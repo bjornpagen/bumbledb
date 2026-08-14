@@ -1416,9 +1416,9 @@ ever had. -/
 assignments, PRE-projection (the fold domain's carrier). A `Set`:
 binding multiplicity is unrepresentable, which is "set semantics
 through aggregation" at the representation level. -/
-def bindingSet (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv) :
-    Set Assignment :=
-  fun σ => derives C r I ρ σ
+def bindingSet (C : Classify) (r : Rule) (F : AtomSource → Set Fact)
+    (ρ : ParamEnv) : Set Assignment :=
+  fun σ => derives C r F ρ σ
 
 /-- A group-key head position: the non-aggregate faces of the
 head-shape row (`crate::ir::HeadTerm`'s `Var` and `Measure`; the
@@ -1449,23 +1449,24 @@ def keyTuple (keys : List KeyTerm) (σ : Assignment) :
 group-key tuple — grouping IS fibering over head values
 (`20-query-ir.md` § aggregation: group key = the projected values of
 the non-aggregated find terms). -/
-def Group (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
-    (keys : List KeyTerm) (g : List (Option Value)) : Set Assignment :=
-  fun σ => derives C r I ρ σ ∧ keyTuple keys σ = g
+def Group (C : Classify) (r : Rule) (F : AtomSource → Set Fact)
+    (ρ : ParamEnv) (keys : List KeyTerm) (g : List (Option Value)) :
+    Set Assignment :=
+  fun σ => derives C r F ρ σ ∧ keyTuple keys σ = g
 
 /-- Fibers are disjoint: a binding lives in exactly one group. -/
-theorem group_fibers_disjoint {C : Classify} {r : Rule} {I : Instance}
+theorem group_fibers_disjoint {C : Classify} {r : Rule} {F : AtomSource → Set Fact}
     {ρ : ParamEnv} {keys : List KeyTerm} {g g' : List (Option Value)}
-    {σ : Assignment} (h : σ ∈ Group C r I ρ keys g)
-    (h' : σ ∈ Group C r I ρ keys g') : g = g' :=
+    {σ : Assignment} (h : σ ∈ Group C r F ρ keys g)
+    (h' : σ ∈ Group C r F ρ keys g') : g = g' :=
   h.2.symm.trans h'.2
 
 /-- Fibers exhaust: every deriving binding lands in its evaluated
 key's group. -/
-theorem group_fibers_exhaust {C : Classify} {r : Rule} {I : Instance}
+theorem group_fibers_exhaust {C : Classify} {r : Rule} {F : AtomSource → Set Fact}
     {ρ : ParamEnv} (keys : List KeyTerm) {σ : Assignment}
-    (h : derives C r I ρ σ) :
-    σ ∈ Group C r I ρ keys (keyTuple keys σ) :=
+    (h : derives C r F ρ σ) :
+    σ ∈ Group C r F ρ keys (keyTuple keys σ) :=
   ⟨h, rfl⟩
 
 /-- **The F4 content, stated positively.** Two deriving bindings with
@@ -1477,12 +1478,12 @@ variable-keyed fibering they split. Bridge:
 columns); `naive/query.rs::project` (the key pushes
 `measure_value(...)`, not the interval). -/
 theorem equal_key_values_share_fiber {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} {keys : List KeyTerm}
-    {σ σ' : Assignment} (h : derives C r I ρ σ)
-    (h' : derives C r I ρ σ')
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {keys : List KeyTerm}
+    {σ σ' : Assignment} (h : derives C r F ρ σ)
+    (h' : derives C r F ρ σ')
     (hkey : keyTuple keys σ = keyTuple keys σ') :
-    σ ∈ Group C r I ρ keys (keyTuple keys σ) ∧
-      σ' ∈ Group C r I ρ keys (keyTuple keys σ) :=
+    σ ∈ Group C r F ρ keys (keyTuple keys σ) ∧
+      σ' ∈ Group C r F ρ keys (keyTuple keys σ) :=
   ⟨⟨h, rfl⟩, ⟨h', hkey.symm⟩⟩
 
 /-- On a plain-variable key list the evaluated tuple IS the valuation
@@ -1559,12 +1560,13 @@ fiber of an ACTUAL deriving binding (`groups.rs::probe_group` — a
 group is created on first sight), which is exactly what refuses SQL's
 zero row. The key handed to the fold is `keyTuple` — head VALUES, the
 F4 decision (module doc). -/
-def aggAnswers (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
+def aggAnswers (C : Classify) (r : Rule) (F : AtomSource → Set Fact)
+    (ρ : ParamEnv)
     (keys : List KeyTerm)
     (fold : List (Option Value) → Set Assignment → AnswerTuple) :
     Set AnswerTuple :=
-  fun t => ∃ σ, derives C r I ρ σ ∧
-    t = fold (keyTuple keys σ) (Group C r I ρ keys (keyTuple keys σ))
+  fun t => ∃ σ, derives C r F ρ σ ∧
+    t = fold (keyTuple keys σ) (Group C r F ρ keys (keyTuple keys σ))
 
 /-- **Theorem 2 (`empty_global_no_answer`).** An aggregate over the
 empty binding set yields the EMPTY answer set — stated for every
@@ -1577,10 +1579,10 @@ Bridge: `finalize.rs::finalize_into` — "Empty input yields zero
 rows"; the refused reading's countermodel is
 `Countermodels.sql_zero_row_from_no_binding`. -/
 theorem empty_global_no_answer {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} {keys : List KeyTerm}
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {keys : List KeyTerm}
     {fold : List (Option Value) → Set Assignment → AnswerTuple}
-    (hempty : ∀ σ, ¬ derives C r I ρ σ) :
-    ∀ t, t ∉ aggAnswers C r I ρ keys fold := by
+    (hempty : ∀ σ, ¬ derives C r F ρ σ) :
+    ∀ t, t ∉ aggAnswers C r F ρ keys fold := by
   rintro t ⟨σ, hσ, -⟩
   exact hempty σ hσ
 

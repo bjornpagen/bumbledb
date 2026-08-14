@@ -14,7 +14,7 @@ glue over PRD 05's proved computable folds
 
 Three case kinds share the directory, dispatched by FILE NAME:
 `judgment-*.json` is a **judgment case** (the write-side arm, below);
-`program-*.json` is a **program case** (the recursive arm, below);
+`reach-*.json` is a **reach case** (the recursive arm, below);
 everything else is a **query case**. A judgment case also carries
 `"kind":"judgment"` for self-description.
 
@@ -291,57 +291,48 @@ id (`judgment-containment-both-directions` — the dedup rule above,
 pinned pre-dedup by a unit test), and a two-key rejection
 (`judgment-multi-key-collisions`, `[0,1]`).
 
-## Program cases — the recursive third oracle
+## Reach cases — the recursive third oracle
 
-A program case carries the program cut instead of a query
-(`Bumbledb/Query/Syntax.lean`: `Program`/`PredicateDef`/`PRule` —
-rule heads are plain variable-id lists, so the recursive corpus is
-projection-shaped by format; folds are the naive lane's, exactly as
-`Pack` is on the query side). The Lean side decodes it, reads the
-RECORDED stratification witness (the Rust side computes one witness —
-the naive model's relaxation, mirroring the strata judge's
-condensation; the denotation is witness-independent, the recorded
-narrowing in `Bumbledb/Exec/Fixpoint.lean`), and runs the PROVED
-fueled fixpoint `evalProgram` (`program_eval_sound` is its agreement
-with the stratified denotation) against the recorded answers.
+A reach case carries a Query with `interiors` / `rec` / main `rules`
+(`Bumbledb/Query/Syntax.lean`) instead of a CQuery. The Lean side
+decodes it and runs `evalQueryList` (`Bumbledb/Exec/Reach.lean`;
+`evalQuery_sound` is its agreement with `evalQuery`) against the
+recorded answers. Atoms on this arm are `edb` / `interior` (never
+`idb`, never a stored `relation` key). `rec` may be JSON `null` or
+omitted for interiors-only; the recut corpus has a rec on every file.
+One-predicate rec queries become `interiors = []`, `rec = some`, and
+an identity main of the same arity — empty `rules` denotes `∅`. Rec
+id is `interiors.length` (0 when interiors are empty).
 
-The Rust builder (`crates/bumbledb-bench/src/conformance/program.rs`)
-writes each document only after the NAIVE stratified fixpoint answered
-and — where the `WITH RECURSIVE` gate admits
-(`translate::sqlite_program_expressible`) — `SQLite` agreed; mutual
-and non-linear cases are naive-attested and still written (Lean judges
-them too — exactly the coverage `SQLite` cannot give). The corpus
-programs read the org tree only (closure sizes bounded by
-construction), so every case stays hand-readable and the Lean run
-stays a per-push lane.
+Filename: `reach-hand-closure.json`, `reach-seeded-0001.json`, …
+Gaps in numbering (`0000`, `0003`, `0010`, `0021`) are the dropped
+mutual cases — provenance stays 1:1, do not renumber. Dispatch by
+prefix `reach-`. Do not name them `query-*.json`.
 
 ```jsonc
 {
-"case":"program-hand-closure",
-"provenance":{"hand":"program-hand-closure","world_seed":12603137},
-                                            // or {world_seed, case_seed,
-                                            //     variant} replayed through
-                                            //     Rng::new(case_seed)
-"strings":[…],                              // as in query cases
-"theory":{…},                               // as in query cases
-"instance":[…],                             // as in query cases
-"program":{
-  "predicates":[                            // PredId = index
-    {"arity":2,"rules":[
-      {"finds":[0,1],                       // PRule.finds: variable IDS
-       "atoms":[                            // the source arm spelled:
-         {"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]}],
-       "negated":[],"conditions":[]},
-      {"finds":[0,2],
-       "atoms":[
-         {"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]},
-         {"idb":0,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],
-       "negated":[],"conditions":[]}]}],
-  "output":0,
-  "strata":[0]},                            // the recorded witness
+"case":"reach-hand-closure",
+"provenance":{"hand":"reach-hand-closure","world_seed":12603137},
+"strings":[],
+"theory":{…},
+"instance":[…],
+"query":{
+  "interiors":[],
+  "rec":{
+    "arity":2,
+    "base":[{ "finds":[0,1], "atoms":[{ "edb":7, "bindings":… }],
+              "negated":[], "conditions":[] }],
+    "rec": [{ "finds":[0,2], "atoms":[
+                { "edb":7, "bindings":… },
+                { "interior":0, "bindings":… }
+              ], "negated":[], "conditions":[] }]
+  },
+  "arity":2,
+  "rules":[{ "finds":[0,1], "atoms":[{ "interior":0, "bindings":… }],
+             "negated":[], "conditions":[] }]
+},
 "params":[],
-"answers":[…]                               // the AGREED answers,
-                                            // canonically sorted
+"answers":[…]
 }
 ```
 
@@ -350,9 +341,9 @@ stays a per-push lane.
 * Regenerate: `cargo test -p bumbledb-bench
   regenerate_the_conformance_corpus -- --ignored --nocapture`
   (deterministic: identical bytes from identical seeds, forever).
-  The recursive arm regenerates independently
-  (`regenerate_the_recursive_conformance_corpus` — `program-*.json`
-  only, leaving the query lane's measured budgets untouched).
+  The reach arm is the checked-in `reach-*.json` recut until the Rust
+  builder is rewritten; do not regenerate it with the old recursive
+  serializer.
 * Compare (engine · naive · file bytes): `cargo test -p bumbledb-bench
   the_corpus_replays_byte_identical` — runs in the plain workspace
   suite.

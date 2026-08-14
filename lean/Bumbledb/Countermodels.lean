@@ -2,7 +2,7 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
-import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Reach
 import Bumbledb.Exec.Plan
 import Bumbledb.Txn
 import Bumbledb.Txn.DeltaRestriction
@@ -157,7 +157,7 @@ part of the spec.
   interchangeable: a rule empty at one instance through a selection
   miss (`Query.EmptyAt.selectionMiss` — the `PendingIntern` dictionary
   miss, `Ok(false)`) ANSWERS at another instance, so the miss verdict
-  can never be promoted to the plan-level `Program::Empty` — which is
+  can never be promoted to the plan-level `PreparedBody::Empty` — which is
   exactly the design decision `api/prepared/bind.rs`'s latch encodes
   (the miss short-circuits one execution; only the fold's refutation
   deletes the rule).
@@ -477,7 +477,7 @@ def gateInstance : Instance := fun _ => fun f => f = gateFact
 `v₀ ∈ allVars` (a find) but `positiveVars = []`. -/
 def unsafeRule : Query.Rule where
   finds := [⟨0⟩]
-  atoms := [{ relation := ⟨0⟩, bindings := [] }]
+  atoms := [{ source := .edb ⟨0⟩, bindings := [] }]
   negated := []
   conditions := []
 
@@ -496,7 +496,7 @@ EVERY value. -/
 theorem unsafe_rule_answers (C : Query.Classify) (ρ : Query.ParamEnv)
     (n : Nat) :
     [(⟨.str, ⟨n⟩⟩ : Value)] ∈
-      Query.ruleAnswers C unsafeRule gateInstance ρ := by
+      Query.ruleAnswers C unsafeRule (Query.edbEnv gateInstance) ρ := by
   refine Query.mem_ruleAnswers.mpr
     ⟨fun _ => ⟨.str, ⟨n⟩⟩, ⟨?_, ?_, ?_⟩, rfl⟩
   · intro a ha
@@ -532,7 +532,7 @@ reading would be this infinity. Bridge:
 `ComparisonOnlyVariable` / `MembershipOnlyVariable` — the acceptance
 boundary that keeps this rule unwritable downstream. -/
 theorem unsafe_rule_infinite (C : Query.Classify) (ρ : Query.ParamEnv) :
-    ¬ (Query.ruleAnswers C unsafeRule gateInstance ρ).Finite := by
+    ¬ (Query.ruleAnswers C unsafeRule (Query.edbEnv gateInstance) ρ).Finite := by
   rintro ⟨l, hl⟩
   have hmem := unsafe_rule_answers C ρ ((l.filterMap headStrId).foldr Nat.max 0 + 1)
   have hinl := (hl _).mp hmem
@@ -554,7 +554,7 @@ empty) binding set. -/
 def sqlGlobalAgg (C : Query.Classify) (r : Query.Rule) (I : Instance)
     (ρ : Query.ParamEnv) (fold : Set Query.Assignment → Value) :
     Set Query.AnswerTuple :=
-  fun t => t = [fold (Query.bindingSet C r I ρ)]
+  fun t => t = [fold (Query.bindingSet C r (Query.edbEnv I) ρ)]
 
 /-- The empty instance: no facts anywhere. -/
 def emptyInstance : Instance := fun _ => fun _ => False
@@ -563,13 +563,13 @@ def emptyInstance : Instance := fun _ => fun _ => False
 positive atom demands a fact, and there are none. -/
 def gateRule : Query.Rule where
   finds := []
-  atoms := [{ relation := ⟨0⟩, bindings := [] }]
+  atoms := [{ source := .edb ⟨0⟩, bindings := [] }]
   negated := []
   conditions := []
 
 theorem gateRule_derives_nothing (C : Query.Classify)
     (ρ : Query.ParamEnv) :
-    ∀ σ, ¬ Query.derives C gateRule emptyInstance ρ σ := by
+    ∀ σ, ¬ Query.derives C gateRule (Query.edbEnv emptyInstance) ρ σ := by
   rintro σ ⟨hatoms, -, -⟩
   obtain ⟨f, hf, -⟩ := hatoms _ (List.mem_singleton.mpr rfl)
   exact hf
@@ -586,9 +586,9 @@ theorem sql_zero_row_from_no_binding (C : Query.Classify)
     (keys : List Query.KeyTerm)
     (foldRow : List (Option Value) → Set Query.Assignment →
       Query.AnswerTuple) :
-    ([fold (Query.bindingSet C gateRule emptyInstance ρ)] ∈
+    ([fold (Query.bindingSet C gateRule (Query.edbEnv emptyInstance) ρ)] ∈
       sqlGlobalAgg C gateRule emptyInstance ρ fold) ∧
-    (∀ t, t ∉ Query.aggAnswers C gateRule emptyInstance ρ keys foldRow) :=
+    (∀ t, t ∉ Query.aggAnswers C gateRule (Query.edbEnv emptyInstance) ρ keys foldRow) :=
   ⟨rfl, Query.empty_global_no_answer (gateRule_derives_nothing C ρ)⟩
 
 /-! ## The sweep-premise countermodel (PRD 06)
@@ -888,7 +888,7 @@ def postingInstance : Instance := fun _ => postingRel
 
 /-- The unkeyed occurrence: only the amount field is bound. -/
 def unkeyedAtom : Query.Atom :=
-  { relation := ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+  { source := .edb ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
 
 /-- The rule around it — the body a `Sum(amount)` head folds. -/
 def unkeyedRule : Query.Rule where
@@ -999,11 +999,11 @@ cannot. -/
 
 /-- The source atom `A(0: v₀)`. -/
 def elimSrc : Query.Atom :=
-  { relation := ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+  { source := .edb ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
 
 /-- The target atom `B(0: v₀)` — the drop candidate. -/
 def elimTgt : Query.Atom :=
-  { relation := ⟨1⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+  { source := .edb ⟨1⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
 
 /-- The two-atom rule: `finds v₀ where A(0: v₀), B(0: v₀)`. -/
 def elimRule : Query.Rule where
@@ -1063,8 +1063,8 @@ theorem elim_step_holds :
 
 /-- The containment premise FAILS: the orphan has no target witness. -/
 theorem elim_no_containment :
-    ¬ Containment (elimInstance elimSrc.relation) Selection.empty
-      [⟨0⟩] (elimInstance elimTgt.relation) Selection.empty [⟨0⟩] := by
+    ¬ Containment (elimInstance ⟨0⟩) Selection.empty
+      [⟨0⟩] (elimInstance ⟨1⟩) Selection.empty [⟨0⟩] := by
   intro h
   obtain ⟨g, hg, -, -⟩ :=
     h orphanFact ⟨rfl, rfl⟩ (Selection.empty_satisfies _)
@@ -1074,15 +1074,17 @@ theorem elim_no_containment :
 theorem elim_survivor_answers (C : Query.Classify)
     (ρ : Query.ParamEnv) :
     [orphanFact ⟨0⟩] ∈
-      Query.ruleAnswers C elimSurvivor elimInstance ρ := by
+      Query.ruleAnswers C elimSurvivor (Query.edbEnv elimInstance) ρ := by
   refine Query.mem_ruleAnswers.mpr
     ⟨fun _ => orphanFact ⟨0⟩, ⟨?_, ?_, ?_⟩, rfl⟩
   · intro a ha
     rcases List.mem_singleton.mp ha with rfl
-    refine ⟨orphanFact, ⟨rfl, rfl⟩, ?_⟩
-    intro bd hbd
-    rcases List.mem_singleton.mp hbd with rfl
-    rfl
+    refine ⟨orphanFact, ?_, ?_⟩
+    · simp [Query.edbEnv, Query.sourceDen]
+      exact ⟨rfl, rfl⟩
+    · intro bd hbd
+      rcases List.mem_singleton.mp hbd with rfl
+      rfl
   · intro a ha
     cases ha
   · intro c hc
@@ -1091,11 +1093,12 @@ theorem elim_survivor_answers (C : Query.Classify)
 /-- The original rule answers NOTHING: its target atom demands a fact
 the empty target relation does not hold. -/
 theorem elim_rule_empty (C : Query.Classify) (ρ : Query.ParamEnv) :
-    ∀ t, t ∉ Query.ruleAnswers C elimRule elimInstance ρ := by
+    ∀ t, t ∉ Query.ruleAnswers C elimRule (Query.edbEnv elimInstance) ρ := by
   intro t ht
   obtain ⟨σ, ⟨hatoms, -, -⟩, -⟩ := Query.mem_ruleAnswers.mp ht
   obtain ⟨f, hf, -⟩ := hatoms elimTgt
     (List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl))
+  simp [Query.edbEnv, Query.sourceDen, elimTgt] at hf
   exact absurd hf.1 (by decide)
 
 /-- **The countermodel (PRD 08).** `elimination_needs_containment` —
@@ -1109,10 +1112,10 @@ theorem elimination_needs_containment (C : Query.Classify)
     (ρ : Query.ParamEnv) :
     Query.ElimStep elimRule elimSurvivor elimSrc elimTgt [⟨0⟩] [⟨0⟩]
       Selection.empty Selection.empty ∧
-    ¬ Containment (elimInstance elimSrc.relation) Selection.empty
-      [⟨0⟩] (elimInstance elimTgt.relation) Selection.empty [⟨0⟩] ∧
-    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor elimInstance ρ ∧
-      t ∉ Query.ruleAnswers C elimRule elimInstance ρ :=
+    ¬ Containment (elimInstance ⟨0⟩) Selection.empty
+      [⟨0⟩] (elimInstance ⟨1⟩) Selection.empty [⟨0⟩] ∧
+    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor (Query.edbEnv elimInstance) ρ ∧
+      t ∉ Query.ruleAnswers C elimRule (Query.edbEnv elimInstance) ρ :=
   ⟨elim_step_holds, elim_no_containment,
     [orphanFact ⟨0⟩], elim_survivor_answers C ρ, elim_rule_empty C ρ _⟩
 
@@ -1128,7 +1131,7 @@ checkable. -/
 theorem latch_miss_not_static (C : Query.Classify)
     (ρ : Query.ParamEnv) :
     Query.EmptyAt C ρ elimSurvivor emptyInstance ∧
-    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor elimInstance ρ :=
+    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor (Query.edbEnv elimInstance) ρ :=
   ⟨.selectionMiss elimSrc (List.mem_singleton.mpr rfl)
       (fun _ hf _ _ => hf),
     [orphanFact ⟨0⟩], elim_survivor_answers C ρ⟩
@@ -1363,135 +1366,143 @@ theorem disjunctive_window_not_literal_conjunction :
       rw [selFalse_group_union]
       exact h01.2 g hg hψ
 
-/-! ## The recursion walls (Exec/Fixpoint)
+/-! ## The recursion walls (Exec/Reach)
 
-Two countermodels fence the stratified fixpoint's two premises:
+Two countermodels fence the linear reach's two premises:
 
-* **The odd loop** — `p ← ¬p`, negation through the predicate's own
-  SCC. Not stratified (`odd_not_stratified`), and honestly so: the
-  operator is NOT monotone (`odd_not_monotone`), its naive rounds
-  oscillate (`odd_rounds_oscillate` — the empty table derives, the
-  derived table underives), and NO table is a fixpoint
-  (`odd_no_fixpoint`) — there is no consistent semantics to assign,
-  which is why `Exec/Fixpoint.lean: stratumOp_mono` carries
-  `StratifiedBy` as its premise rather than as a convention.
+* **The odd loop** — `p ← ¬p`, a rec arm whose negated atom names
+  `self` (`selfCount = 0`). Not `recLinear` (`odd_not_stratified`),
+  and honestly so: the operator is NOT monotone (`odd_not_monotone`),
+  its naive rounds oscillate (`odd_rounds_oscillate` — the empty
+  table derives, the derived table underives), and NO table is a
+  fixpoint (`odd_no_fixpoint`) — there is no consistent semantics to
+  assign, which is why `Exec/Reach.lean: reachOp_mono` carries
+  linearity and `negated = []` as its premise rather than as a
+  convention.
 
 * **The successor operator** — value invention in a rule head,
   modeled at the OPERATOR level because it is unrepresentable in
-  `PRule` syntax (heads are projected variables — the creation
+  `Rule` syntax (heads are projected variables — the creation
   quarantine): `succOp X = {0} ∪ {m + 1 | m ∈ X}` is monotone
   (`succOp_monotone`) yet its naive chain ascends forever
   (`succ_chain_ascends`) and every prefixed point is infinite
   (`succ_prefixed_infinite` — no list enumerates it). Termination's
   premise (heads project BOUND variables, so candidates live on the
-  finite active domain — `Exec/Fixpoint.lean: program_den_finite`)
+  finite active domain — `Exec/Reach.lean: reach_den_finite`)
   is load-bearing, exactly the chain-window fence
   (`docs/architecture/20-query-ir.md` § the chain-window fence). -/
 
-/-- The odd loop's one atom: the program's own predicate, negated,
-zero bindings (the nonemptiness gate). -/
-def oddAtom : Query.PAtom := ⟨.idb ⟨0⟩, []⟩
+/-- The odd loop's one atom: the rec itself, negated, zero bindings. -/
+def oddSelf : Query.InteriorId := ⟨0⟩
+
+def oddAtom : Query.Atom :=
+  { source := .interior oddSelf, bindings := [] }
 
 /-- The odd loop's one rule: `p ← ¬p`. Safe (no variables at all) —
 safety is not the broken premise here. -/
-def oddRule : Query.PRule := ⟨[], [], [oddAtom], []⟩
+def oddRecRule : Query.Rule :=
+  { finds := [], atoms := [], negated := [oddAtom], conditions := [] }
 
-/-- The odd loop: one zero-arity predicate whose only rule negates
-itself. -/
-def oddProgram : Query.Program := ⟨[⟨0, [oddRule]⟩], ⟨0⟩⟩
+/-- Illegal rec: empty base, rec arm is negated self (`selfCount = 0`). -/
+def oddRec : Query.Rec := Query.Rec.mk 0 [] [oddRecRule]
 
-/-- **No stratum witness exists**: the self-negation edge demands
-`strat p < strat p`. -/
-theorem odd_not_stratified : ¬ oddProgram.Stratified := by
-  rintro ⟨strat, h⟩
-  have hedge : (⟨⟨0⟩, .negated⟩ : Query.Edge) ∈ oddRule.edges := by
-    decide
-  have := (h 0 ⟨0, [oddRule]⟩ rfl oddRule (List.mem_singleton.mpr rfl)
-    _ hedge).2 rfl
-  exact Nat.lt_irrefl _ this
+def oddQuery : Query.Query := Query.Query.mk [] (some oddRec) 0 []
 
-/-- The odd loop's stratum-0 operator (any classifier, instance, and
-parameter environment — the program reads none of them). -/
+/-- **No recLinear witness**: empty base, and the rec arm negates
+self. The name keeps the wall; the statement is `¬ recLinear`. -/
+theorem odd_not_stratified : ¬ oddQuery.recLinear := by
+  intro h
+  unfold Query.Query.recLinear at h
+  simp [oddQuery, Query.Query.rec, Query.Query.mk, oddRec,
+    Query.Rec.mk, Query.Rec.base] at h
+
+/-- The odd loop's reach operator (any classifier, instance, and
+parameter environment — the query reads none of them). -/
 def oddOp (C : Query.Classify) (I : Instance) (ρ : Query.ParamEnv) :
-    Query.PredSets → Query.PredSets :=
-  Query.stratumOp C oddProgram (fun _ => 0) I ρ 0 (fun _ _ => False)
+    Set Query.AnswerTuple → Set Query.AnswerTuple :=
+  Query.reachOp C oddRec oddSelf I Query.InteriorEnv.empty ρ
 
 /-- An empty table derives: nothing matches the negated atom. -/
 theorem odd_step_of_empty (C : Query.Classify) (I : Instance)
-    (ρ : Query.ParamEnv) {X : Query.PredSets}
-    (hX : ∀ t, ¬ t ∈ X ⟨0⟩) : [] ∈ oddOp C I ρ X ⟨0⟩ := by
-  refine ⟨rfl, ⟨0, [oddRule]⟩, rfl, oddRule,
-    List.mem_singleton.mpr rfl, fun _ => ⟨.bool, false⟩,
-    ⟨?_, ?_, ?_⟩, rfl⟩
+    (ρ : Query.ParamEnv) {X : Set Query.AnswerTuple}
+    (hX : ∀ t, ¬ t ∈ X) : [] ∈ oddOp C I ρ X := by
+  unfold oddOp Query.reachOp
+  refine Or.inr ⟨oddRecRule, List.mem_singleton.mpr rfl,
+    ⟨fun _ => ⟨.bool, false⟩, ⟨?_, ?_, ?_⟩, rfl⟩⟩
   · intro a ha
-    exact absurd ha (by simp [oddRule])
+    exact absurd ha (by simp [oddRecRule])
   · intro a ha hex
-    have haa : a = oddAtom := by simpa [oddRule] using ha
+    have haa : a = oddAtom := by simpa [oddRecRule] using ha
     subst haa
     obtain ⟨f, hf, -⟩ := hex
-    obtain ⟨t, ht, -⟩ := hf
-    rw [Query.stratumSets_at rfl] at ht
-    exact hX t ht
+    obtain ⟨u, hu, -⟩ := hf
+    unfold Query.InteriorEnv.update at hu
+    rw [if_pos rfl] at hu
+    exact hX u hu
   · intro t ht
-    exact absurd ht (by simp [oddRule])
+    exact absurd ht (by simp [oddRecRule])
 
 /-- A nonempty table underives: the derived fact refutes the very
 rule that derived it. -/
 theorem odd_step_of_nonempty (C : Query.Classify) (I : Instance)
-    (ρ : Query.ParamEnv) {X : Query.PredSets} {t₀ : Query.AnswerTuple}
-    (h0 : t₀ ∈ X ⟨0⟩) : ∀ t, ¬ t ∈ oddOp C I ρ X ⟨0⟩ := by
-  rintro t ⟨-, d, hd, r, hr, σ, ⟨-, hneg, -⟩, -⟩
-  have hdq : d = ⟨0, [oddRule]⟩ := (Option.some.inj hd).symm
-  subst hdq
-  have hrr : r = oddRule := List.mem_singleton.mp hr
-  subst hrr
-  refine hneg oddAtom (List.mem_singleton.mpr rfl)
-    ⟨Query.tupleFact t₀, ⟨t₀, ?_, rfl⟩, ?_⟩
-  · rw [Query.stratumSets_at rfl]
-    exact h0
-  · intro b hb
-    exact absurd hb (by simp [oddAtom])
+    (ρ : Query.ParamEnv) {X : Set Query.AnswerTuple}
+    {t₀ : Query.AnswerTuple} (h0 : t₀ ∈ X) :
+    ∀ t, ¬ t ∈ oddOp C I ρ X := by
+  intro t ht
+  rcases ht with hbase | hrec
+  · obtain ⟨r, hr, -⟩ := hbase
+    simp [oddRec, Query.Rec.base, Query.Rec.mk] at hr
+  · obtain ⟨r, hr, ⟨σ, ⟨-, hneg, -⟩, -⟩⟩ := hrec
+    have hrr : r = oddRecRule := List.mem_singleton.mp hr
+    subst hrr
+    refine hneg oddAtom (List.mem_singleton.mpr rfl)
+      ⟨Query.tupleFact t₀, ⟨t₀, ?_, rfl⟩, ?_⟩
+    · unfold Query.InteriorEnv.update
+      rw [if_pos rfl]
+      exact h0
+    · intro b hb
+      exact absurd hb (by simp [oddAtom])
 
 /-- **The naive rounds oscillate**: round one derives the head from
 the empty table; round two, fed round one's table, underives it —
 no round-robin ever settles. -/
 theorem odd_rounds_oscillate (C : Query.Classify) (I : Instance)
     (ρ : Query.ParamEnv) :
-    [] ∈ oddOp C I ρ (fun _ _ => False) ⟨0⟩ ∧
-      ¬ [] ∈ oddOp C I ρ (oddOp C I ρ (fun _ _ => False)) ⟨0⟩ := by
+    [] ∈ oddOp C I ρ (fun _ => False) ∧
+      ¬ [] ∈ oddOp C I ρ (oddOp C I ρ (fun _ => False)) := by
   have h1 := odd_step_of_empty C I ρ
-    (X := fun _ _ => False) (fun _ ht => ht)
+    (X := fun _ => False) (fun _ ht => ht)
   exact ⟨h1, odd_step_of_nonempty C I ρ h1 []⟩
 
 /-- **No consistent semantics**: no table is a fixed point of the
-odd loop's operator — an empty answer derives the head, a nonempty
-one refutes its own derivation. -/
+odd loop's operator. -/
 theorem odd_no_fixpoint (C : Query.Classify) (I : Instance)
     (ρ : Query.ParamEnv) :
-    ∀ X : Query.PredSets,
-      ¬ (∀ t, t ∈ oddOp C I ρ X ⟨0⟩ ↔ t ∈ X ⟨0⟩) := by
-  intro X hfix
-  by_cases hX : ∃ t, t ∈ X ⟨0⟩
+    ¬ ∃ X, oddOp C I ρ X = X := by
+  rintro ⟨X, hfix⟩
+  have hiff : ∀ t, t ∈ oddOp C I ρ X ↔ t ∈ X := fun t =>
+    ⟨fun h => hfix ▸ h, fun h => hfix.symm ▸ h⟩
+  by_cases hX : ∃ t, t ∈ X
   · obtain ⟨t₀, ht₀⟩ := hX
-    exact odd_step_of_nonempty C I ρ ht₀ t₀ ((hfix t₀).mpr ht₀)
-  · have hempty : ∀ t, ¬ t ∈ X ⟨0⟩ := fun t ht => hX ⟨t, ht⟩
-    exact hempty [] ((hfix []).mp (odd_step_of_empty C I ρ hempty))
+    exact odd_step_of_nonempty C I ρ ht₀ t₀ ((hiff t₀).mpr ht₀)
+  · have hempty : ∀ t, ¬ t ∈ X := fun t ht => hX ⟨t, ht⟩
+    exact hempty [] ((hiff []).mp (odd_step_of_empty C I ρ hempty))
 
 /-- **The non-monotonicity witness**: growing the table SHRINKS the
-operator's output — exactly what `Exec/Fixpoint.lean:
-stratumOp_mono`'s stratification premise rules out. -/
+operator's output — exactly what `Exec/Reach.lean: reachOp_mono`'s
+linearity premise rules out. -/
 theorem odd_not_monotone (C : Query.Classify) (I : Instance)
-    (ρ : Query.ParamEnv) : ¬ Query.MonoP (oddOp C I ρ) := by
+    (ρ : Query.ParamEnv) : ¬ Query.MonoS (oddOp C I ρ) := by
   intro hm
-  have h1 : [] ∈ oddOp C I ρ (fun _ _ => False) ⟨0⟩ :=
+  have h1 : [] ∈ oddOp C I ρ (fun _ => False) :=
     odd_step_of_empty C I ρ (fun _ ht => ht)
-  have h2 := hm (fun _ _ => False) (oddOp C I ρ (fun _ _ => False))
-    (fun _ _ ht => absurd ht (fun h => h)) ⟨0⟩ [] h1
+  have h2 := hm (fun _ => False) (oddOp C I ρ (fun _ => False))
+    (fun _ ht => absurd ht (fun h => h)) [] h1
   exact odd_step_of_nonempty C I ρ h1 [] h2
 
 /-- The successor operator: a head-creating rule's immediate
 consequence (`p(0)`; `p(m + 1) ← p(m)`), writable only at the
-operator level — `PRule` heads cannot create values. -/
+operator level — `Rule` heads cannot create values. -/
 def succOp : Set Nat → Set Nat :=
   fun X n => n = 0 ∨ ∃ m, m ∈ X ∧ n = m + 1
 
@@ -1540,7 +1551,7 @@ theorem succ_prefixed_all (X : Set Nat)
 /-- **The infinite ascending chain's wall**: no prefixed point of the
 successor operator is finite — any candidate list misses the value
 one past its maximum. The safety theorem
-(`Exec/Fixpoint.lean: program_den_finite`) survives on exactly the
+(`Exec/Reach.lean: reach_den_finite`) survives on exactly the
 premise this operator breaks: heads project bound variables, never
 created ones. -/
 theorem succ_prefixed_infinite (X : Set Nat)
@@ -1691,13 +1702,13 @@ def triT : RelId := ⟨2⟩
 
 /-- `R(a, b)`. -/
 def triAtomR : Query.Atom :=
-  ⟨triR, [(⟨0⟩, .var triA), (⟨1⟩, .var triB)]⟩
+  { source := .edb triR, bindings := [(⟨0⟩, .var triA), (⟨1⟩, .var triB)] }
 /-- `S(b, c)`. -/
 def triAtomS : Query.Atom :=
-  ⟨triS, [(⟨0⟩, .var triB), (⟨1⟩, .var triC)]⟩
+  { source := .edb triS, bindings := [(⟨0⟩, .var triB), (⟨1⟩, .var triC)] }
 /-- `T(a, c)`. -/
 def triAtomT : Query.Atom :=
-  ⟨triT, [(⟨0⟩, .var triA), (⟨1⟩, .var triC)]⟩
+  { source := .edb triT, bindings := [(⟨0⟩, .var triA), (⟨1⟩, .var triC)] }
 
 /-- The triangle rule: find `(a, b, c)` from `R(a,b), S(b,c),
 T(a,c)` — safe, well-typed, condition-free. -/
@@ -1910,7 +1921,7 @@ paragraph). -/
 theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
     [tri1, tri3, tri4]
         ∈ Query.looseAnswers C triRule triLoosePlan triInst ρ ∧
-    [tri1, tri3, tri4] ∉ Query.ruleAnswers C triRule triInst ρ := by
+    [tri1, tri3, tri4] ∉ Query.ruleAnswers C triRule (Query.edbEnv triInst) ρ := by
   constructor
   · refine ⟨triLooseOut, ?_, ?_, ?_, ?_⟩
     · show triLooseOut ∈ Query.looseNodeStep triRule triInst ρ
@@ -1925,13 +1936,15 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
           fun v _ => rfl, ?_⟩
         intro s hs
         rw [List.mem_singleton.mp hs]
-        refine ⟨triAtomR, rfl, triFactR, Or.inl ⟨rfl, rfl⟩, ?_⟩
-        intro b hb _
-        rcases List.mem_cons.mp hb with rfl | hb'
-        · exact (by decide : triMid triA = triFactR ⟨0⟩)
-        rcases List.mem_cons.mp hb' with rfl | hb''
-        · exact (by decide : triMid triB = triFactR ⟨1⟩)
-        · exact absurd hb'' List.not_mem_nil
+        refine ⟨triAtomR, rfl, triFactR, ?_, ?_⟩
+        · simp [Query.edbEnv, Query.sourceDen, triAtomR]
+          exact Or.inl ⟨rfl, rfl⟩
+        · intro b hb _
+          rcases List.mem_cons.mp hb with rfl | hb'
+          · exact (by decide : triMid triA = triFactR ⟨0⟩)
+          rcases List.mem_cons.mp hb' with rfl | hb''
+          · exact (by decide : triMid triB = triFactR ⟨1⟩)
+          · exact absurd hb'' List.not_mem_nil
       · -- the paper cover: S's subatom contains the new variable c
         intro v hv
         obtain ⟨h1, h2⟩ := hv
@@ -1962,21 +1975,25 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
       · -- node 2's probes: S and T both consistent with (1, 3, 4)
         intro s hs
         rcases List.mem_cons.mp hs with rfl | hs'
-        · refine ⟨triAtomS, rfl, triFactS, Or.inr (Or.inl ⟨rfl, rfl⟩), ?_⟩
-          intro b hb _
-          rcases List.mem_cons.mp hb with rfl | hb'
-          · exact (by decide : triLooseOut triB = triFactS ⟨0⟩)
-          rcases List.mem_cons.mp hb' with rfl | hb''
-          · exact (by decide : triLooseOut triC = triFactS ⟨1⟩)
-          · exact absurd hb'' List.not_mem_nil
+        · refine ⟨triAtomS, rfl, triFactS, ?_, ?_⟩
+          · simp [Query.edbEnv, Query.sourceDen, triAtomS]
+            exact Or.inr (Or.inl ⟨rfl, rfl⟩)
+          · intro b hb _
+            rcases List.mem_cons.mp hb with rfl | hb'
+            · exact (by decide : triLooseOut triB = triFactS ⟨0⟩)
+            rcases List.mem_cons.mp hb' with rfl | hb''
+            · exact (by decide : triLooseOut triC = triFactS ⟨1⟩)
+            · exact absurd hb'' List.not_mem_nil
         rcases List.mem_cons.mp hs' with rfl | hs''
-        · refine ⟨triAtomT, rfl, triFactT, Or.inr (Or.inr ⟨rfl, rfl⟩), ?_⟩
-          intro b hb _
-          rcases List.mem_cons.mp hb with rfl | hb'
-          · exact (by decide : triLooseOut triA = triFactT ⟨0⟩)
-          rcases List.mem_cons.mp hb' with rfl | hb''
-          · exact (by decide : triLooseOut triC = triFactT ⟨1⟩)
-          · exact absurd hb'' List.not_mem_nil
+        · refine ⟨triAtomT, rfl, triFactT, ?_, ?_⟩
+          · simp [Query.edbEnv, Query.sourceDen, triAtomT]
+            exact Or.inr (Or.inr ⟨rfl, rfl⟩)
+          · intro b hb _
+            rcases List.mem_cons.mp hb with rfl | hb'
+            · exact (by decide : triLooseOut triA = triFactT ⟨0⟩)
+            rcases List.mem_cons.mp hb' with rfl | hb''
+            · exact (by decide : triLooseOut triC = triFactT ⟨1⟩)
+            · exact absurd hb'' List.not_mem_nil
         · exact absurd hs'' List.not_mem_nil
     · intro a ha
       exact absurd ha List.not_mem_nil
@@ -1991,6 +2008,7 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
     injection hproj' with h1 hrest
     injection hrest with h2 hrest2
     obtain ⟨f, hf, hm⟩ := hpos triAtomR List.mem_cons_self
+    simp [Query.edbEnv, Query.sourceDen, triAtomR] at hf
     rcases hf with ⟨-, rfl⟩ | ⟨habs, -⟩ | ⟨habs, -⟩
     · have hsel : σ triB = triFactR ⟨1⟩ :=
         hm (⟨1⟩, .var triB) (List.mem_cons_of_mem _ List.mem_cons_self)

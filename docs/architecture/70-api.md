@@ -504,25 +504,15 @@ is the consumer that names its shape.)
 ## Transactions
 
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries.
-  **`db.prepare(...)` is the ONE prepare entry** (the unified-prepare ruling,
-  frozen 2026-07-15): it takes `impl Into<ProgramRef<'_>>`, so `db.prepare(&query)`
-  and `db.prepare(&program)` both land on it — pin-at-prepare, `40-execution.md`.
-  A query is the degenerate one-predicate program
-  (`From<Query> for Program` is the owned embedding;
-  `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`); a no-`Idb` program
-  prepares as its output predicate's query — byte for byte in the one-predicate
-  case, and always carrying the program-global bind contract (params are ONE
-  binding surface across predicates, `20-query-ir.md` § engine recursion; the
-  query roster never re-judges what the program roster sealed) — and a recursive
-  program executes under the fixpoint driver with the host-settable budget
-  `prepared.set_fixpoint_budget(rounds, tuples)` — `40-execution.md` § the
-  fixpoint driver. **`ProgramRef` borrows by decision, not convenience**: an
-  owned `impl Into<Program>` was rejected because the `&Query → Program`
-  conversion clones an *unvalidated* condition tree — a recursive `Clone`/`Drop`
-  ahead of the iterative nesting screen, exactly the stack exhaustion the
-  trust-boundary law refuses (`20-query-ir.md` § validation boundary; found by
-  the adversarial sweep the moment the owned spelling was tried). The read
-  closure sees
+  `db.prepare(&query)` is the ONE prepare entry (the unified-prepare ruling,
+  frozen 2026-07-15): it takes `&Query` — pin-at-prepare, `40-execution.md`.
+  A query with empty interiors and no rec prepares as today's query plus two
+  empty fields (`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`); interiors
+  run as a preamble (`PreparedBody::Rules` or `Empty`); a rec query executes
+  under the linear reach driver with the host-settable budget
+  `prepared.set_derived_budget(rounds, tuples)` — the tuples axis judges
+  every query, the rounds axis is rec-only (`40-execution.md` § the linear
+  reach driver). The read closure sees
   a consistent generation (the snapshot-sourced tx id, `50-storage.md`) — every
   read is a function of that one state and nothing else
   (`lean/Bumbledb/Txn.lean: snapshot_reads_one_state`). A prepared
@@ -814,14 +804,15 @@ proposition the commit checks in one integer compare.
   still exists as a Duration projection), `Overflow` (aggregate range check, or
   `OverflowKind::OriginCapacity` when a D2 origin counter would cross `u32`),
   `ResultBytesOverflow` (answer-byte offsets do not fit `u32` — a representation
-  ceiling), `FixpointBudgetExceeded { stratum, rounds, tuples }` (a recursive
-  stratum crossed the driver's iteration/tuple budget — ids and counts, the
-  documented default host-amendable via `set_fixpoint_budget`; `40-execution.md`
-  § the fixpoint driver; Lean `evalProgram` is complete only under sufficient
-  fuel — this abort is engine-only incompleteness), `Corruption` (hard error,
+  ceiling), `DerivedBudgetExceeded { rounds, tuples }` (the derived-tuples
+  ledger over interiors ∪ rec crossed the budget — ids and counts, the
+  documented default host-amendable via `set_derived_budget`; tuples axis
+  judges every query, rounds axis rec-only; `40-execution.md` § the linear
+  reach driver; this abort is engine-only incompleteness vs `evalQuery`),
+  `Corruption` (hard error,
   never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable. `OriginCapacity` and `ResultBytesOverflow` are engine-only
-  resource errors Lean `eval_sound` / `ruleAnswers` do not denote.
+  resource errors Lean `eval_sound` / `rulesAnswers` do not denote.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
   `lean/Bumbledb/Txn.lean: rejection_is_complete` — with each citation's
@@ -952,18 +943,17 @@ introspection — EXPLAIN, colloquially — is an in-workspace bench harness
 surface (`#[doc(hidden)]` on the embedding crate), not a host-facing SDK
 API. `snap.introspect(..)`
 returns an ANALYZE-semantics rendered artifact beginning
-with `introspection v3`, then the query in rule notation (`20-query-ir.md` § the
-renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
+with `introspection v4`, then the query in rule notation (`20-query-ir.md` § the
+renderer; `PreparedQuery::rendered_query` exposes the same query string),
 plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
-structured `ExecutionStats`, carrying `introspection_version: 3`, each rule's
-`distinct_bindings` proof status, the same program/node ordering, and — for
-recursive programs — the fixpoint driver's per-stratum round records: labeled plan
-units (predicate, rule, delta variant), each round's per-predicate delta sizes,
-and the union accounting (`40-execution.md` § observability).
+structured `ExecutionStats`, carrying `introspection_version: 4`, each rule's
+`distinct_bindings` proof status, main-rule / node ordering, and — when
+present — `interiors:` then optional one `reach` then main (`40-execution.md`
+§ observability).
 
 Within one version, identical schema fingerprint, canonical query, parameter types,
 and feature set produce byte-identical rendered output. Sections are fixed; rules
-remain in program order, nodes in plan order, and dead, subsumed, and unresolved-
+remain in query order, nodes in plan order, and dead, subsumed, and unresolved-
 literal diagnostics in statement order. Any content or ordering change increments
 the version in both surfaces. When a String literal still awaits interning, plan
 introspection names every pending

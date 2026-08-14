@@ -1,6 +1,6 @@
 import Bumbledb.Txn
 import Bumbledb.Exec.Sweep
-import Bumbledb.Exec.Fixpoint
+import Bumbledb.Query.Denotation
 
 /-!
 # Decide — the finite-instance judgment, decided (Level 1)
@@ -32,7 +32,7 @@ The finite carrier is `RowInstance`: per-relation fact lists whose
 facts are given as VALUE ROWS — the conformance lane's interchange
 shape (`Conformance.decodeFact` reads exactly this row form), denoted
 through the machinery that already exists: `Query.tupleFact` (the
-executable evaluator's tuple-fact reading, `Exec/Fixpoint.lean`) and
+executable evaluator's tuple-fact reading, `Query/Denotation.lean`) and
 `Query.ListInstance` (the eval machinery's association-list world,
 `Query/Denotation.lean`) — `RowInstance.world` / `RowInstance.den`
 reuse both, never duplicate them. Rows rather than bare `Fact`

@@ -76,8 +76,8 @@ nothing (`normalize.rs` pass 1) — is answer-invisible, and
   which is exactly why the modeled IR must mint one — a condition can
   only read the assignment.
 * **The lowering is per-rule.** `VarId`s are rule-scoped, so the
-  typing witness and the mint are too; `queryAnswers` is the rules'
-  union (`mem_queryAnswers`), and the query-level statement is the
+  typing witness and the mint are too; `rulesAnswers` is the rules'
+  union (`mem_rulesAnswers`), and the query-level statement is the
   pointwise lift of the rule-level theorem.
 * **The fold-level companion, DISCHARGED (2026-07-23 audit, finding
   087; the R2 fold-domain docket).** A membership term SELECTS, it
@@ -330,15 +330,15 @@ judgment the engine's normalize and the naive model each re-derive;
 `membership_lowering_preserves` is their shared arbiter. -/
 def SurfaceMatches (Γ : Typing) (f : Fact) (a : Atom) (σ : Assignment)
     (ρ : ParamEnv) : Prop :=
-  ∀ b, b ∈ a.bindings → Term.selectsAt Γ ρ σ a.relation b.1 b.2 (f b.1)
+  ∀ b, b ∈ a.bindings → Term.selectsAt Γ ρ σ (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 (f b.1)
 
 /-- The surface body judgment: `derives` with the surface matching
 equation at both atom polarities — negation is the same anti-join,
 read bivalently. -/
 def surfaceDerives (Γ : Typing) (C : Classify) (r : Rule)
     (I : Instance) (ρ : ParamEnv) (σ : Assignment) : Prop :=
-  (∀ a, a ∈ r.atoms → ∃ f, f ∈ I a.relation ∧ SurfaceMatches Γ f a σ ρ) ∧
-  (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ I a.relation ∧ SurfaceMatches Γ f a σ ρ) ∧
+  (∀ a, a ∈ r.atoms → ∃ f, f ∈ edbEnv I a.source ∧ SurfaceMatches Γ f a σ ρ) ∧
+  (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ edbEnv I a.source ∧ SurfaceMatches Γ f a σ ρ) ∧
   (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t)
 
 /-- One rule's SURFACE answers — the denotation of the written rule. -/
@@ -365,23 +365,23 @@ theorem surfaceMatches_iff_occurrence {Γ : Typing} {f : Fact} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} :
     SurfaceMatches Γ f a σ ρ ↔
       (Matches f
-        ⟨a.relation,
-         a.bindings.filter fun b => !(Γ.membership a.relation b.1 b.2)⟩
+        { source := a.source,
+          bindings := a.bindings.filter fun b => !(Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) }
         σ ρ ∧
-       ∀ b, b ∈ a.bindings → Γ.membership a.relation b.1 b.2 = true →
+       ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = true →
          ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)) := by
   constructor
   · intro h
     constructor
     · intro b hb
       obtain ⟨hmem, hflt⟩ := List.mem_filter.mp hb
-      have hfalse : Γ.membership a.relation b.1 b.2 = false := by
+      have hfalse : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false := by
         simpa using hflt
       exact (selectsAt_of_not_membership hfalse).mp (h b hmem)
     · intro b hb hm
       exact (selectsAt_of_membership hm).mp (h b hb)
   · rintro ⟨hdom, hflt⟩ b hb
-    cases hm : Γ.membership a.relation b.1 b.2 with
+    cases hm : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 with
     | false =>
       refine (selectsAt_of_not_membership hm).mpr ?_
       exact hdom b (List.mem_filter.mpr ⟨hb, by simp [hm]⟩)
@@ -396,13 +396,13 @@ positive ones, and this is why that is sound. Bridge:
 descriptors carry their filters. -/
 theorem surface_antiprobe_filters {Γ : Typing} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} {I : Instance} :
-    (¬ ∃ f, f ∈ I a.relation ∧ SurfaceMatches Γ f a σ ρ) ↔
-      ¬ ∃ f, f ∈ I a.relation ∧
+    (¬ ∃ f, f ∈ edbEnv I a.source ∧ SurfaceMatches Γ f a σ ρ) ↔
+      ¬ ∃ f, f ∈ edbEnv I a.source ∧
         (Matches f
-          ⟨a.relation,
-           a.bindings.filter fun b => !(Γ.membership a.relation b.1 b.2)⟩
+          { source := a.source,
+            bindings := a.bindings.filter fun b => !(Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) }
           σ ρ ∧
-         ∀ b, b ∈ a.bindings → Γ.membership a.relation b.1 b.2 = true →
+         ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = true →
            ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)) :=
   ⟨fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_occurrence.mpr h⟩,
    fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_occurrence.mp h⟩⟩
@@ -418,9 +418,9 @@ theorem repeated_membership_same_fact {Γ : Typing} {f : Fact} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} {v : VarId} {i j : FieldId}
     (h : SurfaceMatches Γ f a σ ρ)
     (hi : (i, Term.var v) ∈ a.bindings)
-    (hm : Γ.membership a.relation i (.var v) = true)
+    (hm : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (.var v) = true)
     (hj : (j, Term.var v) ∈ a.bindings)
-    (hd : Γ.membership a.relation j (.var v) = false) :
+    (hd : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) j (.var v) = false) :
     f j = σ v ∧ (σ v).pointMem (f i) :=
   ⟨((selectsAt_of_not_membership hd).mp (h _ hj)).symm,
    (selectsAt_var_membership hm).mp (h _ hi)⟩
@@ -429,7 +429,7 @@ theorem repeated_membership_same_fact {Γ : Typing} {f : Fact} {a : Atom}
 
 /-- An atom with no membership bindings under the typing. -/
 def Atom.membershipFree (Γ : Typing) (a : Atom) : Prop :=
-  ∀ b, b ∈ a.bindings → Γ.membership a.relation b.1 b.2 = false
+  ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
 
 /-- On a membership-free atom the surface equation IS the matching
 equation. -/
@@ -448,7 +448,7 @@ theorem surface_eq_denotation_of_free {Γ : Typing} {C : Classify}
     {r : Rule} {I : Instance} {ρ : ParamEnv}
     (hpos : ∀ a, a ∈ r.atoms → Atom.membershipFree Γ a)
     (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
-    ∀ t, t ∈ surfaceRuleAnswers Γ C r I ρ ↔ t ∈ ruleAnswers C r I ρ := by
+    ∀ t, t ∈ surfaceRuleAnswers Γ C r I ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
   intro t
   constructor
   · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
@@ -607,9 +607,9 @@ def lowerAtoms (isM : RelId → FieldId → Term → Bool) (u : VarId) :
     List Atom → Option (List Atom × RelId × FieldId × Term)
   | [] => none
   | a :: rest =>
-    match lowerBindings (isM a.relation) u a.bindings with
+    match lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
     | some (bs, i, t) =>
-      some ((⟨a.relation, bs⟩ : Atom) :: rest, a.relation, i, t)
+      some (({ source := a.source, bindings := bs }) :: rest, (match a.source with | .edb R => R | .interior _ => ⟨0⟩), i, t)
     | none => (lowerAtoms isM u rest).map fun out => (a :: out.1, out.2)
 
 /-- `lowerAtoms` finds nothing exactly when every atom is
@@ -619,10 +619,10 @@ theorem lowerAtoms_none {isM : RelId → FieldId → Term → Bool}
     ∀ {atoms : List Atom},
       lowerAtoms isM u atoms = none ↔
         ∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-          isM a.relation b.1 b.2 = false
+          isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
   | [] => by simp [lowerAtoms]
   | a :: rest => by
-    cases hlb : lowerBindings (isM a.relation) u a.bindings with
+    cases hlb : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
     | some out =>
       obtain ⟨bs, i, t⟩ := out
       simp only [lowerAtoms, hlb]
@@ -630,7 +630,7 @@ theorem lowerAtoms_none {isM : RelId → FieldId → Term → Bool}
       · intro h
         cases h
       · intro h
-        have : lowerBindings (isM a.relation) u a.bindings = none :=
+        have : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings = none :=
           lowerBindings_none.mpr (h a (List.mem_cons_self ..))
         rw [this] at hlb
         cases hlb
@@ -665,11 +665,11 @@ theorem lowerAtoms_some {isM : RelId → FieldId → Term → Bool}
       lowerAtoms isM u atoms = some out →
       ∃ pre a post bs i t,
         atoms = pre ++ a :: post ∧
-        lowerBindings (isM a.relation) u a.bindings = some (bs, i, t) ∧
-        out = (pre ++ (⟨a.relation, bs⟩ : Atom) :: post, a.relation, i, t)
+        lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings = some (bs, i, t) ∧
+        out = (pre ++ ({ source := a.source, bindings := bs }) :: post, (match a.source with | .edb R => R | .interior _ => ⟨0⟩), i, t)
   | [], out, h => by cases h
   | a :: rest, out, h => by
-    cases hlb : lowerBindings (isM a.relation) u a.bindings with
+    cases hlb : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
     | some triple =>
       obtain ⟨bs, i, t⟩ := triple
       rw [lowerAtoms, hlb] at h
@@ -733,11 +733,11 @@ theorem stepLower_some {Γ : Typing} {u : VarId} {r : Rule}
     ∃ pre a post bpre i t bpost,
       r.atoms = pre ++ a :: post ∧
       a.bindings = bpre ++ (i, t) :: bpost ∧
-      Γ.membership a.relation i t = true ∧
-      out = (Γ.updateVar u (Γ.header.fieldType a.relation i),
+      Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i t = true ∧
+      out = (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i),
         { finds := r.finds,
           atoms := pre ++
-            (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ : Atom)
+            ({ source := a.source, bindings := bpre ++ (i, Term.var u) :: bpost })
             :: post,
           negated := r.negated,
           conditions :=
@@ -805,15 +805,15 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
   have hbMem : (i, t₀) ∈ a.bindings := by
     rw [hbind]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType a.relation i).isInterval = true := by
-    have h : (Γ.header.isInterval a.relation i
+  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
+    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
         && !(Γ.termInterval t₀)) = true := hmem
     rw [Bool.and_eq_true] at h
     exact Header.fieldType_isInterval.mp h.1
   -- The rewritten binding reads by VALUE under the updated typing.
   have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType a.relation i)).membership
-        a.relation i (Term.var u) = false := by
+      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
+        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
     unfold Typing.membership Typing.termInterval Typing.updateVar
     simp [hIntF]
   obtain ⟨hpos, hneg, hcond⟩ := hσ
@@ -904,14 +904,14 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
   obtain ⟨hneF, hneA, hneN, hneC⟩ := not_mint_of_allVars hu
   have haMem : a ∈ r.atoms := by
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType a.relation i).isInterval = true := by
-    have h : (Γ.header.isInterval a.relation i
+  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
+    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
         && !(Γ.termInterval t₀)) = true := hmem
     rw [Bool.and_eq_true] at h
     exact Header.fieldType_isInterval.mp h.1
   have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType a.relation i)).membership
-        a.relation i (Term.var u) = false := by
+      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
+        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
     unfold Typing.membership Typing.termInterval Typing.updateVar
     simp [hIntF]
   obtain ⟨hpos, hneg, hcond⟩ := hσ
@@ -919,7 +919,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
       (.leaf ⟨.pointIn, .var u, t₀⟩) :=
     hcond _ (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
   obtain ⟨A, hAMem, hSMA⟩ := hpos
-    (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ : Atom)
+    ({ source := a.source, bindings := bpre ++ (i, Term.var u) :: bpost })
     (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
   refine ⟨?_, ?_, ?_⟩
   · intro a'' ha''
@@ -945,7 +945,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
         rw [hbind] at hb
         rcases List.mem_append.mp hb with hbpre | hbmid
         · have hbLow : b ∈
-              (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ :
+              ({ source := a.source, bindings := bpre ++ (i, Term.var u) :: bpost } :
                 Atom).bindings :=
             List.mem_append.mpr (Or.inl hbpre)
           have hbOrig : b ∈ a.bindings := by
@@ -963,7 +963,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
               rw [← hAu, hxu]
               exact hden⟩
           · have hbLow : b ∈
-                (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ :
+                ({ source := a.source, bindings := bpre ++ (i, Term.var u) :: bpost } :
                   Atom).bindings :=
               List.mem_append.mpr
                 (Or.inr (List.mem_cons_of_mem _ hbpost))
@@ -1067,13 +1067,13 @@ theorem memCountB_eq_zero {p : FieldId → Term → Bool} :
 def memCount (isM : RelId → FieldId → Term → Bool) : List Atom → Nat
   | [] => 0
   | a :: rest =>
-    memCountB (isM a.relation) a.bindings + memCount isM rest
+    memCountB (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) a.bindings + memCount isM rest
 
 /-- The atom-level count reads only the statuses. -/
 theorem memCount_ext {p q : RelId → FieldId → Term → Bool} :
     ∀ {atoms : List Atom},
       (∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-        p a.relation b.1 b.2 = q a.relation b.1 b.2) →
+        p (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = q (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) →
       memCount p atoms = memCount q atoms
   | [], _ => rfl
   | a :: rest, h => by
@@ -1094,7 +1094,7 @@ theorem memCount_eq_zero {p : RelId → FieldId → Term → Bool} :
     ∀ {atoms : List Atom},
       memCount p atoms = 0 ↔
         ∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-          p a.relation b.1 b.2 = false
+          p (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
   | [] => by simp [memCount]
   | a :: rest => by
     unfold memCount
@@ -1121,20 +1121,21 @@ theorem stepLower_decrement {Γ : Typing} {u : VarId} {r : Rule}
   obtain ⟨-, hneA, -, -⟩ := not_mint_of_allVars hu
   have haMem : a ∈ r.atoms := by
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType a.relation i).isInterval = true := by
-    have h : (Γ.header.isInterval a.relation i
+  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
+    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
         && !(Γ.termInterval t₀)) = true := hmem
     rw [Bool.and_eq_true] at h
     exact Header.fieldType_isInterval.mp h.1
   have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType a.relation i)).membership
-        a.relation i (Term.var u) = false := by
+      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
+        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
     unfold Typing.membership Typing.termInterval Typing.updateVar
     simp [hIntF]
   -- statuses are stable off the mint
   have hstable : ∀ a'' ∈ r.atoms, ∀ b ∈ a''.bindings,
-      (Γ.updateVar u (Γ.header.fieldType a.relation i)).membership
-        a''.relation b.1 b.2 = Γ.membership a''.relation b.1 b.2 :=
+      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
+        (match a''.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 =
+          Γ.membership (match a''.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 :=
     fun a'' ha'' b hb => Typing.membership_updateVar
       fun v hv => hneA a'' ha'' v (binding_vars_sub_atom hb hv)
   have hpre_mem : ∀ a'' ∈ pre, a'' ∈ r.atoms := fun a'' h => by
@@ -1288,7 +1289,7 @@ theorem stepLower_allVars_sub {Γ : Typing} {u : VarId} {r : Rule}
         rw [hbind] at hb
         rcases List.mem_append.mp hb with hbpre | hbmid
         · exact mem_allVars.mpr (Or.inr (Or.inl
-            ⟨⟨x.relation, bpre ++ (i, Term.var u) :: bpost⟩,
+            ⟨{ source := x.source, bindings := bpre ++ (i, Term.var u) :: bpost },
              List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
              List.mem_flatMap.mpr
                ⟨b, List.mem_append.mpr (Or.inl hbpre), hvb⟩⟩))
@@ -1300,7 +1301,7 @@ theorem stepLower_allVars_sub {Γ : Typing} {u : VarId} {r : Rule}
             show v ∈ Term.vars (.var u) ++ t₀.vars
             exact List.mem_append.mpr (Or.inr hvb)
           · exact mem_allVars.mpr (Or.inr (Or.inl
-              ⟨⟨x.relation, bpre ++ (i, Term.var u) :: bpost⟩,
+              ⟨{ source := x.source, bindings := bpre ++ (i, Term.var u) :: bpost },
                List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
                List.mem_flatMap.mpr
                  ⟨b, List.mem_append.mpr
@@ -1381,7 +1382,7 @@ theorem surfaceDerives_iff_derives_of_free {Γ : Typing} {C : Classify}
     {r : Rule} {I : Instance} {ρ : ParamEnv} {σ : Assignment}
     (hpos : ∀ a, a ∈ r.atoms → Atom.membershipFree Γ a)
     (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
-    surfaceDerives Γ C r I ρ σ ↔ derives C r I ρ σ := by
+    surfaceDerives Γ C r I ρ σ ↔ derives C r (edbEnv I) ρ σ := by
   constructor
   · rintro ⟨hp, hn, hc⟩
     refine ⟨?_, ?_, hc⟩
@@ -1432,7 +1433,7 @@ theorem membership_lowering_preserves (Γ : Typing) (C : Classify)
     (r : Rule) (I : Instance) (ρ : ParamEnv)
     (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
     ∀ t, t ∈ surfaceRuleAnswers Γ C r I ρ ↔
-      t ∈ ruleAnswers C (r.lowerMembership Γ).2 I ρ := by
+      t ∈ ruleAnswers C (r.lowerMembership Γ).2 (edbEnv I) ρ := by
   intro t
   refine (lowerMembership_preserves_surface Γ C r I ρ t).trans
     (surface_eq_denotation_of_free ?_ ?_ t)
@@ -1474,11 +1475,13 @@ bindings by the membership status — exactly `lower_atom`'s two
 passes, with no mint (a filter reads the fact in place; nothing
 binds). -/
 def Atom.lowerNegated (Γ : Typing) (a : Atom) : AntiOccurrence :=
-  { relation := a.relation
-    domain :=
-      a.bindings.filter fun b => !(Γ.membership a.relation b.1 b.2)
-    filters :=
-      a.bindings.filter fun b => Γ.membership a.relation b.1 b.2 }
+  match a.source with
+  | .edb R =>
+    { relation := R
+      domain := a.bindings.filter fun b => !(Γ.membership R b.1 b.2)
+      filters := a.bindings.filter fun b => Γ.membership R b.1 b.2 }
+  | .interior _ =>
+    { relation := ⟨0⟩, domain := a.bindings, filters := [] }
 
 /-- A fact PASSES an anti-occurrence: it matches the domain bindings
 by value and every membership filter's term selects a value whose
@@ -1488,23 +1491,25 @@ domain binding pins `σ v` to the probed fact's field, so the filter's
 read of `σ v` IS the engine's `FieldsPointIn` same-fact composition. -/
 def AntiMatches (f : Fact) (o : AntiOccurrence) (σ : Assignment)
     (ρ : ParamEnv) : Prop :=
-  Matches f ⟨o.relation, o.domain⟩ σ ρ ∧
+  Matches f { source := .edb o.relation, bindings := o.domain } σ ρ ∧
   ∀ b, b ∈ o.filters → ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)
 
 /-- The anti-probe rejection: no fact of the relation passes — the
 `¬∃` the executor realizes by probe, filters inside. -/
 def AntiOccurrence.rejects (o : AntiOccurrence) (I : Instance)
-    (σ : Assignment) (ρ : ParamEnv) : Prop :=
-  ¬ ∃ f, f ∈ I o.relation ∧ AntiMatches f o σ ρ
+    (s : AtomSource) (σ : Assignment) (ρ : ParamEnv) : Prop :=
+  ¬ ∃ f, f ∈ edbEnv I s ∧ AntiMatches f o σ ρ
 
 /-- The surface judgment IS the anti-occurrence pass, fact for fact —
 `surfaceMatches_iff_occurrence` with the filter half carried by the
 filtered binding list instead of the in-place quantification. -/
 theorem surfaceMatches_iff_antiMatches {Γ : Typing} {f : Fact}
-    {a : Atom} {σ : Assignment} {ρ : ParamEnv} :
+    {a : Atom} {σ : Assignment} {ρ : ParamEnv}
+    (hedb : ∃ R, a.source = .edb R) :
     SurfaceMatches Γ f a σ ρ ↔ AntiMatches f (a.lowerNegated Γ) σ ρ := by
+  obtain ⟨R, hsrc⟩ := hedb
   rw [surfaceMatches_iff_occurrence]
-  unfold AntiMatches Atom.lowerNegated
+  simp only [AntiMatches, Atom.lowerNegated, hsrc]
   constructor
   · rintro ⟨hdom, hflt⟩
     refine ⟨hdom, fun b hb => ?_⟩
@@ -1515,13 +1520,28 @@ theorem surfaceMatches_iff_antiMatches {Γ : Typing} {f : Fact}
     exact hflt b (List.mem_filter.mpr ⟨hb, hm⟩)
 
 /-- A negated atom's surface rejection is exactly its anti-probe's
-rejection — the negated case of the lowering, one atom at a time. -/
+rejection — the negated case of the lowering, one atom at a time.
+Interior atoms read the empty EDB environment, so both sides are
+vacuous. -/
 theorem lowerNegated_rejects_iff {Γ : Typing} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} {I : Instance} :
-    (¬ ∃ f, f ∈ I a.relation ∧ SurfaceMatches Γ f a σ ρ) ↔
-      (a.lowerNegated Γ).rejects I σ ρ :=
-  ⟨fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_antiMatches.mpr h⟩,
-   fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_antiMatches.mp h⟩⟩
+    (¬ ∃ f, f ∈ edbEnv I a.source ∧ SurfaceMatches Γ f a σ ρ) ↔
+      (a.lowerNegated Γ).rejects I a.source σ ρ := by
+  cases hsrc : a.source with
+  | edb R =>
+    constructor
+    · intro hn ⟨f, hf, h⟩
+      exact hn ⟨f, hf, (surfaceMatches_iff_antiMatches ⟨R, hsrc⟩).mpr h⟩
+    · intro hn ⟨f, hf, h⟩
+      exact hn ⟨f, hf, (surfaceMatches_iff_antiMatches ⟨R, hsrc⟩).mp h⟩
+  | interior C =>
+    constructor
+    · intro hn ⟨f, hf, h⟩
+      obtain ⟨t, ht, _⟩ := hf
+      exact ht
+    · intro hn ⟨f, hf, h⟩
+      obtain ⟨t, ht, _⟩ := hf
+      exact ht
 
 /-- The lowered rule denotation the engine executes: positive atoms
 and conditions in the pre-lowered `Matches`/`Condition.holds` form
@@ -1530,8 +1550,8 @@ anti-probe. Bridge: `ir/normalize/normalize.rs::normalize_rule` — the
 occurrence list plus the `anti_probes` descriptors. -/
 def antiProbeDerives (Γ : Typing) (C : Classify) (r : Rule)
     (I : Instance) (ρ : ParamEnv) (σ : Assignment) : Prop :=
-  (∀ a, a ∈ r.atoms → ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
-  (∀ a, a ∈ r.negated → (a.lowerNegated Γ).rejects I σ ρ) ∧
+  (∀ a, a ∈ r.atoms → ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
+  (∀ a, a ∈ r.negated → (a.lowerNegated Γ).rejects I a.source σ ρ) ∧
   (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t)
 
 /-- One rule's answers under the anti-probe reading of its negated
@@ -1609,7 +1629,7 @@ theorem antiprobe_eq_antijoin_of_negFree {Γ : Typing} {C : Classify}
     {r : Rule} {I : Instance} {ρ : ParamEnv}
     (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
     ∀ t, t ∈ antiProbeRuleAnswers Γ C r I ρ ↔
-      t ∈ ruleAnswers C r I ρ := by
+      t ∈ ruleAnswers C r (edbEnv I) ρ := by
   intro t
   constructor
   · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
@@ -1649,7 +1669,7 @@ world. On membership-free atoms this coincides with `matchesB`. -/
 def surfaceMatchesB (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
     (a : Atom) (f : Fact) : Bool :=
   a.bindings.all fun b =>
-    Term.selectsAtB Γ ρ σ a.relation b.1 b.2 (f b.1)
+    Term.selectsAtB Γ ρ σ (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 (f b.1)
 
 end Query
 end Bumbledb

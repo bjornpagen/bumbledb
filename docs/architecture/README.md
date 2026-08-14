@@ -44,7 +44,7 @@ laws).
 |---|---|
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
 | `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
-| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, the recursion cut and its fence — decisions whole, semantics by citation |
+| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, interiors + one linear rec — decisions whole, semantics by citation |
 | `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Capacity.lean`+`Txn.lean`: the three statement forms by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
 | `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
@@ -75,6 +75,35 @@ laws).
   in the host's frontier meanwhile (`../cookbook.md` recipe 24). *Trigger:
   a real workload dominated by interval-intersection-along-paths — it
   re-opens theory before engineering.*
+- **Stacked sequential linear lfps** (A finishes; B reads A as a finished
+  set). Two least fixpoints, two drivers, or one Query with `List Rec`.
+  *Trigger: a workload where host two-prepares is the pain (not a translator
+  gap).*
+- **Mutual-linear** (one SCC, several names, each rule ≤1 rec atom). Same
+  class as self-rec; even/odd encodes as one linear predicate with a parity
+  column. Refused this cut so Tarjan / k-variants / multi-pred scratch stay
+  gone. *Trigger: a sighted query that is unnatural as one name **and** is
+  still linear.* Admitting it is a new IR (not `Option<Rec>`), not a
+  resurrection of a predicate table.
+- **Named interior of a finished rec** (inlining-equivalent, up to
+  `MAX_RULES` / DNF caps: unfolding a k-rule view into m main rules is k·m
+  conjunctive rules against main's pool, so a wide today-legal view over a
+  rec can have no this-cut image). This cut inlines into main. *Trigger:
+  two main-shaped queries over one rec that want to share a named
+  projection without a second prepare, **or** an inline image that exceeds
+  the main pool — still not a second SCC.*
+- **Nonlinear rec at L** (`P(x,z) ← P(x,y), P(y,z)`). Semi-naive still
+  agrees; it is a worse TC algorithm at 10⁷ / 10 ms (k FJ plans × |Acc|).
+  *Trigger: a measured L-scale query where the linear encoding is unnatural
+  **and** `|Δ ⋈ Acc|` still fits 10 ms / `DEFAULT_DERIVED_TUPLES`.*
+- **During-walk anti-join of finished tables** (EDB / an earlier interior
+  negated in a rec arm). Monotone — the negated source is constant in the
+  operator's argument (`lean/Bumbledb/Exec/Reach.lean: reachOp_mono` does
+  not witness against it). Refused this cut so `NegationInRec` covers the
+  whole SCC, the driver keeps one negation path, and `recLinear` stays one
+  line. *Trigger: a workload whose during-walk exclusion cannot be written
+  positively.* Admitting it weakens `reachOp_mono`'s premise to
+  no-negated-self; the wall (self) is untouched.
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
   demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
@@ -168,7 +197,7 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
-- **Plan introspection output** is the versioned `introspection v3` contract
+- **Plan introspection output** is the versioned `introspection v4` contract
   (harness-only, not embedding API): deterministic content and ordering within
   a version, with rendered and structured surfaces incremented together
   (`40-execution.md`, `70-api.md`).
@@ -197,6 +226,7 @@ re-litigated by accident:
 - **A created value never re-enters a derivation** — heads bind, filters compare,
   folds create at the answer boundary only; future interval operators must be
   lattice-closed (`20-query-ir.md` § the creation quarantine).
-- **Queries stay query-shaped** — the caps are product decisions; no rule-program
+- **Queries stay query-shaped** — interiors + one linear rec, budgeted; the
+  caps are product decisions; no rule-program
   runtime, no stored rules, no magic sets; a deductive database is a named
   non-goal (`20-query-ir.md` § engine recursion, `00-product.md`).

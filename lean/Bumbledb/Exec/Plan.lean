@@ -97,12 +97,9 @@ the docs; what is admissible here is exactly the semantic content of
   duplicated subatom is semantically idle, and the list carrier makes
   "the same subatom twice" unrefusable at this level — the engine's
   validator refuses the duplicate as mechanism.
-* **The program cut is not re-modeled.** Plans are stated over
-  `Rule` (the degenerate one-predicate program); the recursive arm
-  executes each rule's plan against the current tables, so the
-  per-rule theorem is the one the fixpoint evaluator spends
-  rule-by-rule. When the engine's recursion discharge campaign lands,
-  the `PRule` restatement rides the same change (the gate law).
+* **Plans stay over `Rule`.** Reach evaluation spends the per-rule
+  theorem against the current interior tables; this file does not
+  grow interior-aware plan nodes.
 -/
 
 namespace Bumbledb.Query
@@ -300,7 +297,7 @@ enumerates the extensions) and probing a sibling (its new variables
 are already placed, so the `∃` is the membership test). -/
 def Consistent (r : Rule) (I : Instance) (ρ : ParamEnv) (pre : Plan)
     (s : Subatom) (σ : Assignment) : Prop :=
-  ∃ a, r.atoms[s.occ]? = some a ∧ ∃ f, f ∈ I a.relation ∧
+  ∃ a, r.atoms[s.occ]? = some a ∧ ∃ f, f ∈ edbEnv I a.source ∧
     MatchesOn f a σ ρ (checkedVars pre s.occ ++ s.vars)
 
 /-- One node's step: the bindings extend on the node's new variables
@@ -337,7 +334,7 @@ residual-placement licence. -/
 def planAnswers (C : Classify) (r : Rule) (P : Plan) (I : Instance)
     (ρ : ParamEnv) : Set AnswerTuple :=
   fun t => ∃ σ, σ ∈ planBindings r P I ρ ∧
-    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
+    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
     (∀ c, c ∈ r.conditions → Condition.holds C ρ σ c) ∧
     t = r.finds.map σ
 
@@ -357,7 +354,7 @@ apply. -/
 def probed (r : Rule) (I : Instance) (ρ : ParamEnv) (P : Plan) :
     Set Assignment :=
   fun σ => ∀ i a, r.atoms[i]? = some a → Touches P i →
-    ∃ f, f ∈ I a.relation ∧ MatchesOn f a σ ρ (checkedVars P i)
+    ∃ f, f ∈ edbEnv I a.source ∧ MatchesOn f a σ ρ (checkedVars P i)
 
 /-- **The one-node lemma**: stepping the invariant set through a node
 lands exactly on the invariant of the extended prefix. The
@@ -457,7 +454,7 @@ indices resolve), and `WellTyped`'s measure-free half. -/
 theorem planBindings_positive {r : Rule} {P : Plan} {I : Instance}
     {ρ : ParamEnv} (hv : PlanValid r P) (hwt : r.WellTyped) :
     ∀ σ, σ ∈ planBindings r P I ρ ↔
-      ∀ a, a ∈ r.atoms → ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ := by
+      ∀ a, a ∈ r.atoms → ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ := by
   have hstart : (fun _ => True : Set Assignment) = probed r I ρ [] := by
     refine setExt fun σ => ?_
     constructor
@@ -501,7 +498,7 @@ projection meaning, and the doc records the narrowing. -/
 theorem valid_plan_sound {C : Classify} {r : Rule} {P : Plan}
     {I : Instance} {ρ : ParamEnv} (hv : PlanValid r P)
     (hwt : r.WellTyped) :
-    ∀ t, t ∈ planAnswers C r P I ρ ↔ t ∈ ruleAnswers C r I ρ := by
+    ∀ t, t ∈ planAnswers C r P I ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
   intro t
   constructor
   · rintro ⟨σ, hb, hneg, hcond, rfl⟩
@@ -862,7 +859,7 @@ def looseBindings (r : Rule) (P : Plan) (I : Instance)
 def looseAnswers (C : Classify) (r : Rule) (P : Plan) (I : Instance)
     (ρ : ParamEnv) : Set AnswerTuple :=
   fun t => ∃ σ, σ ∈ looseBindings r P I ρ ∧
-    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
+    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
     (∀ c, c ∈ r.conditions → Condition.holds C ρ σ c) ∧
     t = r.finds.map σ
 

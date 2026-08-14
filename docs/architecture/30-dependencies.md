@@ -584,10 +584,10 @@ even then the feature lands diagnostics-side first, never on enforcement.
 **Decision: statements quantify over stored relations, permanently.** By
 representation: a statement's atoms carry `RelationId`, and no predicate
 vocabulary exists — or will exist — in the statement language, including under
-the landed recursion cut (query-side `PredId` and `RelationId` are separate
-identities that never pun, and the one-line `Idb` guard in both grounding
+the landed recursion cut (query-side `InteriorId` and `RelationId` are separate
+identities that never pun, and the one-line `Interior` guard in both grounding
 rewrites — `plan/ground.rs`, `plan/ground/evaluate.rs` — is this law's
-mechanism, `20-query-ir.md` § engine recursion's consumer guards). A containment between derived predicates is Datalog query
+mechanism, `20-query-ir.md` § interiors and rec's consumer guards). A containment between derived predicates is Datalog query
 containment — undecidable outright — and commit-time enforcement would require
 materializing every constrained view per commit. **Alternative:**
 deductive-database constraints over views. **Why it lost:** the undecidability

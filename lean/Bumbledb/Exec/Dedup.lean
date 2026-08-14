@@ -46,7 +46,7 @@ of the two it spends.
   spanning rules — no merge node, no concat-then-dedup pass exists.
   `seenfold_is_set_semantics` is that seen-set's spec: folding the
   emitted stream through first-occurrence filtering computes exactly
-  PRD 04's `queryAnswers` set.
+  PRD 04's `rulesAnswers` set.
 * **`DistinctWitness`** (`plan/fj/provably_distinct.rs::DistinctWitness`)
   is the only licence to construct an aggregate sink without a binding
   seen-set: `AggregateSink::without_seen_set`
@@ -320,7 +320,7 @@ theorem dedup_eq_of_nodup {β : Type} [DecidableEq β] :
 
 /-- **Theorem 1 (`seenfold_is_set_semantics`).** Folding an
 enumeration of the emitted answers through the seen-set computes the
-answer SET: same membership as PRD 04's `queryAnswers`, no duplicates
+answer SET: same membership as PRD 04's `rulesAnswers`, no duplicates
 — dedup-by-fold is the denotation, which is why "union is not an
 operator" is implementable at all. Bridge: the projection and
 aggregate sinks' seen-sets (`exec/sink.rs` — the module doc's
@@ -328,8 +328,8 @@ aggregate sinks' seen-sets (`exec/sink.rs` — the module doc's
 fact at the denotation level. -/
 theorem seenfold_is_set_semantics {C : Classify} {q : Query}
     {I : Instance} {ρ : ParamEnv} {l : List AnswerTuple}
-    (henum : ∀ t, t ∈ l ↔ t ∈ queryAnswers C q I ρ) :
-    (∀ t, t ∈ seenFold l ↔ t ∈ queryAnswers C q I ρ) ∧
+    (henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) :
+    (∀ t, t ∈ seenFold l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
       (seenFold l).Nodup :=
   ⟨fun t => mem_seenFold.trans (henum t), seenFold_nodup l⟩
 
@@ -384,7 +384,7 @@ instance) with every field of `K` pinned by one of the atom's
 bindings. The per-occurrence clause of
 `plan/fj/provably_distinct.rs::provably_distinct`. -/
 def CoversKey (I : Instance) (a : Atom) : Prop :=
-  ∃ K : List FieldId, Functionality (I a.relation) K ∧
+  ∃ K : List FieldId, Functionality (edbEnv I a.source) K ∧
     ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pins
 
 /-- **`BoundFieldsCoverKey`** — the distinct-bindings elision law's
@@ -405,7 +405,7 @@ key field forces one value, and the key forces one fact. The
 per-occurrence pigeonhole every licence spends. -/
 theorem covered_occurrence_functional {I : Instance} {a : Atom}
     {ρ : ParamEnv} {σ : Assignment} (hcov : CoversKey I a)
-    {f g : Fact} (hf : f ∈ I a.relation) (hg : g ∈ I a.relation)
+    {f g : Fact} (hf : f ∈ edbEnv I a.source) (hg : g ∈ edbEnv I a.source)
     (hmf : Matches f a σ ρ) (hmg : Matches g a σ ρ) : f = g := by
   obtain ⟨K, hkey, hpin⟩ := hcov
   refine hkey f g hf hg ((Fact.project_eq_iff f g K).mpr fun i hi => ?_)
@@ -419,7 +419,7 @@ fact-tuple face of one derivation event (the join emits one binding
 per fact combination). -/
 def MatchSelection (r : Rule) (I : Instance) (ρ : ParamEnv)
     (σ : Assignment) (w : Atom → Fact) : Prop :=
-  ∀ a, a ∈ r.atoms → w a ∈ I a.relation ∧ Matches (w a) a σ ρ
+  ∀ a, a ∈ r.atoms → w a ∈ edbEnv I a.source ∧ Matches (w a) a σ ρ
 
 /-- **Distinct facts yield distinct full bindings** (contrapositive
 form): under the witness premise, one binding admits at most ONE
@@ -515,7 +515,7 @@ is NOT disjoint from itself — `union_idempotent` owns that case). -/
 def DisjointArms (C : Classify) (q : Query) (I : Instance)
     (ρ : ParamEnv) : Prop :=
   q.rules.Pairwise fun r r' =>
-    ∀ t, t ∈ ruleAnswers C r I ρ → t ∉ ruleAnswers C r' I ρ
+    ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ → t ∉ ruleAnswers C r' (edbEnv I) ρ
 
 /-- The induction behind the licence, over plain rule lists: per-arm
 distinct enumerations concatenate — under pairwise arm disjointness —
@@ -524,11 +524,11 @@ theorem disjoint_flatten {C : Classify} {I : Instance} {ρ : ParamEnv} :
     ∀ {arms : List (List AnswerTuple)} {rules : List Rule},
       arms.length = rules.length →
       (∀ p, p ∈ arms.zip rules →
-        (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 I ρ) ∧ p.1.Nodup) →
-      rules.Pairwise (fun r r' => ∀ t, t ∈ ruleAnswers C r I ρ →
-        t ∉ ruleAnswers C r' I ρ) →
+        (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 (edbEnv I) ρ) ∧ p.1.Nodup) →
+      rules.Pairwise (fun r r' => ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ →
+        t ∉ ruleAnswers C r' (edbEnv I) ρ) →
       arms.flatten.Nodup ∧
-        ∀ t, t ∈ arms.flatten ↔ ∃ r, r ∈ rules ∧ t ∈ ruleAnswers C r I ρ
+        ∀ t, t ∈ arms.flatten ↔ ∃ r, r ∈ rules ∧ t ∈ ruleAnswers C r (edbEnv I) ρ
   | [], [], _, _, _ => ⟨List.Pairwise.nil, by simp⟩
   | [], _ :: _, hlen, _, _ => by simp at hlen
   | _ :: _, [], hlen, _, _ => by simp at hlen
@@ -581,20 +581,20 @@ theorem disjoint_witness_licence {C : Classify} {q : Query}
     {arms : List (List AnswerTuple)}
     (hlen : arms.length = q.rules.length)
     (henum : ∀ p, p ∈ arms.zip q.rules →
-      (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 I ρ) ∧ p.1.Nodup) :
+      (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 (edbEnv I) ρ) ∧ p.1.Nodup) :
     arms.flatten.Nodup ∧
       seenFold arms.flatten = arms.flatten ∧
-      ∀ t, t ∈ arms.flatten ↔ t ∈ queryAnswers C q I ρ := by
+      ∀ t, t ∈ arms.flatten ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ := by
   obtain ⟨hnd, hmem⟩ := disjoint_flatten hlen henum DisjointWitness
   exact ⟨hnd, seenFold_eq_of_nodup hnd,
-    fun t => (hmem t).trans mem_queryAnswers.symm⟩
+    fun t => (hmem t).trans mem_rulesAnswers.symm⟩
 
 /-! ## Theorem 5 — the union regime keys the head projection -/
 
 /-- **Theorem 5 (`union_regime_head_projection`).** When rules share
 the union seen-set, dedup keys the projected HEAD tuple — never the
 full binding: seen-filtering the head-projected derivation stream of
-a multi-rule program computes exactly `queryAnswers`, with a later
+a multi-rule query computes exactly `rulesAnswers`, with a later
 rule's re-derivation absorbed like a within-rule duplicate. The key
 must be head-shaped for the spanning set to mean anything: a `VarId`
 is rule-scoped (two rules' slot arrays are incomparable), and
@@ -612,12 +612,12 @@ theorem union_regime_head_projection {C : Classify} {q : Query}
     {I : Instance} {ρ : ParamEnv} {ε : Type} (events : List ε)
     (rule : ε → Rule) (bind : ε → Assignment)
     (hvalid : ∀ e, e ∈ events →
-      rule e ∈ q.rules ∧ derives C (rule e) I ρ (bind e))
-    (hcomplete : ∀ r, r ∈ q.rules → ∀ σ, derives C r I ρ σ →
+      rule e ∈ q.rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
+    (hcomplete : ∀ r, r ∈ q.rules → ∀ σ, derives C r (edbEnv I) ρ σ →
       ((r.finds.map σ : AnswerTuple) ∈
         events.map fun e => (rule e).finds.map (bind e))) :
     (∀ t, t ∈ seenFold (events.map fun e => (rule e).finds.map (bind e))
-        ↔ t ∈ queryAnswers C q I ρ) ∧
+        ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
       (seenFold (events.map fun e =>
         (rule e).finds.map (bind e))).Nodup := by
   refine ⟨fun t => ?_, seenFold_nodup _⟩
@@ -625,10 +625,10 @@ theorem union_regime_head_projection {C : Classify} {q : Query}
   constructor
   · intro ht
     obtain ⟨e, he, rfl⟩ := List.mem_map.mp ht
-    exact mem_queryAnswers.mpr
+    exact mem_rulesAnswers.mpr
       ⟨rule e, (hvalid e he).1, bind e, (hvalid e he).2, rfl⟩
   · intro ht
-    obtain ⟨r, hr, σ, hd, rfl⟩ := mem_queryAnswers.mp ht
+    obtain ⟨r, hr, σ, hd, rfl⟩ := mem_rulesAnswers.mp ht
     exact hcomplete r hr σ hd
 
 /-! ## Theorem 6 — the syntactic check is sound -/
@@ -665,7 +665,7 @@ in both occurrences with the two variables at a common head position
 def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
     (r r' : Rule) : Prop :=
   ∃ a, a ∈ r.atoms ∧ ∃ a', a' ∈ r'.atoms ∧
-    a.relation = R ∧ a'.relation = R ∧
+    a.source = .edb R ∧ a'.source = .edb R ∧
     (∃ c c' : Value, (fld, Term.lit c) ∈ a.bindings ∧
       (fld, Term.lit c') ∈ a'.bindings ∧ c ≠ c') ∧
     ∀ i, i ∈ K → ∃ v v' : VarId, (i, Term.var v) ∈ a.bindings ∧
@@ -685,7 +685,7 @@ theorem armPin_disjoint {C : Classify} {I : Instance} {ρ : ParamEnv}
     {R : RelId} {fld : FieldId} {K : List FieldId}
     (hkey : Functionality (I R) K) {r r' : Rule}
     (hpin : ArmPin R fld K r r') :
-    ∀ t, t ∈ ruleAnswers C r I ρ → t ∉ ruleAnswers C r' I ρ := by
+    ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ → t ∉ ruleAnswers C r' (edbEnv I) ρ := by
   intro t ht ht'
   obtain ⟨σ, hd, heq⟩ := mem_ruleAnswers.mp ht
   obtain ⟨σ', hd', heq'⟩ := mem_ruleAnswers.mp ht'
@@ -702,7 +702,9 @@ theorem armPin_disjoint {C : Classify} {I : Instance} {ρ : ParamEnv}
     have h3 : σ v = σ' v' :=
       map_eq_of_zip_mem (heq.symm.trans heq') hz
     rw [← h1, ← h2, h3]
-  have hone : f = f' := hkey f f' (hR ▸ hf) (hR' ▸ hf') hproj
+  have hone : f = f' := hkey f f'
+    (by rw [hR] at hf; simpa [edbEnv, sourceDen] using hf)
+    (by rw [hR'] at hf'; simpa [edbEnv, sourceDen] using hf') hproj
   exact hne (by rw [hpin1, hpin2, hone])
 
 /-- **Theorem 6 (`syntactic_disjointness_sound`).** The syntactic
@@ -758,7 +760,7 @@ sets). -/
 theorem elim_derives_drop {C : Classify} {I : Instance} {ρ : ParamEnv}
     {r r' : Rule} {a b : Atom} {X Y : List FieldId} {φ ψ : Selection}
     (hs : ElimStep r r' a b X Y φ ψ) {σ : Assignment}
-    (h : derives C r I ρ σ) : derives C r' I ρ σ := by
+    (h : derives C r (edbEnv I) ρ σ) : derives C r' (edbEnv I) ρ σ := by
   obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
   obtain ⟨hp, hn, hc⟩ := h
   refine ⟨?_, ?_, ?_⟩
@@ -784,9 +786,9 @@ the containment witness's fields. -/
 theorem elim_extension_exists {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
     {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
-    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
-    {σ : Assignment} (hσ : derives C r' I ρ σ) :
-    ∃ σ', derives C r I ρ σ' ∧ ∀ v, v ∈ r'.allVars → σ' v = σ v := by
+    (hcont : Containment (edbEnv I a.source) φ X (edbEnv I b.source) ψ Y)
+    {σ : Assignment} (hσ : derives C r' (edbEnv I) ρ σ) :
+    ∃ σ', derives C r (edbEnv I) ρ σ' ∧ ∀ v, v ∈ r'.allVars → σ' v = σ v := by
   obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
   obtain ⟨hatoms, hneg, hconds⟩ := hσ
   obtain ⟨fa, hfa, hma⟩ := hatoms a hs.source
@@ -863,10 +865,10 @@ distinct-full-binding key COLLAPSES onto the surviving slots. -/
 theorem elim_extension_unique {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
     {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
-    (hkey : Functionality (I b.relation) Y)
+    (hkey : Functionality (edbEnv I b.source) Y)
     (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
     {σ₁ σ₂ : Assignment}
-    (h₁ : derives C r I ρ σ₁) (h₂ : derives C r I ρ σ₂)
+    (h₁ : derives C r (edbEnv I) ρ σ₁) (h₂ : derives C r (edbEnv I) ρ σ₂)
     (hagree : ∀ v, v ∈ r'.allVars → σ₁ v = σ₂ v) :
     ∀ v, v ∈ r.allVars → σ₁ v = σ₂ v := by
   obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
@@ -948,7 +950,7 @@ values; `SlotWidth` word layout is mechanism). This is the set
 def GroupSlots (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
     (keys : List KeyTerm) (gk : List (Option Value))
     (slots : List VarId) : Set (List Value) :=
-  fun t => ∃ σ, σ ∈ Group C r I ρ keys gk ∧ t = slots.map σ
+  fun t => ∃ σ, σ ∈ Group C r (edbEnv I) ρ keys gk ∧ t = slots.map σ
 
 /-- Dropping a prefix of a mapped append reads the suffix — the
 slot-tuple projection, as a list identity. -/
@@ -980,8 +982,8 @@ under aggregate sinks is the empirical arm. -/
 theorem elimination_agg_fold_domain {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
     {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
-    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
-    (hkey : Functionality (I b.relation) Y)
+    (hcont : Containment (edbEnv I a.source) φ X (edbEnv I b.source) ψ Y)
+    (hkey : Functionality (edbEnv I b.source) Y)
     (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
     {keys : List KeyTerm}
     (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
@@ -1041,8 +1043,8 @@ one of the two statements. -/
 theorem elimination_agg_domain_counts {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
     {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
-    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
-    (hkey : Functionality (I b.relation) Y)
+    (hcont : Containment (edbEnv I a.source) φ X (edbEnv I b.source) ψ Y)
+    (hkey : Functionality (edbEnv I b.source) Y)
     (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
     {keys : List KeyTerm}
     (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
@@ -1153,7 +1155,7 @@ def aggAnswersOn (C : Classify) (r : Rule) (I : Instance)
     (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
     (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
     Set AnswerTuple :=
-  fun t => ∃ σ, derives C r I ρ σ ∧
+  fun t => ∃ σ, derives C r (edbEnv I) ρ σ ∧
     t = fold (keyTuple keys σ)
       (GroupSlots C r I ρ keys (keyTuple keys σ) slots)
 
@@ -1167,7 +1169,7 @@ theorem aggAnswersOn_eq_aggAnswers (C : Classify) (r : Rule)
     (slots : List VarId)
     (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
     aggAnswersOn C r I ρ keys slots fold =
-      aggAnswers C r I ρ keys
+      aggAnswers C r (edbEnv I) ρ keys
         (fun gk grp => fold gk
           (fun t => ∃ σ, σ ∈ grp ∧ t = slots.map σ)) := rfl
 
@@ -1188,7 +1190,7 @@ halves do not fuse into one abstract-fold statement. -/
 theorem elimination_agg_sound {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
     {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
-    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
+    (hcont : Containment (edbEnv I a.source) φ X (edbEnv I b.source) ψ Y)
     {keys : List KeyTerm}
     (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
     {slots' : List VarId} (hmem : ∀ v, v ∈ slots' → v ∈ r'.allVars)
@@ -1268,7 +1270,7 @@ multiplicity is unrepresentable, so a cross-disjunct re-derivation
 cannot double-count by construction. -/
 def dnfFoldDomain (C : Classify) (rules : List Rule) (I : Instance)
     (ρ : ParamEnv) (slots : List VarId) : Set (List Value) :=
-  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r I ρ σ ∧
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r (edbEnv I) ρ σ ∧
     t = sharedSlotRow slots σ
 
 /-- One re-keyed group: `GroupSlots`, union-widened — the fiber of
@@ -1276,7 +1278,7 @@ the re-keyed domain over an evaluated group-key tuple. -/
 def dnfGroupSlots (C : Classify) (rules : List Rule) (I : Instance)
     (ρ : ParamEnv) (keys : List KeyTerm) (gk : List (Option Value))
     (slots : List VarId) : Set (List Value) :=
-  fun t => ∃ r, r ∈ rules ∧ ∃ σ, σ ∈ Group C r I ρ keys gk ∧
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, σ ∈ Group C r (edbEnv I) ρ keys gk ∧
     t = sharedSlotRow slots σ
 
 /-- **The normative union-regime aggregate denotation for a
@@ -1289,7 +1291,7 @@ def aggAnswersDNF (C : Classify) (rules : List Rule) (I : Instance)
     (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
     (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
     Set AnswerTuple :=
-  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r I ρ σ ∧
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r (edbEnv I) ρ σ ∧
     t = fold (keyTuple keys σ)
       (dnfGroupSlots C rules I ρ keys (keyTuple keys σ) slots)
 
@@ -1309,7 +1311,7 @@ derives the written rule iff it derives some disjunct —
 binding; the membership-widening half of fold-transparency. -/
 theorem lower_preserves_derivations {C : Classify} {r : Rule}
     {I : Instance} {ρ : ParamEnv} {σ : Assignment} :
-    derives C r I ρ σ ↔ ∃ r', r' ∈ r.lower ∧ derives C r' I ρ σ := by
+    derives C r (edbEnv I) ρ σ ↔ ∃ r', r' ∈ r.lower ∧ derives C r' (edbEnv I) ρ σ := by
   constructor
   · rintro ⟨hatoms, hneg, hconds⟩
     obtain ⟨d, hd, hdis⟩ :=
@@ -1380,8 +1382,8 @@ theorem dnf_rekey_stream {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {ε : Type} (events : List ε)
     (rule : ε → Rule) (bind : ε → Assignment) (slots : List VarId)
     (hvalid : ∀ e, e ∈ events →
-      rule e ∈ rules ∧ derives C (rule e) I ρ (bind e))
-    (hcomplete : ∀ r, r ∈ rules → ∀ σ, derives C r I ρ σ →
+      rule e ∈ rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
+    (hcomplete : ∀ r, r ∈ rules → ∀ σ, derives C r (edbEnv I) ρ σ →
       sharedSlotRow slots σ ∈
         events.map fun e => sharedSlotRow slots (bind e)) :
     (∀ t, t ∈ seenFold (events.map fun e => sharedSlotRow slots (bind e))
@@ -1514,7 +1516,7 @@ rule's re-derivation of one head row is the same element
 head-projection law's collapse). -/
 def unionFoldDomain (C : Classify) (rs : List (Rule × List HeadSlot))
     (I : Instance) (ρ : ParamEnv) : Set (List (Option Value)) :=
-  fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 I ρ σ ∧ t = headRow p.2 σ
+  fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 (edbEnv I) ρ σ ∧ t = headRow p.2 σ
 
 /-- One union group: the domain's fiber over a group-key tuple, read
 through the shared key mask. -/
@@ -1533,7 +1535,7 @@ def aggAnswersUnion (C : Classify) (rs : List (Rule × List HeadSlot))
     (I : Instance) (ρ : ParamEnv) (mask : List HeadSlot)
     (fold : List (Option Value) → Set (List (Option Value)) →
       AnswerTuple) : Set AnswerTuple :=
-  fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 I ρ σ ∧
+  fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 (edbEnv I) ρ σ ∧
     t = fold (headKey mask (headRow p.2 σ))
       (unionGroup C rs I ρ mask (headKey mask (headRow p.2 σ)))
 
@@ -1552,8 +1554,8 @@ theorem union_regime_agg_heads {C : Classify}
     {ε : Type} (events : List ε) (arm : ε → Rule × List HeadSlot)
     (bind : ε → Assignment)
     (hvalid : ∀ e, e ∈ events →
-      arm e ∈ rs ∧ derives C (arm e).1 I ρ (bind e))
-    (hcomplete : ∀ p, p ∈ rs → ∀ σ, derives C p.1 I ρ σ →
+      arm e ∈ rs ∧ derives C (arm e).1 (edbEnv I) ρ (bind e))
+    (hcomplete : ∀ p, p ∈ rs → ∀ σ, derives C p.1 (edbEnv I) ρ σ →
       headRow p.2 σ ∈ events.map fun e => headRow (arm e).2 (bind e)) :
     (∀ t, t ∈ seenFold (events.map fun e => headRow (arm e).2 (bind e))
         ↔ t ∈ unionFoldDomain C rs I ρ) ∧

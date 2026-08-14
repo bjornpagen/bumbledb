@@ -227,7 +227,7 @@ needs ray awareness. Consequences, typed rather than left to be discovered:
   error `MeasureOfRay` — the query-path runtime type error for unbounded
   measure (boundedness is not provable at validation). The write-path twin is
   `CapacityRayMeasure`. Other runtime aborts (`Overflow`,
-  `FixpointBudgetExceeded`, `ResultBytesOverflow`) are range or resource,
+  `DerivedBudgetExceeded`, `ResultBytesOverflow`) are range or resource,
   not this type error. The alternative — silently yield
   MAX — fabricates arithmetic.
 - **Coverage judgments over rays**: a source ray is satisfied only by a target

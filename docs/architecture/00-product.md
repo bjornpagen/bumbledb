@@ -346,14 +346,13 @@ new database is the schema-change story; export surface in `70-api.md`). Async A
 Multiple writers. Multi-process write access (the lock law is a writer law,
 R17 — readers are lockless). Data beyond RAM. Intra-query parallelism.
 Encryption/access control. Compatibility with any prior on-disk format. A deductive
-database / logic-programming runtime: queries are query-sized programs against a
+database / logic-programming runtime: queries are query-sized against a
 theory-governed store, never the unit of an application — Turing-completeness lives
-in the host. Engine recursion exists under exactly this ruling: stratified
-fixpoints over query-sized programs, capped (`MAX_PREDICATES`) and
-budgeted, never a rule-program runtime (`20-query-ir.md` § engine
-recursion, the ruling that survived the campaign whole); the closure idiom
-remains the covenant for what the caps and the chain-window fence keep
-outside, not a workaround.
+in the host. Engine recursion exists under exactly this ruling: named interiors
+(a DAG of CQs, evaluated once) plus at most one linear rec, budgeted, never a
+rule-program runtime (`20-query-ir.md` § engine recursion); the closure idiom
+remains the covenant for what the chain-window fence keeps outside, not a
+workaround.
 
 **Built, quarantined:** the JS binding is the in-tree TypeScript SDK
 (`@bjornpagen/bumbledb`, `ts/`), landed on the quarantine shape that was

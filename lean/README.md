@@ -35,9 +35,10 @@ project needs no build programmability.
   (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, `Exec/Plan` — the
   Free Join plan formalism at the mathematical level: plan validity,
   plan soundness against the rule denotation, plannability — and
-  `Exec/Fixpoint` — which deliberately carries both levels of the one
-  feature: the stratified denotation and the fueled round loop,
-  proved to agree).
+  `Exec/Reach` — interior DAG once, optional linear `reachDen`, then
+  main `rulesAnswers`; `evalQueryList` is the executable listing,
+  proved equal to `evalQuery`. Fuel is not a Lean semantic
+  parameter).
   Where an algorithm needs a premise the denotation does not supply,
   Lean forces the premise to be named — those names are exactly the
   engine's witness types. `Oracle` sits at this level too (placement
@@ -122,8 +123,9 @@ mechanism:** Lean identity is canonical encoding equality
 (`value_eq_iff_encode_eq`); the store treats blake3 equality as fact
 equality (collision axiom in `10-data-model.md`). **Schema fingerprint**
 is extra-theoretic engine identity, not a hash of `Theory`.
-**Fixpoint completeness** is under sufficient fuel; the engine may abort
-with `Error::FixpointBudgetExceeded`. **OriginCapacity** and
+Engine `DerivedBudgetExceeded` is incompleteness vs `evalQuery`
+(interior tables and `reachDen` on one ledger) — not vs a fueled Lean
+evaluator (there isn't one). **OriginCapacity** and
 **ResultBytesOverflow** are engine-only resource errors.
 
 ## History — the seed artifact's provenance
@@ -148,12 +150,7 @@ divergence is the empty-global aggregate (the artifact's `sum [] = 0`
 is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
 the artifact's stratification lemma was structurally subsumed at port
 time (the then-modeled syntax had no head-referencing atoms). The
-stratified fixpoint model has since landed — 2026-07-14, owner
-decision — in `Exec/Fixpoint.lean` over `Query/Syntax.lean`'s program
-cut, the prepared home entered. The engine discharge campaign followed
-on 2026-07-15 and is complete — the cut, the strata judge, the oracles,
-the delta-variant plans, the transient images, the per-stratum driver,
-the counted round surface, and the named-head notation
-(`docs/architecture/20-query-ir.md` § engine recursion;
-`40-execution.md` § the fixpoint driver) — and `Bridge.lean` carries
-the fixpoint model's rows, landed with the mechanisms they ledger.
+linear-reach model lives in `Exec/Reach.lean` over
+`Query/Syntax.lean`'s interiors and one rec — interior DAG once,
+optional `reachDen`, then main `rulesAnswers`. `Bridge.lean` carries
+the reach model's rows, landed with the mechanisms they ledger.

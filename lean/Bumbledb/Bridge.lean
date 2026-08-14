@@ -8,7 +8,7 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
-import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Reach
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
 import Bumbledb.Decide
@@ -473,7 +473,7 @@ def ledger : List Obligation := [
 
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
-    "Program::Empty (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
+    "PreparedBody::Empty (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
     "the_empty_program_builds_no_image_and_binds_no_view (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
 
   .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
@@ -543,54 +543,57 @@ def ledger : List Obligation := [
     "SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
     "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
 
-  /- ## The recursion cut (Exec/Fixpoint.lean; R1+R2 of the seam
-  ledger — the IR cut and the stratification fence) -/
+  /- ## The interiors/reach cut (Exec/Reach.lean) -/
 
-  .row @Query.degenerate_embedding `Bumbledb.Query.degenerate_embedding
-    "The degenerate embedding: a one-predicate program with no idb atom denotes exactly the query it embeds, so the query IS the program's degenerate carrier and a no-idb program may execute as its output predicate's query."
-    "crate::ir::Program (crates/bumbledb/src/ir.rs); prepare_program (crates/bumbledb/src/api/prepared/build.rs)"
-    "a_degenerate_program_executes_as_its_query (crates/bumbledb/tests/api.rs); a_degenerate_program_validates_as_its_query (crates/bumbledb/src/ir/validate/tests/program.rs)",
+  .row @Query.evalQuery_plain `Bumbledb.Query.evalQuery_plain
+    "A query with empty interiors and no rec denotes the union of its main rules over the instance."
+    "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
+    "a_degenerate_program_executes_as_its_query (crates/bumbledb/tests/api.rs)",
 
-  .row @Query.wellFormed_reads_real `Bumbledb.Query.wellFormed_reads_real
-    "The well-formedness screen: every idb source an accepted program reads names a real predicate — without the screen a negated phantom read is vacuously satisfied and no stratum witness refuses the shape."
-    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::UnknownPredicate (crates/bumbledb/src/error.rs)"
-    "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/program.rs); rejects_an_idb_atom_naming_no_predicate (crates/bumbledb/src/ir/validate/tests/program.rs); adversarial_program_never_panics (crates/bumbledb/tests/adversarial_ir.rs)",
+  .row @Query.wellFormed_interior_reads_real `Bumbledb.Query.wellFormed_interior_reads_real
+    "Every interior source an accepted query reads names a real interior or the rec."
+    "validate (crates/bumbledb/src/ir/validate.rs); ValidationError::UnknownInterior (crates/bumbledb/src/error.rs)"
+    "rejects_a_negated_phantom_interior (crates/bumbledb/src/ir/validate/tests.rs)",
 
-  .row @Query.stratumOp_mono `Bumbledb.Query.stratumOp_mono
-    "The stratification premise, spent: negated targets sit strictly below their reader under the witness, so the per-stratum operator is monotone — the judge computes one witness by SCC condensation and refuses negation through a cycle."
-    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::NegationThroughCycle (crates/bumbledb/src/error.rs)"
-    "rejects_negation_through_a_cycle (crates/bumbledb/src/ir/validate/tests/program.rs); negation_of_a_lower_stratum_passes_the_strata_judge (crates/bumbledb/src/ir/validate/tests/program.rs); condensation_orders_components_reverse_topologically (crates/bumbledb/src/ir/validate/strata.rs)",
+  .row @Query.reachOp_mono `Bumbledb.Query.reachOp_mono
+    "Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case)."
+    "NegationInRec (crates/bumbledb/src/error.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
+    "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests.rs); odd_not_monotone (lean/Bumbledb/Countermodels.lean)",
 
-  .row @Query.program_den_finite `Bumbledb.Query.program_den_finite
-    "The safety theorem's premise, enforced: recursive heads project bound variables only — no measure, no fold through a cycle — so every predicate's fixpoint is a finite subset of the active domain and termination is a theorem of the roster, never a runtime hope."
-    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::MeasureInRecursiveHead (crates/bumbledb/src/error.rs); ValidationError::AggregationThroughCycle (crates/bumbledb/src/error.rs)"
-    "rejects_a_measure_in_a_recursive_head (crates/bumbledb/src/ir/validate/tests/program.rs); rejects_aggregation_through_a_cycle (crates/bumbledb/src/ir/validate/tests/program.rs); a_measure_head_over_a_lower_stratum_is_legal (crates/bumbledb/src/ir/validate/tests/program.rs)",
+  .row @Query.reach_den_finite `Bumbledb.Query.reach_den_finite
+    "Rec heads project bound variables, so the lfp is a finite subset of the active domain."
+    "MeasureInInterior (crates/bumbledb/src/error.rs); AggregateInInterior (crates/bumbledb/src/error.rs)"
+    "rejects_a_measure_in_a_rec_head (crates/bumbledb/src/ir/validate/tests.rs); succ_prefixed_infinite (lean/Bumbledb/Countermodels.lean)",
 
-  /- ## The recursive oracles (Exec/Fixpoint.lean; R3 of the seam
-  ledger — the oracles land before the evaluator) -/
+  .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
+    "The executable reach lists exactly reachDen."
+    "evalQueryList (lean/Bumbledb/Exec/Reach.lean); translate_query (crates/bumbledb-bench/src/translate.rs)"
+    "lean/conformance/cases",
+
+  .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
+    "The reach driver computes those answers when it terminates. DerivedBudgetExceeded is incompleteness vs evalQuery (interior tables and reachDen on one ledger) — not vs a fueled Lean evaluator (there isn't one)."
+    "run_reach (crates/bumbledb/src/api/prepared/reach.rs); Error::DerivedBudgetExceeded (crates/bumbledb/src/error.rs)"
+    "a_tight_derived_budget_trips_under_reach (crates/bumbledb/tests/api.rs); a_tight_tuple_budget_trips_on_an_interiors_only_query (crates/bumbledb/tests/api.rs)",
+
+  .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
+    "Interior DAG once, optional reachDen, then main rulesAnswers — listed by evalQueryList."
+    "run_interiors (crates/bumbledb/src/api/prepared.rs); run_reach (crates/bumbledb/src/api/prepared/reach.rs)"
+    "docs/cookbook.md",
+
+  .row @Query.evalQuery_empty_rules `Bumbledb.Query.evalQuery_empty_rules
+    "Empty main denotes the empty set; the rec is never the answer."
+    "EmptyRuleSet (crates/bumbledb/src/error.rs)"
+    "lean/conformance/cases",
 
   .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
     "Semi-naive and naive iteration walk one chain round for round, so the model fixpoint may stay NAIVE — no deltas, no frontier — and still reach every fixpoint the engine's delta rewrite will; the independence law's recursive face."
-    "NaiveDb::program (crates/bumbledb-bench/src/naive/query.rs); model_strata (crates/bumbledb-bench/src/naive/query.rs)"
-    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); cyclic_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); a_mutual_pair_iterates_jointly (crates/bumbledb-bench/src/naive/tests/fixpoint.rs)",
-
-  .row @Query.program_eval_sound `Bumbledb.Query.program_eval_sound
-    "The fueled round loop lists exactly the stratified denotation under the acceptance premises — the recursive conformance arm's license: evalProgram (the driver's checkProgramCase in Main.lean) judges the checked-in program cases the naive fixpoint and the SQLite recursive lane agreed on, the third oracle wired before the engine driver landed and standing beside it since."
-    "generate_program_corpus (crates/bumbledb-bench/src/conformance/program.rs); translate_program (crates/bumbledb-bench/src/translate/program.rs)"
-    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_recursive_arm_covers_its_contract_and_agrees_across_oracles (crates/bumbledb-bench/src/querygen/tests.rs)",
-
-  /- ## The fixpoint driver (Exec/Fixpoint.lean; R4–R6 of the seam
-  ledger — the delta rewrite, the transient images, the driver) -/
-
-  .row @Query.program_eval_sound `Bumbledb.Query.program_eval_sound
-    "The engine discharge: given sufficient fuel, the per-stratum driver computes evalProgram's answers — strata in condensation order through the output's own (evalProgramAt's reading), round 0 the rule loop verbatim, rounds >= 1 the delta variants against the watermark frontier, empty delta the stop — held to the model by the three-way closure goldens and the generated-program differential. Completeness is NOT unconditional: the engine may abort with the FixpointBudgetExceeded error before the least fixpoint (engine-only incompleteness vs Lean evalProgram)."
-    "run_fixpoint (crates/bumbledb/src/api/prepared/fixpoint.rs); prepare_program (crates/bumbledb/src/api/prepared/build.rs); Error::FixpointBudgetExceeded (crates/bumbledb/src/error.rs)"
-    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); the_recursive_arm_covers_its_contract_and_agrees_across_oracles (crates/bumbledb-bench/src/querygen/tests.rs); prepare_executes_recursion_under_the_driver (crates/bumbledb/tests/api.rs); a_tight_fixpoint_budget_trips_with_the_typed_error (crates/bumbledb/tests/api.rs)",
+    "NaiveDb::query (crates/bumbledb-bench/src/naive/query.rs)"
+    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); cyclic_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
 
   .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
-    "The delta rewrite's engine face: per recursive rule, k delta-variant plans (variant i binds atom i to the previous round's frontier, the rest to the accumulated set) walk the naive chain round for round — no new/old split, because cross-variant and cross-round re-derivation is absorbed by the predicate's spanning seen-set, whose dense insertion-order suffix IS the frontier."
-    "DeltaVariant (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); ProjectionSink::answers_since (crates/bumbledb/src/exec/sink/projection/new.rs); TransientImage::refill (crates/bumbledb/src/image/build.rs)"
-    "recursive_answers_agree_scalar_and_vectorized (crates/bumbledb/tests/api.rs); cyclic_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); zero_warm_allocation_gate (crates/bumbledb/tests/alloc_gate.rs)",
+    "One delta occurrence per rec arm walks the naive chain; the spanning seen-set absorbs re-derivation."
+    "DeltaVariant (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); answers_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
+    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
 
   /- ## The judgment conformance lane (Decide.lean) -/
 
@@ -609,7 +612,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 96 := rfl
+theorem ledger_count : ledger.length = 98 := rfl
 
 end Bridge
 end Bumbledb

@@ -666,47 +666,172 @@ end
 
 /-! ## Answers — body environments, filtered and projected -/
 
+/-- The out-of-arity filler: `tupleFact` is total, and accepted
+queries never read past a head's arity — the arity roster is
+validator mechanism. -/
+def fillerValue : Value := ⟨.bool, false⟩
+
+/-- The fact a derived-table tuple denotes: `FieldId i` reads head
+position `i`. Out-of-arity positions read `fillerValue`. -/
+def tupleFact (t : AnswerTuple) : Fact :=
+  fun i => (t[i.id]?).getD fillerValue
+
+/-- A tuple-fact field is a tuple value or the filler. -/
+theorem tupleFact_mem_or_filler (t : AnswerTuple) (i : FieldId) :
+    tupleFact t i ∈ t ∨ tupleFact t i = fillerValue := by
+  unfold tupleFact
+  cases h : t[i.id]? with
+  | none => exact Or.inr rfl
+  | some v =>
+    exact Or.inl (by
+      simpa using List.mem_of_getElem? h)
+
+/-- Finished derived-table environment: one answer-tuple set per
+interior id. Unread ids denote empty. -/
+abbrev InteriorEnv : Type := InteriorId → Set AnswerTuple
+
+def InteriorEnv.empty : InteriorEnv := fun _ _ => False
+
+def InteriorEnv.update (W : InteriorEnv) (c : InteriorId)
+    (X : Set AnswerTuple) : InteriorEnv :=
+  fun d => if d = c then X else W d
+
+/-- What an atom source denotes: a stored relation reads the instance;
+a derived table reads the environment through the tuple-fact
+reading. An unread interior id is the empty fact set. -/
+def sourceDen (I : Instance) (W : InteriorEnv) : AtomSource → Set Fact
+  | .edb R => I R
+  | .interior C => fun f => ∃ t, t ∈ W C ∧ f = tupleFact t
+
+/-- The EDB-only environment: interiors unread (empty). -/
+def edbEnv (I : Instance) : AtomSource → Set Fact :=
+  sourceDen I InteriorEnv.empty
+
 /-- The body judgment: an assignment derives when every positive atom
-has a matching fact in the instance, NO fact matches any negated atom
-— **the anti-join**: negation denotes `¬∃` over the relation's finite
-extension, NEVER membership in an infinite complement (there is no
-complement anywhere in this definition to take) — and every condition
-tree holds. Bridge: `docs` § negation — plain anti-join over sets, no
-null trick, no three-valued logic; `exec`'s anti-probe descriptors
+has a matching fact in the source environment, NO fact matches any
+negated atom — **the anti-join**: negation denotes `¬∃` over the
+source's finite extension, NEVER membership in an infinite complement
+(there is no complement anywhere in this definition to take) — and
+every condition tree holds. Both polarities go through `F a.source`.
+Bridge: `docs` § negation — plain anti-join over sets, no null trick,
+no three-valued logic; `exec`'s anti-probe descriptors
 (`ir/normalize`'s `AntiProbe`) realize the `¬∃` by probe. -/
-def derives (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
-    (σ : Assignment) : Prop :=
-  (∀ a, a ∈ r.atoms → ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
-  (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
+def derives (C : Classify) (r : Rule) (F : AtomSource → Set Fact)
+    (ρ : ParamEnv) (σ : Assignment) : Prop :=
+  (∀ a, a ∈ r.atoms → ∃ f, f ∈ F a.source ∧ Matches f a σ ρ) ∧
+  (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ F a.source ∧ Matches f a σ ρ) ∧
   (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t)
 
 /-- One rule's answers: deriving body environments projected through
 the finds. A `Set` — multiplicity is UNREPRESENTABLE, which is the
 set-semantics law at the representation level. -/
-def ruleAnswers (C : Classify) (r : Rule) (I : Instance)
+def ruleAnswers (C : Classify) (r : Rule) (F : AtomSource → Set Fact)
     (ρ : ParamEnv) : Set AnswerTuple :=
-  fun t => ∃ σ, derives C r I ρ σ ∧ t = r.finds.map σ
+  fun t => ∃ σ, derives C r F ρ σ ∧ t = r.finds.map σ
 
 /-- Membership in a rule's answers, unfolded. -/
-theorem mem_ruleAnswers {C : Classify} {r : Rule} {I : Instance}
-    {ρ : ParamEnv} {t : AnswerTuple} :
-    t ∈ ruleAnswers C r I ρ ↔
-      ∃ σ, derives C r I ρ σ ∧ t = r.finds.map σ :=
+theorem mem_ruleAnswers {C : Classify} {r : Rule}
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {t : AnswerTuple} :
+    t ∈ ruleAnswers C r F ρ ↔
+      ∃ σ, derives C r F ρ σ ∧ t = r.finds.map σ :=
   Iff.rfl
 
-/-- **A query's answers: the set UNION of its rules' answers** — the
-one union; no bag distinction exists or is representable
-(`crate::ir::Query`, the denotation block). -/
-def queryAnswers (C : Classify) (q : Query) (I : Instance)
-    (ρ : ParamEnv) : Set AnswerTuple :=
-  fun t => ∃ r, r ∈ q.rules ∧ t ∈ ruleAnswers C r I ρ
+/-- The union of a rule list. The denotation of a whole `Query` is
+`evalQuery` (`Exec/Reach.lean`). -/
+def rulesAnswers (C : Classify) (rules : List Rule)
+    (F : AtomSource → Set Fact) (ρ : ParamEnv) : Set AnswerTuple :=
+  fun t => ∃ r, r ∈ rules ∧ t ∈ ruleAnswers C r F ρ
 
-/-- Membership in a query's answers, unfolded. -/
-theorem mem_queryAnswers {C : Classify} {q : Query} {I : Instance}
-    {ρ : ParamEnv} {t : AnswerTuple} :
-    t ∈ queryAnswers C q I ρ ↔
-      ∃ r, r ∈ q.rules ∧ t ∈ ruleAnswers C r I ρ :=
+/-- Membership in a rule-list union, unfolded. -/
+theorem mem_rulesAnswers {C : Classify} {rules : List Rule}
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {t : AnswerTuple} :
+    t ∈ rulesAnswers C rules F ρ ↔
+      ∃ r, r ∈ rules ∧ t ∈ ruleAnswers C r F ρ :=
   Iff.rfl
+
+/-- The judgment reads the environment extensionally. -/
+theorem derives_congr {C : Classify} {r : Rule} {ρ : ParamEnv}
+    {σ : Assignment} {F G : AtomSource → Set Fact}
+    (h : ∀ s f, f ∈ F s ↔ f ∈ G s) :
+    derives C r F ρ σ ↔ derives C r G ρ σ := by
+  unfold derives
+  constructor
+  · rintro ⟨hpos, hneg, hcond⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
+    · obtain ⟨f, hf, hm⟩ := hpos a ha
+      exact ⟨f, (h _ f).mp hf, hm⟩
+    · obtain ⟨f, hf, hm⟩ := hex
+      exact hneg a ha ⟨f, (h _ f).mpr hf, hm⟩
+  · rintro ⟨hpos, hneg, hcond⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
+    · obtain ⟨f, hf, hm⟩ := hpos a ha
+      exact ⟨f, (h _ f).mpr hf, hm⟩
+    · obtain ⟨f, hf, hm⟩ := hex
+      exact hneg a ha ⟨f, (h _ f).mp hf, hm⟩
+
+/-- Pointwise membership order on interior environments. -/
+def InteriorEnv.le (X Y : InteriorEnv) : Prop :=
+  ∀ c t, t ∈ X c → t ∈ Y c
+
+theorem sourceDen_mono {I : Instance} {X Y : InteriorEnv}
+    (h : InteriorEnv.le X Y) :
+    ∀ src f, f ∈ sourceDen I X src → f ∈ sourceDen I Y src := by
+  intro src f hf
+  cases src with
+  | edb R => exact hf
+  | interior C =>
+    obtain ⟨t, ht, rfl⟩ := hf
+    exact ⟨t, h C t ht, rfl⟩
+
+theorem sourceDen_congr {I : Instance} {X Y : InteriorEnv}
+    (h : ∀ c t, t ∈ X c ↔ t ∈ Y c) :
+    ∀ src f, f ∈ sourceDen I X src ↔ f ∈ sourceDen I Y src := by
+  intro src f
+  cases src with
+  | edb R => exact Iff.rfl
+  | interior C =>
+    exact exists_congr fun t => and_congr_left fun _ => h C t
+
+theorem InteriorEnv.update_le {W : InteriorEnv} {c : InteriorId}
+    {X Y : Set AnswerTuple} (h : ∀ t, t ∈ X → t ∈ Y) :
+    InteriorEnv.le (W.update c X) (W.update c Y) := by
+  intro d t ht
+  unfold InteriorEnv.update at ht ⊢
+  by_cases hd : d = c
+  · rw [if_pos hd] at ht ⊢
+    exact h t ht
+  · rw [if_neg hd] at ht ⊢
+    exact ht
+
+/-- Recover the EDB-only reading under `r.edbOnly`. -/
+theorem derives_edb {C : Classify} {r : Rule} {I : Instance}
+    {ρ : ParamEnv} {σ : Assignment}
+    (hedb : r.edbOnly) :
+    derives C r (edbEnv I) ρ σ ↔
+      (∀ a, a ∈ r.atoms → ∃ R f, a.source = .edb R ∧ f ∈ I R ∧
+        Matches f a σ ρ) ∧
+      (∀ a, a ∈ r.negated → ¬ ∃ R f, a.source = .edb R ∧ f ∈ I R ∧
+        Matches f a σ ρ) ∧
+      (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t) := by
+  constructor
+  · rintro ⟨hpos, hneg, hcond⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
+    · obtain ⟨R, hR⟩ := hedb a (Or.inl ha)
+      obtain ⟨f, hf, hm⟩ := hpos a ha
+      refine ⟨R, f, hR, ?_, hm⟩
+      simpa [edbEnv, sourceDen, hR] using hf
+    · obtain ⟨R, f, hR, hf, hm⟩ := hex
+      refine hneg a ha ⟨f, ?_, hm⟩
+      simpa [edbEnv, sourceDen, hR] using hf
+  · rintro ⟨hpos, hneg, hcond⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
+    · obtain ⟨R, f, hR, hf, hm⟩ := hpos a ha
+      refine ⟨f, ?_, hm⟩
+      simpa [edbEnv, sourceDen, hR] using hf
+    · obtain ⟨f, hf, hm⟩ := hex
+      obtain ⟨R, hR⟩ := hedb a (Or.inr ha)
+      refine hneg a ha ⟨R, f, hR, ?_, hm⟩
+      simpa [edbEnv, sourceDen, hR] using hf
 
 /-! ## Theorem 3 — the anti-join stays on the active domain -/
 
@@ -717,26 +842,26 @@ theorem Term.mem_bindingVars {t : Term} {v : VarId} :
   exact eq_comm
 
 /-- The active domain a rule sees: every value some positive atom's
-fact carries at a bound field. Finite whenever the instance is — the
-answers never leave it. -/
-def activeDomain (I : Instance) (r : Rule) : Set Value :=
-  fun w => ∃ a, a ∈ r.atoms ∧ ∃ f, f ∈ I a.relation ∧
+fact carries at a bound field. Finite whenever the environment is —
+the answers never leave it. -/
+def activeDomain (F : AtomSource → Set Fact) (r : Rule) : Set Value :=
+  fun w => ∃ a, a ∈ r.atoms ∧ ∃ f, f ∈ F a.source ∧
     ∃ b, b ∈ a.bindings ∧ f b.1 = w
 
 /-- **Theorem 3.** Under `Safe` — the hypothesis that makes the safety
 rule load-bearing — every answer value lives in the rule's ACTIVE
 DOMAIN: the anti-join semantics of `derives` quantifies negation over
-the finite relation extension only, and positive range restriction
+the finite source extension only, and positive range restriction
 pins every projected variable to a positive fact's field, so no answer
-ever mentions a value the instance does not carry. Without `Safe` the
-"denotation" escapes to the infinite value universe —
+ever mentions a value the environment does not carry. Without `Safe`
+the "denotation" escapes to the infinite value universe —
 `Countermodels.unsafe_rule_infinite` is the countermodel.
 Bridge: `ValidationError::NegatedVariableUnbound` /
 `ComparisonOnlyVariable` are the acceptance forms of the hypothesis;
 `answers_finite_of_safe` cashes it into finiteness. -/
 theorem antijoin_over_active_domain {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} (hsafe : Safe r) :
-    ∀ t, t ∈ ruleAnswers C r I ρ → ∀ w, w ∈ t → w ∈ activeDomain I r := by
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} (hsafe : Safe r) :
+    ∀ t, t ∈ ruleAnswers C r F ρ → ∀ w, w ∈ t → w ∈ activeDomain F r := by
   intro t ht w hw
   obtain ⟨σ, hder, rfl⟩ := mem_ruleAnswers.mp ht
   obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hw
@@ -779,9 +904,9 @@ rule; `collapse` then dedups by condition-SET equality — sound by
 theorem 6a below); the differential suite proves the same property
 against the naive model. -/
 theorem dnf_preserves_denotation (C : Classify) (r : Rule)
-    (I : Instance) (ρ : ParamEnv) :
-    ∀ t, t ∈ ruleAnswers C r I ρ ↔
-      ∃ r', r' ∈ r.lower ∧ t ∈ ruleAnswers C r' I ρ := by
+    (F : AtomSource → Set Fact) (ρ : ParamEnv) :
+    ∀ t, t ∈ ruleAnswers C r F ρ ↔
+      ∃ r', r' ∈ r.lower ∧ t ∈ ruleAnswers C r' F ρ := by
   intro t
   constructor
   · intro ht
@@ -812,20 +937,20 @@ fact is absorbed exactly like a within-rule duplicate; `dnf.rs::
 collapse` spends this at the representation level TOGETHER with
 theorem 6a — its dedup key reads condition lists as sets, so the
 collapsed pair is answer-equal (6a) before it is a duplicate (6). -/
-theorem union_idempotent (C : Classify) (n : Nat) (r : Rule)
-    (rs : List Rule) (I : Instance) (ρ : ParamEnv) :
-    ∀ t, t ∈ queryAnswers C ⟨n, r :: r :: rs⟩ I ρ ↔
-      t ∈ queryAnswers C ⟨n, r :: rs⟩ I ρ := by
+theorem union_idempotent (C : Classify) (r : Rule)
+    (rs : List Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) :
+    ∀ t, t ∈ rulesAnswers C (r :: r :: rs) F ρ ↔
+      t ∈ rulesAnswers C (r :: rs) F ρ := by
   intro t
   constructor
   · intro ht
-    obtain ⟨r', hmem, h⟩ := mem_queryAnswers.mp ht
+    obtain ⟨r', hmem, h⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_cons.mp hmem with rfl | hmem'
-    · exact mem_queryAnswers.mpr ⟨r', List.mem_cons.mpr (Or.inl rfl), h⟩
-    · exact mem_queryAnswers.mpr ⟨r', hmem', h⟩
+    · exact mem_rulesAnswers.mpr ⟨r', List.mem_cons.mpr (Or.inl rfl), h⟩
+    · exact mem_rulesAnswers.mpr ⟨r', hmem', h⟩
   · intro ht
-    obtain ⟨r', hmem, h⟩ := mem_queryAnswers.mp ht
-    exact mem_queryAnswers.mpr ⟨r', List.mem_cons.mpr (Or.inr hmem), h⟩
+    obtain ⟨r', hmem, h⟩ := mem_rulesAnswers.mp ht
+    exact mem_rulesAnswers.mpr ⟨r', List.mem_cons.mpr (Or.inr hmem), h⟩
 
 /-- **Theorem 6a — the conditions congruence.** `derives` reads the
 condition list by MEMBERSHIP only, so two rules with the same finds,
@@ -838,12 +963,12 @@ congruence, and then a duplicate rule adds nothing by
 `union_idempotent`. Bridge: `ir/normalize/dnf.rs::collapse`
 (`same_normalized_body`: finds, atoms, negated verbatim; conditions as
 sets). -/
-theorem ruleAnswers_conditions_congr {C : Classify} {I : Instance}
-    {ρ : ParamEnv} {r s : Rule}
+theorem ruleAnswers_conditions_congr {C : Classify}
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {r s : Rule}
     (hfinds : r.finds = s.finds) (hatoms : r.atoms = s.atoms)
     (hneg : r.negated = s.negated)
     (hconds : ∀ c : Condition, c ∈ r.conditions ↔ c ∈ s.conditions) :
-    ∀ t, t ∈ ruleAnswers C r I ρ ↔ t ∈ ruleAnswers C s I ρ := by
+    ∀ t, t ∈ ruleAnswers C r F ρ ↔ t ∈ ruleAnswers C s F ρ := by
   intro t
   constructor
   · intro ht
@@ -870,60 +995,73 @@ Bridge: `exec/sink.rs` — the projection sink keys the projected find
 tuple (head-shaped keys, rule-independent), never the rule's full slot
 array; `answer_identity` is why that key is complete. -/
 theorem answer_identity_canonical {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} {σ σ' : Assignment}
-    (h : derives C r I ρ σ)
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} {σ σ' : Assignment}
+    (h : derives C r F ρ σ)
     (hproj : r.finds.map σ = r.finds.map σ') :
-    r.finds.map σ' ∈ ruleAnswers C r I ρ ∧
-      r.finds.map σ ∈ ruleAnswers C r I ρ ∧
+    r.finds.map σ' ∈ ruleAnswers C r F ρ ∧
+      r.finds.map σ ∈ ruleAnswers C r F ρ ∧
       (r.finds.map σ : AnswerTuple) = r.finds.map σ' :=
   ⟨⟨σ, h, hproj.symm⟩, ⟨σ, h, rfl⟩, hproj⟩
 
 /-! ## Theorem 9 — the denotation reads ONE instance -/
 
-/-- The relations a query mentions, positive and negated. -/
+/-- The stored relations a query's main rules mention, positive and
+negated. Interior sources are not stored relations. -/
 def Query.relations (q : Query) : List RelId :=
   q.rules.flatMap fun r =>
-    r.atoms.map Atom.relation ++ r.negated.map Atom.relation
+    (r.atoms ++ r.negated).filterMap fun a => a.source.edb?
 
 /-- **Theorem 9.** The denotation is a function of ONE `Instance` —
-the signature of `queryAnswers` IS the structural note (no
-mixed-instance evaluation is writable), and this theorem makes it
+the signature of `rulesAnswers` over `edbEnv` IS the structural note
+(no mixed-instance evaluation is writable), and this theorem makes it
 checkable: two instances agreeing on every mentioned relation yield
-identical answers, i.e. the denotation reads nothing else.
+identical answers, i.e. the denotation reads nothing else. Interior
+atoms under `edbEnv` are empty on both sides.
 Bridge: snapshot isolation — an execution runs against one storage
 snapshot (`crate::Db::query` pins one read transaction); PRD 09 owns
 the transaction side. -/
 theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
     (ρ : ParamEnv) (h : ∀ R, R ∈ q.relations → I R = J R) :
-    ∀ t, t ∈ queryAnswers C q I ρ ↔ t ∈ queryAnswers C q J ρ := by
-  have hrel : ∀ r, r ∈ q.rules → ∀ a,
-      (a ∈ r.atoms ∨ a ∈ r.negated) → I a.relation = J a.relation := by
-    intro r hr a ha
-    refine h a.relation (List.mem_flatMap.mpr ⟨r, hr, ?_⟩)
-    rcases ha with ha | ha
-    · exact List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨a, ha, rfl⟩))
-    · exact List.mem_append.mpr (Or.inr (List.mem_map.mpr ⟨a, ha, rfl⟩))
+    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔
+      t ∈ rulesAnswers C q.rules (edbEnv J) ρ := by
   have hder : ∀ r, r ∈ q.rules → ∀ σ,
-      derives C r I ρ σ ↔ derives C r J ρ σ := by
+      derives C r (edbEnv I) ρ σ ↔ derives C r (edbEnv J) ρ σ := by
     intro r hr σ
+    have hsrc : ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
+        ∀ f, f ∈ edbEnv I a.source ↔ f ∈ edbEnv J a.source := by
+      intro a ha f
+      cases hsrc : a.source with
+      | interior C =>
+        simp [edbEnv, sourceDen, InteriorEnv.empty]
+      | edb R =>
+        have hmem : R ∈ q.relations := by
+          refine List.mem_flatMap.mpr ⟨r, hr, ?_⟩
+          refine List.mem_filterMap.mpr ⟨a, ?_, by simp [AtomSource.edb?, hsrc]⟩
+          exact List.mem_append.mpr ha
+        show f ∈ I R ↔ f ∈ J R
+        rw [h R hmem]
     unfold derives
     constructor
     · rintro ⟨hatoms, hneg, hconds⟩
-      refine ⟨fun a ha => ?_, fun a ha => ?_, hconds⟩
-      · exact hrel r hr a (Or.inl ha) ▸ hatoms a ha
-      · exact hrel r hr a (Or.inr ha) ▸ hneg a ha
+      refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
+      · obtain ⟨f, hf, hm⟩ := hatoms a ha
+        exact ⟨f, (hsrc a (Or.inl ha) f).mp hf, hm⟩
+      · obtain ⟨f, hf, hm⟩ := hex
+        exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mpr hf, hm⟩
     · rintro ⟨hatoms, hneg, hconds⟩
-      refine ⟨fun a ha => ?_, fun a ha => ?_, hconds⟩
-      · exact (hrel r hr a (Or.inl ha)).symm ▸ hatoms a ha
-      · exact (hrel r hr a (Or.inr ha)).symm ▸ hneg a ha
+      refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
+      · obtain ⟨f, hf, hm⟩ := hatoms a ha
+        exact ⟨f, (hsrc a (Or.inl ha) f).mpr hf, hm⟩
+      · obtain ⟨f, hf, hm⟩ := hex
+        exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mp hf, hm⟩
   intro t
   constructor
   · intro ht
-    obtain ⟨r, hr, σ, hd, hproj⟩ := mem_queryAnswers.mp ht
-    exact mem_queryAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mp hd, hproj⟩
+    obtain ⟨r, hr, σ, hd, hproj⟩ := mem_rulesAnswers.mp ht
+    exact mem_rulesAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mp hd, hproj⟩
   · intro ht
-    obtain ⟨r, hr, σ, hd, hproj⟩ := mem_queryAnswers.mp ht
-    exact mem_queryAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mpr hd, hproj⟩
+    obtain ⟨r, hr, σ, hd, hproj⟩ := mem_rulesAnswers.mp ht
+    exact mem_rulesAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mpr hd, hproj⟩
 
 /-! ## Decidable instances — the executable half's toolkit
 
@@ -1070,6 +1208,49 @@ relation. -/
 def ListInstance.den (W : ListInstance) : Instance :=
   fun R => fun f => f ∈ W.facts R
 
+/-- Executable derived-table map: one answer-tuple list per interior
+id. Unread ids are empty. -/
+abbrev InteriorTables : Type := InteriorId → List AnswerTuple
+
+def InteriorTables.empty : InteriorTables := fun _ => []
+
+def InteriorTables.update (T : InteriorTables) (c : InteriorId)
+    (rows : List AnswerTuple) : InteriorTables :=
+  fun d => if d = c then rows else T d
+
+def InteriorTables.toEnv (T : InteriorTables) : InteriorEnv :=
+  fun c t => t ∈ T c
+
+theorem InteriorTables.toEnv_update (T : InteriorTables) (c : InteriorId)
+    (rows : List AnswerTuple) :
+    ∀ d t, ((T.update c rows).toEnv d t ↔
+      InteriorEnv.update T.toEnv c (fun u => u ∈ rows) d t) := by
+  intro d t
+  unfold InteriorTables.update InteriorTables.toEnv InteriorEnv.update
+  by_cases hd : d = c
+  · simp [hd]
+  · simp [hd]
+
+/-- The executable fact source: stored relations from the world,
+derived tables from `T` through the tuple-fact reading. **The only
+path** the join and the negated filter take — both polarities. -/
+def factsOf (W : ListInstance) (T : InteriorTables) : AtomSource → List Fact
+  | .edb R => W.facts R
+  | .interior C => (T C).map tupleFact
+
+theorem mem_factsOf (W : ListInstance) (T : InteriorTables)
+    (s : AtomSource) (f : Fact) :
+    f ∈ factsOf W T s ↔ f ∈ sourceDen W.den T.toEnv s := by
+  cases s with
+  | edb R => exact Iff.rfl
+  | interior C =>
+    constructor
+    · intro h
+      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp h
+      exact ⟨t, ht, rfl⟩
+    · rintro ⟨t, ht, rfl⟩
+      exact List.mem_map.mpr ⟨t, ht, rfl⟩
+
 /-- The join's state: a partial assignment as an association list. -/
 abbrev PartialAssign : Type := List (VarId × Value)
 
@@ -1113,14 +1294,16 @@ def bindAtom (ρ : ParamEnv) (f : Fact) :
     | none => none
 
 /-- The join: extend every open assignment through every fact of every
-positive atom, in atom order. -/
-def joinAtoms (W : ListInstance) (ρ : ParamEnv) :
+positive atom, in atom order. Fact source is `factsOf` on both
+polarities. -/
+def joinAtoms (W : ListInstance) (T : InteriorTables) (ρ : ParamEnv) :
     List Atom → List PartialAssign → List PartialAssign
   | [], σs => σs
   | a :: rest, σs =>
-    joinAtoms W ρ rest
+    joinAtoms W T ρ rest
       (σs.flatMap fun σ =>
-        (W.facts a.relation).filterMap fun f => bindAtom ρ f a.bindings σ)
+        (factsOf W T a.source).filterMap fun f =>
+          bindAtom ρ f a.bindings σ)
 
 /-- The matching equation, decided (over a total assignment). -/
 def matchesB (ρ : ParamEnv) (σ : Assignment) (a : Atom) (f : Fact) :
@@ -1217,23 +1400,25 @@ end
 
 /-- **`evalList`'s rule stage**: join, negation filter, condition
 filter, projection — the naive evaluator whose stages mirror the
-denotation clause for clause. -/
-def evalRule (C : Classify) (W : ListInstance) (ρ : ParamEnv)
-    (r : Rule) : List AnswerTuple :=
-  ((joinAtoms W ρ r.atoms [[]]).filter fun σp =>
+denotation clause for clause. Negated filter iterates `factsOf`,
+never `W.facts` of a stored relation alone. -/
+def evalRule (C : Classify) (W : ListInstance) (T : InteriorTables)
+    (ρ : ParamEnv) (r : Rule) : List AnswerTuple :=
+  ((joinAtoms W T ρ r.atoms [[]]).filter fun σp =>
     (r.negated.all fun a =>
-      (W.facts a.relation).all fun f => ! matchesB ρ (totalize σp) a f) &&
+      (factsOf W T a.source).all fun f =>
+        ! matchesB ρ (totalize σp) a f) &&
     (r.conditions.all fun t => condHoldsB C ρ (totalize σp) t)).map
     fun σp => r.finds.map (totalize σp)
 
-/-- **`evalList`** — the executable denotation: evaluate every rule
-over a concrete finite world and concatenate (list-level union;
-`eval_sound` says membership agrees with `queryAnswers`, so the
-concatenation IS the set union). PRD 13 runs THIS against the engine
-and the naive model as the third differential oracle. -/
-def evalList (C : Classify) (W : ListInstance) (ρ : ParamEnv)
-    (q : Query) : List AnswerTuple :=
-  q.rules.flatMap (evalRule C W ρ)
+/-- **`evalList`** — the executable denotation over a rule list plus
+derived-table map `T`. Plain callers pass `InteriorTables.empty`.
+List-level union; `eval_sound` says membership agrees with
+`rulesAnswers`. PRD 13 runs THIS against the engine and the naive
+model as the third differential oracle. -/
+def evalList (C : Classify) (W : ListInstance) (T : InteriorTables)
+    (ρ : ParamEnv) (rules : List Rule) : List AnswerTuple :=
+  rules.flatMap (evalRule C W T ρ)
 
 /-! ## `eval_sound` — the refinement, stage by stage -/
 
@@ -1356,11 +1541,12 @@ theorem bindAtom_sound {ρ : ParamEnv} {f : Fact} :
 /-- The join's soundness: every produced state came from an input
 state, extends it, and pins a matching fact for every atom — under
 the FINAL state, because extension preserves pins. -/
-theorem joinAtoms_sound {W : ListInstance} {ρ : ParamEnv} :
+theorem joinAtoms_sound {W : ListInstance} {T : InteriorTables}
+    {ρ : ParamEnv} :
     ∀ (atoms : List Atom) (σs : List PartialAssign)
-      (σp : PartialAssign), σp ∈ joinAtoms W ρ atoms σs →
+      (σp : PartialAssign), σp ∈ joinAtoms W T ρ atoms σs →
       ∃ σ₀, σ₀ ∈ σs ∧ ExtendsPA σp σ₀ ∧
-        ∀ a, a ∈ atoms → ∃ f, f ∈ W.facts a.relation ∧
+        ∀ a, a ∈ atoms → ∃ f, f ∈ factsOf W T a.source ∧
           ∀ b, b ∈ a.bindings → TermPin ρ σp b.2 (f b.1)
   | [], σs, σp, h => by
     refine ⟨σp, h, ExtendsPA.rfl, fun a ha => absurd ha (by simp)⟩
@@ -1379,8 +1565,9 @@ theorem joinAtoms_sound {W : ListInstance} {ρ : ParamEnv} :
 denotational answer — unconditionally (the join binds only what facts
 carry; the filters decide exactly the denotation's clauses). -/
 theorem evalRule_sound {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {r : Rule} {t : AnswerTuple}
-    (h : t ∈ evalRule C W ρ r) : t ∈ ruleAnswers C r W.den ρ := by
+    {T : InteriorTables} {ρ : ParamEnv} {r : Rule} {t : AnswerTuple}
+    (h : t ∈ evalRule C W T ρ r) :
+    t ∈ ruleAnswers C r (sourceDen W.den T.toEnv) ρ := by
   obtain ⟨σp, hσp, rfl⟩ := List.mem_map.mp h
   obtain ⟨hjoin, hchecks⟩ := List.mem_filter.mp hσp
   rw [Bool.and_eq_true] at hchecks
@@ -1389,11 +1576,13 @@ theorem evalRule_sound {C : Classify} {W : ListInstance}
   refine mem_ruleAnswers.mpr ⟨totalize σp, ⟨?_, ?_, ?_⟩, rfl⟩
   · intro a ha
     obtain ⟨f, hf, hpin⟩ := hpins a ha
-    exact ⟨f, hf, fun b hb => (hpin b hb).selects⟩
+    exact ⟨f, (mem_factsOf W T a.source f).mp hf,
+      fun b hb => (hpin b hb).selects⟩
   · intro a ha hex
     obtain ⟨f, hf, hm⟩ := hex
     have hall := List.all_eq_true.mp hnegB a ha
-    have hfall := List.all_eq_true.mp hall f hf
+    have hfall := List.all_eq_true.mp hall f
+      ((mem_factsOf W T a.source f).mpr hf)
     rw [Bool.not_eq_true'] at hfall
     exact absurd (matchesB_iff.mpr hm) (by rw [hfall]; simp)
   · intro c hc
@@ -1478,13 +1667,13 @@ theorem bindAtom_complete {ρ : ParamEnv} {f : Fact} {σ : Assignment} :
 
 /-- The join's completeness: a deriving assignment is realized by some
 produced state agreeing with it. -/
-theorem joinAtoms_complete {W : ListInstance} {ρ : ParamEnv}
-    {σ : Assignment} :
+theorem joinAtoms_complete {W : ListInstance} {T : InteriorTables}
+    {ρ : ParamEnv} {σ : Assignment} :
     ∀ (atoms : List Atom) (σs : List PartialAssign)
       (σ₀ : PartialAssign), σ₀ ∈ σs → AgreesPA σ₀ σ →
-      (∀ a, a ∈ atoms → ∃ f, f ∈ W.facts a.relation ∧ Matches f a σ ρ) →
+      (∀ a, a ∈ atoms → ∃ f, f ∈ factsOf W T a.source ∧ Matches f a σ ρ) →
       (∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure) →
-      ∃ σp, σp ∈ joinAtoms W ρ atoms σs ∧ AgreesPA σp σ
+      ∃ σp, σp ∈ joinAtoms W T ρ atoms σs ∧ AgreesPA σp σ
   | [], σs, σ₀, hmem, hag, _, _ => ⟨σ₀, hmem, hag⟩
   | a :: rest, σs, σ₀, hmem, hag, hatoms, hnm => by
     obtain ⟨f, hf, hm⟩ := hatoms a (List.mem_cons_self ..)
@@ -1492,7 +1681,8 @@ theorem joinAtoms_complete {W : ListInstance} {ρ : ParamEnv}
       bindAtom_complete a.bindings σ₀ hag (fun b hb => hm b hb)
         (hnm a (List.mem_cons_self ..) )
     have hσ₁ : σ₁ ∈ σs.flatMap fun σ' =>
-        (W.facts a.relation).filterMap fun f' => bindAtom ρ f' a.bindings σ' :=
+        (factsOf W T a.source).filterMap fun f' =>
+          bindAtom ρ f' a.bindings σ' :=
       List.mem_flatMap.mpr ⟨σ₀, hmem,
         List.mem_filterMap.mpr ⟨f, hf, hb₁⟩⟩
     obtain ⟨σp, hσp, hagp⟩ :=
@@ -1503,9 +1693,9 @@ theorem joinAtoms_complete {W : ListInstance} {ρ : ParamEnv}
 
 /-- Every produced state covers the rule's positively bound variables
 — read off the join's own soundness. -/
-theorem joinAtoms_covers {W : ListInstance} {ρ : ParamEnv}
-    {atoms : List Atom} {σs : List PartialAssign}
-    {σp : PartialAssign} (h : σp ∈ joinAtoms W ρ atoms σs) :
+theorem joinAtoms_covers {W : ListInstance} {T : InteriorTables}
+    {ρ : ParamEnv} {atoms : List Atom} {σs : List PartialAssign}
+    {σp : PartialAssign} (h : σp ∈ joinAtoms W T ρ atoms σs) :
     ∀ v, (∃ a, a ∈ atoms ∧ v ∈ a.boundVars) →
       (lookupVar σp v).isSome := by
   rintro v ⟨a, ha, hv⟩
@@ -1621,13 +1811,20 @@ join-bound) and the binding shape discipline (`WellTyped`'s
 measure-free bindings — the join cannot bind through a computation),
 every denotational answer is emitted. -/
 theorem evalRule_complete {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {r : Rule} {t : AnswerTuple} (hsafe : Safe r)
+    {T : InteriorTables} {ρ : ParamEnv} {r : Rule} {t : AnswerTuple}
+    (hsafe : Safe r)
     (hnm : ∀ a, a ∈ r.atoms → ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure)
-    (h : t ∈ ruleAnswers C r W.den ρ) : t ∈ evalRule C W ρ r := by
+    (h : t ∈ ruleAnswers C r (sourceDen W.den T.toEnv) ρ) :
+    t ∈ evalRule C W T ρ r := by
   obtain ⟨σ, ⟨hatoms, hneg, hconds⟩, rfl⟩ := mem_ruleAnswers.mp h
+  have hatoms' : ∀ a, a ∈ r.atoms →
+      ∃ f, f ∈ factsOf W T a.source ∧ Matches f a σ ρ :=
+    fun a ha => by
+      obtain ⟨f, hf, hm⟩ := hatoms a ha
+      exact ⟨f, (mem_factsOf W T a.source f).mpr hf, hm⟩
   obtain ⟨σp, hjoin, hag⟩ :=
     joinAtoms_complete r.atoms [[]] [] (by simp)
-      (fun v x hx => by cases hx) hatoms hnm
+      (fun v x hx => by cases hx) hatoms' hnm
   have hcov := joinAtoms_covers hjoin
   have hagree : ∀ v, v ∈ r.positiveVars → totalize σp v = σ v :=
     fun v hv => totalize_agrees hag (hcov v (mem_positiveVars.mp hv))
@@ -1645,7 +1842,8 @@ theorem evalRule_complete {C : Classify} {W : ListInstance}
           (matches_congr fun v hv => hagree v (hsafe v
             (mem_allVars.mpr (Or.inr (Or.inr (Or.inl ⟨a, ha, hv⟩)))))).mp
             hm
-        exact absurd ⟨f, hf, hm'⟩ (hneg a ha)
+        exact absurd ⟨f, (mem_factsOf W T a.source f).mp hf, hm'⟩
+          (hneg a ha)
     · refine List.all_eq_true.mpr fun c hc => ?_
       exact (condHoldsB_iff C ρ (totalize σp) c).mpr
         ((condHolds_congr C ρ (totalize σp) σ c fun v hv =>
@@ -1669,29 +1867,32 @@ differential oracle against `crate::exec` and the naive model, on the
 membership-free-negation fragment `eval_sound` names. Negated
 membership is `antiProbeRuleAnswers` /
 `membership_lowering_preserves_negated`. -/
-theorem eval_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
-    {q : Query} (hsafe : ∀ r, r ∈ q.rules → Safe r)
-    (hwt : ∀ r, r ∈ q.rules → r.WellTyped) :
-    ∀ t, t ∈ evalList C W ρ q ↔ t ∈ queryAnswers C q W.den ρ := by
+theorem eval_sound {C : Classify} {W : ListInstance}
+    {T : InteriorTables} {ρ : ParamEnv} {rules : List Rule}
+    (hsafe : ∀ r, r ∈ rules → Safe r)
+    (hwt : ∀ r, r ∈ rules → r.WellTyped) :
+    ∀ t, t ∈ evalList C W T ρ rules ↔
+      t ∈ rulesAnswers C rules (sourceDen W.den T.toEnv) ρ := by
   intro t
   simp only [evalList, List.mem_flatMap]
   constructor
   · rintro ⟨r, hr, ht⟩
-    exact mem_queryAnswers.mpr ⟨r, hr, evalRule_sound ht⟩
+    exact mem_rulesAnswers.mpr ⟨r, hr, evalRule_sound ht⟩
   · intro ht
-    obtain ⟨r, hr, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨r, hr, hta⟩ := mem_rulesAnswers.mp ht
     exact ⟨r, hr, evalRule_complete (hsafe r hr)
       (fun a ha b hb => (hwt r hr).1 a (Or.inl ha) b hb) hta⟩
 
 /-- The finiteness the safety rule buys, cashed through the executable
-half: over a concrete finite world, a safe well-shaped query's answer
-set carries the listability token — `evalList` itself is the witness
-list. The unsafe converse is `Countermodels.unsafe_rule_infinite`. -/
+half: over a concrete finite world, a safe well-shaped rule list's
+answer set carries the listability token — `evalList` itself is the
+witness list. The unsafe converse is `Countermodels.unsafe_rule_infinite`. -/
 theorem answers_finite_of_safe {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {q : Query} (hsafe : ∀ r, r ∈ q.rules → Safe r)
-    (hwt : ∀ r, r ∈ q.rules → r.WellTyped) :
-    (queryAnswers C q W.den ρ).Finite :=
-  ⟨evalList C W ρ q, fun t => (eval_sound hsafe hwt t).symm⟩
+    {T : InteriorTables} {ρ : ParamEnv} {rules : List Rule}
+    (hsafe : ∀ r, r ∈ rules → Safe r)
+    (hwt : ∀ r, r ∈ rules → r.WellTyped) :
+    (rulesAnswers C rules (sourceDen W.den T.toEnv) ρ).Finite :=
+  ⟨evalList C W T ρ rules, fun t => (eval_sound hsafe hwt t).symm⟩
 
 end Query
 end Bumbledb

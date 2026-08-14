@@ -23,8 +23,8 @@ oracle-plan field (`Countermodels.joined_window_form_uninhabitable`,
 composing the blast countermodel `Countermodels.joined_window_blast`):
 "prohibitively expensive" is a type error, not an opinion. The
 query-side sibling is the recursion safety roster
-(`Exec/Fixpoint.lean`, `docs/architecture/20-query-ir.md` § engine
-recursion): one
+(`Exec/Reach.lean`, `docs/architecture/20-query-ir.md` § interiors
+and rec): one
 doctrine on both paths — a feature's admission is a proof obligation,
 never a vibe.
 

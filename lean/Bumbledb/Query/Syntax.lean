@@ -7,8 +7,9 @@ A faithful abstraction of `crates/bumbledb/src/ir.rs` (the IR, not the
 notation): terms, atoms with named-field bindings (absence of a field
 IS the wildcard), the input condition grammar (leaf / and / or — the
 one place a nested OR is writable), rules (atoms, negated, conditions,
-finds), and the query as a program of rules. Syntax only — meaning
-lives in `Bumbledb.Query.Denotation`.
+finds), named interiors, at most one linear rec SCC, and the main
+query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
+`Bumbledb.Exec.Reach`.
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -16,7 +17,10 @@ lives in `Bumbledb.Query.Denotation`.
   aggregate and measure find positions are PRD 05's folds over the
   binding sets PRD 04 denotes, so the head degenerates to its arity
   (`Query.arity` — every `HeadTerm` is `Var` at this level; the
-  var-free head-shape row arrives with the aggregate ops).
+  var-free head-shape row arrives with the aggregate ops). Interior
+  and rec heads are projection-shaped BY CONSTRUCTION here; the
+  engine roster that refuses `Aggregate` / `Measure` finds on those
+  heads discharges a class Lean cannot write.
 * **The Allen mask is the admitted relation LIST.** `AllenMask` is a
   `List AllenRel` read as a set (membership); the engine's bitmask
   (`crate::allen::AllenMask`) is its encoding. The vacuity rules
@@ -41,33 +45,35 @@ lives in `Bumbledb.Query.Denotation`.
   `membership_lowering_preserves` PROVES the lowering to this level's
   form answer-preserving — the arbiter the engine's `ir/normalize/
   normalize.rs::lower_atom` and the naive model are measured against.
+  Membership stays EDB: theorems match `a.source = .edb R`. Interior
+  membership is engine-only.
 * Boundary caps (`MAX_RULES`, `MAX_CONDITION_DEPTH`) are hostile-input
-  mechanism, not semantics — unmodeled.
+  mechanism, not semantics — unmodeled. **There is no interior-count
+  cap to model.** `InteriorId` is `Nat` here; the engine's `u32` width
+  is representation, not denotation.
 * **Acceptance is strictly narrower than `Safe ∧ WellTyped` — the
-  roster.** The engine rejects programs this model denotes exactly:
-  the empty-edge refusals (`EmptyRuleSet`, `EmptyFinds`,
-  `NoPositiveAtoms`, the all-vanished `Or([])` program,
-  `DuplicateFindTerm`), the write-the-query-you-mean refusals
-  (`SelfComparison`, `ConstantComparison`), the Allen ∅/full vacuity
-  rejections, and the caps above. Benign in every case — never
-  unsound: each theorem quantifies over arbitrary syntax or assumes
-  only `Safe`/`WellTyped`, so a rejected-but-denotable program simply
-  never reaches execution.
-* **The unknown-PredId gap, recorded LOUDLY, with its screen —
-  DISCHARGED (R1).** A rule reading `idb k` with `k` outside
-  `predicates` reads the EMPTY fact set: a positive phantom read kills
-  its rule, but a NEGATED phantom read is vacuously satisfied — and
-  `Program.StratifiedBy` never refuses the shape (a stratum witness may
-  map the phantom low). The screen is `Program.WellFormed` (every `idb`
-  source's `PredId` in range, positive and negated); the engine's
-  refusal is `ValidationError::UnknownPredicate`
-  (`ir/validate/strata.rs`, the R1 discharge — the Bridge row cites
-  `wellFormed_reads_real`). The degenerate embedding carries the screen
-  vacuously (`Query.toProgram_wellFormed`). The `Exec/Fixpoint.lean`
-  agreement theorems are exact equalities with or without the screen —
-  both the denotation and the evaluator read a phantom as empty (the
-  record there, with `wellFormed_reads_real` as the spent form) — so
-  the premise belongs to acceptance readings, not to the agreement.
+  roster.** The engine rejects queries this model denotes exactly:
+  the empty-edge refusals (`EmptyRuleSet` for empty **main**,
+  `EmptyInterior`, `EmptyFinds`, `NoPositiveAtoms`, the all-vanished
+  `Or([])` query, `DuplicateFindTerm`), the write-the-query-you-mean
+  refusals (`SelfComparison`, `ConstantComparison`), the Allen ∅/full
+  vacuity rejections, the rec roster (`EmptyRecursiveBase`,
+  `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`,
+  `NonlinearRecArm`, `NegationInRec`), and the caps above. Benign in
+  every case — never unsound: each theorem quantifies over arbitrary
+  syntax or assumes only `Safe`/`WellTyped`/`recLinear`, so a
+  rejected-but-denotable query simply never reaches execution.
+* **The unknown-interior gap, recorded LOUDLY, with its screen.** A
+  rule reading `interior k` with `k` outside `derivedCount` reads the
+  EMPTY fact set: a positive phantom read kills its rule, but a
+  NEGATED phantom read is vacuously satisfied. The screen is
+  `Query.WellFormed` (`sourcesInRange`); the engine's refusal is
+  `ValidationError::UnknownInterior`. `Query.plain` does **not**
+  rewrite atoms to `.edb` — hostile `Interior` atoms on a plain query
+  fail `sourcesInRange`. The `Exec/Reach.lean` agreement theorems are
+  exact equalities with or without the screen — both the denotation
+  and the evaluator read a phantom as empty — so the premise belongs
+  to acceptance readings, not to the agreement.
 
 ## The creation-quarantine gravestones (law text; the full record is
 `Txn/Fresh.lean`'s module doc)
@@ -77,55 +83,40 @@ rule head — both UNREPRESENTABLE in this IR, permanently: `Term` has
 no mint constructor (the mint is the write path's, Level 2 —
 `Txn/Fresh.lean`), heads are projected variables, and the measure is
 the one arithmetic, its positions boundary-only (`Rule.WellTyped`).
-The program cut below inherits both gravestones verbatim (`PRule`
-heads are `List VarId` too), so recursion's safety roster
-(`MeasureInRecursiveHead` and kin) is this same creation-quarantine
-law restated for fixpoint topology, not a new rule
+Interior and rec heads are `List VarId` too, so recursion's safety
+roster (`MeasureInInterior` and kin) is this same creation-quarantine
+law restated for the reach operator, not a new rule
 (`docs/architecture/20-query-ir.md` § the creation quarantine).
 
-## The program cut (recursion's IR, landed)
+## Interiors and one linear rec (this cut's IR)
 
-`Program`/`PredicateDef`/`AtomSource`/`PAtom`/`PRule` are the IR cut
-(`docs/architecture/20-query-ir.md` § engine recursion): a query is a non-recursive
-Datalog program one step short of the fixpoint, and the cut takes that
-step and nothing else. The degenerate form is today's `Query` — a
-one-predicate program with no `idb` atom — and the embedding is a
-THEOREM, not a convention (`Exec/Fixpoint.lean:
-degenerate_embedding`; `Query::single` is the Rust precedent).
-Stratification lives here as a predicate over the SYNTAX (validation
-models it): the dependency graph is data (`PRule.edges`, labeled
-positive/negated), and `Program.Stratified` is the existence of a
-stratum witness with positive edges non-decreasing and negated edges
-strictly decreasing. Recorded shapes:
+`InteriorId` / `AtomSource` / `Interior` / `Rec` / widened `Query`
+(`interiors`, `rec`, `arity`, `rules`) are the IR. A query with empty
+interiors and no rec is today's query plus two empty fields
+(`Query.plain` / `evalQuery_plain`). Linearity and no-negation-in-rec
+are `Query.recLinear` — not a Tarjan witness. Recorded shapes:
 
-* **`PredId` never puns with `RelId`.** Statements quantify over
+* **`InteriorId` never puns with `RelId`.** Statements quantify over
   stored relations permanently (`30-dependencies.md`, the
-  stored-relations decision): no statement form carries a `PredId`
-  position, so a statement about a predicate is UNWRITABLE, not
-  rejected.
-* **Fold-input edges are unrepresentable at this level.** `PRule`
-  heads are projected variables (`finds : List VarId`), so program
-  predicates are projection-shaped BY CONSTRUCTION (the
-  executable-class item, `docs/architecture/20-query-ir.md` § engine
-  recursion — the engine's validation roster holds interior heads to
-  this class);
-  aggregation is the `Query/Aggregates.lean` composition over a
-  program's OUTPUT, which reads a finished fixpoint — strictly lower
-  by construction. The edge label sum therefore carries
-  positive/negated only; a fold-input edge has no writable syntax.
-* **The two atom shapes, and the landed Rust cut.** The engine's IR
-  now carries `Atom.source : AtomSource` (the R1 cut,
-  `crates/bumbledb/src/ir.rs` — one atom type, both arms); the modeled
-  `Atom` keeps the pre-cut `relation : RelId` shape and `PAtom` models
-  the cut form, with the coding transport (`PAtom.code`,
-  `pderives_code` in `Exec/Fixpoint.lean`) the proved bridge between
-  them. Merging the two modeled shapes is a spec-side amendment queued
-  for its own change under the gate law — a recorded seam, not a
-  drift: every theorem over `Query`/`Atom` reads the engine's
-  `Edb`-only degenerate carrier, which is exactly the degenerate
-  program's execution surface (the fence is gone — the engine's
-  per-stratum fixpoint driver executes recursive programs whole, and
-  `PAtom`/`Exec/Fixpoint.lean` model that surface directly).
+  stored-relations decision): no statement form carries an
+  `InteriorId` position, so a statement about a derived table is
+  UNWRITABLE, not rejected. Do not define `Atom.relation : RelId` as
+  a total accessor.
+* **Fold-input edges are unrepresentable at this level.** `Rule`
+  heads are projected variables (`finds : List VarId`), so interiors
+  and the rec are projection-shaped BY CONSTRUCTION. Aggregation is
+  the `Query/Aggregates.lean` composition over **main**, which reads
+  a finished environment — strictly after interiors/rec by
+  construction of `evalQuery`.
+* **One atom type.** `Atom.source : AtomSource` (`edb | interior`).
+  An `interior` atom's bindings address HEAD POSITIONS positionally —
+  `FieldId i` is the target derived table's column `i`. Numbering:
+  interior `i` has `InteriorId ⟨i⟩`; the rec, if present, has
+  `InteriorId ⟨interiors.length⟩`.
+* **`Rec` / `Query` are products, not structures.** A structure field
+  named `rec` collides with Lean's recursor (`T.rec`). Accessors
+  `Rec.rec` / `Query.rec` keep the spec names; constructors are
+  `Rec.mk` / `Query.mk`. Recorded so the IR names stay locked.
 -/
 
 namespace Bumbledb.Query
@@ -141,6 +132,16 @@ deriving DecidableEq
 /-- Dense parameter id; values are supplied positionally at execution.
 Params are query-global (`crate::ir::ParamId`). -/
 structure ParamId where
+  id : Nat
+deriving DecidableEq
+
+/-- Dense derived-table id — the index into a query's interior list,
+or the rec's id `⟨interiors.length⟩` when rec is present. A SEPARATE
+identity from `RelId`, deliberately: statements quantify over stored
+relations permanently, and no statement form carries an `InteriorId`
+position — a statement about a derived table is unwritable
+(module doc). -/
+structure InteriorId where
   id : Nat
 deriving DecidableEq
 
@@ -173,12 +174,44 @@ inductive Term where
   | lit (value : Value)
   | measure (v : VarId)
 
-/-- One atom: a relation with named-field bindings. Absence of a field
+/-- Where an atom draws its facts: a stored (EDB) relation or a
+derived table (a named interior, or the rec). -/
+inductive AtomSource where
+  | edb (R : RelId)
+  | interior (C : InteriorId)
+deriving DecidableEq
+
+/-- The derived table an atom source reads, if any. -/
+def AtomSource.interior? : AtomSource → Option InteriorId
+  | .interior C => some C
+  | .edb _ => none
+
+/-- The stored relation an atom source reads, if any. -/
+def AtomSource.edb? : AtomSource → Option RelId
+  | .edb R => some R
+  | .interior _ => none
+
+/-- `interior?` reads back the source. -/
+theorem AtomSource.interior?_eq_some {s : AtomSource} {C : InteriorId} :
+    s.interior? = some C ↔ s = .interior C := by
+  cases s with
+  | edb R => simp [AtomSource.interior?]
+  | interior D => simp [AtomSource.interior?]
+
+/-- `edb?` reads back the source. -/
+theorem AtomSource.edb?_eq_some {s : AtomSource} {R : RelId} :
+    s.edb? = some R ↔ s = .edb R := by
+  cases s with
+  | edb S => simp [AtomSource.edb?]
+  | interior C => simp [AtomSource.edb?]
+
+/-- One atom: a source with named-field bindings. Absence of a field
 IS the wildcard — "wildcard bound to something" is unwritable. An atom
 with zero bindings is legal and means a nonemptiness gate on the
-relation (`crate::ir::Atom`). -/
+source (`crate::ir::Atom`). An `interior` atom's `FieldId i` addresses
+that derived head position `i` — positional, never nominal. -/
 structure Atom where
-  relation : RelId
+  source : AtomSource
   bindings : List (FieldId × Term)
 
 /-! ## Comparisons and the input condition grammar -/
@@ -213,12 +246,12 @@ inductive Condition where
   | and (children : List Condition)
   | or (children : List Condition)
 
-/-! ## Rules and queries -/
+/-! ## Rules, interiors, rec, queries -/
 
 /-- One rule: a conjunctive body projecting its finds. A rule is its
 OWN variable scope — `VarId`s never cross rules; params, by contrast,
 are query-global (`crate::ir::Rule`). `negated` are anti-join atoms:
-a binding satisfies one iff NO fact of its relation matches — plain
+a binding satisfies one iff NO fact of its source matches — plain
 anti-join over sets, no null trick, no three-valued logic; negation is
 a POSITION in the rule, not a kind of atom, so the list reuses `Atom`
 unchanged. `conditions` are conjoined. `finds : List VarId` — the
@@ -229,15 +262,74 @@ structure Rule where
   negated : List Atom
   conditions : List Condition
 
-/-- A query: a non-recursive Datalog program — one head, rules.
-**Denotation: the set union of the rules' denotations**
-(`Bumbledb.Query.queryAnswers`); set semantics means there is exactly
-one union — no bag distinction exists or is representable. The head
-is its arity at this level (every head position is a projected
-variable — recorded narrowing; PRD 05 restores the shape row). -/
-structure Query where
+/-- A named interior: a finite CQ (union of CQs), evaluated once.
+Declaration order is topological order. -/
+structure Interior where
   arity : Nat
   rules : List Rule
+
+/-- One recursive SCC (this cut: one name, linear arms).
+Product encoding: a structure field named `rec` collides with the
+recursor. `Rec.rec` is the spec accessor for the rec arms. -/
+def Rec : Type := Nat × List Rule × List Rule
+
+def Rec.arity (r : Rec) : Nat := r.1
+def Rec.base (r : Rec) : List Rule := r.2.1
+def Rec.rec (r : Rec) : List Rule := r.2.2
+def Rec.mk (arity : Nat) (base rec : List Rule) : Rec := ⟨arity, base, rec⟩
+
+/-- A query: named interiors (a DAG, eval once), at most one linear
+rec SCC, then the main query. **Denotation of a Query is `evalQuery`**
+(`Bumbledb.Exec.Reach`); the union of a rule list is `rulesAnswers`.
+Set semantics means there is exactly one union per rule-list — no bag
+distinction exists or is representable. The main head is its arity at
+this level (every head position is a projected variable — recorded
+narrowing; PRD 05 restores the shape row). Product encoding so
+`Query.rec` can be the spec accessor (not a recursor). -/
+def Query : Type := List Interior × Option Rec × Nat × List Rule
+
+def Query.interiors (q : Query) : List Interior := q.1
+def Query.rec (q : Query) : Option Rec := q.2.1
+def Query.arity (q : Query) : Nat := q.2.2.1
+def Query.rules (q : Query) : List Rule := q.2.2.2
+def Query.mk (interiors : List Interior) (rec : Option Rec)
+    (arity : Nat) (rules : List Rule) : Query :=
+  ⟨interiors, rec, arity, rules⟩
+
+/-- Today's query: empty interiors, no rec. -/
+def Query.plain (arity : Nat) (rules : List Rule) : Query :=
+  Query.mk [] none arity rules
+
+/-- A query with empty interiors and no rec. -/
+def Query.Plain (q : Query) : Prop :=
+  q.interiors = [] ∧ q.rec = none
+
+/-- Every rule of every interior, the rec, and main — the
+quantification surface the theorems range over. -/
+def Query.allRules (q : Query) : List Rule :=
+  q.interiors.flatMap (·.rules) ++
+    (match q.rec with
+     | none => []
+     | some r => r.base ++ r.rec) ++
+    q.rules
+
+/-- The rec's derived-table id, when rec is present:
+`⟨interiors.length⟩`. -/
+def Query.recId (q : Query) : Option InteriorId :=
+  match q.rec with
+  | none => none
+  | some _ => some ⟨q.interiors.length⟩
+
+/-- How many derived tables the query names (interiors plus rec). -/
+def Query.derivedCount (q : Query) : Nat :=
+  q.interiors.length + (if q.rec.isSome then 1 else 0)
+
+/-- Every atom of the rule — positive or negated — reads a stored
+relation. Hostile `Interior` atoms on a `Query.plain` fail
+`sourcesInRange`; this is the acceptance screen `plain_wellFormed`
+spends. -/
+def Rule.edbOnly (r : Rule) : Prop :=
+  ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) → ∃ R, a.source = .edb R
 
 /-! ## Variable occurrence — the raw material of `Safe` -/
 
@@ -353,236 +445,67 @@ def Rule.WellTyped (r : Rule) : Prop :=
     ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure) ∧
   (∀ t, t ∈ r.conditions → t.wellShaped)
 
-/-! ## The program cut — recursion's IR (`20-query-ir.md` § engine
-recursion) -/
+/-! ## Well-formedness — one recursive SCC, no Tarjan -/
 
-/-- Dense predicate id — the index into a program's predicate list
-(the design's `PredId`; `Program.predicates` is the address space).
-A SEPARATE identity from `RelId`, deliberately: statements quantify
-over stored relations permanently, and no statement form carries a
-`PredId` position — a statement about a predicate is unwritable
-(module doc). -/
-structure PredId where
-  id : Nat
-deriving DecidableEq
+/-- Interior sources a rule reads (both polarities). -/
+def Rule.interiorReads (r : Rule) : List InteriorId :=
+  (r.atoms ++ r.negated).filterMap fun a => a.source.interior?
 
-/-- Where an atom draws its facts: a stored (EDB) relation or a
-program predicate (IDB) — the design's one-line sum, landing
-INHABITED (the one-inhabitant refusal is why it waited for the
-fixpoint semantics beside it). -/
-inductive AtomSource where
-  | edb (R : RelId)
-  | idb (P : PredId)
-deriving DecidableEq
+/-- Interior sources a rule reads positively. -/
+def Rule.positiveInteriorReads (r : Rule) : List InteriorId :=
+  r.atoms.filterMap fun a => a.source.interior?
 
-/-- The predicate an atom source reads, if any — the dependency
-graph's projection. -/
-def AtomSource.idb? : AtomSource → Option PredId
-  | .idb P => some P
-  | .edb _ => none
+/-- How many positive atoms name `self`. -/
+def Rule.selfCount (r : Rule) (self : InteriorId) : Nat :=
+  (r.atoms.filter fun a => decide (a.source = .interior self)).length
 
-/-- A program-level atom: `Atom` with the relation position widened
-to `AtomSource` (the design's `Atom.relation → Atom.source` cut). An
-`idb` atom's bindings address HEAD POSITIONS positionally — `FieldId
-i` is the target predicate's column `i` — through the same `FieldId`
-reading (`FieldId` is already positional, never nominal). -/
-structure PAtom where
-  source : AtomSource
-  bindings : List (FieldId × Term)
+/-- Whether a negated atom names `self`. -/
+def Rule.hasNegatedSelf (r : Rule) (self : InteriorId) : Prop :=
+  ∃ a, a ∈ r.negated ∧ a.source = .interior self
 
-/-- A program-level rule: `Rule` with `PAtom` occurrences, everything
-else verbatim — same scope law (a rule is its own variable scope),
-same negation reading (a position, not a kind of atom), same
-projected-variable head. The head gravestones carry over unchanged:
-no mint, no arithmetic, no measure is writable in `finds`. -/
-structure PRule where
-  finds : List VarId
-  atoms : List PAtom
-  negated : List PAtom
-  conditions : List Condition
+/-- Every interior source names a real named interior or the rec. -/
+def Query.sourcesInRange (q : Query) : Prop :=
+  ∀ r, r ∈ q.allRules → ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
+    ∀ C, a.source = .interior C → C.id < q.derivedCount
 
-/-- One predicate: head arity plus deriving rules — today's `Query`
-verbatim as the predicate body (the design's `PredicateDef`). -/
-structure PredicateDef where
-  arity : Nat
-  rules : List PRule
+/-- Interior `i` reads only strictly earlier interiors. The rec id is
+never `< i`. -/
+def Query.interiorsDag (q : Query) : Prop :=
+  ∀ (i : Nat) (d : Interior), q.interiors[i]? = some d → ∀ r, r ∈ d.rules →
+    ∀ (C : InteriorId), C ∈ r.interiorReads → C.id < i
 
-/-- A program: a predicate list (`PredId` = index) and the answer
-predicate (the design's `Program`). Boundary caps (`MAX_PREDICATES`,
-per-predicate `MAX_RULES`) are hostile-input mechanism, not
-semantics — unmodeled, like `MAX_RULES` on `Query`. -/
-structure Program where
-  predicates : List PredicateDef
-  output : PredId
+/-- Match `q.rec` only. `self` is `⟨q.interiors.length⟩` — do not match
+`recId` beside it (the catch-all is not unreachable to the elaborator).
+Bans **all** negation in the rec SCC (`negated = []`), not only
+self-negation — matches `NegationInRec`. Empty `base` / empty `rec`
+fail `recLinear`. -/
+def Query.recLinear (q : Query) : Prop :=
+  match q.rec with
+  | none => True
+  | some rec =>
+      let self : InteriorId := ⟨q.interiors.length⟩
+      rec.base ≠ [] ∧ rec.rec ≠ [] ∧
+      (∀ r, r ∈ rec.base → r.selfCount self = 0 ∧ ¬ r.hasNegatedSelf self) ∧
+      (∀ r, r ∈ rec.rec → r.selfCount self = 1 ∧ ¬ r.hasNegatedSelf self) ∧
+      (∀ r, r ∈ rec.base ++ rec.rec → r.negated = [])
 
-/-- Every rule of every predicate — the quantification surface the
-fixpoint theorems range over. -/
-def Program.rulesList (p : Program) : List PRule :=
-  p.predicates.flatMap PredicateDef.rules
+def Query.WellFormed (q : Query) : Prop :=
+  q.sourcesInRange ∧ q.interiorsDag ∧ q.recLinear
 
-/-! ## The degenerate embedding (syntax half; the theorem is
-`Exec/Fixpoint.lean: degenerate_embedding`) -/
-
-/-- An atom is a program atom over its stored relation. -/
-def Atom.toPAtom (a : Atom) : PAtom :=
-  { source := .edb a.relation, bindings := a.bindings }
-
-/-- A rule embeds field-for-field; every occurrence is `edb`. -/
-def Rule.toPRule (r : Rule) : PRule :=
-  { finds := r.finds, atoms := r.atoms.map Atom.toPAtom,
-    negated := r.negated.map Atom.toPAtom, conditions := r.conditions }
-
-/-- The degenerate program: ONE predicate, no `idb` atom — today's
-`Query`, field for field (the `Query::single` precedent). -/
-def Query.toProgram (q : Query) : Program :=
-  { predicates := [{ arity := q.arity, rules := q.rules.map Rule.toPRule }],
-    output := ⟨0⟩ }
-
-/-! ## Variable occurrence over program rules — `PRule.Safe`'s raw
-material (the `Rule` functions, verbatim over `PAtom`) -/
-
-/-- The variables a program atom's bindings mention. -/
-def PAtom.vars (a : PAtom) : List VarId :=
-  a.bindings.flatMap fun b => b.2.vars
-
-/-- The variables a program atom BINDS (positive positions only bind
-`var` terms — `Term.bindingVars`). -/
-def PAtom.boundVars (a : PAtom) : List VarId :=
-  a.bindings.flatMap fun b => b.2.bindingVars
-
-/-- The variables bound by a program rule's positive atoms. -/
-def PRule.positiveVars (r : PRule) : List VarId :=
-  r.atoms.flatMap PAtom.boundVars
-
-/-- Every variable a program rule mentions anywhere. -/
-def PRule.allVars (r : PRule) : List VarId :=
-  r.finds ++ r.atoms.flatMap PAtom.vars ++ r.negated.flatMap PAtom.vars
-    ++ r.conditions.flatMap Condition.vars
-
-/-! ## Stratification — the dependency graph as data, the witness as
-a predicate (`20-query-ir.md` § engine recursion; validation models
-it) -/
-
-/-- An edge label: how a rule reads its target predicate. Fold-input
-is UNREPRESENTABLE at this level (module doc: heads are projected
-variables, so program predicates are projection-shaped by
-construction; folds read a finished output fixpoint). -/
-inductive EdgeKind where
-  | positive
-  | negated
-deriving DecidableEq
-
-/-- One dependency edge: the predicate a rule reads and how. -/
-structure Edge where
-  target : PredId
-  kind : EdgeKind
-deriving DecidableEq
-
-/-- A rule's positively read predicates. -/
-def PRule.idbPositive (r : PRule) : List PredId :=
-  r.atoms.filterMap fun a => a.source.idb?
-
-/-- A rule's negatively read predicates. -/
-def PRule.idbNegated (r : PRule) : List PredId :=
-  r.negated.filterMap fun a => a.source.idb?
-
-/-- A rule's dependency edges — the graph, one rule at a time. -/
-def PRule.edges (r : PRule) : List Edge :=
-  r.idbPositive.map (fun Q => ⟨Q, .positive⟩)
-    ++ r.idbNegated.map (fun Q => ⟨Q, .negated⟩)
-
-/-- `strat` witnesses stratification: along every edge of every rule,
-positive targets sit no higher and negated targets sit STRICTLY
-lower. Negation of a lower stratum is legal — a lower stratum is a
-finished set before this stratum's operator runs, which is exactly
-what keeps the operator monotone (`Exec/Fixpoint.lean:
-stratumOp_mono` spends the negated half). -/
-def Program.StratifiedBy (p : Program) (strat : PredId → Nat) : Prop :=
-  ∀ i d, p.predicates[i]? = some d → ∀ r, r ∈ d.rules → ∀ e, e ∈ r.edges →
-    (e.kind = .positive → strat e.target ≤ strat ⟨i⟩) ∧
-    (e.kind = .negated → strat e.target < strat ⟨i⟩)
-
-/-- Stratified: some stratum witness exists. Validation computes one
-(SCC condensation — mechanism); the semantics carries the witness. -/
-def Program.Stratified (p : Program) : Prop :=
-  ∃ strat, p.StratifiedBy strat
-
-/-! ## Well-formed sources — the unknown-PredId screen -/
-
-/-- Every `idb` source of every rule — positive and negated — names a
-real predicate: the index sits inside `predicates`. This is the
-unknown-PredId roster item of the validation boundary
-(`docs/architecture/20-query-ir.md` § engine recursion)
-as a predicate over the syntax (the module-doc gap record): WITHOUT
-it, a phantom `idb` read denotes the empty fact set — a positive
-phantom read kills its rule, a NEGATED phantom read is vacuously
-satisfied — and `StratifiedBy` never screens it (map the phantom
-low). Accepted programs carry this predicate; the degenerate
-embedding carries it vacuously (`Query.toProgram_wellFormed`). -/
-def Program.WellFormed (p : Program) : Prop :=
-  ∀ r, r ∈ p.rulesList → ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
-    ∀ Q, a.source = .idb Q → Q.id < p.predicates.length
-
-/-- The degenerate program is well-formed: no rule of an embedded
-query reads any `idb` source at all. -/
-theorem Query.toProgram_wellFormed (q : Query) :
-    q.toProgram.WellFormed := by
-  intro r hr a ha Q hsrc
-  obtain ⟨d, hd, hrd⟩ := List.mem_flatMap.mp hr
-  rw [show q.toProgram.predicates
-      = [{ arity := q.arity, rules := q.rules.map Rule.toPRule }] from rfl,
-    List.mem_singleton] at hd
-  subst hd
-  obtain ⟨r₀, -, hr₀⟩ := List.mem_map.mp hrd
-  subst hr₀
-  have hedb : ∃ b : Atom, a = b.toPAtom := by
-    rcases ha with ha | ha
-    · obtain ⟨b, -, hb⟩ := List.mem_map.mp ha
-      exact ⟨b, hb.symm⟩
-    · obtain ⟨b, -, hb⟩ := List.mem_map.mp ha
-      exact ⟨b, hb.symm⟩
-  obtain ⟨b, rfl⟩ := hedb
-  exact nomatch hsrc
-
-/-- `idb?` reads back the source — the membership bridge for the
-occurrence lists. -/
-theorem AtomSource.idb?_eq_some {s : AtomSource} {Q : PredId} :
-    s.idb? = some Q ↔ s = .idb Q := by
-  cases s with
-  | edb R => simp [AtomSource.idb?]
-  | idb P => simp [AtomSource.idb?]
-
-/-- A negated `idb` occurrence is a negated edge. -/
-theorem PRule.negated_edge {r : PRule} {a : PAtom} {Q : PredId}
-    (ha : a ∈ r.negated) (hsrc : a.source = .idb Q) :
-    (⟨Q, .negated⟩ : Edge) ∈ r.edges :=
-  List.mem_append.mpr (Or.inr (List.mem_map.mpr
-    ⟨Q, List.mem_filterMap.mpr ⟨a, ha, AtomSource.idb?_eq_some.mpr hsrc⟩,
-      rfl⟩))
-
-/-- A positive `idb` occurrence is a positive edge. -/
-theorem PRule.positive_edge {r : PRule} {a : PAtom} {Q : PredId}
-    (ha : a ∈ r.atoms) (hsrc : a.source = .idb Q) :
-    (⟨Q, .positive⟩ : Edge) ∈ r.edges :=
-  List.mem_append.mpr (Or.inl (List.mem_map.mpr
-    ⟨Q, List.mem_filterMap.mpr ⟨a, ha, AtomSource.idb?_eq_some.mpr hsrc⟩,
-      rfl⟩))
-
-/-- The stratification witness, spent at a negated occurrence: the
-target is strictly below — the premise `stratumOp_mono` cashes. -/
-theorem Program.StratifiedBy.negated_lt {p : Program}
-    {strat : PredId → Nat} (h : p.StratifiedBy strat) {i : Nat}
-    {d : PredicateDef} (hd : p.predicates[i]? = some d) {r : PRule}
-    (hr : r ∈ d.rules) {a : PAtom} (ha : a ∈ r.negated) {Q : PredId}
-    (hsrc : a.source = .idb Q) : strat Q < strat ⟨i⟩ :=
-  (h i d hd r hr _ (PRule.negated_edge ha hsrc)).2 rfl
-
-/-- The stratification witness, spent at a positive occurrence. -/
-theorem Program.StratifiedBy.positive_le {p : Program}
-    {strat : PredId → Nat} (h : p.StratifiedBy strat) {i : Nat}
-    {d : PredicateDef} (hd : p.predicates[i]? = some d) {r : PRule}
-    (hr : r ∈ d.rules) {a : PAtom} (ha : a ∈ r.atoms) {Q : PredId}
-    (hsrc : a.source = .idb Q) : strat Q ≤ strat ⟨i⟩ :=
-  (h i d hd r hr _ (PRule.positive_edge ha hsrc)).1 rfl
+/-- A plain query of all-EDB rules is well-formed: no interior
+sources, empty interiors, no rec. Hostile `Interior` atoms fail
+`sourcesInRange` (`derivedCount = 0`). -/
+theorem Query.plain_wellFormed (arity : Nat) (rules : List Rule)
+    (hedb : ∀ r, r ∈ rules → r.edbOnly) :
+    (Query.plain arity rules).WellFormed := by
+  refine ⟨?src, ?dag, trivial⟩
+  · intro r hr a ha C hsrc
+    have hr' : r ∈ rules := by
+      simpa [Query.plain, Query.mk, Query.allRules, Query.interiors,
+        Query.rec, Query.rules] using hr
+    obtain ⟨R, hR⟩ := hedb r hr' a ha
+    exact nomatch (hR.symm.trans hsrc)
+  · intro i d hi
+    simp [Query.plain, Query.mk, Query.interiors] at hi
 
 end Bumbledb.Query

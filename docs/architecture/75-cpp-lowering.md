@@ -391,43 +391,49 @@ field-declaration order").
 
 ---
 
-## 4. Query/program IR
+## 4. Query IR
 
 ### 4.1 Engine shapes (`crates/bumbledb/src/ir.rs`)
 
-- `PredId(u16)` — index into `Program.predicates` (ir.rs:65).
-- `AtomSource` = `Edb(RelationId) | Idb(PredId)` (ir.rs:76-79). An `Idb`
-  atom's `FieldId(i)` addresses the target predicate's head position `i`.
+- `InteriorId(u32)` — index into `Query.interiors`; the Rec, if present,
+  is `InteriorId(interiors.len())` after the overflow check. Same width as
+  `RelationId`. Never puns with `RelId`.
+- `AtomSource` = `Edb(RelationId) | Interior(InteriorId)` (ir.rs). An
+  `Interior` atom's `FieldId(i)` addresses the target derived head
+  position `i`.
 - `VarId(u16)` — dense, RULE-SCOPED (the same id in two rules is two
-  variables; ir.rs:105). `ParamId(u16)` — dense, QUERY-GLOBAL (ir.rs:109).
+  variables; ir.rs). `ParamId(u16)` — dense, QUERY-GLOBAL (ir.rs).
 - `Term` = `Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
-  | Measure(VarId)` (ir.rs:114-138). `ParamSet` is legal in atom bindings and
+  | Measure(VarId)` (ir.rs). `ParamSet` is legal in atom bindings and
   one side of `Eq` only; `Measure` only as one side of an order comparison.
 - `Atom { source, bindings: Vec<(FieldId, Term)> }` — absence of a field IS
-  the wildcard; zero bindings = nonemptiness gate (ir.rs:150-166).
+  the wildcard; zero bindings = nonemptiness gate (ir.rs).
 - `AggOp` = `Sum | Min | Max | Count | Pack`.
 - `FindTerm` = `Var(VarId) | Aggregate{op, over: Option<VarId>} |
-  Measure(VarId) | AggregateMeasure{op, over: VarId}` (ir.rs:248-271).
+  Measure(VarId) | AggregateMeasure{op, over: VarId}` (ir.rs).
   `over` is `None` for nullary `Count`.
 - `HeadTerm` = `Var | Aggregate(HeadOp)` — var-free head shapes
-  (ir.rs:294-332).
+  (ir.rs).
 - `CmpOp` = `Eq | Ne | Lt | Le | Gt | Ge | Allen{mask: AllenMask} | PointIn`
-  (ir.rs:359-368). `PointIn` is lowered interval-LEFT, point-RIGHT
-  (ir.rs:355-357).
-- `ConditionTree` = `Leaf(Comparison) | And(Vec) | Or(Vec)` (ir.rs:418-422);
-  `Comparison { op, lhs, rhs }` (ir.rs:394-398). OR is distributed to DNF
+  (ir.rs). `PointIn` is lowered interval-LEFT, point-RIGHT
+  (ir.rs).
+- `ConditionTree` = `Leaf(Comparison) | And(Vec) | Or(Vec)` (ir.rs);
+  `Comparison { op, lhs, rhs }` (ir.rs). OR is distributed to DNF
   rules at validation, engine-side.
-- `Rule { finds, atoms, negated, conditions }` (ir.rs:433-455). Negated
+- `Rule { finds, atoms, negated, conditions }` (ir.rs). Negated
   atoms bind nothing (safety rule).
-- `Query { head: Vec<HeadTerm>, rules: Vec<Rule> }` (ir.rs:483-491);
-  `PredicateDef` is the same pair (ir.rs:510-517);
-  `Program { predicates, output: PredId }` (ir.rs:532-538). A plain query is
-  the degenerate one-predicate program, `output = PredId(0)`
-  (ir.rs:540-556). Caps: `MAX_RULES = 16` (ir.rs:31), `MAX_PREDICATES = 16`
-  (ir.rs:42), `MAX_CONDITION_DEPTH = 64` (ir.rs:55).
+- `Interior { head, rules }` — bound-var head; ≥1, ≤ `MAX_RULES` rules.
+- `Rec { head, base, rec }` — bound-var head; both lists nonempty;
+  `base.len() + rec.len() ≤ MAX_RULES`.
+- `Query { interiors, rec: Option<Rec>, head, rules }` (ir.rs). Main
+  `rules` ≥1 at validate, ≤ `MAX_RULES`. Empty `interiors` and `rec:
+  None` is today's query plus two empty fields. Caps: `MAX_RULES = 16`
+  per rule-list (rec pooled); **no `MAX_CTES` / `MAX_PREDICATES`**;
+  `MAX_CONDITION_DEPTH = 64`.
 
-Wire mirror (what the bridge takes, 1:1 — `ts/src/native.ts:80-175`):
-`ProgramIr{predicates, output}`, `PredicateDefIr{head, rules}`,
+Wire mirror (what the bridge takes, 1:1 — `ts/src/native.ts`):
+`QueryIr{interiors, rec, head, rules}`, `InteriorIr{head, rules}`,
+`RecIr{head, base, rec}`,
 `HeadTermIr {kind:"var"} | {kind:"aggregate", op}` with `HeadOpIr` strings
 `"sum"|"min"|"max"|"count"|"pack"`,
 `RuleIr{finds, atoms, negated, conditions}`,
@@ -435,87 +441,82 @@ Wire mirror (what the bridge takes, 1:1 — `ts/src/native.ts:80-175`):
 {kind:"measure",var} | {kind:"aggregateMeasure",op,over}`,
 `AggOpIr` (kind string only),
 `AtomIr{source, bindings: [fieldId, TermIr][]}`,
-`AtomSourceIr {kind:"edb",relation} | {kind:"idb",pred}`,
+`AtomSourceIr {kind:"edb",relation} | {kind:"interior",interior}`,
 `TermIr {kind:"var"|"param"|"paramSet"|"literal"|"measure", ...}`,
 `CmpOpIr` (allen carries a literal `mask` number), `ComparisonIr{op,lhs,rhs}`,
 `ConditionTreeIr {kind:"leaf",cmp} | {kind:"and"|"or", children}`.
-Ids only — the bridge never sees names in queries (native.ts:75-79).
+Ids only — the bridge never sees names in queries (native.ts).
 
 ### 4.2 How the SDK lowers (`ts/src/query/lower.ts` — reproduce exactly)
 
-`lowerQuery` (query/lower.ts:1953-1994) is pure and stable: the same query
+`lowerQuery` is pure and stable: the same query
 value lowers to deeply-equal IR every time.
 
 - **Relation ordinals**: relation name → its declaration index in the
-  schema's relation record (query/lower.ts:1956-1958).
-- **Predicates**: recs in declaration order, `PredId` = index; the OUTPUT
-  predicate (the query's own rules) appended LAST, `output = recs.length`
-  (query/lower.ts:1959-1993).
-- **Variable numbering** (query/lower.ts:1678-1697, 1912-1946): per rule,
+  schema's relation record.
+- **Query shape**: interiors in declaration order, then optional rec,
+  then main. There is no output-last predicate slot and no
+  `output = recs.length`.
+- **Variable numbering**: per rule,
   a fresh numberer keyed on the variable OBJECT REFERENCE assigns dense ids
   by FIRST OCCURRENCE during the lowering walk. The walk order is: body
-  items in WRITTEN order — positive atoms, negated atoms, idb atoms, and
-  conditions interleaved exactly as `.match/.where/.idb` were called (each
+  items in WRITTEN order — positive atoms, negated atoms, interior atoms, and
+  conditions interleaved exactly as `.match/.where/.interior` were called (each
   lowered into its own bucket: `atoms`, `negated`, `conditions`) — then the
   find terms LAST. Within an EDB atom, bindings lower in the bindings
   record's WRITTEN property order; each binding is
   `[sealedFieldOrdinal, TermIr]` where the ordinal is the field's index in
-  the SEALED roster (closed `id` = 0; query/lower.ts:1712-1734). Within an
-  IDB atom, bindings are placed and numbered in HEAD ORDER — `FieldId(i)` =
-  head position `i`, every head column bound exactly once
-  (query/lower.ts:1759-1783).
+  the SEALED roster (closed `id` = 0). Within an
+  interior atom, bindings are placed and numbered in HEAD ORDER — `FieldId(i)` =
+  head position `i`, every head column bound exactly once.
 - **Atom ordering**: `atoms`/`negated`/`conditions` each keep written order;
-  an idb item goes to `atoms` or `negated` by its polarity
-  (query/lower.ts:1917-1937).
-- **Param registry** (query/lower.ts:1337-1426; entry shape
-  ts/src/query/scope.ts:392-398): fold every rule's param uses — recs in
-  declaration order (each rec's rules in order) FIRST, output rules LAST,
+  an interior item goes to `atoms` or `negated` by its polarity.
+- **Param registry**: fold every rule's param uses — interiors in
+  declaration order, then rec base, then rec arms, then main —
   uses within a rule in written order. First use of a name mints the dense
   `ParamId` (registry order = positional execution order); the first
   FIELD-ANCHORED use types the wire (anchor = the binding position's field
-  descriptor, or the comparison sibling's field, or `"measure"`;
-  query/lower.ts:633-654). One name keeps ONE shape (`value`/`set`/`mask`)
+  descriptor, or the comparison sibling's field, or `"measure"`).
+  One name keeps ONE shape (`value`/`set`/`mask`)
   and ONE closedness — conflicts are construction errors. A param with no
-  field-anchored use (and not a mask) fails lowering
-  (query/lower.ts:1965-1971).
-- **Membership arrays** (closed-reference literal sets;
-  query/lower.ts:453-487, 1400-1422): a plain array of ≥ 2 DISTINCT handle
+  field-anchored use (and not a mask) fails lowering.
+- **Membership arrays** (closed-reference literal sets): a plain array of ≥ 2 DISTINCT handle
   names at a closed-reference binding position lowers as a `paramSet` term
   over a synthetic content-addressed registry entry (name =
   `"∈ <Roster> <sorted-members-JSON>"`); the entry's `membership` is
   pre-resolved at BUILD to a frozen `{kind:"set", values:[{kind:"u64",...}]}`
-  program constant — the execute-time params object is never consulted for
-  it (ts/src/query/run.ts:57-63). Empty and one-element arrays are refused.
-- **Aggregate heads** (query/lower.ts:1860-1909): `sum/min/max(var)` →
+  query constant — the execute-time params object is never consulted for
+  it. Empty and one-element arrays are refused.
+- **Aggregate heads**: `sum/min/max(var)` →
   `{kind:"aggregate", op:{kind:"sum"|...}, over: varId}`;
   `sum/min/max(duration(v))` → `{kind:"aggregateMeasure", op, over: varId}`;
   `count()` → `{kind:"aggregate", op:{kind:"count"}}` (no `over`);
   `pack(v)` → `{kind:"aggregate", op:{kind:"pack"}, over}`. Head terms:
   var and measure finds → `{kind:"var"}`; aggregates →
-  `{kind:"aggregate", op: <HeadOpIr string>}` (query/lower.ts:1887-1909).
+  `{kind:"aggregate", op: <HeadOpIr string>}`.
   Every rule of a query must derive the same head signature AND the same
-  per-column closed roster and class (query/lower.ts:1441-1478).
-- **Match-literal handling** (query/lower.ts:1590-1667): a bare literal at
+  per-column closed roster and class.
+- **Match-literal handling**: a bare literal at
   an atom binding tags by the FIELD's structural kind
   (`taggedLiteral`) — bool→`{kind:"bool"}`, u64/i64→bigint-tagged,
   str→well-formed string, bytes→`{kind:"fixedBytes"}`, interval field:
   a bigint tags as the ELEMENT (point membership), an interval-shaped value
-  as the interval (`taggedAtElementDomain`, query/lower.ts:1570-1584).
+  as the interval (`taggedAtElementDomain`).
   A comparison/param literal tags by its SIBLING's anchor
-  (`taggedCmpLiteral`, query/lower.ts:1643-1667): measure sibling → u64;
+  (`taggedCmpLiteral`): measure sibling → u64;
   interval-field sibling → element domain; and — op-aware, the POINT-DOMAIN
   rule — under `pointIn` an interval-shaped literal beside a scalar u64/i64
   sibling tags as an interval of the sibling's kind.
-- **Closed-handle resolution in queries** (query/lower.ts:1548-1563): a
+- **Closed-handle resolution in queries**: a
   handle NAME at a closed-reference position is verified against the roster
   and translated to its declaration-order row id, tagged
   `{kind:"u64", value: BigInt(index)}` (`taggedHandleId` — THE single
   roster-verification point). Order comparisons and folds over closed-bound
-  terms are refused (the orderable ban, query/lower.ts:869-902).
+  terms are refused (the orderable ban).
 - **Allen masks**: 13-bit literal masks only (bit order
   ts/src/query/atom.ts, identical to the engine's palindromic order).
 - **pointIn operand sealing**: the VALUE stores interval-left, point-right
-  whatever the surface argument order (ts/src/query/atom.ts:432-435); the
+  whatever the surface argument order (ts/src/query/atom.ts); the
   lowering emits lhs = interval side, rhs = point side.
 
 ---
@@ -559,7 +560,7 @@ pub enum AnswerValue<'a> {            // prepared.rs:89-101, borrowed from Answe
 cells (fixed-width inline; String/FixedBytes as ranges into two byte heaps —
 prepared.rs:103-116), arity = find-term count, `clear()` retains capacity,
 `get` panics out-of-range. Answers are SETS — no order
-exists; hosts sort. Column order = the program's head order = the find
+exists; hosts sort. Column order = the query's head order = the find
 record's written order.
 
 Host decode mapping (the TS precedent, run.ts:107-127; C++ mirrors with its
@@ -690,10 +691,10 @@ out-of-roster id is a pointed error, never a fallback.
     (lower.ts:63-70) → `Generation::Fresh` (spec.rs:1078-1083).
 13. **Query IR discipline**: per-rule dense var ids by first occurrence over
     the written walk (body items in written order, EDB bindings in written
-    property order at sealed ordinals, IDB bindings in head order, finds
-    last); params by first-use registry order = positional bind order; plain
-    query = one-predicate program with `output` = rec count
-    (query/lower.ts:1678-1994).
+    property order at sealed ordinals, interior bindings in head order, finds
+    last); params by first-use registry order = positional bind order;
+    interiors then rec then main — no output-last predicate slot
+    (query/lower.ts).
 14. **Point/interval tagging**: field-directed at bindings, sibling-directed
     (op-aware at `pointIn`) at comparisons and params; `pointIn` lowers
     interval-left (query/lower.ts:1570-1667; atom.ts:432-435).

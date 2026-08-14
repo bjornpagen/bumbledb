@@ -10,7 +10,7 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
-import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Reach
 import Bumbledb.Exec.Plan
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh

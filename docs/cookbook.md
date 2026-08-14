@@ -1102,8 +1102,9 @@ bumbledb::schema! {
 
 Guarantee: host discipline for the loop — the finite `seen` set proves
 termination for the host run; the engine-native form beside it executes
-whole under the fixpoint driver, budget-bounded
-(`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
+under the linear reach driver, budget-bounded
+(`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
+`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
 
 Reachability, in two dialects. The host-loop idiom remains the
 depth-bounded answer: the censused hierarchies are **depth-bounded**, so
@@ -1111,9 +1112,11 @@ the loop runs depth-many rounds and each round is one ∈-set query — a
 `ParamSet` probe, microsecond-class — against the engine as it stands. The
 frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
 is a loop: the host. The engine-native form (below) is the same closure as
-one stratified program (`20-query-ir.md` § engine recursion): a named head
-declares the predicate, the bare rule is the output, and the driver runs
-the rounds inside one plan (`40-execution.md` § the fixpoint driver).
+one linear rec (`20-query-ir.md` § engine recursion): `recursive` declares
+the rec, the bare rule is the required main, and the driver runs the rounds
+inside one plan (`40-execution.md` § the linear reach driver). Primer-shaped
+`reach(x, x)` is the same family — linear rec plus a main join of the
+finished table, not a second SCC.
 
 ```rust
 bumbledb::schema! {
@@ -1155,13 +1158,13 @@ inside a finite node set. When the idiom's costs bite — **unbounded or
 large depth** (the per-round query cost stops being noise), or **closure
 composed into a larger plan** (the reachable set must join further inside
 one plan) — write the engine-native form instead: the same closure, one
-stratified program under the fixpoint driver — `?root` seeds the predicate,
-the bare rule is the output —
+linear rec under the reach driver — `?root` seeds the rec, the bare rule is
+the required main —
 
 ```rust
 let native = query!(Closure {
-    reach(c) | Node(id: c), c == ?root;
-    reach(c) | Parent(child: c, parent: m), reach(m);
+    recursive reach(c) | Node(id: c), c == ?root;
+    recursive reach(c) | Parent(child: c, parent: m), reach(m);
     (c) | reach(c);
 });
 ```
@@ -1178,28 +1181,28 @@ one intersection per hop, and that composition has no engine form.
 
 Guarantee: host discipline + runtime aggregate semantics — the host computes
 closure, then one checked `Sum` (`lean/Bumbledb/Query/Aggregates.lean:
-checkedSum_sound`); the engine-native form folds over a *finished* lower
-stratum, the one aggregation shape the strata roster admits
-(`20-query-ir.md` § engine recursion).
+checkedSum_sound`); the engine-native form folds over a *finished* rec, the
+ordinary main-over-finished-table shape (`20-query-ir.md` § engine recursion;
+`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
 
 The ledger workload's real recursion case, in the same two dialects: a
 hierarchical chart of accounts and a subtree rollup. The host composition —
 recipe 24's loop accumulates the subtree's ∈-set, then **one `Sum` query
 over the accumulated set** folds the postings. The engine aggregates, the
 host composes (aggregates never nest — recipe 18's refusal family). The
-engine-native form is one program: aggregation *through* a cycle is refused
-(`AggregationThroughCycle`), but a fold over a recursive predicate from a
-**higher stratum** reads a finished set and is ordinary —
+engine-native form is one query: aggregation *through* the rec cycle is refused
+(`AggregateInInterior` on a rec head), but a fold over a **finished** rec is
+ordinary main —
 
 ```rust
 let native = query!(Accounts {
-    sub(a) | Account(id: a), a == ?root;
-    sub(a) | AccountParent(child: a, parent: p), sub(p);
+    recursive sub(a) | Account(id: a), a == ?root;
+    recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
     (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
 });
 ```
 
-— the closure stratum converges first, then the output's fold runs once
+— the rec converges first, then the main fold runs once
 over the finished subtree (the compiled copy in `cookbook.rs` asserts both
 dialects against the hand-computed sums).
 

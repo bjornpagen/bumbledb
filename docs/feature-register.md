@@ -93,7 +93,7 @@ next-but-one rung).
   real types are available (the destructured mint, verdict 6, is what shipped
   instead).
 - **The ramp stays.** The conformance corpus
-  (`crates/bumbledb-query/tests/notation-corpus/`, 27 Rust⇄TS ProgramIr JSON
+  (`crates/bumbledb-query/tests/notation-corpus/`, 27 Rust⇄TS Query IR JSON
   cases) remains in-tree and available — feasibility was never the question,
   and the corpus is not deleted.
 - **TRIGGER**: only a direct owner reversal reopens it. No workload

@@ -610,7 +610,7 @@ at the snapshot's state — the whole read surface. -/
 def Snapshot.read {T : Theory} (snap : Snapshot T)
     (C : Query.Classify) (r : Query.Rule) (ρ : Query.ParamEnv) :
     Set Query.AnswerTuple :=
-  Query.ruleAnswers C r snap.state.inst ρ
+  Query.ruleAnswers C r (Query.edbEnv snap.state.inst) ρ
 
 /-- **Item 5.** Every read is a function of ONE state — the
 signature-level fact: `Snapshot.read` factors through `state.inst`

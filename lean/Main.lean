@@ -1,6 +1,6 @@
 import Bumbledb.Conformance
 import Bumbledb.Decide
-import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Reach
 
 /-!
 # The conformance driver (PRD 13; judgment + recursive arms) — the IO shell
@@ -30,17 +30,12 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   `verdictOf` is one pattern match on `judgeB`'s position-tagged
   payload — the compared citation list IS the proved artifact's index
   projection (2026-07-23 audit, finding 143).
-* **program cases** (`program-*.json`, the RECURSIVE arm — the
-  shipping law: the oracles landed before the evaluator,
-  `docs/architecture/60-validation.md` § the two oracles): decode the
-  program cut
-  (`Bumbledb/Query/Syntax.lean`: `Program`/`PredicateDef`/`PRule`) and
-  the recorded stratification witness, run the PROVED fueled fixpoint
-  `Query.evalProgram` (`Bumbledb/Exec/Fixpoint.lean`;
-  `program_eval_sound` is its agreement with the stratified
-  denotation), and compare answer sets against the naive-and-SQLite
-  agreed answers the Rust builder recorded — the third oracle judging
-  recursion before any engine driver exists.
+* **reach cases** (`reach-*.json`): decode a Query with interiors/rec
+  (`Bumbledb/Query/Syntax.lean`) and run `Query.evalQueryList`
+  (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is its agreement with
+  `evalQuery`), comparing answer sets against the recorded agreed
+  answers. Atoms on this arm are `edb` / `interior` (never a stored
+  `relation` key).
 
 This file is the ONE place PRD 13 allows `partial` definitions; the
 modules below happen to need none — the loops are `for`s over finite
@@ -344,22 +339,23 @@ def checkJudgmentCase (text : String) :
 
 end JudgmentCase
 
-namespace ProgramCase
+namespace ReachCase
 
 open Lean (Json)
 open Conformance
 
-/-! ## Decoding — the program interchange format into the program cut -/
+/-! ## Decoding — the reach interchange format into Query -/
 
-/-- One program atom: the source arm spelled (`edb`/`idb`), bindings as
-the query lane's `[field, term]` pairs. -/
-def decodePAtom (j : Json) : Except String Query.PAtom := do
+/-- One reach atom: the source arm spelled (`edb`/`interior`), bindings
+as the query lane's `[field, term]` pairs. Never a stored `relation`
+key on this arm. -/
+def decodeReachAtom (j : Json) : Except String Query.Atom := do
   let source : Query.AtomSource ←
     if let some r := objKey? j "edb" then
       pure (.edb ⟨← r.getNat?⟩)
-    else if let some p := objKey? j "idb" then
-      pure (.idb ⟨← p.getNat?⟩)
-    else .error "program atom expects edb or idb"
+    else if let some c := objKey? j "interior" then
+      pure (.interior ⟨← c.getNat?⟩)
+    else .error "reach atom expects edb or interior"
   let bindings ← (← (← j.getObjVal? "bindings").getArr?).toList.mapM
     fun pair => do
       match (← pair.getArr?).toList with
@@ -367,85 +363,93 @@ def decodePAtom (j : Json) : Except String Query.PAtom := do
       | _ => Except.error "binding expects [field, term]"
   return { source, bindings }
 
-/-- One program rule — the head is the plain variable-id list
-(`PRule.finds : List VarId`; the program cut is projection-shaped, so
-the corpus carries no fold heads). -/
-def decodePRule (j : Json) : Except String Query.PRule := do
+/-- One reach rule — finds are raw variable ids (`List VarId`). -/
+def decodeReachRule (j : Json) : Except String Query.Rule := do
   let finds ← (← (← j.getObjVal? "finds").getArr?).toList.mapM
     fun n => do pure (⟨← n.getNat?⟩ : Query.VarId)
-  let atoms ← (← (← j.getObjVal? "atoms").getArr?).toList.mapM decodePAtom
+  let atoms ← (← (← j.getObjVal? "atoms").getArr?).toList.mapM
+    decodeReachAtom
   let negated ←
-    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodePAtom
+    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeReachAtom
   let conditions ← (← (← j.getObjVal? "conditions").getArr?).toList.mapM
     (decodeCondition 64)
   return { finds, atoms, negated, conditions }
 
-/-- One predicate: head arity plus deriving rules. -/
-def decodePredicate (j : Json) : Except String Query.PredicateDef := do
+/-- One named interior: arity plus deriving rules. -/
+def decodeInterior (j : Json) : Except String Query.Interior := do
   return { arity := ← natKey j "arity",
            rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
-             decodePRule }
+             decodeReachRule }
 
-/-- One decoded program case: the world (open instance + ground axioms
-merged, the query lane's own rule), the program, the recorded
-stratification witness (the Rust side computes ONE witness; the
-denotation is witness-independent — the recorded narrowing in
-`Bumbledb/Exec/Fixpoint.lean`), the parameters, and the agreed
-answers. -/
-structure PCase where
-  /-- The world the program's `edb` atoms read. -/
+/-- One linear rec SCC. -/
+def decodeRec (j : Json) : Except String Query.Rec := do
+  let arity ← natKey j "arity"
+  let base ← (← (← j.getObjVal? "base").getArr?).toList.mapM
+    decodeReachRule
+  let rec ← (← (← j.getObjVal? "rec").getArr?).toList.mapM
+    decodeReachRule
+  return Query.Rec.mk arity base rec
+
+/-- `rec` may be omitted or JSON null (interiors-only). -/
+def decodeRecOpt (j : Json) : Except String (Option Query.Rec) :=
+  match objKey? j "rec" with
+  | none => pure none
+  | some .null => pure none
+  | some r => some <$> decodeRec r
+
+/-- One Query on the reach arm. -/
+def decodeReachQuery (j : Json) : Except String Query.Query := do
+  let interiors ← (← (← j.getObjVal? "interiors").getArr?).toList.mapM
+    decodeInterior
+  let rec ← decodeRecOpt j
+  let arity ← natKey j "arity"
+  let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
+    decodeReachRule
+  return Query.Query.mk interiors rec arity rules
+
+/-- One decoded reach case: the world (open instance + ground axioms
+merged), the Query, the parameters, and the agreed answers. -/
+structure RCase where
+  /-- The world the query's `edb` atoms read. -/
   world : Query.ListInstance
-  /-- The program cut. -/
-  program : Query.Program
-  /-- The recorded stratification witness, `strata[p]` = predicate
-  `p`'s stratum. -/
-  strata : List Nat
+  /-- The query (interiors, optional rec, main rules). -/
+  query : Query.Query
   /-- The positional parameter environment. -/
   env : Query.ParamEnv
-  /-- The recorded agreed answers (naive; SQLite-attested where the
-  `WITH RECURSIVE` gate admits). -/
+  /-- The recorded agreed answers. -/
   expected : List (List Value)
 
-/-- One full program-case document. -/
-def decodePCase (j : Json) : Except String PCase := do
+/-- One full reach-case document. -/
+def decodeRCase (j : Json) : Except String RCase := do
   let open_ ← (← (← j.getObjVal? "instance").getArr?).toList.mapM
     decodeRelationFacts
   let closed ← (← (← (← j.getObjVal? "theory").getObjVal?
     "ground_axioms").getArr?).toList.mapM decodeRelationFacts
-  let p := (← j.getObjVal? "program")
-  let predicates ← (← (← p.getObjVal? "predicates").getArr?).toList.mapM
-    decodePredicate
-  let output : Query.PredId := ⟨← natKey p "output"⟩
-  let strata ← (← (← p.getObjVal? "strata").getArr?).toList.mapM
-    (·.getNat?)
+  let q ← decodeReachQuery (← j.getObjVal? "query")
   let params ← (← (← j.getObjVal? "params").getArr?).toList.mapM
     decodeParam
   let expected ← (← (← j.getObjVal? "answers").getArr?).toList.mapM
     fun row => do (← row.getArr?).toList.mapM decodeValue
   return { world := ⟨open_ ++ closed⟩,
-           program := { predicates, output },
-           strata, env := paramEnv params, expected }
+           query := q, env := paramEnv params, expected }
 
-/-- One program case, end to end: decode, run the PROVED fueled
-fixpoint (`Query.evalProgram` — `program_eval_sound` names its
-agreement with the stratified denotation `programAnswers`, and
-`program_den_finite` is why the run terminates), canonicalize both
-sides, compare. `none` is agreement; `some (expected, evaluated)` is a
-disagreement (a trophy — the caller reports, never repairs). -/
-def checkProgramCase (text : String) :
+/-- One reach case, end to end: decode, run `evalQueryList`
+(`evalQuery_sound` names its agreement with `evalQuery`), canonicalize
+both sides, compare. `none` is agreement; `some (expected, evaluated)`
+is a disagreement (a trophy — the caller reports, never repairs). -/
+def checkReachCase (text : String) :
     Except String (Option (List String × List String)) := do
   let json ← Json.parse text
-  let c ← decodePCase json
-  let strat : Query.PredId → Nat := fun P => c.strata.getD P.id 0
+  let c ← decodeRCase json
   let evaluated :=
-    Query.evalProgram theClassify c.world c.env c.program strat
+    Query.evalQueryList theClassify c.world c.env c.query
   let want := canonical c.expected
   let got := canonical evaluated
   if want == got then
     return none
   return some (want, got)
 
-end ProgramCase
+end ReachCase
 end Bumbledb
 
 /-- Rows present in one canonical list and absent from the other — the
@@ -463,16 +467,16 @@ def main (args : List String) : IO UInt32 := do
     a.toString.compare b.toString == .lt
   let mut failures : Nat := 0
   let mut judgments : Nat := 0
-  let mut programs : Nat := 0
+  let mut reaches : Nat := 0
   for path in files do
     let text ← IO.FS.readFile path
-    if (path.fileName.getD "").startsWith "program-" then
-      programs := programs + 1
-      match Bumbledb.ProgramCase.checkProgramCase text with
+    if (path.fileName.getD "").startsWith "reach-" then
+      reaches := reaches + 1
+      match Bumbledb.ReachCase.checkReachCase text with
       | .ok none => pure ()
       | .ok (some (want, got)) =>
         failures := failures + 1
-        IO.eprintln s!"MISMATCH {path}: evalProgram disagrees with the recorded agreed answers"
+        IO.eprintln s!"MISMATCH {path}: evalQueryList disagrees with the recorded agreed answers"
         IO.eprintln s!"  recorded {want.length} rows, evaluated {got.length} rows"
         for row in (missingFrom got want).take 5 do
           IO.eprintln s!"  recorded but not derived: {row}"
@@ -509,7 +513,7 @@ def main (args : List String) : IO UInt32 := do
         IO.eprintln s!"ERROR {path}: {e}"
   let elapsed := (← IO.monoMsNow) - started
   IO.println
-    s!"conformance: {files.size} cases ({judgments} judgment, {programs} program), {failures} disagreements, {elapsed} ms"
+    s!"conformance: {files.size} cases ({judgments} judgment, {reaches} reach), {failures} disagreements, {elapsed} ms"
   if failures == 0 then
     return 0
   return 1

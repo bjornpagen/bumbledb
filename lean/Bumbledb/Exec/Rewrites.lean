@@ -308,8 +308,8 @@ join stage computes exactly `groundAtom` — partial evaluation moves
 the fold to prepare, it does not change it. -/
 theorem groundAtom_join_step {W : ListInstance} {ρ : ParamEnv}
     {a : Atom} {ext : GroundExtension}
-    (h : W.facts a.relation = ext.facts) (σs : List PartialAssign) :
-    joinAtoms W ρ [a] σs = σs.flatMap (groundAtom ρ a ext) := by
+    (h : factsOf W InteriorTables.empty a.source = ext.facts) (σs : List PartialAssign) :
+    joinAtoms W InteriorTables.empty ρ [a] σs = σs.flatMap (groundAtom ρ a ext) := by
   simp only [joinAtoms, h]
   rfl
 
@@ -415,7 +415,7 @@ theorem groundCondition_holds {C : Classify} {ρ : ParamEnv}
 
 /-- The refutation verdict: the rule whose closed atom's prepare-time
 σ survived nothing. Bridge: `NormalizedQuery::dead` (`folded to ∅:
-…`), deleted at prepare into `Program::Empty`. -/
+…`), deleted at prepare into `PreparedBody::Empty`. -/
 structure Grounded where
   /-- The refuted rule. -/
   rule : Rule
@@ -429,7 +429,7 @@ def groundSplit (T : Theory) :
     List Atom → Option (Atom × GroundExtension × List Atom)
   | [] => none
   | a :: rest =>
-    match T.closed a.relation, a.foldableB with
+    match match a.source with | .edb R => T.closed R | .interior _ => none, a.foldableB with
     | some ext, true => some (a, ext, rest)
     | _, _ =>
       match groundSplit T rest with
@@ -442,13 +442,13 @@ rest, membership for membership. -/
 theorem groundSplit_spec (T : Theory) :
     ∀ (atoms : List Atom) (b : Atom) (ext : GroundExtension)
       (rest : List Atom), groundSplit T atoms = some (b, ext, rest) →
-      T.closed b.relation = some ext ∧
+      (match b.source with | .edb R => T.closed R | .interior _ => none) = some ext ∧
         ∀ x, x ∈ atoms ↔ x = b ∨ x ∈ rest
   | [], _, _, _, h => by cases h
   | a :: atoms, b, ext, rest, h => by
     have recurse : ∀ l' : List Atom,
         groundSplit T atoms = some (b, ext, l') → rest = a :: l' →
-        T.closed b.relation = some ext ∧
+        (match b.source with | .edb R => T.closed R | .interior _ => none) = some ext ∧
           ∀ x, x ∈ a :: atoms ↔ x = b ∨ x ∈ rest := by
       rintro l' heq' rfl
       obtain ⟨hc, hmem⟩ := groundSplit_spec T atoms b ext l' heq'
@@ -465,7 +465,7 @@ theorem groundSplit_spec (T : Theory) :
         · rcases List.mem_cons.mp hx with rfl | hx'
           · exact List.mem_cons_self ..
           · exact List.mem_cons_of_mem _ ((hmem x).mpr (Or.inr hx'))
-    cases hc : T.closed a.relation with
+    cases hc : match a.source with | .edb R => T.closed R | .interior _ => none with
     | some ext' =>
       cases hf : a.foldableB with
       | true =>
@@ -511,12 +511,12 @@ def groundRewrite (T : Theory) (r : Rule) : Rule ⊕ Grounded :=
              conditions := groundCondition b (f :: fs) :: r.conditions }
 
 /-- The answers a ground outcome denotes: a rewritten rule's answers,
-or the empty set for a refutation (`Program::Empty` — a dead rule is
+or the empty set for a refutation (`PreparedBody::Empty` — a dead rule is
 deleted at prepare and plans nothing). -/
 def groundAnswers (C : Classify) (o : Rule ⊕ Grounded) (I : Instance)
     (ρ : ParamEnv) : Set AnswerTuple :=
   match o with
-  | .inl r => ruleAnswers C r I ρ
+  | .inl r => ruleAnswers C r (edbEnv I) ρ
   | .inr _ => fun _ => False
 
 /-- **Item 1 — `grounding_preserves_answers`.** On every instance
@@ -531,15 +531,20 @@ theorem grounding_preserves_answers {T : Theory} (C : Classify)
     (r : Rule) {I : Instance} (hax : AgreesWithAxioms T I)
     (ρ : ParamEnv) :
     ∀ t, t ∈ groundAnswers C (groundRewrite T r) I ρ ↔
-      t ∈ ruleAnswers C r I ρ := by
+      t ∈ ruleAnswers C r (edbEnv I) ρ := by
   intro t
   unfold groundRewrite
   split
   · exact Iff.rfl
   · rename_i b ext rest hsp
     obtain ⟨hclosed, hmem⟩ := groundSplit_spec T r.atoms b ext rest hsp
-    have hag : ∀ f, f ∈ I b.relation ↔ f ∈ ext.facts :=
-      hax b.relation ext hclosed
+    have hag : ∀ f, f ∈ edbEnv I b.source ↔ f ∈ ext.facts := by
+      cases hb : b.source with
+      | interior _ => simp [hb] at hclosed
+      | edb R =>
+        simp [hb] at hclosed
+        intro f
+        simpa [edbEnv, sourceDen, hb] using hax R ext hclosed f
     split
     · -- no survivor: the rule denotes nothing on any agreeing instance
       rename_i heq2
@@ -559,7 +564,7 @@ theorem grounding_preserves_answers {T : Theory} (C : Classify)
       simp only [groundAnswers]
       have hcond : ∀ σ : Assignment,
           Condition.holds C ρ σ (groundCondition b (f₀ :: fs)) ↔
-            ∃ f, f ∈ I b.relation ∧ Matches f b σ ρ := by
+            ∃ f, f ∈ edbEnv I b.source ∧ Matches f b σ ρ := by
         intro σ
         rw [← heq2, groundCondition_holds]
         constructor
@@ -588,12 +593,12 @@ theorem grounding_preserves_answers {T : Theory} (C : Classify)
         · exact hconds c hc'
 
 /-- The refutation verdict spent: a rule the grounding refuted answers
-NOTHING on any agreeing instance — the `Program::Empty` face of
+NOTHING on any agreeing instance — the `PreparedBody::Empty` face of
 item 1, and the fold-death channel's soundness. -/
 theorem ground_refuted_empty {T : Theory} {C : Classify} {r : Rule}
     {g : Grounded} (h : groundRewrite T r = .inr g) {I : Instance}
     (hax : AgreesWithAxioms T I) (ρ : ParamEnv) :
-    ∀ t, t ∉ ruleAnswers C r I ρ := by
+    ∀ t, t ∉ ruleAnswers C r (edbEnv I) ρ := by
   intro t ht
   have := (grounding_preserves_answers C r hax ρ t).mpr ht
   rw [h] at this
@@ -728,8 +733,8 @@ Bridge: `Role::Eliminated(statement)`; the elimination differential
 theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
     {r r' : Rule} {a b : Atom} {X Y : List FieldId} {φ ψ : Selection}
     (hs : ElimStep r r' a b X Y φ ψ)
-    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y) :
-    ∀ t, t ∈ ruleAnswers C r' I ρ ↔ t ∈ ruleAnswers C r I ρ := by
+    (hcont : Containment (edbEnv I a.source) φ X (edbEnv I b.source) ψ Y) :
+    ∀ t, t ∈ ruleAnswers C r' (edbEnv I) ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
   obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
   have hsub : ∀ x : Atom, x ∈ r'.atoms → x ∈ r.atoms := by
     intro x hx
@@ -843,7 +848,7 @@ theorem ruleAnswers_atoms_congr {C : Classify} {I : Instance}
     (hatoms : ∀ x : Atom, x ∈ r.atoms ↔ x ∈ s.atoms)
     (hfinds : r.finds = s.finds) (hneg : r.negated = s.negated)
     (hconds : r.conditions = s.conditions) :
-    ∀ t, t ∈ ruleAnswers C r I ρ ↔ t ∈ ruleAnswers C s I ρ := by
+    ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ ↔ t ∈ ruleAnswers C s (edbEnv I) ρ := by
   intro t
   constructor
   · intro ht
@@ -931,9 +936,9 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
     (hs₁ : ElimStep r r₁ a b X₁ Y₁ φ₁ ψ₁)
     (hs₂ : ChainedElimStep r₁ r₂ b c X₂ Y₂ φ₂ ψ₂)
     (hroot : a ∈ r₂.atoms)
-    (hcont₁ : Containment (I a.relation) φ₁ X₁ (I b.relation) ψ₁ Y₁)
-    (hcont₂ : Containment (I b.relation) φ₂ X₂ (I c.relation) ψ₂ Y₂) :
-    ∀ t, t ∈ ruleAnswers C r₂ I ρ ↔ t ∈ ruleAnswers C r I ρ := by
+    (hcont₁ : Containment (edbEnv I a.source) φ₁ X₁ (edbEnv I b.source) ψ₁ Y₁)
+    (hcont₂ : Containment (edbEnv I b.source) φ₂ X₂ (edbEnv I c.source) ψ₂ Y₂) :
+    ∀ t, t ∈ ruleAnswers C r₂ (edbEnv I) ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
   -- The replay rules are built inline from `r₂`'s own items so every
   -- shared field agrees definitionally: drop `c` first (source `b`
   -- live), then `b` (source `a`, the surviving root).
@@ -1053,8 +1058,8 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
   -- the chain: r₂ ↔ (b live) ↔ (c and b live) ↔ r
   intro t
   have hAr : t ∈ ruleAnswers C
-      ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩ I ρ ↔
-      t ∈ ruleAnswers C r I ρ := by
+      ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩ (edbEnv I) ρ ↔
+      t ∈ ruleAnswers C r (edbEnv I) ρ := by
     refine ruleAnswers_atoms_congr
       (r := ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩)
       (s := r) (fun x => ?_) hfinds₂ hneg₂ hconds₂ t
@@ -1105,7 +1110,7 @@ structure SubsumeWitness (k d : Rule) : Prop where
   /-- Every keeper occurrence pairs with a candidate occurrence of the
   same relation carrying AT LEAST the keeper's bindings. -/
   atoms_within : ∀ a : Atom, a ∈ k.atoms → ∃ a', a' ∈ d.atoms ∧
-    a'.relation = a.relation ∧ ∀ bd, bd ∈ a.bindings → bd ∈ a'.bindings
+    a'.source = a.source ∧ ∀ bd, bd ∈ a.bindings → bd ∈ a'.bindings
   /-- Every keeper negated atom present verbatim in the candidate. -/
   negated_within : ∀ a : Atom, a ∈ k.negated → a ∈ d.negated
   /-- The keeper's conditions within the candidate's. -/
@@ -1126,7 +1131,7 @@ record); `the_dnf_residue_subsumes_the_filtered_rule`
 empirical arm. -/
 theorem subsume_containment {C : Classify} {I : Instance}
     {ρ : ParamEnv} {k d : Rule} (hw : SubsumeWitness k d) :
-    ∀ t, t ∈ ruleAnswers C d I ρ → t ∈ ruleAnswers C k I ρ := by
+    ∀ t, t ∈ ruleAnswers C d (edbEnv I) ρ → t ∈ ruleAnswers C k (edbEnv I) ρ := by
   intro t ht
   obtain ⟨σ, ⟨hatoms, hneg, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
   refine mem_ruleAnswers.mpr ⟨σ, ⟨?_, ?_, ?_⟩, by rw [hw.finds_eq]⟩
@@ -1278,7 +1283,9 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
   negated : r.negated = []
   /-- The key resolves against a declared functionality statement
   (`key_probe_candidate`; fresh auto-keys included). -/
-  declared : Statement.functionality a.relation K ∈ T.statements
+  declared : (match a.source with
+      | .edb R => Statement.functionality R K
+      | .interior _ => Statement.functionality ⟨0⟩ K) ∈ T.statements
   /-- Every key field is bound by value (`value_of` finds an `Eq`
   constant for each). -/
   covered : ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pinned
@@ -1294,7 +1301,7 @@ machinery: `bindAtom` is the decode-and-check step, `condHoldsB` the
 residual filter. -/
 def keyProbeEval (C : Classify) (W : ListInstance) (ρ : ParamEnv)
     (r : Rule) (a : Atom) (K : List FieldId) : List AnswerTuple :=
-  match (W.facts a.relation).find? (probeHitB ρ a K) with
+  match (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
   | none => []
   | some f =>
     match bindAtom ρ f a.bindings [] with
@@ -1357,15 +1364,18 @@ Bridge: `PreparedRule::KeyProbe` (minted at
 theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     {W : ListInstance} {ρ : ParamEnv} {r : Rule} {a : Atom}
     {K : List FieldId} (hshape : KeyProbeShape T r a K)
-    (hkey : Functionality (W.den a.relation) K) (hsafe : Safe r)
+    (hkey : Functionality (edbEnv W.den a.source) K) (hsafe : Safe r)
     (hnm : ∀ bd, bd ∈ a.bindings → ¬ bd.2.isMeasure) :
-    ∀ t, t ∈ keyProbeEval C W ρ r a K ↔ t ∈ ruleAnswers C r W.den ρ := by
+    ∀ t, t ∈ keyProbeEval C W ρ r a K ↔ t ∈ ruleAnswers C r (edbEnv W.den) ρ := by
   intro t
+  have henv : InteriorTables.empty.toEnv = InteriorEnv.empty := by
+    funext _ _
+    simp [InteriorTables.toEnv, InteriorTables.empty, InteriorEnv.empty]
   constructor
   · -- the probe's answer derives
     intro ht
     unfold keyProbeEval at ht
-    cases hfind : (W.facts a.relation).find? (probeHitB ρ a K) with
+    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
     | none =>
       simp only [hfind] at ht
       cases ht
@@ -1390,8 +1400,11 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
           · intro x hx
             rw [hshape.atoms] at hx
             rcases List.mem_singleton.mp hx with rfl
-            exact ⟨f, List.mem_of_find?_eq_some hfind,
-              fun bd hbd => (hpins bd hbd).selects⟩
+            refine ⟨f, ?_, fun bd hbd => (hpins bd hbd).selects⟩
+            unfold edbEnv
+            rw [← henv]
+            exact (mem_factsOf W InteriorTables.empty x.source f).mp
+              (List.mem_of_find?_eq_some hfind)
           · intro n hn
             rw [hshape.negated] at hn
             cases hn
@@ -1404,18 +1417,26 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     obtain ⟨f, hfI, hm⟩ := hatoms a (by
       rw [hshape.atoms]
       exact List.mem_singleton.mpr rfl)
-    have hf : f ∈ W.facts a.relation := hfI
+    have hf : f ∈ factsOf W InteriorTables.empty a.source :=
+      (mem_factsOf W InteriorTables.empty a.source f).mpr (by
+        unfold edbEnv at hfI
+        rw [henv]
+        exact hfI)
     have hhit := probeHit_of_matches hshape.covered hm
     -- the one get finds exactly the deriving fact
-    cases hfind : (W.facts a.relation).find? (probeHitB ρ a K) with
+    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
     | none => exact absurd hhit (List.find?_eq_none.mp hfind f hf)
     | some g =>
       have hghit := List.find?_some hfind
-      have hgmem : g ∈ W.facts a.relation :=
+      have hgmem : g ∈ factsOf W InteriorTables.empty a.source :=
         List.mem_of_find?_eq_some hfind
+      have hgF : g ∈ edbEnv W.den a.source := by
+        unfold edbEnv
+        rw [← henv]
+        exact (mem_factsOf W InteriorTables.empty a.source g).mp hgmem
       have hgf : g = f :=
         functionality_unique_witness hkey (f.project K) f hfI rfl g
-          hgmem (probeHit_project hghit hhit)
+          hgF (probeHit_project hghit hhit)
       subst hgf
       -- the decode-and-check step succeeds and agrees with σ
       obtain ⟨σp, hbind, hagp, -⟩ :=
@@ -1527,11 +1548,11 @@ def StaticallyEmpty (C : Classify) (r : Rule) : Prop :=
 
 /-- **`statically_empty_sound`.** A refuted rule contributes the empty
 answer set on EVERY instance — the verdict never consulted one.
-Bridge: `Program::Empty` and the fold-death records (`NormalizedQuery::
+Bridge: `PreparedBody::Empty` and the fold-death records (`NormalizedQuery::
 dead`, deleted at prepare). -/
 theorem statically_empty_sound {C : Classify} {r : Rule}
     (h : StaticallyEmpty C r) :
-    ∀ (I : Instance) (ρ : ParamEnv) t, t ∉ ruleAnswers C r I ρ := by
+    ∀ (I : Instance) (ρ : ParamEnv) t, t ∉ ruleAnswers C r (edbEnv I) ρ := by
   intro I ρ t ht
   obtain ⟨σ, ⟨-, -, hconds⟩, -⟩ := mem_ruleAnswers.mp ht
   obtain ⟨c, hc, href⟩ := h
@@ -1548,7 +1569,7 @@ fact of this snapshot carries the value) — per-execution, never a plan
 verdict; a later instance may answer
 (`Countermodels.latch_miss_not_static`). `refuted` is the fold's
 instance-independent refutation — the plan itself is
-`Program::Empty`. -/
+`PreparedBody::Empty`. -/
 inductive EmptyAt (C : Classify) (ρ : ParamEnv) (r : Rule)
     (I : Instance) : Prop where
   /-- The per-instance selection miss: one positive atom matches no
@@ -1556,7 +1577,7 @@ inductive EmptyAt (C : Classify) (ρ : ParamEnv) (r : Rule)
   short-circuit, sound on positive occurrences only (a negated miss
   just rejects nothing). -/
   | selectionMiss (a : Atom) (ha : a ∈ r.atoms)
-      (hmiss : ∀ f, f ∈ I a.relation → ∀ σ, ¬ Matches f a σ ρ)
+      (hmiss : ∀ f, f ∈ edbEnv I a.source → ∀ σ, ¬ Matches f a σ ρ)
   /-- The instance-independent refutation: the fold's verdict, which
   never read `I`. -/
   | refuted (h : StaticallyEmpty C r)
@@ -1566,7 +1587,7 @@ face; only `refuted` transfers to every instance (the theorem after,
 and the countermodel that the miss does not). -/
 theorem emptyAt_no_answers {C : Classify} {ρ : ParamEnv} {r : Rule}
     {I : Instance} (h : EmptyAt C ρ r I) :
-    ∀ t, t ∉ ruleAnswers C r I ρ := by
+    ∀ t, t ∉ ruleAnswers C r (edbEnv I) ρ := by
   intro t ht
   cases h with
   | selectionMiss a ha hmiss =>
@@ -2270,7 +2291,7 @@ theorem filter_fold_transport {dom : FieldId → Elem} {π : Type}
 
 The prepare pipeline's licence to chain: grounding steps,
 eliminations, subsumption deletions and kills, in any order, any
-number — each preserves `queryAnswers` on instances that hold the
+number — each preserves `rulesAnswers` on instances that hold the
 theory and agree with its ground axioms, so any sequence does. The
 theorem falls out of items 1, 2, 2b and 4 by rewriting, which is the
 shape check on their statements. -/
@@ -2288,44 +2309,43 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   (`Role::Folded`, the membership attachment). -/
   | ground {n : Nat} {pre post : List Rule} {r r' : Rule}
       (h : groundRewrite T r = .inl r') :
-      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ r' :: post⟩
+      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
   /-- The grounding refutation: the dead rule deleted at prepare
   (`folded to ∅`). -/
   | groundDead {n : Nat} {pre post : List Rule} {r : Rule}
       {g : Grounded} (h : groundRewrite T r = .inr g) :
-      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ post⟩
+      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
   /-- The containment elimination (`Role::Eliminated(statement)`). -/
   | eliminate {n : Nat} {pre post : List Rule} {r r' : Rule}
-      {a b : Atom} {X Y : List FieldId} {φ ψ : Selection}
+      {a b : Atom} {Ra Rb : RelId} {X Y : List FieldId} {φ ψ : Selection}
+      (ha : a.source = .edb Ra) (hb : b.source = .edb Rb)
       (hs : ElimStep r r' a b X Y φ ψ)
-      (hdecl : Statement.containment ⟨a.relation, X, φ⟩
-        ⟨b.relation, Y, ψ⟩ ∈ T.statements)
-      (hsrc : T.header.intervalSplit a.relation X = none)
-      (htgt : T.header.intervalSplit b.relation Y = none) :
-      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ r' :: post⟩
+      (hdecl : Statement.containment ⟨Ra, X, φ⟩ ⟨Rb, Y, ψ⟩ ∈ T.statements)
+      (hsrc : T.header.intervalSplit Ra X = none)
+      (htgt : T.header.intervalSplit Rb Y = none) :
+      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
   /-- The chained containment elimination — the discharged-source arm
   (`chain_reaches`, the support forest): the support pair and the
   elimination it licenses land as ONE composed step, the
   acyclic-support premise (`hroot`) named. -/
   | eliminateChained {n : Nat} {pre post : List Rule} {r r₁ r₂ : Rule}
-      {a b c : Atom} {X₁ Y₁ X₂ Y₂ : List FieldId}
+      {a b c : Atom} {Ra Rb Rc : RelId} {X₁ Y₁ X₂ Y₂ : List FieldId}
       {φ₁ ψ₁ φ₂ ψ₂ : Selection}
+      (ha : a.source = .edb Ra) (hb : b.source = .edb Rb) (hc : c.source = .edb Rc)
       (hs₁ : ElimStep r r₁ a b X₁ Y₁ φ₁ ψ₁)
       (hs₂ : ChainedElimStep r₁ r₂ b c X₂ Y₂ φ₂ ψ₂)
       (hroot : a ∈ r₂.atoms)
-      (hdecl₁ : Statement.containment ⟨a.relation, X₁, φ₁⟩
-        ⟨b.relation, Y₁, ψ₁⟩ ∈ T.statements)
-      (hdecl₂ : Statement.containment ⟨b.relation, X₂, φ₂⟩
-        ⟨c.relation, Y₂, ψ₂⟩ ∈ T.statements)
-      (hsrc₁ : T.header.intervalSplit a.relation X₁ = none)
-      (htgt₁ : T.header.intervalSplit b.relation Y₁ = none)
-      (hsrc₂ : T.header.intervalSplit b.relation X₂ = none)
-      (htgt₂ : T.header.intervalSplit c.relation Y₂ = none) :
-      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ r₂ :: post⟩
+      (hdecl₁ : Statement.containment ⟨Ra, X₁, φ₁⟩ ⟨Rb, Y₁, ψ₁⟩ ∈ T.statements)
+      (hdecl₂ : Statement.containment ⟨Rb, X₂, φ₂⟩ ⟨Rc, Y₂, ψ₂⟩ ∈ T.statements)
+      (hsrc₁ : T.header.intervalSplit Ra X₁ = none)
+      (htgt₁ : T.header.intervalSplit Rb Y₁ = none)
+      (hsrc₂ : T.header.intervalSplit Rb X₂ = none)
+      (htgt₂ : T.header.intervalSplit Rc Y₂ = none) :
+      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r₂ :: post))
   /-- The statically-empty kill (`NormalizedQuery::dead`). -/
   | kill {n : Nat} {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
-      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ post⟩
+      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
   `api/prepared/build.rs::ground_program`): a rule the witness proves
   covered by a KEPT sibling is deleted from the program — the sixth
@@ -2336,96 +2356,96 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   theory premise: the containment holds on EVERY instance. -/
   | subsume {n : Nat} {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
-      RewriteStep T C ⟨n, pre ++ d :: post⟩ ⟨n, pre ++ post⟩
+      RewriteStep T C (Query.plain n (pre ++ d :: post)) (Query.plain n (pre ++ post))
 
 /-- Replacing one rule by an answer-equal rule preserves the query's
 answers — the union reads members only. -/
-theorem queryAnswers_congr_at {C : Classify} {I : Instance}
-    {ρ : ParamEnv} {n : Nat} {pre post : List Rule} {r r' : Rule}
-    (h : ∀ t, t ∈ ruleAnswers C r I ρ ↔ t ∈ ruleAnswers C r' I ρ) :
-    ∀ t, t ∈ queryAnswers C ⟨n, pre ++ r :: post⟩ I ρ ↔
-      t ∈ queryAnswers C ⟨n, pre ++ r' :: post⟩ I ρ := by
+theorem rulesAnswers_congr_at {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {pre post : List Rule} {r r' : Rule}
+    (h : ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ ↔ t ∈ ruleAnswers C r' (edbEnv I) ρ) :
+    ∀ t, t ∈ rulesAnswers C (pre ++ r :: post) (edbEnv I) ρ ↔
+      t ∈ rulesAnswers C (pre ++ r' :: post) (edbEnv I) ρ := by
   intro t
   constructor
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
     · rcases List.mem_cons.mp hx' with rfl | hx''
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr
           ⟨r', List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
             (h t).mp hta⟩
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr
           ⟨x, List.mem_append.mpr
             (Or.inr (List.mem_cons_of_mem _ hx'')), hta⟩
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
     · rcases List.mem_cons.mp hx' with rfl | hx''
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr
           ⟨r, List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
             (h t).mpr hta⟩
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr
           ⟨x, List.mem_append.mpr
             (Or.inr (List.mem_cons_of_mem _ hx'')), hta⟩
 
 /-- Deleting an answerless rule preserves the query's answers — the
 union loses nothing it never had. -/
-theorem queryAnswers_drop_at {C : Classify} {I : Instance}
-    {ρ : ParamEnv} {n : Nat} {pre post : List Rule} {r : Rule}
-    (h : ∀ t, t ∉ ruleAnswers C r I ρ) :
-    ∀ t, t ∈ queryAnswers C ⟨n, pre ++ r :: post⟩ I ρ ↔
-      t ∈ queryAnswers C ⟨n, pre ++ post⟩ I ρ := by
+theorem rulesAnswers_drop_at {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {pre post : List Rule} {r : Rule}
+    (h : ∀ t, t ∉ ruleAnswers C r (edbEnv I) ρ) :
+    ∀ t, t ∈ rulesAnswers C (pre ++ r :: post) (edbEnv I) ρ ↔
+      t ∈ rulesAnswers C (pre ++ post) (edbEnv I) ρ := by
   intro t
   constructor
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
     · rcases List.mem_cons.mp hx' with rfl | hx''
       · exact absurd hta (h t)
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr
           ⟨x, List.mem_append.mpr (Or.inr hx''), hta⟩
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hx')),
           hta⟩
 
 /-- Deleting a rule whose answers a KEPT rule covers preserves the
-query's answers — `queryAnswers_drop_at`'s covered sibling: the union
+query's answers — `rulesAnswers_drop_at`'s covered sibling: the union
 loses nothing a survivor still supplies. The subsumption deletion's
 program-level face. -/
-theorem queryAnswers_drop_covered {C : Classify} {I : Instance}
-    {ρ : ParamEnv} {n : Nat} {pre post : List Rule} {d k : Rule}
+theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {pre post : List Rule} {d k : Rule}
     (hk : k ∈ pre ++ post)
-    (hcov : ∀ t, t ∈ ruleAnswers C d I ρ → t ∈ ruleAnswers C k I ρ) :
-    ∀ t, t ∈ queryAnswers C ⟨n, pre ++ d :: post⟩ I ρ ↔
-      t ∈ queryAnswers C ⟨n, pre ++ post⟩ I ρ := by
+    (hcov : ∀ t, t ∈ ruleAnswers C d (edbEnv I) ρ → t ∈ ruleAnswers C k (edbEnv I) ρ) :
+    ∀ t, t ∈ rulesAnswers C (pre ++ d :: post) (edbEnv I) ρ ↔
+      t ∈ rulesAnswers C (pre ++ post) (edbEnv I) ρ := by
   intro t
   constructor
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
     · rcases List.mem_cons.mp hx' with rfl | hx''
-      · exact mem_queryAnswers.mpr ⟨k, hk, hcov t hta⟩
-      · exact mem_queryAnswers.mpr
+      · exact mem_rulesAnswers.mpr ⟨k, hk, hcov t hta⟩
+      · exact mem_rulesAnswers.mpr
           ⟨x, List.mem_append.mpr (Or.inr hx''), hta⟩
   · intro ht
-    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    obtain ⟨x, hx, hta⟩ := mem_rulesAnswers.mp ht
     rcases List.mem_append.mp hx with hx' | hx'
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
-    · exact mem_queryAnswers.mpr
+    · exact mem_rulesAnswers.mpr
         ⟨x, List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hx')),
           hta⟩
 
@@ -2436,37 +2456,49 @@ premise: its containment is instance-blind). -/
 theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     (hstep : RewriteStep T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ queryAnswers C q I ρ ↔ t ∈ queryAnswers C q' I ρ := by
+    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
   cases hstep with
   | ground h =>
     rename_i r _
-    refine queryAnswers_congr_at fun t => ?_
+    refine rulesAnswers_congr_at fun t => ?_
     have := grounding_preserves_answers C r hax ρ t
     rw [h] at this
     exact this.symm
   | groundDead h =>
-    exact queryAnswers_drop_at fun t => ground_refuted_empty h hax ρ t
-  | eliminate hs hdecl hsrc htgt =>
-    refine queryAnswers_congr_at fun t => ?_
+    exact rulesAnswers_drop_at fun t => ground_refuted_empty h hax ρ t
+  | @eliminate n pre post r r' a b Ra Rb X Y φ ψ ha hb hs hdecl hsrc htgt =>
+    refine rulesAnswers_congr_at fun t => ?_
     have hj := hI _ hdecl
     simp only [Statement.judgment, hsrc, htgt] at hj
+    have hA : ∀ f, f ∈ T.den I Ra ↔ f ∈ edbEnv I a.source := by
+      intro f; rw [ha]; simp [edbEnv, sourceDen]; exact den_agrees hax Ra f
+    have hB : ∀ f, f ∈ T.den I Rb ↔ f ∈ edbEnv I b.source := by
+      intro f; rw [hb]; simp [edbEnv, sourceDen]; exact den_agrees hax Rb f
     exact (elimination_sound hs
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj.2)
-      t).symm
-  | eliminateChained hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
-    refine queryAnswers_congr_at fun t => ?_
+      (containment_transfer hA hB hj.2) t).symm
+  | @eliminateChained n pre post r r₁ r₂ a b c Ra Rb Rc X₁ Y₁ X₂ Y₂ φ₁ ψ₁ φ₂ ψ₂
+      ha hb hc hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
+    refine rulesAnswers_congr_at fun t => ?_
     have hj₁ := hI _ hdecl₁
     have hj₂ := hI _ hdecl₂
     simp only [Statement.judgment, hsrc₁, htgt₁] at hj₁
     simp only [Statement.judgment, hsrc₂, htgt₂] at hj₂
+    have hA : ∀ f, f ∈ T.den I Ra ↔ f ∈ edbEnv I a.source := by
+      intro f; rw [ha]; simp [edbEnv, sourceDen]; exact den_agrees hax Ra f
+    have hB₁ : ∀ f, f ∈ T.den I Rb ↔ f ∈ edbEnv I b.source := by
+      intro f; rw [hb]; simp [edbEnv, sourceDen]; exact den_agrees hax Rb f
+    have hB₂ : ∀ f, f ∈ T.den I Rb ↔ f ∈ edbEnv I b.source := by
+      intro f; rw [hb]; simp [edbEnv, sourceDen]; exact den_agrees hax Rb f
+    have hC : ∀ f, f ∈ T.den I Rc ↔ f ∈ edbEnv I c.source := by
+      intro f; rw [hc]; simp [edbEnv, sourceDen]; exact den_agrees hax Rc f
     exact (chained_elimination_sound hs₁ hs₂ hroot
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₁.2)
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₂.2)
+      (containment_transfer hA hB₁ hj₁.2)
+      (containment_transfer hB₂ hC hj₂.2)
       t).symm
   | kill h =>
-    exact queryAnswers_drop_at fun t => statically_empty_sound h I ρ t
+    exact rulesAnswers_drop_at fun t => statically_empty_sound h I ρ t
   | subsume hw hk =>
-    exact queryAnswers_drop_covered hk (subsume_containment hw)
+    exact rulesAnswers_drop_covered hk (subsume_containment hw)
 
 /-- A rewrite sequence: any chain of the rewrites (grounding, kill,
 elimination — the chained composed step included — and the
@@ -2478,7 +2510,7 @@ inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
 
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
 elimination (chained-source pairs included), subsumption deletion and
-kill steps preserves `queryAnswers` on every instance holding the
+kill steps preserves `rulesAnswers` on every instance holding the
 theory and agreeing with its ground axioms — the prepare pipeline's
 licence to chain, all six rewrites in the chain (the subsumption
 deletion's admission is 2026-07-15's discharge — the module doc's
@@ -2487,7 +2519,7 @@ chain, one rewrite per step. -/
 theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
     (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ queryAnswers C q I ρ ↔ t ∈ queryAnswers C q' I ρ := by
+    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
   induction h with
   | refl q => exact fun t => Iff.rfl
   | step hstep _ ih =>

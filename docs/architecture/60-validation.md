@@ -87,32 +87,33 @@ each checked in only after the engine and the naive model agreed on the
 verdict; `lake exe conformance` dispatches `judgment-*.json` to `Txn.judgeB`
 and compares whole (format in `lean/conformance/README.md` § judgment cases).
 
-**All three oracles run recursion — and so does the engine.** The shipping
-law (recorded in `20-query-ir.md` § engine recursion) demanded the oracles
-land before the evaluator, so the differential existed on day one of driver
-work; the oracles did land first, the per-stratum fixpoint driver followed
-(`40-execution.md` § the fixpoint driver), and the R1 execution fence is
-gone — a sealed `ValidatedProgram` executes whole. The naive model evaluates programs by the **naive
-stratified fixpoint** (`NaiveDb::program` — per stratum in condensation order,
-every rule against the current predicate sets, union, stop on no change;
-deliberately naive, never semi-naive: staying on the plain chain loses nothing,
-`lean/Bumbledb/Exec/Fixpoint.lean: semi_naive_agrees`, and keeps the trust root
-definitional). The SQLite lane translates **linear self-recursive
-projection-shaped** predicates to `WITH RECURSIVE` under `UNION`
-(`translate::translate_program`, hand-written goldens beside the query forms);
-non-linear rules, mutual recursion, and program folds join the enumerated
-`Inexpressible` set — counted, reported, never silent (the ψ-subset
-division-of-labor precedent). The Lean lane judges the checked-in
-`program-*.json` cases with the **proved fueled fixpoint**
-(`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`, sound and complete against
-the stratified denotation by `lean/Bumbledb/Exec/Fixpoint.lean:
-program_eval_sound`), each case written only after the naive fixpoint — and
-SQLite, where expressible — agreed; the hand-verified closure goldens (a fixed
-tree, a fixed cyclic graph, the empty store) hold every program-capable oracle
-to the same answers — the naive fixpoint, the SQLite lane, and the ENGINE's
-per-stratum fixpoint driver (`40-execution.md` § the fixpoint driver;
-`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound` is the semantics both
-the Lean lane and the driver compute), three-way.
+**All three oracles run recursion — and so does the engine.** The naive
+model evaluates a Query by materializing interior tables in declaration
+order, iterating `T(acc) = base ∪ rec(acc)` to least fixpoint when `rec`
+is present (no budget in the model; empty base ⇒ empty lfp is this
+iteration), then evaluating main (`NaiveDb::query`). Staying on the
+plain chain loses nothing (`lean/Bumbledb/Exec/Reach.lean:
+semi_naive_agrees`) and keeps the trust root definitional. The SQLite
+lane is a **lossy translator of this cut**: it emits SQL
+`WITH [RECURSIVE]` then the whole cte-list because that is what SQLite
+speaks (`translate::translate_query`, hand-written goldens beside the
+query forms). That SQL is not a grammar for the language and not a field
+in the IR. Mutual-linear and nonlinear shapes are unwritable this cut,
+so their former inexpressible-set rows are unreachable, not a denotation
+reason; interval-typed derived columns remain a translator limit. The
+Lean lane judges the checked-in `reach-*.json` cases with
+`evalQueryList` (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`, sound
+against `evalQuery` by `lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`);
+the CQuery arm (`seeded-*.json`) is unchanged. Each reach case is
+written only after the naive lfp — and SQLite, where the translator can
+speak the shape — agreed; the hand-verified closure goldens (a fixed
+tree, a fixed cyclic graph, the empty store) hold every reach-capable
+oracle to the same answers — the naive lfp, the SQLite lane, and the
+ENGINE's linear reach driver (`40-execution.md` § the linear reach
+driver; `lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp` is the
+rec agreement, `evalQuery_sound` the query agreement), three-way. A
+budget abort is engine-only incompleteness versus `evalQuery` — not a
+three-way case.
 
 **The store sweeper is the third leg: the oracles judge semantics; the sweeper
 judges the store.** `Db::verify_store` takes one read snapshot and sweeps
@@ -815,23 +816,27 @@ no per-family sentence, nothing.
   family plus a seeded randomized slice runs against a zero-fact store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
 - **The recursive-shape arm** (`querygen/shapes_recursive.rs`, its own
-  coverage-contract test): seeded random programs over the org tree — closure
+  coverage-contract test): seeded random Queries over the org tree — closure
   sizes bounded **by construction** (the corpus org relation is a binary tree,
-  so every fixpoint sits inside `orgs × log₂ orgs`; the cost-bound rule's
-  sibling), predicate counts bounded at 2–3, recursive atoms per rule at 1–2.
-  Rows asserted per run: linear self-recursion; a mutual pair; a non-linear
-  rule; negation of a lower stratum; a fold over a recursive predicate from a
-  higher stratum; and the empty-Δ-at-round-1 boundary (constructed —
-  the reachable set below a node whose children are leaves — and verified
-  dynamically: the base rules alone denote the fixpoint). Every program
-  passes the engine's whole program roster, prepares through
-  `Db::prepare`, and EXECUTES under the fixpoint driver — engine
-  answers set-equal to the naive fixpoint on every program, and every
-  expressible one through SQLite too. **The budget-trip row is active and
+  so every lfp sits inside `orgs × log₂ orgs`; the cost-bound rule's
+  sibling). Rows asserted per run: linear self-recursion (one `Rec`, identity
+  or anti-join main); interiors-heavy DAG chains (interior reading interior,
+  anti-joins of earlier interiors, many interiors, a preamble ledger-trip);
+  main-negation of finished rec; a fold over finished rec from main; the
+  empty-Δ-at-round-1 boundary (constructed — the reachable set below a node
+  whose children are leaves — and verified dynamically: the base rules alone
+  denote the lfp); and primer-shaped `reach(x,x)`. Mutual and nonlinear
+  variants are unwritable this cut — not coverage rows. Every Query
+  passes the engine's roster, prepares through
+  `Db::prepare`, and EXECUTES — interiors-only never enters `ReachDriver`;
+  rec queries run under the linear reach driver — engine
+  answers set-equal to the naive lfp on every Query, and every
+  translator-expressible one through SQLite too. **The budget-trip row is active and
   constructed, never hoped for** (`RecursiveCoverage::budget_trip`): a drawn
-  closure under a zero-round budget raises the typed
-  `Error::FixpointBudgetExceeded`, and the widened budget then executes clean
-  — the snapshot stays usable.
+  closure under a tight budget raises the typed
+  `Error::DerivedBudgetExceeded`, and the widened budget then executes clean
+  — the snapshot stays usable. A tight rounds budget alone does not trip an
+  interiors-only query (`rounds: 0` on a tuple-budget trip).
 - **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
   one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
   stream above) and `Rng::Bytes` (the byte-string arm: draws consume a

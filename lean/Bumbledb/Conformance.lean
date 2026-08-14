@@ -387,7 +387,7 @@ def decodeAtom (j : Json) : Except String Query.Atom := do
       match (← pair.getArr?).toList with
       | [f, t] => return ((⟨← f.getNat?⟩ : FieldId), ← decodeTerm t)
       | _ => .error "binding expects [field, term]"
-  return { relation := ⟨relation⟩, bindings }
+  return { source := .edb ⟨relation⟩, bindings }
 
 /-- One head position. -/
 def decodeFind (j : Json) : Except String CFind := do
@@ -535,7 +535,10 @@ def scalarAnchored (h : Header) (r : Query.Rule) (v : Query.VarId) :
   r.atoms.any fun a =>
     a.bindings.any fun b =>
       match b.2 with
-      | .var u => decide (u = v) && !h.isInterval a.relation b.1
+      | .var u => decide (u = v) &&
+          !(match a.source with
+            | .edb R => h.isInterval R b.1
+            | .interior _ => false)
       | _ => false
 
 /-- The typing witness `SurfaceMatches` / AntiProbe consult: field
@@ -556,9 +559,9 @@ with `evalList`'s `matchesB` anti-join. -/
 def ruleStates (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (r : Query.Rule) : List Query.PartialAssign :=
   let Γ := typingOf h ρ r
-  (Query.joinAtoms W ρ r.atoms [[]]).filter fun σp =>
+  (Query.joinAtoms W Query.InteriorTables.empty ρ r.atoms [[]]).filter fun σp =>
     (r.negated.all fun a =>
-      (W.facts a.relation).all fun f =>
+      (Query.factsOf W Query.InteriorTables.empty a.source).all fun f =>
         ! Query.surfaceMatchesB Γ ρ (Query.totalize σp) a f) &&
     (r.conditions.all fun t =>
       Query.condHoldsB theClassify ρ (Query.totalize σp) t)
@@ -922,9 +925,9 @@ def CFind.isAgg : CFind → Bool
 path: every head position a variable, the head restored into each
 rule's `finds`. -/
 def plainQuery (q : CQuery) : Query.Query :=
-  { arity := (q.rules.head?.map (·.finds.length)).getD 0,
-    rules := q.rules.map fun r =>
-      { r.body with finds := r.finds.filterMap CFind.plainVar? } }
+  Query.Query.plain ((q.rules.head?.map (·.finds.length)).getD 0)
+    (q.rules.map fun r =>
+      { r.body with finds := r.finds.filterMap CFind.plainVar? })
 
 /-- The plain-projection evaluator: join + surface anti-join + head
 projection — `evalList`'s pipeline with AntiProbe on negated atoms. -/

@@ -42,18 +42,22 @@ errors, which foreign callers need anyway. Sugar *producing* the IR is downstrea
 package territory, in any language, permanently. (Host newtypes still give
 compile-time nominal safety at the app layer — see `10-data-model.md`.)
 
-## The query shape: one head, a set of rules
+## The query shape: interiors, optional rec, main
 
-A query is a **program**: one head and a non-empty list of conjunctive
-**rules** — which is precisely a **non-recursive Datalog program**. The head
-owns the find shape (arity, aggregate ops, and the output typing — the
-predicate below, sealed at validation); each rule is a conjunct
-(positive atoms, negated atoms, conditions) whose find terms align against
-the head position by position. The single-rule query is the degenerate case
-and embeds the conjunctive query unchanged (`Query::single`); every
-pre-rules query is a one-rule program.
+A `Query` is three parts, in evaluation order
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery`): named interiors — a DAG of
+conjunctive rule-lists, each a finite CQ evaluated **once**; at most one
+linear `Rec`; and the **main** query — one head and a non-empty list of
+conjunctive rules. The head owns the find shape (arity, aggregate ops, and
+the output typing — the predicate below, sealed at validation); each rule
+is a conjunct (positive atoms, negated atoms, conditions) whose find terms
+align against the head position by position. The single-rule query is the
+degenerate case and embeds the conjunctive query unchanged
+(`Query::single`); a query with empty `interiors` and no rec is today's
+query plus two empty fields
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`).
 
-- **A query defines one anonymous predicate; rules derive it.** The head is
+- **Main defines one anonymous predicate; rules derive it.** The head is
   its definition, and its typed **signature** is the answer-type tuple: one
   column per head position, each carrying the type that lands in the buffer
   (`Count` is U64 whatever it counted; the measure is
@@ -63,120 +67,100 @@ pre-rules query is a one-rule program.
   witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
   typing, finalize's column writers, and plan introspection's header all read that
   one object — no second derivation of the answer exists anywhere.
-  The fence: the predicate is anonymous and engine-internal, **referenced
-  only by `PredId`, from inside the same `Program`** (names live in the
-  host, exactly like relations pre-`as`; no stored, named, or
-  cross-program reference exists). That one reference form is the
-  recursion cut's `Idb` atom (§ engine recursion), typed against the
-  sealed columns — the ledger's rewrite of the old *referenced by
-  nothing* sentence, gone through the ledger, not around it.
+  The predicate is anonymous and engine-internal (names live in the
+  host, exactly like relations pre-`as`). Derived tables — interiors and
+  the rec — are referenced by `InteriorId` from `AtomSource::Interior`
+  (§ engine recursion), typed against their sealed columns. `RelId` /
+  `RelationId` never puns with `InteriorId`. Statements still quantify
+  over stored relations only (`30-dependencies.md`).
 
-- **A query's answers are the set union of its rules' answers**
-  (`lean/Bumbledb/Query/Denotation.lean: mem_queryAnswers`). Under set
+- **A rule-list's answers are the set union of its rules' answers**
+  (`lean/Bumbledb/Query/Denotation.lean: mem_rulesAnswers`). Under set
   semantics there is exactly one union — no bag distinction exists
-  or is representable (there is no UNION ALL to refuse).
+  or is representable (there is no UNION ALL to refuse). There is **one
+  sink per rule-list**: one sink per `Interior`, one sink for the `Rec`,
+  one sink for the main query — not one sink for the whole `Query`. No
+  merge node concatenates derived tables into the answer; later clauses
+  read a finished derived table as an atom.
 - **Variables are strictly rule-scoped**: the same `VarId` in two rules
   names two unrelated variables (they may resolve to different types). A
   rule is its own typing scope and its own plan.
-- **Params are query-global**: one binding surface; any rule may reference
-  any param, and every rule's anchors must resolve one type per param.
-- A query's rules are **one step short of the fixpoint**: within a
-  `Query`, a rule's head is never a body atom. The `Program` (next
-  section) takes exactly that step — a body atom may name a predicate by
-  `PredId` — and the query stays the degenerate carrier: one predicate,
-  no `Idb` atom, field for field
-  (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
+- **Params are query-global**: one binding surface across every interior
+  rule, every rec arm, and the main query; any rule may reference any
+  param, and every rule's anchors must resolve one type per param.
 
-## Engine recursion — the cut, executing end to end
+## Engine recursion — interiors, one linear rec, main
 
-A query is a non-recursive Datalog program one step short of the
-fixpoint, and the **`Program` shape takes that step and nothing else**:
-`Program { predicates, output }` with each `PredicateDef` today's query
-verbatim, and `Atom.source: AtomSource = Edb(RelationId) | Idb(PredId)`
-— a head becomes usable as a body atom by naming its `PredId`
-(`crates/bumbledb/src/ir.rs`): the cut, the strata judge, the three
-oracles (`60-validation.md` § the two oracles), the delta-variant
-plans, the transient images, the per-stratum fixpoint driver
-(`40-execution.md` § the fixpoint driver), the counted round surface
-(`40-execution.md` § observability), and the named-head notation
-(§ the query notation) — the whole surface. The degenerate form
-is today's `Query` — a one-predicate, no-`Idb` program, field for field
-— and the embedding is a theorem, not a convention
-(`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`;
-`From<Query> for Program` is the Rust form, `Query::single` its
-precedent one level down). An `Idb` atom's bindings address **head
-positions**: `FieldId(i)` is the target predicate's column `i`, typed by
-its sealed signature column — positional, never nominal, and the
-membership typing rule reads through it unchanged (an interval-typed
-predicate column participates in point membership exactly as an interval
-field does).
+`Query { interiors, rec, head, rules }` is the IR
+(`crates/bumbledb/src/ir.rs`). Named interiors are a DAG in declaration
+order, each a finite CQ evaluated once. `rec` is at most one linear SCC
+— `Rec { head, base, rec }` — whose denotation is `reachDen = lfpS`
+(`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is today's query: one
+head, ≥1 rule, folds, measures, negation. `evalQuery` is main
+`rulesAnswers` over the finished environment. `Db::prepare` takes
+`&Query` only. A query with empty `interiors` and no rec is today's
+query plus two empty fields
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`) — not an embedding
+into another type. An `AtomSource::Interior` atom's bindings address
+**head positions**: `FieldId(i)` is the target derived table's column
+`i`, typed by its sealed signature column — positional, never nominal,
+and the membership typing rule reads through it unchanged (an
+interval-typed derived column participates in point membership exactly
+as an interval field does). Interior `i` has `InteriorId(i)`; the rec,
+if present, has `InteriorId(interiors.len() as u32)` after the overflow
+check. There is no `MAX_CTES` / `MAX_INTERIORS` / `TooManyCtes`.
 
-**Validation quantifies over predicates** (`ir/validate::validate_program`;
-an `Idb`-carrying `Query` routes through it as the degenerate embedding
-read backwards). One sealed `Predicate` derives per `PredicateDef` — the
-same one derivation, run per predicate by a signature fixpoint (a
-predicate seals from its first rule whose `Idb` targets are sealed;
-`p(x) | p(x)` alone never seals and is the typed
-`UnresolvedPredicateSignature`) — and the per-rule alignment rule
-restates unchanged: every rule derives its predicate. Params are
-program-global: one binding surface, unified across predicates. The
-roster grows the screen and the strata judge, each refusal typed:
+**Validation is one roster on `Query`.** Each interior seals in
+declaration order; rec seals from base then rec arms; main last. Params
+are query-global. The rec roster (`lean/Bumbledb/Query/Syntax.lean:
+Query.recLinear`) is the judge, not a Tarjan condensation:
 
-- **The well-formedness screen** — every `Idb` source names a real
-  predicate and addresses within its arity
-  (`lean/Bumbledb/Query/Syntax.lean: Program.WellFormed`, spent by
-  `lean/Bumbledb/Exec/Fixpoint.lean: wellFormed_reads_real`): without
-  it a negated phantom read would be vacuously satisfied, and the
-  stratification witness alone never refuses the shape.
-- **The strata judge** (`ir/validate/strata.rs`) — the dependency graph
-  is condensed by iterative Tarjan (the nesting judge's iterative
-  convention), and the condensation's topological index is the
-  stratification witness (`lean/Bumbledb/Query/Syntax.lean:
-  Program.StratifiedBy`). Through a cycle, three refusals:
-  `NegationThroughCycle` (negation *of* lower strata stays legal — a
-  finished set is what keeps the operator monotone,
-  `lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono`;
-  `lean/Bumbledb/Countermodels.lean: odd_not_monotone` is the wall),
-  `AggregationThroughCycle` (a fold reads finished sets only), and
-  `MeasureInRecursiveHead` (a measure is a computation, not a binding,
-  and its ray error's timing must not depend on iteration order).
-  Recursive heads therefore project **bound variables only** — the
-  creation quarantine (§ below) restated for fixpoint topology, and the
-  premise under which every predicate's fixpoint is finite
-  (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`;
+- **The well-formedness screen** — every `Interior` source names a real
+  derived table and addresses within its arity
+  (`lean/Bumbledb/Query/Syntax.lean: Query.WellFormed`, spent by
+  `lean/Bumbledb/Exec/Reach.lean: wellFormed_interior_reads_real`):
+  without it a negated phantom read would be vacuously satisfied.
+  Out of range is `UnknownInterior`. A forward or self interior read,
+  or an interior reading the rec, is `InteriorNotPrior`.
+- **The rec roster.** Rec heads project **bound variables only** — the
+  creation quarantine (§ below) restated for the reach operator, and
+  the premise under which the lfp is finite
+  (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`;
   `lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite` is the wall
-  when a head creates values). Mutual recursion within one SCC is
-  ordinary and passes whole.
+  when a head creates values). `NegationInRec` refuses every negated
+  atom in the rec SCC (self is the wall —
+  `lean/Bumbledb/Countermodels.lean: odd_not_monotone`; anti-join of a
+  finished table in a rec arm is monotone and refused here, OPEN, not
+  the wall). A fold or measure find on an interior or rec head is
+  `AggregateInInterior` / `MeasureInInterior`; a measure in a rec body
+  is `MeasureInRec`. Main may join, anti-join, `Sum`, `Pack`, and
+  measure the **finished** rec. Linearity is `NonlinearRecArm` (exactly
+  one positive self-atom per rec arm). Empty lists are
+  `EmptyRecursiveBase` / `EmptyRecursiveStep` / `EmptyInterior`.
+  `reachOp_mono` takes linearity plus no-negation-in-rec
+  (`lean/Bumbledb/Exec/Reach.lean: reachOp_mono`).
 
-**Execution consumes the whole witness — the fence is dead.** A sealed
-`ValidatedProgram` executes under the per-stratum fixpoint driver
-(`api/prepared/fixpoint.rs`, `40-execution.md` § the fixpoint driver),
-which computes exactly the model's answers
-(`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`; `program_eval_sound`
-is the agreement theorem). The consumer table's guards are permanent
-law, not fence residue: both grounding rewrites refuse `Idb` —
-statements quantify over stored relations permanently
-(`30-dependencies.md`), so elimination has no licensing statement and
-evaluation no stage-0 rows; statistics pin nothing for an `Idb`
-occurrence and cost on the ladder's delta/accumulated floors
+**Execution.** Interiors-only never enters the reach driver
+(`PreparedBody::Rules` or `Empty`; `40-execution.md` § the linear reach
+driver). A rec query runs the interior preamble, then `ReachDriver`
+(round 0 = `reachOp_empty`, one `DeltaVariant` per rec arm), then main.
+The driver computes the model's answers
+(`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
+`evalQuery_sound` is the query agreement). Grounding rewrites refuse
+`Interior` occurrences — statements quantify over stored relations
+permanently (`30-dependencies.md`), so elimination has no licensing
+statement and evaluation no stage-0 rows; statistics pin nothing for an
+interior occurrence and cost on the ladder's delta/accumulated floors
 (`plan/selectivity.rs`); view binding takes the per-round
 transient-image bind, never the cache or the memo.
-`Db::prepare` is the surface: a no-`Idb` program prepares as
-its output predicate's query — zero new code paths, which is what it
-denotes (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`),
-prepared from the program roster's own output witness so the bind
-contract stays the program-global table (one binding surface, exactly
-as the fixpoint arm binds it; the query roster never re-judges a
-sealed program) — and a recursive program prepares its delta-variant
-plans and executes whole.
 
 **The chain-window fence — the standing OPEN item** (the README's OPEN
 list carries its trigger). The chain-window class wants *the interval
 over which an entire path holds* — `path(x, z, w) | edge(x, y, w₁),
 path(y, z, w₂), w = w₁ ∩ w₂` — and the head position `w` is **created**
 (`[max(s₁, s₂), min(e₁, e₂))`), not bound, which exits the safety
-theorem at its premise (`lean/Bumbledb/Exec/Fixpoint.lean:
-program_den_finite` requires bound heads;
+theorem at its premise (`lean/Bumbledb/Exec/Reach.lean:
+reach_den_finite` requires bound heads;
 `lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite` is the wall)
 and therefore sits outside the landed recursion surface, honestly. The
 termination sketch is recorded for the day it is sighted: intersection
@@ -188,32 +172,51 @@ lattice-closure `Pack` already exhibits
 keeps it open anyway: emptiness must kill the tuple by a typed rule
 (the constructor invariant is a boundary law, `10-data-model.md`); the
 honest per-pair answer is a *set* of maximal windows — a
-relation-shaped fold inside a fixpoint, composing exactly what the
-strata roster keeps apart; and the frontier key would grow from
+relation-shaped fold inside a reach, composing exactly what the rec
+roster keeps apart; and the frontier key would grow from
 |reachable pairs| to |pairs × windows|. Until it is answered, the
 closure idiom computes chain windows the honest way — the window
 carried in the host's frontier, one intersection per hop
 (`docs/cookbook.md` recipe 24 is the pattern's home).
 
-**The ruling that survives — queries stay query-shaped.** The caps
-(`MAX_RULES`, `MAX_PREDICATES` (16), documented at their definitions)
-are product decisions, not provisional limits: they keep programs
-query-shaped so pin-at-prepare, the selectivity ladder, and the
-allocation high-water contract stay meaningful. The engine is never a
+**The ruling that survives — queries stay query-shaped.** `MAX_RULES`
+(16) applies uniformly to every rule-list: each `Interior.rules`
+independently, main independently, and the rec SCC as **one** pool
+(`base.len() + rec.len() ≤ MAX_RULES`). There is no interior-count cap.
+Work is bounded by that rule-size law plus the derived-tuples ledger
+(`DEFAULT_DERIVED_TUPLES`; `40-execution.md` § the linear reach
+driver), so pin-at-prepare, the selectivity ladder, and the allocation
+high-water contract stay meaningful. The engine is never a
 rule-program runtime — *deductive database* is a named non-goal
-(`00-product.md`): no stored or composable rule artifacts (a program is
+(`00-product.md`): no stored or composable rule artifacts (a query is
 host data, assembled per prepare), no magic sets or demand
 transformation (demand lives in the host loop — the host seeds the
 frontier), no cross-rule join reuse or rule inlining, no incremental
-maintenance of rule programs, and statements never reference predicates
-(`30-dependencies.md`, the stored-relations decision — `PredId` and
-`RelationId` are separate identities that never pun, so a statement
-about a predicate is unwritable, not rejected).
+maintenance of rule programs, and statements never reference derived
+tables (`30-dependencies.md`, the stored-relations decision —
+`InteriorId` and `RelationId` are separate identities that never pun,
+so a statement about a derived table is unwritable, not rejected).
 **Alternative:** a full Datalog runtime (the Soufflé/Ascent shape).
 **Why it lost:** program-scale workloads invalidate the prepared-query
 economics wholesale, and every accreted feature pays this project's full
 oracle + differential cost — cheap in a Datalog engine, ruinous
 here. **Reverses if:** never — the identity is the thesis.
+
+**Walls, this cut, and OPEN, in one paragraph.** Bound rec heads
+(creation quarantine) and no negation or aggregation through the cycle
+— the rec's own table under `!` or a fold — are walls, as are
+fuel-is-not-denotation (`reachDen` is `lfpS`; the budget is a resource
+abort), rec-is-never-the-answer (`evalQuery` is main `rulesAnswers`;
+empty main denotes `∅` even when `reachDen` is huge —
+`lean/Bumbledb/Exec/Reach.lean: evalQuery_empty_rules`), not-a-Datalog-
+runtime, and no bags. This cut is one linear `Rec`, interiors as a DAG
+evaluated once, and `NegationInRec` wider than the wall: it also
+refuses anti-join of a finished table in rec arms, which is monotone
+and OPEN, not the wall. OPEN, same complexity class, workload-triggered
+(the README's OPEN list): stacked sequential linear lfps; mutual-linear;
+a named interior of a finished rec; nonlinear-at-L; during-walk
+anti-join of finished tables; and the chain-window class already OPEN
+there.
 
 ## Semantics
 
@@ -225,7 +228,7 @@ post-filter), and the select-never-bind rule for params are
 `repeated_var_unifies_cross_atom`, and `param_selects_not_binds`; a rule's
 answers are its distinct satisfying bindings projected through the head, and a
 query's are the set union over its rules (`mem_ruleAnswers`,
-`mem_queryAnswers`). The equality throughout is structural value equality, with
+`mem_rulesAnswers`). The equality throughout is structural value equality, with
 the interval-element membership typing rule below replacing it where
 applicable; a variable occurring only in membership positions is rejected
 (`membership_only_unsafe`; `ir/validate`'s `MembershipOnlyVariable`, the
@@ -259,9 +262,10 @@ rejects (`lean/Bumbledb/Query/Denotation.lean: Safe`,
 `antijoin_over_active_domain`; the unsafe rule's infinite-answer countermodel
 is `lean/Bumbledb/Countermodels.lean: unsafe_rule_infinite`). Literals, params,
 param sets, and membership bindings are all legal inside negated atoms. Within one
-predicate's rules there is no stratification concern — a head is never a body atom
-there; across a program's predicates the strata judge refuses negation through a
-cycle and admits negation of finished lower strata (§ engine recursion). Negated
+rule-list there is no reach concern — a head is never a body atom
+there; the rec roster refuses negation in the rec SCC (`NegationInRec`)
+and main may anti-join a finished interior or the finished rec
+(§ engine recursion). Negated
 atoms contribute no
 find variables and never multiply anything — they are filters with a relation's
 worth of vocabulary.
@@ -365,19 +369,21 @@ join costume.
 ## IR shape (normative)
 
 ```rust
-Program {
-    predicates: Vec<PredicateDef>,    // ≥1, ≤ MAX_PREDICATES (16); PredId = index
-    output:     PredId,               // the program's answer predicate
-}
-PredicateDef {
-    head:       Vec<HeadTerm>,        // Query.head, verbatim
-    rules:      Vec<Rule>,            // Query.rules, verbatim
-}
 Query {
-    head:       Vec<HeadTerm>,        // ≥1; the find shape every rule aligns to
-    rules:      Vec<Rule>,            // ≥1, ≤ MAX_RULES (16)
-}                                     // = the degenerate Program: one predicate,
-                                      //   no Idb atom (From<Query> for Program)
+    interiors:  Vec<Interior>,        // DAG, declaration order; no count cap
+    rec:        Option<Rec>,          // at most one linear SCC
+    head:       Vec<HeadTerm>,        // MAIN answer shape
+    rules:      Vec<Rule>,            // MAIN; ≥1 at validate, ≤ MAX_RULES (16)
+}
+Interior {
+    head:       Vec<HeadTerm>,        // bound-variable positions only
+    rules:      Vec<Rule>,            // ≥1, ≤ MAX_RULES; union; EDB ∪ earlier interiors
+}
+Rec {
+    head:       Vec<HeadTerm>,        // bound-variable positions only
+    base:       Vec<Rule>,            // ≥1; no self atom
+    rec:        Vec<Rule>,            // ≥1; each arm: exactly one positive self-atom
+}                                     // base.len() + rec.len() ≤ MAX_RULES
 Rule {
     finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
@@ -400,9 +406,11 @@ Atom {
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
 }
 AtomSource = Edb(RelationId)          // a stored relation, exactly as ever
-           | Idb(PredId)              // a predicate of the same Program; FieldId(i)
+           | Interior(InteriorId)     // a derived table of this Query; FieldId(i)
                                       //   addresses head position i (positional,
                                       //   never nominal — § engine recursion)
+                                      // InteriorId(i) = interiors[i]; the Rec, if
+                                      //   present, is InteriorId(interiors.len())
 Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
            | Measure(VarId)           // the measure — comparison side only
                                       //   (§ the measure; a binding position
@@ -562,9 +570,9 @@ arithmetic the denotation defines (`10-data-model.md`); everything else that
 looks like interval arithmetic is endpoint math and stays refused.
 **Legal positions,
 exhaustively:** a find term (`FindTerm::Measure` — a group-key position
-under aggregation, exactly like a plain variable find; in a `Program`,
-legal at the OUTPUT predicate's head only — `MeasureInteriorPredicate` /
-`MeasureInRecursiveHead`, § engine recursion); the aggregated
+under aggregation, exactly like a plain variable find; legal at the
+**main** head only — an interior or rec head is `MeasureInInterior`, a
+rec body is `MeasureInRec`, § engine recursion); the aggregated
 input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
 wide accumulator with the single finalize range check, like every Sum); and
 one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
@@ -587,7 +595,7 @@ of one comparison, a non-interval variable, and any fold but the three.
   `MeasureOfRay`, carrying the offending interval's two encoded words —
   **the query-path runtime type error for unbounded measure** (the write-path
   twin is `CapacityRayMeasure`; other runtime aborts are range/resource —
-  `Overflow`, `FixpointBudgetExceeded`, `ResultBytesOverflow`); one ray in a group poisons the
+  `Overflow`, `DerivedBudgetExceeded`, `ResultBytesOverflow`); one ray in a group poisons the
   whole group's measure column, never yielding a value
   (`lean/Bumbledb/Query/Aggregates.lean: measure_fold_laws`). Hosts exclude
   rays first: an
@@ -680,22 +688,23 @@ endpoints are *selected* from stored endpoints, never invented —
 `lean/Bumbledb/Query/Aggregates.lean: pack_lattice_closed`) and
 relation-shaped rows; `fresh` mints on the write path, never during evaluation.
 The law is enforced by representation — each creating operator's legal
-positions are enumerated with typed rejections — and, since the recursion
-cut, by the strata judge's safety roster (`MeasureInRecursiveHead`,
-`AggregationThroughCycle` — `ir/validate/strata.rs`;
-`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite` is the theorem the
-roster's premise buys): this same law restated for fixpoint
-topology, not a new rule — one law, two enforcement sites: value invention inside a fixpoint is the
-Turing-completeness door, and it stays shut. The fence for future interval
-operators follows: only lattice-closed, endpoint-selecting operations are ever
-candidates (intersection, someday, under the chain-window fence —
-§ engine recursion above); endpoint-inventing operations (shift, widen, arithmetic
-on bounds) are refused categorically. **Alternative:** computed columns /
-general expressions in rule bodies. **Why it lost:** it breaks the pure-data IR,
-the fingerprint, and both oracles today, and becomes undecidable termination the
-day recursion lands. **Reverses if:** never as a general mechanism; individual
-named computations may be admitted one at a time on the measure's precedent —
-typed positions, boundary-only, each a recorded decision.
+positions are enumerated with typed rejections — and by the rec roster
+(`MeasureInInterior`, `MeasureInRec`, `AggregateInInterior`;
+`lean/Bumbledb/Exec/Reach.lean: reach_den_finite` is the theorem the
+roster's premise buys): this same law restated for the reach operator,
+not a new rule — one law, two enforcement sites: value invention inside a
+reach is the Turing-completeness door, and it stays shut. The fence for
+future interval operators follows: only lattice-closed, endpoint-selecting
+operations are ever candidates (intersection, someday, under the
+chain-window fence — § engine recursion above); endpoint-inventing
+operations (shift, widen, arithmetic on bounds) are refused categorically.
+**Alternative:** computed columns / general expressions in rule bodies.
+**Why it lost:** it breaks the pure-data IR, the fingerprint, and both
+oracles today, and becomes undecidable termination the day a created head
+re-enters a derivation. **Reverses if:** never as a general mechanism;
+individual named computations may be admitted one at a time on the
+measure's precedent — typed positions, boundary-only, each a recorded
+decision.
 
 ## The input condition grammar and DNF lowering (owned here; runs inside validation)
 
@@ -721,12 +730,13 @@ representation downstream and recovered as rules at the boundary — **OR is
 data or it is nothing.** Negated atoms and membership stay leaf-level; atoms
 disjoin by writing rules, which is what rules are for.
 
-- **The cap:** the distributed program validates under the ordinary roster,
+- **The cap:** each distributed rule-list validates under the ordinary roster,
   `MAX_RULES` included. The blowup is judged on the *structural* term count,
   before a single disjunct materializes; past the cap it is the typed
   `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
-  declaration, exactly like determinant-width overflow. (A program *written* with
-  more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
+  declaration, exactly like determinant-width overflow. (A list *written* with
+  more than `MAX_RULES` rules is still `TooManyRules`, judged first.) Rec
+  pools the cap: `dnf_width(base) + dnf_width(rec) ≤ MAX_RULES`.
 - **The nesting cap:** trees deeper than `MAX_CONDITION_DEPTH` (64) are the
   typed `ConditionNestingTooDeep`, judged **iteratively** (an explicit work
   list) before the count or the distribution runs — those walks recurse by
@@ -746,7 +756,7 @@ disjoin by writing rules, which is what rules are for.
   (`lean/Bumbledb/Query/Denotation.lean: Condition.allHold_iff`,
   `Condition.anyHold_iff`, at the empty list) — an `Or([])` rule lowers to
   zero rules, accepted exactly as statically contradictory conditions are;
-  a program whose *every* rule vanishes is the empty union,
+  a query whose *every* main rule vanishes is the empty union,
   rejected as the empty rule set.
 - **The validated artifact contains no `Or`** — grep-provable: everything
   downstream of validation carries flat comparison lists (`LoweredRule`),
@@ -759,7 +769,7 @@ disjoin by writing rules, which is what rules are for.
 
 Normalization runs **per rule** — a rule lowers exactly as the conjunctive
 query did, and the normalized artifact is a **list**, one entry per rule,
-because the query is a program. The paper's formalism (§2) assumes atoms
+because the query is a list of rules. The paper's formalism (§2) assumes atoms
 with all-distinct variables, no self-joins
 (renamed apart), and selections pushed to base tables. The IR deliberately permits all
 three; **normalization lowers IR form to paper form**:
@@ -800,8 +810,8 @@ three; **normalization lowers IR form to paper form**:
    instance (`lean/Bumbledb/Exec/Rewrites.lean: statically_empty_sound`):
    the rule is marked dead carrying the
    rendered killing condition (plan introspection prints it), a dead rule inside a
-   live program is deleted at prepare and never runs, and a program of
-   only dead rules prepares to the `Empty` plan (`40-execution.md`,
+   live query is deleted at prepare and never runs, and a query of
+   only dead **main** rules prepares to the `Empty` plan (`40-execution.md`,
    § access paths). `Ne` and param-bearing conditions never fold (params
    are stage-3; `Ne` prunes nothing statically); interval variables fold
    via their two slot summaries independently — no cross-slot reasoning in
@@ -851,48 +861,50 @@ validate → normalize → prepare and reddens on any panic; `unreachable!` arms
 *downstream* of validation are exempt — they are checked by it, and the sweep's
 job is proving the check total.
 
-The program shape first, each with a distinct typed error: an **empty rule
-set** (the empty union is no query); more than **`MAX_RULES` (16) rules**
-(the roster cap, documented at the definition and counted independently of
-the per-rule occurrence cap — rules are planned one at a time, so the
-program's breadth is bounded here and each rule's width there); and **head
+The query shape first, each with a distinct typed error: an **empty main
+rule set** (`EmptyRuleSet` — the empty union is no query); more than
+**`MAX_RULES` (16) rules** per list (the roster cap, documented at the
+definition and counted independently of the per-rule occurrence cap —
+rules are planned one at a time, so each list's breadth is bounded here
+and each rule's width there; rec pools `base` + `rec`); and **head
 misalignment** — a rule whose find-term count differs from the head's arity,
 whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned answer tuple (rule 0's
 resolved input types pin the head's positional tuple; every later rule must
 agree position by position — that alignment is *how* every rule derives
-the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
+the one predicate, whose signature the witness then seals from rule 0). Between the query shape and
 the per-rule roster, the **nesting boundary check** (trees deeper than
 `MAX_CONDITION_DEPTH` are the typed `ConditionNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then
 **DNF distribution** (§ the input condition grammar):
 the blowup past `MAX_RULES` is the typed `DnfExceedsRules { produced, cap }`
-on the structural term count, duplicates collapse, and a program whose every
+on the structural term count, duplicates collapse, and a query whose every
 disjunction is empty is the empty union. Rules then validate **one at a
 time** under the per-rule roster below — a rule validates exactly as a
 conjunctive query did, with its own bivalent-anchor typing fixpoint — and
 every rule-local diagnostic names a position inside the first failing
 **lowered** rule.
 Params, being query-global, unify after the rules' own fixpoints: type,
-scalar-vs-set role, and value-vs-mask role must agree across rules, and id
-density is judged jointly across the whole program.
+scalar-vs-set role, and value-vs-mask role must agree across every interior,
+rec arm, and main rule, and id density is judged jointly across the whole
+query.
 
-**The program roster** (`validate_program`; § engine recursion) wraps the
-same per-predicate machinery: the predicate cap (`MAX_PREDICATES`,
-documented at its definition), the output screen, the `Idb`
-well-formedness screen (unknown `PredId`, a binding beyond the target's
-arity), the strata judge's three typed refusals, the executable-class item
-(`AggregateInteriorPredicate` / `MeasureInteriorPredicate` — folds and
-measures are legal only at the output predicate's head; interior heads,
-recursive or not, project bound variables, the Lean cut's own class:
-`PRule.finds : List VarId`), the signature fixpoint's
-`UnresolvedPredicateSignature`, and program-global param unification —
-every refusal testable on recursive programs, and a sealed witness
-executable whole (no fence stands between validation and the driver).
-The trust-boundary law extends
-verbatim: the adversarial sweep drives hostile `Program`s (random
-predicate ids, injected `Idb` reads, phantom targets) through
-the unified `Db::prepare` and reddens on any panic.
+**The rec / interior roster** (`validate`; § engine recursion) wraps the
+same per-list machinery: `InteriorIdOverflow` (derived-table count does not
+fit `u32` — id-width, not a product 16; there is no `TooManyCtes`), the
+well-formedness screen (`UnknownInterior`, `InteriorColumnOutOfRange`,
+`InteriorNotPrior`), the rec roster (`EmptyInterior`, `EmptyRecursiveBase`,
+`EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`, `NonlinearRecArm`,
+`NegationInRec`, `MeasureInRec`), and the bound-var head law
+(`AggregateInInterior` / `MeasureInInterior` — folds and measure finds are
+legal only at the main head; interior and rec heads project bound
+variables). Query-global param unification is the only param pass. Every
+refusal is testable on a `Query`, and a sealed witness is executable whole
+(no fence stands between validation and the driver). The trust-boundary law
+extends verbatim: the adversarial sweep drives hostile `Query`s (random
+`InteriorId`s, self in base, two self-atoms, huge `interiors.len()`) through
+`Db::prepare` and reddens on any panic. More than 16 interiors still
+validate.
 
 Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
@@ -953,9 +965,9 @@ membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined 
 notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
-`render_program` is the program twin: predicates in `PredId` order, interior
-rules carrying the synthesized `p{id}` name, output rules bare — total like
-`render`, and equally golden-pinned.
+The renderer emits `interior p{id}(...) | ...;` then `recursive p{id}(...) | ...;`
+then bare main rules — total, and golden-pinned. There is no separate program
+renderer.
 
 **Handles print as handles.** A literal word at a closed-reference position — a
 binding on a field whose declared containment targets a closed relation's id, or
@@ -996,38 +1008,41 @@ statement surface's query side, not an import. One notational family, schema to
 query.
 
 ```text
-program := rule+                       // bare-headed rules ARE the output predicate
-rule    := [pred] '(' head ')' '|' body ';'
-head    := headterm (',' headterm)*
-headterm:= var | [name ':'] agg        // named positions become result columns
-agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
-           where t := v | Duration(v)
-body    := item (',' item)*
-item    := atom                        // positive occurrence
-         | '!' atom                    // negation (anti-probe; safety per roster)
-         | term 'in' term              // membership: point ∈ interval, value ∈ ?set
-         | Allen '(' term ',' mask ',' term ')'
-         | cond                        // a condition tree; the list is a conjunction
-cond    := term cmp term               // ==  !=  <  <=  >  >=
-         | 'and' '(' cond (',' cond)* ')'   // ConditionTree::And — comparison
-         | 'or'  '(' cond (',' cond)* ')'   //   leaves only (ruled 2026-07-23, R9)
-atom    := Relation '(' binding (',' binding)* ')'
-         | pred '(' var (',' var)* ')'  // ordered dense: head positions left to
-                                        //   right from 0 — positional, never nominal
-         | pred '(' pbind (',' pbind)* ')'
-                                        // indexed: the sparse/selection forms; never
-                                        //   mixed with the bare form, and an explicit
-                                        //   dense in-order `i: v` list is refused —
-                                        //   the ordered form is the one dense spelling
-binding := field                       // punning: binds a var named after the field
-         | field ':' var               // explicit variable — the join spelling
-         | field '==' value            // selection, schema-grammar-verbatim
-pbind   := position ':' var            // sparse explicit position
-         | position '==' value         // position selection
-         | position 'in' ?param        // position set membership
-pred    := lowercase ident             // relations are UpperCamel — the case split
-mask    := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
-term    := var | ?param | literal
+query     := interior* recblock? main
+interior  := 'interior' pred '(' head ')' '|' body ';'
+recblock  := 'recursive' pred '(' head ')' '|' body ';'
+main      := barerule+
+barerule  := '(' head ')' '|' body ';'
+head      := headterm (',' headterm)*
+headterm  := var | [name ':'] agg        // named positions become result columns
+agg       := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
+             where t := v | Duration(v)
+body      := item (',' item)*
+item      := atom                        // positive occurrence
+           | '!' atom                    // negation (anti-probe; safety per roster)
+           | term 'in' term              // membership: point ∈ interval, value ∈ ?set
+           | Allen '(' term ',' mask ',' term ')'
+           | cond                        // a condition tree; the list is a conjunction
+cond      := term cmp term               // ==  !=  <  <=  >  >=
+           | 'and' '(' cond (',' cond)* ')'   // ConditionTree::And — comparison
+           | 'or'  '(' cond (',' cond)* ')'   //   leaves only (ruled 2026-07-23, R9)
+atom      := Relation '(' binding (',' binding)* ')'
+           | pred '(' var (',' var)* ')'  // ordered dense: head positions left to
+                                          //   right from 0 — positional, never nominal
+           | pred '(' pbind (',' pbind)* ')'
+                                          // indexed: the sparse/selection forms; never
+                                          //   mixed with the bare form, and an explicit
+                                          //   dense in-order `i: v` list is refused —
+                                          //   the ordered form is the one dense spelling
+binding   := field                       // punning: binds a var named after the field
+           | field ':' var               // explicit variable — the join spelling
+           | field '==' value            // selection, schema-grammar-verbatim
+pbind     := position ':' var            // sparse explicit position
+           | position '==' value         // position selection
+           | position 'in' ?param        // position set membership
+pred      := lowercase ident             // relations are UpperCamel — the case split
+mask      := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
+term      := var | ?param | literal
 ```
 
 Every token is either the schema grammar's own or Rust's: atoms are `Relation(...)`
@@ -1050,9 +1065,9 @@ admit any boolean combination of comparisons as one item — comparison leaves
 only, exactly the IR's `ConditionTree` (negated atoms and membership stay
 leaf-level, § the input condition grammar) and an exact mirror of the TS
 condition grammar: one condition language, two identical surfaces, one
-renderer. `and` and `or` are reserved — a predicate cannot take either name —
-and the renderer's functional forms are grammar, closing the render→parse
-round trip over the full input grammar.
+renderer. `and`, `or`, `interior`, and `recursive` are reserved — a derived
+name cannot take any of them — and the renderer's functional forms are grammar,
+closing the render→parse round trip over the full input grammar.
 
 **Integer literals are rustc's (ruled 2026-07-23, R8):** an optional
 `0x`/`0o`/`0b` radix prefix and `_` separators, accepted uniformly at every
@@ -1062,30 +1077,32 @@ parser owning the law, so no position has a private dialect. The renderer
 normalizes to **canonical decimal**: the round-trip law is canonical-form,
 not verbatim — `0x64` lowers, renders, and reparses as `100`.
 
-**Named heads are the notation's recursion form — bare rules ARE the
-output predicate.** `path(x, z) | edge(x, y), path(y, z);` declares the
-predicate at its head and reads it as a body atom whose bindings address
-**head positions** — positional, never nominal: predicate columns have
-no fields to name. Bare idents are the **ordered dense** spelling,
-positions assigned left to right from 0 (`path(y, z)` is bindings
-`[(0, y), (1, z)]`); the indexed `i:` forms remain exclusively for
-sparse positions (`path(1: z)`) and position selections (`0 == …`,
-`0 in ?p`). The two spellings never mix in one atom, and an explicitly
-indexed dense in-order variable list (`path(0: y, 1: z)`) is refused —
-canonical utterance, one spelling per meaning. Predicate names
-begin lowercase, so a predicate spelled like a relation is unwritable
-(the punning law's discipline applied to names), and a program of only
-named rules is a macro error — bare rules are the output, so every
-existing query is already a program whose every rule is bare and denotes
-what it denoted (`lean/Bumbledb/Exec/Fixpoint.lean:
-degenerate_embedding` is that sentence as a theorem). Names are a
-**macro-local sidecar**, exactly as variable names are: resolution
-happens at expansion, the emitted `Program` carries bare `PredId`s, and
-no name ever enters the IR, the fingerprint, or any engine surface. The
-renderer prints interior predicates as `p{id}` (the `v{id}`/`?{id}`
-convention extended, `ir::render::render_program`) and output rules
-bare, so the rendered text of any macro-written program is its own
-fixed point — pinned byte-exact by the round-trip goldens
+**`interior` / `recursive` are the notation's derived-table form — bare
+rules ARE the main query.** A named head without either keyword is a
+compile error (the former Program sneak). `interior mid(x) | Edge(src: x);`
+declares a named interior; `recursive reach(c) | …;` declares the rec;
+`(c) | reach(c);` is the required main. A body atom naming `pred` is an
+`Interior` atom whose bindings address **head positions** — positional,
+never nominal: derived columns have no fields to name. Bare idents are the
+**ordered dense** spelling, positions assigned left to right from 0
+(`path(y, z)` is bindings `[(0, y), (1, z)]`); the indexed `i:` forms
+remain exclusively for sparse positions (`path(1: z)`) and position
+selections (`0 == …`, `0 in ?p`). The two spellings never mix in one atom,
+and an explicitly indexed dense in-order variable list (`path(0: y, 1: z)`)
+is refused — canonical utterance, one spelling per meaning. Derived names
+begin lowercase, so a derived table spelled like a relation is unwritable
+(the punning law's discipline applied to names), and a query of only named
+lines is a macro error — bare rules are the output, so every existing
+all-bare query lowers to `Query { interiors: vec![], rec: None, head,
+rules }` and denotes what it denoted
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain` is that sentence as a
+theorem). Names are a **macro-local sidecar**, exactly as variable names
+are: resolution happens at expansion, the emitted `Query` carries bare
+`InteriorId`s, and no name ever enters the IR, the fingerprint, or any
+engine surface. The renderer prints interiors as `interior p{id}(...)` and
+the rec as `recursive p{id}(...)` (the `v{id}`/`?{id}` convention
+extended) and main rules bare, so the rendered text of any macro-written
+query is its own fixed point — pinned byte-exact by the round-trip goldens
 (`bumbledb-query/tests/notation.rs`).
 
 **The punning law (B, decided; alternative (A) is in the refusals ledger).** A bare
