@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(bab484e3)
 - **Source:** audit/plan-exec.md F7
 - **Depends on:** none (executor layout; textual overlap with exec-005 in `PipeTables`)
 

@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(d4b73718)
 - **Source:** audit/plan-exec.md F8
 - **Depends on:** exec-004 (same `PipeTables`; land with or after)
 

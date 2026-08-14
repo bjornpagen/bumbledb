@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F12
 - **Depends on:** none (COLT shape; `api/prepared/build.rs` is a writer of `SelectionLevel`)
 

@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(87f44004)
 - **Source:** audit/plan-exec.md F6
 - **Depends on:** none (trait shape; parallel-safe with exec-001/002)
 

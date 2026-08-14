@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md (validation add; F7's `PipeTables` product)
 - **Depends on:** exec-004 (same `PipeTables`; land with or after); exec-010 (Root-absorb writes the drive stop)
 

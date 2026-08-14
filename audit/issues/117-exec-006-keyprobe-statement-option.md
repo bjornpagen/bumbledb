@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F9
 - **Depends on:** none (dispatch types; parallel-safe)
 

@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(9e0a27db)
 - **Source:** audit/plan-exec.md F1
 - **Depends on:** none (sink vocabulary; `find_specs` in `api/prepared/build.rs` is the one writer)
 

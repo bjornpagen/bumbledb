@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F13
 - **Depends on:** none (executor stop state; parallel-safe)
 

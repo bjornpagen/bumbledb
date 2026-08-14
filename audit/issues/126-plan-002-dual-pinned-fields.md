@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** plan
-- **Status:** OPEN
+- **Status:** FIXED(0e10d51e)
 - **Source:** audit/plan-exec.md F4
 - **Depends on:** none (parallel-safe)
 
