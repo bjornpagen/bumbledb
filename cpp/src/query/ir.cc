@@ -109,16 +109,54 @@ enum class query_cmp : std::uint8_t {
 };
 
 /**
- * One leaf condition. `point_in` stores interval-LEFT, point-RIGHT
- * whatever the surface argument order; `mask` is the literal 13-bit Allen
- * word (allen conditions only).
+ * A condition node's form (`ir::ConditionTree`): a comparison leaf, or
+ * an n-ary And/Or whose children are a contiguous range in the same
+ * pool. C++ cannot name the combinators `and`/`or` (alternative tokens);
+ * the surface spells them `And`/`Or`.
+ */
+enum class condition_form : std::uint8_t {
+	leaf,
+	and_node,
+	or_node,
+};
+
+/**
+ * One condition-tree node. Leaf payload (`op`/`mask`/`lhs`/`rhs`) is live
+ * when `form == leaf`; `child_begin`/`child_count` index sibling roots in
+ * the same pool when `form` is And/Or. `point_in` stores interval-LEFT,
+ * point-RIGHT whatever the surface argument order; `mask` is the literal
+ * 13-bit Allen word (allen leaves only).
+ */
+struct condition_node {
+	condition_form form{};
+	query_cmp op{};
+	std::uint16_t mask{};
+	term_data lhs{};
+	term_data rhs{};
+	std::size_t child_begin{};
+	std::size_t child_count{};
+};
+
+/**
+ * One `.where` argument as a tree: root at `nodes[0]`, descendants packed
+ * with sibling roots contiguous (`child_begin`/`child_count`). A leaf is
+ * `node_count == 1`.
  */
 struct condition_data {
-	query_cmp op;
-	std::uint16_t mask;
-	term_data lhs;
-	term_data rhs;
+	std::size_t node_count{1};
+	std::array<condition_node, max_query_conditions> nodes{};
 };
+
+[[nodiscard]] consteval auto leaf_condition(query_cmp op, std::uint16_t mask, term_data lhs, term_data rhs) -> condition_data {
+	auto out = condition_data{};
+	out.node_count = 1;
+	out.nodes[0].form = condition_form::leaf;
+	out.nodes[0].op = op;
+	out.nodes[0].mask = mask;
+	out.nodes[0].lhs = lhs;
+	out.nodes[0].rhs = rhs;
+	return out;
+}
 
 /**
  * One named binding of an interior/rec atom: the target head column by
@@ -295,10 +333,13 @@ struct wire_atom {
 };
 
 struct wire_condition {
-	query_cmp op;
-	std::uint16_t mask;
-	wire_term lhs;
-	wire_term rhs;
+	condition_form form{};
+	query_cmp op{};
+	std::uint16_t mask{};
+	wire_term lhs{};
+	wire_term rhs{};
+	std::size_t child_begin{};
+	std::size_t child_count{};
 };
 
 /**
@@ -322,6 +363,7 @@ struct wire_rule {
 	std::size_t negated_count;
 	std::array<wire_atom, max_query_atoms> negated;
 	std::size_t condition_count;
+	std::size_t condition_node_count;
 	std::array<wire_condition, max_query_conditions> conditions;
 	std::size_t find_count;
 	std::array<wire_find, max_query_finds> finds;
@@ -379,13 +421,13 @@ struct query_ir<NI, true, NR> : query_body<NI, NR> {
 };
 
 /**
- * One built condition value (a `.where` argument): the leaf comparison
+ * One built condition value (a `.where` argument): the condition tree
  * plus the param uses its construction anchored.
  */
 struct cond_value {
 	condition_data data;
 	std::size_t use_count;
-	std::array<param_use, 2> uses;
+	std::array<param_use, max_query_params * 4> uses;
 };
 
 }

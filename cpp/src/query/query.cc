@@ -18,6 +18,7 @@ import :var;
 import :param;
 import :aggregate;
 import :pattern;
+import :predicate;
 import :rule;
 import :lower;
 import :schema;
@@ -61,6 +62,20 @@ struct rule_scope {
 	template<fixed_string Name, class Var>
 	[[nodiscard]] consteval auto sum(measure_ref<Var>) const -> agg_ref<Name, fold_form::sum, measure_ref<Var>> {
 		return {};
+	}
+
+	/**
+	 * Member twins of `bdb::And` / `bdb::Or` (C++ cannot name them `and` /
+	 * `or` — those are alternative tokens).
+	 */
+	template<class... Conds>
+	[[nodiscard]] consteval auto And(Conds const&... conds) const -> cond_value {
+		return bdb::And(conds...);
+	}
+
+	template<class... Conds>
+	[[nodiscard]] consteval auto Or(Conds const&... conds) const -> cond_value {
+		return bdb::Or(conds...);
 	}
 
 	/** Starts the rule body with one positive EDB atom. */

@@ -100,6 +100,20 @@ inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval
 	    });
 });
 
+inline constexpr auto LongOrShort = bdb::query(Uptime).rule([](auto r) consteval {
+	auto vars = r.vars(Outage);
+	return r
+	    .match(Outage,
+	           {
+	               .service = vars.service,
+	               .window = vars.window,
+	           })
+	    .where(r.Or(bdb::ge(r.duration(vars.window), std::uint64_t{100}), bdb::lt(r.duration(vars.window), std::uint64_t{80})))
+	    .find({
+	        .service = vars.service,
+	    });
+});
+
 inline constexpr auto WindowLen = bdb::query(Uptime).rule([](auto r) consteval {
 	auto vars = r.vars(Outage);
 	return r
@@ -190,6 +204,20 @@ static_assert(LongOutages.rules[0].conditions[0].lhs.var == 1);
 static_assert(LongOutages.rules[0].conditions[0].rhs.form == bdb::query_term_form::literal);
 static_assert(LongOutages.rules[0].conditions[0].rhs.literal.kind == bdb::value_kind::u64);
 static_assert(LongOutages.rules[0].conditions[0].rhs.literal.u64 == 100);
+
+static_assert(LongOrShort.rules[0].condition_count == 1);
+static_assert(LongOrShort.rules[0].condition_node_count == 3);
+static_assert(LongOrShort.rules[0].conditions[0].form == bdb::condition_form::or_node);
+static_assert(LongOrShort.rules[0].conditions[0].child_count == 2);
+static_assert(LongOrShort.rules[0].conditions[0].child_begin == 1);
+static_assert(LongOrShort.rules[0].conditions[1].form == bdb::condition_form::leaf);
+static_assert(LongOrShort.rules[0].conditions[1].op == bdb::query_cmp::ge);
+static_assert(LongOrShort.rules[0].conditions[2].form == bdb::condition_form::leaf);
+static_assert(LongOrShort.rules[0].conditions[2].op == bdb::query_cmp::lt);
+static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].conditions[0].kind ==
+              static_cast<std::uint32_t>(bdb::foreign::bdb_condition_kind::BDB_CONDITION_KIND_OR));
+static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].conditions[0].child_count == 2);
+static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].condition_count == 1);
 
 static_assert(WindowLen.head_count == 2);
 static_assert(WindowLen.rules[0].find_count == 2);

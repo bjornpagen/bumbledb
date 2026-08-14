@@ -222,8 +222,14 @@ template<class Ir>
 	for (auto index = std::size_t{0}; index != rule.state.item_count; ++index) {
 		auto const& item = rule.state.items[index];
 		if (item.form == body_form::condition) {
-			if (!term_is_bound_var(rule.state, item.condition.lhs) || !term_is_bound_var(rule.state, item.condition.rhs)) {
-				where_condition_variable_is_not_bound_in_this_rule();
+			for (auto node = std::size_t{0}; node != item.condition.node_count; ++node) {
+				auto const& cond = item.condition.nodes[node];
+				if (cond.form != condition_form::leaf) {
+					continue;
+				}
+				if (!term_is_bound_var(rule.state, cond.lhs) || !term_is_bound_var(rule.state, cond.rhs)) {
+					where_condition_variable_is_not_bound_in_this_rule();
+				}
 			}
 		}
 		if (item.form == body_form::negated_atom) {
@@ -329,17 +335,51 @@ template<class Ir>
 				++out.atom_count;
 			}
 		} else {
-			if (out.condition_count == max_query_conditions) {
-				rule_has_too_many_conditions();
-			}
-			out.conditions[out.condition_count] = wire_condition{
-			    .op = item.condition.op,
-			    .mask = item.condition.mask,
-			    .lhs = wire_term_of(ir, numbers, item.condition.lhs),
-			    .rhs = wire_term_of(ir, numbers, item.condition.rhs),
-			};
 			++out.condition_count;
+			out.condition_node_count += item.condition.node_count;
+			for (auto node = std::size_t{0}; node != item.condition.node_count; ++node) {
+				auto const& cond = item.condition.nodes[node];
+				if (cond.form != condition_form::leaf) {
+					continue;
+				}
+				(void)wire_term_of(ir, numbers, cond.lhs);
+				(void)wire_term_of(ir, numbers, cond.rhs);
+			}
 		}
+	}
+	if (out.condition_node_count > max_query_conditions) {
+		rule_has_too_many_conditions();
+	}
+	auto root_at = std::size_t{0};
+	auto desc_at = out.condition_count;
+	for (auto index = std::size_t{0}; index != rule.state.item_count; ++index) {
+		auto const& item = rule.state.items[index];
+		if (item.form != body_form::condition) {
+			continue;
+		}
+		auto const& tree = item.condition;
+		auto const desc_begin = desc_at;
+		auto const map = [&](std::size_t old) -> std::size_t { return old == 0 ? root_at : desc_begin + old - 1; };
+		auto wire_one = [&](condition_node const& node) {
+			auto wired = wire_condition{
+			    .form = node.form,
+			    .op = node.op,
+			    .mask = node.mask,
+			    .child_begin = node.child_count == 0 ? 0 : map(node.child_begin),
+			    .child_count = node.child_count,
+			};
+			if (node.form == condition_form::leaf) {
+				wired.lhs = wire_term_of(ir, numbers, node.lhs);
+				wired.rhs = wire_term_of(ir, numbers, node.rhs);
+			}
+			return wired;
+		};
+		out.conditions[root_at] = wire_one(tree.nodes[0]);
+		for (auto k = std::size_t{1}; k != tree.node_count; ++k) {
+			out.conditions[desc_at] = wire_one(tree.nodes[k]);
+			++desc_at;
+		}
+		++root_at;
 	}
 	out.find_count = rule.find_count;
 	for (auto index = std::size_t{0}; index != rule.find_count; ++index) {

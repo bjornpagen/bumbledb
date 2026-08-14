@@ -135,9 +135,21 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 	return abi_tag(bdb_head_op::BDB_HEAD_OP_PACK);
 }
 
+[[nodiscard]] consteval auto condition_kind_of(condition_form form) -> std::uint32_t {
+	switch (form) {
+	case condition_form::leaf:
+		return abi_tag(bdb_condition_kind::BDB_CONDITION_KIND_LEAF);
+	case condition_form::and_node:
+		return abi_tag(bdb_condition_kind::BDB_CONDITION_KIND_AND);
+	case condition_form::or_node:
+		break;
+	}
+	return abi_tag(bdb_condition_kind::BDB_CONDITION_KIND_OR);
+}
+
 [[nodiscard]] consteval auto condition_of(wire_condition const& condition) -> bdb_condition {
 	return bdb_condition{
-	    .kind = abi_tag(bdb_condition_kind::BDB_CONDITION_KIND_LEAF),
+	    .kind = condition_kind_of(condition.form),
 	    .cmp =
 	        bdb_comparison{
 	            .op =
@@ -226,7 +238,7 @@ template<auto Query>
 template<auto Query>
 [[nodiscard]] consteval auto condition_total() -> std::size_t {
 	auto total = std::size_t{0};
-	for_each_wire_rule<Query>([&](wire_rule const& wire) { total += wire.condition_count; });
+	for_each_wire_rule<Query>([&](wire_rule const& wire) { total += wire.condition_node_count; });
 	return total;
 }
 
@@ -351,20 +363,34 @@ template<auto Query>
 inline constexpr auto query_negated = make_negated<Query>();
 
 template<auto Query>
-[[nodiscard]] consteval auto make_conditions() -> std::array<bdb_condition, condition_total<Query>()> {
-	auto out = std::array<bdb_condition, condition_total<Query>()>{};
-	auto at = std::size_t{0};
-	for_each_wire_rule<Query>([&](wire_rule const& wire) {
-		for (auto condition = std::size_t{0}; condition != wire.condition_count; ++condition) {
-			out[at] = condition_of(wire.conditions[condition]);
-			++at;
-		}
-	});
-	return out;
-}
+struct condition_arena {
+	std::array<bdb_condition, condition_total<Query>()> nodes{};
+
+	consteval condition_arena() {
+		auto at = std::size_t{0};
+		for_each_wire_rule<Query>([&](wire_rule const& wire) {
+			auto const base = at;
+			for (auto condition = std::size_t{0}; condition != wire.condition_node_count; ++condition) {
+				nodes[at] = condition_of(wire.conditions[condition]);
+				++at;
+			}
+			for (auto condition = std::size_t{0}; condition != wire.condition_node_count; ++condition) {
+				auto const& source = wire.conditions[condition];
+				if (source.form == condition_form::leaf || source.child_count == 0) {
+					continue;
+				}
+				nodes[base + condition].children = nodes.data() + base + source.child_begin;
+				nodes[base + condition].child_count = source.child_count;
+			}
+		});
+	}
+};
 
 template<auto Query>
-inline constexpr auto query_conditions = make_conditions<Query>();
+inline constexpr condition_arena<Query> query_condition_arena{};
+
+template<auto Query>
+inline constexpr auto const& query_conditions = query_condition_arena<Query>.nodes;
 
 template<auto Query>
 [[nodiscard]] consteval auto make_finds() -> std::array<bdb_find_term, find_total<Query>()> {
@@ -404,7 +430,7 @@ template<auto Query>
 		find_offset += wire.find_count;
 		atom_offset += wire.atom_count;
 		negated_offset += wire.negated_count;
-		condition_offset += wire.condition_count;
+		condition_offset += wire.condition_node_count;
 		++at;
 	});
 	return out;
