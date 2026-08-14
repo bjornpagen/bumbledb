@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(428005dd)
 - **Source:** audit/lean-rest.md L1
 - **Depends on:** after lean-001/005 (same-file comment churn on Dedup/Rewrites/Denotation)
 - **Conflicts with:** none. Not DUPLICATE(lean-020): that issue is SCC/Tarjan/strata in Syntax/Reach/Main. Not DUPLICATE(lean-019): that issue is the `translate/program.rs` census *path* token. Not DUPLICATE(lean-011): that issue is `idb` on `recDom`.
