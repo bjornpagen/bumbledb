@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(428005dd)
 - **Source:** audit/lean-rest.md L1
 - **Depends on:** after lean-001/005 (same-file comment churn on Dedup/Rewrites/Denotation)
 - **Conflicts with:** none. Not DUPLICATE(lean-020): that issue is SCC/Tarjan/strata in Syntax/Reach/Main. Not DUPLICATE(lean-019): that issue is the `translate/program.rs` census *path* token. Not DUPLICATE(lean-011): that issue is `idb` on `recDom`.
@@ -27,9 +27,9 @@ Per `audit/CONTRACT.md §C7`: present-tense "query" / "rule list" / "prepared pi
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -inw 'program' lean/Bumbledb/Exec/Dedup.lean lean/Bumbledb/Exec/Rewrites.lean lean/Bumbledb/Query/Denotation.lean lean/Bumbledb/Query/Aggregates.lean` → no matches; `rg -n 'program level|program union' lean/Bumbledb/Bridge.lean` → no matches.
-- [ ] Comment-only on the listed files (plus the two Bridge prose strings). Zero theorem/def/name changes in this issue; `lake build` output identical modulo comment hash if any; `./scripts/lean.sh` fully green.
-- [ ] Out of scope here (do not fail this issue on them): `translate/program.rs` (lean-019); `ground_program` / `the_empty_program_*` path tokens (engine-034 + C8); `Exec/Reach.lean` "old program domain" (lean-011); Syntax/Main SCC comments (lean-020).
+- [x] Gone: `rg -inw 'program' lean/Bumbledb/Exec/Dedup.lean lean/Bumbledb/Exec/Rewrites.lean lean/Bumbledb/Query/Denotation.lean lean/Bumbledb/Query/Aggregates.lean` → no matches; `rg -n 'program level|program union' lean/Bumbledb/Bridge.lean` → no matches.
+- [x] Comment-only on the listed files (plus the two Bridge prose strings). Zero theorem/def/name changes in this issue; `lake build` output identical modulo comment hash if any; `./scripts/lean.sh` fully green.
+- [x] Out of scope here (do not fail this issue on them): `translate/program.rs` (lean-019); `ground_program` / `the_empty_program_*` path tokens (engine-034 + C8); `Exec/Reach.lean` "old program domain" (lean-011); Syntax/Main SCC comments (lean-020).
 
 ## Constraints
 

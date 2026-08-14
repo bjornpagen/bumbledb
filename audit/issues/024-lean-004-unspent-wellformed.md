@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN (scoped — the telescope/`Vector` half is refused per CONTRACT §C5)
+- **Status:** FIXED(673f0215)
 - **Source:** audit/lean.md H4
 - **Depends on:** lean-001 (`plain_wellFormed` mentions `Query.plain`; land after the sum)
 - **Conflicts with:** lean-003, lean-014 (shared deletions)
@@ -50,10 +50,10 @@ Per `audit/CONTRACT.md §C4`:
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'WellFormed|interiorsDag|sourcesInRange|plain_wellFormed|edbOnly|wellFormed_interior_reads_real|derives_edb' lean --glob '!conformance/cases/**'` → no matches (Bridge row for the old theorem is retargeted, so the `@Query.wellFormed_interior_reads_real` token is gone from Bridge.lean too).
-- [ ] Unchanged behavior: 268-case conformance green; `evalQuery_sound` (restated by lean-001) keeps exactly `Safe`/`WellTyped` premises per rule list — no new premise smuggled in, none dropped.
-- [ ] New locks: none — the deletion is the fix; the module doc paragraph updated (grep `rg -n 'sourcesInRange' lean/Bumbledb/Query/Syntax.lean` → empty, `rg -n 'UnknownInterior' lean/Bumbledb/Query/Syntax.lean` → still present).
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -nw 'WellFormed|interiorsDag|sourcesInRange|plain_wellFormed|edbOnly|wellFormed_interior_reads_real|derives_edb' lean --glob '!conformance/cases/**'` → no matches (Bridge row for the old theorem is retargeted, so the `@Query.wellFormed_interior_reads_real` token is gone from Bridge.lean too).
+- [x] Unchanged behavior: 268-case conformance green; `evalQuery_sound` (restated by lean-001) keeps exactly `Safe`/`WellTyped` premises per rule list — no new premise smuggled in, none dropped.
+- [x] New locks: none — the deletion is the fix; the module doc paragraph updated (grep `rg -n 'sourcesInRange' lean/Bumbledb/Query/Syntax.lean` → empty, `rg -n 'UnknownInterior' lean/Bumbledb/Query/Syntax.lean` → still present).
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(33f9cf4a)
 - **Source:** audit/lean.md H5
 - **Depends on:** none for the List-Rule restatements (Dedup/Rewrites); the Theorem 9 half depends on lean-001
 - **Conflicts with:** lean-016 (DUPLICATE of this issue's RewriteStep restatement)
@@ -59,10 +59,10 @@ Per `audit/CONTRACT.md §C4` ("One rule-list theory"):
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'RewriteStep.*Query → Query|Query\\.plain n' lean/Bumbledb/Exec/Rewrites.lean` → no matches; `rg -n '\\{q : Query\\}' lean/Bumbledb/Exec/Dedup.lean` → no matches; `DisjointArms` / `ProvablyDisjointRules` take `List Rule` (or equivalent), not `Query`.
-- [ ] Real Theorem 9: `rg -n 'evalQuery' lean/Bumbledb/Query/Denotation.lean` (or the file `snapshot_single` moves to) shows `snapshot_single` concluding over `evalQuery`; `Query.relations` covers interior and rec rules (`rg -n 'def Query.relations' -A 6 lean` shows all three lists).
-- [ ] Unchanged: theorem NAMES survive (`seenfold_is_set_semantics`, `union_regime_head_projection`, `snapshot_single`, `disjoint_witness_licence`, `syntactic_disjointness_sound`, `step_preserves`, `rewrites_compose`) — Bridge rows keep resolving; 268-case conformance green.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`; `./scripts/spec-census.sh` green (census tokens follow the restatements).
+- [x] Gone: `rg -n 'RewriteStep.*Query → Query|Query\\.plain n' lean/Bumbledb/Exec/Rewrites.lean` → no matches; `rg -n '\\{q : Query\\}' lean/Bumbledb/Exec/Dedup.lean` → no matches; `DisjointArms` / `ProvablyDisjointRules` take `List Rule` (or equivalent), not `Query`.
+- [x] Real Theorem 9: `rg -n 'evalQuery' lean/Bumbledb/Query/Denotation.lean` (or the file `snapshot_single` moves to) shows `snapshot_single` concluding over `evalQuery`; `Query.relations` covers interior and rec rules (`rg -n 'def Query.relations' -A 6 lean` shows all three lists).
+- [x] Unchanged: theorem NAMES survive (`seenfold_is_set_semantics`, `union_regime_head_projection`, `snapshot_single`, `disjoint_witness_licence`, `syntactic_disjointness_sound`, `step_preserves`, `rewrites_compose`) — Bridge rows keep resolving; 268-case conformance green.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`; `./scripts/spec-census.sh` green (census tokens follow the restatements).
 
 ## Constraints
 

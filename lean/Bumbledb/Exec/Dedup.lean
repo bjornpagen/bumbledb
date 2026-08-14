@@ -42,7 +42,7 @@ of the two it spends.
 * **The sinks are where union lives** (`exec/sink.rs`'s module doc;
   the two consumers are `exec/sink.rs::ProjectionSink` and
   `exec/sink.rs::AggregateSink`): one sink hears every rule of a
-  program, its seen-set
+  query, its seen-set
   spanning rules — no merge node, no concat-then-dedup pass exists.
   `seenfold_is_set_semantics` is that seen-set's spec: folding the
   emitted stream through first-occurrence filtering computes exactly
@@ -91,7 +91,7 @@ of the two it spends.
   (the closing section) is the law, PROVED: the re-keyed union
   denotation of a lowering equals the written rule's own aggregate
   denotation. The head-projection key governs HAND-WRITTEN multi-rule
-  programs only. The R2 agreement, DISCHARGED (2026-07-23 audit):
+  queries only. The R2 agreement, DISCHARGED (2026-07-23 audit):
   `dnf_rekey_stream` is the executable face's spec — seen-filtering a
   complete enumeration's shared-slot rows computes exactly
   `dnfFoldDomain`, duplicate-free — and the conformance glue's
@@ -101,7 +101,7 @@ of the two it spends.
 * **The R1 refusal (ruled 2026-07-23, R1), stated and justified** —
   a validation-model refusal (stated, never proved:
   `CountAcrossRulesAccepted`): a nullary `Count` in a fold-free head
-  of a 2+-rule program is a typed validation error beside
+  of a 2+-rule query is a typed validation error beside
   `ArgAcrossRules`. Under the head-projection law its answer is
   definitionally the constant 1 per group — `foldfree_head_constant`
   PROVES the uninformativeness (the head row is a function of the
@@ -158,7 +158,7 @@ flow is positional agreement on the two find lists (`zip`), and the
 key itself enters as a semantic `Functionality` hypothesis (PRD 03's
 judgment — the schema-declared key the checker consults, discharged
 on committed instances by `holds`). One quantifier gap recorded: the
-model fixes a single `K` program-wide, while `pair_disjoint` picks a
+model fixes a single `K` query-wide, while `pair_disjoint` picks a
 declared key PER RULE PAIR (the `keys().iter().any` of
 `key_flows_to_common_head`, invoked per pair) — an acceptance
 discharged by heterogeneous keys
@@ -326,10 +326,10 @@ operator" is implementable at all. Bridge: the projection and
 aggregate sinks' seen-sets (`exec/sink.rs` — the module doc's
 "the sinks are where union lives"); `union_idempotent` is the same
 fact at the denotation level. -/
-theorem seenfold_is_set_semantics {C : Classify} {q : Query}
+theorem seenfold_is_set_semantics {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {l : List AnswerTuple}
-    (henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) :
-    (∀ t, t ∈ seenFold l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
+    (henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) :
+    (∀ t, t ∈ seenFold l ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) ∧
       (seenFold l).Nodup :=
   ⟨fun t => mem_seenFold.trans (henum t), seenFold_nodup l⟩
 
@@ -510,11 +510,11 @@ theorem distinct_witness_licence {γ : Type} {r : Rule} {I : Instance}
 
 /-- **`DisjointArms`** — the semantic property the syntactic check
 approximates: no answer tuple derives from two different rules of the
-program (pairwise over rule positions, so a literally duplicated rule
+query (pairwise over rule positions, so a literally duplicated rule
 is NOT disjoint from itself — `union_idempotent` owns that case). -/
-def DisjointArms (C : Classify) (q : Query) (I : Instance)
+def DisjointArms (C : Classify) (rules : List Rule) (I : Instance)
     (ρ : ParamEnv) : Prop :=
-  q.rules.Pairwise fun r r' =>
+  rules.Pairwise fun r r' =>
     ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ → t ∉ ruleAnswers C r' (edbEnv I) ρ
 
 /-- The induction behind the licence, over plain rule lists: per-arm
@@ -575,16 +575,16 @@ refutation (docs/architecture/40-execution.md § set semantics,
 representation on the clock, and that record is doc-side authority,
 cited here, not restated. This theorem proves the elision SOUND; the
 docs record why sound is not the same as worth it. -/
-theorem disjoint_witness_licence {C : Classify} {q : Query}
+theorem disjoint_witness_licence {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv}
-    (DisjointWitness : DisjointArms C q I ρ)
+    (DisjointWitness : DisjointArms C rules I ρ)
     {arms : List (List AnswerTuple)}
-    (hlen : arms.length = q.rules.length)
-    (henum : ∀ p, p ∈ arms.zip q.rules →
+    (hlen : arms.length = rules.length)
+    (henum : ∀ p, p ∈ arms.zip rules →
       (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 (edbEnv I) ρ) ∧ p.1.Nodup) :
     arms.flatten.Nodup ∧
       seenFold arms.flatten = arms.flatten ∧
-      ∀ t, t ∈ arms.flatten ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ := by
+      ∀ t, t ∈ arms.flatten ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ := by
   obtain ⟨hnd, hmem⟩ := disjoint_flatten hlen henum DisjointWitness
   exact ⟨hnd, seenFold_eq_of_nodup hnd,
     fun t => (hmem t).trans mem_rulesAnswers.symm⟩
@@ -603,21 +603,21 @@ Bridge: `union_spans` (`exec/sink.rs::union_spans`) — per head position,
 the slot span the position reads from THIS rule's binding layout; the
 extracted words are the head projection, rule-independent by
 construction. The aggregate reading of this key law — "aggregates
-read the head" — governs HAND-WRITTEN multi-rule programs only: a
+read the head" — governs HAND-WRITTEN multi-rule queries only: a
 DNF-derived rule set re-keys on the shared slot array instead (ruled
 2026-07-23, R2), and the aggregate-object form this projection-head
 statement deliberately does not carry is `union_regime_agg_heads`
 (the union-fold section below). -/
-theorem union_regime_head_projection {C : Classify} {q : Query}
+theorem union_regime_head_projection {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {ε : Type} (events : List ε)
     (rule : ε → Rule) (bind : ε → Assignment)
     (hvalid : ∀ e, e ∈ events →
-      rule e ∈ q.rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
-    (hcomplete : ∀ r, r ∈ q.rules → ∀ σ, derives C r (edbEnv I) ρ σ →
+      rule e ∈ rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
+    (hcomplete : ∀ r, r ∈ rules → ∀ σ, derives C r (edbEnv I) ρ σ →
       ((r.finds.map σ : AnswerTuple) ∈
         events.map fun e => (rule e).finds.map (bind e))) :
     (∀ t, t ∈ seenFold (events.map fun e => (rule e).finds.map (bind e))
-        ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
+        ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) ∧
       (seenFold (events.map fun e =>
         (rule e).finds.map (bind e))).Nodup := by
   refine ⟨fun t => ?_, seenFold_nodup _⟩
@@ -671,12 +671,12 @@ def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
     ∀ i, i ∈ K → ∃ v v' : VarId, (i, Term.var v) ∈ a.bindings ∧
       (i, Term.var v') ∈ a'.bindings ∧ (v, v') ∈ r.finds.zip r'.finds
 
-/-- The check, program-level: one witness discharging every rule pair
+/-- The check, query-level: one witness discharging every rule pair
 — `plan/fj/provably_disjoint.rs::provably_disjoint_rules`
 ("pairwise over all rules; one witness for every pair"). -/
-def ProvablyDisjointRules (q : Query) (R : RelId) (fld : FieldId)
+def ProvablyDisjointRules (rules : List Rule) (R : RelId) (fld : FieldId)
     (K : List FieldId) : Prop :=
-  q.rules.Pairwise (ArmPin R fld K)
+  rules.Pairwise (ArmPin R fld K)
 
 /-- The pair soundness: equal head answers force the two pinned facts
 through the key onto ONE fact of `R`, whose `fld` cannot equal two
@@ -708,11 +708,11 @@ theorem armPin_disjoint {C : Classify} {I : Instance} {ρ : ParamEnv}
   exact hne (by rw [hpin1, hpin2, hone])
 
 /-- **Theorem 6 (`syntactic_disjointness_sound`).** The syntactic
-check is SOUND: a program `provably_disjoint_rules` accepts under a
+check is SOUND: a query `provably_disjoint_rules` accepts under a
 witness `(R, fld)` and a semantically keyed `K` has `DisjointArms` on
 every instance where the key holds. The SOUNDNESS direction only —
 completeness is explicitly a non-goal: the checker may refuse truly
-disjoint programs (pins it cannot compare — params, mixed constant
+disjoint queries (pins it cannot compare — params, mixed constant
 forms; keys that never reach a common head position), and its
 conservatism is the discipline that keeps `None` honest, never a
 defect to fix (the doc of
@@ -722,11 +722,11 @@ only mint of `DisjointWitness`; the semantic key premise is the
 schema-declared `Functionality` the check reads (the
 `keys().iter().any` of `key_flows_to_common_head`), discharged on
 committed instances by PRD 03's `holds`. -/
-theorem syntactic_disjointness_sound {C : Classify} {q : Query}
+theorem syntactic_disjointness_sound {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {R : RelId} {fld : FieldId}
     {K : List FieldId} (hkey : Functionality (I R) K)
-    (hsyn : ProvablyDisjointRules q R fld K) :
-    DisjointArms C q I ρ :=
+    (hsyn : ProvablyDisjointRules rules R fld K) :
+    DisjointArms C rules I ρ :=
   hsyn.imp fun hpin => armPin_disjoint hkey hpin
 
 /-! ## The aggregate face of elimination — one extension per binding
@@ -1244,7 +1244,7 @@ unrepresentable), and `dnf_rekey_transparent` — THE law, proved — is
 the composition: the re-keyed union denotation of a lowering equals
 the written rule's own aggregate denotation (`aggAnswersOn`), fiber
 for fiber, key for key, uniformly in the fold. Hand-written
-multi-rule programs keep the head-projection law
+multi-rule queries keep the head-projection law
 (`union_regime_head_projection`; `aggAnswersUnion` below carries its
 aggregate object), with R1 policing its degenerate corner (module
 doc).
@@ -1406,7 +1406,7 @@ The hand-written multi-rule aggregate head folds the union of the
 rules' head-projected binding sets. `union_regime_head_projection`
 deliberately cannot state that (its finds are projection variables —
 the trimmed scope, its docstring); the vocabulary and the law live
-here. `HeadSlot` is the head shape at the key law's level (the
+here. `HeadPos` is the head shape at the key law's level (the
 aggregate faces of `union_spans`): a key position projects and keys
 (`KeyTerm` — var or measure), a fold input enters the union key with
 its VALUE (distinct inputs are distinct fold contributions), a measure
@@ -1425,49 +1425,27 @@ take this fold (`dnf_rekey_transparent` above — ruled 2026-07-23, R2);
 the degenerate corner, with `foldfree_head_constant` the proved
 uninformativeness that justifies the refusal. -/
 
-/-- One aggregate-head position, as the union key law reads it. -/
-inductive HeadSlot where
-  /-- A projected group-key position: a plain variable or the
-  measure. -/
-  | key (k : KeyTerm)
-  /-- A fold input (`Sum`/`Min`/`Max`/`Pack` over a
-  variable): its value enters the union key. -/
-  | fold (v : VarId)
-  /-- A measure fold input: its evaluated measure enters the key. -/
-  | foldMeasure (v : VarId)
-  /-- The nullary `Count`: no words — a keyless head position. -/
-  | count
-deriving DecidableEq
-
-/-- Whether a head position keys the group. -/
-def HeadSlot.isKeyB : HeadSlot → Bool
-  | .key _ => true
-  | _ => false
-
-/-- The key positions of a head, in head order. -/
-def keysOf (head : List HeadSlot) : List KeyTerm :=
-  head.filterMap fun s =>
-    match s with
-    | .key k => some k
-    | _ => none
+/-- The union-key quotient of the Aggregates head inventory: a
+position is a grouping key or an `AggOp`. Count contributes no
+words; this is a function of that inventory, not a parallel
+inductive. The key positions of a head, in head order. -/
+def keysOf (head : List HeadPos) : List KeyTerm :=
+  head.filterMap fun
+    | .inl k => some k
+    | .inr _ => none
 
 /-- The head row of one binding — what the union seen-set keys: key
 positions project (`KeyTerm.value?` — a measure position's `none` is
 the ray, corpus-excluded), fold positions carry their input, the
 nullary `Count` its constant. -/
-def headRow (head : List HeadSlot) (σ : Assignment) :
+def headRow (head : List HeadPos) (σ : Assignment) :
     List (Option Value) :=
-  head.map fun s =>
-    match s with
-    | .key k => k.value? σ
-    | .fold v => some (σ v)
-    | .foldMeasure v => (σ v).measure?
-    | .count => none
+  head.map (HeadPos.row σ)
 
 /-- The key selection of a head row: the entries at the head's key
 positions. Structural recursion (not zip-and-filter) so the mask
 congruence below is an induction, not a plumbing exercise. -/
-def headKey : List HeadSlot → List (Option Value) →
+def headKey : List HeadPos → List (Option Value) →
     List (Option Value)
   | s :: t, x :: r => if s.isKeyB then x :: headKey t r else headKey t r
   | _, _ => []
@@ -1477,8 +1455,8 @@ def headKey : List HeadSlot → List (Option Value) →
 head shapes positionally, so any rule's head serves as the shared
 mask. -/
 theorem headKey_mask_congr :
-    ∀ {h h' : List HeadSlot},
-      h.map HeadSlot.isKeyB = h'.map HeadSlot.isKeyB →
+    ∀ {h h' : List HeadPos},
+      h.map HeadPos.isKeyB = h'.map HeadPos.isKeyB →
       ∀ row, headKey h row = headKey h' row
   | [], [], _, _ => rfl
   | [], _ :: _, heq, _ => by simp at heq
@@ -1496,32 +1474,30 @@ theorem headKey_mask_congr :
 union domain by the key is well-defined (the head-projection twin of
 `dnf_key_of_slot_row`). -/
 theorem headKey_headRow :
-    ∀ (head : List HeadSlot) (σ : Assignment),
+    ∀ (head : List HeadPos) (σ : Assignment),
       headKey head (headRow head σ) = keyTuple (keysOf head) σ
   | [], _ => rfl
   | s :: t, σ => by
     cases s with
-    | key k =>
+    | inl k =>
       show k.value? σ :: headKey t (headRow t σ) =
         k.value? σ :: keyTuple (keysOf t) σ
       exact congrArg _ (headKey_headRow t σ)
-    | fold v => exact headKey_headRow t σ
-    | foldMeasure v => exact headKey_headRow t σ
-    | count => exact headKey_headRow t σ
+    | inr _ => exact headKey_headRow t σ
 
 /-- **The normative union fold domain** (2026-07-23 audit, 027): the
 union of the rules' head-projected binding sets — a `Set`, so a later
 rule's re-derivation of one head row is the same element
 (multiplicity across written rules is unrepresentable, exactly the
 head-projection law's collapse). -/
-def unionFoldDomain (C : Classify) (rs : List (Rule × List HeadSlot))
+def unionFoldDomain (C : Classify) (rs : List (Rule × List HeadPos))
     (I : Instance) (ρ : ParamEnv) : Set (List (Option Value)) :=
   fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 (edbEnv I) ρ σ ∧ t = headRow p.2 σ
 
 /-- One union group: the domain's fiber over a group-key tuple, read
 through the shared key mask. -/
-def unionGroup (C : Classify) (rs : List (Rule × List HeadSlot))
-    (I : Instance) (ρ : ParamEnv) (mask : List HeadSlot)
+def unionGroup (C : Classify) (rs : List (Rule × List HeadPos))
+    (I : Instance) (ρ : ParamEnv) (mask : List HeadPos)
     (gk : List (Option Value)) : Set (List (Option Value)) :=
   fun t => t ∈ unionFoldDomain C rs I ρ ∧ headKey mask t = gk
 
@@ -1531,8 +1507,8 @@ fiber of distinct head rows (the per-position folds of the rules-IR
 union regime, abstracted as `fold`). The witness `(p, σ)` is the
 load-bearing shape, as in `aggAnswers`: a group exists only as the
 fiber of an actual derivation. -/
-def aggAnswersUnion (C : Classify) (rs : List (Rule × List HeadSlot))
-    (I : Instance) (ρ : ParamEnv) (mask : List HeadSlot)
+def aggAnswersUnion (C : Classify) (rs : List (Rule × List HeadPos))
+    (I : Instance) (ρ : ParamEnv) (mask : List HeadPos)
     (fold : List (Option Value) → Set (List (Option Value)) →
       AnswerTuple) : Set AnswerTuple :=
   fun t => ∃ p, p ∈ rs ∧ ∃ σ, derives C p.1 (edbEnv I) ρ σ ∧
@@ -1542,7 +1518,7 @@ def aggAnswersUnion (C : Classify) (rs : List (Rule × List HeadSlot))
 /-- **The aggregate-head coverage of the union key law** (the
 companion `union_regime_head_projection`'s projection-head statement
 deliberately does not carry): seen-filtering the HEAD-ROW stream of a
-complete enumeration of a multi-rule program's derivations computes
+complete enumeration of a multi-rule query's derivations computes
 exactly the normative union fold domain, duplicate-free — the
 spanning seen-set keyed on `union_spans`' head projection hands every
 per-position fold the distinct head-projected union, which is
@@ -1550,8 +1526,8 @@ per-position fold the distinct head-projected union, which is
 (`exec/sink.rs::union_spans`); the aggregate sink's spanning seen-set
 (`exec/sink.rs::AggregateSink`). -/
 theorem union_regime_agg_heads {C : Classify}
-    {rs : List (Rule × List HeadSlot)} {I : Instance} {ρ : ParamEnv}
-    {ε : Type} (events : List ε) (arm : ε → Rule × List HeadSlot)
+    {rs : List (Rule × List HeadPos)} {I : Instance} {ρ : ParamEnv}
+    {ε : Type} (events : List ε) (arm : ε → Rule × List HeadPos)
     (bind : ε → Assignment)
     (hvalid : ∀ e, e ∈ events →
       arm e ∈ rs ∧ derives C (arm e).1 (edbEnv I) ρ (bind e))
@@ -1574,18 +1550,19 @@ theorem union_regime_agg_heads {C : Classify}
 
 /-- The R1 head shape: a fold-free head carrying the nullary `Count`
 — every position keys or counts, with a `Count` present. -/
-def FoldFreeNullaryCount (head : List HeadSlot) : Prop :=
-  .count ∈ head ∧ ∀ s, s ∈ head → s.isKeyB = true ∨ s = .count
+def FoldFreeNullaryCount (head : List HeadPos) : Prop :=
+  (Sum.inr AggOp.count : HeadPos) ∈ head ∧
+    ∀ s, s ∈ head → s.isKeyB = true ∨ s = Sum.inr AggOp.count
 
 /-- **The R1 acceptance screen (ruled 2026-07-23, R1)** — a
-validation-model refusal, stated never proved: a 2+-rule program
+validation-model refusal, stated never proved: a 2+-rule query
 whose head is fold-free with a nullary `Count` is a typed validation
 error beside `ArgAcrossRules` (the modeling answer: one `Count` per
 disjunct, host-merged). DNF-derived rule sets are untouched — the R2
 re-key keeps their fold domain the written rule's full binding set,
 so their `Count` counts. `foldfree_head_constant` below is the
 uninformativeness that justifies the refusal. -/
-def CountAcrossRulesAccepted (rs : List (Rule × List HeadSlot)) :
+def CountAcrossRulesAccepted (rs : List (Rule × List HeadPos)) :
     Prop :=
   2 ≤ rs.length → ∀ p, p ∈ rs → ¬ FoldFreeNullaryCount p.2
 
@@ -1596,10 +1573,10 @@ the nullary `Count` under the head-projection law is definitionally
 the constant 1 per group: an uninformative query, made
 unrepresentable by the screen. -/
 theorem foldfree_head_constant :
-    ∀ {h h' : List HeadSlot},
-      h.map HeadSlot.isKeyB = h'.map HeadSlot.isKeyB →
-      (∀ s, s ∈ h → s.isKeyB = true ∨ s = .count) →
-      (∀ s, s ∈ h' → s.isKeyB = true ∨ s = .count) →
+    ∀ {h h' : List HeadPos},
+      h.map HeadPos.isKeyB = h'.map HeadPos.isKeyB →
+      (∀ s, s ∈ h → s.isKeyB = true ∨ s = Sum.inr AggOp.count) →
+      (∀ s, s ∈ h' → s.isKeyB = true ∨ s = Sum.inr AggOp.count) →
       ∀ {σ σ' : Assignment},
         keyTuple (keysOf h) σ = keyTuple (keysOf h') σ' →
         headRow h σ = headRow h' σ'
@@ -1614,31 +1591,27 @@ theorem foldfree_head_constant :
     have hfft' := fun x hx => hff' x (List.mem_cons_of_mem _ hx)
     cases hkb : s.isKeyB with
     | true =>
-      obtain ⟨k, rfl⟩ : ∃ k, s = .key k := by
+      obtain ⟨k, rfl⟩ : ∃ k, s = Sum.inl k := by
         cases s with
-        | key k => exact ⟨k, rfl⟩
-        | fold v => exact nomatch hkb
-        | foldMeasure v => exact nomatch hkb
-        | count => exact nomatch hkb
-      obtain ⟨k', rfl⟩ : ∃ k', s' = .key k' := by
+        | inl k => exact ⟨k, rfl⟩
+        | inr _ => simp [HeadPos.isKeyB] at hkb
+      obtain ⟨k', rfl⟩ : ∃ k', s' = Sum.inl k' := by
         rw [hkb] at h1
         cases s' with
-        | key k' => exact ⟨k', rfl⟩
-        | fold v => exact nomatch h1
-        | foldMeasure v => exact nomatch h1
-        | count => exact nomatch h1
+        | inl k' => exact ⟨k', rfl⟩
+        | inr _ => simp [HeadPos.isKeyB] at h1
       have hkey' : k.value? σ :: keyTuple (keysOf t) σ =
           k'.value? σ' :: keyTuple (keysOf t') σ' := hkey
       injection hkey' with hk1 hk2
       show k.value? σ :: headRow t σ = k'.value? σ' :: headRow t' σ'
       rw [hk1, foldfree_head_constant h2 hfft hfft' hk2]
     | false =>
-      have hcnt : s = .count := by
+      have hcnt : s = Sum.inr AggOp.count := by
         rcases hs with hk | hc
         · rw [hkb] at hk
           exact nomatch hk
         · exact hc
-      have hcnt' : s' = .count := by
+      have hcnt' : s' = Sum.inr AggOp.count := by
         rcases hs' with hk | hc
         · rw [← h1, hkb] at hk
           exact nomatch hk
@@ -1655,11 +1628,11 @@ distinct head-row set is a singleton, so the union-regime `Count`
 answers 1 per group uniformly (the R1 refusal's countermodel-free
 form). -/
 theorem nullary_count_fiber_singleton {C : Classify}
-    {rs : List (Rule × List HeadSlot)} {I : Instance} {ρ : ParamEnv}
-    {mask : List HeadSlot}
+    {rs : List (Rule × List HeadPos)} {I : Instance} {ρ : ParamEnv}
+    {mask : List HeadPos}
     (hshape : ∀ p, p ∈ rs →
-      p.2.map HeadSlot.isKeyB = mask.map HeadSlot.isKeyB)
-    (hff : ∀ p, p ∈ rs → ∀ s, s ∈ p.2 → s.isKeyB = true ∨ s = .count)
+      p.2.map HeadPos.isKeyB = mask.map HeadPos.isKeyB)
+    (hff : ∀ p, p ∈ rs → ∀ s, s ∈ p.2 → s.isKeyB = true ∨ s = Sum.inr AggOp.count)
     {gk t t' : List (Option Value)}
     (ht : t ∈ unionGroup C rs I ρ mask gk)
     (ht' : t' ∈ unionGroup C rs I ρ mask gk) : t = t' := by
@@ -1728,7 +1701,7 @@ theorem membership_fibers_eq (Γ : Typing) (C : Classify) (r : Rule)
     SurfaceGroupSlots Γ C r I ρ keys gk slots =
       GroupSlots C (r.lowerMembership Γ).2 I ρ keys gk slots := by
   have hposF := lowerFuel_posFree _ Γ r (Nat.le_refl _)
-  have hnegF := lowerFuel_negFree (memCount Γ.membership r.atoms) Γ r hneg
+  have hnegF := lowerFuel_negFree (memCount Γ.membershipSrc r.atoms) Γ r hneg
   funext t
   refine propext ?_
   constructor
@@ -1757,7 +1730,7 @@ theorem membership_lowering_preserves_fold (Γ : Typing) (C : Classify)
     surfaceAggAnswersOn Γ C r I ρ keys slots fold =
       aggAnswersOn C (r.lowerMembership Γ).2 I ρ keys slots fold := by
   have hposF := lowerFuel_posFree _ Γ r (Nat.le_refl _)
-  have hnegF := lowerFuel_negFree (memCount Γ.membership r.atoms) Γ r hneg
+  have hnegF := lowerFuel_negFree (memCount Γ.membershipSrc r.atoms) Γ r hneg
   funext t
   refine propext ?_
   constructor

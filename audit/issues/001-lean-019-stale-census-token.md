@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean (Bridge/census)
-- **Status:** OPEN
+- **Status:** FIXED(93f7640b)
 - **Source:** adversarial pass (not in audit/lean.md)
 - **Depends on:** none — **fix FIRST**: every other issue's green definition includes `./scripts/lean.sh`, whose census battery cannot pass until this lands.
 
@@ -35,10 +35,10 @@ Per `audit/CONTRACT.md §C8` (tokens move WITH renames): retarget the one token 
 
 ## Acceptance criteria
 
-- [ ] `bash scripts/spec-census.sh` exits 0.
-- [ ] `./scripts/lean.sh` exits 0 (build + battery + census + conformance + comparator).
-- [ ] Gone: `rg -n 'translate/program\.rs' lean crates docs` → no matches.
-- [ ] No other token, ledger row, theorem, or assertion touched (one-line diff).
+- [x] `bash scripts/spec-census.sh` exits 0.
+- [x] `./scripts/lean.sh` exits 0 (build + battery + census + conformance + comparator).
+- [x] Gone: `rg -n 'translate/program\.rs' lean crates docs` → no matches.
+- [x] No other token, ledger row, theorem, or assertion touched (one-line diff).
 
 ## Constraints
 

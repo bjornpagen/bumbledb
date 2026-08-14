@@ -55,7 +55,7 @@ the identity variable mapping.
   UCQ minimization restricted to the normalized-form witness;
   `plan/ground.rs::subsumes`, the ordered-pair check), wired after
   grounding at `api/prepared/build.rs::ground_program`: the deleted
-  rules are filtered out of the prepared program. Modeled:
+  rules are filtered out of the prepared pipeline. Modeled:
   `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
   sixth rewrite, in the chain (the discharge record below).
 * **The statically-empty fold** — `ir/normalize/fold.rs::fold`
@@ -104,7 +104,7 @@ the identity variable mapping.
   identical participating-atom multiset with the keeper's per-atom
   filters ⊆ the candidate's, the keeper's residual sets ⊆ the
   candidate's, and every keeper negated atom present in the candidate
-  — is DELETED from the prepared program. `SubsumeWitness` reads that
+  — is DELETED from the prepared pipeline. `SubsumeWitness` reads that
   witness in this level's vocabulary (a per-occurrence Eq filter is a
   literal binding, residuals are the rule's conditions): every keeper
   atom pairs with a candidate atom of the same relation whose binding
@@ -1282,10 +1282,10 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
   /-- Positive only — no anti-joins on the fast path. -/
   negated : r.negated = []
   /-- The key resolves against a declared functionality statement
-  (`key_probe_candidate`; fresh auto-keys included). -/
-  declared : (match a.source with
-      | .edb R => Statement.functionality R K
-      | .interior _ => Statement.functionality ⟨0⟩ K) ∈ T.statements
+  (`key_probe_candidate`; fresh auto-keys included). Interior
+  key-probe is unrepresentable — statements name stored relations. -/
+  declared : ∃ R, a.source = .edb R ∧
+    Statement.functionality R K ∈ T.statements
   /-- Every key field is bound by value (`value_of` finds an `Eq`
   constant for each). -/
   covered : ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pinned
@@ -1299,9 +1299,9 @@ finds projected, exactly the probe kernel's shape
 (`exec/dispatch/execute_key_probe.rs`). Reuses the `evalList`
 machinery: `bindAtom` is the decode-and-check step, `condHoldsB` the
 residual filter. -/
-def keyProbeEval (C : Classify) (W : ListInstance) (ρ : ParamEnv)
+def keyProbeEval (C : Classify) (facts : List Fact) (ρ : ParamEnv)
     (r : Rule) (a : Atom) (K : List FieldId) : List AnswerTuple :=
-  match (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+  match facts.find? (probeHitB ρ a K) with
   | none => []
   | some f =>
     match bindAtom ρ f a.bindings [] with
@@ -1362,20 +1362,19 @@ Bridge: `PreparedRule::KeyProbe` (minted at
 `api/prepared/build.rs::prepare_rule_variant`); `remaining_filters`
 (`exec/dispatch/classify.rs::unconsumed_filters`). -/
 theorem keyprobe_equiv_join {T : Theory} {C : Classify}
-    {W : ListInstance} {ρ : ParamEnv} {r : Rule} {a : Atom}
+    {F : AtomSource → Set Fact} {facts : List Fact}
+    {ρ : ParamEnv} {r : Rule} {a : Atom}
     {K : List FieldId} (hshape : KeyProbeShape T r a K)
-    (hkey : Functionality (edbEnv W.den a.source) K) (hsafe : Safe r)
+    (hlist : ∀ f, f ∈ facts ↔ f ∈ F a.source)
+    (hkey : Functionality (F a.source) K) (hsafe : Safe r)
     (hnm : ∀ bd, bd ∈ a.bindings → ¬ bd.2.isMeasure) :
-    ∀ t, t ∈ keyProbeEval C W ρ r a K ↔ t ∈ ruleAnswers C r (edbEnv W.den) ρ := by
+    ∀ t, t ∈ keyProbeEval C facts ρ r a K ↔ t ∈ ruleAnswers C r F ρ := by
   intro t
-  have henv : InteriorTables.empty.toEnv = InteriorEnv.empty := by
-    funext _ _
-    simp [InteriorTables.toEnv, InteriorTables.empty, InteriorEnv.empty]
   constructor
   · -- the probe's answer derives
     intro ht
     unfold keyProbeEval at ht
-    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+    cases hfind : facts.find? (probeHitB ρ a K) with
     | none =>
       simp only [hfind] at ht
       cases ht
@@ -1401,10 +1400,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
             rw [hshape.atoms] at hx
             rcases List.mem_singleton.mp hx with rfl
             refine ⟨f, ?_, fun bd hbd => (hpins bd hbd).selects⟩
-            unfold edbEnv
-            rw [← henv]
-            exact (mem_factsOf W InteriorTables.empty x.source f).mp
-              (List.mem_of_find?_eq_some hfind)
+            exact (hlist f).mp (List.mem_of_find?_eq_some hfind)
           · intro n hn
             rw [hshape.negated] at hn
             cases hn
@@ -1417,23 +1413,15 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     obtain ⟨f, hfI, hm⟩ := hatoms a (by
       rw [hshape.atoms]
       exact List.mem_singleton.mpr rfl)
-    have hf : f ∈ factsOf W InteriorTables.empty a.source :=
-      (mem_factsOf W InteriorTables.empty a.source f).mpr (by
-        unfold edbEnv at hfI
-        rw [henv]
-        exact hfI)
+    have hf : f ∈ facts := (hlist f).mpr hfI
     have hhit := probeHit_of_matches hshape.covered hm
     -- the one get finds exactly the deriving fact
-    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+    cases hfind : facts.find? (probeHitB ρ a K) with
     | none => exact absurd hhit (List.find?_eq_none.mp hfind f hf)
     | some g =>
       have hghit := List.find?_some hfind
-      have hgmem : g ∈ factsOf W InteriorTables.empty a.source :=
-        List.mem_of_find?_eq_some hfind
-      have hgF : g ∈ edbEnv W.den a.source := by
-        unfold edbEnv
-        rw [← henv]
-        exact (mem_factsOf W InteriorTables.empty a.source g).mp hgmem
+      have hgmem : g ∈ facts := List.mem_of_find?_eq_some hfind
+      have hgF : g ∈ F a.source := (hlist g).mp hgmem
       have hgf : g = f :=
         functionality_unique_witness hkey (f.project K) f hfI rfl g
           hgF (probeHit_project hghit hhit)
@@ -1598,7 +1586,7 @@ theorem emptyAt_no_answers {C : Classify} {ρ : ParamEnv} {r : Rule}
 
 /-- The refutation constructor is instance-INDEPENDENT: it verdicts
 every instance at once — exactly what licenses deleting the rule from
-the prepared program, where the miss licenses only this execution's
+the prepared pipeline, where the miss licenses only this execution's
 empty result. -/
 theorem emptyAt_refuted_everywhere {C : Classify} {r : Rule}
     (h : StaticallyEmpty C r) :
@@ -2296,7 +2284,7 @@ theory and agree with its ground axioms, so any sequence does. The
 theorem falls out of items 1, 2, 2b and 4 by rewriting, which is the
 shape check on their statements. -/
 
-/-- One prepare-time rewrite step on a program, at one rule. The
+/-- One prepare-time rewrite step on a rule list, at one rule. The
 elimination step carries the THEORY-side premises: the declared
 containment (in the statement's own `Bumbledb.Atom` shape) and
 condition 4's scalar splits (`Enforcement::ScalarProbe` — the interval
@@ -2304,31 +2292,31 @@ refusal, the `Enforcement::ScalarProbe` screen in
 `plan/ground.rs::removable`); `holds` cashes them into the semantic
 containment at execution. -/
 inductive RewriteStep (T : Theory) (C : Classify) :
-    Query → Query → Prop where
+    List Rule → List Rule → Prop where
   /-- The grounding fold: one rule rewritten
   (`Role::Folded`, the membership attachment). -/
-  | ground {n : Nat} {pre post : List Rule} {r r' : Rule}
+  | ground {pre post : List Rule} {r r' : Rule}
       (h : groundRewrite T r = .inl r') :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The grounding refutation: the dead rule deleted at prepare
   (`folded to ∅`). -/
-  | groundDead {n : Nat} {pre post : List Rule} {r : Rule}
+  | groundDead {pre post : List Rule} {r : Rule}
       {g : Grounded} (h : groundRewrite T r = .inr g) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The containment elimination (`Role::Eliminated(statement)`). -/
-  | eliminate {n : Nat} {pre post : List Rule} {r r' : Rule}
+  | eliminate {pre post : List Rule} {r r' : Rule}
       {a b : Atom} {Ra Rb : RelId} {X Y : List FieldId} {φ ψ : Selection}
       (ha : a.source = .edb Ra) (hb : b.source = .edb Rb)
       (hs : ElimStep r r' a b X Y φ ψ)
       (hdecl : Statement.containment ⟨Ra, X, φ⟩ ⟨Rb, Y, ψ⟩ ∈ T.statements)
       (hsrc : T.header.intervalSplit Ra X = none)
       (htgt : T.header.intervalSplit Rb Y = none) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The chained containment elimination — the discharged-source arm
   (`chain_reaches`, the support forest): the support pair and the
   elimination it licenses land as ONE composed step, the
   acyclic-support premise (`hroot`) named. -/
-  | eliminateChained {n : Nat} {pre post : List Rule} {r r₁ r₂ : Rule}
+  | eliminateChained {pre post : List Rule} {r r₁ r₂ : Rule}
       {a b c : Atom} {Ra Rb Rc : RelId} {X₁ Y₁ X₂ Y₂ : List FieldId}
       {φ₁ ψ₁ φ₂ ψ₂ : Selection}
       (ha : a.source = .edb Ra) (hb : b.source = .edb Rb) (hc : c.source = .edb Rc)
@@ -2341,22 +2329,22 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (htgt₁ : T.header.intervalSplit Rb Y₁ = none)
       (hsrc₂ : T.header.intervalSplit Rb X₂ = none)
       (htgt₂ : T.header.intervalSplit Rc Y₂ = none) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r₂ :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r₂ :: post)
   /-- The statically-empty kill (`NormalizedQuery::dead`). -/
-  | kill {n : Nat} {pre post : List Rule} {r : Rule}
+  | kill {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
   `api/prepared/build.rs::ground_program`): a rule the witness proves
-  covered by a KEPT sibling is deleted from the program — the sixth
+  covered by a KEPT sibling is deleted from the rule list — the sixth
   denotation-affecting rewrite, in the chain. The keeper's membership
   (`hk`) is the sweep's own discipline made a premise: a deleted rule
   neither subsumes nor re-enters, so the keeper of every recorded
-  `Subsumption` survives to the output program. Purely syntactic — no
+  `Subsumption` survives to the output list. Purely syntactic — no
   theory premise: the containment holds on EVERY instance. -/
-  | subsume {n : Nat} {pre post : List Rule} {d k : Rule}
+  | subsume {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
-      RewriteStep T C (Query.plain n (pre ++ d :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (pre ++ d :: post) (pre ++ post)
 
 /-- Replacing one rule by an answer-equal rule preserves the query's
 answers — the union reads members only. -/
@@ -2422,7 +2410,7 @@ theorem rulesAnswers_drop_at {C : Classify} {I : Instance}
 /-- Deleting a rule whose answers a KEPT rule covers preserves the
 query's answers — `rulesAnswers_drop_at`'s covered sibling: the union
 loses nothing a survivor still supplies. The subsumption deletion's
-program-level face. -/
+query-level face. -/
 theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
     {ρ : ParamEnv} {pre post : List Rule} {d k : Rule}
     (hk : k ∈ pre ++ post)
@@ -2451,12 +2439,12 @@ theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
 
 /-- One step preserves the query's answers on every instance that
 holds the theory and agrees with its ground axioms — items 1, 2, 2b
-and 4, lifted to the program (the subsumption arm needs neither
+and 4, lifted to the rule list (the subsumption arm needs neither
 premise: its containment is instance-blind). -/
-theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
-    (hstep : RewriteStep T C q q') {I : Instance} {ρ : ParamEnv}
+theorem step_preserves {T : Theory} {C : Classify} {rs rs' : List Rule}
+    (hstep : RewriteStep T C rs rs') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
+    ∀ t, t ∈ rulesAnswers C rs (edbEnv I) ρ ↔ t ∈ rulesAnswers C rs' (edbEnv I) ρ := by
   cases hstep with
   | ground h =>
     rename_i r _
@@ -2466,7 +2454,7 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     exact this.symm
   | groundDead h =>
     exact rulesAnswers_drop_at fun t => ground_refuted_empty h hax ρ t
-  | @eliminate n pre post r r' a b Ra Rb X Y φ ψ ha hb hs hdecl hsrc htgt =>
+  | @eliminate pre post r r' a b Ra Rb X Y φ ψ ha hb hs hdecl hsrc htgt =>
     refine rulesAnswers_congr_at fun t => ?_
     have hj := hI _ hdecl
     simp only [Statement.judgment, hsrc, htgt] at hj
@@ -2476,7 +2464,7 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
       intro f; rw [hb]; simp [edbEnv, sourceDen]; exact den_agrees hax Rb f
     exact (elimination_sound hs
       (containment_transfer hA hB hj.2) t).symm
-  | @eliminateChained n pre post r r₁ r₂ a b c Ra Rb Rc X₁ Y₁ X₂ Y₂ φ₁ ψ₁ φ₂ ψ₂
+  | @eliminateChained pre post r r₁ r₂ a b c Ra Rb Rc X₁ Y₁ X₂ Y₂ φ₁ ψ₁ φ₂ ψ₂
       ha hb hc hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
     refine rulesAnswers_congr_at fun t => ?_
     have hj₁ := hI _ hdecl₁
@@ -2503,10 +2491,10 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
 /-- A rewrite sequence: any chain of the rewrites (grounding, kill,
 elimination — the chained composed step included — and the
 subsumption deletion). -/
-inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
-  | refl (q : Query) : Rewrites T C q q
-  | step {q q' q'' : Query} (h : RewriteStep T C q q')
-      (rest : Rewrites T C q' q'') : Rewrites T C q q''
+inductive Rewrites (T : Theory) (C : Classify) : List Rule → List Rule → Prop
+  | refl (rs : List Rule) : Rewrites T C rs rs
+  | step {rs rs' rs'' : List Rule} (h : RewriteStep T C rs rs')
+      (rest : Rewrites T C rs' rs'') : Rewrites T C rs rs''
 
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
 elimination (chained-source pairs included), subsumption deletion and
@@ -2516,12 +2504,12 @@ licence to chain, all six rewrites in the chain (the subsumption
 deletion's admission is 2026-07-15's discharge — the module doc's
 record). Falls out of items 1, 2, 2b and 4 by induction over the
 chain, one rewrite per step. -/
-theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
-    (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
+theorem rewrite_composition {T : Theory} {C : Classify} {rs rs' : List Rule}
+    (h : Rewrites T C rs rs') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
+    ∀ t, t ∈ rulesAnswers C rs (edbEnv I) ρ ↔ t ∈ rulesAnswers C rs' (edbEnv I) ρ := by
   induction h with
-  | refl q => exact fun t => Iff.rfl
+  | refl rs => exact fun t => Iff.rfl
   | step hstep _ ih =>
     exact fun t => (step_preserves hstep hI hax t).trans (ih t)
 

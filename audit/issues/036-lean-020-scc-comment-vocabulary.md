@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(428005dd)
 - **Source:** adversarial pass (not in audit/lean.md; the docs audit's F3/F6 pattern, found in the Lean spec itself)
 - **Depends on:** none (comment-only; textually overlaps lean-001/002 in Syntax.lean — land after them to avoid churn)
 
@@ -28,8 +28,8 @@ Per `audit/CONTRACT.md §C7` vocabulary (it governs all prose, including Lean do
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -inw 'scc|tarjan|strata' lean/Bumbledb lean/Main.lean` → no matches.
-- [ ] Comment-only: `lake build` output identical; zero theorem/def/name changes; `./scripts/lean.sh` fully green (battery + census + 268-case conformance + comparator).
+- [x] Gone: `rg -inw 'scc|tarjan|strata' lean/Bumbledb lean/Main.lean` → no matches.
+- [x] Comment-only: `lake build` output identical; zero theorem/def/name changes; `./scripts/lean.sh` fully green (battery + census + 268-case conformance + comparator).
 
 ## Constraints
 

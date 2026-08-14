@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(3d42fdeb)
 - **Source:** audit/lean.md M2
 - **Depends on:** lean-001, lean-002 (decodes into their types)
 
@@ -54,10 +54,10 @@ Per `audit/CONTRACT.md §C4` ("One decoder"):
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'plainQuery|decodeReachAtom' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'def evalQuery' lean/Bumbledb/Conformance.lean` → no match under that name. A wrapper type may remain (heads + `dnf` + `width` + the `Query` body); it must not duplicate atom/condition/rule-body types.
-- [ ] One decoder: one function accepts `relation` or `edb`/`interior`.
-- [ ] Unchanged: ALL 268 cases green — 246 seeded + 22 reach — corpus byte-identical. Negated-membership seeded cases still use the surface anti-join (or an explicit lowering). Membership-free plain cases may use `evalQueryList`.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator).
+- [x] Gone: `rg -nw 'plainQuery|decodeReachAtom' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'def evalQuery' lean/Bumbledb/Conformance.lean` → no match under that name. A wrapper type may remain (heads + `dnf` + `width` + the `Query` body); it must not duplicate atom/condition/rule-body types.
+- [x] One decoder: one function accepts `relation` or `edb`/`interior`.
+- [x] Unchanged: ALL 268 cases green — 246 seeded + 22 reach — corpus byte-identical. Negated-membership seeded cases still use the surface anti-join (or an explicit lowering). Membership-free plain cases may use `evalQueryList`.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator).
 
 ## Constraints
 

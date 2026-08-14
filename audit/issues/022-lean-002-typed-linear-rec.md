@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(c8af2915)
 - **Source:** audit/lean.md H2
 - **Depends on:** none (foundation; lands as ONE change with lean-001)
 - **Conflicts with:** lean-010, lean-011, lean-015, lean-017 (same theorems; land after)
@@ -104,10 +104,10 @@ def RecStep.toRule (self : InteriorId) (r : RecStep) : Rule :=
 
 ## Acceptance criteria
 
-- [ ] Unrepresentable/gone: `rg -nw 'selfCount|hasNegatedSelf|recLinear|recLinear_arms|selfCount_eq_one_mem|oddRec' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'def Rec ' lean/Bumbledb/Query/Syntax.lean` → no matches.
-- [ ] Unchanged behavior: `lake exe conformance conformance/cases` → 268 cases, 0 disagreements (the 22 reach cases decode into `LinearRec` and evaluate identically); `evalLinearReach_eq_lfp` and `reach_den_finite` survive with the same content minus the linearity premise.
-- [ ] New locks: `reachOp_mono` restated WITHOUT a linearity premise (monotonicity from the structural self) — its Bridge row updated; a decoder test path exercised by the corpus (the 22 reach cases are the lock).
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`; no `axiom`.
+- [x] Unrepresentable/gone: `rg -nw 'selfCount|hasNegatedSelf|recLinear|recLinear_arms|selfCount_eq_one_mem|oddRec' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'def Rec ' lean/Bumbledb/Query/Syntax.lean` → no matches.
+- [x] Unchanged behavior: `lake exe conformance conformance/cases` → 268 cases, 0 disagreements (the 22 reach cases decode into `LinearRec` and evaluate identically); `evalLinearReach_eq_lfp` and `reach_den_finite` survive with the same content minus the linearity premise.
+- [x] New locks: `reachOp_mono` restated WITHOUT a linearity premise (monotonicity from the structural self) — its Bridge row updated; a decoder test path exercised by the corpus (the 22 reach cases are the lock).
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`; no `axiom`.
 
 ## Constraints
 

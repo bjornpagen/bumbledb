@@ -7,7 +7,7 @@ A faithful abstraction of `crates/bumbledb/src/ir.rs` (the IR, not the
 notation): terms, atoms with named-field bindings (absence of a field
 IS the wildcard), the input condition grammar (leaf / and / or — the
 one place a nested OR is writable), rules (atoms, negated, conditions,
-finds), named interiors, at most one linear rec SCC, and the main
+finds), named interiors, at most one linear rec, and the main
 query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
 `Bumbledb.Exec.Reach`.
 
@@ -15,8 +15,8 @@ query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
 
 * **Finds are projected variables.** `Rule.finds : List VarId`;
   aggregate and measure find positions are PRD 05's folds over the
-  binding sets PRD 04 denotes, so the head degenerates to its arity
-  (`Query.arity` — every `HeadTerm` is `Var` at this level; the
+  binding sets PRD 04 denotes, so the head degenerates to projected
+  variables (every `HeadTerm` is `Var` at this level; the
   var-free head-shape row arrives with the aggregate ops). Interior
   and rec heads are projection-shaped BY CONSTRUCTION here; the
   engine roster that refuses `Aggregate` / `Measure` finds on those
@@ -61,18 +61,15 @@ query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
   `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`,
   `NonlinearRecArm`, `NegationInRec`), and the caps above. Benign in
   every case — never unsound: each theorem quantifies over arbitrary
-  syntax or assumes only `Safe`/`WellTyped`/`recLinear`, so a
+  syntax or assumes only `Safe`/`WellTyped`, so a
   rejected-but-denotable query simply never reaches execution.
 * **The unknown-interior gap, recorded LOUDLY, with its screen.** A
-  rule reading `interior k` with `k` outside `derivedCount` reads the
-  EMPTY fact set: a positive phantom read kills its rule, but a
-  NEGATED phantom read is vacuously satisfied. The screen is
-  `Query.WellFormed` (`sourcesInRange`); the engine's refusal is
-  `ValidationError::UnknownInterior`. `Query.plain` does **not**
-  rewrite atoms to `.edb` — hostile `Interior` atoms on a plain query
-  fail `sourcesInRange`. The `Exec/Reach.lean` agreement theorems are
-  exact equalities with or without the screen — both the denotation
-  and the evaluator read a phantom as empty — so the premise belongs
+  rule reading `interior k` with `k` outside the interiors (and rec,
+  when present) reads the EMPTY fact set: a positive phantom read
+  kills its rule, but a NEGATED phantom read is vacuously satisfied.
+  The engine's refusal is `ValidationError::UnknownInterior`. Lean
+  keeps phantom-empty — the `Exec/Reach.lean` agreement theorems are
+  exact equalities with or without a screen, so the premise belongs
   to acceptance readings, not to the agreement.
 
 ## The creation-quarantine gravestones (law text; the full record is
@@ -90,11 +87,12 @@ law restated for the reach operator, not a new rule
 
 ## Interiors and one linear rec (this cut's IR)
 
-`InteriorId` / `AtomSource` / `Interior` / `Rec` / widened `Query`
-(`interiors`, `rec`, `arity`, `rules`) are the IR. A query with empty
-interiors and no rec is today's query plus two empty fields
-(`Query.plain` / `evalQuery_plain`). Linearity and no-negation-in-rec
-are `Query.recLinear` — not a Tarjan witness. Recorded shapes:
+`InteriorId` / `AtomSource` / `Interior` / `LinearRec` / `Query` are
+the IR. Empty-prefix `.cq` is a CQ; `.reach` carries `LinearRec`.
+Interiors are plain, possibly-empty data in both arms. No-self-in-base
+and no-negation-in-rec are structural on `LinearRec` — base arms
+cannot mention self or negation; a step arm carries the unique
+positive self-atom as `selfBindings`. Recorded shapes:
 
 * **`InteriorId` never puns with `RelId`.** Statements quantify over
   stored relations permanently (`30-dependencies.md`, the
@@ -111,12 +109,12 @@ are `Query.recLinear` — not a Tarjan witness. Recorded shapes:
 * **One atom type.** `Atom.source : AtomSource` (`edb | interior`).
   An `interior` atom's bindings address HEAD POSITIONS positionally —
   `FieldId i` is the target derived table's column `i`. Numbering:
-  interior `i` has `InteriorId ⟨i⟩`; the rec, if present, has
-  `InteriorId ⟨interiors.length⟩`.
-* **`Rec` / `Query` are products, not structures.** A structure field
-  named `rec` collides with Lean's recursor (`T.rec`). Accessors
-  `Rec.rec` / `Query.rec` keep the spec names; constructors are
-  `Rec.mk` / `Query.mk`. Recorded so the IR names stay locked.
+  interior `i` has `InteriorId ⟨i⟩`; the rec, when present, has
+  `InteriorId ⟨interiors.length⟩`. The `reach` constructor is the one
+  site that knows that id.
+* **`Query` is a two-arm sum.** Constructor names `cq`/`reach` — a
+  field or constructor named `rec` collides with Lean's recursor
+  (`T.rec`). Accessors `Query.interiors` / `Query.rules` are total by match. There is no `Query.rec` accessor.
 -/
 
 namespace Bumbledb.Query
@@ -263,73 +261,94 @@ structure Rule where
   conditions : List Condition
 
 /-- A named interior: a finite CQ (union of CQs), evaluated once.
-Declaration order is topological order. -/
+Declaration order is topological order. Head width is `finds.length`. -/
 structure Interior where
-  arity : Nat
   rules : List Rule
 
-/-- One recursive SCC (this cut: one name, linear arms).
-Product encoding: a structure field named `rec` collides with the
-recursor. `Rec.rec` is the spec accessor for the rec arms. -/
-def Rec : Type := Nat × List Rule × List Rule
+/-- A base arm of a linear rec: negation is unrepresentable, and there
+is no self field. The decoder refuses a self-atom (`SelfInBase`) and
+a nonempty `negated` (`NegationInRec`). -/
+structure RecRule where
+  finds : List VarId
+  atoms : List Atom
+  conditions : List Condition
 
-def Rec.arity (r : Rec) : Nat := r.1
-def Rec.base (r : Rec) : List Rule := r.2.1
-def Rec.rec (r : Rec) : List Rule := r.2.2
-def Rec.mk (arity : Nat) (base rec : List Rule) : Rec := ⟨arity, base, rec⟩
+/-- A step arm of a linear rec: `selfBindings` IS the unique positive
+self-atom. Remaining atoms are non-self. Negation is unrepresentable. -/
+structure RecStep where
+  finds : List VarId
+  selfBindings : List (FieldId × Term)
+  atoms : List Atom
+  conditions : List Condition
 
-/-- A query: named interiors (a DAG, eval once), at most one linear
-rec SCC, then the main query. **Denotation of a Query is `evalQuery`**
+/-- One linear rec: nonempty base and nonempty step by type. A field
+named `rec` collides with the recursor — the step arms are `step`. -/
+structure LinearRec where
+  base : RecRule × List RecRule
+  step : RecStep × List RecStep
+
+/-- Lower a base arm to a `Rule`. Negation stays unrepresentable. -/
+def RecRule.toRule (r : RecRule) : Rule :=
+  { finds := r.finds, atoms := r.atoms, negated := [], conditions := r.conditions }
+
+/-- Lower a step arm, reconstructing the unique positive self-atom so
+`reachOp_empty` still sees a positive self against ∅. -/
+def RecStep.toRule (self : InteriorId) (r : RecStep) : Rule :=
+  { finds := r.finds
+    atoms := { source := .interior self, bindings := r.selfBindings } :: r.atoms
+    negated := []
+    conditions := r.conditions }
+
+def LinearRec.baseRules (r : LinearRec) : List Rule :=
+  (r.base.1 :: r.base.2).map RecRule.toRule
+
+def LinearRec.stepRules (self : InteriorId) (r : LinearRec) : List Rule :=
+  (r.step.1 :: r.step.2).map (RecStep.toRule self)
+
+def LinearRec.rules (self : InteriorId) (r : LinearRec) : List Rule :=
+  r.baseRules ++ r.stepRules self
+
+theorem RecRule.toRule_negated (r : RecRule) : r.toRule.negated = [] := rfl
+
+theorem RecStep.toRule_negated (self : InteriorId) (r : RecStep) :
+    (RecStep.toRule self r).negated = [] := rfl
+
+theorem LinearRec.baseRules_negated (rec : LinearRec)
+    {r : Rule} (hr : r ∈ rec.baseRules) : r.negated = [] := by
+  obtain ⟨s, _, rfl⟩ := List.mem_map.mp hr
+  rfl
+
+theorem LinearRec.stepRules_negated (self : InteriorId) (rec : LinearRec)
+    {r : Rule} (hr : r ∈ rec.stepRules self) : r.negated = [] := by
+  obtain ⟨s, _, rfl⟩ := List.mem_map.mp hr
+  rfl
+
+theorem LinearRec.stepRules_self_atom (self : InteriorId) (rec : LinearRec)
+    {r : Rule} (hr : r ∈ rec.stepRules self) :
+    ∃ a, a ∈ r.atoms ∧ a.source = .interior self := by
+  obtain ⟨s, _, rfl⟩ := List.mem_map.mp hr
+  exact ⟨_, List.mem_cons_self, rfl⟩
+
+/-- A query: named interiors (a DAG, eval once), then either a CQ or
+one linear rec plus main. **Denotation of a Query is `evalQuery`**
 (`Bumbledb.Exec.Reach`); the union of a rule list is `rulesAnswers`.
 Set semantics means there is exactly one union per rule-list — no bag
-distinction exists or is representable. The main head is its arity at
-this level (every head position is a projected variable — recorded
-narrowing; PRD 05 restores the shape row). Product encoding so
-`Query.rec` can be the spec accessor (not a recursor). -/
-def Query : Type := List Interior × Option Rec × Nat × List Rule
+distinction exists or is representable. The main head is projected
+variables at this level (recorded narrowing; PRD 05 restores the shape
+row). Two arms; interiors are a
+possibly-empty prefix in both. Constructor `rec` is unavailable
+(recursor collision). -/
+inductive Query where
+  | cq    (interiors : List Interior) (rules : List Rule)
+  | reach (interiors : List Interior) (r : LinearRec) (rules : List Rule)
 
-def Query.interiors (q : Query) : List Interior := q.1
-def Query.rec (q : Query) : Option Rec := q.2.1
-def Query.arity (q : Query) : Nat := q.2.2.1
-def Query.rules (q : Query) : List Rule := q.2.2.2
-def Query.mk (interiors : List Interior) (rec : Option Rec)
-    (arity : Nat) (rules : List Rule) : Query :=
-  ⟨interiors, rec, arity, rules⟩
+def Query.interiors : Query → List Interior
+  | .cq interiors _ => interiors
+  | .reach interiors _ _ => interiors
 
-/-- Today's query: empty interiors, no rec. -/
-def Query.plain (arity : Nat) (rules : List Rule) : Query :=
-  Query.mk [] none arity rules
-
-/-- A query with empty interiors and no rec. -/
-def Query.Plain (q : Query) : Prop :=
-  q.interiors = [] ∧ q.rec = none
-
-/-- Every rule of every interior, the rec, and main — the
-quantification surface the theorems range over. -/
-def Query.allRules (q : Query) : List Rule :=
-  q.interiors.flatMap (·.rules) ++
-    (match q.rec with
-     | none => []
-     | some r => r.base ++ r.rec) ++
-    q.rules
-
-/-- The rec's derived-table id, when rec is present:
-`⟨interiors.length⟩`. -/
-def Query.recId (q : Query) : Option InteriorId :=
-  match q.rec with
-  | none => none
-  | some _ => some ⟨q.interiors.length⟩
-
-/-- How many derived tables the query names (interiors plus rec). -/
-def Query.derivedCount (q : Query) : Nat :=
-  q.interiors.length + (if q.rec.isSome then 1 else 0)
-
-/-- Every atom of the rule — positive or negated — reads a stored
-relation. Hostile `Interior` atoms on a `Query.plain` fail
-`sourcesInRange`; this is the acceptance screen `plain_wellFormed`
-spends. -/
-def Rule.edbOnly (r : Rule) : Prop :=
-  ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) → ∃ R, a.source = .edb R
+def Query.rules : Query → List Rule
+  | .cq _ rules => rules
+  | .reach _ _ rules => rules
 
 /-! ## Variable occurrence — the raw material of `Safe` -/
 
@@ -444,68 +463,5 @@ def Rule.WellTyped (r : Rule) : Prop :=
   (∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
     ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure) ∧
   (∀ t, t ∈ r.conditions → t.wellShaped)
-
-/-! ## Well-formedness — one recursive SCC, no Tarjan -/
-
-/-- Interior sources a rule reads (both polarities). -/
-def Rule.interiorReads (r : Rule) : List InteriorId :=
-  (r.atoms ++ r.negated).filterMap fun a => a.source.interior?
-
-/-- Interior sources a rule reads positively. -/
-def Rule.positiveInteriorReads (r : Rule) : List InteriorId :=
-  r.atoms.filterMap fun a => a.source.interior?
-
-/-- How many positive atoms name `self`. -/
-def Rule.selfCount (r : Rule) (self : InteriorId) : Nat :=
-  (r.atoms.filter fun a => decide (a.source = .interior self)).length
-
-/-- Whether a negated atom names `self`. -/
-def Rule.hasNegatedSelf (r : Rule) (self : InteriorId) : Prop :=
-  ∃ a, a ∈ r.negated ∧ a.source = .interior self
-
-/-- Every interior source names a real named interior or the rec. -/
-def Query.sourcesInRange (q : Query) : Prop :=
-  ∀ r, r ∈ q.allRules → ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
-    ∀ C, a.source = .interior C → C.id < q.derivedCount
-
-/-- Interior `i` reads only strictly earlier interiors. The rec id is
-never `< i`. -/
-def Query.interiorsDag (q : Query) : Prop :=
-  ∀ (i : Nat) (d : Interior), q.interiors[i]? = some d → ∀ r, r ∈ d.rules →
-    ∀ (C : InteriorId), C ∈ r.interiorReads → C.id < i
-
-/-- Match `q.rec` only. `self` is `⟨q.interiors.length⟩` — do not match
-`recId` beside it (the catch-all is not unreachable to the elaborator).
-Bans **all** negation in the rec SCC (`negated = []`), not only
-self-negation — matches `NegationInRec`. Empty `base` / empty `rec`
-fail `recLinear`. -/
-def Query.recLinear (q : Query) : Prop :=
-  match q.rec with
-  | none => True
-  | some rec =>
-      let self : InteriorId := ⟨q.interiors.length⟩
-      rec.base ≠ [] ∧ rec.rec ≠ [] ∧
-      (∀ r, r ∈ rec.base → r.selfCount self = 0 ∧ ¬ r.hasNegatedSelf self) ∧
-      (∀ r, r ∈ rec.rec → r.selfCount self = 1 ∧ ¬ r.hasNegatedSelf self) ∧
-      (∀ r, r ∈ rec.base ++ rec.rec → r.negated = [])
-
-def Query.WellFormed (q : Query) : Prop :=
-  q.sourcesInRange ∧ q.interiorsDag ∧ q.recLinear
-
-/-- A plain query of all-EDB rules is well-formed: no interior
-sources, empty interiors, no rec. Hostile `Interior` atoms fail
-`sourcesInRange` (`derivedCount = 0`). -/
-theorem Query.plain_wellFormed (arity : Nat) (rules : List Rule)
-    (hedb : ∀ r, r ∈ rules → r.edbOnly) :
-    (Query.plain arity rules).WellFormed := by
-  refine ⟨?src, ?dag, trivial⟩
-  · intro r hr a ha C hsrc
-    have hr' : r ∈ rules := by
-      simpa [Query.plain, Query.mk, Query.allRules, Query.interiors,
-        Query.rec, Query.rules] using hr
-    obtain ⟨R, hR⟩ := hedb r hr' a ha
-    exact nomatch (hR.symm.trans hsrc)
-  · intro i d hi
-    simp [Query.plain, Query.mk, Query.interiors] at hi
 
 end Bumbledb.Query

@@ -9,6 +9,7 @@ import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Reach
+import Bumbledb.Exec.SemiNaive
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
 import Bumbledb.Decide
@@ -284,7 +285,7 @@ def ledger : List Obligation := [
     "dnf_distributes_or_pairs_to_four_rules (crates/bumbledb/src/ir/validate/tests/rules.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.union_idempotent `Bumbledb.Query.union_idempotent
-    "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the program level."
+    "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the query level."
     "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
     "an_overlapping_union_has_no_duplicates_and_host_concatenation_does (crates/bumbledb/src/api/prepared/tests/rules.rs)",
 
@@ -457,7 +458,7 @@ def ledger : List Obligation := [
     "a_containment_chain_eliminates_both_targets_in_fixpoint (crates/bumbledb/src/plan/ground/tests.rs); a_chained_elimination_executes_result_identical_to_the_disabled_plan (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.subsume_containment `Bumbledb.Query.subsume_containment
-    "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the program union — the sixth rewrite, in the composition chain."
+    "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the query union — the sixth rewrite, in the composition chain."
     "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_program (crates/bumbledb/src/api/prepared/build.rs)"
     "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
@@ -545,18 +546,18 @@ def ledger : List Obligation := [
 
   /- ## The interiors/reach cut (Exec/Reach.lean) -/
 
-  .row @Query.evalQuery_plain `Bumbledb.Query.evalQuery_plain
+  .row @Query.evalQuery_cq `Bumbledb.Query.evalQuery_cq
     "A query with empty interiors and no rec denotes the union of its main rules over the instance."
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
     "a_plain_query_executes_as_today (crates/bumbledb/tests/api.rs)",
 
-  .row @Query.wellFormed_interior_reads_real `Bumbledb.Query.wellFormed_interior_reads_real
-    "Every interior source an accepted query reads names a real interior or the rec."
+  .row @Query.sourceDen_phantom_empty `Bumbledb.Query.sourceDen_phantom_empty
+    "A phantom interior read against the empty environment is empty."
     "validate (crates/bumbledb/src/ir/validate.rs); ValidationError::UnknownInterior (crates/bumbledb/src/error.rs)"
     "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/interior.rs)",
 
   .row @Query.reachOp_mono `Bumbledb.Query.reachOp_mono
-    "Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case)."
+    "Negation is unrepresentable in LinearRec, so the reach operator is monotone (the wall is the self case)."
     "NegationInRec (crates/bumbledb/src/error.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
     "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
@@ -567,7 +568,7 @@ def ledger : List Obligation := [
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The executable reach lists exactly reachDen."
-    "translate_query (crates/bumbledb-bench/src/translate/program.rs)"
+    "translate_query (crates/bumbledb-bench/src/translate/reach.rs)"
     "lean/conformance/cases",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
@@ -581,7 +582,7 @@ def ledger : List Obligation := [
     "docs/cookbook.md",
 
   .row @Query.evalQuery_empty_rules `Bumbledb.Query.evalQuery_empty_rules
-    "Empty main denotes the empty set; the rec is never the answer."
+    "Main's rulesAnswers over [] is the empty union; a reach arm's finished table is an environment entry, never the conclusion."
     "EmptyRuleSet (crates/bumbledb/src/error.rs)"
     "lean/conformance/cases",
 

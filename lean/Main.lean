@@ -346,73 +346,86 @@ open Conformance
 
 /-! ## Decoding — the reach interchange format into Query -/
 
-/-- One reach atom: the source arm spelled (`edb`/`interior`), bindings
-as the query lane's `[field, term]` pairs. Never a stored `relation`
-key on this arm. -/
-def decodeReachAtom (j : Json) : Except String Query.Atom := do
-  let source : Query.AtomSource ←
-    if let some r := objKey? j "edb" then
-      pure (.edb ⟨← r.getNat?⟩)
-    else if let some c := objKey? j "interior" then
-      pure (.interior ⟨← c.getNat?⟩)
-    else .error "reach atom expects edb or interior"
-  let bindings ← (← (← j.getObjVal? "bindings").getArr?).toList.mapM
-    fun pair => do
-      match (← pair.getArr?).toList with
-      | [f, t] => return ((⟨← f.getNat?⟩ : FieldId), ← decodeTerm t)
-      | _ => Except.error "binding expects [field, term]"
-  return { source, bindings }
-
 /-- One reach rule — finds are raw variable ids (`List VarId`). -/
 def decodeReachRule (j : Json) : Except String Query.Rule := do
   let finds ← (← (← j.getObjVal? "finds").getArr?).toList.mapM
     fun n => do pure (⟨← n.getNat?⟩ : Query.VarId)
   let atoms ← (← (← j.getObjVal? "atoms").getArr?).toList.mapM
-    decodeReachAtom
+    decodeAtom
   let negated ←
-    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeReachAtom
+    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeAtom
   let conditions ← (← (← j.getObjVal? "conditions").getArr?).toList.mapM
     (decodeCondition 64)
   return { finds, atoms, negated, conditions }
 
-/-- One named interior: arity plus deriving rules. -/
+/-- One named interior: rules; JSON `arity` is parsed and discarded. -/
 def decodeInterior (j : Json) : Except String Query.Interior := do
-  return { arity := ← natKey j "arity",
-           rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
+  let _ ← natKey j "arity"
+  return { rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
              decodeReachRule }
 
-/-- One linear rec SCC. -/
-def decodeRec (j : Json) : Except String Query.Rec := do
-  let arity ← natKey j "arity"
+/-- One base arm: refuse negation and a self-atom. -/
+def decodeRecRule (selfId : Query.InteriorId) (j : Json) :
+    Except String Query.RecRule := do
+  let r ← decodeReachRule j
+  if !r.negated.isEmpty then
+    .error "NegationInRec"
+  else if r.atoms.any fun a => decide (a.source = .interior selfId) then
+    .error "SelfInBase"
+  else
+    return { finds := r.finds, atoms := r.atoms, conditions := r.conditions }
+
+/-- One step arm: refuse negation; the unique self-atom becomes
+`selfBindings`. -/
+def decodeRecStep (selfId : Query.InteriorId) (j : Json) :
+    Except String Query.RecStep := do
+  let r ← decodeReachRule j
+  if !r.negated.isEmpty then
+    .error "NegationInRec"
+  else
+    let (selfAtoms, rest) := r.atoms.partition fun a =>
+      decide (a.source = .interior selfId)
+    match selfAtoms with
+    | [a] =>
+      return { finds := r.finds, selfBindings := a.bindings, atoms := rest,
+               conditions := r.conditions }
+    | [] => .error "RecArmMissingSelf"
+    | _ => .error "NonlinearRecArm"
+
+/-- One linear rec. JSON keys `base`/`rec` unchanged; arity is parsed
+and discarded (heads size from `finds.length`). -/
+def decodeRec (selfId : Query.InteriorId) (j : Json) :
+    Except String Query.LinearRec := do
+  let _ ← natKey j "arity"
   let base ← (← (← j.getObjVal? "base").getArr?).toList.mapM
-    decodeReachRule
-  let rec ← (← (← j.getObjVal? "rec").getArr?).toList.mapM
-    decodeReachRule
-  return Query.Rec.mk arity base rec
+    (decodeRecRule selfId)
+  let step ← (← (← j.getObjVal? "rec").getArr?).toList.mapM
+    (decodeRecStep selfId)
+  match base, step with
+  | b :: bs, s :: ss => return { base := (b, bs), step := (s, ss) }
+  | [], _ => .error "EmptyRecursiveBase"
+  | _, [] => .error "EmptyRecursiveStep"
 
-/-- `rec` may be omitted or JSON null (interiors-only). -/
-def decodeRecOpt (j : Json) : Except String (Option Query.Rec) :=
-  match objKey? j "rec" with
-  | none => pure none
-  | some .null => pure none
-  | some r => some <$> decodeRec r
-
-/-- One Query on the reach arm. -/
+/-- One Query: `rec` omitted or JSON null is `.cq`; otherwise `.reach`. -/
 def decodeReachQuery (j : Json) : Except String Query.Query := do
   let interiors ← (← (← j.getObjVal? "interiors").getArr?).toList.mapM
     decodeInterior
-  let rec ← decodeRecOpt j
-  let arity ← natKey j "arity"
+  let _ ← natKey j "arity"
   let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
     decodeReachRule
-  return Query.Query.mk interiors rec arity rules
+  match objKey? j "rec" with
+  | none => return .cq interiors rules
+  | some .null => return .cq interiors rules
+  | some r =>
+    let rec ← decodeRec ⟨interiors.length⟩ r
+    return .reach interiors rec rules
 
 /-- One decoded reach case: the world (open instance + ground axioms
 merged), the Query, the parameters, and the agreed answers. -/
 structure RCase where
   /-- The world the query's `edb` atoms read. -/
   world : Query.ListInstance
-  /-- The query (interiors, optional rec, main rules). -/
+  /-- The query (interiors, optional linear rec, main rules). -/
   query : Query.Query
   /-- The positional parameter environment. -/
   env : Query.ParamEnv

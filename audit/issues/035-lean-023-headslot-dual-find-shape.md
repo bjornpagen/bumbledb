@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(b9d53fda)
 - **Source:** audit/lean-rest.md M2
 - **Depends on:** none (unify onto Aggregates; coordinate with lean-008 so Conformance maps into that type rather than the reverse)
 - **Conflicts with:** none. Not DUPLICATE(lean-008): `CFind`/`CQuery` live in Conformance; `HeadSlot` is Dedup-local. Aggregates' `AggOp` is the recorded op inventory and stays.
@@ -67,9 +67,9 @@ Per `audit/CONTRACT.md §C4` / §C6 (Count is its own kind):
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'inductive HeadSlot' lean` → no matches; union-key theorems (`headRow`, `keysOf`, `union_regime_agg_heads`) take the Aggregates head type (or `List AggOp` plus keys), not a parallel inductive. `Exec/Dedup.lean` does not import `Conformance.lean`.
-- [ ] Unchanged: `union_regime_agg_heads`, `agg_over_distinct_bindings`, `empty_global_no_answer` survive with the same content (Count contributes no union-key words; empty global aggregate is the empty answer set). 268-case conformance green.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green. No `sorry`/`admit`.
+- [x] Gone: `rg -n 'inductive HeadSlot' lean` → no matches; union-key theorems (`headRow`, `keysOf`, `union_regime_agg_heads`) take the Aggregates head type (or `List AggOp` plus keys), not a parallel inductive. `Exec/Dedup.lean` does not import `Conformance.lean`.
+- [x] Unchanged: `union_regime_agg_heads`, `agg_over_distinct_bindings`, `empty_global_no_answer` survive with the same content (Count contributes no union-key words; empty global aggregate is the empty answer set). 268-case conformance green.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green. No `sorry`/`admit`.
 
 ## Constraints
 

@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(835f1b5e)
 - **Source:** audit/lean-rest.md M1
 - **Depends on:** lean-005 (same restatement: theorems about a rule take `Rule` + an environment, not a hardcoded EDB instance)
 - **Conflicts with:** none. Plan staying *over `Rule`* is recorded essential (`Exec/Plan.lean:100-102`) and is not this issue.
@@ -48,9 +48,9 @@ Per `audit/CONTRACT.md §C4` ("theorems about a rule list take `List Rule` + an 
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'edbEnv I a.source' lean/Bumbledb/Exec/Plan.lean` → no matches in `Consistent`; `valid_plan_sound` quantifies over `F` (or `InteriorEnv`), not solely `edbEnv`.
-- [ ] Unchanged: `valid_plan_sound`, `every_rule_plannable`, `PlanValid.paper`, `Countermodels.loose_cover_rebinds` survive with the same content (plan answers = rule answers; every rule has a valid plan; paper cover is looser). 268-case conformance green (Plan is not a corpus decoder).
-- [ ] Commands green: `cd lean && lake build`; `./scripts/lean.sh` fully green. No `sorry`/`admit`.
+- [x] Gone: `rg -n 'edbEnv I a.source' lean/Bumbledb/Exec/Plan.lean` → no matches in `Consistent`; `valid_plan_sound` quantifies over `F` (or `InteriorEnv`), not solely `edbEnv`.
+- [x] Unchanged: `valid_plan_sound`, `every_rule_plannable`, `PlanValid.paper`, `Countermodels.loose_cover_rebinds` survive with the same content (plan answers = rule answers; every rule has a valid plan; paper cover is looser). 268-case conformance green (Plan is not a corpus decoder).
+- [x] Commands green: `cd lean && lake build`; `./scripts/lean.sh` fully green. No `sorry`/`admit`.
 
 ## Constraints
 

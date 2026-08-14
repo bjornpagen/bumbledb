@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(a73bbe07)
 - **Source:** audit/lean-rest.md H1
 - **Depends on:** none for the ⟨0⟩ kill / key-probe (membership stays EDB). Coordinate with lean-022 (`keyProbeEval` / Plan take the same `F`).
 - **Conflicts with:** none (Membership.lean / Rewrites.lean KeyProbeShape were not in wave 1)
@@ -71,9 +71,9 @@ Per `audit/CONTRACT.md §C4` (one `AtomSource`) and the recorded narrowing `Synt
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'interior _ => ⟨0⟩' lean/Bumbledb` → no matches; `rg -n 'Statement.functionality ⟨0⟩' lean` → no matches; `rg -n 'InteriorTables.empty' lean/Bumbledb/Exec/Rewrites.lean` → no matches in `keyProbeEval` / `keyprobe_equiv_join`. `AntiOccurrence` has no interior `relation : RelId` (sum, or `source : AtomSource` with filters empty on interior).
-- [ ] Unchanged: `membership_lowering_preserves` / `_negated` still EDB-only (same surface = lowered content); `keyprobe_equiv_join` still probe = join under a stored key. `scalarAnchored` still `interior _ => false`. No new interior-membership theorems. 268-case conformance green; corpus frozen.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator). No `sorry`/`admit`.
+- [x] Gone: `rg -n 'interior _ => ⟨0⟩' lean/Bumbledb` → no matches; `rg -n 'Statement.functionality ⟨0⟩' lean` → no matches; `rg -n 'InteriorTables.empty' lean/Bumbledb/Exec/Rewrites.lean` → no matches in `keyProbeEval` / `keyprobe_equiv_join`. `AntiOccurrence` has no interior `relation : RelId` (sum, or `source : AtomSource` with filters empty on interior).
+- [x] Unchanged: `membership_lowering_preserves` / `_negated` still EDB-only (same surface = lowered content); `keyprobe_equiv_join` still probe = join under a stored key. `scalarAnchored` still `interior _ => false`. No new interior-membership theorems. 268-case conformance green; corpus frozen.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator). No `sorry`/`admit`.
 
 ## Constraints
 

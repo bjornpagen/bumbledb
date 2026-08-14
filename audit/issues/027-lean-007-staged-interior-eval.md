@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(9b21ea6a)
 - **Source:** audit/lean.md M1
 - **Depends on:** none (textually conflicts with lean-001 in `Exec/Reach.lean`; coordinate)
 
@@ -56,9 +56,9 @@ def evalInteriors (C : Classify) (q : Query) (I : Instance) (ρ : ParamEnv) :
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'evalInteriorsAt|evalInteriorsAt_stable|evalInteriorsAt_out|evalInteriorsAt_agree_prefix' lean` → no matches; `rg -n 'none => False' lean/Bumbledb/Exec/Reach.lean` → no matches.
-- [ ] Unchanged: `evalQuery`'s value on every input (the fold computes the same env — provable, and witnessed by the 268-case conformance staying green); `evalInteriorTables_sound` survives under that name relating Level 1 to the new Level 0.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -nw 'evalInteriorsAt|evalInteriorsAt_stable|evalInteriorsAt_out|evalInteriorsAt_agree_prefix' lean` → no matches; `rg -n 'none => False' lean/Bumbledb/Exec/Reach.lean` → no matches.
+- [x] Unchanged: `evalQuery`'s value on every input (the fold computes the same env — provable, and witnessed by the 268-case conformance staying green); `evalInteriorTables_sound` survives under that name relating Level 1 to the new Level 0.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

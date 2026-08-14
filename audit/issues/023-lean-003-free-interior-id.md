@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN (scoped — the Fin-telescope half is refused per CONTRACT §C5)
+- **Status:** FIXED(c8af2915)
 - **Source:** audit/lean.md H3
 - **Depends on:** lean-001, lean-002 (the sum and structural self ARE most of this fix)
 - **Conflicts with:** lean-004 (shares the `WellFormed` deletions)
@@ -56,10 +56,10 @@ Scoped per `audit/CONTRACT.md §C2/§C5`:
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'recId' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'do not match recId|Do not match .?recId' lean` → no matches; `rg -c 'InteriorId := ⟨.*interiors.length⟩|⟨q.interiors.length⟩' lean/Bumbledb` → at most 1 site (the `evalQuery`/`evalQueryList` reach case pair; 2 sites if Level 0/Level 1 each compute it once).
-- [ ] Not attempted: `rg -nw 'recSelf|Fin n' lean/Bumbledb/Query/Syntax.lean` → no matches (the refused half stays refused).
-- [ ] Unchanged behavior: 268-case conformance green; `reach_den_finite` survives.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -nw 'recId' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'do not match recId|Do not match .?recId' lean` → no matches; `rg -c 'InteriorId := ⟨.*interiors.length⟩|⟨q.interiors.length⟩' lean/Bumbledb` → at most 1 site (the `evalQuery`/`evalQueryList` reach case pair; 2 sites if Level 0/Level 1 each compute it once).
+- [x] Not attempted: `rg -nw 'recSelf|Fin n' lean/Bumbledb/Query/Syntax.lean` → no matches (the refused half stays refused).
+- [x] Unchanged behavior: 268-case conformance green; `reach_den_finite` survives.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

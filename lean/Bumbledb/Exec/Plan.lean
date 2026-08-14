@@ -295,9 +295,9 @@ the subatom's own variables. This one `∃` is BOTH executor moves:
 iterating a cover (its variables are the node's new ones, so the `∃`
 enumerates the extensions) and probing a sibling (its new variables
 are already placed, so the `∃` is the membership test). -/
-def Consistent (r : Rule) (I : Instance) (ρ : ParamEnv) (pre : Plan)
+def Consistent (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) (pre : Plan)
     (s : Subatom) (σ : Assignment) : Prop :=
-  ∃ a, r.atoms[s.occ]? = some a ∧ ∃ f, f ∈ edbEnv I a.source ∧
+  ∃ a, r.atoms[s.occ]? = some a ∧ ∃ f, f ∈ F a.source ∧
     MatchesOn f a σ ρ (checkedVars pre s.occ ++ s.vars)
 
 /-- One node's step: the bindings extend on the node's new variables
@@ -306,35 +306,35 @@ the extension is DRAWN from a cover subatom's matching facts — the
 cover sits among the subatoms and its variables are exactly the new
 ones, so its consistency clause is the draw; `cover_drives_extension`
 records the licence. -/
-def nodeStep (r : Rule) (I : Instance) (ρ : ParamEnv) (pre : Plan)
+def nodeStep (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) (pre : Plan)
     (n : PlanNode) (S : Set Assignment) : Set Assignment :=
   fun σ' => ∃ σ, σ ∈ S ∧ (∀ v, ¬ NewVar pre n v → σ' v = σ v) ∧
-    ∀ s, s ∈ n → Consistent r I ρ pre s σ'
+    ∀ s, s ∈ n → Consistent r F ρ pre s σ'
 
 /-- The fold: run the remaining nodes against a prefix. -/
-def runPlan (r : Rule) (I : Instance) (ρ : ParamEnv) :
+def runPlan (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) :
     Plan → Plan → Set Assignment → Set Assignment
   | _, [], S => S
   | pre, n :: rest, S =>
-    runPlan r I ρ (pre ++ [n]) rest (nodeStep r I ρ pre n S)
+    runPlan r F ρ (pre ++ [n]) rest (nodeStep r F ρ pre n S)
 
 /-- The plan's binding set: every node folded from the empty prefix,
 seeded with every assignment (the totalization device — the seed is
 "nothing bound yet", and each stage's set is closed off the bound
 variables). -/
-def planBindings (r : Rule) (P : Plan) (I : Instance) (ρ : ParamEnv) :
+def planBindings (r : Rule) (P : Plan) (F : AtomSource → Set Fact) (ρ : ParamEnv) :
     Set Assignment :=
-  runPlan r I ρ [] P fun _ => True
+  runPlan r F ρ [] P fun _ => True
 
 /-- The plan's answers: the completed binding set, POST-FILTERED by
 the negated atoms (the anti-join, as the executor's anti-probe) and
 the condition trees (residuals), projected through the finds —
 `valid_plan_sound` is the equality with `ruleAnswers`, the
 residual-placement licence. -/
-def planAnswers (C : Classify) (r : Rule) (P : Plan) (I : Instance)
+def planAnswers (C : Classify) (r : Rule) (P : Plan) (F : AtomSource → Set Fact)
     (ρ : ParamEnv) : Set AnswerTuple :=
-  fun t => ∃ σ, σ ∈ planBindings r P I ρ ∧
-    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
+  fun t => ∃ σ, σ ∈ planBindings r P F ρ ∧
+    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ F a.source ∧ Matches f a σ ρ) ∧
     (∀ c, c ∈ r.conditions → Condition.holds C ρ σ c) ∧
     t = r.finds.map σ
 
@@ -351,22 +351,22 @@ a fact matching on its checked prefix. Untouched occurrences carry no
 obligation yet — which is exactly why validity's `complete` clause is
 load-bearing: an unplaced occurrence's constant filters would never
 apply. -/
-def probed (r : Rule) (I : Instance) (ρ : ParamEnv) (P : Plan) :
+def probed (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) (P : Plan) :
     Set Assignment :=
   fun σ => ∀ i a, r.atoms[i]? = some a → Touches P i →
-    ∃ f, f ∈ edbEnv I a.source ∧ MatchesOn f a σ ρ (checkedVars P i)
+    ∃ f, f ∈ F a.source ∧ MatchesOn f a σ ρ (checkedVars P i)
 
 /-- **The one-node lemma**: stepping the invariant set through a node
 lands exactly on the invariant of the extended prefix. The
 `occDisjoint` premise is load-bearing: two subatoms of one occurrence
 in one node would each produce their OWN matching fact, and the two
 `∃`s do not compose into the one fact the extended prefix demands. -/
-theorem nodeStep_probed {r : Rule} {I : Instance} {ρ : ParamEnv}
+theorem nodeStep_probed {r : Rule} {F : AtomSource → Set Fact} {ρ : ParamEnv}
     {pre : Plan} {n : PlanNode}
     (hdisj : ∀ s₁, s₁ ∈ n → ∀ s₂, s₂ ∈ n → s₁.occ = s₂.occ → s₁ = s₂)
     (hscope : ∀ s, s ∈ n → ∃ a, r.atoms[s.occ]? = some a) :
-    nodeStep r I ρ pre n (probed r I ρ pre)
-      = probed r I ρ (pre ++ [n]) := by
+    nodeStep r F ρ pre n (probed r F ρ pre)
+      = probed r F ρ (pre ++ [n]) := by
   refine setExt fun σ' => ?_
   constructor
   · rintro ⟨σ, hσ, hag, hcons⟩
@@ -404,7 +404,7 @@ theorem nodeStep_probed {r : Rule} {I : Instance} {ρ : ParamEnv}
       · rw [List.mem_singleton.mp hmn] at hs
         exact absurd ⟨s, hs, hocc⟩ hin
   · intro hσ'
-    have hpre : σ' ∈ probed r I ρ pre := by
+    have hpre : σ' ∈ probed r F ρ pre := by
       intro i a hia ht
       obtain ⟨m, hmem, s, hs, hocc⟩ := ht
       obtain ⟨f, hf, hm⟩ := hσ' i a hia
@@ -428,13 +428,13 @@ theorem nodeStep_probed {r : Rule} {I : Instance} {ρ : ParamEnv}
           s, hs, rfl, hvs⟩
 
 /-- The fold walks the invariant from any prefix to its end. -/
-theorem runPlan_probed {r : Rule} {I : Instance} {ρ : ParamEnv} :
+theorem runPlan_probed {r : Rule} {F : AtomSource → Set Fact} {ρ : ParamEnv} :
     ∀ rest pre : Plan,
       (∀ n, n ∈ rest →
         (∀ s₁, s₁ ∈ n → ∀ s₂, s₂ ∈ n → s₁.occ = s₂.occ → s₁ = s₂) ∧
         (∀ s, s ∈ n → ∃ a, r.atoms[s.occ]? = some a)) →
-      runPlan r I ρ pre rest (probed r I ρ pre)
-        = probed r I ρ (pre ++ rest)
+      runPlan r F ρ pre rest (probed r F ρ pre)
+        = probed r F ρ (pre ++ rest)
   | [], pre, _ => by rw [runPlan, List.append_nil]
   | n :: rest, pre, h => by
     rw [runPlan,
@@ -451,18 +451,18 @@ positive-body judgment of `derives`, whole. Spends `complete` +
 `coversVar` (the final prefix checks every binding of every
 occurrence), `occDisjoint` (probe composition), `scoped` (occurrence
 indices resolve), and `WellTyped`'s measure-free half. -/
-theorem planBindings_positive {r : Rule} {P : Plan} {I : Instance}
+theorem planBindings_positive {r : Rule} {P : Plan} {F : AtomSource → Set Fact}
     {ρ : ParamEnv} (hv : PlanValid r P) (hwt : r.WellTyped) :
-    ∀ σ, σ ∈ planBindings r P I ρ ↔
-      ∀ a, a ∈ r.atoms → ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ := by
-  have hstart : (fun _ => True : Set Assignment) = probed r I ρ [] := by
+    ∀ σ, σ ∈ planBindings r P F ρ ↔
+      ∀ a, a ∈ r.atoms → ∃ f, f ∈ F a.source ∧ Matches f a σ ρ := by
+  have hstart : (fun _ => True : Set Assignment) = probed r F ρ [] := by
     refine setExt fun σ => ?_
     constructor
     · rintro - i a - ⟨m, hm, -⟩
       exact absurd hm (List.not_mem_nil)
     · intro _
       trivial
-  have hrun := runPlan_probed (r := r) (I := I) (ρ := ρ) P []
+  have hrun := runPlan_probed (r := r) (F := F) (ρ := ρ) P []
     fun n hn =>
       ⟨hv.occDisjoint n hn,
         fun s hs => ⟨(hv.occScoped n hn s hs).choose,
@@ -496,9 +496,9 @@ the denotation is what makes any placement sound). `Safe` is not a
 premise of the equality — acceptance supplies it for finiteness and
 projection meaning, and the doc records the narrowing. -/
 theorem valid_plan_sound {C : Classify} {r : Rule} {P : Plan}
-    {I : Instance} {ρ : ParamEnv} (hv : PlanValid r P)
+    {F : AtomSource → Set Fact} {ρ : ParamEnv} (hv : PlanValid r P)
     (hwt : r.WellTyped) :
-    ∀ t, t ∈ planAnswers C r P I ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
+    ∀ t, t ∈ planAnswers C r P F ρ ↔ t ∈ ruleAnswers C r F ρ := by
   intro t
   constructor
   · rintro ⟨σ, hb, hneg, hcond, rfl⟩
@@ -516,13 +516,13 @@ exactly the node's new variables, so its consistency clause pins
 `σ'` on the new variables to a fact of a finite extension. The node
 step never guesses over the value universe; iteration is the
 mechanism face (COLT, dynamic cover choice — docs-side, whole). -/
-theorem cover_drives_extension {r : Rule} {I : Instance}
+theorem cover_drives_extension {r : Rule} {F : AtomSource → Set Fact}
     {ρ : ParamEnv} {P : Plan} {k : Nat} {n : PlanNode}
     {S : Set Assignment} {σ' : Assignment} (hv : PlanValid r P)
     (hk : P[k]? = some n)
-    (hσ : σ' ∈ nodeStep r I ρ (P.take k) n S) :
+    (hσ : σ' ∈ nodeStep r F ρ (P.take k) n S) :
     ∃ s, s ∈ n ∧ (∀ v, v ∈ s.vars ↔ NewVar (P.take k) n v) ∧
-      Consistent r I ρ (P.take k) s σ' := by
+      Consistent r F ρ (P.take k) s σ' := by
   obtain ⟨s, hs, hcov⟩ := hv.covered k n hk
   obtain ⟨-, -, -, hcons⟩ := hσ
   exact ⟨s, hs, hcov, hcons s hs⟩
@@ -835,31 +835,31 @@ this differs from the denotation. -/
 
 /-- The paper-rule node step: some cover containing the new variables
 drives the extension over its WHOLE variable set. -/
-def looseNodeStep (r : Rule) (I : Instance) (ρ : ParamEnv)
+def looseNodeStep (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv)
     (pre : Plan) (n : PlanNode) (S : Set Assignment) :
     Set Assignment :=
   fun σ' => ∃ σ, σ ∈ S ∧ ∃ c, c ∈ n ∧
     (∀ v, NewVar pre n v → v ∈ c.vars) ∧
     (∀ v, v ∉ c.vars → σ' v = σ v) ∧
-    ∀ s, s ∈ n → Consistent r I ρ pre s σ'
+    ∀ s, s ∈ n → Consistent r F ρ pre s σ'
 
 /-- The loose fold. -/
-def looseRun (r : Rule) (I : Instance) (ρ : ParamEnv) :
+def looseRun (r : Rule) (F : AtomSource → Set Fact) (ρ : ParamEnv) :
     Plan → Plan → Set Assignment → Set Assignment
   | _, [], S => S
   | pre, n :: rest, S =>
-    looseRun r I ρ (pre ++ [n]) rest (looseNodeStep r I ρ pre n S)
+    looseRun r F ρ (pre ++ [n]) rest (looseNodeStep r F ρ pre n S)
 
 /-- The loose binding set. -/
-def looseBindings (r : Rule) (P : Plan) (I : Instance)
+def looseBindings (r : Rule) (P : Plan) (F : AtomSource → Set Fact)
     (ρ : ParamEnv) : Set Assignment :=
-  looseRun r I ρ [] P fun _ => True
+  looseRun r F ρ [] P fun _ => True
 
 /-- The loose answers — same post-filters, loose fold. -/
-def looseAnswers (C : Classify) (r : Rule) (P : Plan) (I : Instance)
+def looseAnswers (C : Classify) (r : Rule) (P : Plan) (F : AtomSource → Set Fact)
     (ρ : ParamEnv) : Set AnswerTuple :=
-  fun t => ∃ σ, σ ∈ looseBindings r P I ρ ∧
-    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
+  fun t => ∃ σ, σ ∈ looseBindings r P F ρ ∧
+    (∀ a, a ∈ r.negated → ¬ ∃ f, f ∈ F a.source ∧ Matches f a σ ρ) ∧
     (∀ c, c ∈ r.conditions → Condition.holds C ρ σ c) ∧
     t = r.finds.map σ
 

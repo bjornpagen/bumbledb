@@ -130,6 +130,20 @@ theorem Header.fieldType_isInterval {h : Header} {R : RelId}
   | none => simp [ValueType.isInterval]
   | some ty => cases ty <;> simp [ValueType.isInterval]
 
+/-- Field type of a stored relation; interiors have no header, so the
+unreachable totalization is the scalar default (never an interval). -/
+def Header.fieldTypeSrc (h : Header) (s : Query.AtomSource) (i : FieldId) :
+    ValueType :=
+  match s with
+  | .edb R => h.fieldType R i
+  | .interior _ => .bool
+
+def Header.isIntervalSrc (h : Header) (s : Query.AtomSource) (i : FieldId) :
+    Bool :=
+  match s with
+  | .edb R => h.isInterval R i
+  | .interior _ => false
+
 /-- Point membership of a value pair: `x`'s point lies in `w`'s
 point-family — the value-level reading of the membership binding, and
 definitionally the `pointIn` comparison with `w` on the interval side
@@ -196,6 +210,14 @@ def Typing.membership (Γ : Typing) (R : RelId) (i : FieldId)
     (t : Term) : Bool :=
   Γ.header.isInterval R i && !(Γ.termInterval t)
 
+/-- Membership is declared on stored relations only. Interior atoms
+have no membership typing — their surface reading is value equality. -/
+def Typing.membershipSrc (Γ : Typing) (s : AtomSource) (i : FieldId)
+    (t : Term) : Bool :=
+  match s with
+  | .edb R => Γ.membership R i t
+  | .interior _ => false
+
 /-- Rewriting the typing at one variable — the mint's footprint: the
 lowering types its fresh variable at the lowered field. -/
 def Typing.updateVar (Γ : Typing) (u : VarId) (ty : ValueType) :
@@ -226,6 +248,16 @@ theorem Typing.membership_updateVar {Γ : Typing} {u : VarId}
   unfold Typing.membership
   rw [Typing.termInterval_updateVar hne]
   rfl
+
+/-- Membership status of an `AtomSource` is stable under a typing
+update at an absent variable. -/
+theorem Typing.membershipSrc_updateVar {Γ : Typing} {u : VarId}
+    {ty : ValueType} {s : AtomSource} {i : FieldId} {t : Term}
+    (hne : ∀ v, v ∈ t.vars → v ≠ u) :
+    (Γ.updateVar u ty).membershipSrc s i t = Γ.membershipSrc s i t := by
+  cases s with
+  | edb R => exact Typing.membership_updateVar hne
+  | interior _ => rfl
 
 /-! ## The bivalent surface selection -/
 
@@ -322,6 +354,61 @@ theorem selectsAt_paramSet_membership {Γ : Typing} {ρ : ParamEnv}
   rw [selectsAt_of_membership hm]
   exact Iff.rfl
 
+/-- Surface selection keyed by `AtomSource`: interiors are value
+equality (membership-free); stored relations keep `selectsAt`. -/
+def Term.selectsAtSrc (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
+    (s : AtomSource) (i : FieldId) (t : Term) (w : Value) : Prop :=
+  match s with
+  | .edb R => Term.selectsAt Γ ρ σ R i t w
+  | .interior _ => Term.selects ρ σ t w
+
+theorem selectsAtSrc_of_not_membership {Γ : Typing} {ρ : ParamEnv}
+    {σ : Assignment} {s : AtomSource} {i : FieldId} {t : Term}
+    {w : Value} (hm : Γ.membershipSrc s i t = false) :
+    Term.selectsAtSrc Γ ρ σ s i t w ↔ Term.selects ρ σ t w := by
+  cases s with
+  | edb R => exact selectsAt_of_not_membership hm
+  | interior _ => simp [Term.selectsAtSrc]
+
+theorem selectsAtSrc_of_membership {Γ : Typing} {ρ : ParamEnv}
+    {σ : Assignment} {s : AtomSource} {i : FieldId} {t : Term}
+    {w : Value} (hm : Γ.membershipSrc s i t = true) :
+    Term.selectsAtSrc Γ ρ σ s i t w ↔
+      ∃ x, Term.selects ρ σ t x ∧ x.pointMem w := by
+  cases s with
+  | edb R => exact selectsAt_of_membership hm
+  | interior _ => simp [Typing.membershipSrc] at hm
+
+theorem selectsAtSrc_var_membership {Γ : Typing} {ρ : ParamEnv}
+    {σ : Assignment} {s : AtomSource} {i : FieldId} {v : VarId}
+    {w : Value} (hm : Γ.membershipSrc s i (.var v) = true) :
+    Term.selectsAtSrc Γ ρ σ s i (.var v) w ↔ (σ v).pointMem w := by
+  cases s with
+  | edb R => exact selectsAt_var_membership hm
+  | interior _ => simp [Typing.membershipSrc] at hm
+
+/-- A membership binding under `membershipSrc` is an interval field of
+a stored relation; minting a value-read at that field is not itself
+membership. -/
+theorem membershipSrc_mint {Γ : Typing} {u : VarId} {s : AtomSource}
+    {i : FieldId} {t : Term} (hmem : Γ.membershipSrc s i t = true) :
+    (Γ.header.fieldTypeSrc s i).isInterval = true ∧
+    (Γ.updateVar u (Γ.header.fieldTypeSrc s i)).membershipSrc s i
+      (.var u) = false := by
+  cases s with
+  | interior _ => simp [Typing.membershipSrc] at hmem
+  | edb R =>
+    have hm : Γ.membership R i t = true := hmem
+    have hInt : Γ.header.isInterval R i = true := by
+      unfold Typing.membership at hm
+      rw [Bool.and_eq_true] at hm
+      exact hm.1
+    have hIntF : (Γ.header.fieldType R i).isInterval = true :=
+      Header.fieldType_isInterval.mp hInt
+    refine ⟨hIntF, ?_⟩
+    simp [Typing.membershipSrc, Typing.membership, Typing.termInterval,
+      Typing.updateVar, Header.fieldTypeSrc, hIntF]
+
 /-! ## The surface matching equation and rule denotation -/
 
 /-- The SURFACE matching equation: `Matches` with every binding read
@@ -330,7 +417,7 @@ judgment the engine's normalize and the naive model each re-derive;
 `membership_lowering_preserves` is their shared arbiter. -/
 def SurfaceMatches (Γ : Typing) (f : Fact) (a : Atom) (σ : Assignment)
     (ρ : ParamEnv) : Prop :=
-  ∀ b, b ∈ a.bindings → Term.selectsAt Γ ρ σ (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 (f b.1)
+  ∀ b, b ∈ a.bindings → Term.selectsAtSrc Γ ρ σ a.source b.1 b.2 (f b.1)
 
 /-- The surface body judgment: `derives` with the surface matching
 equation at both atom polarities — negation is the same anti-join,
@@ -366,27 +453,27 @@ theorem surfaceMatches_iff_occurrence {Γ : Typing} {f : Fact} {a : Atom}
     SurfaceMatches Γ f a σ ρ ↔
       (Matches f
         { source := a.source,
-          bindings := a.bindings.filter fun b => !(Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) }
+          bindings := a.bindings.filter fun b => !(Γ.membershipSrc a.source b.1 b.2) }
         σ ρ ∧
-       ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = true →
+       ∀ b, b ∈ a.bindings → Γ.membershipSrc a.source b.1 b.2 = true →
          ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)) := by
   constructor
   · intro h
     constructor
     · intro b hb
       obtain ⟨hmem, hflt⟩ := List.mem_filter.mp hb
-      have hfalse : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false := by
+      have hfalse : Γ.membershipSrc a.source b.1 b.2 = false := by
         simpa using hflt
-      exact (selectsAt_of_not_membership hfalse).mp (h b hmem)
+      exact (selectsAtSrc_of_not_membership hfalse).mp (h b hmem)
     · intro b hb hm
-      exact (selectsAt_of_membership hm).mp (h b hb)
+      exact (selectsAtSrc_of_membership hm).mp (h b hb)
   · rintro ⟨hdom, hflt⟩ b hb
-    cases hm : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 with
+    cases hm : Γ.membershipSrc a.source b.1 b.2 with
     | false =>
-      refine (selectsAt_of_not_membership hm).mpr ?_
+      refine (selectsAtSrc_of_not_membership hm).mpr ?_
       exact hdom b (List.mem_filter.mpr ⟨hb, by simp [hm]⟩)
     | true =>
-      exact (selectsAt_of_membership hm).mpr (hflt b hb hm)
+      exact (selectsAtSrc_of_membership hm).mpr (hflt b hb hm)
 
 /-- The anti-probe filter form: a negated membership atom rejects
 exactly when no fact passes the occurrence's domain bindings AND its
@@ -400,9 +487,9 @@ theorem surface_antiprobe_filters {Γ : Typing} {a : Atom}
       ¬ ∃ f, f ∈ edbEnv I a.source ∧
         (Matches f
           { source := a.source,
-            bindings := a.bindings.filter fun b => !(Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) }
+            bindings := a.bindings.filter fun b => !(Γ.membershipSrc a.source b.1 b.2) }
           σ ρ ∧
-         ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = true →
+         ∀ b, b ∈ a.bindings → Γ.membershipSrc a.source b.1 b.2 = true →
            ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)) :=
   ⟨fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_occurrence.mpr h⟩,
    fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_occurrence.mp h⟩⟩
@@ -418,18 +505,18 @@ theorem repeated_membership_same_fact {Γ : Typing} {f : Fact} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} {v : VarId} {i j : FieldId}
     (h : SurfaceMatches Γ f a σ ρ)
     (hi : (i, Term.var v) ∈ a.bindings)
-    (hm : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (.var v) = true)
+    (hm : Γ.membershipSrc a.source i (.var v) = true)
     (hj : (j, Term.var v) ∈ a.bindings)
-    (hd : Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) j (.var v) = false) :
+    (hd : Γ.membershipSrc a.source j (.var v) = false) :
     f j = σ v ∧ (σ v).pointMem (f i) :=
-  ⟨((selectsAt_of_not_membership hd).mp (h _ hj)).symm,
-   (selectsAt_var_membership hm).mp (h _ hi)⟩
+  ⟨((selectsAtSrc_of_not_membership hd).mp (h _ hj)).symm,
+   (selectsAtSrc_var_membership hm).mp (h _ hi)⟩
 
 /-! ## Membership-free collapse — the surface reading IS `Matches` -/
 
 /-- An atom with no membership bindings under the typing. -/
 def Atom.membershipFree (Γ : Typing) (a : Atom) : Prop :=
-  ∀ b, b ∈ a.bindings → Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
+  ∀ b, b ∈ a.bindings → Γ.membershipSrc a.source b.1 b.2 = false
 
 /-- On a membership-free atom the surface equation IS the matching
 equation. -/
@@ -438,8 +525,8 @@ theorem surfaceMatches_of_membershipFree {Γ : Typing} {f : Fact}
     (hfree : a.membershipFree Γ) :
     SurfaceMatches Γ f a σ ρ ↔ Matches f a σ ρ := by
   constructor <;> intro h b hb
-  · exact (selectsAt_of_not_membership (hfree b hb)).mp (h b hb)
-  · exact (selectsAt_of_not_membership (hfree b hb)).mpr (h b hb)
+  · exact (selectsAtSrc_of_not_membership (hfree b hb)).mp (h b hb)
+  · exact (selectsAtSrc_of_not_membership (hfree b hb)).mpr (h b hb)
 
 /-- On a rule whose atoms (both polarities) are membership-free, the
 surface denotation IS the denotation — the collapse the lowering
@@ -490,6 +577,16 @@ theorem selectsAt_stable {Γ : Typing} {u : VarId} {ty : ValueType}
   · rw [if_neg hm, if_neg hm]
     exact selects_congr hσ
 
+theorem selectsAtSrc_stable {Γ : Typing} {u : VarId} {ty : ValueType}
+    {ρ : ParamEnv} {σ σ' : Assignment} {s : AtomSource} {i : FieldId}
+    {t : Term} {w : Value} (hne : ∀ v, v ∈ t.vars → v ≠ u)
+    (hσ : ∀ v, v ∈ t.vars → σ v = σ' v) :
+    Term.selectsAtSrc Γ ρ σ s i t w ↔
+      Term.selectsAtSrc (Γ.updateVar u ty) ρ σ' s i t w := by
+  cases s with
+  | edb R => exact selectsAt_stable hne hσ
+  | interior _ => exact selects_congr hσ
+
 /-- The surface matching equation is stable under the same update, at
 an atom that does not mention the minted variable. -/
 theorem surfaceMatches_stable {Γ : Typing} {u : VarId} {ty : ValueType}
@@ -499,10 +596,10 @@ theorem surfaceMatches_stable {Γ : Typing} {u : VarId} {ty : ValueType}
     SurfaceMatches Γ f a σ ρ ↔
       SurfaceMatches (Γ.updateVar u ty) f a σ' ρ := by
   constructor <;> intro h b hb
-  · exact (selectsAt_stable
+  · exact (selectsAtSrc_stable
       (fun v hv => hne v (List.mem_flatMap.mpr ⟨b, hb, hv⟩))
       (fun v hv => hσ v (List.mem_flatMap.mpr ⟨b, hb, hv⟩))).mp (h b hb)
-  · exact (selectsAt_stable
+  · exact (selectsAtSrc_stable
       (fun v hv => hne v (List.mem_flatMap.mpr ⟨b, hb, hv⟩))
       (fun v hv => hσ v (List.mem_flatMap.mpr ⟨b, hb, hv⟩))).mpr (h b hb)
 
@@ -603,26 +700,26 @@ theorem lowerBindings_some {isM : FieldId → Term → Bool} {u : VarId} :
 
 /-- Lower the first membership binding of an atom list, returning the
 rewritten atoms with the lowered atom's relation, field, and term. -/
-def lowerAtoms (isM : RelId → FieldId → Term → Bool) (u : VarId) :
-    List Atom → Option (List Atom × RelId × FieldId × Term)
+def lowerAtoms (isM : AtomSource → FieldId → Term → Bool) (u : VarId) :
+    List Atom → Option (List Atom × AtomSource × FieldId × Term)
   | [] => none
   | a :: rest =>
-    match lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
+    match lowerBindings (isM a.source) u a.bindings with
     | some (bs, i, t) =>
-      some (({ source := a.source, bindings := bs }) :: rest, (match a.source with | .edb R => R | .interior _ => ⟨0⟩), i, t)
+      some (({ source := a.source, bindings := bs }) :: rest, a.source, i, t)
     | none => (lowerAtoms isM u rest).map fun out => (a :: out.1, out.2)
 
 /-- `lowerAtoms` finds nothing exactly when every atom is
 membership-free. -/
-theorem lowerAtoms_none {isM : RelId → FieldId → Term → Bool}
+theorem lowerAtoms_none {isM : AtomSource → FieldId → Term → Bool}
     {u : VarId} :
     ∀ {atoms : List Atom},
       lowerAtoms isM u atoms = none ↔
         ∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-          isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
+          isM a.source b.1 b.2 = false
   | [] => by simp [lowerAtoms]
   | a :: rest => by
-    cases hlb : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
+    cases hlb : lowerBindings (isM a.source) u a.bindings with
     | some out =>
       obtain ⟨bs, i, t⟩ := out
       simp only [lowerAtoms, hlb]
@@ -630,7 +727,7 @@ theorem lowerAtoms_none {isM : RelId → FieldId → Term → Bool}
       · intro h
         cases h
       · intro h
-        have : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings = none :=
+        have : lowerBindings (isM a.source) u a.bindings = none :=
           lowerBindings_none.mpr (h a (List.mem_cons_self ..))
         rw [this] at hlb
         cases hlb
@@ -659,17 +756,17 @@ theorem lowerAtoms_none {isM : RelId → FieldId → Term → Bool}
 
 /-- `lowerAtoms`' success shape: the atom list splits at the lowered
 atom, whose bindings split at the lowered position. -/
-theorem lowerAtoms_some {isM : RelId → FieldId → Term → Bool}
+theorem lowerAtoms_some {isM : AtomSource → FieldId → Term → Bool}
     {u : VarId} :
-    ∀ {atoms : List Atom} {out : List Atom × RelId × FieldId × Term},
+    ∀ {atoms : List Atom} {out : List Atom × AtomSource × FieldId × Term},
       lowerAtoms isM u atoms = some out →
       ∃ pre a post bs i t,
         atoms = pre ++ a :: post ∧
-        lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings = some (bs, i, t) ∧
-        out = (pre ++ ({ source := a.source, bindings := bs }) :: post, (match a.source with | .edb R => R | .interior _ => ⟨0⟩), i, t)
+        lowerBindings (isM a.source) u a.bindings = some (bs, i, t) ∧
+        out = (pre ++ ({ source := a.source, bindings := bs }) :: post, a.source, i, t)
   | [], out, h => by cases h
   | a :: rest, out, h => by
-    cases hlb : lowerBindings (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) u a.bindings with
+    cases hlb : lowerBindings (isM a.source) u a.bindings with
     | some triple =>
       obtain ⟨bs, i, t⟩ := triple
       rw [lowerAtoms, hlb] at h
@@ -694,10 +791,10 @@ on the point side, the mint on the interval side. `none` exactly when
 the positive atoms are membership-free. -/
 def stepLower (Γ : Typing) (u : VarId) (r : Rule) :
     Option (Typing × Rule) :=
-  match lowerAtoms Γ.membership u r.atoms with
+  match lowerAtoms Γ.membershipSrc u r.atoms with
   | none => none
-  | some (atoms', R, i, t) =>
-    some (Γ.updateVar u (Γ.header.fieldType R i),
+  | some (atoms', s, i, t) =>
+    some (Γ.updateVar u (Γ.header.fieldTypeSrc s i),
       { finds := r.finds, atoms := atoms', negated := r.negated,
         conditions :=
           r.conditions ++ [.leaf ⟨.pointIn, .var u, t⟩] })
@@ -707,7 +804,7 @@ theorem stepLower_none {Γ : Typing} {u : VarId} {r : Rule} :
     stepLower Γ u r = none ↔
       ∀ a, a ∈ r.atoms → a.membershipFree Γ := by
   unfold stepLower
-  cases hla : lowerAtoms Γ.membership u r.atoms with
+  cases hla : lowerAtoms Γ.membershipSrc u r.atoms with
   | none =>
     simp only []
     constructor
@@ -722,7 +819,7 @@ theorem stepLower_none {Γ : Typing} {u : VarId} {r : Rule} :
     · intro h
       cases h
     · intro h
-      have : lowerAtoms Γ.membership u r.atoms = none :=
+      have : lowerAtoms Γ.membershipSrc u r.atoms = none :=
         lowerAtoms_none.mpr fun a ha => h a ha
       rw [this] at hla
       cases hla
@@ -733,8 +830,8 @@ theorem stepLower_some {Γ : Typing} {u : VarId} {r : Rule}
     ∃ pre a post bpre i t bpost,
       r.atoms = pre ++ a :: post ∧
       a.bindings = bpre ++ (i, t) :: bpost ∧
-      Γ.membership (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i t = true ∧
-      out = (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i),
+      Γ.membershipSrc a.source i t = true ∧
+      out = (Γ.updateVar u (Γ.header.fieldTypeSrc a.source i),
         { finds := r.finds,
           atoms := pre ++
             ({ source := a.source, bindings := bpre ++ (i, Term.var u) :: bpost })
@@ -743,7 +840,7 @@ theorem stepLower_some {Γ : Typing} {u : VarId} {r : Rule}
           conditions :=
             r.conditions ++ [.leaf ⟨.pointIn, .var u, t⟩] }) := by
   unfold stepLower at h
-  cases hla : lowerAtoms Γ.membership u r.atoms with
+  cases hla : lowerAtoms Γ.membershipSrc u r.atoms with
   | none => rw [hla] at h; cases h
   | some quad =>
     rw [hla] at h
@@ -805,17 +902,7 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
   have hbMem : (i, t₀) ∈ a.bindings := by
     rw [hbind]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
-    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
-        && !(Γ.termInterval t₀)) = true := hmem
-    rw [Bool.and_eq_true] at h
-    exact Header.fieldType_isInterval.mp h.1
-  -- The rewritten binding reads by VALUE under the updated typing.
-  have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
-        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
-    unfold Typing.membership Typing.termInterval Typing.updateVar
-    simp [hIntF]
+  obtain ⟨_, hNewFalse⟩ := membershipSrc_mint (u := u) hmem
   obtain ⟨hpos, hneg, hcond⟩ := hσ
   obtain ⟨f, hf, hSM⟩ := hpos a haMem
   refine ⟨fun v => if v = u then f i else σ v, ⟨?_, ?_, ?_⟩,
@@ -838,21 +925,21 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
         rcases List.mem_append.mp hb with hbpre | hbmid
         · have hbOrig : b ∈ a.bindings := by
             rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
-          exact (selectsAt_stable
+          exact (selectsAtSrc_stable
             (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
             (fun v hv => by
               simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
             |>.mp (hSM b hbOrig)
         · rcases List.mem_cons.mp hbmid with rfl | hbpost
           · -- the minted binding pins the field value
-            refine (selectsAt_of_not_membership hNewFalse).mpr ?_
+            refine (selectsAtSrc_of_not_membership hNewFalse).mpr ?_
             show (if u = u then f i else σ u) = f i
             simp
           · have hbOrig : b ∈ a.bindings := by
               rw [hbind]
               exact List.mem_append.mpr
                 (Or.inr (List.mem_cons_of_mem _ hbpost))
-            exact (selectsAt_stable
+            exact (selectsAtSrc_stable
               (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
               (fun v hv => by
                 simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
@@ -876,7 +963,7 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
         (fun v hv => by simp [hneC c hold v hv])).mp (hcond c hold)
     · rcases List.mem_cons.mp hnew with rfl | hemp
       · -- the appended pointIn condition
-        have hsel := (selectsAt_of_membership hmem).mp (hSM _ hbMem)
+        have hsel := (selectsAtSrc_of_membership hmem).mp (hSM _ hbMem)
         obtain ⟨x, hx, hpm⟩ := hsel
         refine ⟨f i, x, ?_, ?_, hpm⟩
         · show (if u = u then f i else σ u) = f i
@@ -904,16 +991,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
   obtain ⟨hneF, hneA, hneN, hneC⟩ := not_mint_of_allVars hu
   have haMem : a ∈ r.atoms := by
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
-    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
-        && !(Γ.termInterval t₀)) = true := hmem
-    rw [Bool.and_eq_true] at h
-    exact Header.fieldType_isInterval.mp h.1
-  have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
-        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
-    unfold Typing.membership Typing.termInterval Typing.updateVar
-    simp [hIntF]
+  obtain ⟨_, hNewFalse⟩ := membershipSrc_mint (u := u) hmem
   obtain ⟨hpos, hneg, hcond⟩ := hσ
   have hcNew : Condition.holds C ρ σ
       (.leaf ⟨.pointIn, .var u, t₀⟩) :=
@@ -940,7 +1018,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
         have hAu : σ u = A i := by
           have := hSMA (i, Term.var u)
             (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
-          exact (selectsAt_of_not_membership hNewFalse).mp this
+          exact (selectsAtSrc_of_not_membership hNewFalse).mp this
         intro b hb
         rw [hbind] at hb
         rcases List.mem_append.mp hb with hbpre | hbmid
@@ -950,12 +1028,12 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
             List.mem_append.mpr (Or.inl hbpre)
           have hbOrig : b ∈ a.bindings := by
             rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
-          exact (selectsAt_stable
+          exact (selectsAtSrc_stable
             (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
             (fun v hv => rfl)).mpr (hSMA b hbLow)
         · rcases List.mem_cons.mp hbmid with rfl | hbpost
           · -- the membership binding itself, from the condition
-            refine (selectsAt_of_membership hmem).mpr ?_
+            refine (selectsAtSrc_of_membership hmem).mpr ?_
             obtain ⟨x, y, hx, hy, hden⟩ := hcNew
             have hxu : σ u = x := hx
             exact ⟨y, hy, by
@@ -971,7 +1049,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
               rw [hbind]
               exact List.mem_append.mpr
                 (Or.inr (List.mem_cons_of_mem _ hbpost))
-            exact (selectsAt_stable
+            exact (selectsAtSrc_stable
               (fun v hv =>
                 hneA a haMem v (binding_vars_sub_atom hbOrig hv))
               (fun v hv => rfl)).mpr (hSMA b hbLow)
@@ -1064,16 +1142,16 @@ theorem memCountB_eq_zero {p : FieldId → Term → Bool} :
         exact h b' (List.mem_cons_of_mem _ hb')
 
 /-- Membership bindings across an atom list. -/
-def memCount (isM : RelId → FieldId → Term → Bool) : List Atom → Nat
+def memCount (isM : AtomSource → FieldId → Term → Bool) : List Atom → Nat
   | [] => 0
   | a :: rest =>
-    memCountB (isM (match a.source with | .edb R => R | .interior _ => ⟨0⟩)) a.bindings + memCount isM rest
+    memCountB (isM a.source) a.bindings + memCount isM rest
 
 /-- The atom-level count reads only the statuses. -/
-theorem memCount_ext {p q : RelId → FieldId → Term → Bool} :
+theorem memCount_ext {p q : AtomSource → FieldId → Term → Bool} :
     ∀ {atoms : List Atom},
       (∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-        p (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = q (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2) →
+        p a.source b.1 b.2 = q a.source b.1 b.2) →
       memCount p atoms = memCount q atoms
   | [], _ => rfl
   | a :: rest, h => by
@@ -1082,7 +1160,7 @@ theorem memCount_ext {p q : RelId → FieldId → Term → Bool} :
       memCount_ext fun a' ha' => h a' (List.mem_cons_of_mem _ ha')]
 
 /-- The atom-level count splits over append. -/
-theorem memCount_append {p : RelId → FieldId → Term → Bool} :
+theorem memCount_append {p : AtomSource → FieldId → Term → Bool} :
     ∀ (xs ys : List Atom),
       memCount p (xs ++ ys) = memCount p xs + memCount p ys
   | [], ys => by simp [memCount]
@@ -1090,11 +1168,11 @@ theorem memCount_append {p : RelId → FieldId → Term → Bool} :
     simp [memCount, memCount_append xs ys, Nat.add_assoc]
 
 /-- A zero atom-level count is membership-freeness everywhere. -/
-theorem memCount_eq_zero {p : RelId → FieldId → Term → Bool} :
+theorem memCount_eq_zero {p : AtomSource → FieldId → Term → Bool} :
     ∀ {atoms : List Atom},
       memCount p atoms = 0 ↔
         ∀ a, a ∈ atoms → ∀ b, b ∈ a.bindings →
-          p (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 = false
+          p a.source b.1 b.2 = false
   | [] => by simp [memCount]
   | a :: rest => by
     unfold memCount
@@ -1112,8 +1190,8 @@ theorem memCount_eq_zero {p : RelId → FieldId → Term → Bool} :
 theorem stepLower_decrement {Γ : Typing} {u : VarId} {r : Rule}
     {Γ' : Typing} {r' : Rule} (hu : u ∉ r.allVars)
     (hstep : stepLower Γ u r = some (Γ', r')) :
-    memCount Γ'.membership r'.atoms + 1 =
-      memCount Γ.membership r.atoms := by
+    memCount Γ'.membershipSrc r'.atoms + 1 =
+      memCount Γ.membershipSrc r.atoms := by
   obtain ⟨pre, a, post, bpre, i, t₀, bpost, hatoms, hbind, hmem, hout⟩ :=
     stepLower_some hstep
   injection hout with hΓ hr
@@ -1121,22 +1199,13 @@ theorem stepLower_decrement {Γ : Typing} {u : VarId} {r : Rule}
   obtain ⟨-, hneA, -, -⟩ := not_mint_of_allVars hu
   have haMem : a ∈ r.atoms := by
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
-  have hIntF : (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i).isInterval = true := by
-    have h : (Γ.header.isInterval (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i
-        && !(Γ.termInterval t₀)) = true := hmem
-    rw [Bool.and_eq_true] at h
-    exact Header.fieldType_isInterval.mp h.1
-  have hNewFalse :
-      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
-        (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i (Term.var u) = false := by
-    unfold Typing.membership Typing.termInterval Typing.updateVar
-    simp [hIntF]
+  obtain ⟨_, hNewFalse⟩ := membershipSrc_mint (u := u) hmem
   -- statuses are stable off the mint
   have hstable : ∀ a'' ∈ r.atoms, ∀ b ∈ a''.bindings,
-      (Γ.updateVar u (Γ.header.fieldType (match a.source with | .edb R => R | .interior _ => ⟨0⟩) i)).membership
-        (match a''.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 =
-          Γ.membership (match a''.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 :=
-    fun a'' ha'' b hb => Typing.membership_updateVar
+      (Γ.updateVar u (Γ.header.fieldTypeSrc a.source i)).membershipSrc
+        a''.source b.1 b.2 =
+          Γ.membershipSrc a''.source b.1 b.2 :=
+    fun a'' ha'' b hb => Typing.membershipSrc_updateVar
       fun v hv => hneA a'' ha'' v (binding_vars_sub_atom hb hv)
   have hpre_mem : ∀ a'' ∈ pre, a'' ∈ r.atoms := fun a'' h => by
     rw [hatoms]; exact List.mem_append.mpr (Or.inl h)
@@ -1177,7 +1246,7 @@ membership count is exactly enough fuel
 (`stepLower_decrement`). Returns the extended typing (the mints' field
 types) with the lowered rule. -/
 def Rule.lowerMembership (Γ : Typing) (r : Rule) : Typing × Rule :=
-  lowerFuel (memCount Γ.membership r.atoms) Γ r
+  lowerFuel (memCount Γ.membershipSrc r.atoms) Γ r
 
 /-- Every fuel level preserves the surface denotation — the step
 theorem, iterated. -/
@@ -1235,7 +1304,7 @@ theorem lowerFuel_negFree :
       injection hout with hΓ hr
       subst hΓ hr
       intro a'' ha'' b hb
-      rw [Typing.membership_updateVar
+      rw [Typing.membershipSrc_updateVar
         fun v hv => hneN a'' ha'' v (binding_vars_sub_atom hb hv)]
       exact h a'' ha'' b hb
 
@@ -1243,11 +1312,11 @@ theorem lowerFuel_negFree :
 membership-free — the lowering RAN to exhaustion. -/
 theorem lowerFuel_posFree :
     ∀ (n : Nat) (Γ : Typing) (r : Rule),
-      memCount Γ.membership r.atoms ≤ n →
+      memCount Γ.membershipSrc r.atoms ≤ n →
       ∀ a, a ∈ (lowerFuel n Γ r).2.atoms →
         Atom.membershipFree (lowerFuel n Γ r).1 a
   | 0, Γ, r, hle => by
-    have h0 : memCount Γ.membership r.atoms = 0 := Nat.le_zero.mp hle
+    have h0 : memCount Γ.membershipSrc r.atoms = 0 := Nat.le_zero.mp hle
     exact fun a ha b hb => (memCount_eq_zero.mp h0) a ha b hb
   | n + 1, Γ, r, hle => by
     cases hstep : stepLower Γ r.freshVar r with
@@ -1462,26 +1531,28 @@ membership positions to `PointIn`/`FieldsPointIn`/`AnyPointIn`
 filters) and the `AntiProbe` descriptor (`probe_bindings` are the
 occurrence's vars; its filters evaluate inside the probe). -/
 structure AntiOccurrence where
-  /-- The probed relation. -/
-  relation : RelId
+  /-- The probed source — stored relation or interior; interiors carry
+  no membership filters. -/
+  source : AtomSource
   /-- The value-read bindings — the probe keys. -/
   domain : List (FieldId × Term)
   /-- The membership positions — `PointIn` filters over the probed
-  fact's interval fields. -/
+  fact's interval fields. Empty on interior sources. -/
   filters : List (FieldId × Term)
 
 /-- The role-blind lowering of one negated atom: partition its
 bindings by the membership status — exactly `lower_atom`'s two
 passes, with no mint (a filter reads the fact in place; nothing
-binds). -/
+binds). Interior atoms are membership-free: domain is the bindings,
+filters empty. -/
 def Atom.lowerNegated (Γ : Typing) (a : Atom) : AntiOccurrence :=
   match a.source with
   | .edb R =>
-    { relation := R
+    { source := .edb R
       domain := a.bindings.filter fun b => !(Γ.membership R b.1 b.2)
       filters := a.bindings.filter fun b => Γ.membership R b.1 b.2 }
-  | .interior _ =>
-    { relation := ⟨0⟩, domain := a.bindings, filters := [] }
+  | .interior C =>
+    { source := .interior C, domain := a.bindings, filters := [] }
 
 /-- A fact PASSES an anti-occurrence: it matches the domain bindings
 by value and every membership filter's term selects a value whose
@@ -1491,14 +1562,16 @@ domain binding pins `σ v` to the probed fact's field, so the filter's
 read of `σ v` IS the engine's `FieldsPointIn` same-fact composition. -/
 def AntiMatches (f : Fact) (o : AntiOccurrence) (σ : Assignment)
     (ρ : ParamEnv) : Prop :=
-  Matches f { source := .edb o.relation, bindings := o.domain } σ ρ ∧
+  Matches f { source := o.source, bindings := o.domain } σ ρ ∧
   ∀ b, b ∈ o.filters → ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)
 
-/-- The anti-probe rejection: no fact of the relation passes — the
-`¬∃` the executor realizes by probe, filters inside. -/
+/-- The anti-probe rejection: no fact of the occurrence's source
+passes — the `¬∃` the executor realizes by probe, filters inside.
+The source lives on the occurrence so it cannot disagree with a
+separately-passed `RelId`. -/
 def AntiOccurrence.rejects (o : AntiOccurrence) (I : Instance)
-    (s : AtomSource) (σ : Assignment) (ρ : ParamEnv) : Prop :=
-  ¬ ∃ f, f ∈ edbEnv I s ∧ AntiMatches f o σ ρ
+    (σ : Assignment) (ρ : ParamEnv) : Prop :=
+  ¬ ∃ f, f ∈ edbEnv I o.source ∧ AntiMatches f o σ ρ
 
 /-- The surface judgment IS the anti-occurrence pass, fact for fact —
 `surfaceMatches_iff_occurrence` with the filter half carried by the
@@ -1526,17 +1599,20 @@ vacuous. -/
 theorem lowerNegated_rejects_iff {Γ : Typing} {a : Atom}
     {σ : Assignment} {ρ : ParamEnv} {I : Instance} :
     (¬ ∃ f, f ∈ edbEnv I a.source ∧ SurfaceMatches Γ f a σ ρ) ↔
-      (a.lowerNegated Γ).rejects I a.source σ ρ := by
+      (a.lowerNegated Γ).rejects I σ ρ := by
   cases hsrc : a.source with
   | edb R =>
     constructor
     · intro hn ⟨f, hf, h⟩
+      simp only [Atom.lowerNegated, hsrc] at hf
       exact hn ⟨f, hf, (surfaceMatches_iff_antiMatches ⟨R, hsrc⟩).mpr h⟩
     · intro hn ⟨f, hf, h⟩
-      exact hn ⟨f, hf, (surfaceMatches_iff_antiMatches ⟨R, hsrc⟩).mp h⟩
+      refine hn ⟨f, ?_, (surfaceMatches_iff_antiMatches ⟨R, hsrc⟩).mp h⟩
+      simpa [Atom.lowerNegated, hsrc] using hf
   | interior C =>
     constructor
     · intro hn ⟨f, hf, h⟩
+      simp only [Atom.lowerNegated, hsrc] at hf
       obtain ⟨t, ht, _⟩ := hf
       exact ht
     · intro hn ⟨f, hf, h⟩
@@ -1551,7 +1627,7 @@ occurrence list plus the `anti_probes` descriptors. -/
 def antiProbeDerives (Γ : Typing) (C : Classify) (r : Rule)
     (I : Instance) (ρ : ParamEnv) (σ : Assignment) : Prop :=
   (∀ a, a ∈ r.atoms → ∃ f, f ∈ edbEnv I a.source ∧ Matches f a σ ρ) ∧
-  (∀ a, a ∈ r.negated → (a.lowerNegated Γ).rejects I a.source σ ρ) ∧
+  (∀ a, a ∈ r.negated → (a.lowerNegated Γ).rejects I σ ρ) ∧
   (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t)
 
 /-- One rule's answers under the anti-probe reading of its negated
@@ -1663,13 +1739,19 @@ def Term.selectsAtB (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
   else
     decide (Term.selects ρ σ t w)
 
+def Term.selectsAtBSrc (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
+    (s : AtomSource) (i : FieldId) (t : Term) (w : Value) : Bool :=
+  match s with
+  | .edb R => Term.selectsAtB Γ ρ σ R i t w
+  | .interior _ => decide (Term.selects ρ σ t w)
+
 /-- Executable `SurfaceMatches` — the engine's negated-membership
 reading (`normalize.rs::AntiProbe`) as a filter over a concrete
 world. On membership-free atoms this coincides with `matchesB`. -/
 def surfaceMatchesB (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
     (a : Atom) (f : Fact) : Bool :=
   a.bindings.all fun b =>
-    Term.selectsAtB Γ ρ σ (match a.source with | .edb R => R | .interior _ => ⟨0⟩) b.1 b.2 (f b.1)
+    Term.selectsAtBSrc Γ ρ σ a.source b.1 b.2 (f b.1)
 
 end Query
 end Bumbledb

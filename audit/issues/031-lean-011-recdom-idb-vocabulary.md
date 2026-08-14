@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(b10d9df5)
 - **Source:** audit/lean.md M5
 - **Depends on:** lean-002 (`recDom` is restated over `LinearRec`)
 
@@ -44,9 +44,9 @@ Per `audit/CONTRACT.md §C2/§C4`: after lean-002, a step arm's self-occurrence 
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -in 'idb|program domain' lean/Bumbledb/Exec/Reach.lean` → no matches; `rg -n 'by_cases hQ : Q = self' lean/Bumbledb/Exec/Reach.lean` → no matches.
-- [ ] Unchanged: `reach_den_finite` and `evalLinearReach_eq_lfp` survive (restated over `LinearRec`) with the same content; 268-case conformance green (22 reach cases exercise the candidate space).
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -in 'idb|program domain' lean/Bumbledb/Exec/Reach.lean` → no matches; `rg -n 'by_cases hQ : Q = self' lean/Bumbledb/Exec/Reach.lean` → no matches.
+- [x] Unchanged: `reach_den_finite` and `evalLinearReach_eq_lfp` survive (restated over `LinearRec`) with the same content; 268-case conformance green (22 reach cases exercise the candidate space).
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

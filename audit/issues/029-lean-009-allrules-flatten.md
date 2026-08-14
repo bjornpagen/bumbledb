@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(a003eb51)
 - **Source:** audit/lean.md M3
 - **Depends on:** lean-001 (lands as part of the sum's `evalQuery_sound` restatement)
 
@@ -51,9 +51,9 @@ DELETE `Query.allRules` and `mem_allRules_interior`/`mem_allRules_rec`/`mem_allR
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'allRules|mem_allRules_interior|mem_allRules_rec|mem_allRules_main' lean --glob '!conformance/cases/**'` → no matches.
-- [ ] Unchanged: `evalQuery_sound` survives (restated) with per-lane `Safe`/`WellTyped` premises and the same conclusion; 268-case conformance green.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -nw 'allRules|mem_allRules_interior|mem_allRules_rec|mem_allRules_main' lean --glob '!conformance/cases/**'` → no matches.
+- [x] Unchanged: `evalQuery_sound` survives (restated) with per-lane `Safe` / `WellTyped` premises and the same conclusion; 268-case conformance green.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

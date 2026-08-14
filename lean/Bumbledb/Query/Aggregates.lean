@@ -1539,7 +1539,7 @@ dedup-invariant under duplicated input, UNIFORMLY in the fold — no op
 can observe a duplicate, which is set semantics through aggregation
 ("two postings of amount 100 are two distinct bindings; the same
 posting twice is one"). Bridge: the binding seen-set (`fold_row.rs`:
-single-rule programs key the whole slot array, the union regime keys
+single-rule queries key the whole slot array, the union regime keys
 the head projection) and its elision licence — `DistinctWitness`,
 whose proof is PRD 07's. -/
 theorem agg_over_distinct_bindings {β γ : Type} [DecidableEq β]
@@ -2054,6 +2054,26 @@ inductive AggOp where
   | pack (v : VarId)
   | measureFold (op : ScalarFold) (v : VarId)
 deriving DecidableEq
+
+/-- A head position is a grouping key or an aggregate op. The
+union-key reading (Count contributes no words; folds contribute
+their input) is a function of this inventory, not a parallel
+inductive. -/
+abbrev HeadPos := KeyTerm ⊕ AggOp
+
+def HeadPos.isKeyB : HeadPos → Bool
+  | .inl _ => true
+  | .inr _ => false
+
+/-- One position of a union-key row. Count is keyless. -/
+def HeadPos.row (σ : Assignment) : HeadPos → Option Value
+  | .inl k => k.value? σ
+  | .inr .count => none
+  | .inr (.sum v) => some (σ v)
+  | .inr (.min v) => some (σ v)
+  | .inr (.max v) => some (σ v)
+  | .inr (.pack v) => some (σ v)
+  | .inr (.measureFold _ v) => (σ v).measure?
 
 end Query
 
