@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (ts)
-- **Status:** OPEN
+- **Status:** FIXED(0f288bcf)
 - **Source:** audit/sdks.md #5
 - **Depends on:** none (foundation for the ts tree; sdk-007 and sdk-018's TS half land with/after it)
 

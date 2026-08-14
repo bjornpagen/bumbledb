@@ -72,6 +72,8 @@ import type {
 	MatchShape,
 	ParamUse,
 	RecData,
+	RecHandle,
+	RecHead,
 	RuleData,
 	RuleItem
 } from "#query/atom.ts"
@@ -362,28 +364,36 @@ type QueryParams<Q extends AnyQuery> = ParamsOf<Q>
 
 /**
  * The entry value of `query(S)`: interiors, then optional recursive, then
- * the first `.rule` mints the query.
+ * the first `.rule` mints the query. `interior` / `recursive` exist only
+ * while `Rec` is `null`; `.recursive()` moves the type parameter.
  */
-interface QueryStart<
+type QueryStart<
 	Rels extends SchemaRelations,
 	Classes extends SchemaClasses = SchemaClasses,
-	P extends ParamsRecord = Record<never, never>
-> {
-	interior<const Builds extends readonly InteriorBuild<Rels, Classes>[]>(
-		name: string,
-		...builds: Builds
-	): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>>
-	recursive<
-		const Base extends readonly RecBuild<Rels, Classes>[],
-		const Step extends readonly RecBuild<Rels, Classes>[]
-	>(
-		name: string,
-		arms: { readonly base: Base; readonly rec: Step }
-	): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>
+	P extends ParamsRecord = Record<never, never>,
+	Rec extends RecData | null = null
+> = {
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
 	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>
-}
+} & (Rec extends null
+	? {
+			interior<const Builds extends readonly InteriorBuild<Rels, Classes>[]>(
+				name: string,
+				...builds: Builds
+			): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>, null>
+			recursive<
+				const Base extends readonly RecBuild<Rels, Classes>[],
+				const Step extends readonly RecBuild<Rels, Classes>[]
+			>(
+				name: string,
+				arms: { readonly base: Base; readonly rec: Step }
+			): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>, RecData>
+		}
+	: {
+			interior: never
+			recursive: never
+		})
 
 /** The frozen constructor vocabulary every rule builder spreads. */
 const termOps: TermOps = Object.freeze({
@@ -1081,7 +1091,7 @@ interface RawScope extends TermOps {
 /** The declared derived tables a chain may name. */
 interface DerivedEnv {
 	readonly interiors: readonly InteriorData[]
-	readonly rec: RecData | null
+	readonly rec: RecHandle | RecHead | RecData | null
 }
 
 /** Which rule family a chain builds — plus the schema's runtime class map and theory value (the join judge's authority). */
@@ -1089,8 +1099,8 @@ type ChainContext = { readonly classes: SchemaClasses; readonly theory: AnySchem
 	(
 		| { readonly kind: "query" }
 		| { readonly kind: "interior"; readonly self: string }
-		| { readonly kind: "rec-base"; readonly self: RecData }
-		| { readonly kind: "rec-arm"; readonly self: RecData }
+		| { readonly kind: "rec-base"; readonly self: RecHandle }
+		| { readonly kind: "rec-arm"; readonly self: RecHead }
 	)
 
 /** The diagnostic label of a chain context. */
@@ -1130,6 +1140,9 @@ function lookupDerived(context: ChainContext, name: string): DerivedTable {
 			throw errors.new(
 				`recursive ${context.rec.name}: a base arm does not read the rec — self-atoms belong on rec arms`
 			)
+		}
+		if (!("finds" in context.rec)) {
+			throw errors.new(`recursive ${context.rec.name}: rec arms resolve the rec head after base arms seal it`)
 		}
 		return context.rec
 	}
@@ -1264,10 +1277,37 @@ function makeInteriorRuleScope<Rels extends SchemaRelations, Classes extends Sch
 function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: AnySchema,
 	env: DerivedEnv,
-	self: RecData,
+	self: RecHandle,
+	kind: "rec-base"
+): RecRuleScope<Rels, Classes>
+function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
+	theory: AnySchema,
+	env: DerivedEnv,
+	self: RecHead,
+	kind: "rec-arm"
+): RecRuleScope<Rels, Classes>
+function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
+	theory: AnySchema,
+	env: DerivedEnv,
+	self: RecHandle | RecHead,
 	kind: "rec-base" | "rec-arm"
 ): RecRuleScope<Rels, Classes> {
-	const raw = makeRawScope({ kind, self, classes: theory.classes, theory, ...env })
+	const raw =
+		kind === "rec-base"
+			? makeRawScope({
+					kind: "rec-base",
+					self: self as RecHandle,
+					classes: theory.classes,
+					theory,
+					...env
+				})
+			: makeRawScope({
+					kind: "rec-arm",
+					self: self as RecHead,
+					classes: theory.classes,
+					theory,
+					...env
+				})
 	if (!isTypedScope<RecRuleScope<Rels, Classes>>(raw)) {
 		throw errors.new("recursive rule builder construction incomplete")
 	}
@@ -1569,29 +1609,39 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	if (recBuilds.length === 0) {
 		throw errors.new(`query: recursive ${name} has no rec arms`)
 	}
-	const recData: RecData = {
-		name,
-		finds: Object.freeze([]),
-		base: Object.freeze([]),
-		rec: Object.freeze([])
-	}
-	const env: DerivedEnv = { interiors, rec: recData }
+	const handle: RecHandle = Object.freeze({ name })
+	const baseEnv: DerivedEnv = { interiors, rec: handle }
 	const base = baseBuilds.map(function buildBase(buildOne) {
-		return buildOne(makeRecRuleScope<Rels, Classes>(theory, env, recData, "rec-base")).rule
+		return buildOne(makeRecRuleScope<Rels, Classes>(theory, baseEnv, handle, "rec-base")).rule
 	})
 	assertAlignedHeads(`recursive ${name}`, base)
 	const first = base[0]
 	if (first === undefined) {
 		throw errors.new(`query: recursive ${name} has no base arms`)
 	}
-	;(recData as { finds: readonly FindColumn[] }).finds = first.finds
+	const firstFind = first.finds[0]
+	if (firstFind === undefined) {
+		throw errors.new(`query: recursive ${name} has no head`)
+	}
+	const finds: RecHead["finds"] = [firstFind, ...first.finds.slice(1)]
+	const head: RecHead = Object.freeze({ name, finds })
+	const recEnv: DerivedEnv = { interiors, rec: head }
 	const rec = recBuilds.map(function buildRec(buildOne) {
-		return buildOne(makeRecRuleScope<Rels, Classes>(theory, env, recData, "rec-arm")).rule
+		return buildOne(makeRecRuleScope<Rels, Classes>(theory, recEnv, head, "rec-arm")).rule
 	})
 	assertAlignedHeads(`recursive ${name}`, [...base, ...rec])
-	;(recData as { base: readonly RuleData[] }).base = Object.freeze(base)
-	;(recData as { rec: readonly RuleData[] }).rec = Object.freeze(rec)
-	Object.freeze(recData)
+	const firstRec = rec[0]
+	if (firstRec === undefined) {
+		throw errors.new(`query: recursive ${name} has no rec arms`)
+	}
+	const sealedBase: RecData["base"] = [first, ...base.slice(1)]
+	const sealedRec: RecData["rec"] = [firstRec, ...rec.slice(1)]
+	const recData: RecData = Object.freeze({
+		name,
+		finds,
+		base: sealedBase,
+		rec: sealedRec
+	})
 	return recData
 }
 
@@ -1599,18 +1649,19 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 function makeQueryStart<
 	Rels extends SchemaRelations,
 	Classes extends SchemaClasses,
-	P extends ParamsRecord
+	P extends ParamsRecord,
+	Rec extends RecData | null
 >(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[],
-	rec: RecData | null
-): QueryStart<Rels, Classes, P> {
+	rec: Rec
+): QueryStart<Rels, Classes, P, Rec> {
 	const env: DerivedEnv = { interiors, rec }
-	const start: QueryStart<Rels, Classes, P> = {
+	const start = {
 		interior<const Builds extends readonly InteriorBuild<Rels, Classes>[]>(
 			name: string,
 			...builds: Builds
-		): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>> {
+		): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>, null> {
 			if (rec !== null) {
 				throw errors.new(
 					"query: interior after recursive is unwritable — declaration order is interiors, then rec, then main"
@@ -1623,7 +1674,7 @@ function makeQueryStart<
 				throw errors.new("query: an interior needs a name")
 			}
 			const data = collectInterior(theory, env, name, builds)
-			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>>(theory, [...interiors, data], null)
+			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>, null>(theory, [...interiors, data], null)
 		},
 		recursive<
 			const Base extends readonly RecBuild<Rels, Classes>[],
@@ -1631,7 +1682,7 @@ function makeQueryStart<
 		>(
 			name: string,
 			arms: { readonly base: Base; readonly rec: Step }
-		): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>> {
+		): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>, RecData> {
 			if (rec !== null) {
 				throw errors.new("query: a second recursive is unwritable — this cut admits one rec SCC")
 			}
@@ -1642,7 +1693,7 @@ function makeQueryStart<
 				throw errors.new("query: recursive needs a name")
 			}
 			const data = collectRec(theory, interiors, name, arms.base, arms.rec)
-			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>(
+			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>, RecData>(
 				theory,
 				interiors,
 				data
@@ -1661,7 +1712,7 @@ function makeQueryStart<
 		}
 	}
 	Object.freeze(start)
-	return start
+	return start as unknown as QueryStart<Rels, Classes, P, Rec>
 }
 
 /**
@@ -1674,7 +1725,7 @@ function makeQueryStart<
 function query<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>
 ): QueryStart<Rels, Classes> {
-	return makeQueryStart<Rels, Classes, Record<never, never>>(theory, [], null)
+	return makeQueryStart<Rels, Classes, Record<never, never>, null>(theory, [], null)
 }
 
 /**
@@ -1807,7 +1858,7 @@ function taggedCmpLiteral(
 interface LowerContext {
 	readonly theory: AnySchema
 	readonly relationIds: ReadonlyMap<string, number>
-	readonly interiorIds: ReadonlyMap<DerivedTable, number>
+	readonly interiorIds: ReadonlyMap<string, number>
 	readonly paramIds: ReadonlyMap<string, number>
 	readonly params: ReadonlyMap<string, ParamEntry>
 }
@@ -1899,7 +1950,7 @@ function lowerInteriorAtom(
 	bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>,
 	ids: VarIds
 ): AtomIr {
-	const interior = ctx.interiorIds.get(target)
+	const interior = ctx.interiorIds.get(target.name)
 	if (interior === undefined) {
 		throw errors.new(`query lowering: derived table ${target.name} was not declared on this query`)
 	}
@@ -2081,12 +2132,12 @@ function lowerQuery(q: AnyQuery): QueryIr {
 	Object.keys(theory.relations).forEach(function assignOrdinal(name, index) {
 		relationIds.set(name, index)
 	})
-	const interiorIds = new Map<DerivedTable, number>()
+	const interiorIds = new Map<string, number>()
 	q.data.interiors.forEach(function assignInteriorId(interior, index) {
-		interiorIds.set(interior, index)
+		interiorIds.set(interior.name, index)
 	})
 	if (q.data.rec !== null) {
-		interiorIds.set(q.data.rec, q.data.interiors.length)
+		interiorIds.set(q.data.rec.name, q.data.interiors.length)
 	}
 	const paramIds = new Map<string, number>()
 	const params = new Map<string, ParamEntry>()

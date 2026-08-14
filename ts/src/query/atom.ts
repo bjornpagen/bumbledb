@@ -185,20 +185,38 @@ interface InteriorData {
 	readonly rules: readonly RuleData[]
 }
 
+/** A nonempty frozen list — empty base/rec/finds are unrepresentable on RecData. */
+type NonEmpty<T> = readonly [T, ...T[]]
+
+/**
+ * Name-only rec identity used while base arms are in flight. Rec-base
+ * arms cannot read the rec; they must not observe a head.
+ */
+interface RecHandle {
+	readonly name: string
+}
+
+/**
+ * Rec identity plus the sealed head, used while rec arms are in flight
+ * and as the target those arms capture.
+ */
+interface RecHead {
+	readonly name: string
+	readonly finds: NonEmpty<FindColumn>
+}
+
 /**
  * The optional linear rec's runtime description — identity keys the dense
  * `InteriorId` (`interiors.length`) at lowering. Base and rec arms are
- * sealed when `q.recursive` returns.
+ * nonempty by type and sealed in one assignment.
  */
-interface RecData {
-	readonly name: string
-	readonly finds: readonly FindColumn[]
-	readonly base: readonly RuleData[]
-	readonly rec: readonly RuleData[]
+interface RecData extends RecHead {
+	readonly base: NonEmpty<RuleData>
+	readonly rec: NonEmpty<RuleData>
 }
 
 /** A named derived table (an interior or the rec) as `.interior(name)` / `r.not(name)` resolve it. */
-type DerivedTable = InteriorData | RecData
+type DerivedTable = InteriorData | RecHead
 
 /**
  * What a binding position of field `F` accepts: a bare structural literal
@@ -849,6 +867,8 @@ export type {
 	ParamUse,
 	PointSide,
 	RecData,
+	RecHandle,
+	RecHead,
 	RuleData,
 	RuleItem,
 	SlotAt,
