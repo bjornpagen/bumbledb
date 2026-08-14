@@ -2,8 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
-- **Lane note (`audit/docs`, 2026-08-14):** blocked until engine-041 lands on another branch. Left OPEN; this lane did not rewrite the `Predicate` / `predicate()` citations.
+- **Status:** FIXED(654c4062)
 - **Source:** audit/docs.md F2
 - **Depends on:** engine-041 (the `Predicate` → `Signature` type rename; this doc cites the type by name)
 
@@ -23,9 +22,9 @@ Per `audit/CONTRACT.md §C7`: "Main owns the answer signature (arity, types, fol
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'anonymous predicate|The predicate is' docs/architecture/20-query-ir.md` → no matches.
-- [ ] The type citation matches the code post-engine-041 (`rg -n "ir/validate.*Predicate" docs/architecture` → no matches).
-- [ ] Sealing-time claims (once at validation, buffer-typing role) unchanged.
+- [x] Gone: `rg -n 'anonymous predicate|The predicate is' docs/architecture/20-query-ir.md` → no matches.
+- [x] The type citation matches the code post-engine-041 (`rg -n "ir/validate.*Predicate" docs/architecture` → no matches).
+- [x] Sealing-time claims (once at validation, buffer-typing role) unchanged.
 
 ## Constraints
 
