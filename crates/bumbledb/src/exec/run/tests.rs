@@ -34,8 +34,7 @@ impl Sink for CollectSink {
         Flow::Continue
     }
 
-    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        debug_assert!(!stop_on_skip, "CollectSink never skips");
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         for &entry in batch.survivors {
             let row: Vec<u64> = (0..batch.bindings.slot_count())
                 .map(|slot| match batch.source_of(slot) {
@@ -58,8 +57,12 @@ struct RecordingCounters {
 impl Counters for RecordingCounters {
     fn node_entry(&mut self, _: usize) {}
     fn batch(&mut self, _: usize, _: usize) {}
-    fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool) {
-        self.cover_choices.push((node, subatom, exact));
+    fn cover_choice(&mut self, node: usize, subatom: usize, count: crate::exec::colt::KeyCount) {
+        self.cover_choices.push((
+            node,
+            subatom,
+            matches!(count, crate::exec::colt::KeyCount::Exact(_)),
+        ));
     }
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
@@ -174,7 +177,8 @@ fn colts_with_params(
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.relation().0).expect("small")],
+                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                        .expect("small")],
                     &occurrence.filters,
                     params,
                     Vec::new(),
@@ -290,7 +294,7 @@ struct SkipCounterRun {
 impl Counters for SkipCounterRun {
     fn batch(&mut self, _: usize, _: usize) {}
     fn node_entry(&mut self, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}
@@ -346,7 +350,7 @@ struct PhaseOrderCounters {
 impl Counters for PhaseOrderCounters {
     fn batch(&mut self, _: usize, _: usize) {}
     fn node_entry(&mut self, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     fn probe_hash(&mut self, node: usize, subatom: usize) {
         self.events.push(("hash", node, subatom));
     }

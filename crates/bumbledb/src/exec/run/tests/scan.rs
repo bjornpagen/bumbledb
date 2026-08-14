@@ -153,11 +153,14 @@ fn hoisted_and_per_position_arms_agree() {
     };
     let len = views[0].row_count();
     let mut hoisted = ProjectionSinkForTest::new(slots.clone());
-    assert!(hoisted.begin_scan(&scan));
+    assert_eq!(hoisted.begin_scan(&scan), crate::exec::run::ScanOffer::Open);
     hoisted.scan_run(&scan, SuffixRun::Identity { start: 0, len });
     assert_eq!(hoisted.end_scan(&scan), len as u64);
     let mut per_position = ProjectionSinkForTest::new(slots);
-    assert!(per_position.begin_scan(&scan));
+    assert_eq!(
+        per_position.begin_scan(&scan),
+        crate::exec::run::ScanOffer::Open
+    );
     let positions: Vec<u32> = (0..u32::try_from(len).expect("small")).collect();
     for chunk in positions.chunks(SCAN_HOIST_THRESHOLD - 1) {
         per_position.scan_run(&scan, SuffixRun::Positions(chunk));

@@ -91,7 +91,7 @@ impl AggregateSink {
                     answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                     key_cursor += width;
                 }
-                SinkSpec::Agg { .. } => {
+                SinkSpec::Agg(_) => {
                     answer_scratch.push(Self::finalize_acc(accs[acc_cursor], find_idx)?);
                     acc_cursor += 1;
                 }
@@ -148,7 +148,7 @@ impl AggregateSink {
                             self.answer_scratch.push(start);
                             self.answer_scratch.push(frontier);
                         }
-                        SinkSpec::Agg { .. } => {
+                        SinkSpec::Agg(_) => {
                             unreachable!("validated: Pack mixes with no other aggregate")
                         }
                     }

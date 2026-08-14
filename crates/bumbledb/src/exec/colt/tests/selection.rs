@@ -171,14 +171,8 @@ fn set_levels_chain_with_scalar_levels() {
     let mut colt = Colt::new(
         all(&view),
         &[
-            SelectionLevel {
-                columns: vec![0],
-                set: false,
-            },
-            SelectionLevel {
-                columns: vec![1],
-                set: true,
-            },
+            SelectionLevel::Point { columns: vec![0] },
+            SelectionLevel::Set { columns: vec![1] },
         ],
         vec![vec![]],
     );

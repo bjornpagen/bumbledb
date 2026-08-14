@@ -138,7 +138,11 @@ fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
     let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
     };
-    rule.plan.occurrences().iter().map(|o| o.role).collect()
+    rule.plan
+        .occurrences()
+        .iter()
+        .map(|o| o.role.clone())
+        .collect()
 }
 
 fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {

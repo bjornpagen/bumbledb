@@ -29,7 +29,7 @@ impl Colt {
         }
         let mut cursor = Self::root();
         for (level, words) in keys.iter().enumerate() {
-            cursor = if self.set_levels[level] {
+            cursor = if matches!(self.selection_kinds[level], super::SelectionKind::Set) {
                 self.select_union(cursor, level, words)?
             } else {
                 debug_assert_eq!(words.len(), self.arity_at(level), "one key per level");
@@ -37,7 +37,7 @@ impl Colt {
             };
         }
         self.start = cursor;
-        self.selected = true;
+        self.select_state = super::SelectState::Done;
         Some(cursor)
     }
 
@@ -203,7 +203,10 @@ impl Colt {
     /// Once per occurrence per execution; noise against the join.
     #[must_use]
     pub fn start(&self) -> Cursor {
-        assert!(self.selected, "select() runs before the join");
+        assert!(
+            !matches!(self.select_state, super::SelectState::Pending),
+            "select() runs before the join"
+        );
         self.start
     }
 

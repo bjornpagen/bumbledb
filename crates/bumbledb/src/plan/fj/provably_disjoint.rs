@@ -1,6 +1,7 @@
-use crate::image::view::{Const, FilterPredicate};
+use crate::image::view::Const;
 use crate::ir::normalize::{NormalizedQuery, Occurrence};
-use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
+use crate::ir::{AggOp, FindTerm, VarId};
+use crate::plan::pinned_fields;
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, RelationId};
 
@@ -111,18 +112,6 @@ fn pins_of(
                 .find(|(field, _)| *field == witness.field)
                 .map(|(_, value)| (occurrence, value))
         })
-}
-
-/// The `Eq`-pinned (field, constant) pairs of one occurrence's filters.
-fn pinned_fields(occurrence: &Occurrence) -> impl Iterator<Item = (FieldId, &Const)> {
-    occurrence.filters.iter().filter_map(|filter| match filter {
-        FilterPredicate::Compare {
-            field,
-            op: CmpOp::Eq,
-            value,
-        } => Some((*field, value)),
-        _ => None,
-    })
 }
 
 /// Whether two plan-time constants can never resolve to one column

@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F14
 - **Depends on:** exec-001 (optional; AggSpec may absorb Pack/measures into a body sum)
 

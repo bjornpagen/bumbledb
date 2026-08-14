@@ -37,7 +37,7 @@ impl Executor {
         // A poisoned execution's tail flushes (pump's remainder, deeper
         // recursion unwinds) skip the whole pipeline — every survivor
         // would be discarded at the routing loop's own check anyway.
-        if self.all_cancelled {
+        if !matches!(self.drive_state, super::DriveState::Running) {
             scratch.parents.clear();
             scratch.element_origins.clear();
             return;
@@ -330,7 +330,7 @@ impl Executor {
                 }
             }
             counters.phase_end(node_idx, JoinPhase::Hash);
-            let carried = tables.carried_col[node_idx][occ];
+            let carried = tables.carried_index(node_idx, occ);
             let start_cursor = colts[occ].start();
             // A first-appearance sibling probes the batch-constant start
             // cursor: force its map here, under the Force phase, like
@@ -414,7 +414,7 @@ impl Executor {
                 debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
                 super::CursorSrc::Sibling(sub_idx)
             } else {
-                match tables.carried_col[node_idx][occ] {
+                match tables.carried_index(node_idx, occ) {
                     Some(col) => super::CursorSrc::Carried(col),
                     None => super::CursorSrc::Const(colt.start()),
                 }
@@ -570,7 +570,7 @@ impl Executor {
         // W2 gravestone commit carries the full protocol.
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
-        let mints_origins = tables.absorb == Some(node_idx);
+        let mints_origins = tables.absorb == super::SkipAbsorb::Node(node_idx);
         // The origin mint space is checked HERE, at mint granularity —
         // one branch per probe pass (this pass mints at most one origin
         // per survivor), never on the per-tuple path. Past 2³² absorb
@@ -604,9 +604,9 @@ impl Executor {
         // Real origins exist strictly below the absorb node; the seed id
         // above it must never match a minted id. Resolved once per pass,
         // never per survivor (the instruction diet).
-        let below_absorb = tables.absorb.is_some_and(|a| node_idx > a);
+        let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         for k in 0..scratch.survivors.len() {
-            if self.all_cancelled {
+            if !matches!(self.drive_state, super::DriveState::Running) {
                 break;
             }
             let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
@@ -665,9 +665,13 @@ impl Executor {
                     // below the absorb (minted here or inherited).
                     counters.skip(node_idx);
                     match tables.absorb {
-                        Some(a) if node_idx >= a => self.cancel_origin(origin),
-                        Some(_) => {}
-                        None => self.all_cancelled = true,
+                        super::SkipAbsorb::Node(a) if node_idx >= a => self.cancel_origin(origin),
+                        super::SkipAbsorb::Node(_) => {}
+                        super::SkipAbsorb::Root => {
+                            if matches!(self.drive_state, super::DriveState::Running) {
+                                self.drive_state = super::DriveState::SkipDone;
+                            }
+                        }
                     }
                 }
             } else {

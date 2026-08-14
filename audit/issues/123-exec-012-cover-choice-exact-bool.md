@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F15
 - **Depends on:** none (counters seam; parallel-safe)
 

@@ -31,6 +31,14 @@ impl Executor {
         counters: &mut C,
     ) -> Option<Flow> {
         let node = &plan.nodes()[node_idx];
+        let super::LeafPrecompute::Fast {
+            const_residuals,
+            scan_residuals,
+            ..
+        } = &self.leaf
+        else {
+            unreachable!("fast path is classified Fast");
+        };
         {
             if !colts[occ].suffix_scannable(cursor)
                 || (node.suffix_skip == crate::plan::fj::SuffixSkip::Licensed
@@ -40,10 +48,10 @@ impl Executor {
             }
             // Batch-constant residuals (both sides outer) decide the
             // whole leaf at once.
-            for (op, lhs, rhs) in &self.leaf_const_residuals {
+            for (op, lhs, rhs) in const_residuals {
                 if !op.compare(&bindings.get(*lhs), &bindings.get(*rhs)) {
                     counters.node_entry(node_idx);
-                    counters.cover_choice(node_idx, 0, false);
+                    counters.cover_choice(node_idx, 0, crate::exec::colt::KeyCount::Estimate(0));
                     counters.residual(node_idx, false);
                     return Some(Flow::Continue);
                 }
@@ -54,13 +62,13 @@ impl Executor {
                 key_slots: &self.slot_map[node_idx][0],
                 bindings,
             };
-            if !sink.begin_scan(&scan) {
+            if sink.begin_scan(&scan) != super::ScanOffer::Open {
                 return None;
             }
             counters.node_entry(node_idx);
-            counters.cover_choice(node_idx, 0, false);
+            counters.cover_choice(node_idx, 0, crate::exec::colt::KeyCount::Estimate(0));
             counters.phase_start(node_idx, JoinPhase::Descend);
-            let n_residuals = self.leaf_scan_residuals.len();
+            let n_residuals = scan_residuals.len();
             let mut filtered = std::mem::take(&mut self.scan_filter);
             let drove = scan.colt.for_each_suffix_run(cursor, |run| {
                 counters.batch(node_idx, run.len());
@@ -83,8 +91,7 @@ impl Executor {
                     // exactly like the batch path's residual passes. No
                     // fixed-size residual table exists: the witness
                     // list is iterated directly, at any length.
-                    for (idx, (op, lhs_src, rhs_src)) in self.leaf_scan_residuals.iter().enumerate()
-                    {
+                    for (idx, (op, lhs_src, rhs_src)) in scan_residuals.iter().enumerate() {
                         let side = |src: &Source| match *src {
                             Source::Batch(word) => {
                                 Operand::Col(scan.colt.suffix_column(scan.level, word))
@@ -117,7 +124,7 @@ impl Executor {
                     }
                 } else {
                     let mut eval = |position: u32| {
-                        for (op, lhs_src, rhs_src) in &self.leaf_scan_residuals {
+                        for (op, lhs_src, rhs_src) in scan_residuals {
                             let value = |src: &Source| match *src {
                                 Source::Batch(word) => {
                                     match scan.colt.suffix_column(scan.level, word) {

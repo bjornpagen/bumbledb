@@ -155,7 +155,7 @@ pub(crate) fn occurrence_stats(
         let distinct = distinct_of(txn, schema, relation, *field, image.as_deref(), rows)?;
         var_distincts.push((*var, distinct));
     }
-    let estimate = occurrence_estimate(txn, schema, occurrence, image.as_deref(), rows)?;
+    let estimate = occurrence_estimate(txn, schema, occurrence, relation, image.as_deref(), rows)?;
     Ok(OccStats {
         occ_id: occurrence.occ_id,
         rows: estimate,
@@ -179,20 +179,14 @@ fn occurrence_estimate(
     txn: &ReadTxn<'_>,
     schema: &Schema,
     occurrence: &Occurrence,
+    relation: bumbledb_theory::schema::RelationId,
     image: Option<&crate::image::RelationImage>,
     rows: u64,
 ) -> crate::error::Result<u64> {
     let (selections, residuals) = split_filters(&occurrence.filters);
     let mut estimate = rows;
     for selection in &selections {
-        let distinct = distinct_of(
-            txn,
-            schema,
-            occurrence.relation(),
-            selection.field,
-            image,
-            rows,
-        )?;
+        let distinct = distinct_of(txn, schema, relation, selection.field, image, rows)?;
         estimate =
             (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
@@ -225,7 +219,7 @@ fn occurrence_estimate(
             value,
         } = residual
         {
-            let distinct = distinct_of(txn, schema, occurrence.relation(), *field, image, rows)?;
+            let distinct = distinct_of(txn, schema, relation, *field, image, rows)?;
             estimate = (estimate.saturating_mul(selection_matches(value)) / distinct.max(1)).max(1);
             continue;
         }

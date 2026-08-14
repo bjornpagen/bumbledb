@@ -1,20 +1,20 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
-    OccurrencePin, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule, ProjectionSink,
-    ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
+    OccurrencePin, PARKED_SLOTS, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
+    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{normalize_predicate, NormalizedQuery};
-use crate::ir::validate::{validate, RuleWitness, ValidatedQuery};
+use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
+use crate::ir::validate::{RuleWitness, ValidatedQuery, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    binary2fj, factor, fold_split, gj_split, provably_disjoint_rules, provably_distinct,
-    DisjointWitness, DistinctWitness,
+    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
+    provably_disjoint_rules, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
@@ -1091,12 +1091,19 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
             .iter()
-            .map(|s| crate::exec::colt::SelectionLevel {
-                columns: columns_of(s.field),
-                set: matches!(
+            .map(|s| {
+                if matches!(
                     s.value,
                     crate::image::view::Const::ParamSet(_) | crate::image::view::Const::WordSet(_)
-                ),
+                ) {
+                    crate::exec::colt::SelectionLevel::Set {
+                        columns: columns_of(s.field),
+                    }
+                } else {
+                    crate::exec::colt::SelectionLevel::Point {
+                        columns: columns_of(s.field),
+                    }
+                }
             })
             .collect();
         memo.colts
@@ -1230,28 +1237,21 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 AggOp::Pack => FindSpec::Pack {
                     slot: layout.slot_of(over.expect("validated: Pack carries a variable")),
                 },
-                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count => {
-                    let (over_slot, over_width, over_ty) = match over {
-                        Some(var) => (
-                            Some(layout.slot_of(*var)),
-                            layout.width_of(*var),
-                            rule.var_type(*var).clone(),
-                        ),
-                        None => (None, 1, ValueType::U64), // Count
-                    };
+                AggOp::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
+                AggOp::Sum | AggOp::Min | AggOp::Max => {
+                    let var = over.expect("validated: Sum/Min/Max carry a variable");
                     let fold = match op {
                         AggOp::Sum => crate::exec::sink::FoldOp::Sum,
                         AggOp::Min => crate::exec::sink::FoldOp::Min,
                         AggOp::Max => crate::exec::sink::FoldOp::Max,
-                        AggOp::Count => crate::exec::sink::FoldOp::Count,
-                        AggOp::Pack => unreachable!("handled above"),
+                        AggOp::Count | AggOp::Pack => unreachable!("handled above"),
                     };
-                    FindSpec::Agg {
+                    FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
                         op: fold,
-                        over_slot,
-                        over_width,
-                        signed: matches!(over_ty, ValueType::I64),
-                    }
+                        slot: layout.slot_of(var),
+                        width: layout.width_of(var),
+                        signed: matches!(rule.var_type(var), ValueType::I64),
+                    })
                 }
             },
         })
@@ -1279,7 +1279,7 @@ fn key_probe_find_table(
                 Some((var.field, column.ty.clone()))
             }
             // aggregate and measure key_probes keep the sink path
-            FindSpec::Agg { .. }
+            FindSpec::Agg(_)
             | FindSpec::Pack { .. }
             | FindSpec::Duration { .. }
             | FindSpec::AggDuration { .. } => None,

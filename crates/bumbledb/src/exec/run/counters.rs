@@ -67,7 +67,7 @@ impl Counters for PhaseTimers {
     #[inline]
     fn batch(&mut self, _: usize, _: usize) {}
     #[inline]
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     #[inline]
     fn probe_hash(&mut self, _: usize, _: usize) {}
     #[inline]
@@ -153,7 +153,7 @@ impl Counters for NoopCounters {
     #[inline]
     fn batch(&mut self, _: usize, _: usize) {}
     #[inline]
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     #[inline]
     fn probe_hash(&mut self, _: usize, _: usize) {}
     #[inline]

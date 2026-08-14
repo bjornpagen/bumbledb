@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** plan
-- **Status:** OPEN
+- **Status:** FIXED(0e10d51e)
 - **Source:** audit/plan-exec.md F5
 - **Depends on:** plan-001 (folded marks carrying `RelationId` lets `into_stats` stop calling this); engine-017 (the `edb() else` forest this accessor serves)
 

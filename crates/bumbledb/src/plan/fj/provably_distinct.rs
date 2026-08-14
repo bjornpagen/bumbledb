@@ -52,7 +52,7 @@ pub(crate) fn provably_distinct(
                 .vars
                 .iter()
                 .map(|(f, _)| *f)
-                .chain(pinned_fields(occurrence))
+                .chain(pinned_fields(occurrence).map(|(field, _)| field))
                 .collect();
             relation.keys().iter().any(|id| {
                 schema

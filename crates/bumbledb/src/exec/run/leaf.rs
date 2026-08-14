@@ -66,17 +66,25 @@ impl Executor {
         counters: &mut C,
     ) -> Flow {
         let node = &plan.nodes()[node_idx];
+        let super::LeafPrecompute::Fast {
+            residual_sources,
+            row,
+            ..
+        } = &mut self.leaf
+        else {
+            unreachable!("fast path is classified Fast");
+        };
         {
             let key_slots = &self.slot_map[node_idx][0];
             let arity = key_slots.len();
             counters.node_entry(node_idx);
-            counters.cover_choice(node_idx, 0, false);
+            counters.cover_choice(node_idx, 0, crate::exec::colt::KeyCount::Estimate(0));
             counters.batch(node_idx, 1);
             counters.phase_start(node_idx, JoinPhase::Descend);
-            colts[occ].gather_row(level, position, &mut self.leaf_row[..arity.max(1)]);
-            for (idx, (lhs_src, rhs_src)) in self.leaf_residual_sources.iter().enumerate() {
+            colts[occ].gather_row(level, position, &mut row[..arity.max(1)]);
+            for (idx, (lhs_src, rhs_src)) in residual_sources.iter().enumerate() {
                 let value = |src: &Source| match *src {
-                    Source::Batch(word) => self.leaf_row[word],
+                    Source::Batch(word) => row[word],
                     Source::Slot(slot) => bindings.get(slot),
                 };
                 let op = self.residual_slots[node_idx][idx].0.op;
@@ -88,15 +96,13 @@ impl Executor {
                 }
             }
             let batch = LeafBatch {
-                keys: &self.leaf_row,
+                keys: row,
                 arity,
                 survivors: &[0],
                 key_slots,
                 bindings,
             };
-            let stop_on_skip = node.suffix_skip == crate::plan::fj::SuffixSkip::Licensed
-                && sink.skip_capability() == super::SkipCapability::Licensed;
-            let flow = sink.emit_batch(&batch, stop_on_skip);
+            let flow = super::emit_node_batch(sink, node.suffix_skip, &batch);
             counters.emit();
             counters.phase_end(node_idx, JoinPhase::Descend);
             if flow == Flow::SkipSuffix {
@@ -182,7 +188,7 @@ impl Executor {
             "a pinned run under a skip-licensed leaf loses origin attribution"
         );
         counters.node_entry(node_idx);
-        counters.cover_choice(node_idx, 0, false);
+        counters.cover_choice(node_idx, 0, crate::exec::colt::KeyCount::Estimate(0));
         counters.batch(node_idx, n);
         counters.phase_start(node_idx, JoinPhase::Descend);
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
@@ -203,7 +209,15 @@ impl Executor {
         // slot is batch-varying here, not a binding); everything else
         // reads as the pinned arm does. Resolution is per (residual,
         // side) — never per entry.
-        for (r_idx, (lhs_src, rhs_src)) in self.leaf_residual_sources.iter().enumerate() {
+        let residual_sources = match &self.leaf {
+            super::LeafPrecompute::Fast {
+                residual_sources, ..
+            } => residual_sources.as_slice(),
+            super::LeafPrecompute::Generic => {
+                unreachable!("fast path is classified Fast")
+            }
+        };
+        for (r_idx, (lhs_src, rhs_src)) in residual_sources.iter().enumerate() {
             let op = self.residual_slots[node_idx][r_idx].0.op;
             let resolve = |src: &Source| match *src {
                 Source::Batch(word) => Source::Batch(outer_arity + word),
@@ -235,9 +249,9 @@ impl Executor {
                 key_slots,
                 bindings,
             };
-            // `stop_on_skip` is structurally false here (the contract
-            // tripwire above), so the sink consumes the whole batch.
-            let flow = sink.emit_batch(&batch, false);
+            // The contract tripwire above: this arm never Licensed-skips,
+            // so the sink consumes the whole batch.
+            let flow = sink.emit_batch(&batch);
             debug_assert_eq!(flow, Flow::Continue, "non-skipping sinks never skip");
             for _ in 0..scratch.survivors.len() {
                 counters.emit();

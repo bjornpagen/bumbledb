@@ -8,7 +8,7 @@
 //! execution is dropped — the error path owes no speed.
 
 use crate::exec::colt::SuffixRun;
-use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource};
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource, ScanOffer};
 use crate::exec::sink::{MeasuredSource, ProjSource, ProjectionSink, ProjectionSources, measure};
 use crate::image::ColumnView;
 
@@ -87,11 +87,7 @@ impl ProjectionSink {
 
     /// The measured batch emit — [`ProjectionSink::emit_batch`]'s
     /// per-row twin.
-    pub(super) fn emit_batch_measured(
-        &mut self,
-        batch: &LeafBatch<'_>,
-        stop_on_skip: bool,
-    ) -> Flow {
+    pub(super) fn emit_batch_measured(&mut self, batch: &LeafBatch<'_>, until_skip: bool) -> Flow {
         if self.ray.is_some() {
             return Flow::Continue;
         }
@@ -121,7 +117,7 @@ impl ProjectionSink {
                 };
             }
             self.seen.insert(&self.scratch);
-            if stop_on_skip {
+            if until_skip {
                 // First-emit semantics (see `Sink::emit`).
                 return Flow::SkipSuffix;
             }
@@ -132,16 +128,16 @@ impl ProjectionSink {
     /// The measured scan open — outer words (measures included) resolve
     /// once; a constant-ray batch poisons here and `scan_run_measured`
     /// consumes the runs without inserting.
-    pub(super) fn begin_scan_measured(&mut self, scan: &LeafScan<'_>) -> bool {
+    pub(super) fn begin_scan_measured(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         self.scan_count = 0;
         if self.ray.is_some() {
-            return true;
+            return ScanOffer::Open;
         }
         let _ = self.resolve_measured(
             |slot| scan.key_slots.iter().position(|k| *k == slot),
             |slot| scan.bindings.get(slot),
         );
-        true
+        ScanOffer::Open
     }
 
     /// The measured scan run — per-position, columns resolved per read

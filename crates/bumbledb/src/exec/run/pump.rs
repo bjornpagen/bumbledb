@@ -49,7 +49,7 @@ impl Executor {
         let node = &plan.nodes()[node_idx];
         // Origin ids are meaningful strictly BELOW the absorb node —
         // resolved once per pump, never per entry (the instruction diet).
-        let below_absorb = tables.absorb.is_some_and(|a| node_idx > a);
+        let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         let mut fill = 0usize;
         // The open cover run: (cover_sub, arity, occ, level).
         let mut group: Option<(usize, usize, usize, usize)> = None;
@@ -60,7 +60,7 @@ impl Executor {
         // every `probe_pass` so no deeper phase runs inside it.
         counters.phase_start(node_idx, JoinPhase::Gather);
         for entry in 0..scratch.pending_len {
-            if self.all_cancelled {
+            if !matches!(self.drive_state, super::DriveState::Running) {
                 break;
             }
             // D2: a cancelled origin's pending work is dead —
@@ -78,7 +78,7 @@ impl Executor {
             for &cover in &node.covers {
                 let sub_idx = usize::from(cover);
                 let occ = usize::from(node.subatoms[sub_idx].occ.0);
-                let cursor = match tables.carried_col[node_idx][occ] {
+                let cursor = match tables.carried_index(node_idx, occ) {
                     Some(col) => scratch.pending_cursors[entry * carried_w + col],
                     None => colts[occ].start(),
                 };
@@ -92,7 +92,7 @@ impl Executor {
                 }
             }
             let (cover_sub, count) = best.expect("validated plans have non-empty cover sets");
-            counters.cover_choice(node_idx, cover_sub, matches!(count, KeyCount::Exact(_)));
+            counters.cover_choice(node_idx, cover_sub, count);
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
             let cover_level = tables.entry_level[node_idx][cover_occ];
             // Word-level batch arity (the SlotWidth layout).
@@ -119,7 +119,7 @@ impl Executor {
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
-            let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
+            let cover_cursor = match tables.carried_index(node_idx, cover_occ) {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };
@@ -141,11 +141,11 @@ impl Executor {
             let mut token = BatchToken::default();
             loop {
                 // The whole-execution poison lands mid-batch (a leaf skip
-                // under absorb=None, or a typed poison): node 0 holds ONE
+                // under SkipAbsorb::Root, or a typed poison): node 0 holds ONE
                 // entry — the virtual root — so the per-entry check above
                 // can never re-fire for it; this is the granularity that
                 // actually stops the top-level cover draw.
-                if self.all_cancelled {
+                if !matches!(self.drive_state, super::DriveState::Running) {
                     break;
                 }
                 let want = if gate_cover { 1 } else { self.batch - fill };

@@ -31,7 +31,7 @@ impl ProjectionSink {
             measured_sources: Vec::new(),
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
-            batch_sources: vec![None; arity],
+            batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
             scan_rows: Vec::new(),
             scan_count: 0,
         }

@@ -18,18 +18,25 @@ use bumbledb_theory::schema::FieldId;
 /// diverge. Sets (`ParamSet`/`WordSet`) pin nothing: an Eq against a
 /// set matches any element, so two distinct facts can differ on the
 /// field.
-pub(crate) fn pinned_fields(occurrence: &Occurrence) -> impl Iterator<Item = FieldId> + '_ {
+pub(crate) fn pinned_fields(
+    occurrence: &Occurrence,
+) -> impl Iterator<Item = (FieldId, &Const)> + '_ {
     occurrence.filters.iter().filter_map(|filter| match filter {
         FilterPredicate::Compare {
             field,
             op: crate::ir::CmpOp::Eq,
-            value:
-                Const::Word(_)
+            value,
+        } if matches!(
+            value,
+            Const::Word(_)
                 | Const::Byte(_)
                 | Const::Interval { .. }
                 | Const::Param(_)
-                | Const::PendingIntern { .. },
-        } => Some(*field),
+                | Const::PendingIntern { .. }
+        ) =>
+        {
+            Some((*field, value))
+        }
         _ => None,
     })
 }

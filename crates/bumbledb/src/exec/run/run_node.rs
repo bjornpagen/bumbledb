@@ -32,7 +32,7 @@ impl Executor {
         // The leaf fast paths: pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
         // generic batch machinery with no counters fired.
-        if self.leaf_single
+        if matches!(self.leaf, super::LeafPrecompute::Fast { .. })
             && let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
         {
             return flow;
@@ -49,7 +49,7 @@ impl Executor {
         counters.cover_choice(
             node_idx,
             cover_sub,
-            matches!(colts[cover_occ].key_count(cover_cursor), KeyCount::Exact(_)),
+            colts[cover_occ].key_count(cover_cursor),
         );
 
         // Word-level batch arity: an interval cover variable contributes
@@ -594,11 +594,9 @@ impl Executor {
             // the last plan node — the entry assert). No recursion, no
             // journal, no cursor writes — nothing below reads them — and
             // no binding stores for the leaf's own vars (the batch
-            // carries them). `stop_on_skip` folds this node's
-            // sink-relevance into the batch call: when the leaf binds
-            // nothing sink-relevant, the sink stops at its first emit and
-            // the skip unwinds here exactly as the recursive path's
-            // absorption arm did.
+            // carries them). Licensed suffix AND Licensed skip
+            // capability stop at the first emit; a Forbidden node
+            // consumes the whole batch — those rows are sink-relevant.
             if scratch.survivors.is_empty() {
                 if gate_cover {
                     break; // the gate's one representative was filtered
@@ -613,10 +611,8 @@ impl Executor {
                 key_slots: &self.slot_map[node_idx][cover_sub],
                 bindings,
             };
-            let stop_on_skip = plan.nodes()[node_idx].suffix_skip
-                == crate::plan::fj::SuffixSkip::Licensed
-                && sink.skip_capability() == super::SkipCapability::Licensed;
-            let batch_flow = sink.emit_batch(&batch, stop_on_skip);
+            let batch_flow =
+                super::emit_node_batch(sink, plan.nodes()[node_idx].suffix_skip, &batch);
             // introspection's `emits` counts rows the sink consumed: the
             // whole batch, or exactly one when the first emit's skip
             // stopped it (identical to the recursive path's counts).

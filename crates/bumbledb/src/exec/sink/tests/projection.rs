@@ -103,7 +103,8 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
     // suffix multiplies witnesses without changing the projection.
     // The tag node is the LEAF and is not sink-relevant: at batch
     // size 128 all 50 tags arrive in one leaf batch and the batch
-    // emit must stop at the first row (`stop_on_skip`) — the
+    // emit must stop at the first row (Licensed suffix + Licensed
+    // skip capability — emit_batch_until_skip) — the
     // same skip the recursive path signaled per-row.
     let postings = vec![(1u64, 7u64, 100i64)];
     let tags: Vec<(u64, u64)> = (0..50).map(|t| (1, t)).collect();

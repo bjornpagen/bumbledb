@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(9e0a27db)
 - **Source:** audit/plan-exec.md F2
 - **Depends on:** none (sink state; rides exec-001 if `union_span` moves with `AggSpec`)
 

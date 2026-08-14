@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, SinkSpec, word_to_i64};
 
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots
@@ -49,27 +49,25 @@ impl AggregateSink {
         // seen-set lane's per-insert constant). The seen-set insert IS
         // the loop; the fold stays arithmetic (`value × count`).
         let key_sourced = self.finds.iter().any(|find| match find {
-            SinkSpec::Agg {
-                over_slot: Some(slot),
-                ..
-            } => matches!(batch.source_of(*slot), LeafSource::Key(_)),
+            SinkSpec::Agg(AggSpec::Fold { slot, .. }) => {
+                matches!(batch.source_of(*slot), LeafSource::Key(_))
+            }
             _ => false,
         });
-        let seen = self.seen.as_mut().expect("dedup regime");
         // Alias-hoisted: `binding_scratch` reborrowed
         // once — the survivor pushes and seen-set writes can no longer
         // alias its header.
         let binding_scratch = &mut self.binding_scratch[..];
-        let union_spans = self.union_spans.as_deref();
-        let union_scratch = &mut self.union_scratch;
         if !key_sourced {
             let mut fresh = 0u64;
             for &entry in batch.survivors {
                 for (word, slot) in batch.key_slots.iter().enumerate() {
                     binding_scratch[*slot] = batch.key(entry, word);
                 }
-                let key = super::fold_row::dedup_key(union_spans, union_scratch, binding_scratch);
-                fresh += u64::from(seen.insert(key));
+                fresh += u64::from(
+                    self.dedup
+                        .consider(binding_scratch, &mut self.union_scratch),
+                );
             }
             if fresh > 0 {
                 self.fold_constant_group(batch, fresh, &[]);
@@ -82,8 +80,10 @@ impl AggregateSink {
             for (word, slot) in batch.key_slots.iter().enumerate() {
                 binding_scratch[*slot] = batch.key(entry, word);
             }
-            let key = super::fold_row::dedup_key(union_spans, union_scratch, binding_scratch);
-            if seen.insert(key) {
+            if self
+                .dedup
+                .consider(binding_scratch, &mut self.union_scratch)
+            {
                 survivors.push(entry);
             }
         }
@@ -116,70 +116,79 @@ impl AggregateSink {
             .extend_from_slice(&self.accs[range.clone()]);
         let mut cursor = 0;
         for find in &self.finds {
-            let SinkSpec::Agg {
-                op,
-                over_slot,
-                signed,
-                ..
-            } = find
-            else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
             let acc = &mut self.acc_scratch[cursor];
             cursor += 1;
-            match (op, acc) {
-                // Count is arithmetic, never a loop.
-                (FoldOp::Count, Acc::Count(n)) => *n += count,
-                (FoldOp::Sum, Acc::SumSigned(total)) => {
-                    debug_assert!(*signed);
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += match batch.source_of(slot) {
-                        // Constant over the batch: value × count, i128 —
-                        // identical to `count` additions.
-                        LeafSource::Outer => {
-                            i128::from(word_to_i64(batch.bindings.get(slot))) * i128::from(count)
-                        }
-                        LeafSource::Key(word) => {
-                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
-                            gather_sum_signed(batch.keys, batch.arity, word, survivors)
-                        }
+            match spec {
+                AggSpec::Count => {
+                    let Acc::Count(n) = acc else {
+                        unreachable!("accumulators are seeded per op");
                     };
+                    *n += count;
                 }
-                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += match batch.source_of(slot) {
-                        LeafSource::Outer => {
-                            u128::from(batch.bindings.get(slot)) * u128::from(count)
-                        }
-                        LeafSource::Key(word) => {
-                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
-                            gather_sum_unsigned(batch.keys, batch.arity, word, survivors)
-                        }
-                    };
-                }
-                (FoldOp::Min, Acc::Min(best)) => {
-                    let slot = over_slot.expect("validated: Min has a variable");
-                    let word = match batch.source_of(slot) {
-                        LeafSource::Outer => batch.bindings.get(slot),
-                        LeafSource::Key(word) => {
-                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
-                            gather_min(batch.keys, batch.arity, word, survivors)
-                        }
-                    };
-                    *best = (*best).min(word);
-                }
-                (FoldOp::Max, Acc::Max(best)) => {
-                    let slot = over_slot.expect("validated: Max has a variable");
-                    let word = match batch.source_of(slot) {
-                        LeafSource::Outer => batch.bindings.get(slot),
-                        LeafSource::Key(word) => {
-                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
-                            gather_max(batch.keys, batch.arity, word, survivors)
-                        }
-                    };
-                    *best = (*best).max(word);
-                }
-                _ => unreachable!("accumulators are seeded per op"),
+                AggSpec::Fold {
+                    op, slot, signed, ..
+                } => match (op, acc) {
+                    (FoldOp::Sum, Acc::SumSigned(total)) => {
+                        debug_assert!(*signed);
+                        *total += match batch.source_of(*slot) {
+                            LeafSource::Outer => {
+                                i128::from(word_to_i64(batch.bindings.get(*slot)))
+                                    * i128::from(count)
+                            }
+                            LeafSource::Key(word) => {
+                                debug_assert!(
+                                    !survivors.is_empty(),
+                                    "count-only folds never gather"
+                                );
+                                gather_sum_signed(batch.keys, batch.arity, word, survivors)
+                            }
+                        };
+                    }
+                    (FoldOp::Sum, Acc::SumUnsigned(total)) => {
+                        *total += match batch.source_of(*slot) {
+                            LeafSource::Outer => {
+                                u128::from(batch.bindings.get(*slot)) * u128::from(count)
+                            }
+                            LeafSource::Key(word) => {
+                                debug_assert!(
+                                    !survivors.is_empty(),
+                                    "count-only folds never gather"
+                                );
+                                gather_sum_unsigned(batch.keys, batch.arity, word, survivors)
+                            }
+                        };
+                    }
+                    (FoldOp::Min, Acc::Min(best)) => {
+                        let word = match batch.source_of(*slot) {
+                            LeafSource::Outer => batch.bindings.get(*slot),
+                            LeafSource::Key(word) => {
+                                debug_assert!(
+                                    !survivors.is_empty(),
+                                    "count-only folds never gather"
+                                );
+                                gather_min(batch.keys, batch.arity, word, survivors)
+                            }
+                        };
+                        *best = (*best).min(word);
+                    }
+                    (FoldOp::Max, Acc::Max(best)) => {
+                        let word = match batch.source_of(*slot) {
+                            LeafSource::Outer => batch.bindings.get(*slot),
+                            LeafSource::Key(word) => {
+                                debug_assert!(
+                                    !survivors.is_empty(),
+                                    "count-only folds never gather"
+                                );
+                                gather_max(batch.keys, batch.arity, word, survivors)
+                            }
+                        };
+                        *best = (*best).max(word);
+                    }
+                    _ => unreachable!("accumulators are seeded per op"),
+                },
             }
         }
         self.accs[range].copy_from_slice(&self.acc_scratch);

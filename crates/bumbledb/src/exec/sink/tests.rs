@@ -212,7 +212,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.relation().0).expect("small")],
+                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                        .expect("small")],
                     &[],
                     &[],
                     Vec::new(),
@@ -247,7 +248,7 @@ fn normalized(
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
         .flat_map(|o| {
-            let relation = schema.relation(o.relation());
+            let relation = schema.relation(o.source.edb().expect("fixture"));
             o.vars
                 .iter()
                 .map(move |(f, v)| (*v, SlotWidth::of(&relation.field(*f).value_type)))
@@ -357,12 +358,15 @@ fn var_spec(plan: &ValidatedPlan, var: u16) -> FindSpec {
 
 /// A scalar fold's spec.
 fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: Option<u16>, signed: bool) -> FindSpec {
-    FindSpec::Agg {
-        op,
-        over_slot: over.map(|v| plan.slot_of(VarId(v))),
-        over_width: over.map_or(1, |v| plan.width_of(VarId(v))),
-        signed,
-    }
+    FindSpec::Agg(match over {
+        None => AggSpec::Count,
+        Some(v) => AggSpec::Fold {
+            op,
+            slot: plan.slot_of(VarId(v)),
+            width: plan.width_of(VarId(v)),
+            signed,
+        },
+    })
 }
 
 /// Counters recording D2 skips.
@@ -374,7 +378,7 @@ struct SkipCounter {
 impl Counters for SkipCounter {
     fn batch(&mut self, _: usize, _: usize) {}
     fn node_entry(&mut self, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}

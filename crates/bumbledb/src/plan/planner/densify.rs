@@ -78,7 +78,9 @@ pub(super) fn densify(
             // flows from key coverage; its rows already sit on the
             // ladder's delta/accumulated floors (`plan/selectivity.rs`).
             let pinned: std::collections::BTreeSet<bumbledb_theory::schema::FieldId> =
-                crate::plan::pinned_fields(occurrence).collect();
+                crate::plan::pinned_fields(occurrence)
+                    .map(|(field, _)| field)
+                    .collect();
             let key_var_sets = match occurrence.source.edb() {
                 None => Vec::new(),
                 Some(stored) => schema

@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** plan
-- **Status:** OPEN
+- **Status:** FIXED(0e10d51e)
 - **Source:** audit/plan-exec.md F3
 - **Depends on:** none (mark shape; `into_stats` consumer rides this)
 

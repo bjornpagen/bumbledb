@@ -1,8 +1,10 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
-use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, FoldOp, SinkSpec, word_to_i64};
 use crate::image::ColumnView;
+
+use super::super::FoldSource;
 
 impl Sink for AggregateSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
@@ -18,15 +20,15 @@ impl Sink for AggregateSink {
     /// straight through the kernels with no key batch materialized.
     /// Partials are identity-seeded and merged at `end_scan`, so an
     /// empty scan creates no group row (matching the batch paths).
-    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
-        if self.seen.is_some() {
-            return false;
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
+        if !matches!(self.dedup, DedupState::Elided { .. }) {
+            return ScanOffer::Declined;
         }
         // Measures and Pack fold per row (derived words / claim lists
         // — no fold kernel exists); their leaves stay on
         // the batch path.
-        if self.row_fold_only {
-            return false;
+        if self.pack.is_some() || !self.measures.is_empty() {
+            return ScanOffer::Declined;
         }
         // Group spans checked word-wise: an interval group variable is
         // scan-constant only if neither of its words is a leaf key.
@@ -35,59 +37,64 @@ impl Sink for AggregateSink {
             .iter()
             .any(|(slot, width)| (*slot..slot + width).any(|word| scan.key_slots.contains(&word)))
         {
-            return false;
+            return ScanOffer::Declined;
         }
         self.scan_sources.clear();
         for find in &self.finds {
-            let SinkSpec::Agg { over_slot, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let source = over_slot.and_then(|slot| scan.key_slots.iter().position(|k| *k == slot));
-            if let Some(word) = source {
-                // Aggregates fold integer columns; a byte-backed column
-                // here would be a validation hole — decline, don't trust.
-                if !matches!(
-                    scan.colt.suffix_column(scan.level, word),
-                    ColumnView::Words(_)
-                ) {
-                    return false;
+            let AggSpec::Fold { slot, .. } = spec else {
+                continue; // Count contributes no slot
+            };
+            let source = match scan.key_slots.iter().position(|k| *k == *slot) {
+                Some(word) => {
+                    // Aggregates fold integer columns; a byte-backed column
+                    // here would be a validation hole — decline, don't trust.
+                    if !matches!(
+                        scan.colt.suffix_column(scan.level, word),
+                        ColumnView::Words(_)
+                    ) {
+                        return ScanOffer::Declined;
+                    }
+                    FoldSource::Column(word)
                 }
-            }
+                None => FoldSource::Outer,
+            };
             self.scan_sources.push(source);
         }
         // Identity-seeded partials; the group key resolves now (outer
         // bindings are constant for this node entry).
         self.acc_scratch.clear();
         for find in &self.finds {
-            if let SinkSpec::Agg { op, signed, .. } = find {
-                self.acc_scratch.push(match (op, signed) {
-                    (FoldOp::Sum, true) => Acc::SumSigned(0),
-                    (FoldOp::Sum, false) => Acc::SumUnsigned(0),
-                    (FoldOp::Min, _) => Acc::Min(u64::MAX),
-                    (FoldOp::Max, _) => Acc::Max(u64::MIN),
-                    (FoldOp::Count, _) => Acc::Count(0),
-                });
+            if let SinkSpec::Agg(spec) = find {
+                self.acc_scratch.push(spec.seed_acc());
             }
         }
         self.scan_count = 0;
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             scan.bindings.get(slot)
         });
-        true
+        ScanOffer::Open
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        let mut cursor = 0;
+        let mut acc_i = 0;
+        let mut fold_i = 0;
         for find in &self.finds {
-            let SinkSpec::Agg { op, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let source = self.scan_sources[cursor];
-            let acc = &mut self.acc_scratch[cursor];
-            cursor += 1;
-            let Some(word) = source else {
-                continue; // outer-constant / Count: finished at end_scan
+            let acc = &mut self.acc_scratch[acc_i];
+            acc_i += 1;
+            let AggSpec::Fold { op, .. } = spec else {
+                continue; // Count finishes at end_scan
+            };
+            let source = self.scan_sources[fold_i];
+            fold_i += 1;
+            let FoldSource::Column(word) = source else {
+                continue; // outer-constant: finished at end_scan
             };
             let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
                 unreachable!("begin_scan declined byte columns")
@@ -128,36 +135,44 @@ impl Sink for AggregateSink {
             return 0;
         }
         // Finish the outer-sourced and Count partials.
-        let mut cursor = 0;
+        let mut acc_i = 0;
+        let mut fold_i = 0;
         for find in &self.finds {
-            let SinkSpec::Agg { op, over_slot, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let source = self.scan_sources[cursor];
-            let acc = &mut self.acc_scratch[cursor];
-            cursor += 1;
-            if source.is_some() {
-                continue;
-            }
-            match (op, acc) {
-                (FoldOp::Count, Acc::Count(n)) => *n += count,
-                (FoldOp::Sum, Acc::SumSigned(total)) => {
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += i128::from(word_to_i64(scan.bindings.get(slot))) * i128::from(count);
+            let acc = &mut self.acc_scratch[acc_i];
+            acc_i += 1;
+            match spec {
+                AggSpec::Count => {
+                    let Acc::Count(n) = acc else {
+                        unreachable!("accumulators are seeded per op");
+                    };
+                    *n += count;
                 }
-                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += u128::from(scan.bindings.get(slot)) * u128::from(count);
+                AggSpec::Fold { op, slot, .. } => {
+                    let source = self.scan_sources[fold_i];
+                    fold_i += 1;
+                    if matches!(source, FoldSource::Column(_)) {
+                        continue;
+                    }
+                    match (op, acc) {
+                        (FoldOp::Sum, Acc::SumSigned(total)) => {
+                            *total += i128::from(word_to_i64(scan.bindings.get(*slot)))
+                                * i128::from(count);
+                        }
+                        (FoldOp::Sum, Acc::SumUnsigned(total)) => {
+                            *total += u128::from(scan.bindings.get(*slot)) * u128::from(count);
+                        }
+                        (FoldOp::Min, Acc::Min(best)) => {
+                            *best = (*best).min(scan.bindings.get(*slot));
+                        }
+                        (FoldOp::Max, Acc::Max(best)) => {
+                            *best = (*best).max(scan.bindings.get(*slot));
+                        }
+                        _ => unreachable!("accumulators are seeded per op"),
+                    }
                 }
-                (FoldOp::Min, Acc::Min(best)) => {
-                    let slot = over_slot.expect("validated: Min has a variable");
-                    *best = (*best).min(scan.bindings.get(slot));
-                }
-                (FoldOp::Max, Acc::Max(best)) => {
-                    let slot = over_slot.expect("validated: Max has a variable");
-                    *best = (*best).max(scan.bindings.get(slot));
-                }
-                _ => unreachable!("accumulators are seeded per op"),
             }
         }
         // Merge the partials into the group's row (identity seeds make
@@ -180,10 +195,7 @@ impl Sink for AggregateSink {
         count
     }
 
-    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        // Aggregate plans mark every node sink-relevant, so the
-        // executor never asks a fold to stop on skip.
-        debug_assert!(!stop_on_skip, "folds never stop on skip");
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         if batch.survivors.is_empty() {
             return Flow::Continue;
         }
@@ -195,11 +207,14 @@ impl Sink for AggregateSink {
         // the scratch row, and Pack's group state is a claim list, so
         // no gather kernel applies — the per-row scratch fold is the
         // correctness path.
-        if self.row_fold_only {
+        if self.pack.is_some() || !self.measures.is_empty() {
             self.fold_batch_rows(batch);
             return Flow::Continue;
         }
-        match (self.seen.is_some(), self.cached_constant_group) {
+        match (
+            !matches!(self.dedup, DedupState::Elided { .. }),
+            self.cached_constant_group,
+        ) {
             // Dedup required (the plan could not prove distinctness):
             // the seen-set pass runs per row, but the group probe still
             // hoists — surviving entries gather-fold like the elided

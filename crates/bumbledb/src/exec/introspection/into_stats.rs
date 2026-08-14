@@ -14,6 +14,10 @@ impl CountingCounters {
     /// through untouched; `absorbed` is the union accounting the rule
     /// loop measured against the shared sink's seen-set.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the stats surface is one table of node, eliminated, and folded rows"
+    )]
     pub fn into_rule_stats(
         self,
         plan: &ValidatedPlan,
@@ -68,41 +72,48 @@ impl CountingCounters {
             .occurrences()
             .iter()
             .filter_map(|occurrence| {
-                let Role::Eliminated(statement) = occurrence.role else {
+                let Role::Eliminated(statement) = &occurrence.role else {
+                    return None;
+                };
+                let crate::ir::AtomSource::Edb(relation) = occurrence.source else {
+                    debug_assert!(false, "eliminated occurrences are stored relations");
                     return None;
                 };
                 Some(EliminatedOccurrence {
                     occurrence: occurrence.occ_id.0,
-                    relation: schema.relation(occurrence.relation()).name().to_owned(),
-                    statement,
-                    rendered: crate::schema::render::render(schema, statement),
+                    relation: schema.relation(relation).name().to_owned(),
+                    statement: *statement,
+                    rendered: crate::schema::render::render(schema, *statement),
                 })
             })
             .collect();
         // The folded occurrences, read straight off the plan's
         // `Role::Folded` marks (`plan/ground/evaluate.rs` — the
-        // Eliminated precedent: no separate list exists); the picture
-        // renders from the occurrence's retained filter list, and the
-        // surviving id-set re-evaluates from the sealed extension (the
-        // same σ the fold ran — n ≤ 256, diagnostic-path only) so the
-        // line can name the handles, not count the numbers.
+        // Eliminated precedent: no separate list exists). Handles name
+        // the σ-survivors stored on the mark.
         let folded = plan
             .occurrences()
             .iter()
             .filter_map(|occurrence| {
-                let Role::Folded(mark) = occurrence.role else {
+                let Role::Folded(mark) = &occurrence.role else {
                     return None;
                 };
-                let relation = schema.relation(occurrence.relation());
-                let parsed = crate::plan::ground::evaluate::parse_resolvable(&occurrence.filters);
-                debug_assert!(parsed.is_some(), "folded occurrences parsed at fold time");
-                let handles = parsed
-                    .map(|filters| crate::plan::ground::evaluate::surviving_ids(relation, &filters))
-                    .unwrap_or_default()
-                    .into_iter()
+                let (relation_id, survivors, negated) = match mark {
+                    crate::ir::normalize::FoldedMark::Positive {
+                        relation,
+                        survivors,
+                    } => (*relation, survivors, false),
+                    crate::ir::normalize::FoldedMark::Negated {
+                        relation,
+                        survivors,
+                    } => (*relation, survivors, true),
+                };
+                let relation = schema.relation(relation_id);
+                let handles = survivors
+                    .iter()
                     .map(|id| {
                         let mut handle = String::new();
-                        crate::plan::ground::evaluate::push_handle(&mut handle, relation, id);
+                        crate::plan::ground::evaluate::push_handle(&mut handle, relation, *id);
                         handle
                     })
                     .collect();
@@ -111,11 +122,11 @@ impl CountingCounters {
                     relation: relation.name().to_owned(),
                     rendered: crate::plan::ground::evaluate::folded_picture(
                         schema,
-                        occurrence.relation(),
+                        relation_id,
                         &occurrence.filters,
                     ),
                     handles,
-                    negated: mark.negated,
+                    negated,
                 })
             })
             .collect();

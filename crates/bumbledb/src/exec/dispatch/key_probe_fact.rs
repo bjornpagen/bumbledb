@@ -252,11 +252,11 @@ pub(crate) fn key_probe_fact<'t>(
     // dictionary miss lands the sentinel id in the key, and the probe
     // below misses.
     key_scratch.clear();
-    if let Some(statement) = plan.statement {
-        read::begin_determinant_key(key_scratch, plan.relation, statement);
+    if let super::KeyProbeKind::Uniqueness { statement, .. } = &plan.kind {
+        read::begin_determinant_key(key_scratch, plan.relation, *statement);
     }
     let layout = schema.relation(plan.relation).layout();
-    for (field, value) in &plan.key {
+    for (field, value) in plan.kind.key() {
         let desc = layout.field_type(usize::from(field.0));
         const_bytes(txn, desc, value, params, key_scratch)?;
     }
@@ -265,25 +265,30 @@ pub(crate) fn key_probe_fact<'t>(
     // The fresh-row auto-key maintains no `U` tree (the one id allocator,
     // ruled 2026-07-23, R16): its determinant IS the row id, so the probe
     // reads `F` directly — an honest miss, one descent.
-    let fact = if let Some(statement) = plan.statement
-        && let Some(crate::schema::StatementView::Key(_, key)) = schema.statement_checked(statement)
-        && key.fresh_row
-    {
-        let row_id = u64::from_be_bytes(
-            key_scratch[read::DETERMINANT_KEY_HEADER..]
-                .try_into()
-                .expect("a fresh-row determinant is one u64 word"),
-        );
-        read::fact_at(txn, schema, plan.relation, row_id)?
-    } else if plan.statement.is_some() {
-        match read::determinant_row_for_key(txn, key_scratch)? {
-            Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
-            None => None,
+    let fact = match &plan.kind {
+        super::KeyProbeKind::Uniqueness { statement, .. }
+            if let Some(crate::schema::StatementView::Key(_, key)) =
+                schema.statement_checked(*statement)
+                && key.fresh_row =>
+        {
+            let row_id = u64::from_be_bytes(
+                key_scratch[read::DETERMINANT_KEY_HEADER..]
+                    .try_into()
+                    .expect("a fresh-row determinant is one u64 word"),
+            );
+            read::fact_at(txn, schema, plan.relation, row_id)?
         }
-    } else {
-        match read::fact_row(txn, plan.relation, key_scratch)? {
-            Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
-            None => None,
+        super::KeyProbeKind::Uniqueness { .. } => {
+            match read::determinant_row_for_key(txn, key_scratch)? {
+                Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+                None => None,
+            }
+        }
+        super::KeyProbeKind::Membership { .. } => {
+            match read::fact_row(txn, plan.relation, key_scratch)? {
+                Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+                None => None,
+            }
         }
     };
     probe_span.set_args(u64::from(fact.is_some()), 0);

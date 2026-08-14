@@ -58,7 +58,11 @@ fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
 }
 
 fn roles(normalized: &NormalizedQuery) -> Vec<Role> {
-    normalized.occurrences.iter().map(|o| o.role).collect()
+    normalized
+        .occurrences
+        .iter()
+        .map(|o| o.role.clone())
+        .collect()
 }
 
 /// Hand-built DP stats for the participating occurrences (unit fanout).

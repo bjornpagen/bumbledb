@@ -57,11 +57,10 @@
 //!   var-binding gate is REFUSED, recorded; trigger: a measured
 //!   projection-sink-only win.
 //!
-//! The fold mark remains `Copy`, so it cannot carry the parsed filter
-//! set. introspection reparses the retained original filters on its cold path;
-//! a failed reparse maps to an empty handle list after a debug assertion,
-//! never to a production panic. The rendered picture always uses those
-//! originals so diagnostics preserve the user's spelling.
+//! The fold mark carries the σ-survivors (n ≤ 256) and polarity as a
+//! sum; introspection reads the mark. The rendered picture always uses
+//! the retained original filters so diagnostics preserve the user's
+//! spelling.
 //!
 //! # Negated closed atoms — the complement fold, direction pinned
 //!
@@ -113,7 +112,7 @@ pub(super) fn fold_step(
     output_vars: &BTreeSet<VarId>,
 ) -> bool {
     for c_idx in 0..normalized.occurrences.len() {
-        let folded = match normalized.occurrences[c_idx].role {
+        let folded = match &normalized.occurrences[c_idx].role {
             Role::Positive => fold_positive(normalized, schema, output_vars, c_idx),
             Role::Negated => fold_negated(normalized, schema, c_idx),
             Role::Eliminated(_) | Role::Folded(_) => false,
@@ -192,12 +191,9 @@ fn fold_positive(
         ));
         return true;
     }
-    let mark = FoldedMark {
-        ids: u16::try_from(survivors.len()).expect("extensions cap at 256 rows"),
-        negated: false,
-    };
     attach_membership(normalized, &binders, &survivors);
-    normalized.occurrences[c_idx].role = Role::Folded(mark);
+    normalized.occurrences[c_idx].role =
+        Role::Folded(FoldedMark::of(relation_id, survivors, false));
     true
 }
 
@@ -224,10 +220,8 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         // outright (and the rule is NOT empty). Any binding shape
         // qualifies: emptiness of σ needs no key reasoning.
         remove_anti_probe(normalized, c_idx);
-        normalized.occurrences[c_idx].role = Role::Folded(FoldedMark {
-            ids: 0,
-            negated: true,
-        });
+        normalized.occurrences[c_idx].role =
+            Role::Folded(FoldedMark::of(relation_id, Vec::new(), true));
         return true;
     }
     if occurrence.vars.is_empty() {
@@ -270,10 +264,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         ));
         return true;
     }
-    let mark = FoldedMark {
-        ids: u16::try_from(survivors.len()).expect("extensions cap at 256 rows"),
-        negated: true,
-    };
+    let mark = FoldedMark::of(closed, survivors, true);
     attach_membership(normalized, &binders, &complement);
     remove_anti_probe(normalized, c_idx);
     normalized.occurrences[c_idx].role = Role::Folded(mark);

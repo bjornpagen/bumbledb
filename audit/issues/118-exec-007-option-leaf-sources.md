@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** exec
-- **Status:** OPEN
+- **Status:** FIXED(44db7ad6)
 - **Source:** audit/plan-exec.md F10
 - **Depends on:** exec-001 (`scan_sources` Count-as-None rides the AggSpec sum)
 

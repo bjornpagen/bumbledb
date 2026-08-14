@@ -72,18 +72,16 @@ fn all(image: &Arc<crate::image::RelationImage>) -> View {
 fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {
     columns
         .iter()
-        .map(|column| SelectionLevel {
+        .map(|column| SelectionLevel::Point {
             columns: vec![*column],
-            set: false,
         })
         .collect()
 }
 
 /// One set-bound selection level over a single column.
 fn set_level(column: usize) -> Vec<SelectionLevel> {
-    vec![SelectionLevel {
+    vec![SelectionLevel::Set {
         columns: vec![column],
-        set: true,
     }]
 }
 

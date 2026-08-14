@@ -148,12 +148,12 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
 fn sum_is_order_independent_near_the_boundary() {
     // {i64::MAX, 1, -2} sums to MAX-1 under any fold order thanks to
     // i128 accumulation; {MAX, 1} overflows deterministically.
-    let sum_find = FindSpec::Agg {
+    let sum_find = FindSpec::Agg(AggSpec::Fold {
         op: FoldOp::Sum,
-        over_slot: Some(0),
-        over_width: 1,
+        slot: 0,
+        width: 1,
         signed: true,
-    };
+    });
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
         let values = [i64::MAX, 1, -2];
         let mut sink = AggregateSink::new(vec![sum_find], 1);
@@ -190,18 +190,18 @@ fn sum_is_order_independent_near_the_boundary() {
 fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
     let mut sink = AggregateSink::new(
         vec![
-            FindSpec::Agg {
+            FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Min,
-                over_slot: Some(0),
-                over_width: 1,
+                slot: 0,
+                width: 1,
                 signed: true,
-            },
-            FindSpec::Agg {
+            }),
+            FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Max,
-                over_slot: Some(0),
-                over_width: 1,
+                slot: 0,
+                width: 1,
                 signed: true,
-            },
+            }),
         ],
         1,
     );

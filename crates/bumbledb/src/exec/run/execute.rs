@@ -1,8 +1,8 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
-    PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
+    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor, LeafPrecompute,
+    NodeScratch, PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
     PointProbeSpec, Sink, ValidatedPlan,
 };
 
@@ -297,18 +297,17 @@ impl Executor {
             var_widths,
             anti_probe_slots,
             scratch,
-            leaf_single: leaf.single,
-            leaf_residual_sources: leaf.residual_sources,
-            leaf_scan_residuals: leaf.scan_residuals,
-            leaf_const_residuals: leaf.const_residuals,
-            leaf_row: leaf.row,
+            leaf,
             scan_filter: Vec::new(),
-            pipe: (plan.nodes().len() >= 2).then(|| PipeTables::of(plan)),
+            drive: if plan.nodes().len() >= 2 {
+                Drive::Pipeline(std::rc::Rc::new(PipeTables::of(plan)))
+            } else {
+                Drive::Leaf
+            },
             cancelled: Vec::new(),
             cancel_epoch: 0,
             next_origin: 0,
-            all_cancelled: false,
-            poison: None,
+            drive_state: super::DriveState::Running,
             overlap: crate::interval::overlap::OverlapCache::default(),
             overlap_hits: Vec::new(),
             overlap_key: Vec::new(),
@@ -363,7 +362,7 @@ impl Executor {
         assert_eq!(colts.len(), plan.occurrences().len());
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
-        self.poison = None;
+        self.drive_state = super::DriveState::Running;
         // Overlap indexes key trie paths that this execution's forces
         // will mint afresh (the per-execution boundary, overlap_leaf.rs).
         self.overlap.reset();
@@ -377,18 +376,21 @@ impl Executor {
         // pipeline — probes batch ACROSS parent entries, D2 skips cancel
         // origins — and single-node plans are one leaf pass. The
         // recursive per-survivor executor is gone.
-        if self.pipe.is_some() {
-            self.run_pipeline(plan, colts, bindings, sink, counters);
-        } else {
-            self.run_node(plan, 0, colts, bindings, sink, counters);
+        match &self.drive {
+            Drive::Pipeline(_) => {
+                self.run_pipeline(plan, colts, bindings, sink, counters);
+            }
+            Drive::Leaf => {
+                self.run_node(plan, 0, colts, bindings, sink, counters);
+            }
         }
         // The poison drain: set-once, so the first typed stop IS the
         // execution's one honest answer — no precedence to adjudicate.
-        match self.poison.take() {
-            Some(super::Poison::OriginOverflow) => Err(crate::error::Error::Overflow(
-                crate::error::OverflowKind::OriginCapacity,
-            )),
-            None => Ok(()),
+        match std::mem::replace(&mut self.drive_state, super::DriveState::Running) {
+            super::DriveState::Poisoned(super::Poison::OriginOverflow) => Err(
+                crate::error::Error::Overflow(crate::error::OverflowKind::OriginCapacity),
+            ),
+            super::DriveState::Running | super::DriveState::SkipDone => Ok(()),
         }
     }
 
@@ -407,7 +409,10 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) {
-        let tables = self.pipe.take().expect("dispatched on Some");
+        let tables = match &self.drive {
+            Drive::Pipeline(tables) => std::rc::Rc::clone(tables),
+            Drive::Leaf => unreachable!("dispatched on Pipeline"),
+        };
         let slot_count = bindings.slot_count();
         for scratch in &mut self.scratch {
             scratch.pending_bindings.clear();
@@ -422,7 +427,7 @@ impl Executor {
         // origin and silently drop answers).
         self.advance_cancel_epoch();
         self.next_origin = 0;
-        self.all_cancelled = false;
+        self.drive_state = super::DriveState::Running;
         // The virtual root entry: no bindings, no carried cursors.
         self.scratch[0].pending_bindings.resize(slot_count, 0);
         self.scratch[0].pending_len = 1;
@@ -438,6 +443,5 @@ impl Executor {
                 self.pump(&tables, plan, i, colts, bindings, sink, counters);
             }
         }
-        self.pipe = Some(tables);
     }
 }
