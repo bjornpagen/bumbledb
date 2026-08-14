@@ -368,7 +368,7 @@ pub fn verify_family(
         .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

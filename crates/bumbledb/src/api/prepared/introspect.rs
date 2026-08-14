@@ -82,7 +82,7 @@ impl<S> PreparedQuery<'_, S> {
         let report = IntrospectionReport {
             header: Some(IntrospectionHeader {
                 query: self.rendered.clone(),
-                predicate: self.predicate.to_string(),
+                predicate: self.signature.to_string(),
                 pending_literal: pending,
             }),
             body,
@@ -174,7 +174,7 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(Answers, ExecutionStats)> {
         self.check_snapshot(txn)?;
         let mut out = Answers::new();
-        out.arity = self.predicate.columns.len();
+        out.arity = self.signature.columns.len();
         {
             let _s = crate::obs::span(
                 crate::obs::names::BIND_PARAMS,
@@ -314,8 +314,8 @@ impl<S> PreparedQuery<'_, S> {
     /// The buffer itself stays typeless: stamping owned types per
     /// execution would allocate on the warm path.
     #[must_use]
-    pub fn predicate(&self) -> &crate::ir::validate::Predicate {
-        &self.predicate
+    pub fn signature(&self) -> &crate::ir::validate::Signature {
+        &self.signature
     }
 }
 

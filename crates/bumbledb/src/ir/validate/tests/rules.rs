@@ -184,7 +184,7 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
     assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
     assert_eq!(witness.rule(1).var_type(VarId(0)), &ValueType::I64);
     let types: Vec<ValueType> = witness
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

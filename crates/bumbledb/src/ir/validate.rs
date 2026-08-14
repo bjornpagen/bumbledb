@@ -108,12 +108,12 @@ pub use validate::validate;
 /// reference form is the `Interior` atom, typed against these sealed
 /// columns.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Predicate {
+pub struct Signature {
     /// The signature: one column per head position, in head order.
-    pub columns: Box<[PredicateColumn]>,
+    pub columns: Box<[SignatureColumn]>,
 }
 
-impl std::fmt::Display for Predicate {
+impl std::fmt::Display for Signature {
     /// The signature in one line — introspection's header (`(u64, Sum i64)`:
     /// declaration type spellings, rule-notation fold names).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -147,9 +147,9 @@ impl std::fmt::Display for Predicate {
     }
 }
 
-/// One column of the predicate's signature.
+/// One column of the sealed signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PredicateColumn {
+pub struct SignatureColumn {
     /// The RESULT type — what lands in the buffer. Count is U64 here
     /// whatever it counted; Duration's measure is U64; Min/Max/Sum
     /// carry their input's type; Pack carries the interval type; the
@@ -286,12 +286,12 @@ pub(super) struct InteriorSignatures<'a> {
     /// Already-sealed interiors in declaration order. Interior *i*
     /// types against `&sealed[..i]`; rec base types against the full
     /// interiors slice (the rec's own predicate is not yet present).
-    interiors: &'a [Predicate],
+    interiors: &'a [Signature],
     /// The rec predicate, present when typing rec arms or a reach
     /// query's main. Absent while typing interiors and rec base — a
     /// self-atom in base is [`ValidationError::SelfInBase`] at the
     /// roster, before typing.
-    rec: Option<&'a Predicate>,
+    rec: Option<&'a Signature>,
     /// The reading interior's id, if this rule-list is an interior
     /// ([`ValidationError::InteriorNotPrior`]); `None` for rec and main
     /// (out-of-range is [`ValidationError::UnknownInterior`]).
@@ -332,7 +332,7 @@ impl InteriorSignatures<'_> {
     /// The sealed predicate for a derived id that [`Self::screen`] has
     /// already admitted. Rec base never looks up the rec slot (self in
     /// base is a roster refusal).
-    fn lookup(&self, interior: InteriorId) -> &Predicate {
+    fn lookup(&self, interior: InteriorId) -> &Signature {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         if index < self.interiors.len() {
             &self.interiors[index]
@@ -367,15 +367,15 @@ impl InteriorSignatures<'_> {
 #[derive(Debug)]
 pub struct ValidatedInterior {
     lowered: Vec<LoweredRule>,
-    predicate: Predicate,
+    signature: Signature,
     rules: Vec<RuleTyping>,
 }
 
 impl ValidatedInterior {
     /// This interior's sealed signature.
     #[must_use]
-    pub fn predicate(&self) -> &Predicate {
-        &self.predicate
+    pub fn signature(&self) -> &Signature {
+        &self.signature
     }
 
     /// Lowered-rule count.
@@ -450,14 +450,14 @@ impl ValidatedRecArm {
 pub struct ValidatedRec {
     base: NonEmpty<ValidatedBaseArm>,
     rec: NonEmpty<ValidatedRecArm>,
-    predicate: Predicate,
+    signature: Signature,
 }
 
 impl ValidatedRec {
     /// The rec's sealed signature.
     #[must_use]
-    pub fn predicate(&self) -> &Predicate {
-        &self.predicate
+    pub fn signature(&self) -> &Signature {
+        &self.signature
     }
 
     /// Lowered base-arm count.
@@ -530,15 +530,15 @@ impl ValidatedRec {
 #[derive(Debug)]
 pub struct ValidatedMain {
     lowered: Vec<LoweredRule>,
-    predicate: Predicate,
+    signature: Signature,
     rules: Vec<RuleTyping>,
 }
 
 impl ValidatedMain {
     /// The answer head's sealed signature.
     #[must_use]
-    pub fn predicate(&self) -> &Predicate {
-        &self.predicate
+    pub fn signature(&self) -> &Signature {
+        &self.signature
     }
 
     /// Lowered main-rule count.
@@ -622,8 +622,8 @@ impl ValidatedQuery {
     /// predicate. Downstream result typing reads this, never an
     /// interior or rec signature.
     #[must_use]
-    pub fn predicate(&self) -> &Predicate {
-        self.main().predicate()
+    pub fn signature(&self) -> &Signature {
+        self.main().signature()
     }
 
     /// One **main** rule's slice of the witness — the unit the per-rule

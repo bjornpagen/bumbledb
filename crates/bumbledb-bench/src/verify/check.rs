@@ -43,7 +43,7 @@ impl<S> Run<'_, S> {
             ),
             Ok(mut prepared) => {
                 let types: Vec<ValueType> = prepared
-                    .predicate()
+                    .signature()
                     .columns
                     .iter()
                     .map(|column| column.ty.clone())

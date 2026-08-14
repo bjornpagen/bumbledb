@@ -45,7 +45,7 @@ pub(crate) fn prepare<'s, S>(
         let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
         validate(schema, query)?
     };
-    let mut signatures: Vec<&crate::ir::validate::Predicate> = Vec::new();
+    let mut signatures: Vec<&crate::ir::validate::Signature> = Vec::new();
     let mut interiors = Vec::with_capacity(witness.interiors().len());
     for i in 0..witness.interiors().len() {
         interiors.push(prepare_interior(
@@ -56,12 +56,12 @@ pub(crate) fn prepare<'s, S>(
             i,
             &signatures,
         )?);
-        signatures.push(witness.interiors()[i].predicate());
+        signatures.push(witness.interiors()[i].signature());
     }
     let rec = match &witness {
         ValidatedQuery::Cq { .. } => None,
         ValidatedQuery::Reach { rec, rec_id, .. } => {
-            signatures.push(rec.predicate());
+            signatures.push(rec.signature());
             Some(prepare_reach(
                 txn,
                 cache,
@@ -102,7 +102,7 @@ fn prepare_witnessed<'s, S>(
     rendered: String,
     interiors: Vec<PreparedInterior>,
     rec: Option<super::reach::ReachDriver>,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedQuery<'s, S>> {
     let normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
@@ -119,7 +119,7 @@ fn prepare_witnessed<'s, S>(
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
     // so the empty program still types its result columns.
-    let predicate = witness.predicate().clone();
+    let predicate = witness.signature().clone();
     let mut rules = Vec::with_capacity(survivors.len());
     // Written-rule provenance per surviving rule (R2): the sink regime
     // splits on it below. The first survivor's witness index feeds the
@@ -315,7 +315,7 @@ fn prepare_witnessed<'s, S>(
         pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedScratch::default(),
-        predicate,
+        signature: predicate,
         params,
         resolved_params: Vec::new(),
         unresolved_literals,
@@ -339,10 +339,10 @@ fn prepare_interior(
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     index: usize,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedInterior> {
     let inner = &witness.interiors()[index];
-    let columns = &inner.predicate().columns;
+    let columns = &inner.signature().columns;
     let witnesses: Vec<_> = witness.interior_rules(index).collect();
     let normalized =
         crate::ir::normalize::normalize_rules(schema, signatures, witnesses.iter().copied());
@@ -405,9 +405,9 @@ fn prepare_reach(
     witness: &crate::ir::validate::ValidatedQuery,
     rec: &crate::ir::validate::ValidatedRec,
     rec_id: crate::ir::InteriorId,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<super::reach::ReachDriver> {
-    let columns = &rec.predicate().columns;
+    let columns = &rec.signature().columns;
     let base_w: Vec<_> = rec.base_rules(witness).collect();
     let rec_w: Vec<_> = rec.step_rules(witness).collect();
     let base_norm =
@@ -679,7 +679,7 @@ fn ground_program(
 /// The per-rule pipeline tail: classify → statistics → DP → lowering →
 /// plan validation — the conjunctive query's pipeline, with zero
 /// changes, over one already-grounded rule. Returns the rule's prepared
-/// artifact; result types are the query's predicate ([`super::Predicate`]),
+/// artifact; result types are the query's signature ([`super::Signature`]),
 /// never re-derived here.
 fn prepare_rule(
     txn: &ReadTxn<'_>,
@@ -687,8 +687,8 @@ fn prepare_rule(
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::PredicateColumn],
-    signatures: &[&crate::ir::validate::Predicate],
+    columns: &[crate::ir::validate::SignatureColumn],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
     prepare_rule_variant(
         txn,
@@ -711,8 +711,8 @@ fn prepare_rec_arm(
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::PredicateColumn],
-    signatures: &[&crate::ir::validate::Predicate],
+    columns: &[crate::ir::validate::SignatureColumn],
+    signatures: &[&crate::ir::validate::Signature],
     delta: crate::ir::normalize::OccId,
 ) -> Result<super::RecArm> {
     let prepared = prepare_rule_variant(
@@ -744,8 +744,8 @@ fn prepare_rule_variant(
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::PredicateColumn],
-    signatures: &[&crate::ir::validate::Predicate],
+    columns: &[crate::ir::validate::SignatureColumn],
+    signatures: &[&crate::ir::validate::Signature],
     is_delta: impl Fn(crate::ir::normalize::OccId) -> bool,
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
@@ -901,7 +901,7 @@ fn prepare_ray_probes(
     cache: &ImageCache,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<Vec<super::RayProbeSet>> {
     let members: Vec<_> = witness.rules().collect();
     prepare_ray_probes_for(txn, cache, schema, &members, signatures)
@@ -912,7 +912,7 @@ fn prepare_ray_probes_for(
     cache: &ImageCache,
     schema: &Schema,
     rules: &[crate::ir::validate::RuleWitness<'_>],
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<Vec<super::RayProbeSet>> {
     use crate::ir::validate::ClassifiedComparison;
     let mut groups: Vec<u16> = rules
@@ -991,7 +991,7 @@ fn prepare_ray_probe(
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
     measured: crate::ir::VarId,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Result<super::RayProbe> {
     let mut stats = Vec::with_capacity(normalized.occurrences.len());
     for occurrence in normalized
@@ -1262,7 +1262,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
 fn key_probe_find_table(
     key_probe: &crate::exec::dispatch::KeyProbePlan,
     finds: &[FindSpec],
-    columns: &[crate::ir::validate::PredicateColumn],
+    columns: &[crate::ir::validate::SignatureColumn],
 ) -> Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>> {
     finds
         .iter()

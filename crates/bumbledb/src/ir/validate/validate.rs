@@ -1,5 +1,5 @@
 use super::{
-    Context, InteriorSignatures, NonEmpty, ParamKind, Predicate, RuleTyping, TypeSlot,
+    Context, InteriorSignatures, NonEmpty, ParamKind, RuleTyping, Signature, TypeSlot,
     ValidatedBaseArm, ValidatedInterior, ValidatedMain, ValidatedQuery, ValidatedRec,
     ValidatedRecArm,
 };
@@ -36,7 +36,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     }
 
     let mut params = ParamTables::default();
-    let mut sealed: Vec<Predicate> = Vec::with_capacity(query.interiors.len());
+    let mut sealed: Vec<Signature> = Vec::with_capacity(query.interiors.len());
     let mut interiors_out = Vec::with_capacity(query.interiors.len());
     let mut rule_count = 0u64;
 
@@ -69,11 +69,11 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             &mut params,
         )?;
         rule_count += typings.len() as u64;
-        let predicate = super::Predicate::derive(&lowered[0], &typings[0]);
+        let predicate = super::Signature::derive(&lowered[0], &typings[0]);
         sealed.push(predicate.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
-            predicate,
+            signature: predicate,
             rules: typings,
         });
     }
@@ -99,7 +99,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             &mut params,
         )?;
         rule_count += base_typing.len() as u64;
-        let predicate = super::Predicate::derive(&base[0], &base_typing[0]);
+        let predicate = super::Signature::derive(&base[0], &base_typing[0]);
         let rec_typing = type_rules(
             schema,
             &InteriorSignatures {
@@ -148,14 +148,14 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             ValidatedRec {
                 base: base_arms,
                 rec: rec_arms,
-                predicate,
+                signature: predicate,
             },
         ))
     } else {
         None
     };
 
-    let rec_pred = rec_out.as_ref().map(|(_, rec)| &rec.predicate);
+    let rec_pred = rec_out.as_ref().map(|(_, rec)| rec.signature());
     let lowered = lower_rules(
         &query.head,
         &query.rules,
@@ -175,7 +175,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         &mut params,
     )?;
     rule_count += typings.len() as u64;
-    let predicate = super::Predicate::derive(&lowered[0], &typings[0]);
+    let predicate = super::Signature::derive(&lowered[0], &typings[0]);
 
     let mut rules_span = crate::obs::span(
         crate::obs::names::VALIDATE_RULES,
@@ -192,7 +192,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         .collect();
     let main = ValidatedMain {
         lowered,
-        predicate,
+        signature: predicate,
         rules: typings,
     };
     Ok(match rec_out {
@@ -588,7 +588,7 @@ fn validate_rule(
 /// One rule's positional INPUT contribution to the alignment check: a
 /// variable position carries the variable's type; an aggregate position
 /// its fold input type (the nullary `Count` is `U64`).
-/// Alignment-only — the signature is [`super::Predicate::derive`].
+/// Alignment-only — the signature is [`super::Signature::derive`].
 fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds

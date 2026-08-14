@@ -76,7 +76,7 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     }
     assert_eq!(
         prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| &column.ty)

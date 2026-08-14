@@ -56,7 +56,7 @@ fn build_occurrences(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     slots: &[(VarId, SlotWidth)],
 ) -> Vec<PlanOccurrence> {
     normalized
@@ -232,7 +232,7 @@ pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     estimates: Vec<u64>,
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {

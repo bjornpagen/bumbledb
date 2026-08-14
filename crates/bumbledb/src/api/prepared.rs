@@ -16,7 +16,7 @@ use crate::exec::dispatch::KeyProbePlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::validate::Predicate;
+use crate::ir::validate::Signature;
 use crate::plan::fj::ValidatedPlan;
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -221,11 +221,11 @@ pub struct PreparedQuery<'s, S> {
     /// Finished derived images (interiors then rec) plus per-occurrence
     /// bind scratch for `run_join`'s Interior arm.
     derived: crate::api::prepared::reach::DerivedScratch,
-    /// The predicate the query defines ([`Predicate`] — the signature
-    /// authority), sealed at validation and cloned here at prepare. It
-    /// sits beside the pipeline because a dead-main Cq still has an
-    /// arity and buffer types (the empty path's `out.arity` reads it).
-    predicate: Predicate,
+    /// The signature the query defines, sealed at validation and cloned
+    /// here at prepare. It sits beside the pipeline because a dead-main
+    /// Cq still has an arity and buffer types (the empty path's
+    /// `out.arity` reads it).
+    signature: Signature,
     /// Dense per-param bind contracts (validation rejects id gaps): one
     /// sum carries scalar/set/mask shape, element type, and point-domain
     /// status without parallel flags.

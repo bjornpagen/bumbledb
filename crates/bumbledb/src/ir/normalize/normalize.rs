@@ -42,7 +42,7 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery
 pub fn normalize_predicate(
     schema: &Schema,
     query: &ValidatedQuery,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Vec<NormalizedQuery> {
     normalize_rules(schema, signatures, query.rules())
 }
@@ -51,7 +51,7 @@ pub fn normalize_predicate(
 #[must_use]
 pub fn normalize_rules<'a>(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rules: impl IntoIterator<Item = RuleWitness<'a>>,
 ) -> Vec<NormalizedQuery> {
     rules
@@ -64,7 +64,7 @@ pub fn normalize_rules<'a>(
 /// rule's own variable scope.
 fn normalize_rule(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
 ) -> NormalizedQuery {
     normalize_rule_with(schema, signatures, rule, rule.classified_comparisons())
@@ -82,7 +82,7 @@ fn normalize_rule(
 #[must_use]
 pub fn normalize_ray_probe(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
     measured: VarId,
 ) -> NormalizedQuery {
@@ -113,7 +113,7 @@ pub fn normalize_ray_probe(
 /// extra caller is the ray probe, whose comparisons are not the rule's.
 fn normalize_rule_with(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
     comparisons: &[crate::ir::validate::ClassifiedComparison],
 ) -> NormalizedQuery {
@@ -237,7 +237,7 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 )] // the two-pass binding walk, one arm per term kind
 fn lower_atom(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     witness: &RuleWitness<'_>,
     idx: usize,
     role: Role,

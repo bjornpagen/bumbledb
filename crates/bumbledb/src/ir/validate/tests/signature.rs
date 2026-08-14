@@ -292,7 +292,7 @@ fn query_of(case: &Case) -> Query {
 fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
     let witness = crate::ir::validate::validate(schema, query).expect("validate");
     witness
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

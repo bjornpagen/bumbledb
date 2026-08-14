@@ -113,7 +113,7 @@ impl BenchRun<'_> {
             .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
         let sets = spec.sets.clone();
         let types: Vec<bumbledb::schema::ValueType> = prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())

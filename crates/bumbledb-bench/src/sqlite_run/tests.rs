@@ -41,7 +41,7 @@ fn fairness_and_the_prepared_sample_contract() {
         let db = bumbledb::Db::create(&db_dir, crate::schema::Ledger).expect("create");
         let prepared = db.prepare(&(family.query)()).expect("prepare");
         prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())
@@ -82,7 +82,7 @@ fn fairness_and_the_prepared_sample_contract() {
         let db = bumbledb::Db::open(&dir.join("types-db"), crate::schema::Ledger).expect("reopen");
         let prepared = db.prepare(&(point.query)()).expect("prepare");
         prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())

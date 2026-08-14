@@ -446,7 +446,7 @@ fn gate(
         .prepare(&query)
         .map_err(|e| format!("crud/crud_read_point [{}]: prepare: {e:?}", lane.label()))?;
     let types: Vec<ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
