@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(bda13364)
 - **Source:** audit/engine.md F31
 - **Depends on:** engine-001 (the parsed lane), engine-008 (one protocol consumes it)
 
