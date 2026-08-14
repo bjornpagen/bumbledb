@@ -1,5 +1,6 @@
 import std;
 import bumbledb;
+import bumbledb_foreign;
 
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
@@ -99,6 +100,21 @@ inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval
 	    });
 });
 
+inline constexpr auto WindowLen = bdb::query(Uptime).rule([](auto r) consteval {
+	auto vars = r.vars(Outage);
+	return r
+	    .match(Outage,
+	           {
+	               .service = vars.service,
+	               .window = vars.window,
+	           })
+	    .find(
+	        {
+	            .service = vars.service,
+	        },
+	        bdb::as<"len">(r.duration(vars.window)));
+});
+
 namespace {
 
 [[nodiscard]] consteval auto text_is(bdb::name_text name, std::string_view want) -> bool {
@@ -175,6 +191,16 @@ static_assert(LongOutages.rules[0].conditions[0].lhs.var == 1);
 static_assert(LongOutages.rules[0].conditions[0].rhs.form == bdb::query_term_form::literal);
 static_assert(LongOutages.rules[0].conditions[0].rhs.literal.kind == bdb::value_kind::u64);
 static_assert(LongOutages.rules[0].conditions[0].rhs.literal.u64 == 100);
+
+static_assert(WindowLen.head_count == 2);
+static_assert(WindowLen.rules[0].find_count == 2);
+static_assert(WindowLen.rules[0].finds[1].form == bdb::find_form::measure);
+static_assert(WindowLen.rules[0].finds[1].over == 1);
+static_assert(text_is(WindowLen.head[1].name, "len"));
+static_assert(WindowLen.head[1].answer == bdb::field_class{bdb::value_kind::u64, 0});
+static_assert(bdb::foreign::query_of<WindowLen>.rules[0].finds[1].kind ==
+              static_cast<std::uint32_t>(bdb::foreign::bdb_find_term_kind::BDB_FIND_TERM_KIND_MEASURE));
+static_assert(std::same_as<decltype(std::declval<bdb::row_of<WindowLen>>().len), std::uint64_t>);
 
 static_assert(NamedDownAt.rules[0].atom_count == 2);
 static_assert(NamedDownAt.rules[0].atoms[1].source == bdb::atom_source::edb);

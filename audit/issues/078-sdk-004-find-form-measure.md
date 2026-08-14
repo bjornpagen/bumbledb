@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(c234ee9b)
 - **Source:** audit/sdks.md #4
 - **Depends on:** none (parallel-safe; dummy Var `op` filler is this change — sdks.md #20)
 

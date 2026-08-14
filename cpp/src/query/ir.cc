@@ -157,6 +157,7 @@ struct body_item {
 enum class find_form : std::uint8_t {
 	variable,
 	aggregate,
+	measure,
 	aggregate_measure,
 };
 
@@ -181,7 +182,6 @@ struct find_data {
 	fold_form op;
 	term_data over;
 	field_class answer;
-	bool has_over;
 	bool classed;
 	coord_ref law;
 };
@@ -281,14 +281,14 @@ struct wire_condition {
 };
 
 /**
- * One numbered find term. `over` is read for variable/measure columns and
- * for aggregates with `has_over` (nullary `count` has none).
+ * One numbered find term. `over` is the projected var for variable/measure
+ * columns and the fold input for aggregates that take one; nullary `count`
+ * does not read it.
  */
 struct wire_find {
 	find_form form;
 	fold_form op;
 	std::uint16_t over;
-	bool has_over;
 };
 
 /**

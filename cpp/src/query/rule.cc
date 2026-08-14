@@ -228,12 +228,10 @@ struct rule_chain {
 				}
 				out.finds[out.find_count] = find_data{
 				    .name = Slot::field_name,
-				    .form = find_form::variable,
-				    .op = fold_form::sum,
+				    .form = slot.form,
 				    .over = slot.term,
-				    .answer = Slot::cls,
-				    .has_over = true,
-				    .classed = Slot::classed,
+				    .answer = slot.form == find_form::measure ? field_class{value_kind::u64, 0} : Slot::cls,
+				    .classed = slot.form == find_form::measure ? false : Slot::classed,
 				    .law = Slot::law,
 				};
 				++out.find_count;
@@ -249,17 +247,28 @@ struct rule_chain {
 				detail::rule_has_too_many_finds();
 			}
 			if constexpr (detail::is_named_find_v<Extra>) {
-				using Var = typename Extra::var;
-				out.finds[out.find_count] = find_data{
-				    .name = Extra::column_name,
-				    .form = find_form::variable,
-				    .op = fold_form::sum,
-				    .over = detail::var_term<Var>(),
-				    .answer = Var::cls,
-				    .has_over = true,
-				    .classed = Var::classed,
-				    .law = Var::law,
-				};
+				using Payload = typename Extra::var;
+				if constexpr (detail::is_measure_ref_v<Payload>) {
+					using Inner = typename Payload::over;
+					out.finds[out.find_count] = find_data{
+					    .name = Extra::column_name,
+					    .form = find_form::measure,
+					    .over = detail::var_term<Inner>(),
+					    .answer = field_class{value_kind::u64, 0},
+					    .classed = false,
+					    .law = Inner::law,
+					};
+				} else {
+					using Var = Payload;
+					out.finds[out.find_count] = find_data{
+					    .name = Extra::column_name,
+					    .form = find_form::variable,
+					    .over = detail::var_term<Var>(),
+					    .answer = Var::cls,
+					    .classed = Var::classed,
+					    .law = Var::law,
+					};
+				}
 			} else {
 				out.finds[out.find_count] = detail::fold_find_of<Extra>();
 			}

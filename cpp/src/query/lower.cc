@@ -262,14 +262,15 @@ template<class Ir>
 		if (self != no_interior && column.form != find_form::variable) {
 			a_recursive_rule_head_projects_bound_variables_only();
 		}
-		if (column.form != find_form::variable) {
+		if (column.form == find_form::aggregate || column.form == find_form::aggregate_measure) {
 			if (column.op == fold_form::pack) {
 				++pack_count;
 			} else {
 				++fold_count;
 			}
 		}
-		if (column.has_over && !term_is_bound_var(rule.state, column.over)) {
+		auto const carries_over = column.form != find_form::aggregate || column.op != fold_form::count;
+		if (carries_over && !term_is_bound_var(rule.state, column.over)) {
 			find_head_variable_is_not_bound_in_this_rule();
 		}
 		for (auto other = std::size_t{0}; other != index; ++other) {
@@ -348,8 +349,8 @@ template<class Ir>
 		auto find = wire_find{};
 		find.form = column.form;
 		find.op = column.op;
-		find.has_over = column.has_over;
-		if (column.has_over) {
+		auto const carries_over = column.form != find_form::aggregate || column.op != fold_form::count;
+		if (carries_over) {
 			find.over = var_id(numbers, column.over.variable);
 		}
 		out.finds[index] = find;

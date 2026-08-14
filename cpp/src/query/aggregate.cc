@@ -58,16 +58,13 @@ template<class Fold>
 	using Over = typename Fold::over;
 	if constexpr (std::same_as<Over, void>) {
 		out.form = find_form::aggregate;
-		out.has_over = false;
 		out.answer = field_class{value_kind::u64, 0};
 	} else if constexpr (is_measure_ref_v<Over>) {
 		out.form = find_form::aggregate_measure;
-		out.has_over = true;
 		out.over = var_term<typename Over::over>();
 		out.answer = field_class{value_kind::u64, 0};
 	} else {
 		out.form = find_form::aggregate;
-		out.has_over = true;
 		out.over = var_term<Over>();
 		out.answer = Over::cls;
 	}
@@ -94,8 +91,9 @@ export namespace bdb {
  */
 template<fixed_string Name, class Var>
 [[nodiscard]] consteval auto as(Var) -> named_find<Name, Var> {
-	static_assert(detail::is_qvar_v<Var>, "bumbledb as(): the argument must be a query variable "
-	                                      "(vars.field)");
+	static_assert(detail::is_qvar_v<Var> || detail::is_measure_ref_v<Var>,
+	              "bumbledb as(): the argument must be a query variable "
+	              "(vars.field) or r.duration(interval variable)");
 	return {};
 }
 

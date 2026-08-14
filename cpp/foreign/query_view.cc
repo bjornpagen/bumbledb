@@ -167,22 +167,28 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 		out.kind = abi_tag(bdb_find_term_kind::BDB_FIND_TERM_KIND_VAR);
 		out.var = find.over;
 		return out;
+	case find_form::measure:
+		out.kind = abi_tag(bdb_find_term_kind::BDB_FIND_TERM_KIND_MEASURE);
+		out.var = find.over;
+		return out;
 	case find_form::aggregate:
+		if (find.op == fold_form::count) {
+			out.kind = abi_tag(bdb_find_term_kind::BDB_FIND_TERM_KIND_COUNT);
+			return out;
+		}
 		out.kind = abi_tag(bdb_find_term_kind::BDB_FIND_TERM_KIND_AGGREGATE);
-		out.has_over = abi_flag(find.has_over);
 		out.over = find.over;
 		return out;
 	case find_form::aggregate_measure:
 		break;
 	}
 	out.kind = abi_tag(bdb_find_term_kind::BDB_FIND_TERM_KIND_AGGREGATE_MEASURE);
-	out.has_over = abi_flag(true);
 	out.over = find.over;
 	return out;
 }
 
 [[nodiscard]] consteval auto head_term_of(find_data const& column) -> bdb_head_term {
-	return column.form == find_form::variable
+	return column.form == find_form::variable || column.form == find_form::measure
 	           ? bdb_head_term{
 	                 .kind = abi_tag(bdb_head_term_kind::BDB_HEAD_TERM_KIND_VAR),
 	                 .op = abi_tag(bdb_head_op::BDB_HEAD_OP_SUM),

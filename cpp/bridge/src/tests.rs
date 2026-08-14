@@ -433,7 +433,6 @@ fn find_var(var: u16) -> bdb_find_term {
         kind: u32::from(bdb_find_term_kind::Var),
         var,
         op: blank_agg(),
-        has_over: 0,
         over: 0,
     }
 }

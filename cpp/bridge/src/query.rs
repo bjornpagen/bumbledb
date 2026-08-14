@@ -18,7 +18,7 @@ use crate::db::{Engine, bdb_db};
 use crate::error::{bdb_error, fail_engine, fail_locked, fail_shape};
 use crate::value::{bdb_value, value_in};
 use crate::{
-    BridgeResult, Fail, bdb_status, bool_in, box_in, box_out_to, c_tag, guard, ref_in, require_out,
+    BridgeResult, Fail, bdb_status, box_in, box_out_to, c_tag, guard, ref_in, require_out,
     slice_in, tag_in,
 };
 
@@ -122,6 +122,7 @@ pub enum bdb_find_term_kind {
     Measure,
     Aggregate,
     AggregateMeasure,
+    Count,
 }
 
 c_tag!(bdb_find_term_kind {
@@ -129,18 +130,18 @@ c_tag!(bdb_find_term_kind {
     Measure,
     Aggregate,
     AggregateMeasure,
+    Count,
 });
 
-/// One find term. `var` is read for `Var`/`Measure`; `op` plus
-/// `has_over`/`over` for `Aggregate` (`has_over == false` is the nullary
-/// `Count`); `op` plus `over` for `AggregateMeasure`.
+/// One find term. `var` is read for `Var`/`Measure`; `op` plus `over` for
+/// `Aggregate`/`AggregateMeasure` (folds always carry `over`); `Count` is
+/// nullary and does not read `over`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_find_term {
     pub kind: u32,
     pub var: u16,
     pub op: bdb_agg_op,
-    pub has_over: u8,
     pub over: u16,
 }
 
@@ -334,10 +335,20 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
     Ok(match tag_in::<bdb_find_term_kind>(view.kind)? {
         bdb_find_term_kind::Var => FindTerm::Var(VarId(view.var)),
         bdb_find_term_kind::Measure => FindTerm::Measure(VarId(view.var)),
-        bdb_find_term_kind::Aggregate => FindTerm::Aggregate {
-            op: agg_op_in(view.op)?,
-            over: bool_in(view.has_over)?.then_some(VarId(view.over)),
+        bdb_find_term_kind::Count => FindTerm::Aggregate {
+            op: AggOp::Count,
+            over: None,
         },
+        bdb_find_term_kind::Aggregate => {
+            let op = agg_op_in(view.op)?;
+            if matches!(op, AggOp::Count) {
+                return Err(fail_shape("Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE"));
+            }
+            FindTerm::Aggregate {
+                op,
+                over: Some(VarId(view.over)),
+            }
+        }
         bdb_find_term_kind::AggregateMeasure => FindTerm::AggregateMeasure {
             op: agg_op_in(view.op)?,
             over: VarId(view.over),
@@ -373,7 +384,9 @@ fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
 /// One condition tree, marshaled with the engine's own depth ceiling
 /// (`bumbledb::MAX_CONDITION_DEPTH`): the roster rejects deeper trees
 /// anyway, and refusing at marshal keeps this recursion stack-safe on
-/// hostile input — the ts bridge's rule, verbatim.
+/// hostile input — the ts bridge's rule, verbatim. Parse by kind: Leaf
+/// reads `cmp` only; And/Or read `children` only. Leftover payloads of
+/// the other arm are never read.
 fn condition_in(view: &bdb_condition, depth: usize) -> BridgeResult<ConditionTree> {
     if depth > bumbledb::MAX_CONDITION_DEPTH {
         return Err(fail_shape(&format!(

@@ -211,6 +211,7 @@ typedef enum bdb_find_term_kind {
   BDB_FIND_TERM_KIND_MEASURE,
   BDB_FIND_TERM_KIND_AGGREGATE,
   BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
+  BDB_FIND_TERM_KIND_COUNT,
 } bdb_find_term_kind;
 
 // An atom source's tag: a stored relation (`Edb`) or a derived table of
@@ -516,14 +517,13 @@ typedef struct bdb_agg_op {
   uint32_t kind;
 } bdb_agg_op;
 
-// One find term. `var` is read for `Var`/`Measure`; `op` plus
-// `has_over`/`over` for `Aggregate` (`has_over == false` is the nullary
-// `Count`); `op` plus `over` for `AggregateMeasure`.
+// One find term. `var` is read for `Var`/`Measure`; `op` plus `over` for
+// `Aggregate` and `AggregateMeasure` (folds always carry `over`); `Count`
+// is nullary and does not read `over`.
 typedef struct bdb_find_term {
   uint32_t kind;
   uint16_t var;
   struct bdb_agg_op op;
-  uint8_t has_over;
   uint16_t over;
 } bdb_find_term;
 
