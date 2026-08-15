@@ -12,11 +12,15 @@ still names membership-free negation. Aggregate heads run the recorded
 glue over PRD 05's proved computable folds
 (`Bumbledb/Conformance.lean`, module doc).
 
-Three case kinds share the directory, dispatched by FILE NAME:
+Three case kinds share the directory, dispatched by FILE NAME
+(which evaluator, not the Query constructor):
 `judgment-*.json` is a **judgment case** (the write-side arm, below);
-`reach-*.json` is a **reach case** (the recursive arm, below);
-everything else is a **query case**. A judgment case also carries
-`"kind":"judgment"` for self-description.
+`reach-*.json` is a **reach case** (interiors / rec evaluator, below);
+everything else is a **query case** (aggregate-head `cq` evaluator).
+A judgment case also carries `"kind":"judgment"` for self-description.
+The Query document is one tagged encoding: `{ "cq": { interiors, head,
+rules } } | { "reach": { interiors, rec, head, rules } }`. CQ does not
+carry rec. Reach carries `rec` by value. Atoms spell `edb` / `interior`.
 
 ## Values (the tagged form)
 
@@ -69,15 +73,18 @@ both sides of the lane (`Interval.isRay`).
     [{"u64":2},{"u64":0},{"u64":2}],        // nothing else)
     [{"u64":3},{"u64":0},{"u64":2}],
     [{"u64":4},{"u64":0},{"u64":1}]]}],
-"query":{"rules":[                          // the IR, serialized
+"query":{"cq":{                             // tagged Query: cq | reach
+  "interiors":[],                           // empty-prefix CQ
+  "head":[{"kind":"var"},{"kind":"var"},{"kind":"var"}],
+  "rules":[                                 // the IR, serialized
   {"finds":[{"var":0},{"var":1},{"var":2}], // head positions: {"var"},
                                             // {"measure"}, {"agg":{…}},
                                             // {"agg_measure":{…}}
    "atoms":[                                // [field, term] bindings;
-     {"relation":1,"bindings":[[0,{"var":0}],[2,{"var":1}]]},
-     {"relation":13,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],
+     {"edb":1,"bindings":[[0,{"var":0}],[2,{"var":1}]]},
+     {"edb":13,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],
    "negated":[],                            // anti-join atoms
-   "conditions":[]}]},                      // {"cmp":{op,lhs,rhs}} |
+   "conditions":[]}]}},                     // {"cmp":{op,lhs,rhs}} |
                                             // {"and":[…]} | {"or":[…]};
                                             // allen carries a literal "mask"
                                             // beside "op"
@@ -130,8 +137,9 @@ had):
   (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`,
   the 2026-07-23 audit's finding 087). Absent: the decoded rule's own
   variable ceiling, correct whenever no lowering fired.
-* The query may carry `"dnf": true`: the rule list is ONE written
-  rule's DNF lowering (the serializer's derivation mark). Aggregate
+* The query object may carry `"dnf": true` beside the `cq` payload:
+  the rule list is ONE written rule's DNF lowering (the serializer's
+  derivation mark). Aggregate
   and measure heads then fold the deduplicated union of the
   disjuncts' binding rows over the shared width — the written rule's
   own fold domain (ruled 2026-07-23, R2: surface `or` is
@@ -293,22 +301,22 @@ pinned pre-dedup by a unit test), and a two-key rejection
 
 ## Reach cases — the recursive third oracle
 
-Every case carries a `Query`. Plain cases have empty `interiors` and
-`rec: null` (their atoms use the `relation` spelling of the EDB source).
-Reach cases fill those fields (atoms spell `edb`/`interior`). One type,
-one decoder. The Lean side decodes it and runs `evalQueryList`
-(`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is its agreement with
-`evalQuery`) against the recorded answers. Atoms are `edb` / `interior`.
-`FieldId` on an interior atom addresses a derived head position. `rec`
-may be JSON `null` or omitted for interiors-only; the recut corpus has a
-rec on every file. A rec with empty interiors and an identity main of
-the same arity — empty `rules` denotes `∅`. Rec id is
-`interiors.length` (0 when interiors are empty).
+Every case carries one tagged `Query`. Interiors-only files are the
+`cq` arm (interiors, no rec key). Recursive files are the `reach` arm
+(`rec` by value). One type, one decoder — the tag is the constructor,
+not the filename and not `rec: null`. The Lean side decodes it and
+runs `evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is
+its agreement with `evalQuery`) against the recorded answers. Atoms
+are `edb` / `interior`. `FieldId` on an interior atom addresses a
+derived head position. Empty `rules` denotes `∅`. A `.reach` rec's id
+is `interiors.length` (0 when interiors are empty). Rec payload is
+`{ head, base, step }` — `step` is the step list (Lean `LinearRec.step`);
+JSON `arity` is unrepresentable.
 
 Filename: `reach-hand-closure.json`, `reach-seeded-0001.json`, …
 Gaps in numbering (`0000`, `0003`, `0010`, `0021`) are the dropped
 mutual cases — provenance stays 1:1, do not renumber. Dispatch by
-prefix `reach-`. Do not name them `query-*.json`.
+prefix `reach-` selects the evaluator. Do not name them `query-*.json`.
 
 ```jsonc
 {
@@ -318,19 +326,21 @@ prefix `reach-`. Do not name them `query-*.json`.
 "theory":{…},
 "instance":[…],
 "query":{
-  "interiors":[],
-  "rec":{
-    "arity":2,
-    "base":[{ "finds":[0,1], "atoms":[{ "edb":7, "bindings":… }],
-              "negated":[], "conditions":[] }],
-    "rec": [{ "finds":[0,2], "atoms":[
-                { "edb":7, "bindings":… },
-                { "interior":0, "bindings":… }
-              ], "negated":[], "conditions":[] }]
-  },
-  "arity":2,
-  "rules":[{ "finds":[0,1], "atoms":[{ "interior":0, "bindings":… }],
-             "negated":[], "conditions":[] }]
+  "reach":{
+    "interiors":[],
+    "rec":{
+      "head":[{"kind":"var"},{"kind":"var"}],
+      "base":[{ "finds":[0,1], "atoms":[{ "edb":7, "bindings":… }],
+                "negated":[], "conditions":[] }],
+      "step": [{ "finds":[0,2], "atoms":[
+                  { "edb":7, "bindings":… },
+                  { "interior":0, "bindings":… }
+                ], "negated":[], "conditions":[] }]
+    },
+    "head":[{"kind":"var"},{"kind":"var"}],
+    "rules":[{ "finds":[0,1], "atoms":[{ "interior":0, "bindings":… }],
+               "negated":[], "conditions":[] }]
+  }
 },
 "params":[],
 "answers":[…]
@@ -342,9 +352,10 @@ prefix `reach-`. Do not name them `query-*.json`.
 * Regenerate: `cargo test -p bumbledb-bench
   regenerate_the_conformance_corpus -- --ignored --nocapture`
   (deterministic: identical bytes from identical seeds, forever).
-  The reach arm is the checked-in `reach-*.json` recut until the Rust
-  builder is rewritten; do not regenerate it with the old recursive
-  serializer.
+  Corpus bytes move once onto the tagged encoding; the pin is 268
+  answers and 0 Lean disagreements. Until bench regenerates, the
+  checked-in files are still the old product and the Lean decoder
+  (this tree) refuses them.
 * Compare (engine · naive · file bytes): `cargo test -p bumbledb-bench
   the_corpus_replays_byte_identical` — runs in the plain workspace
   suite.

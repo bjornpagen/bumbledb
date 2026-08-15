@@ -7,7 +7,7 @@
  * statement algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
  * runtime (exclusive-lock stores, transactions, typed violations, scoped
  * snapshot reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07, zero
- * closables), the query surface (Datalog as values, kysely-shaped:
+ * closables), the query surface (kysely-shaped:
  * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
  * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
  * join), the head a `find` RECORD whose keys name the answer columns
@@ -132,6 +132,7 @@ export type {
 	Query,
 	QueryData,
 	QueryParams,
+	QueryReachStart,
 	QueryRelation,
 	QueryRow,
 	QueryRuleChain,

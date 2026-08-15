@@ -792,7 +792,7 @@ impl fmt::Display for ValidationError {
                 write!(f, "{count} derived tables overflow InteriorId")
             }
             Self::EmptyInterior { interior } => {
-                write!(f, "interior p{} has no rules", interior.0)
+                write!(f, "interior {} has no rules", interior.0)
             }
             Self::EmptyRecursiveBase => {
                 write!(f, "recursive block has no base arms — that lfp is empty")
@@ -801,13 +801,13 @@ impl fmt::Display for ValidationError {
                 write!(f, "recursive block has no rec arms — write an interior")
             }
             Self::SelfInBase => {
-                write!(f, "a base arm names the recursive predicate")
+                write!(f, "a base arm names the rec")
             }
             Self::RecArmMissingSelf => {
-                write!(f, "a rec arm does not name the recursive predicate")
+                write!(f, "a rec arm does not name the rec")
             }
             Self::NonlinearRecArm => {
-                write!(f, "a rec arm names the recursive predicate more than once")
+                write!(f, "a rec arm names the rec more than once")
             }
             Self::NegationInRec => {
                 write!(f, "negation inside the recursive block")
@@ -815,7 +815,7 @@ impl fmt::Display for ValidationError {
             Self::UnknownInterior { atom, interior } => {
                 write!(
                     f,
-                    "atom {atom}: interior p{} is not in the query",
+                    "atom {atom}: interior {} is not in the query",
                     interior.0
                 )
             }
@@ -826,17 +826,17 @@ impl fmt::Display for ValidationError {
             ),
             Self::InteriorNotPrior { interior, at } => write!(
                 f,
-                "interior p{} reads p{} which is not a prior interior",
+                "interior {} reads interior {} which is not a prior interior",
                 at.0, interior.0
             ),
             Self::AggregateInInterior { interior } => write!(
                 f,
-                "interior p{} folds — interior and rec heads project bound variables only",
+                "interior {} folds — interior and rec heads project bound variables only",
                 interior.0
             ),
             Self::MeasureInInterior { interior } => write!(
                 f,
-                "interior p{} projects a Duration — interior and rec heads project bound variables only",
+                "interior {} projects a Duration — interior and rec heads project bound variables only",
                 interior.0
             ),
             Self::MeasureInRec => {

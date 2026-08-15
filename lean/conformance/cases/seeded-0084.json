@@ -1,31 +1,25 @@
 {
 "case":"seeded-0084",
-"provenance":{"world_seed":12603137,"case_seed":1245306,"draw":2},
-"strings":[[0,"holder-1955"]],
-"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","str"]},
-{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]}],
-"ground_axioms":[]},
-"instance":[{"relation":0,"facts":[
-[{"u64":0},{"str":0}]
-]},
-{"relation":1,"facts":[
+"provenance":{"world_seed":12603137,"case_seed":1245302,"draw":2},
+"strings":[],
+"theory":{"relations":[{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]},
+{"id":13,"name":"Currency","closed":true,"fields":["u64","u64"]}],
+"ground_axioms":[{"relation":13,"facts":[
+[{"u64":0},{"u64":2}],
+[{"u64":1},{"u64":2}],
+[{"u64":2},{"u64":0}]
+]}]},
+"instance":[{"relation":1,"facts":[
 [{"u64":0},{"u64":0},{"u64":1}],
 [{"u64":1},{"u64":0},{"u64":1}],
 [{"u64":2},{"u64":0},{"u64":1}],
 [{"u64":3},{"u64":0},{"u64":2}],
 [{"u64":4},{"u64":0},{"u64":0}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":1}],
- "atoms":[{"relation":1,"bindings":[[1,{"var":0}],[2,{"var":1}]]},{"relation":0,"bindings":[[0,{"var":0}]]}],
- "negated":[],
- "conditions":[],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":1}],"atoms":[{"edb":1,"bindings":[[2,{"var":0}],[1,{"var":1}]]},{"edb":13,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":2}}]]}],"negated":[],"conditions":[],"width":2}]}},
 "params":[],
 "answers":[
-[{"u64":0}],
-[{"u64":1}],
-[{"u64":2}]
+[{"u64":0},{"u64":0}],
+[{"u64":1},{"u64":0}]
 ]
 }

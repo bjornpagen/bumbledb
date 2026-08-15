@@ -13,7 +13,6 @@
 use std::collections::BTreeSet;
 
 use bumbledb::ir::{CmpOp, Comparison, Rule, Term};
-use bumbledb::schema::ValueType;
 use bumbledb::{ParamId, Schema, Value, VarId};
 
 /// The resolved scalar terms; everything else reads as interval-typed
@@ -74,10 +73,10 @@ pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
             // An interior/rec column is scalar: the translator refuses
             // interval-typed derived columns before any rule renders.
             let interval_field = match atom.source {
-                bumbledb::AtomSource::Edb(relation) => matches!(
-                    schema.relation(relation).fields()[usize::from(field.0)].value_type,
-                    ValueType::Interval { .. }
-                ),
+                bumbledb::AtomSource::Edb(relation) => schema.relation(relation).fields()
+                    [usize::from(field.0)]
+                .value_type
+                .is_interval(),
                 bumbledb::AtomSource::Interior(_) => false,
             };
             match term {

@@ -89,7 +89,7 @@ impl<S> PreparedQuery<'_, S> {
             stats,
         };
         // After the version marker, the report opens with the query in the rule notation
-        // (`crate::ir::render` — the read-side syntax) and the predicate
+        // (`crate::ir::render` — the read-side syntax) and the signature
         // it defines (`ir/validate` — the signature authority): introspection
         // prints what it explains.
         Ok((out, report.to_string()))
@@ -308,7 +308,7 @@ impl<S> PreparedQuery<'_, S> {
         })
     }
 
-    /// The predicate this query defines — the buffer-typing authority
+    /// The signature this query defines — the buffer-typing authority
     /// (docs/architecture/70-api.md): one column per head position, the
     /// metadata a generic host needs to type an (even empty) result.
     /// The buffer itself stays typeless: stamping owned types per

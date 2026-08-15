@@ -108,7 +108,6 @@ fn schema() -> SchemaDescriptor {
                         name: "slot".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -568,9 +567,9 @@ fn escalation_query() -> Query {
 
 /// The recursive family (docs/architecture/40-execution.md § the
 /// linear reach driver — the allocation contract's iteration-shape axis):
-/// `p0(a, h) | Account(id: a, holder: h), a <= ?0;
-///  p0(a, h2) | Account(id: a, holder: h), a <= ?0, p0(h, h2);
-///  main(x) | p0(x, _)` — a linear rec under a non-recursive output that
+/// `interior 0(a, h) | Account(id: a, holder: h), a <= ?0;
+///  interior 0(a, h2) | Account(id: a, holder: h), a <= ?0, interior 0(h, h2);
+///  main(x) | interior 0(x, _)` — a linear rec under a non-recursive output that
 /// reads the finished closure. The `?0` cap bounds the admitted edge
 /// set, so the rec's size — and every per-round image slab — scales
 /// with the parameter: rotation exercises the steady state, the cap
@@ -588,9 +587,9 @@ fn recursive_query() -> Query {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -613,7 +612,7 @@ fn recursive_query() -> Query {
                 negated: vec![],
                 conditions: vec![cap],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -658,12 +657,11 @@ fn interiors_only_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query {
+    Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             rules: vec![join],
         }],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -712,9 +710,8 @@ fn union_rules_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query {
+    Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
         rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
     }
@@ -759,9 +756,8 @@ fn union_aggregate_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query {
+    Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             bumbledb::HeadTerm::Var,
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum),

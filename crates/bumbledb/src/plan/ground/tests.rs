@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::normalize::{NormalizedQuery, OccId, normalize_predicate};
+use crate::ir::normalize::{NormalizedQuery, OccId, normalize_rules};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, Query, Rule, Term, Value};
 use crate::plan::planner::{OccStats, plan};
@@ -52,8 +52,8 @@ fn containment(
 /// Runs the full honest pipeline: validate → normalize → grounding.
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut normalized = normalize_predicate(schema, &witness, &[]).remove(0);
-    ground(&mut normalized, schema, &query.rules[0].finds);
+    let mut normalized = normalize_rules(schema, &[], witness.rules()).remove(0);
+    ground(&mut normalized, schema, &query.rules()[0].finds);
     normalized
 }
 
@@ -151,10 +151,10 @@ fn the_off_switch_bypasses_the_rewrite() {
     let schema = walk_schema();
     let query = walk_query();
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut normalized = normalize_predicate(&schema, &witness, &[]).remove(0);
-    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
+    let mut normalized = normalize_rules(&schema, &[], witness.rules()).remove(0);
+    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules()[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
-    ground(&mut normalized, &schema, &query.rules[0].finds);
+    ground(&mut normalized, &schema, &query.rules()[0].finds);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(2))],
@@ -483,7 +483,6 @@ fn a_membership_point_sourced_from_the_target_refuses() {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -636,7 +635,6 @@ fn an_extra_target_selection_refuses() {
 fn an_interval_typed_pair_refuses() {
     let during = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     let schema = SchemaDescriptor {
         relations: vec![
@@ -694,7 +692,7 @@ fn an_interval_typed_pair_refuses() {
 /// subsumption pass's exact inputs.
 fn grounded_main(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut rules = normalize_predicate(schema, &witness, &[]);
+    let mut rules = normalize_rules(schema, &[], witness.rules());
     let finds: Vec<Vec<FindTerm>> = (0..rules.len())
         .map(|idx| witness.rule(idx).rule().finds.clone())
         .collect();

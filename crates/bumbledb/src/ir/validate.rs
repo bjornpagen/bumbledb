@@ -98,7 +98,7 @@ mod validate;
 
 pub use validate::validate;
 
-/// The predicate a query defines — anonymous (names live in the host,
+/// The signature a query defines — anonymous (names live in the host,
 /// exactly like relations pre-`as`), its typed output signature derived
 /// ONCE at validation and sealed. The single authority for sink
 /// construction, result-buffer typing, finalize's all-words decision,
@@ -131,15 +131,19 @@ impl std::fmt::Display for Signature {
                 ValueType::I64 => f.write_str("i64")?,
                 ValueType::String => f.write_str("string")?,
                 ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
-                ValueType::Interval { element, width } => {
+                ValueType::Interval { element } => {
                     let element = match element {
                         IntervalElement::U64 => "u64",
                         IntervalElement::I64 => "i64",
                     };
-                    match width {
-                        None => write!(f, "interval<{element}>")?,
-                        Some(w) => write!(f, "interval<{element}, {w}>")?,
-                    }
+                    write!(f, "interval<{element}>")?;
+                }
+                ValueType::FixedInterval { element, width } => {
+                    let element = match element {
+                        IntervalElement::U64 => "u64",
+                        IntervalElement::I64 => "i64",
+                    };
+                    write!(f, "interval<{element}, {width}>")?;
                 }
             }
         }
@@ -162,7 +166,7 @@ pub struct SignatureColumn {
     pub op: Option<AggKind>,
 }
 
-/// The fold producing a predicate column, by kind alone: an Arg key is a
+/// The fold producing a signature column, by kind alone: an Arg key is a
 /// rule-scoped variable outside the signature's vocabulary, so the head
 /// owns the payload-free kind (a projected measure is a plain column —
 /// `None` — while a folded measure carries its fold's kind).
@@ -276,33 +280,68 @@ pub(crate) enum DurationOperand {
 }
 
 /// The interior typing surface handed to the per-rule roster: sealed
-/// column types, indexed by [`InteriorId`]. The phase is the slice
-/// extent, not a hole in it: interiors already sealed sit in
-/// [`Self::interiors`]; the rec predicate is a second slice (present
-/// only when rec arms or main type against it). An `Interior` anchor
-/// resolves against the target's sealed column exactly as an `Edb`
-/// anchor resolves against its stored field ([`Context::check_atoms`]).
-pub(super) struct InteriorSignatures<'a> {
-    /// Already-sealed interiors in declaration order. Interior *i*
-    /// types against `&sealed[..i]`; rec base types against the full
-    /// interiors slice (the rec's own predicate is not yet present).
-    interiors: &'a [Signature],
-    /// The rec predicate, present when typing rec arms or a reach
-    /// query's main. Absent while typing interiors and rec base — a
-    /// self-atom in base is [`ValidationError::SelfInBase`] at the
-    /// roster, before typing.
-    rec: Option<&'a Signature>,
-    /// The reading interior's id, if this rule-list is an interior
-    /// ([`ValidationError::InteriorNotPrior`]); `None` for rec and main
-    /// (out-of-range is [`ValidationError::UnknownInterior`]).
-    reader: Option<InteriorId>,
-    /// `interiors.len() + rec.is_some()` on the *boundary* query — the
-    /// well-formedness screen's address space, independent of how many
-    /// signatures have sealed.
-    derived_count: usize,
+/// column types, indexed by [`InteriorId`]. CQ typing never has a rec
+/// slot. Reach typing is a phase sum: interiors / rec-base (rec not yet
+/// sealed — looking up the rec signature is unrepresentable) vs rec-arms
+/// and main (rec signature by value). An `Interior` anchor resolves
+/// against the target's sealed column exactly as an `Edb` anchor
+/// resolves against its stored field ([`Context::check_atoms`]).
+pub(super) enum InteriorSignatures<'a> {
+    /// CQ: interiors only. Rec lookup is unrepresentable.
+    Cq {
+        /// Already-sealed interiors in declaration order. Interior *i*
+        /// types against `&sealed[..i]`.
+        interiors: &'a [Signature],
+        /// The reading interior's id, if this rule-list is an interior
+        /// ([`ValidationError::InteriorNotPrior`]); `None` for main
+        /// (out-of-range is [`ValidationError::UnknownInterior`]).
+        reader: Option<InteriorId>,
+        /// `interiors.len()` on a CQ — the well-formedness screen's
+        /// address space.
+        derived_count: usize,
+    },
+    /// Reach interiors and rec-base: rec occupies
+    /// `InteriorId(interiors.len())` in the address space but its
+    /// signature is not yet sealed.
+    ReachOpen {
+        interiors: &'a [Signature],
+        reader: Option<InteriorId>,
+        /// `interiors.len() + 1` on a Reach query.
+        derived_count: usize,
+    },
+    /// Reach rec-arms and main: rec signature sealed by value.
+    ReachSealed {
+        interiors: &'a [Signature],
+        rec: &'a Signature,
+        /// `interiors.len() + 1` on a Reach query.
+        derived_count: usize,
+    },
 }
 
 impl InteriorSignatures<'_> {
+    fn interiors(&self) -> &[Signature] {
+        match self {
+            Self::Cq { interiors, .. }
+            | Self::ReachOpen { interiors, .. }
+            | Self::ReachSealed { interiors, .. } => interiors,
+        }
+    }
+
+    fn derived_count(&self) -> usize {
+        match self {
+            Self::Cq { derived_count, .. }
+            | Self::ReachOpen { derived_count, .. }
+            | Self::ReachSealed { derived_count, .. } => *derived_count,
+        }
+    }
+
+    fn reader(&self) -> Option<InteriorId> {
+        match self {
+            Self::Cq { reader, .. } | Self::ReachOpen { reader, .. } => *reader,
+            Self::ReachSealed { .. } => None,
+        }
+    }
+
     /// The binding-independent source screen: the target names a real
     /// derived table (a zero-binding `Interior` gate never reaches
     /// [`InteriorSignatures::column`], so the screen runs per atom).
@@ -313,10 +352,10 @@ impl InteriorSignatures<'_> {
     /// when `j < derived_count`).
     pub(super) fn screen(&self, atom: usize, interior: InteriorId) -> Result<(), ValidationError> {
         let index = usize::try_from(interior.0).expect("64-bit usize");
-        if index >= self.derived_count {
+        if index >= self.derived_count() {
             return Err(ValidationError::UnknownInterior { atom, interior });
         }
-        if let Some(at) = self.reader {
+        if let Some(at) = self.reader() {
             let at_idx = usize::try_from(at.0).expect("64-bit usize");
             if index >= at_idx {
                 return Err(ValidationError::InteriorNotPrior { interior, at });
@@ -325,16 +364,22 @@ impl InteriorSignatures<'_> {
         Ok(())
     }
 
-    /// The sealed predicate for a derived id that [`Self::screen`] has
+    /// The sealed signature for a derived id that [`Self::screen`] has
     /// already admitted. Rec base never looks up the rec slot (self in
-    /// base is a roster refusal).
+    /// base is a roster refusal). Rec lookup is unrepresentable on
+    /// [`Self::Cq`] and [`Self::ReachOpen`].
     fn lookup(&self, interior: InteriorId) -> &Signature {
         let index = usize::try_from(interior.0).expect("64-bit usize");
-        if index < self.interiors.len() {
-            &self.interiors[index]
+        let interiors = self.interiors();
+        if index < interiors.len() {
+            &interiors[index]
         } else {
-            self.rec
-                .expect("screen admitted this id; rec base never reads self")
+            match self {
+                Self::ReachSealed { rec, .. } => rec,
+                Self::Cq { .. } | Self::ReachOpen { .. } => {
+                    unreachable!("screen admitted this id; rec lookup only after the rec is sealed")
+                }
+            }
         }
     }
 
@@ -620,7 +665,7 @@ impl ValidatedQuery {
     }
 
     /// The answer head's sealed signature — [`ValidatedMain`]'s
-    /// predicate. Downstream result typing reads this, never an
+    /// signature. Downstream result typing reads this, never an
     /// interior or rec signature.
     #[must_use]
     pub fn signature(&self) -> &Signature {
@@ -860,10 +905,9 @@ enum TypeSlot {
     /// field's exact family member, width included) or `element`-typed
     /// (membership; a point carries no width).
     Bivalent {
-        element: IntervalElement,
-        /// The anchoring field's width: `None` general, `Some(w)`
-        /// fixed — part of the equality reading's type.
-        width: Option<u64>,
+        /// The anchoring field's interval type — [`ValueType::Interval`]
+        /// or [`ValueType::FixedInterval`].
+        interval: ValueType,
     },
 }
 

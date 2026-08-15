@@ -107,7 +107,6 @@ fn side_selected(relation: &str, projection: &[&str], field: &str, handle: &str)
 fn everything_spec() -> SchemaSpec {
     let interval_u64 = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     SchemaSpec {
         relations: vec![
@@ -200,7 +199,6 @@ fn everything_spec() -> SchemaSpec {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
-                                width: None,
                             },
                         )
                     },
@@ -208,9 +206,9 @@ fn everything_spec() -> SchemaSpec {
                         newtype: Some("Lease".into()),
                         ..field(
                             "lease",
-                            ValueType::Interval {
+                            ValueType::FixedInterval {
                                 element: IntervalElement::U64,
-                                width: Some(7),
+                                width: 7,
                             },
                         )
                     },
@@ -414,7 +412,6 @@ fn seam_spec() -> SchemaSpec {
                         "window",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                     field("tag", ValueType::FixedBytes { len: 2 }),
@@ -466,23 +463,21 @@ fn seam_spec() -> SchemaSpec {
                         "span_u",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                     field(
                         "span_i",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                     FieldSpec {
                         newtype: Some("LeaseI".into()),
                         ..field(
                             "lease",
-                            ValueType::Interval {
+                            ValueType::FixedInterval {
                                 element: IntervalElement::I64,
-                                width: Some(3),
+                                width: 3,
                             },
                         )
                     },

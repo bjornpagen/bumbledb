@@ -75,9 +75,8 @@ impl CountingCounters {
                 let Role::Eliminated(statement) = &occurrence.role else {
                     return None;
                 };
-                let crate::ir::AtomSource::Edb(relation) = occurrence.source else {
-                    debug_assert!(false, "eliminated occurrences are stored relations");
-                    return None;
+                let crate::plan::fj::OccBind::Edb(relation) = occurrence.occ_bind() else {
+                    unreachable!("eliminated occurrences are stored relations");
                 };
                 Some(EliminatedOccurrence {
                     occurrence: occurrence.occ_id.0,
@@ -131,7 +130,10 @@ impl CountingCounters {
             })
             .collect();
         RuleStats {
-            distinct_bindings: plan.distinct_witness().is_some(),
+            distinct_bindings: matches!(
+                plan.distinctness(),
+                crate::plan::fj::Distinctness::Proven(_)
+            ),
             nodes,
             eliminated,
             folded,

@@ -101,11 +101,7 @@ struct CacheInner {
 /// anything else that can panic stay outside the lock.
 pub struct ImageCache {
     inner: Mutex<CacheInner>,
-    /// Closed relation ids in declaration order — the index is the slot
-    /// into `closed`. Ordinary relations are absent; a foreign id misses
-    /// the search.
-    closed_ids: Box<[RelationId]>,
-    /// Synthesized closed-relation images, indexed by closed slot —
+    /// Synthesized closed-relation images, keyed only for closed ids —
     /// keyed OUTSIDE the generation map (`docs/architecture/50-storage.md`
     /// § virtual relations): a closed relation's storage is the theory
     /// and its "generation" is the fingerprint, so each slot builds on
@@ -113,16 +109,8 @@ pub struct ImageCache {
     /// [`ImageCache::advance`] (and its lineage-disabled twin
     /// [`ImageCache::evict_older_than`]) skips it by construction,
     /// because it is not in the generation-keyed map at all.
-    closed: Box<[OnceLock<Arc<RelationImage>>]>,
+    closed: HashMap<RelationId, OnceLock<Arc<RelationImage>>>,
     counters: stats::CacheCounters,
-}
-
-impl ImageCache {
-    /// The synthesized-image slot of a closed `rel`.
-    fn closed_slot(&self, rel: RelationId) -> Option<&OnceLock<Arc<RelationImage>>> {
-        let slot = self.closed_ids.iter().position(|&id| id == rel)?;
-        Some(&self.closed[slot])
-    }
 }
 
 #[cfg(feature = "trace")]

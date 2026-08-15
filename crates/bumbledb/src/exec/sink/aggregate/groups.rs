@@ -97,7 +97,7 @@ impl AggregateSink {
                     SinkSpec::Var { .. } | SinkSpec::Pack { .. } => {}
                 }
             }
-            if self.pack.is_some() {
+            if self.pack_slot().is_some() {
                 self.init_pack_group(group_idx);
             }
         }

@@ -2,6 +2,7 @@ use super::{KeyProbePlan, KeyProbeVar};
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
+use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
 use bumbledb_theory::schema::FieldId;
 
@@ -84,11 +85,13 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         })
     };
 
-    // An `Interior` occurrence never key-probes: a predicate has no `U`
+    // An `Interior` occurrence never key-probes: a derived table has no `U`
     // determinants and no `M` entries — its storage is the fixpoint
     // driver's transient image — so an `Interior`-reading rule always keeps
     // the Free Join path.
-    let relation_id = occurrence.source.edb()?;
+    let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
+        return None;
+    };
     let relation = schema.relation(relation_id);
     // A closed relation has no `U` determinants and no `M` entries — its
     // storage is the theory (`docs/architecture/50-storage.md` § virtual

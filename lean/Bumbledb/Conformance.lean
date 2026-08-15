@@ -50,8 +50,9 @@ the shared slot array, and `dnf_rekey_transparent`
 lowering equals the written rule's aggregate denotation, with
 `dnf_rekey_stream` the stream-level spec the executable dedup meets.
 The interchange format carries the serializer's DERIVATION MARK
-(`"dnf": true` on the query — the rule list is one written rule's DNF
-lowering); `dnfBindings` below re-keys marked sets on the shared
+(`"dnf": true` beside the tagged `cq` payload — the rule list is one
+written rule's DNF lowering); `dnfBindings` below re-keys marked sets
+on the shared
 width, so the OR+aggregate case class evaluates the written rule's
 own fold domain (R2, discharged). The serializer also carries each
 rule's SURFACE WIDTH (`"width"` — the written rule's variable count,
@@ -183,9 +184,9 @@ structure CRule where
   087). Absent in a case file: the decoded rule's own ceiling. -/
   width : Option Nat
 
-/-- One decoded query: a `.cq` body (empty interiors) plus the head-shape
-row, R2 `dnf` mark, and optional surface width that `Query` does not
-carry. -/
+/-- One decoded query-case: the `cq` arm (empty interiors) plus the
+head-shape row, R2 `dnf` mark, and optional surface width that
+`Query` does not carry. -/
 structure CQuery where
   rules : List CRule
   /-- The serializer's derivation mark (`"dnf": true`): the rule list
@@ -386,17 +387,14 @@ def decodeCondition : Nat → Json → Except String Query.Condition
       return .or (← (← cs.getArr?).toList.mapM (decodeCondition fuel))
     .error "unknown condition node"
 
-/-- One atom: `relation` (seeded) or `edb`/`interior` (reach) spellings
-of the one `AtomSource`. -/
+/-- One atom: `edb` or `interior` — one spelling of `AtomSource`. -/
 def decodeAtom (j : Json) : Except String Query.Atom := do
   let source : Query.AtomSource ←
-    if let some r := objKey? j "relation" then
-      pure (.edb ⟨← r.getNat?⟩)
-    else if let some r := objKey? j "edb" then
+    if let some r := objKey? j "edb" then
       pure (.edb ⟨← r.getNat?⟩)
     else if let some c := objKey? j "interior" then
       pure (.interior ⟨← c.getNat?⟩)
-    else .error "atom expects relation, edb, or interior"
+    else .error "atom expects edb or interior"
   let bindings ← (← (← j.getObjVal? "bindings").getArr?).toList.mapM
     fun pair => do
       match (← pair.getArr?).toList with
@@ -441,13 +439,42 @@ def decodeRule (j : Json) : Except String CRule := do
   return { finds, body := { finds := [], atoms, negated, conditions },
            width := (natKey j "width").toOption }
 
+/-- The tagged Query JSON: `{ "cq": payload } | { "reach": payload }`.
+Derivation marks (`dnf`) sit beside the payload. -/
+inductive QueryTag where
+  | cq (payload : Json)
+  | reach (payload : Json)
+
+/-- One tagged encoding of `Query.cq | Query.reach`. No `rec: null`,
+no omitted-`rec` constructor. -/
+def taggedQueryPayload (j : Json) : Except String QueryTag :=
+  match objKey? j "cq", objKey? j "reach" with
+  | some p, none => .ok (.cq p)
+  | none, some p => .ok (.reach p)
+  | some _, some _ => .error "query carries both cq and reach tags"
+  | none, none => .error "query expects a cq or reach tag"
+
+/-- JSON `head` is the find list (required). Lean sizes heads from
+`finds.length`; the name `arity` is unrepresentable. -/
+def decodeHead (j : Json) : Except String Unit := do
+  let _ ← (← j.getObjVal? "head").getArr?
+  return ()
+
+/-- Query-case documents are the `cq` arm. `dnf` sits beside the
+payload; `width` stays on each rule. -/
 def decodeQuery (j : Json) : Except String CQuery := do
-  let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM decodeRule
-  let dnf :=
-    match objKey? j "dnf" with
-    | some b => b.getBool?.toOption.getD false
-    | none => false
-  return { rules, dnf }
+  match ← taggedQueryPayload j with
+  | .reach _ => .error "query-case document is the cq arm"
+  | .cq payload =>
+    decodeHead payload
+    let _ ← (← payload.getObjVal? "interiors").getArr?
+    let rules ← (← (← payload.getObjVal? "rules").getArr?).toList.mapM
+      decodeRule
+    let dnf :=
+      match objKey? j "dnf" with
+      | some b => b.getBool?.toOption.getD false
+      | none => false
+    return { rules, dnf }
 
 /-- One positional parameter. -/
 def decodeParam (j : Json) : Except String PVal := do
@@ -627,23 +654,51 @@ def dnfBindings (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
   dedupRows (rules.flatMap fun r =>
     (ruleStates h W ρ r.body).map (fullRow n))
 
-/-! The fold-domain keys, decode-pinned: the derivation mark and the
-surface width read when present and default when absent — a corpus
-file built before the keys existed decodes unchanged. -/
+/-! Tagged Query decode, pinned: `cq` payload carries `interiors` /
+`head` / `rules`; `dnf` sits beside the tag; the product (`rec: null`,
+`arity`, untagged `rules`) is unrepresentable. -/
 
 #guard ((decodeQuery (Json.mkObj [
-    ("rules", Json.arr #[Json.mkObj [
-      ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
-      ("negated", Json.arr #[]), ("conditions", Json.arr #[]),
-      ("width", Json.num 3)]]),
+    ("cq", Json.mkObj [
+      ("interiors", Json.arr #[]),
+      ("head", Json.arr #[]),
+      ("rules", Json.arr #[Json.mkObj [
+        ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
+        ("negated", Json.arr #[]), ("conditions", Json.arr #[]),
+        ("width", Json.num 3)]])]),
     ("dnf", Json.bool true)])).toOption.map
   fun q => (q.dnf, q.rules.map ruleWidth)) == some (true, [3])
 
 #guard ((decodeQuery (Json.mkObj [
-    ("rules", Json.arr #[Json.mkObj [
-      ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
-      ("negated", Json.arr #[]), ("conditions", Json.arr #[])]])])).toOption.map
+    ("cq", Json.mkObj [
+      ("interiors", Json.arr #[]),
+      ("head", Json.arr #[]),
+      ("rules", Json.arr #[Json.mkObj [
+        ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
+        ("negated", Json.arr #[]), ("conditions", Json.arr #[])]])])])).toOption.map
   fun q => (q.dnf, q.rules.map ruleWidth)) == some (false, [0])
+
+#guard !(decodeQuery (Json.mkObj [
+    ("rules", Json.arr #[]), ("rec", Json.null),
+    ("arity", Json.num 0)])).isOk
+
+#guard (decodeAtom (Json.mkObj [
+    ("edb", Json.num 1), ("bindings", Json.arr #[])])).isOk
+
+#guard !(decodeAtom (Json.mkObj [
+    ("relation", Json.num 1), ("bindings", Json.arr #[])])).isOk
+
+#guard (match taggedQueryPayload (Json.mkObj [
+    ("reach", Json.mkObj [
+      ("interiors", Json.arr #[]), ("head", Json.arr #[]),
+      ("rec", Json.mkObj []), ("rules", Json.arr #[])])]) with
+  | .ok (.reach _) => true
+  | _ => false)
+
+#guard (match taggedQueryPayload (Json.mkObj [
+    ("interiors", Json.arr #[]), ("rec", Json.null)]) with
+  | .error _ => true
+  | _ => false)
 
 /-- A row's value at a variable position. -/
 def rowGet (row : List Value) (v : Query.VarId) : Value :=

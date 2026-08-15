@@ -1063,13 +1063,7 @@
 [{"u64":6},{"u64":3}],
 [{"u64":7},{"u64":3}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":3}],
- "atoms":[{"relation":4,"bindings":[[4,{"var":0}],[2,{"var":1}]]},{"relation":1,"bindings":[[0,{"var":1}],[1,{"var":2}],[2,{"var":4}]]},{"relation":0,"bindings":[[0,{"var":2}],[1,{"var":3}]]},{"relation":6,"bindings":[]}],
- "negated":[{"relation":7,"bindings":[]}],
- "conditions":[{"cmp":{"op":"ne","lhs":{"var":4},"rhs":{"lit":{"u64":1}}}},{"cmp":{"op":"le","lhs":{"var":2},"rhs":{"lit":{"u64":0}}}}],
- "width":5}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":3}],"atoms":[{"edb":4,"bindings":[[4,{"var":0}],[2,{"var":1}]]},{"edb":1,"bindings":[[0,{"var":1}],[1,{"var":2}],[2,{"var":4}]]},{"edb":0,"bindings":[[0,{"var":2}],[1,{"var":3}]]},{"edb":6,"bindings":[]}],"negated":[{"edb":7,"bindings":[]}],"conditions":[{"cmp":{"op":"ne","lhs":{"var":4},"rhs":{"lit":{"u64":1}}}},{"cmp":{"op":"le","lhs":{"var":2},"rhs":{"lit":{"u64":0}}}}],"width":5}]}},
 "params":[],
 "answers":[]
 }

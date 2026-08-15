@@ -1,7 +1,7 @@
 use super::oracle::{LARGE_BOUNDARY, ParamAnchor, param_anchors, u64_domain};
 use super::target::{self, Domains};
 use super::*;
-use bumbledb::Value;
+use bumbledb::{Query, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::translate::translate;
@@ -341,7 +341,7 @@ fn generated_string_literals_are_nul_free() {
     let mut rng = Rng::new(SEED);
     for _ in 0..N {
         let query = random_query(&mut rng, CFG);
-        for rule in &query.rules {
+        for rule in query.rules() {
             for atom in rule.atoms.iter().chain(&rule.negated) {
                 for (_, term) in &atom.bindings {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
@@ -585,7 +585,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
             Ok(()) => {
                 tally.sqlite_expressible += 1;
                 let translated = translate(&query, target::schema(), &[]).expect("translates");
-                let arity = query.head.len();
+                let arity = query.head().len();
                 let mut statement = conn.prepare(&translated.sql).expect("prepare");
                 let rows: std::collections::BTreeSet<crate::naive::Tuple> = statement
                     .query_map([], |row| {
@@ -610,7 +610,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
 
         if variant == RecursiveVariant::EmptyDelta {
             let mut base_only = query.clone();
-            if let Some(rec) = &mut base_only.rec {
+            if let Query::Reach { rec, .. } = &mut base_only {
                 rec.rec.clear();
             }
             let base_answers = naive
@@ -697,9 +697,9 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
         Atom, AtomSource, FindTerm, HeadTerm, InteriorId, ParamId, Query, Rec, Rule, Term, VarId,
     };
 
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -731,7 +731,7 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

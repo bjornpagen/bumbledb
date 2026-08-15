@@ -140,31 +140,57 @@ impl ClosedRefs {
 pub fn render(schema: &Schema, query: &Query) -> String {
     let refs = ClosedRefs::build(schema);
     let mut out = String::new();
-    for (id, interior) in query.interiors.iter().enumerate() {
+    match query {
+        Query::Cq {
+            interiors, rules, ..
+        } => {
+            render_interiors(&mut out, schema, &refs, interiors);
+            render_main(&mut out, schema, &refs, rules);
+        }
+        Query::Reach {
+            interiors,
+            rec,
+            rules,
+            ..
+        } => {
+            render_interiors(&mut out, schema, &refs, interiors);
+            for rule in rec.base.iter().chain(&rec.rec) {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str("rec");
+                render_rule(&mut out, schema, &refs, rule);
+            }
+            render_main(&mut out, schema, &refs, rules);
+        }
+    }
+    out
+}
+
+fn render_interiors(
+    out: &mut String,
+    schema: &Schema,
+    refs: &ClosedRefs,
+    interiors: &[crate::ir::Interior],
+) {
+    for (id, interior) in interiors.iter().enumerate() {
         for rule in &interior.rules {
             if !out.is_empty() {
                 out.push('\n');
             }
             let _ = write!(out, "interior {id}");
-            render_rule(&mut out, schema, &refs, rule);
+            render_rule(out, schema, refs, rule);
         }
     }
-    if let Some(rec) = &query.rec {
-        for rule in rec.base.iter().chain(&rec.rec) {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str("rec");
-            render_rule(&mut out, schema, &refs, rule);
-        }
-    }
-    for rule in &query.rules {
+}
+
+fn render_main(out: &mut String, schema: &Schema, refs: &ClosedRefs, rules: &[Rule]) {
+    for rule in rules {
         if !out.is_empty() {
             out.push('\n');
         }
-        render_rule(&mut out, schema, &refs, rule);
+        render_rule(out, schema, refs, rule);
     }
-    out
 }
 
 /// One rule as `(head) | body;`.
@@ -245,8 +271,8 @@ fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
 /// reads as membership under the same bivalent typing rule the IR
 /// binding carries); a param set is membership, `field in ?N`. A literal
 /// word at a closed-reference position prints its handle (module doc).
-/// A predicate atom whose bindings are dense, in-order, and
-/// variable-only renders in the ordered bare form (`p0(v1, v2)`) — the
+/// A derived-table atom whose bindings are dense, in-order, and
+/// variable-only renders in the ordered bare form (`interior 0(v1, v2)`) — the
 /// notation's one dense spelling; sparse positions and selections keep
 /// the indexed `i:`/selection spellings.
 fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> String {
@@ -503,15 +529,15 @@ fn param_name(out: &mut String, param: ParamId) {
     let _ = write!(out, "?{}", param.0);
 }
 
-/// An atom source: the relation's name for `Edb`; the synthesized
-/// `p{id}` for `Interior` (the `v{id}`/`?{id}` convention extended —
+/// An atom source: the relation's name for `Edb`; `interior {id}` for
+/// `Interior` (the same spelling the rule prefix already emits —
 /// interior names are a text-layer sidecar the IR never carries; the
 /// macro's names resolve locally and lower to bare `InteriorId`s).
 fn source_name(out: &mut String, schema: &Schema, source: crate::ir::AtomSource) {
     match source {
         crate::ir::AtomSource::Edb(relation) => relation_name(out, schema, relation),
-        crate::ir::AtomSource::Interior(pred) => {
-            let _ = write!(out, "p{}", pred.0);
+        crate::ir::AtomSource::Interior(id) => {
+            let _ = write!(out, "interior {}", id.0);
         }
     }
 }

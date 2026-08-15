@@ -55,7 +55,6 @@ fn theory() -> SchemaDescriptor {
                         "at",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                     field("status", ValueType::U64),
@@ -277,7 +276,6 @@ fn a_selection_carrying_theory_survives_the_exhume_round_trip() {
                     "at",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 ),
             ],

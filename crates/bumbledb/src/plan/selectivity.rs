@@ -12,6 +12,7 @@ use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp;
 use crate::ir::normalize::Occurrence;
+use crate::plan::fj::OccBind;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::Schema;
@@ -131,37 +132,47 @@ pub(crate) fn occurrence_stats(
     // interiors, rec-accumulated reads, and main's finished-rec reads);
     // each bound variable's distinct count is the floor itself (a table
     // of N rows has at most N distinct words per column).
-    if let Some(role) = occurrence.bind {
-        let floor = match role {
-            crate::ir::normalize::BindRole::RecDelta => DELTA_PLANNING_ROWS,
-            crate::ir::normalize::BindRole::Finished | crate::ir::normalize::BindRole::RecAcc => {
-                ACCUMULATED_PLANNING_ROWS
-            }
+    match OccBind::of_occurrence(occurrence) {
+        OccBind::RecDelta(_) => {
+            let floor = DELTA_PLANNING_ROWS.max(1);
+            Ok(OccStats {
+                occ_id: occurrence.occ_id,
+                rows: floor,
+                var_distincts: occurrence
+                    .vars
+                    .iter()
+                    .map(|(_, var)| (*var, floor))
+                    .collect(),
+            })
         }
-        .max(1);
-        return Ok(OccStats {
-            occ_id: occurrence.occ_id,
-            rows: floor,
-            var_distincts: occurrence
-                .vars
-                .iter()
-                .map(|(_, var)| (*var, floor))
-                .collect(),
-        });
+        OccBind::Finished(_) | OccBind::RecAcc(_) => {
+            let floor = ACCUMULATED_PLANNING_ROWS.max(1);
+            Ok(OccStats {
+                occ_id: occurrence.occ_id,
+                rows: floor,
+                var_distincts: occurrence
+                    .vars
+                    .iter()
+                    .map(|(_, var)| (*var, floor))
+                    .collect(),
+            })
+        }
+        OccBind::Edb(relation) => {
+            let image = cache.peek(txn, schema, relation)?;
+            let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
+            for (field, var) in &occurrence.vars {
+                let distinct = distinct_of(txn, schema, relation, *field, image.as_deref(), rows)?;
+                var_distincts.push((*var, distinct));
+            }
+            let estimate =
+                occurrence_estimate(txn, schema, occurrence, relation, image.as_deref(), rows)?;
+            Ok(OccStats {
+                occ_id: occurrence.occ_id,
+                rows: estimate,
+                var_distincts,
+            })
+        }
     }
-    let relation = occurrence.source.edb().expect("bind None is EDB");
-    let image = cache.peek(txn, relation)?;
-    let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
-    for (field, var) in &occurrence.vars {
-        let distinct = distinct_of(txn, schema, relation, *field, image.as_deref(), rows)?;
-        var_distincts.push((*var, distinct));
-    }
-    let estimate = occurrence_estimate(txn, schema, occurrence, relation, image.as_deref(), rows)?;
-    Ok(OccStats {
-        occ_id: occurrence.occ_id,
-        rows: estimate,
-        var_distincts,
-    })
 }
 
 /// The assumed distinct-match count of one selection: 1 for every scalar

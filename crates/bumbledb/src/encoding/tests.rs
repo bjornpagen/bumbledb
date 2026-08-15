@@ -115,11 +115,9 @@ fn mixed_layout() -> FactLayout {
         TypeDesc::FixedBytes { len: 12 },
         TypeDesc::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
         TypeDesc::Interval {
             element: IntervalElement::I64,
-            width: None,
         },
     ])
 }
@@ -228,19 +226,17 @@ fn append_key_field_matches_determinant_image_slices() {
         TypeDesc::FixedBytes { len: 12 },
         TypeDesc::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
         TypeDesc::Interval {
             element: IntervalElement::I64,
-            width: None,
         },
-        TypeDesc::Interval {
+        TypeDesc::FixedInterval {
             element: IntervalElement::U64,
-            width: Some(5),
+            width: 5,
         },
-        TypeDesc::Interval {
+        TypeDesc::FixedInterval {
             element: IntervalElement::I64,
-            width: Some(3),
+            width: 3,
         },
     ]);
     let values = [
@@ -790,13 +786,7 @@ fn fact_hash_is_full_32_byte_blake3() {
 
 /// A one-fixed-field layout per element domain, width `w`.
 fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
-    FactLayout::new(&[
-        TypeDesc::U64,
-        TypeDesc::Interval {
-            element,
-            width: Some(width),
-        },
-    ])
+    FactLayout::new(&[TypeDesc::U64, TypeDesc::FixedInterval { element, width }])
 }
 
 #[test]

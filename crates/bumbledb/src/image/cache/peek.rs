@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::image::RelationImage;
+use crate::schema::{RelationBody, Schema};
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
 
@@ -22,11 +23,23 @@ impl ImageCache {
     /// # Panics
     ///
     /// Only on a poisoned cache mutex (a prior panic while holding it).
-    pub fn peek(&self, txn: &ReadTxn<'_>, rel: RelationId) -> Result<Option<Arc<RelationImage>>> {
+    pub fn peek(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &Schema,
+        rel: RelationId,
+    ) -> Result<Option<Arc<RelationImage>>> {
         // A closed relation's slot, once synthesized, is resident forever
         // — same never-builds contract, and no generation to read.
-        if let Some(slot) = self.closed_slot(rel) {
-            return Ok(slot.get().map(Arc::clone));
+        match schema.relation(rel).body() {
+            RelationBody::Closed { .. } => {
+                let slot = self
+                    .closed
+                    .get(&rel)
+                    .expect("Closed body implies a closed cache slot");
+                return Ok(slot.get().map(Arc::clone));
+            }
+            RelationBody::Ordinary { .. } => {}
         }
         let generation = txn.generation()?;
         let inner = self.inner.lock().expect("cache mutex");

@@ -154,7 +154,9 @@ fn sql_type(ty: &ValueType) -> &'static str {
         ValueType::Bool | ValueType::U64 | ValueType::I64 => "INTEGER",
         ValueType::String => "TEXT",
         ValueType::FixedBytes { .. } => "BLOB",
-        ValueType::Interval { .. } => unreachable!("the lawful world declares scalar fields only"),
+        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+            unreachable!("the lawful world declares scalar fields only")
+        }
     }
 }
 

@@ -213,11 +213,10 @@ fn value_type(cur: &mut Cursor<'_>) -> Result<ValueType, &'static str> {
         5 => ValueType::FixedBytes { len: cur.u16()? },
         6 => ValueType::Interval {
             element: element(cur)?,
-            width: None,
         },
-        7 => ValueType::Interval {
+        7 => ValueType::FixedInterval {
             element: element(cur)?,
-            width: Some(cur.u64()?),
+            width: cur.u64()?,
         },
         _ => return Err("descriptor value-type tag"),
     })
@@ -370,10 +369,7 @@ fn literal(cur: &mut Cursor<'_>, desc: TypeDesc) -> Result<Value, &'static str> 
             }
             Value::FixedBytes(raw.into())
         }
-        TypeDesc::Interval {
-            element,
-            width: None,
-        } => {
+        TypeDesc::Interval { element } => {
             let (start, end) = (cur.word()?, cur.word()?);
             match element {
                 IntervalElement::U64 => Value::IntervalU64(
@@ -392,10 +388,7 @@ fn literal(cur: &mut Cursor<'_>, desc: TypeDesc) -> Result<Value, &'static str> 
                 ),
             }
         }
-        TypeDesc::Interval {
-            element,
-            width: Some(width),
-        } => {
+        TypeDesc::FixedInterval { element, width } => {
             let (start_word, end_word) =
                 crate::encoding::decode_fixed_interval_start(cur.word()?, width)
                     .map_err(|_| "descriptor fixed interval literal start")?;
@@ -504,7 +497,6 @@ mod tests {
                             "span",
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                                width: None,
                             },
                         ),
                     ],
@@ -538,14 +530,13 @@ mod tests {
                             "at",
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                                width: None,
                             },
                         ),
                         field(
                             "lease",
-                            ValueType::Interval {
+                            ValueType::FixedInterval {
                                 element: IntervalElement::I64,
-                                width: Some(7),
+                                width: 7,
                             },
                         ),
                         field("balance", ValueType::I64),
@@ -562,7 +553,6 @@ mod tests {
                             "busy",
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                                width: None,
                             },
                         ),
                     ],

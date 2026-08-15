@@ -36,9 +36,9 @@ fn ladder_schema() -> SchemaDescriptor {
                     field("group", ValueType::U64),
                     field(
                         "lane",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: IntervalElement::U64,
-                            width: Some(5),
+                            width: 5,
                         },
                     ),
                 ],
@@ -52,7 +52,6 @@ fn ladder_schema() -> SchemaDescriptor {
                         "extent",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -237,7 +236,6 @@ fn playlist_schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -249,9 +247,9 @@ fn playlist_schema() -> SchemaDescriptor {
                     field("playlist", ValueType::U64),
                     field(
                         "slot",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: IntervalElement::U64,
-                            width: Some(1),
+                            width: 1,
                         },
                     ),
                     field("track", ValueType::U64),

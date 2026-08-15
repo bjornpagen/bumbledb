@@ -51,7 +51,6 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                     field("reference", ValueType::U64),
@@ -481,9 +480,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // the spanning seen-set is the union — 40-execution's rule
         // loop, differentially pinned against the model's set union).
         (
-            Query {
+            Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: vec![HeadTerm::Var],
                 rules: vec![
                     Rule {
@@ -514,9 +512,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // booking matched by both rules folds once — the union fold,
         // 20-query-ir § aggregation).
         (
-            Query {
+            Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: vec![
                     HeadTerm::Aggregate(HeadOp::Sum),
                     HeadTerm::Aggregate(HeadOp::Count),
@@ -549,9 +546,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // of room ?0 ∪ references >= ?0 (params bind once; every rule
         // reads the shared slot).
         (
-            Query {
+            Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: vec![HeadTerm::Var],
                 rules: vec![
                     Rule {

@@ -12,8 +12,8 @@ import { parseQueryIr } from "#query/parse-ir.ts"
 /** A shape-legal one-var query over relation 0. */
 function plainIr(): QueryIr {
 	return {
+		kind: "cq",
 		interiors: [],
-		rec: null,
 		head: [{ kind: "var" }],
 		rules: [
 			{
@@ -30,12 +30,13 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 	test("brands a shape-legal QueryIr", function brands() {
 		const parsed = parseQueryIr(plainIr())
 		assert.equal(parsed.rules.length, 1)
-		assert.equal(parsed.rec, null)
+		assert.equal(parsed.kind, "cq")
 	})
 
 	test("rejects empty main with populated interiors", function emptyMain() {
 		assert.throws(function emptyMainRules() {
 			parseQueryIr({
+				kind: "cq",
 				interiors: [
 					{
 						head: [{ kind: "var" }],
@@ -49,7 +50,6 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 						]
 					}
 				],
-				rec: null,
 				head: [{ kind: "var" }],
 				rules: []
 			})
@@ -59,6 +59,7 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 	test("rejects rec with an empty base", function emptyRecBase() {
 		assert.throws(function emptyBase() {
 			parseQueryIr({
+				kind: "reach",
 				interiors: [],
 				rec: {
 					head: [{ kind: "var" }],
@@ -88,8 +89,8 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 	test("rejects Count-with-over", function countWithOver() {
 		assert.throws(function countOver() {
 			parseQueryIr({
+				kind: "cq",
 				interiors: [],
-				rec: null,
 				head: [{ kind: "aggregate", op: "count" }],
 				rules: [
 					{

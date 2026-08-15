@@ -180,9 +180,9 @@ pub fn closure_query() -> Query {
         source: AtomSource::Edb(ids::EDGE),
         bindings: vec![(ids::edge::SRC, src), (ids::edge::DST, dst)],
     };
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -202,7 +202,7 @@ pub fn closure_query() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

@@ -22,6 +22,7 @@ import type {
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
+	QueryIr,
 	QueryParam,
 	StatementKindTag,
 	TaggedValue,
@@ -61,6 +62,7 @@ const ROSTERS = {
 	atomSource: ["edb", "interior"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	condition: ["leaf", "and", "or"],
+	query: ["cq", "reach"],
 	direction: ["sourceUnsatisfied", "targetRequired"],
 	param: ["set"]
 } as const
@@ -85,6 +87,7 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.atomSource)[number], AtomSourceIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.cmpOp)[number], CmpOpIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.condition)[number], ConditionTreeIr["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.query)[number], QueryIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.direction)[number], Extract<Violation, { readonly kind: "containment" }>["direction"]>>,
 	Expect<Equal<(typeof ROSTERS.param)[number], Exclude<QueryParam["kind"], TaggedValue["kind"]>>>,
 	Expect<Equal<(typeof ROSTERS.value)[number], ValueSpec["kind"]>>

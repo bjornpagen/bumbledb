@@ -1,6 +1,7 @@
 use super::{AllenKeep, MAX_DISTINCT_VARS, OccInfo, OccStats};
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, Occurrence};
+use crate::plan::fj::OccBind;
 use crate::schema::Schema;
 
 /// Densifies the participating occurrences into bitset form, resolving stats
@@ -81,9 +82,9 @@ pub(super) fn densify(
                 crate::plan::pinned_fields(occurrence)
                     .map(|(field, _)| field)
                     .collect();
-            let key_var_sets = match occurrence.source.edb() {
-                None => Vec::new(),
-                Some(stored) => schema
+            let key_var_sets = match OccBind::of_occurrence(occurrence) {
+                OccBind::Finished(_) | OccBind::RecDelta(_) | OccBind::RecAcc(_) => Vec::new(),
+                OccBind::Edb(stored) => schema
                     .relation(stored)
                     .keys()
                     .iter()

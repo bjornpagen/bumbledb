@@ -133,7 +133,7 @@ fn lowered_rule_set_union_equals_naive_tree_evaluation() {
         let direct = db.query(&query, &[]).expect("no aggregates: no overflow");
 
         let mut union: BTreeSet<Tuple> = BTreeSet::new();
-        for lowered in ir::distribute(&query.rules[0]) {
+        for lowered in ir::distribute(&query.rules()[0]) {
             let ir::LoweredRule {
                 finds,
                 atoms,
@@ -175,7 +175,6 @@ fn interval_schema() -> SchemaDescriptor {
                     "span",
                     ValueType::Interval {
                         element: bumbledb::schema::IntervalElement::U64,
-                        width: None,
                     },
                 ),
             ],
@@ -293,7 +292,7 @@ fn distribution_preserves_the_kleene_verdict() {
         let direct = db.query(&query, &[]);
 
         let distributed = ConditionTree::Or(
-            ir::distribute(&query.rules[0])
+            ir::distribute(&query.rules()[0])
                 .into_iter()
                 .map(|lowered| {
                     ConditionTree::And(

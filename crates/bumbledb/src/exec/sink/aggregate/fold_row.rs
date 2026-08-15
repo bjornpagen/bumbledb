@@ -12,14 +12,14 @@ impl AggregateSink {
         // subtraction into the parsed spec's derived word.
         // A poisoned sink folds nothing more — the execution's answer is
         // the typed `MeasureOfRay`, and the error path owes no speed.
-        if self.ray.is_some() {
+        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
             return;
         }
         for i in 0..self.measures.len() {
             let (derived, slot) = self.measures[i];
             let (start, end) = (self.binding_scratch[slot], self.binding_scratch[slot + 1]);
             let Some(duration) = measure(start, end) else {
-                self.ray = Some([start, end]);
+                self.ray = crate::exec::sink::RayPoison::Hit([start, end]);
                 return;
             };
             self.binding_scratch[derived] = duration;
@@ -45,7 +45,7 @@ impl AggregateSink {
         });
         let group_idx = self.probe_group();
 
-        if let Some(slot) = self.pack {
+        if let Some(slot) = self.pack_slot() {
             // One coalescing-fold step: append the claim raw — identical
             // and overlapping claims collapse in the finalize sweep,
             // never here (20-query-ir § aggregation).

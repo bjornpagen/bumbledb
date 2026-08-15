@@ -854,9 +854,10 @@ pub enum ValidationError {
     },
 
     // --- Interiors and rec (20-query-ir.md § interiors / rec; 01-language.md roster) ---
-    /// Derived-table count (`interiors.len() + rec.is_some()`) does not
-    /// fit `u32` — id-width, not a product cap. Counted with `usize`
-    /// before any [`crate::ir::InteriorId`] is constructed.
+    /// Derived-table count does not fit `u32` — id-width, not a product
+    /// cap. CQ counts `interiors.len()`; Reach counts `interiors.len() + 1`
+    /// (the rec). Counted with `usize` before any
+    /// [`crate::ir::InteriorId`] is constructed.
     InteriorIdOverflow {
         count: usize,
     },

@@ -352,7 +352,6 @@ fn schema() -> SchemaDescriptor {
                         name: "slot".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -534,9 +533,8 @@ fn chain_query(atoms: u16, conds: u16, rules: u16) -> Query {
             })
             .collect(),
     };
-    Query {
+    Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: (0..rules).map(|r| rule(u64::from(r))).collect(),
     }
@@ -759,9 +757,9 @@ fn recursive_query() -> Query {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -784,7 +782,7 @@ fn recursive_query() -> Query {
                 negated: vec![],
                 conditions: vec![cap],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -827,12 +825,11 @@ fn interiors_only_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query {
+    Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             rules: vec![join],
         }],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

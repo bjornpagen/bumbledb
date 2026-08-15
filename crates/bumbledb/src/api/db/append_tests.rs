@@ -45,14 +45,13 @@ fn wide_schema() -> SchemaDescriptor {
                         "during",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                     field(
                         "window",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: IntervalElement::U64,
-                            width: Some(5),
+                            width: 5,
                         },
                     ),
                 ],

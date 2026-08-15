@@ -24,9 +24,10 @@ fn introspection_reports_the_join_plan_with_actuals() {
     assert!(report.contains("emitted bindings: 2"));
 }
 
-/// The report's header renders the predicate the query defines — the
+/// The report's header renders the signature the query defines — the
 /// signature authority (`ir/validate`), one column per head position,
-/// fold kinds by their rule-notation names.
+/// fold kinds by their rule-notation names. The sealed v5 header still
+/// spells the line `predicate:`.
 #[test]
 fn the_introspection_header_renders_the_predicate() {
     let dir = TempDir::new("prepared-introspect-predicate");

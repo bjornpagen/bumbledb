@@ -15,7 +15,8 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
 
 * **query cases** (everything else): evaluate the denotation
   (`Bumbledb.Conformance.checkCase` — join + surface anti-join / AntiProbe,
-  plus the recorded aggregate glue) and compare answer sets.
+  plus the recorded aggregate glue) and compare answer sets. The
+  document's Query is the tagged `cq` arm.
 * **judgment cases** (`judgment-*.json`): decode `(theory, instance,
   delta)`, apply the delta by row-set arithmetic, and run the PROVED
   two-phase judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
@@ -30,12 +31,12 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   `verdictOf` is one pattern match on `judgeB`'s position-tagged
   payload — the compared citation list IS the proved artifact's index
   projection (2026-07-23 audit, finding 143).
-* **reach cases** (`reach-*.json`): decode a Query with interiors/rec
-  (`Bumbledb/Query/Syntax.lean`) and run `Query.evalQueryList`
-  (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is its agreement with
-  `evalQuery`), comparing answer sets against the recorded agreed
-  answers. Atoms on this arm are `edb` / `interior` (never a stored
-  `relation` key).
+* **reach cases** (`reach-*.json`): decode a tagged Query
+  (`cq` | `reach`; `Bumbledb/Query/Syntax.lean`) and run
+  `Query.evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound`
+  is its agreement with `evalQuery`), comparing answer sets against
+  the recorded agreed answers. Filename selects the evaluator, not
+  the Query constructor. Atoms are `edb` / `interior`.
 
 This file is the ONE place PRD 13 allows `partial` definitions; the
 modules below happen to need none — the loops are `for`s over finite
@@ -358,9 +359,9 @@ def decodeReachRule (j : Json) : Except String Query.Rule := do
     (decodeCondition 64)
   return { finds, atoms, negated, conditions }
 
-/-- One named interior: rules; JSON `arity` is parsed and discarded. -/
+/-- One named interior: rules. JSON `head` is the find list. -/
 def decodeInterior (j : Json) : Except String Query.Interior := do
-  let _ ← natKey j "arity"
+  decodeHead j
   return { rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
              decodeReachRule }
 
@@ -392,40 +393,53 @@ def decodeRecStep (selfId : Query.InteriorId) (j : Json) :
     | [] => .error "RecArmMissingSelf"
     | _ => .error "NonlinearRecArm"
 
-/-- One linear rec. JSON keys `base`/`rec` unchanged; arity is parsed
-and discarded (heads size from `finds.length`). -/
+/-- One linear rec. JSON keys `base`/`step`; `head` is the find list.
+Query-level `rec` is the Reach payload, never the step list. -/
 def decodeRec (selfId : Query.InteriorId) (j : Json) :
     Except String Query.LinearRec := do
-  let _ ← natKey j "arity"
+  decodeHead j
   let base ← (← (← j.getObjVal? "base").getArr?).toList.mapM
     (decodeRecRule selfId)
-  let step ← (← (← j.getObjVal? "rec").getArr?).toList.mapM
+  let step ← (← (← j.getObjVal? "step").getArr?).toList.mapM
     (decodeRecStep selfId)
   match base, step with
   | b :: bs, s :: ss => return { base := (b, bs), step := (s, ss) }
   | [], _ => .error "EmptyRecursiveBase"
   | _, [] => .error "EmptyRecursiveStep"
 
-/-- One Query: `rec` omitted or JSON null is `.cq`; otherwise `.reach`. -/
-def decodeReachQuery (j : Json) : Except String Query.Query := do
-  let interiors ← (← (← j.getObjVal? "interiors").getArr?).toList.mapM
+/-- Shared payload of both tags: interiors, head, main rules. -/
+def decodeReachPayload (payload : Json) :
+    Except String (List Query.Interior × List Query.Rule) := do
+  let interiors ← (← (← payload.getObjVal? "interiors").getArr?).toList.mapM
     decodeInterior
-  let _ ← natKey j "arity"
-  let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
+  decodeHead payload
+  let rules ← (← (← payload.getObjVal? "rules").getArr?).toList.mapM
     decodeReachRule
-  match objKey? j "rec" with
-  | none => return .cq interiors rules
-  | some .null => return .cq interiors rules
-  | some r =>
-    let rec ← decodeRec ⟨interiors.length⟩ r
-    return .reach interiors rec rules
+  return (interiors, rules)
+
+/-- One tagged Query: `{ "cq": { interiors, head, rules } } |
+{ "reach": { interiors, rec, head, rules } }`. Reach carries `rec`
+by value; CQ does not carry a rec key. -/
+def decodeReachQuery (j : Json) : Except String Query.Query := do
+  match ← taggedQueryPayload j with
+  | .cq payload =>
+    let (interiors, rules) ← decodeReachPayload payload
+    return .cq interiors rules
+  | .reach payload =>
+    let (interiors, rules) ← decodeReachPayload payload
+    match ← payload.getObjVal? "rec" with
+    | .null => .error "reach rec is required by value"
+    | r =>
+      let rec ← decodeRec ⟨interiors.length⟩ r
+      return .reach interiors rec rules
 
 /-- One decoded reach case: the world (open instance + ground axioms
 merged), the Query, the parameters, and the agreed answers. -/
 structure RCase where
   /-- The world the query's `edb` atoms read. -/
   world : Query.ListInstance
-  /-- The query (interiors, optional linear rec, main rules). -/
+  /-- The query: interiors then either main (`.cq`) or rec-plus-main
+  (`.reach`). -/
   query : Query.Query
   /-- The positional parameter environment. -/
   env : Query.ParamEnv

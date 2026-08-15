@@ -560,9 +560,8 @@ fn per_rule_elimination_marks_one_rule_only() {
             conditions: vec![],
         }
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: rule(false).head(),
         rules: vec![rule(false), rule(true)],
     };

@@ -40,7 +40,7 @@
 //!   fact matches the Y tuple; combined with existence, **exactly one**.
 //!   The eliminated occurrence's own selections are a literal subset of
 //!   ψ (condition 2), so that one fact satisfies them, and no other
-//!   predicate of the query reads it (conditions 2–3).
+//!   derived table of the query reads it (conditions 2–3).
 //! - **Aggregate safety** — the fold domain is the set of distinct full
 //!   bindings over all query variables (20-query-ir, aggregation).
 //!   Key-ness of Y makes every non-Y field of the match functionally
@@ -83,7 +83,8 @@ use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
-use crate::ir::{AtomSource, CmpOp, FindTerm, VarId};
+use crate::ir::{CmpOp, FindTerm, VarId};
+use crate::plan::fj::OccBind;
 use crate::schema::{Enforcement, Schema};
 use bumbledb_theory::schema::{FieldId, Side, StatementId};
 
@@ -179,13 +180,14 @@ fn removable(
         // containment side: the comparison against the statement's
         // `Edb` source discharges a law, not a convenience.
         for (b_idx, b) in normalized.occurrences.iter().enumerate() {
-            if !b.role.participates() || b.source != AtomSource::Edb(target.relation) {
+            if !b.role.participates() || OccBind::of_occurrence(b) != OccBind::Edb(target.relation)
+            {
                 continue;
             }
             for (a_idx, a) in normalized.occurrences.iter().enumerate() {
                 if a_idx == b_idx
                     || a.role == Role::Negated
-                    || a.source != AtomSource::Edb(source.relation)
+                    || OccBind::of_occurrence(a) != OccBind::Edb(source.relation)
                 {
                     continue;
                 }

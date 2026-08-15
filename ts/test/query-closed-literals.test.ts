@@ -143,8 +143,8 @@ describe("query literals, params & membership arrays over closed references", fu
 		// spelling's query, position for position (queries cross ids,
 		// never handle names).
 		assert.deepStrictEqual(lowerQuery(crits), {
+			kind: "cq",
 			interiors: [],
-			rec: null,
 			head: [{ kind: "var" }],
 			rules: [
 				{

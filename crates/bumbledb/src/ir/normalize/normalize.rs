@@ -6,7 +6,7 @@ use super::{
     place_comparisons::place_comparisons,
 };
 use crate::image::view::{Const, FilterPredicate, SetConst, ViewWordSource};
-use crate::ir::validate::{RuleWitness, ValidatedQuery};
+use crate::ir::validate::RuleWitness;
 use crate::ir::{Atom, CmpOp, Term, Value, VarId};
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, ValueType};
@@ -18,20 +18,6 @@ use bumbledb_theory::schema::{FieldId, ValueType};
 /// is head position `i` (`docs/architecture/20-query-ir.md` § engine recursion; the
 /// positional reading `lean/Bumbledb/Exec/Reach.lean: tupleFact`
 /// promises). Everything else is the conjunctive lowering, verbatim.
-///
-/// # Panics
-///
-/// As [`normalize_rules`].
-#[must_use]
-pub fn normalize_predicate(
-    schema: &Schema,
-    query: &ValidatedQuery,
-    signatures: &[&crate::ir::validate::Signature],
-) -> Vec<NormalizedQuery> {
-    normalize_rules(schema, signatures, query.rules())
-}
-
-/// Lowers an arbitrary rule list against `signatures` (`InteriorId` order).
 #[must_use]
 pub fn normalize_rules<'a>(
     schema: &Schema,
@@ -209,8 +195,7 @@ fn normalize_rule_with(
 /// never its value (`docs/architecture/20-query-ir.md`, the membership
 /// rule; validation resolved every term's type).
 fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
-    matches!(field_type, ValueType::Interval { .. })
-        && !matches!(term_type, ValueType::Interval { .. })
+    field_type.is_interval() && !term_type.is_interval()
 }
 
 /// Lowers one atom (positive or negated — the rules are identical; only
@@ -318,7 +303,7 @@ fn lower_atom(
                 }
             }
             Term::ParamSet(param) => {
-                if matches!(field_type, ValueType::Interval { .. }) {
+                if field_type.is_interval() {
                     // A set holds points (validation anchored the element
                     // type): any element in the field's interval.
                     filters.push(FilterPredicate::AnyPointIn {
@@ -339,7 +324,7 @@ fn lower_atom(
             }
             Term::Measure(_) => unreachable!("validated: no measure in bindings"),
             Term::Literal(value) => {
-                let membership = matches!(field_type, ValueType::Interval { .. })
+                let membership = field_type.is_interval()
                     && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));
                 if membership {
                     filters.push(FilterPredicate::PointIn {

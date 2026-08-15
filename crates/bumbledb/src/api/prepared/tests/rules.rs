@@ -47,9 +47,8 @@ fn by_account_rule(account: u64) -> Rule {
 /// Q(memo, amount) :- account 3's postings ∪ account 7's postings, both
 /// under one `amount >= ?0` param.
 fn union_query() -> Query {
-    Query {
+    Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![by_account_rule(3), by_account_rule(7)],
     }
@@ -205,9 +204,8 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
@@ -258,9 +256,8 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
         rules: vec![rule(3), rule(7)],
     };
@@ -322,9 +319,8 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
     };
@@ -371,9 +367,8 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
     };
@@ -441,9 +436,8 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
             }),
         ])],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
@@ -556,9 +550,8 @@ fn a_key_probe_rule_unions_through_the_sink() {
     };
     let mut rule0 = by_account_rule(3);
     rule0.conditions.clear(); // no param: the key-probe rule binds none
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule0, key_probe_rule],
     };

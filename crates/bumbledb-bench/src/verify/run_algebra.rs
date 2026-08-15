@@ -96,9 +96,8 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         negated: vec![],
         conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
     };
-    let assemble = |rules: Vec<Rule>| Query {
+    let assemble = |rules: Vec<Rule>| Query::Cq {
         interiors: vec![],
-        rec: None,
         head: rules[0].head(),
         rules,
     };
@@ -420,9 +419,8 @@ fn order_op(rng: &mut Rng) -> CmpOp {
 /// Returns the ops and the count of `SQLite`-inexpressible cases, each
 /// one asserted to be exactly the enumerated `PackAggregate` routing.
 fn pack_and_measure_ops() -> (Vec<Op>, u64) {
-    let pack = |rules: Vec<Rule>| Query {
+    let pack = |rules: Vec<Rule>| Query::Cq {
         interiors: vec![],
-        rec: None,
         head: rules[0].head(),
         rules,
     };
@@ -588,13 +586,13 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
         {
             // One Or of 17 arms: width 17 > 16.
             let q = Query::single(posting_rule(vec![wide_or(17)]));
-            let naive_width = dnf_width(&q.rules[0]);
+            let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (wide Or)", q, Expected::DnfCap { naive_width })
         },
         {
             // Conjoined Ors multiply: 5 × 4 = 20 > 16.
             let q = Query::single(posting_rule(vec![wide_or(5), wide_or(4)]));
-            let naive_width = dnf_width(&q.rules[0]);
+            let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (product)", q, Expected::DnfCap { naive_width })
         },
         (
@@ -635,13 +633,12 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
                 negated: vec![],
                 conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
             };
-            let q = Query {
+            let q = Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: arm(0).head(),
                 rules: vec![arm(0), arm(1)],
             };
-            let rules = q.rules.len();
+            let rules = q.rules().len();
             (
                 "count across rules (R1)",
                 q,
@@ -679,7 +676,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
             ),
             // The vanished query surfaces as the empty union.
             Expected::Vanished => {
-                dnf_width(&q.rules[0]) == 0
+                dnf_width(&q.rules()[0]) == 0
                     && matches!(verdict, bumbledb::error::ValidationError::EmptyRuleSet)
             }
             Expected::EmptyMask => {

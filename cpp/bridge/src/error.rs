@@ -180,16 +180,16 @@ impl bdb_error {
                 render_rejection(descriptor, violations)
                     .into_iter()
                     .map(|rendered| OwnedViolation {
-                        statement: rendered.statement.0,
-                        kind: match rendered.kind {
+                        statement: rendered.statement().0,
+                        kind: match rendered.kind() {
                             bumbledb::StatementKind::Functionality => {
                                 bdb_statement_kind::Functionality
                             }
                             bumbledb::StatementKind::Containment => bdb_statement_kind::Containment,
                             bumbledb::StatementKind::Capacity => bdb_statement_kind::Capacity,
                         },
-                        spelling: rendered.spelling,
-                        direction: match rendered.direction {
+                        spelling: rendered.spelling().to_owned(),
+                        direction: match rendered.direction() {
                             None => bdb_violation_direction::None,
                             Some(bumbledb::Direction::SourceUnsatisfied) => {
                                 bdb_violation_direction::SourceUnsatisfied
@@ -198,7 +198,7 @@ impl bdb_error {
                                 bdb_violation_direction::TargetRequired
                             }
                         },
-                        measure: rendered.measure,
+                        measure: rendered.measure(),
                     })
                     .collect()
             }

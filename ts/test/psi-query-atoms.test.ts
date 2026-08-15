@@ -274,8 +274,8 @@ describe("ψ query atoms over closed relations", function suite() {
 				.find({ i: inc.id })
 		})
 		assert.deepStrictEqual(lowerQuery(golden), {
+			kind: "cq",
 			interiors: [],
-			rec: null,
 			head: [{ kind: "var" }],
 			rules: [
 				{

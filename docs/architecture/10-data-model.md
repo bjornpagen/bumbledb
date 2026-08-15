@@ -664,7 +664,7 @@ standing instance.
 
 **Virtual views are host-level IR composition — a view is a function returning
 atoms.** Queries are plain data (`20-query-ir.md`), so the composition layer is
-the host language: a derived predicate is a Rust function returning IR fragments
+the host language: a host function returning IR fragments
 (atoms, conditions, rule bodies) that callers splice into their queries. Worked,
 from the calendar theory (`60-validation.md`):
 

@@ -108,8 +108,8 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
     (b.into_query(), shape, tags)
 }
 
-/// CQ-only reconstructer. Seeded corpus replay (`conformance` 246
-/// files) must keep this RNG stream (C1).
+/// CQ-only reconstructer. Seeded corpus replay must keep this RNG
+/// stream (`SHAPE_WEIGHTS`) so answers stay pinned.
 #[must_use]
 pub fn random_cq_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     random_query_tagged(rng, cfg).0

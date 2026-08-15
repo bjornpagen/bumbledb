@@ -39,8 +39,8 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
-    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, StatementKind,
-    Term, Value,
+    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, Query,
+    StatementKind, Term, Value,
 };
 
 use crate::marshal::OwnedParam;
@@ -145,7 +145,7 @@ wire_tags! {
         I64: ValueType::I64 => "i64",
         STRING: ValueType::String => "string",
         FIXED_BYTES: ValueType::FixedBytes { .. } => "fixedBytes",
-        INTERVAL: ValueType::Interval { .. } => "interval",
+        INTERVAL: ValueType::Interval { .. } | ValueType::FixedInterval { .. } => "interval",
     }
 }
 
@@ -311,6 +311,15 @@ wire_tags! {
 }
 
 wire_tags! {
+    /// Query IR kind (`query_in`): CQ carries no rec; Reach carries rec
+    /// by value. Exhaustive over engine `Query`.
+    mod query for Query {
+        CQ: Query::Cq { .. } => "cq",
+        REACH: Query::Reach { .. } => "reach",
+    }
+}
+
+wire_tags! {
     /// `bumbledb::Direction` — the containment violation's direction (OUT
     /// today; `parse` generated so an IN lane never re-opens the gap).
     mod direction for unit Direction {
@@ -365,6 +374,7 @@ mod golden {
             ("atomSource", super::atom_source::TAGS.to_vec()),
             ("cmpOp", super::cmp_op::TAGS.to_vec()),
             ("condition", super::condition::TAGS.to_vec()),
+            ("query", super::query::TAGS.to_vec()),
             ("direction", super::direction::TAGS.to_vec()),
             ("param", wire_param),
         ]

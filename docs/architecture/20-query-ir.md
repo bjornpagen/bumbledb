@@ -29,7 +29,7 @@ engine. A "strict subset" could keep the syntax but not the semantics. **Why it 
 one user, calling from Rust; the parser layer served nobody. What we keep as IR design:
 named-argument atoms, group-key-from-output aggregation, membership as a binding form
 (Logica's `x in R`), and rules-as-views reborn as **host-language composition** — a
-"derived predicate" is a Rust function returning an IR fragment; the engine has no
+host function returning an IR fragment; the engine has no
 view/rule/module concept.
 
 **Alternative 2 — typed builder/generics as the contract, and its stronger 2026-07-10
@@ -42,19 +42,28 @@ errors, which foreign callers need anyway. Sugar *producing* the IR is downstrea
 package territory, in any language, permanently. (Host newtypes still give
 compile-time nominal safety at the app layer — see `10-data-model.md`.)
 
-## The query shape: interiors, optional rec, main
+## The query shape: `Cq | Reach`
 
-A `Query` is three parts, in evaluation order
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery`): named interiors — a DAG of
-conjunctive rule-lists, each a finite CQ evaluated **once**; at most one
-linear `Rec`; and the **main** query — one head and a non-empty list of
-conjunctive rules. The head owns the find shape (arity, aggregate ops, and
-the output typing — the signature below, sealed at validation); each rule
-is a conjunct (positive atoms, negated atoms, conditions) whose find terms
-align against the head position by position. The single-rule query is the
-degenerate case (`Query::single`). Empty interiors and `rec: None` is the
-rec-absent constructor of `Query` (`cq`: interiors are a possibly-empty
-prefix) — `lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding
+A `Query` is the tagged sum
+(`lean/Bumbledb/Query/Syntax.lean`; `lean/Bumbledb/Exec/Reach.lean: evalQuery`):
+
+```text
+Query =
+    Cq    { interiors, head, rules }
+  | Reach { interiors, rec, head, rules }
+```
+
+`Cq` does not carry rec. `Reach` carries `Rec` by value. Named interiors
+are a DAG of conjunctive rule-lists, each a finite CQ evaluated **once**.
+The **main** query — one head and a non-empty list of conjunctive rules —
+is on both constructors. Evaluation is the eliminator: `Cq` runs interiors
+then main; `Reach` runs interiors, the rec, then main. The head owns the
+find shape (arity, aggregate ops, and the output typing — the signature
+below, sealed at validation); each rule is a conjunct (positive atoms,
+negated atoms, conditions) whose find terms align against the head
+position by position. The single-rule query is the degenerate case
+(`Query::single` constructs `Cq`). Empty interiors on `Cq` is a case of
+`Cq` — `lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding
 of a prior type.
 
 - **Main owns the answer signature; rules derive it.** The head is
@@ -91,24 +100,25 @@ of a prior type.
 
 ## Engine recursion — interiors, one linear rec, main
 
-`Query { interiors, rec, head, rules }` is the IR
-(`crates/bumbledb/src/ir.rs`). Named interiors are a DAG in declaration
-order, each a finite CQ evaluated once. `rec` is at most one linear rec
-— `Rec { head, base, rec }` — whose denotation is `reachDen = lfpS`
-(`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is: one head, ≥1 rule,
-folds, measures, negation. `evalQuery` is main `rulesAnswers` over the
-finished environment. `Db::prepare` takes `&Query` only. Empty interiors
-and `rec: None` is the rec-absent constructor of `Query` (`cq`) —
-`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding of a
-prior type. An
+`Query = Cq { interiors, head, rules } | Reach { interiors, rec, head, rules }`
+is the IR (`crates/bumbledb/src/ir.rs`). Named interiors are a DAG in
+declaration order, each a finite CQ evaluated once. On `Reach`, `rec` is
+one linear rec — `Rec { head, base, rec }` — whose denotation is
+`reachDen = lfpS` (`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is:
+one head, ≥1 rule, folds, measures, negation. `evalQuery` is main
+`rulesAnswers` over the finished environment. `Db::prepare` takes
+`&Query` only. `Query::single` constructs `Cq`. Empty interiors on `Cq`
+is still `Cq` — `lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an
+embedding of a prior type. An
 `AtomSource::Interior` atom's bindings address **head positions**:
 `FieldId(i)` is the target derived table's column `i`, typed by its
 sealed signature column — positional, never nominal, and the membership
 typing rule reads through it unchanged (an interval-typed derived column
 participates in point membership exactly as an interval field does).
-Interior `i` has `InteriorId(i)`; the rec, if present, has
+Interior `i` has `InteriorId(i)`; on `Reach`, the rec occupies
 `InteriorId(interiors.len() as u32)` after the overflow check.
-Derived-table count is `u32` width (`InteriorIdOverflow`). There is no
+Derived-table count (`interiors.len()` on `Cq`, `interiors.len() + 1`
+on `Reach`) is `u32` width (`InteriorIdOverflow`). There is no
 interior-count product cap.
 
 **Validation is one roster on `Query`.** Each interior seals in
@@ -141,9 +151,9 @@ step):
   `reachOp_mono` takes linearity plus no-negation-in-rec
   (`lean/Bumbledb/Exec/Reach.lean: reachOp_mono`).
 
-**Execution.** Interiors-only never enters the reach driver
+**Execution.** `Cq` never enters the reach driver
 (`PreparedPipeline::Cq`; `40-execution.md` § the linear reach
-driver). A rec query runs the interior preamble, then `ReachDriver`
+driver). `Reach` runs the interior preamble, then `ReachDriver`
 (round 0 = `reachOp_empty`, one `RecArm` per rec arm), then main.
 The driver computes the model's answers
 (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
@@ -188,12 +198,12 @@ Work is bounded by that rule-size law plus the derived-tuples ledger
 (`DEFAULT_DERIVED_TUPLES`; `40-execution.md` § the linear reach
 driver), so pin-at-prepare, the selectivity ladder, and the allocation
 high-water contract stay meaningful. The engine is never a
-rule-program runtime — *deductive database* is a named non-goal
+Datalog runtime — *deductive database* is a named non-goal
 (`00-product.md`): no stored or composable rule artifacts (a query is
 host data, assembled per prepare), no magic sets or demand
 transformation (demand lives in the host loop — the host seeds the
 frontier), no cross-rule join reuse or rule inlining, no incremental
-maintenance of rule programs, and statements never reference derived
+maintenance of stored queries, and statements never reference derived
 tables (`30-dependencies.md`, the stored-relations decision —
 `InteriorId` and `RelationId` are separate identities that never pun,
 so a statement about a derived table is unwritable, not rejected).
@@ -371,12 +381,18 @@ join costume.
 ## IR shape (normative)
 
 ```rust
-Query {
-    interiors:  Vec<Interior>,        // DAG, declaration order; no count cap
-    rec:        Option<Rec>,          // at most one linear rec
-    head:       Vec<HeadTerm>,        // MAIN answer shape
-    rules:      Vec<Rule>,            // MAIN; ≥1 at validate, ≤ MAX_RULES (16)
-}
+Query =
+    Cq {
+        interiors:  Vec<Interior>,        // DAG, declaration order; no count cap
+        head:       Vec<HeadTerm>,        // MAIN answer shape
+        rules:      Vec<Rule>,            // MAIN; ≥1 at validate, ≤ MAX_RULES (16)
+    }
+  | Reach {
+        interiors:  Vec<Interior>,        // DAG, declaration order; no count cap
+        rec:        Rec,                  // one linear rec, by value
+        head:       Vec<HeadTerm>,        // MAIN answer shape
+        rules:      Vec<Rule>,            // MAIN; ≥1 at validate, ≤ MAX_RULES (16)
+    }
 Interior {
     head:       Vec<HeadTerm>,        // bound-variable positions only
     rules:      Vec<Rule>,            // ≥1, ≤ MAX_RULES; union; EDB ∪ earlier interiors
@@ -411,8 +427,8 @@ AtomSource = Edb(RelationId)          // a stored relation, exactly as ever
            | Interior(InteriorId)     // a derived table of this Query; FieldId(i)
                                       //   addresses head position i (positional,
                                       //   never nominal — § engine recursion)
-                                      // InteriorId(i) = interiors[i]; the Rec, if
-                                      //   present, is InteriorId(interiors.len())
+                                      // InteriorId(i) = interiors[i]; on Reach,
+                                      //   Rec is InteriorId(interiors.len())
 Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
            | Measure(VarId)           // the measure — comparison side only
                                       //   (§ the measure; a binding position
@@ -440,6 +456,18 @@ CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
            | PointIn                   // point membership as a predicate — the
                                        //   point form only; ⊇ is Allen(COVERS)
 ```
+
+JSON, QueryIr, and the C ABI / TS wire are tagged encodings of the same
+sum, not a product with a nullable rec:
+
+```text
+{ "cq":    { "interiors", "head", "rules" } }
+{ "reach": { "interiors", "rec", "head", "rules" } }
+```
+
+`Cq` has no rec key. The `Reach` payload carries `rec` by value. Rec
+payload uses `head`, not a second `arity` key. Dual spellings (`rec`
+null vs omitted, `arity` vs `head`) are defects.
 
 Representation notes (the branch-removal decisions): no `union`/`or` node
 exists — disjunction at the top **is** the rule list, so an OR execution
@@ -967,8 +995,8 @@ membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined 
 notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
-The renderer emits `interior p{id}(...) | ...;` then `recursive p{id}(...) | ...;`
-then bare main rules — total, and golden-pinned.
+The renderer emits `interior {id}(...) | ...;` then, on `Reach`,
+`recursive {id}(...) | ...;` then bare main rules — total, and golden-pinned.
 
 **Handles print as handles.** A literal word at a closed-reference position — a
 binding on a field whose declared containment targets a closed relation's id, or
@@ -1009,9 +1037,11 @@ statement surface's query side, not an import. One notational family, schema to
 query.
 
 ```text
-query     := interior* recblock? main
-interior  := 'interior' pred '(' head ')' '|' body ';'
-recblock  := 'recursive' pred '(' head ')' '|' body ';'
+query     := cq | reach
+cq        := interior* main
+reach     := interior* recblock main
+interior  := 'interior' dname '(' head ')' '|' body ';'
+recblock  := 'recursive' dname '(' head ')' '|' body ';'
 main      := barerule+
 barerule  := '(' head ')' '|' body ';'
 head      := headterm (',' headterm)*
@@ -1028,9 +1058,9 @@ cond      := term cmp term               // ==  !=  <  <=  >  >=
            | 'and' '(' cond (',' cond)* ')'   // ConditionTree::And — comparison
            | 'or'  '(' cond (',' cond)* ')'   //   leaves only (ruled 2026-07-23, R9)
 atom      := Relation '(' binding (',' binding)* ')'
-           | pred '(' var (',' var)* ')'  // ordered dense: head positions left to
+           | dname '(' var (',' var)* ')'  // ordered dense: head positions left to
                                           //   right from 0 — positional, never nominal
-           | pred '(' pbind (',' pbind)* ')'
+           | dname '(' pbind (',' pbind)* ')'
                                           // indexed: the sparse/selection forms; never
                                           //   mixed with the bare form, and an explicit
                                           //   dense in-order `i: v` list is refused —
@@ -1041,7 +1071,7 @@ binding   := field                       // punning: binds a var named after the
 pbind     := position ':' var            // sparse explicit position
            | position '==' value         // position selection
            | position 'in' ?param        // position set membership
-pred      := lowercase ident             // relations are UpperCamel — the case split
+dname     := lowercase ident             // relations are UpperCamel — the case split
 mask      := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
 term      := var | ?param | literal
 ```
@@ -1082,7 +1112,7 @@ not verbatim — `0x64` lowers, renders, and reparses as `100`.
 rules ARE the main query.** A named head requires `interior` or `recursive`.
 Bare rules are the main query. `interior mid(x) | Edge(src: x);`
 declares a named interior; `recursive reach(c) | …;` declares the rec;
-`(c) | reach(c);` is the required main. A body atom naming `pred` is an
+`(c) | reach(c);` is the required main. A body atom naming a derived table is an
 `Interior` atom whose bindings address **head positions** — positional,
 never nominal: derived columns have no fields to name. Bare idents are the
 **ordered dense** spelling, positions assigned left to right from 0
@@ -1094,15 +1124,15 @@ is refused — canonical utterance, one spelling per meaning. Derived names
 begin lowercase, so a derived table spelled like a relation is unwritable
 (the punning law's discipline applied to names), and a query of only named
 lines is a macro error — bare rules are the output, so every existing
-all-bare query lowers to `Query { interiors: vec![], rec: None, head,
-rules }` and denotes what it denoted
+all-bare query lowers to `Cq { interiors: vec![], head, rules }`
+and denotes what it denoted
 (`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq` is that sentence as a
 constructor case). Names are a **macro-local sidecar**, exactly as variable names
 are: resolution happens at expansion, the emitted `Query` carries bare
 `InteriorId`s, and no name ever enters the IR, the fingerprint, or any
-engine surface. The renderer prints interiors as `interior p{id}(...)` and
-the rec as `recursive p{id}(...)` (the `v{id}`/`?{id}` convention
-extended) and main rules bare, so the rendered text of any macro-written
+engine surface. The renderer prints interiors as `interior {id}(...)` and
+the rec as `recursive {id}(...)` (`InteriorId` in the same id convention
+as `v{id}` / `?{id}`) and main rules bare, so the rendered text of any macro-written
 query is its own fixed point — pinned byte-exact by the round-trip goldens
 (`bumbledb-query/tests/notation.rs`).
 
@@ -1147,7 +1177,7 @@ zero-allocation contract is written against (`40-execution.md`). The plan
 pipeline (statistics → DP → lowering → plan validation) runs **per rule**:
 the prepared query holds one plan per rule of each list and one sink per
 list. Each rule-list has its own sink: interiors in declaration order,
-then the rec, then main. Main's sink is the answer. Each list's seen-set
+then — on `Reach` — the rec, then main. Main's sink is the answer. Each list's seen-set
 spanning that list's rules is the union (`40-execution.md` § the rule loop). **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
 accepted at this scale, and re-preparation is explicit. The compensating control is

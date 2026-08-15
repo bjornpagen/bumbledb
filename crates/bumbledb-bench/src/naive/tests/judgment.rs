@@ -16,7 +16,6 @@ use crate::naive::{Delta, NaiveDb, Violation};
 fn interval() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     }
 }
 

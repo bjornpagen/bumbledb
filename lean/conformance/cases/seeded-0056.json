@@ -1041,13 +1041,7 @@
 [{"u64":6},{"str":940}],
 [{"u64":7},{"str":941}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0}],
- "atoms":[{"relation":4,"bindings":[[0,{"param":0}],[4,{"var":0}]]}],
- "negated":[{"relation":6,"bindings":[]}],
- "conditions":[],
- "width":1}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"}],"rules":[{"finds":[{"var":0}],"atoms":[{"edb":4,"bindings":[[0,{"param":0}],[4,{"var":0}]]}],"negated":[{"edb":6,"bindings":[]}],"conditions":[],"width":1}]}},
 "params":[{"scalar":{"u64":178}}],
 "answers":[]
 }

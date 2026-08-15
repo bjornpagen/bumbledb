@@ -546,31 +546,45 @@ template<auto Query>
 
 export namespace bdb::foreign {
 
-template<auto Query>
-[[nodiscard]] consteval auto rec_ptr() -> bdb_rec const* {
-	if constexpr (requires { Query.rec; }) {
-		return &query_rec<Query>;
-	} else {
-		return nullptr;
-	}
-}
-
 /**
  * The whole lowered query as ONE static constant view graph: interiors
- * in declaration order, optional rec, then the main answer. Every
- * pointer in the graph aims at `static constexpr` storage, so the view
- * outlives any `bdb_db_prepare` call by construction.
+ * in declaration order, then the live arm — CQ (no rec) or Reach (rec
+ * by value, never NULL). Every pointer in the graph aims at
+ * `static constexpr` storage, so the view outlives any `bdb_db_prepare`
+ * call by construction.
  */
 template<auto Query>
-inline constexpr auto query_of = bdb_query{
-    .interiors = Query.interiors.size() == 0 ? nullptr : query_interiors<Query>.data(),
-    .interior_count = Query.interiors.size(),
-    .rec = rec_ptr<Query>(),
-    .head = Query.head_count == 0 ? nullptr : query_heads<Query>.data() + main_head_offset<Query>(),
-    .head_count = Query.head_count,
-    .rules = Query.rules.size() == 0 ? nullptr : query_rules<Query>.data() + main_rule_offset<Query>(),
-    .rule_count = Query.rules.size(),
-};
+[[nodiscard]] consteval auto query_of_value() -> bdb_query {
+	auto const interiors = Query.interiors.size() == 0 ? nullptr : query_interiors<Query>.data();
+	auto const interior_count = Query.interiors.size();
+	auto const head = Query.head_count == 0 ? nullptr : query_heads<Query>.data() + main_head_offset<Query>();
+	auto const head_count = Query.head_count;
+	auto const rules = Query.rules.size() == 0 ? nullptr : query_rules<Query>.data() + main_rule_offset<Query>();
+	auto const rule_count = Query.rules.size();
+	auto out = bdb_query{};
+	if constexpr (requires { Query.rec; }) {
+		out.kind = abi_tag(bdb_query_kind::BDB_QUERY_KIND_REACH);
+		out.payload.reach.interiors = interiors;
+		out.payload.reach.interior_count = interior_count;
+		out.payload.reach.rec = &query_rec<Query>;
+		out.payload.reach.head = head;
+		out.payload.reach.head_count = head_count;
+		out.payload.reach.rules = rules;
+		out.payload.reach.rule_count = rule_count;
+	} else {
+		out.kind = abi_tag(bdb_query_kind::BDB_QUERY_KIND_CQ);
+		out.payload.cq.interiors = interiors;
+		out.payload.cq.interior_count = interior_count;
+		out.payload.cq.head = head;
+		out.payload.cq.head_count = head_count;
+		out.payload.cq.rules = rules;
+		out.payload.cq.rule_count = rule_count;
+	}
+	return out;
+}
+
+template<auto Query>
+inline constexpr auto query_of = query_of_value<Query>();
 
 [[nodiscard]] inline auto wire_param(bool value) -> bdb_param {
 	auto out = bdb_param{};

@@ -437,10 +437,8 @@ enum FunctionalityEvidence {
 /// u64-vs-i64 interval pairs still mismatch
 /// (`docs/architecture/30-dependencies.md` § Q1).
 fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
-    match (a, b) {
-        (ValueType::Interval { element: ea, .. }, ValueType::Interval { element: eb, .. }) => {
-            ea == eb
-        }
+    match (a.interval_element(), b.interval_element()) {
+        (Some(ea), Some(eb)) => ea == eb,
         _ => a == b,
     }
 }
@@ -452,7 +450,7 @@ fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec
         .filter(|(_, field)| {
             matches!(
                 fields[usize::from(field.0)].value_type,
-                ValueType::Interval { .. }
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. }
             )
         })
         .map(|(pos, _)| pos)
@@ -599,10 +597,11 @@ fn validate_functionality(
     // collision probe below and the sealed witness both consume it.
     let tail = interval_position.map(|pos| {
         let idx = usize::from(projection.ordered()[pos].0);
-        IntervalTail::from_width(match relation.fields[idx].value_type {
-            ValueType::Interval { width, .. } => width,
+        match relation.fields[idx].value_type {
+            ValueType::Interval { .. } => IntervalTail::General,
+            ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width },
             _ => unreachable!("interval_positions found an interval field"),
-        })
+        }
     });
 
     // Roster "duplicate statements", FD form: one field *set* per relation
@@ -890,17 +889,18 @@ fn validate_capacity(
         }
         Weight::DurationOf(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
-            let ValueType::Interval { width, .. } = descriptor.value_type else {
-                return Err(StatementErrorKind::CapacityWeightNotDuration {
-                    relation: source.relation,
-                    field,
+            let tail = match &descriptor.value_type {
+                ValueType::Interval { .. } => IntervalTail::General,
+                ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width: *width },
+                _ => {
+                    return Err(StatementErrorKind::CapacityWeightNotDuration {
+                        relation: source.relation,
+                        field,
+                    }
+                    .at(id));
                 }
-                .at(id));
             };
-            SealedWeight::Duration {
-                field,
-                tail: IntervalTail::from_width(width),
-            }
+            SealedWeight::Duration { field, tail }
         }
     };
 
@@ -935,34 +935,29 @@ fn validate_capacity(
         }
         Some(Bound::TargetDuration(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
-            let ValueType::Interval { width, .. } = descriptor.value_type else {
-                return Err(StatementErrorKind::CapacityBoundNotDuration {
-                    relation: target.relation,
-                    field,
+            let tail = match &descriptor.value_type {
+                ValueType::Interval { .. } => IntervalTail::General,
+                ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width: *width },
+                _ => {
+                    return Err(StatementErrorKind::CapacityBoundNotDuration {
+                        relation: target.relation,
+                        field,
+                    }
+                    .at(id));
                 }
-                .at(id));
             };
             if !matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
-            SealedBound::Duration {
-                field,
-                tail: IntervalTail::from_width(width),
-            }
+            SealedBound::Duration { field, tail }
         }
     };
 
     // Probe-ability, the containment rule reused: Y resolves a declared
     // key of B (a closed target takes the member-set arm through the same
     // call — the closed-side mirror).
-    let enforcement = CapacityEnforcement::from_resolved(resolve_target_key(
-        id,
-        target,
-        &target_projection,
-        relations,
-        descriptors,
-        None,
-    )?);
+    let enforcement =
+        resolve_capacity_target(id, target, &target_projection, relations, descriptors)?;
 
     // Both sides constant: the measure judgment is decidable here — per
     // ψ-selected parent axiom, the φ-selected child axioms sharing its
@@ -1416,26 +1411,9 @@ fn resolve_target_key(
     let interval_position = positions.first().copied();
 
     let want = target_projection.fields();
-    let found = descriptors
-        .iter()
-        .enumerate()
-        .find_map(|(index, descriptor)| match descriptor {
-            StatementDescriptor::Functionality {
-                relation,
-                projection,
-            } if *relation == target.relation
-                && FieldSet::new(projection).is_ok_and(|set| &set == want) =>
-            {
-                Some((index, projection.as_ref()))
-            }
-            StatementDescriptor::Functionality { .. }
-            | StatementDescriptor::Containment { .. }
-            | StatementDescriptor::Capacity { .. } => None,
-        });
-
-    // Roster "IND whose target projection matches no key of the target
-    // (or, with an interval position, no pointwise key carrying it)".
-    let Some((key_idx, key_projection)) = found else {
+    let Some((key_idx, key_projection)) =
+        matching_functionality(target.relation, want, descriptors)
+    else {
         return Err(missing_target_key(
             id,
             target,
@@ -1448,33 +1426,8 @@ fn resolve_target_key(
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    // Stored INVERSE (determinant position → projection index), minted
-    // once here so the per-fact encoder is a straight indexed gather —
-    // the measured-law reversal condition cashed
-    // (`keys::permuted_determinant_image`; cleanup-0.5.0 ruling 8).
-    let key_permutation = key_projection
-        .iter()
-        .map(|key_field| {
-            let source_pos = target_projection
-                .ordered()
-                .iter()
-                .position(|field| field == key_field)
-                .expect("set-equal projection contains every key field");
-            u16::try_from(source_pos).expect("field count fits u16")
-        })
-        .collect();
-
-    let target_key = KeyId(
-        u16::try_from(
-            descriptors[..key_idx]
-                .iter()
-                .filter(|descriptor| {
-                    matches!(descriptor, StatementDescriptor::Functionality { .. })
-                })
-                .count(),
-        )
-        .expect("statement count fits u16"),
-    );
+    let key_permutation = key_permutation(target_projection, key_projection);
+    let target_key = functionality_key_id(descriptors, key_idx);
 
     if interval_position.is_some() {
         let FunctionalityEvidence::Pointwise(disjoint, _) = validate_functionality(
@@ -1502,6 +1455,89 @@ fn resolve_target_key(
             key_permutation,
         })
     }
+}
+
+/// Capacity's target resolver: [`CapacityEnforcement`] directly. Coverage
+/// is unrepresentable — projections already refused interval positions.
+fn resolve_capacity_target(
+    id: StatementId,
+    target: &Side,
+    target_projection: &Projection<'_>,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<CapacityEnforcement, SchemaError> {
+    let target_relation = &relations[target.relation.0 as usize];
+    if let Some(rows) = target_relation.body.closed_rows() {
+        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
+            return Err(StatementErrorKind::ClosedTargetNotHandle {
+                target: target.relation,
+                projection: target.projection.clone(),
+            }
+            .at(id));
+        }
+        return Ok(CapacityEnforcement::Closed {
+            members: compile_member_set(target_relation, target, rows),
+        });
+    }
+
+    let Some((key_idx, key_projection)) =
+        matching_functionality(target.relation, target_projection.fields(), descriptors)
+    else {
+        return Err(missing_target_key(id, target, descriptors, false));
+    };
+    Ok(CapacityEnforcement::ScalarProbe {
+        target_key: functionality_key_id(descriptors, key_idx),
+        key_permutation: key_permutation(target_projection, key_projection),
+    })
+}
+
+fn matching_functionality<'a>(
+    relation: RelationId,
+    want: &FieldSet,
+    descriptors: &'a [StatementDescriptor],
+) -> Option<(usize, &'a [FieldId])> {
+    descriptors
+        .iter()
+        .enumerate()
+        .find_map(|(index, descriptor)| match descriptor {
+            StatementDescriptor::Functionality {
+                relation: r,
+                projection,
+            } if *r == relation && FieldSet::new(projection).is_ok_and(|set| &set == want) => {
+                Some((index, projection.as_ref()))
+            }
+            StatementDescriptor::Functionality { .. }
+            | StatementDescriptor::Containment { .. }
+            | StatementDescriptor::Capacity { .. } => None,
+        })
+}
+
+fn key_permutation(target_projection: &Projection<'_>, key_projection: &[FieldId]) -> Box<[u16]> {
+    key_projection
+        .iter()
+        .map(|key_field| {
+            let source_pos = target_projection
+                .ordered()
+                .iter()
+                .position(|field| field == key_field)
+                .expect("set-equal projection contains every key field");
+            u16::try_from(source_pos).expect("field count fits u16")
+        })
+        .collect()
+}
+
+fn functionality_key_id(descriptors: &[StatementDescriptor], key_idx: usize) -> KeyId {
+    KeyId(
+        u16::try_from(
+            descriptors[..key_idx]
+                .iter()
+                .filter(|descriptor| {
+                    matches!(descriptor, StatementDescriptor::Functionality { .. })
+                })
+                .count(),
+        )
+        .expect("statement count fits u16"),
+    )
 }
 
 /// Owned evidence for an exact-target-key rejection. Key ids follow the
@@ -1591,7 +1627,7 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
             .fields
             .iter()
             .map(|field| match field.value_type {
-                ValueType::Interval { .. } => 2,
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 2,
                 ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
                 _ => 1,
             })
@@ -1648,10 +1684,7 @@ fn validate_relation(
                 });
             }
         }
-        if let ValueType::Interval {
-            width: Some(width), ..
-        } = field.value_type
-        {
+        if let ValueType::FixedInterval { width, .. } = field.value_type {
             // The interval<E, w> width gate: w ≥ 1 (zero points denote
             // nothing) and w ≤ u64::MAX − 1 (at w = u64::MAX no start
             // satisfies the Q2 bound in either element domain — an empty

@@ -90,7 +90,6 @@ fn schema() -> Schema {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },

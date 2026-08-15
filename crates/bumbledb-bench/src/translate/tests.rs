@@ -155,7 +155,6 @@ fn schema() -> &'static Schema {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
-                                width: None,
                             },
                         ),
                     ],
@@ -970,9 +969,8 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
     // Q(x) :- PostingTag(posting = x).
     // One SELECT DISTINCT per rule, joined by UNION — set union, the
     // systematized rules translation.
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![
             Rule {
@@ -1030,9 +1028,8 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
         negated: vec![],
         conditions,
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: arm(vec![]).head(),
         rules: vec![
             arm(vec![]),
@@ -1073,9 +1070,8 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![arm(ids::posting::ACCOUNT), arm(ids::posting::INSTRUMENT)],
     };
@@ -1112,9 +1108,9 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
 /// The linear transitive closure over `OrgParent` — identity main over
 /// the rec (base arm + one-recursive-atom arm).
 fn closure_query() -> Query {
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -1146,7 +1142,7 @@ fn closure_query() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -1173,8 +1169,8 @@ fn the_linear_closure_matches_its_hand_written_golden() {
 fn negation_of_finished_rec_matches_its_hand_written_golden() {
     // Main: Org(id = x), ¬rec(c0 = x) — anti-join inlined in the SELECT.
     let mut query = closure_query();
-    query.head = vec![HeadTerm::Var];
-    query.rules = vec![Rule {
+    *query.head_mut() = vec![HeadTerm::Var];
+    *query.rules_mut() = vec![Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::ORG),
@@ -1193,9 +1189,9 @@ fn negation_of_finished_rec_matches_its_hand_written_golden() {
 
 #[test]
 fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -1227,7 +1223,7 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -1252,9 +1248,9 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
 /// Interval-typed derived columns remain the translator's named limit.
 #[test]
 fn interval_derived_columns_error_by_name() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -1274,7 +1270,7 @@ fn interval_derived_columns_error_by_name() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

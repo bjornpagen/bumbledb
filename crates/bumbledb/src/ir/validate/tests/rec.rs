@@ -20,13 +20,13 @@ fn rule(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Rule {
 }
 
 fn reach_query(base: Vec<Rule>, rec: Vec<Rule>, main: Rule) -> Query {
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base,
             rec,
-        }),
+        },
         head: main.head(),
         rules: vec![main],
     }
@@ -169,9 +169,9 @@ fn rejects_nonlinear_rec_arm() {
 
 #[test]
 fn rejects_negation_in_rec() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![rule(
                 vec![FindTerm::Var(VarId(0))],
@@ -186,7 +186,7 @@ fn rejects_negation_in_rec() {
                 negated: vec![atom(POSTING, vec![(1, var(0))])],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -198,9 +198,9 @@ fn rejects_negation_in_rec() {
 
 #[test]
 fn rejects_measure_in_interior_on_rec_head() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![rule(
                 vec![FindTerm::Measure(VarId(0))],
@@ -210,7 +210,7 @@ fn rejects_measure_in_interior_on_rec_head() {
                 vec![FindTerm::Var(VarId(0))],
                 vec![interior_atom(0, vec![(0, var(0))])],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -227,9 +227,9 @@ fn rejects_measure_in_interior_on_rec_head() {
 
 #[test]
 fn rejects_aggregate_in_interior_on_rec_head() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
             base: vec![rule(
                 vec![
@@ -251,7 +251,7 @@ fn rejects_aggregate_in_interior_on_rec_head() {
                 ],
                 vec![interior_atom(0, vec![(0, var(0))])],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -268,9 +268,9 @@ fn rejects_aggregate_in_interior_on_rec_head() {
 
 #[test]
 fn a_measure_on_main_over_finished_rec_is_legal() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![rule(
                 vec![FindTerm::Var(VarId(0))],
@@ -280,7 +280,7 @@ fn a_measure_on_main_over_finished_rec_is_legal() {
                 vec![FindTerm::Var(VarId(0))],
                 vec![interior_atom(0, vec![(0, var(0))])],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Measure(VarId(0))],
@@ -292,9 +292,9 @@ fn a_measure_on_main_over_finished_rec_is_legal() {
 
 #[test]
 fn negation_of_finished_rec_in_main_is_legal() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![rule(
                 vec![FindTerm::Var(VarId(0))],
@@ -304,7 +304,7 @@ fn negation_of_finished_rec_in_main_is_legal() {
                 vec![FindTerm::Var(VarId(0))],
                 vec![interior_atom(0, vec![(0, var(0))])],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -378,7 +378,7 @@ fn rec_pool_caps_base_plus_rec() {
 
 #[test]
 fn an_interior_reading_the_rec_is_not_prior() {
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -386,7 +386,7 @@ fn an_interior_reading_the_rec_is_not_prior() {
                 vec![interior_atom(1, vec![(0, var(0))])],
             )],
         }],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![rule(
                 vec![FindTerm::Var(VarId(0))],
@@ -396,7 +396,7 @@ fn an_interior_reading_the_rec_is_not_prior() {
                 vec![FindTerm::Var(VarId(0))],
                 vec![interior_atom(1, vec![(0, var(0))])],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],

@@ -16,13 +16,7 @@
 [{"u64":3},{"u64":0},{"u64":2}],
 [{"u64":4},{"u64":0},{"u64":0}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":1}],
- "atoms":[{"relation":1,"bindings":[[2,{"var":0}],[1,{"var":1}]]},{"relation":13,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":2}}]]}],
- "negated":[],
- "conditions":[],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":1}],"atoms":[{"edb":1,"bindings":[[2,{"var":0}],[1,{"var":1}]]},{"edb":13,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":2}}]]}],"negated":[],"conditions":[],"width":2}]}},
 "params":[],
 "answers":[
 [{"u64":0},{"u64":0}],

@@ -3,7 +3,7 @@
 //! pre-refactor result-row/sink behavior and hand-verified against
 //! `docs/architecture/20-query-ir.md`'s aggregate typing prose. The
 //! TABLE is the pin — it was landed green against the triple derivation
-//! and must stay green, byte-identical, over the reified predicate.
+//! and must stay green, byte-identical, over the reified signature.
 
 use crate::ir::{AggOp, Atom, FindTerm, Query, Rule, Term, VarId};
 use crate::schema::Schema;
@@ -42,14 +42,12 @@ fn sig_schema() -> Schema {
                     "pu",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 ),
                 field(
                     "pi",
                     ValueType::Interval {
                         element: IntervalElement::I64,
-                        width: None,
                     },
                 ),
                 field("ku", ValueType::U64),
@@ -84,14 +82,12 @@ fn type_roster() -> Vec<(u16, ValueType)> {
             PU,
             ValueType::Interval {
                 element: IntervalElement::U64,
-                width: None,
             },
         ),
         (
             PI,
             ValueType::Interval {
                 element: IntervalElement::I64,
-                width: None,
             },
         ),
     ]
@@ -100,14 +96,12 @@ fn type_roster() -> Vec<(u16, ValueType)> {
 fn interval_u64() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     }
 }
 
 fn interval_i64() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     }
 }
 
@@ -288,7 +282,7 @@ fn query_of(case: &Case) -> Query {
 /// The observation seam the pin swings on: the query's derived output
 /// signature. Pinned against the pre-refactor triple derivation (read
 /// through `prepare`'s result-column iterator), re-anchored to the
-/// validation-sealed predicate — the table never moved.
+/// validation-sealed signature — the table never moved.
 fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
     let witness = crate::ir::validate::validate(schema, query).expect("validate");
     witness

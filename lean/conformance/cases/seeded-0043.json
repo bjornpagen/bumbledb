@@ -1038,13 +1038,7 @@
 [{"u64":1022},{"u64":396},{"u64":2},{"u64":9},{"i64":0},{"i64":1700000000051100},{"str":929},{"bool":true}],
 [{"u64":1023},{"u64":140},{"u64":3},{"u64":11},{"i64":0},{"i64":1700000000051150},{"str":930},{"bool":false}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":2}],
- "atoms":[{"relation":4,"bindings":[[4,{"var":0}],[2,{"var":1}],[5,{"var":0}]]},{"relation":1,"bindings":[[0,{"var":1}],[2,{"var":2}]]}],
- "negated":[],
- "conditions":[],
- "width":3}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":2}],"atoms":[{"edb":4,"bindings":[[4,{"var":0}],[2,{"var":1}],[5,{"var":0}]]},{"edb":1,"bindings":[[0,{"var":1}],[2,{"var":2}]]}],"negated":[],"conditions":[],"width":3}]}},
 "params":[],
 "answers":[]
 }

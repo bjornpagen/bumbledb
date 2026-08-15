@@ -92,7 +92,7 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
-            ValueType::Interval { .. } => {
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
             }
         }
@@ -164,7 +164,7 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
-            ValueType::Interval { .. } => {
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
             }
         };

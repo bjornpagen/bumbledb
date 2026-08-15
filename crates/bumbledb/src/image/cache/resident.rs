@@ -17,7 +17,7 @@ impl ImageCache {
             .map(|cached| cached.image.byte_size() as u64)
             .sum();
         drop(inner);
-        for image in self.closed.iter().filter_map(std::sync::OnceLock::get) {
+        for image in self.closed.values().filter_map(std::sync::OnceLock::get) {
             images += 1;
             bytes += image.byte_size() as u64;
         }

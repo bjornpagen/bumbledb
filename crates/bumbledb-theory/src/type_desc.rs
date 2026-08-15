@@ -32,37 +32,40 @@ pub enum TypeDesc {
         /// `encoding::MAX_FIXED_BYTES`, 64).
         len: u16,
     },
-    /// The interval family. General (`width: None`): 16 bytes,
-    /// `start ‖ end`, each half in the element's order-preserving
-    /// encoding, strictly `start < end`. Fixed (`width: Some(w)`,
-    /// `interval<E, w>`): 8 bytes — the START half only; the width is
-    /// the type's, so the end derives as `start + w` at decode, and a
-    /// stored start at or past the Q2 bound (`start + w < MAX_END`) is
-    /// corruption (the engine's
-    /// `error::CorruptionError::InvalidFixedIntervalStart`).
+    /// General interval: 16 bytes, `start ‖ end`, each half in the
+    /// element's order-preserving encoding, strictly `start < end`.
     Interval {
         /// The element domain: one of the two orderable scalars.
         element: IntervalElement,
-        /// `Some(w)`: the fixed width — the encoding is one word.
-        width: Option<u64>,
+    },
+    /// Fixed `interval<E, w>`: 8 bytes — the START half only; the width
+    /// is the type's, so the end derives as `start + w` at decode, and a
+    /// stored start at or past the Q2 bound (`start + w < MAX_END`) is
+    /// corruption (the engine's
+    /// `error::CorruptionError::InvalidFixedIntervalStart`).
+    FixedInterval {
+        /// The element domain: one of the two orderable scalars.
+        element: IntervalElement,
+        /// The fixed width — the encoding is one word.
+        width: u64,
     },
 }
 
 impl TypeDesc {
     /// Encoded width in bytes: 1 for `Bool`, 16 for a general
-    /// `Interval` and 8 for a fixed-width one (the width halving — the
-    /// end is the type's to derive, so storing it would be
-    /// transcription), the word-padded `⌈len/8⌉ × 8` for `FixedBytes`,
-    /// 8 for everything else.
+    /// [`TypeDesc::Interval`] and 8 for [`TypeDesc::FixedInterval`] (the
+    /// width halving — the end is the type's to derive, so storing it
+    /// would be transcription), the word-padded `⌈len/8⌉ × 8` for
+    /// `FixedBytes`, 8 for everything else.
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
             Self::Bool => 1,
             // A fixed-width interval is one word — the start; the end
             // is the type's to derive (the width halving).
-            Self::U64 | Self::I64 | Self::String | Self::Interval { width: Some(_), .. } => 8,
+            Self::U64 | Self::I64 | Self::String | Self::FixedInterval { .. } => 8,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
-            Self::Interval { width: None, .. } => 16,
+            Self::Interval { .. } => 16,
         }
     }
 }
@@ -77,7 +80,8 @@ impl ValueType {
             Self::I64 => TypeDesc::I64,
             Self::String => TypeDesc::String,
             Self::FixedBytes { len } => TypeDesc::FixedBytes { len: *len },
-            Self::Interval { element, width } => TypeDesc::Interval {
+            Self::Interval { element } => TypeDesc::Interval { element: *element },
+            Self::FixedInterval { element, width } => TypeDesc::FixedInterval {
                 element: *element,
                 width: *width,
             },

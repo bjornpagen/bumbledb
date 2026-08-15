@@ -10,12 +10,12 @@
 
 use crate::image::ColumnSpan;
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::VarId;
 use crate::ir::normalize::{
-    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
-    SlotWidth,
+    AntiProbe, BindRole, OccId, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration,
+    PlacedWordComparison, Role, SlotWidth,
 };
-use bumbledb_theory::schema::FieldId;
+use crate::ir::{InteriorId, VarId};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 mod binary2fj;
 mod check_occurrence_coverage;
@@ -35,7 +35,41 @@ pub use factor::factor;
 pub use fold_split::fold_split;
 pub use gj_split::gj_split;
 pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
-pub(crate) use provably_distinct::{DistinctWitness, provably_distinct};
+pub(crate) use provably_distinct::{DistinctWitness, Distinctness, provably_distinct};
+
+/// How an occurrence binds: stored EDB vs a derived table, with the
+/// rec-arm stamp on the derived arms. Collapses `AtomSource` +
+/// `Option<BindRole>` so EDB-with-a-derived-role and Interior-with-no-role
+/// are unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OccBind {
+    Edb(RelationId),
+    Finished(InteriorId),
+    RecDelta(InteriorId),
+    RecAcc(InteriorId),
+}
+
+impl OccBind {
+    pub(crate) fn of(source: crate::ir::AtomSource, bind: Option<BindRole>) -> Self {
+        match (source, bind) {
+            (crate::ir::AtomSource::Edb(relation), None) => Self::Edb(relation),
+            (crate::ir::AtomSource::Interior(id), Some(BindRole::Finished)) => Self::Finished(id),
+            (crate::ir::AtomSource::Interior(id), Some(BindRole::RecDelta)) => Self::RecDelta(id),
+            (crate::ir::AtomSource::Interior(id), Some(BindRole::RecAcc)) => Self::RecAcc(id),
+            (crate::ir::AtomSource::Edb(_), Some(_)) => {
+                unreachable!("EDB occurrence cannot carry a derived bind")
+            }
+            (crate::ir::AtomSource::Interior(_), None) => {
+                unreachable!("derived occurrence carries a bind role")
+            }
+        }
+    }
+
+    pub(crate) fn of_occurrence(occurrence: &Occurrence) -> Self {
+        Self::of(occurrence.source, occurrence.bind)
+    }
+}
+
 pub(crate) use split_filters::split_filters;
 #[cfg(test)]
 pub use validate::validate;
@@ -158,7 +192,7 @@ pub struct PlanOccurrence {
     /// as ever; an `Interior` occurrence binds to the reach driver's
     /// per-round transient image (`api/prepared/run_join.rs` — never
     /// the cache, never the memo), its `spans` derived from the target
-    /// predicate's sealed signature columns.
+    /// signature's sealed columns.
     pub source: crate::ir::AtomSource,
     /// The occurrence's planning state, carried from normalization —
     /// execution's view-bind and filter-resolution loops read it to
@@ -167,7 +201,8 @@ pub struct PlanOccurrence {
     pub role: Role,
     /// Derived-bind role from the normalized occurrence. `None` is EDB;
     /// `run_join` and `fill_plan_images` dispatch on this, never on the
-    /// complement of an EDB source.
+    /// complement of an EDB source. Plan/exec match [`OccBind`], minted
+    /// once from `source` + `bind`.
     pub bind: Option<crate::ir::normalize::BindRole>,
     /// The field each variable reads from.
     pub vars: Vec<(FieldId, VarId)>,
@@ -217,6 +252,12 @@ pub struct PlanOccurrence {
     /// wordmap keys tuples, and this is the key-width bookkeeping it
     /// reads.
     pub key_widths: Vec<u16>,
+}
+
+impl PlanOccurrence {
+    pub(crate) fn occ_bind(&self) -> OccBind {
+        OccBind::of(self.source, self.bind)
+    }
 }
 
 /// One validated node.
@@ -297,8 +338,9 @@ pub struct ValidatedPlan {
     /// Provably-distinct-bindings: every positive occurrence's bound
     /// fields cover a key (`Functionality` statement) of its relation, so
     /// distinct facts imply distinct bindings and the aggregate sink may
-    /// skip its seen-set (40-execution, elision).
-    distinct_witness: Option<DistinctWitness>,
+    /// skip the spanning set (40-execution, elision). Proven vs unproven
+    /// is the sum; absence is not a missing witness.
+    distinctness: Distinctness,
     /// The planner's per-step estimates (introspection's reader, the 40-execution doc).
     estimates: Vec<u64>,
 }
@@ -349,8 +391,16 @@ impl ValidatedPlan {
     }
 
     #[must_use]
+    pub(crate) fn distinctness(&self) -> Distinctness {
+        self.distinctness
+    }
+
+    #[must_use]
     pub(crate) fn distinct_witness(&self) -> Option<DistinctWitness> {
-        self.distinct_witness
+        match self.distinctness {
+            Distinctness::Proven(witness) => Some(witness),
+            Distinctness::Unproven => None,
+        }
     }
 
     /// The planner's per-step estimates — introspection's reader and

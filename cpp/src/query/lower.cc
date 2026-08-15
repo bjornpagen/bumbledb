@@ -397,9 +397,9 @@ template<class Ir>
 }
 
 /**
- * The head-alignment wall shared by every predicate: rule 0 seals the
- * head; every later rule derives the same (name, shape, op, answer class,
- * law class), position for position.
+ * The head-alignment wall shared by every rule-list head: rule 0 seals
+ * the head; every later rule derives the same (name, shape, op, answer
+ * class, law class), position for position.
  */
 consteval auto align_head(std::size_t head_count, std::array<find_data, max_query_finds> const& head, rule_data const& rule) -> void {
 	if (head_count != rule.find_count) {

@@ -5,7 +5,7 @@ LMDB, executing conjunctive queries with **Free Join** — and tuned, one
 measured PRD at a time, for Apple Silicon.
 
 There is no SQL and no interpreter in the hot path. You declare a schema with
-a macro, write plain structs, and run queries — rule programs with joins,
+a macro, write plain structs, and run queries — joins,
 negation, the full Allen interval algebra (one 13-bit mask, one branchless
 kernel), point membership, `Duration`, and the coalescing `Pack` aggregate —
 planned once and executed over columnar in-memory images with a lazy trie
@@ -58,7 +58,7 @@ db.write(|tx| {
     Ok(())
 })?;
 
-// Queries are rule programs in set-builder notation (the `query!` macro
+// Queries are set-builder notation (the `query!` macro
 // lowers to plain-data IR at compile time; the raw IR remains the contract).
 // Prepared once, executed on snapshots into reusable `Answers` — zero
 // allocations per execution after warmup.

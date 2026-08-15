@@ -7,8 +7,8 @@ A faithful abstraction of `crates/bumbledb/src/ir.rs` (the IR, not the
 notation): terms, atoms with named-field bindings (absence of a field
 IS the wildcard), the input condition grammar (leaf / and / or — the
 one place a nested OR is writable), rules (atoms, negated, conditions,
-finds), named interiors, at most one linear rec, and the main
-query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
+finds), named interiors, then either a CQ main or one linear rec plus
+main. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
 `Bumbledb.Exec.Reach`.
 
 ## Narrowings recorded (law 5: narrow and record)
@@ -64,8 +64,8 @@ query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
   syntax or assumes only `Safe`/`WellTyped`, so a
   rejected-but-denotable query simply never reaches execution.
 * **The unknown-interior gap, recorded LOUDLY, with its screen.** A
-  rule reading `interior k` with `k` outside the interiors (and rec,
-  when present) reads the EMPTY fact set: a positive phantom read
+  rule reading `interior k` with `k` outside the interiors (and a
+  `.reach` rec) reads the EMPTY fact set: a positive phantom read
   kills its rule, but a NEGATED phantom read is vacuously satisfied.
   The engine's refusal is `ValidationError::UnknownInterior`. Lean
   keeps phantom-empty — the `Exec/Reach.lean` agreement theorems are
@@ -109,7 +109,7 @@ positive self-atom as `selfBindings`. Recorded shapes:
 * **One atom type.** `Atom.source : AtomSource` (`edb | interior`).
   An `interior` atom's bindings address HEAD POSITIONS positionally —
   `FieldId i` is the target derived table's column `i`. Numbering:
-  interior `i` has `InteriorId ⟨i⟩`; the rec, when present, has
+  interior `i` has `InteriorId ⟨i⟩`; a `.reach` rec has
   `InteriorId ⟨interiors.length⟩`. The `reach` constructor is the one
   site that knows that id.
 * **`Query` is a two-arm sum.** Constructor names `cq`/`reach` — a
@@ -134,7 +134,7 @@ structure ParamId where
 deriving DecidableEq
 
 /-- Dense derived-table id — the index into a query's interior list,
-or the rec's id `⟨interiors.length⟩` when rec is present. A SEPARATE
+or a `.reach` rec's id `⟨interiors.length⟩`. A SEPARATE
 identity from `RelId`, deliberately: statements quantify over stored
 relations permanently, and no statement form carries an `InteriorId`
 position — a statement about a derived table is unwritable

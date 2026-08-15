@@ -167,10 +167,7 @@ pub fn decode_field(
         TypeDesc::I64 => Ok(ValueRef::I64(decode_i64(word()))),
         TypeDesc::String => Ok(ValueRef::String(decode_u64(word()))),
         TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
-        TypeDesc::Interval {
-            element,
-            width: None,
-        } => {
+        TypeDesc::Interval { element } => {
             // The 16-byte width is layout-derived — the same
             // single-determinant ruling as [`field_word_bytes`], inline for
             // the one wide shape.
@@ -184,10 +181,7 @@ pub fn decode_field(
                 IntervalElement::I64 => decode_interval_i64(bytes).map(ValueRef::IntervalI64),
             }
         }
-        TypeDesc::Interval {
-            element,
-            width: Some(w),
-        } => {
+        TypeDesc::FixedInterval { element, width: w } => {
             // One stored word: the start; the end re-derives from the
             // TYPE's width. The Q2 bound is the corruption check —
             // `decode_fixed_interval_start` validates it in the

@@ -4,6 +4,7 @@ use super::*;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp as ViewCmp;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
+use crate::plan::fj::OccBind;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
@@ -116,7 +117,10 @@ fn order_cost(
             .fold(0u128, |acc, (_, v)| acc | 1 << var_index[v])
     };
     let key_sets = |i: usize| -> Vec<u128> {
-        let relation = schema.relation(occ(i).source.edb().expect("fixture"));
+        let OccBind::Edb(relation_id) = OccBind::of_occurrence(occ(i)) else {
+            panic!("fixture");
+        };
+        let relation = schema.relation(relation_id);
         relation
             .keys()
             .iter()
@@ -217,7 +221,6 @@ fn key_coverage_fires_through_the_fresh_auto_key() {
 fn pointwise_schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![

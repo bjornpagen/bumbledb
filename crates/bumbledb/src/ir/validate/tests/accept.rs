@@ -185,8 +185,7 @@ fn accepts_a_variable_joined_across_two_interval_fields() {
     assert_eq!(
         witness.rule(0).var_type(VarId(1)),
         &ValueType::Interval {
-            element: IntervalElement::U64,
-            width: None
+            element: IntervalElement::U64
         }
     );
 }
@@ -299,8 +298,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
         (
             ParamId(0),
             &ValueType::Interval {
-                element: IntervalElement::U64,
-                width: None
+                element: IntervalElement::U64
             }
         )
     );
@@ -337,7 +335,7 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
 fn accepts_pack_and_pins_the_interval_result_type() {
     // finds [account, Pack(span)]: the coalescing fold — the result
     // position is interval-typed (a packed segment shares its input's
-    // type), sealed in the predicate's signature.
+    // type), sealed in the signature.
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
@@ -360,8 +358,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         vec![
             ValueType::U64,
             ValueType::Interval {
-                element: IntervalElement::U64,
-                width: None
+                element: IntervalElement::U64
             }
         ]
     );
@@ -384,9 +381,8 @@ fn accepts_pack_across_rules() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             crate::ir::HeadTerm::Var,
             crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),
@@ -420,14 +416,13 @@ fn mixed_width_schema() -> Schema {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 ),
                 field(
                     "lane",
-                    ValueType::Interval {
+                    ValueType::FixedInterval {
                         element: IntervalElement::U64,
-                        width: Some(5),
+                        width: 5,
                     },
                 ),
             ],

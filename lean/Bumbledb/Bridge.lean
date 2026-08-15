@@ -475,7 +475,7 @@ def ledger : List Obligation := [
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
     "PreparedPipeline (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
-    "the_empty_program_builds_no_image_and_binds_no_view (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
+    "crates/bumbledb/src/api/prepared/tests/statically_empty.rs",
 
   .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
     "On the bounded word domain one slot's conjunction of constant order bounds means exactly its folded summary's at-most-two emitted bounds, and an in-range equality pin implies every constituent — the filter replacement never changes which words pass."
@@ -547,7 +547,7 @@ def ledger : List Obligation := [
   /- ## The interiors/reach cut (Exec/Reach.lean) -/
 
   .row @Query.evalQuery_cq `Bumbledb.Query.evalQuery_cq
-    "A query with empty interiors and no rec denotes the union of its main rules over the instance."
+    "Empty-prefix cq denotes the union of its main rules over the instance."
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
     "a_plain_query_executes_as_today (crates/bumbledb/tests/api.rs)",
 
@@ -577,7 +577,7 @@ def ledger : List Obligation := [
     "a_tight_derived_budget_trips_under_reach (crates/bumbledb/tests/api.rs); a_tight_tuple_budget_trips_on_an_interiors_only_query (crates/bumbledb/tests/api.rs)",
 
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
-    "Interior DAG once, optional reachDen, then main rulesAnswers — listed by evalQueryList."
+    "Interior DAG once, then either main rulesAnswers or reachDen plus main — listed by evalQueryList."
     "run_derived (crates/bumbledb/src/api/prepared/reach.rs); run_reach (crates/bumbledb/src/api/prepared/reach.rs)"
     "docs/cookbook.md",
 

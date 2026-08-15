@@ -5,7 +5,7 @@ use crate::api::stats::StatsBody;
 use crate::ir::Rec;
 
 fn interiors_only() -> Query {
-    Query {
+    Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![Rule {
@@ -18,7 +18,6 @@ fn interiors_only() -> Query {
                 conditions: vec![],
             }],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -97,8 +96,8 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
     // Main is an EDB rule whose constant conditions refute themselves —
     // the known fold kernel (`score > 5 ∧ score < 3` on i64). Interiors
     // stay live; the pipeline is Cq with empty main rules.
-    query.head = vec![HeadTerm::Var];
-    query.rules = vec![Rule {
+    *query.head_mut() = vec![HeadTerm::Var];
+    *query.rules_mut() = vec![Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             source: AtomSource::Edb(POSTING),
@@ -150,9 +149,9 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
 }
 
 fn rec_query() -> Query {
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -172,7 +171,7 @@ fn rec_query() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

@@ -37,7 +37,6 @@ fn a_redundant_pointwise_superkey_seals_with_a_warning() {
             "span",
             ValueType::Interval {
                 element: IntervalElement::I64,
-                width: None,
             },
         ),
     ]);
@@ -203,7 +202,6 @@ fn example_schema_resolves_exactly() {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],
@@ -287,7 +285,6 @@ fn example_schema_resolves_exactly() {
 fn pointwise_key_and_containment_resolve() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     let schema = SchemaDescriptor {
         relations: vec![
@@ -743,7 +740,6 @@ fn a_satisfied_closed_to_closed_window_validates() {
 fn power_tree() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -978,7 +974,6 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -990,9 +985,9 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
                     field("playlist", ValueType::U64),
                     field(
                         "slot",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: IntervalElement::U64,
-                            width: Some(1),
+                            width: 1,
                         },
                     ),
                 ],

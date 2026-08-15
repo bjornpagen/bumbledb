@@ -115,7 +115,7 @@ pub fn column_spans(field_types: &[bumbledb_theory::TypeDesc]) -> Box<[ColumnSpa
                         count => ColumnWidth::Words { count },
                     }
                 }
-                TypeDesc::Interval { .. } => ColumnWidth::WordPair,
+                TypeDesc::Interval { .. } | TypeDesc::FixedInterval { .. } => ColumnWidth::WordPair,
             };
             let span = ColumnSpan {
                 first_column: next_column,

@@ -32,26 +32,189 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Panics
 ///
 /// Never: interior ids are `u32`-checked above before the `expect`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one validation walk: interiors, rec, main, then the sealed witness"
-)]
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
-    let derived = query.interiors.len() + usize::from(query.rec.is_some());
-    if u32::try_from(derived).is_err() {
-        return Err(ValidationError::InteriorIdOverflow { count: derived });
+    match query {
+        Query::Cq {
+            interiors,
+            head,
+            rules,
+        } => validate_cq(schema, interiors, head, rules),
+        Query::Reach {
+            interiors,
+            rec,
+            head,
+            rules,
+        } => validate_reach(schema, interiors, rec, head, rules),
     }
+}
 
+fn overflow(derived: usize) -> Result<(), ValidationError> {
+    if u32::try_from(derived).is_err() {
+        Err(ValidationError::InteriorIdOverflow { count: derived })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_cq(
+    schema: &Schema,
+    interiors: &[crate::ir::Interior],
+    head: &[crate::ir::HeadTerm],
+    rules: &[crate::ir::Rule],
+) -> Result<ValidatedQuery, ValidationError> {
+    let derived = interiors.len();
+    overflow(derived)?;
     let mut params = ParamTables::default();
-    let mut sealed: Vec<Signature> = Vec::with_capacity(query.interiors.len());
-    let mut interiors_out = Vec::with_capacity(query.interiors.len());
-    let mut rule_count = 0u64;
+    let (sealed, interiors_out, mut rule_count) = seal_interiors(
+        schema,
+        interiors,
+        |sealed, id| InteriorSignatures::Cq {
+            interiors: sealed,
+            reader: Some(id),
+            derived_count: derived,
+        },
+        &mut params,
+    )?;
+    let main = type_main(
+        schema,
+        head,
+        rules,
+        &InteriorSignatures::Cq {
+            interiors: &sealed,
+            reader: None,
+            derived_count: derived,
+        },
+        &mut params,
+        &mut rule_count,
+    )?;
+    finish_cq(params, interiors_out, main, rule_count)
+}
 
+fn validate_reach(
+    schema: &Schema,
+    interiors: &[crate::ir::Interior],
+    rec: &Rec,
+    head: &[crate::ir::HeadTerm],
+    rules: &[crate::ir::Rule],
+) -> Result<ValidatedQuery, ValidationError> {
+    let derived = interiors.len() + 1;
+    overflow(derived)?;
+    let mut params = ParamTables::default();
+    let (sealed, interiors_out, mut rule_count) = seal_interiors(
+        schema,
+        interiors,
+        |sealed, id| InteriorSignatures::ReachOpen {
+            interiors: sealed,
+            reader: Some(id),
+            derived_count: derived,
+        },
+        &mut params,
+    )?;
+    let id = InteriorId(u32::try_from(interiors.len()).expect("derived count fits u32"));
+    rec_roster(rec, id)?;
+    let (base, rec_low) = lower_rec_pool(rec)?;
+    refuse_derived_head(&rec.head, &base, id)?;
+    refuse_derived_head(&rec.head, &rec_low, id)?;
+    let base_typing = type_rules(
+        schema,
+        &InteriorSignatures::ReachOpen {
+            interiors: &sealed,
+            reader: None,
+            derived_count: derived,
+        },
+        &rec.head,
+        &base,
+        &mut params,
+        true,
+    )?;
+    rule_count += base_typing.len() as u64;
+    let rec_signature = super::Signature::derive(&base[0], &base_typing[0]);
+    let rec_typing = type_rules(
+        schema,
+        &InteriorSignatures::ReachSealed {
+            interiors: &sealed,
+            rec: &rec_signature,
+            derived_count: derived,
+        },
+        &rec.head,
+        &rec_low,
+        &mut params,
+        true,
+    )?;
+    let base_row = input_row(&base[0], &base_typing[0]);
+    for (rule_idx, (rule, typing)) in rec_low.iter().zip(&rec_typing).enumerate() {
+        let row = input_row(rule, typing);
+        if let Some(position) = (0..row.len()).find(|&i| row[i] != base_row[i]) {
+            return Err(ValidationError::HeadTypeMismatch {
+                rule: rule_idx,
+                position,
+            });
+        }
+    }
+    rule_count += rec_typing.len() as u64;
+    let base_arms = NonEmpty::from_vec(
+        base.into_iter()
+            .zip(base_typing)
+            .map(|(rule, typing)| ValidatedBaseArm { rule, typing })
+            .collect(),
+    )
+    .expect("roster/lower refused empty base");
+    let rec_arms = NonEmpty::from_vec(
+        rec_low
+            .into_iter()
+            .zip(rec_typing)
+            .map(|(rule, typing)| ValidatedRecArm {
+                self_occ: rec_arm_self_occ(&rule, id),
+                rule,
+                typing,
+            })
+            .collect(),
+    )
+    .expect("roster/lower refused empty rec");
+    let rec_out = ValidatedRec {
+        base: base_arms,
+        rec: rec_arms,
+        signature: rec_signature,
+    };
+    let main = type_main(
+        schema,
+        head,
+        rules,
+        &InteriorSignatures::ReachSealed {
+            interiors: &sealed,
+            rec: rec_out.signature(),
+            derived_count: derived,
+        },
+        &mut params,
+        &mut rule_count,
+    )?;
+    finish_reach(
+        params,
+        interiors_out,
+        rec_out,
+        id,
+        derived,
+        main,
+        rule_count,
+    )
+}
+
+/// Seals interiors in declaration order. `sigs` builds the typing
+/// surface for interior *id* against already-sealed signatures.
+fn seal_interiors(
+    schema: &Schema,
+    interiors: &[crate::ir::Interior],
+    sigs: impl for<'a> Fn(&'a [Signature], InteriorId) -> InteriorSignatures<'a>,
+    params: &mut ParamTables,
+) -> Result<(Vec<Signature>, Vec<ValidatedInterior>, u64), ValidationError> {
+    let mut sealed: Vec<Signature> = Vec::with_capacity(interiors.len());
+    let mut interiors_out = Vec::with_capacity(interiors.len());
+    let mut rule_count = 0u64;
     let mut seal_span = crate::obs::span(
         crate::obs::names::VALIDATE_SEAL,
         crate::obs::Category::Prepare,
     );
-    for (index, interior) in query.interiors.iter().enumerate() {
+    for (index, interior) in interiors.iter().enumerate() {
         let id = InteriorId(u32::try_from(index).expect("derived count fits u32"));
         if interior.rules.is_empty() {
             return Err(ValidationError::EmptyInterior { interior: id });
@@ -65,165 +228,103 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         refuse_derived_head(&interior.head, &lowered, id)?;
         let typings = type_rules(
             schema,
-            &InteriorSignatures {
-                interiors: &sealed,
-                rec: None,
-                reader: Some(id),
-                derived_count: derived,
-            },
+            &sigs(&sealed, id),
             &interior.head,
             &lowered,
-            &mut params,
+            params,
             false,
         )?;
         rule_count += typings.len() as u64;
-        let predicate = super::Signature::derive(&lowered[0], &typings[0]);
-        sealed.push(predicate.clone());
+        let signature = super::Signature::derive(&lowered[0], &typings[0]);
+        sealed.push(signature.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
-            signature: predicate,
+            signature,
             rules: typings,
         });
     }
-    seal_span.set_args(query.interiors.len() as u64, sealed.len() as u64);
+    seal_span.set_args(interiors.len() as u64, sealed.len() as u64);
     seal_span.end();
+    Ok((sealed, interiors_out, rule_count))
+}
 
-    let rec_out = if let Some(rec) = &query.rec {
-        let id = InteriorId(u32::try_from(query.interiors.len()).expect("derived count fits u32"));
-        rec_roster(rec, id)?;
-        let (base, rec_low) = lower_rec_pool(rec)?;
-        refuse_derived_head(&rec.head, &base, id)?;
-        refuse_derived_head(&rec.head, &rec_low, id)?;
-        let base_typing = type_rules(
-            schema,
-            &InteriorSignatures {
-                interiors: &sealed,
-                rec: None,
-                reader: None,
-                derived_count: derived,
-            },
-            &rec.head,
-            &base,
-            &mut params,
-            true,
-        )?;
-        rule_count += base_typing.len() as u64;
-        let predicate = super::Signature::derive(&base[0], &base_typing[0]);
-        let rec_typing = type_rules(
-            schema,
-            &InteriorSignatures {
-                interiors: &sealed,
-                rec: Some(&predicate),
-                reader: None,
-                derived_count: derived,
-            },
-            &rec.head,
-            &rec_low,
-            &mut params,
-            true,
-        )?;
-        let base_row = input_row(&base[0], &base_typing[0]);
-        for (rule_idx, (rule, typing)) in rec_low.iter().zip(&rec_typing).enumerate() {
-            let row = input_row(rule, typing);
-            if let Some(position) = (0..row.len()).find(|&i| row[i] != base_row[i]) {
-                return Err(ValidationError::HeadTypeMismatch {
-                    rule: rule_idx,
-                    position,
-                });
-            }
-        }
-        rule_count += rec_typing.len() as u64;
-        let base_arms = NonEmpty::from_vec(
-            base.into_iter()
-                .zip(base_typing)
-                .map(|(rule, typing)| ValidatedBaseArm { rule, typing })
-                .collect(),
-        )
-        .expect("roster/lower refused empty base");
-        let rec_arms = NonEmpty::from_vec(
-            rec_low
-                .into_iter()
-                .zip(rec_typing)
-                .map(|(rule, typing)| ValidatedRecArm {
-                    self_occ: rec_arm_self_occ(&rule, id),
-                    rule,
-                    typing,
-                })
-                .collect(),
-        )
-        .expect("roster/lower refused empty rec");
-        Some((
-            id,
-            ValidatedRec {
-                base: base_arms,
-                rec: rec_arms,
-                signature: predicate,
-            },
-        ))
-    } else {
-        None
-    };
+fn type_main(
+    schema: &Schema,
+    head: &[crate::ir::HeadTerm],
+    rules: &[crate::ir::Rule],
+    sigs: &InteriorSignatures<'_>,
+    params: &mut ParamTables,
+    rule_count: &mut u64,
+) -> Result<ValidatedMain, ValidationError> {
+    let lowered = lower_rules(head, rules, ValidationError::EmptyRuleSet, true)?;
+    let typings = type_rules(schema, sigs, head, &lowered, params, false)?;
+    *rule_count += typings.len() as u64;
+    let signature = super::Signature::derive(&lowered[0], &typings[0]);
+    Ok(ValidatedMain {
+        lowered,
+        signature,
+        rules: typings,
+    })
+}
 
-    let rec_pred = rec_out.as_ref().map(|(_, rec)| rec.signature());
-    let lowered = lower_rules(
-        &query.head,
-        &query.rules,
-        ValidationError::EmptyRuleSet,
-        true,
-    )?;
-    let typings = type_rules(
-        schema,
-        &InteriorSignatures {
-            interiors: &sealed,
-            rec: rec_pred,
-            reader: None,
-            derived_count: derived,
-        },
-        &query.head,
-        &lowered,
-        &mut params,
-        false,
-    )?;
-    rule_count += typings.len() as u64;
-    let predicate = super::Signature::derive(&lowered[0], &typings[0]);
-
+fn finish_cq(
+    params: ParamTables,
+    interiors: Vec<ValidatedInterior>,
+    main: ValidatedMain,
+    rule_count: u64,
+) -> Result<ValidatedQuery, ValidationError> {
     let mut rules_span = crate::obs::span(
         crate::obs::names::VALIDATE_RULES,
         crate::obs::Category::Prepare,
     );
     rules_span.set_args(rule_count, 0);
     rules_span.end();
-
     params.check_masks_and_density()?;
-    let set_params = params
+    let set_params = set_params_of(&params);
+    Ok(ValidatedQuery::Cq {
+        interiors,
+        main,
+        param_types: params.param_types,
+        set_params,
+        point_params: params.point_params,
+    })
+}
+
+fn finish_reach(
+    params: ParamTables,
+    interiors: Vec<ValidatedInterior>,
+    rec: ValidatedRec,
+    rec_id: InteriorId,
+    derived: usize,
+    main: ValidatedMain,
+    rule_count: u64,
+) -> Result<ValidatedQuery, ValidationError> {
+    let mut rules_span = crate::obs::span(
+        crate::obs::names::VALIDATE_RULES,
+        crate::obs::Category::Prepare,
+    );
+    rules_span.set_args(rule_count, 0);
+    rules_span.end();
+    params.check_masks_and_density()?;
+    let set_params = set_params_of(&params);
+    Ok(ValidatedQuery::Reach {
+        interiors,
+        rec,
+        main,
+        rec_id,
+        derived_count: u32::try_from(derived).expect("derived count fits u32"),
+        param_types: params.param_types,
+        set_params,
+        point_params: params.point_params,
+    })
+}
+
+fn set_params_of(params: &ParamTables) -> BTreeSet<ParamId> {
+    params
         .param_kinds
         .iter()
         .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(*param))
-        .collect();
-    let main = ValidatedMain {
-        lowered,
-        signature: predicate,
-        rules: typings,
-    };
-    Ok(match rec_out {
-        None => ValidatedQuery::Cq {
-            interiors: interiors_out,
-            main,
-            param_types: params.param_types,
-            set_params,
-            point_params: params.point_params,
-        },
-        Some((rec_id, rec)) => ValidatedQuery::Reach {
-            interiors: interiors_out,
-            rec,
-            main,
-            rec_id,
-            derived_count: u32::try_from(derived).expect("derived count fits u32"),
-            param_types: params.param_types,
-            set_params,
-            point_params: params.point_params,
-        },
-    })
+        .collect()
 }
 
 /// Head-alignment, per-rule roster, and head-type agreement for one

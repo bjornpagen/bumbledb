@@ -31,7 +31,6 @@ fn calendar() -> Schema {
     };
     let during = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -113,9 +112,8 @@ fn projection_rule(relation: RelationId) -> Rule {
 #[test]
 fn calendar_union_golden() {
     let rule = projection_rule(BUSY);
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: rule.head(),
         rules: vec![rule, projection_rule(OOO)],
     };

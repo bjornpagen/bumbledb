@@ -50,7 +50,7 @@ fn type_index(ty: &ValueType) -> usize {
         ValueType::Bool => 2,
         ValueType::String => 3,
         ValueType::FixedBytes { .. } => 4,
-        ValueType::Interval { .. } => 5,
+        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 5,
     }
 }
 
@@ -92,7 +92,7 @@ fn typing(rule: &Rule) -> Typing {
             if let Term::Var(var) = term {
                 t.var_atoms.entry(*var).or_default().push(atom_idx);
             }
-            if matches!(ty, ValueType::Interval { .. }) {
+            if ty.is_interval() {
                 continue;
             }
             match term {
@@ -112,7 +112,7 @@ fn typing(rule: &Rule) -> Typing {
     }
     for atom in &rule.negated {
         for (field, term) in &atom.bindings {
-            if matches!(field_type(atom, *field), ValueType::Interval { .. }) {
+            if field_type(atom, *field).is_interval() {
                 continue;
             }
             if let Term::Param(p) | Term::ParamSet(p) = term {
@@ -125,7 +125,7 @@ fn typing(rule: &Rule) -> Typing {
     for atom in &rule.atoms {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
-            if !matches!(ty, ValueType::Interval { .. }) {
+            if !ty.is_interval() {
                 continue;
             }
             if let Term::Var(var) = term {
@@ -140,10 +140,7 @@ fn typing(rule: &Rule) -> Typing {
 }
 
 fn element_of(ty: &ValueType) -> Option<IntervalElement> {
-    match ty {
-        ValueType::Interval { element, .. } => Some(*element),
-        _ => None,
-    }
+    ty.interval_element()
 }
 
 /// The equality-spine cost-bound check
@@ -164,8 +161,8 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
     for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let Term::Var(var) = term else { continue };
-            let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
-            let var_interval = matches!(t.var_types.get(var), Some(ValueType::Interval { .. }));
+            let field_interval = field_type(atom, *field).is_interval();
+            let var_interval = t.var_types.get(var).is_some_and(ValueType::is_interval);
             if !field_interval || var_interval {
                 eq_atoms.entry(*var).or_default().insert(index);
             }
@@ -178,7 +175,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
     };
     let has_eq_selection = |atom: &Atom| {
         atom.bindings.iter().any(|(field, term)| {
-            !matches!(field_type(atom, *field), ValueType::Interval { .. })
+            !field_type(atom, *field).is_interval()
                 && matches!(term, Term::Literal(_) | Term::Param(_) | Term::ParamSet(_))
         })
     };
@@ -186,11 +183,11 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
     let mut needs: BTreeSet<usize> = BTreeSet::new();
     for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
-            if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
+            if !field_type(atom, *field).is_interval() {
                 continue;
             }
             if let Term::Var(var) = term
-                && !matches!(t.var_types.get(var), Some(ValueType::Interval { .. }))
+                && !t.var_types.get(var).is_some_and(ValueType::is_interval)
             {
                 needs.insert(index);
             }
@@ -209,7 +206,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 continue; // a same-atom pair is a filter, not a join
             }
             for var in [lhs, rhs] {
-                if matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
+                if t.var_types.get(var).is_some_and(ValueType::is_interval) {
                     needs.extend(t.var_atoms[var].iter().copied());
                 }
             }
@@ -223,12 +220,10 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
         let mut memberships = 0usize;
         let mut others = 0usize;
         for (field, term) in &atom.bindings {
-            let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
+            let field_interval = field_type(atom, *field).is_interval();
             let is_membership = field_interval
                 && match term {
-                    Term::Var(var) => {
-                        !matches!(t.var_types.get(var), Some(ValueType::Interval { .. }))
-                    }
+                    Term::Var(var) => !t.var_types.get(var).is_some_and(ValueType::is_interval),
                     Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => true,
                     _ => false,
                 };
@@ -319,9 +314,7 @@ impl Coverage {
                         self.membership_param += 1;
                         true
                     }
-                    Term::Var(var)
-                        if !matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) =>
-                    {
+                    Term::Var(var) if !t.var_types.get(var).is_some_and(ValueType::is_interval) => {
                         self.membership_var += 1;
                         true
                     }
@@ -456,10 +449,7 @@ impl Coverage {
                         // Membership inside negation: an element-typed
                         // var at an interval field.
                         if element_of(&field_type(atom, *field)).is_some()
-                            && !matches!(
-                                t.var_types.get(var),
-                                Some(ValueType::Interval { .. }) | None
-                            )
+                            && t.var_types.get(var).is_some_and(|ty| !ty.is_interval())
                         {
                             self.negation_membership += 1;
                         }
@@ -476,7 +466,7 @@ impl Coverage {
         for term in &rule.finds {
             match term {
                 FindTerm::Var(var) => {
-                    if matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
+                    if t.var_types.get(var).is_some_and(ValueType::is_interval) {
                         interval_finds += 1;
                         projected_words += 2;
                     } else {
@@ -523,7 +513,7 @@ impl Coverage {
     /// from the tag).
     fn record_rules(&mut self, query: &Query, variant: Option<RulesVariant>) {
         let Some(variant) = variant else { return };
-        match query.rules.len() {
+        match query.rules().len() {
             2 => self.rules_arms[0] += 1,
             3 => self.rules_arms[1] += 1,
             4 => self.rules_arms[2] += 1,

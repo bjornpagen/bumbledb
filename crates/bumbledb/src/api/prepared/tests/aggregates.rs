@@ -26,7 +26,6 @@ fn interval_schema() -> Schema {
                     name: "during".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::I64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -64,7 +63,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
 
 /// The interval find round-trip: a projected interval variable
 /// materializes as `Value::IntervalI64` rows equal to the stored
-/// facts', and the predicate's signature reports the interval type.
+/// facts', and the signature reports the interval type.
 #[test]
 fn interval_find_round_trips_through_answers() {
     let dir = TempDir::new("prepared-interval-roundtrip");
@@ -104,11 +103,10 @@ fn interval_find_round_trips_through_answers() {
         vec![
             ValueType::U64,
             ValueType::Interval {
-                element: IntervalElement::I64,
-                width: None
+                element: IntervalElement::I64
             },
         ],
-        "the predicate reports the interval type"
+        "the signature reports the interval type"
     );
     let out = prepared
         .execute_collect(&txn, &cache, &[])

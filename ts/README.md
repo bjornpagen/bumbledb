@@ -2,7 +2,7 @@
 
 Type-theoretic TypeScript SDK for the [bumbledb](https://github.com/bjornpagen/bumbledb) embedded relational engine.
 
-bumbledb models data as relations judged by statements (functionality, containment, capacity) and queried with Datalog expressed as plain values — no SQL, no query-string parser. The SDK is a thin, fully typed surface over an in-process native engine (LMDB storage, MVCC snapshots, one-shot `write` / `writeFrom`).
+bumbledb models data as relations judged by statements (functionality, containment, capacity) and queried as typed IR values — no SQL, no query-string parser. The SDK is a thin, fully typed surface over an in-process native engine (LMDB storage, MVCC snapshots, one-shot `write` / `writeFrom`).
 
 The surface is structural to the bone. Relation declarations are pure structure — kind, width, element, fresh, nothing else — and domains are never declared anywhere: **the laws type the columns**. `schema()` computes every field's equivalence class from the statement list itself, so the containments and mirrors you already write ARE the typing, at compile time and again at construction. Values stay bare (`bigint`, `string`, …); identity lives in the class the laws compute, not in a wrapper.
 
@@ -21,7 +21,7 @@ pnpm add @bjornpagen/bumbledb
 ## Quick start
 
 Declare relations as pure structure, let the statement list type every column,
-write facts through a transaction, and query with Datalog as values.
+write facts through a transaction, and query with the typed builder.
 Everything is typed end to end — bare structural values in law-computed
 classes, inferred query rows, and rejections that arrive as data rather than
 exceptions.
@@ -75,7 +75,7 @@ if (!result.ok) {
 	}
 }
 
-// Query: Datalog as values. v(R) mints a fresh variable per column, typed by
+// Query: v(R) mints a fresh variable per column, typed by
 // the column's law-class; reusing one by object reference IS the join, and
 // rows are typed from the find keys. Params are typed by use.
 // `gt` is one of the free comparison exports.
@@ -129,7 +129,7 @@ The drizzle law governs this surface: the SDK's job at the host boundary is tran
 - The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
 - The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `capacity`; faces via `on` (set membership is a plain array in `.where`); windows via `within` (`within(n)` exact, `within(lo, hi)` range, `within(lo, "*")` floor), measures via `weigh` (`weigh("f")` a u64 field, `weigh(duration("f"))` an interval's measure), dependent bounds via `ref`/`duration` read from the target row; ψ-selection via `.where` on relations and closed rosters.
 - The `Db` runtime — `Db.create`/`Db.open` (exclusive-lock stores; a second open of the same path is `EnvironmentLocked`), transactions, typed violations, scoped snapshot reads (`db.read(fn)`, or `using snap = db.read()` — lifetimes are disposables, never `close()`), the write verbs with `abandon` (returning `abandon(payload)` from `write` or `writeFrom` rolls the transaction back; the outcome arm is in the result type).
-- The query surface — Datalog as values, `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); named interiors and one linear rec via `q.interior` / `q.recursive`; `db.prepare` as a plain value.
+- The query surface — `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); named interiors and one linear rec via `q.interior` / `q.recursive`; `db.prepare` as a plain value.
 - The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`). A disposable lifetime: `using exhumed = await Db.exhume(path)` releases the store's exclusive lock at scope exit.
 
 ## Cookbook

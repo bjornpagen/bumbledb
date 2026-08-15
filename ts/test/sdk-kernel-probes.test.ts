@@ -130,7 +130,7 @@ test("a param value no rule places never registers — the query lowers under it
 	assert.deepEqual(inferrred, {})
 	const ir = lowerQuery(q)
 	assert.equal(ir.interiors.length, 0, "the ghost never reaches the IR")
-	assert.equal(ir.rec, null, "the ghost never reaches the IR")
+	assert.equal(ir.kind, "cq", "the ghost never reaches the IR")
 })
 
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {

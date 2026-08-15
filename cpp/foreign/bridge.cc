@@ -42,6 +42,7 @@ export using ::bdb_atom_source_kind;
 export using ::bdb_term_kind;
 export using ::bdb_condition_kind;
 export using ::bdb_cmp_op_kind;
+export using ::bdb_query_kind;
 
 export using ::bdb_string_view;
 export using ::bdb_bytes_view;
@@ -77,6 +78,9 @@ export using ::bdb_condition;
 export using ::bdb_rule;
 export using ::bdb_interior;
 export using ::bdb_rec;
+export using ::bdb_cq;
+export using ::bdb_reach;
+export using ::bdb_query_payload;
 export using ::bdb_query;
 
 export using ::bdb_read_callback;

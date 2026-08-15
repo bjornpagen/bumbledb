@@ -1030,13 +1030,7 @@
 [{"u64":1022},{"u64":396},{"u64":2},{"u64":9},{"i64":0},{"i64":1700000000051100},{"str":929},{"bool":true}],
 [{"u64":1023},{"u64":140},{"u64":3},{"u64":11},{"i64":0},{"i64":1700000000051150},{"str":930},{"bool":false}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0}],
- "atoms":[{"relation":4,"bindings":[[0,{"var":0}],[2,{"param_set":0}]]}],
- "negated":[],
- "conditions":[],
- "width":1}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"}],"rules":[{"finds":[{"var":0}],"atoms":[{"edb":4,"bindings":[[0,{"var":0}],[2,{"param_set":0}]]}],"negated":[],"conditions":[],"width":1}]}},
 "params":[{"set":[{"u64":0},{"u64":2},{"u64":0}]}],
 "answers":[
 [{"u64":0}],

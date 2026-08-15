@@ -93,9 +93,9 @@ fn rejects_interval_widths_outside_the_range() {
     // w = u64::MAX no start satisfies the Q2 bound in either element
     // domain (an empty type is a relation no fact can inhabit); every
     // other width is a real type.
-    let fixed = |width: u64| ValueType::Interval {
+    let fixed = |width: u64| ValueType::FixedInterval {
         element: IntervalElement::U64,
-        width: Some(width),
+        width,
     };
     for width in [0u64, u64::MAX] {
         let decl = one_relation(vec![field("span", fixed(width))]);
@@ -148,7 +148,6 @@ fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
         33_000,
         ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
         66_000,
     );
@@ -430,7 +429,6 @@ fn rejects_duplicate_selection_field() {
 fn rejects_functionality_with_two_intervals() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     let mut decl = one_relation(vec![field("a", iv.clone()), field("b", iv)]);
     decl.statements
@@ -454,7 +452,6 @@ fn rejects_functionality_interval_not_last() {
             "during",
             ValueType::Interval {
                 element: IntervalElement::I64,
-                width: None,
             },
         ),
         field("room", ValueType::U64),
@@ -573,7 +570,6 @@ fn rejects_interval_position_against_scalar() {
             "span",
             ValueType::Interval {
                 element: IntervalElement::I64,
-                width: None,
             },
         )],
         vec![field("x", ValueType::I64)],
@@ -720,7 +716,6 @@ fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key(
 fn rejects_interval_containment_without_pointwise_key() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     let decl = two_relations(
         vec![field("who", ValueType::U64), field("span", iv.clone())],
@@ -919,13 +914,7 @@ fn rejects_a_ray_axiom() {
     let of_element = |element, value| SchemaDescriptor {
         relations: vec![closed(
             "Quarter",
-            vec![field(
-                "span",
-                ValueType::Interval {
-                    element,
-                    width: None,
-                },
-            )],
+            vec![field("span", ValueType::Interval { element })],
             vec![row("Q1", vec![value])],
         )],
         statements: vec![],
@@ -1033,7 +1022,6 @@ fn closed_window() -> RelationDescriptor {
             "during",
             ValueType::Interval {
                 element: IntervalElement::U64,
-                width: None,
             },
         )],
         vec![row(
@@ -1059,7 +1047,6 @@ fn rejects_an_interval_position_into_a_closed_target() {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 )],
             },
@@ -1092,7 +1079,6 @@ fn rejects_an_interval_position_from_a_closed_source() {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 )],
             },
@@ -1302,7 +1288,6 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
                 "during",
                 ValueType::Interval {
                     element: IntervalElement::U64,
-                    width: None,
                 },
             )],
             vec![
@@ -1358,7 +1343,6 @@ fn extension_tree() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -1480,7 +1464,6 @@ fn rejects_a_capacity_with_an_interval_position() {
         "active",
         ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
     ));
     decl.statements = vec![
@@ -1650,7 +1633,6 @@ fn rejects_a_unit_window_against_a_duration_bound() {
         "span",
         ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
     ));
     decl.statements.push(capacity(
@@ -1683,7 +1665,6 @@ fn rejects_a_u64_weight_against_a_duration_bound() {
         "span",
         ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
     ));
     decl.statements.push(capacity_weighted(
@@ -1908,16 +1889,15 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
     let decl = two_relations(
         vec![field(
             "slot",
-            ValueType::Interval {
+            ValueType::FixedInterval {
                 element: IntervalElement::U64,
-                width: Some(1),
+                width: 1,
             },
         )],
         vec![field(
             "span",
             ValueType::Interval {
                 element: IntervalElement::I64,
-                width: None,
             },
         )],
         vec![containment(

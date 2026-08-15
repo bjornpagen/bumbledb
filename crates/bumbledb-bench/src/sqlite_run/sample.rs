@@ -66,7 +66,7 @@ pub(crate) fn drain_typed(
                     std::hint::black_box(value.as_i64()?);
                     column += 1;
                 }
-                ValueType::Interval { .. } => {
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                     // The two half columns of one interval find.
                     for half in [column, column + 1] {
                         let value = row.get_ref(half)?;

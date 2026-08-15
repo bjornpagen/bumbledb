@@ -1,8 +1,8 @@
 /**
- * Host shape parse for the wire `QueryIr`: rec/main nonempty, aggregate
- * finds split (Count has no `over`; folds require it), head/find
- * alignment. The engine validator remains the one roster authority —
- * this parse refuses only shape the host type can see.
+ * Host shape parse for the wire `QueryIr`: CQ/Reach eliminator, rec/main
+ * nonempty, aggregate finds split (Count has no `over`; folds require
+ * it), head/find alignment. The engine validator remains the one roster
+ * authority — this parse refuses only shape the host type can see.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -17,7 +17,7 @@ function parseQueryIr(ir: QueryIr): ParsedQuery {
 	ir.interiors.forEach(function checkInterior(interior, index) {
 		align(`interior ${index}`, interior.head, interior.rules)
 	})
-	if (ir.rec !== null) {
+	if (ir.kind === "reach") {
 		if (ir.rec.base.length === 0) {
 			throw errors.new("parseQueryIr: rec base is empty")
 		}

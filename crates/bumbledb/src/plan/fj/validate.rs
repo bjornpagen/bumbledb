@@ -91,8 +91,8 @@ fn build_occurrences(
                 })
                 .collect();
             // The field→column shape: a stored relation's layout, or —
-            // for an `Interior` occurrence — the target predicate's sealed
-            // signature columns (`FieldId(i)` is head position `i`, the
+            // for an `Interior` occurrence — the target signature's sealed
+            // columns (`FieldId(i)` is head position `i`, the
             // positional reading `lean/Bumbledb/Query/Denotation.lean:
             // tupleFact` promises; the transient image is built with
             // exactly these types, so the spans agree by construction).
@@ -103,7 +103,7 @@ fn build_occurrences(
                         .map(|idx| layout.field_type(idx))
                         .collect()
                 }
-                crate::ir::AtomSource::Interior(pred) => signatures[pred.index()]
+                crate::ir::AtomSource::Interior(id) => signatures[id.index()]
                     .columns
                     .iter()
                     .map(|column| column.ty.type_desc())
@@ -401,12 +401,15 @@ pub fn validate_with_signatures(
     // are empty (see `build_occurrences`).
     debug_assert!(check_selections(&occurrences).is_ok());
 
-    let distinct_witness = provably_distinct(normalized, schema);
+    let distinctness = match provably_distinct(normalized, schema) {
+        Some(witness) => crate::plan::fj::Distinctness::Proven(witness),
+        None => crate::plan::fj::Distinctness::Unproven,
+    };
     Ok(ValidatedPlan {
         occurrences,
         nodes,
         slots,
-        distinct_witness,
+        distinctness,
         estimates,
     })
 }

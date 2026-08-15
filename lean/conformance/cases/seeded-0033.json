@@ -1053,13 +1053,7 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004225,2000000000004481]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004248,2000000000004458]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":2}],
- "atoms":[{"relation":4,"bindings":[[2,{"var":0}],[5,{"var":1}]]},{"relation":8,"bindings":[[0,{"var":0}],[1,{"var":2}],[2,{"var":3}]]}],
- "negated":[],
- "conditions":[{"cmp":{"op":"point_in","lhs":{"var":3},"rhs":{"var":1}}}],
- "width":3}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":2}],"atoms":[{"edb":4,"bindings":[[2,{"var":0}],[5,{"var":1}]]},{"edb":8,"bindings":[[0,{"var":0}],[1,{"var":2}],[2,{"var":3}]]}],"negated":[],"conditions":[{"cmp":{"op":"point_in","lhs":{"var":3},"rhs":{"var":1}}}],"width":3}]}},
 "params":[],
 "answers":[]
 }

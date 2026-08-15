@@ -1581,7 +1581,7 @@ fn identity_main(arity: u16) -> Rule {
 
 /// Recursion at the public surface: a roster-clean linear rec prepares
 /// and executes under the reach driver, and the self-loop
-/// `p0(x) | Account(id: x); p0(x) | p0(x)` denotes exactly the base
+/// `interior 0(x) | Account(id: x); interior 0(x) | interior 0(x)` denotes exactly the base
 /// rule's set — the rec arm re-derives, the seen-set absorbs, the
 /// fixpoint closes in one growing round
 /// (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
@@ -1625,13 +1625,13 @@ fn prepare_executes_recursion_under_the_driver() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![base.clone()],
             rec: vec![recursive],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
     };
@@ -1670,7 +1670,7 @@ bumbledb::schema! {
 }
 
 /// The transitive-closure query over [`Graph`]:
-/// `recursive p0(x, z) | GraphEdge(x, z); p0(x, z) | GraphEdge(x, y), p0(y, z)`
+/// `rec(x, z) | GraphEdge(x, z); rec(x, z) | GraphEdge(x, y), interior 0(y, z)`
 /// with identity main.
 fn closure_query() -> Query {
     let edge = |a: u16, b: u16| Atom {
@@ -1680,9 +1680,9 @@ fn closure_query() -> Query {
             (FieldId(1), Term::Var(VarId(b))),
         ],
     };
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -1705,7 +1705,7 @@ fn closure_query() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_main(2)],
     }
@@ -1721,9 +1721,9 @@ fn primer_reach_xx() -> Query {
             (FieldId(1), Term::Var(VarId(b))),
         ],
     };
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -1746,7 +1746,7 @@ fn primer_reach_xx() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -1997,7 +1997,7 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
 }
 
 fn interiors_only_accounts() -> Query {
-    Query {
+    Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![Rule {
@@ -2010,7 +2010,6 @@ fn interiors_only_accounts() -> Query {
                 conditions: vec![],
             }],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
     }

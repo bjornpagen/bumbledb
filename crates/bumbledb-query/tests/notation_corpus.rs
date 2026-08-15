@@ -369,31 +369,53 @@ fn rec_json(rec: &Rec) -> String {
 }
 
 /// The whole query, compact — byte-for-byte what the TS side's
-/// `JSON.stringify(queryIr, bigintAsDecimalString)` produces.
+/// `JSON.stringify(queryIr, bigintAsDecimalString)` produces. Tagged Q1:
+/// CQ carries no rec key; Reach carries rec by value.
 fn query_json(query: &Query) -> String {
-    let interiors = query
-        .interiors
-        .iter()
-        .map(interior_json)
-        .collect::<Vec<_>>()
-        .join(",");
-    let rec = query
-        .rec
-        .as_ref()
-        .map_or_else(|| "null".to_owned(), rec_json);
-    let head = query
-        .head
-        .iter()
-        .map(|term| head_term_json(*term))
-        .collect::<Vec<_>>()
-        .join(",");
-    let rules = query
-        .rules
-        .iter()
-        .map(rule_json)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{\"interiors\":[{interiors}],\"rec\":{rec},\"head\":[{head}],\"rules\":[{rules}]}}")
+    match query {
+        Query::Cq {
+            interiors,
+            head,
+            rules,
+        } => {
+            let interiors = interiors
+                .iter()
+                .map(interior_json)
+                .collect::<Vec<_>>()
+                .join(",");
+            let head = head
+                .iter()
+                .map(|term| head_term_json(*term))
+                .collect::<Vec<_>>()
+                .join(",");
+            let rules = rules.iter().map(rule_json).collect::<Vec<_>>().join(",");
+            format!(
+                "{{\"kind\":\"cq\",\"interiors\":[{interiors}],\"head\":[{head}],\"rules\":[{rules}]}}"
+            )
+        }
+        Query::Reach {
+            interiors,
+            rec,
+            head,
+            rules,
+        } => {
+            let interiors = interiors
+                .iter()
+                .map(interior_json)
+                .collect::<Vec<_>>()
+                .join(",");
+            let rec = rec_json(rec);
+            let head = head
+                .iter()
+                .map(|term| head_term_json(*term))
+                .collect::<Vec<_>>()
+                .join(",");
+            let rules = rules.iter().map(rule_json).collect::<Vec<_>>().join(",");
+            format!(
+                "{{\"kind\":\"reach\",\"interiors\":[{interiors}],\"rec\":{rec},\"head\":[{head}],\"rules\":[{rules}]}}"
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -585,8 +607,8 @@ fn cases() -> Vec<Case> {
           recursive reach(p) | OrgParent(child: c, parent: p), reach(c);
           (p) | Org(id: p), reach(p); },
         { rec(v0) | Org(id: v0), v0 == ?0;
-          rec(v1) | OrgParent(child: v0, parent: v1), p0(v0);
-          (v0) | Org(id: v0), p0(v0); });
+          rec(v1) | OrgParent(child: v0, parent: v1), interior 0(v0);
+          (v0) | Org(id: v0), interior 0(v0); });
 
     // The classic two-column closure: the recursive rule binds its head's
     // second position through the interior atom alone, which the TS builder's
@@ -601,8 +623,8 @@ fn cases() -> Vec<Case> {
           recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
           (c, a) | reach(c, a); },
         { rec(v0, v1) | OrgParent(child: v0, parent: v1);
-          rec(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
-          (v0, v1) | p0(v0, v1); });
+          rec(v0, v2) | OrgParent(child: v0, parent: v1), interior 0(v1, v2);
+          (v0, v1) | interior 0(v0, v1); });
 
     corpus_case!(cases, false, "posted-sparse",
         ["interior-sparse", "interior-position-selection"],
@@ -611,7 +633,7 @@ fn cases() -> Vec<Case> {
         { interior posted(id, account, amount) | Posting(id, account, amount);
           (x) | posted(2: x, 0 in ?wanted); },
         { interior 0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
-          (v0) | p0(2: v0, 0 in ?0); });
+          (v0) | interior 0(2: v0, 0 in ?0); });
 
     corpus_case!(cases, false, "usd-selected",
         ["interior-position-selection"],
@@ -620,7 +642,7 @@ fn cases() -> Vec<Case> {
         { interior acct(id, currency) | Account(id, currency);
           (a) | acct(0: a, 1 == Currency::Usd); },
         { interior 0(v0, v1) | Account(id: v0, currency: v1);
-          (v0) | p0(0: v0, 1 == 0); });
+          (v0) | interior 0(0: v0, 1 == 0); });
 
     cases
 }

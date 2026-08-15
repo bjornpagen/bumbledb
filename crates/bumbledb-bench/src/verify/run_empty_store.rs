@@ -82,7 +82,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             "empty random",
             |query| {
                 gate_bearing +=
-                    u32::from(query.rules[0].atoms.iter().any(|a| a.bindings.is_empty()));
+                    u32::from(query.rules()[0].atoms.iter().any(|a| a.bindings.is_empty()));
             },
             &mut naive_routed,
         );

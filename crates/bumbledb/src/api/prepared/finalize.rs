@@ -138,7 +138,7 @@ fn fill_fixed_column(
                 slots[col] = Cell::I64((answer[word] ^ (1 << 63)).cast_signed());
             }
         }
-        ValueType::Interval { element, .. } => {
+        ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => {
             for (slots, answer) in rows {
                 slots[col] = Answers::interval_cell(*element, answer[word], answer[word + 1]);
             }
@@ -171,7 +171,7 @@ fn push_resolved_answer(
             ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
             ValueType::U64 => (Cell::U64(answer[word]), 1),
             ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),
-            ValueType::Interval { element, .. } => (
+            ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => (
                 Answers::interval_cell(*element, answer[word], answer[word + 1]),
                 2,
             ),

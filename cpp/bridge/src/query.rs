@@ -14,12 +14,12 @@ use bumbledb::{
     SchemaDescriptor, Term, VarId,
 };
 
-use crate::db::{Engine, bdb_db};
+use crate::db::{bdb_db, Engine};
 use crate::error::{bdb_error, fail_engine, fail_locked, fail_shape};
 use crate::value::{bdb_value, value_in};
 use crate::{
-    BridgeResult, Fail, bdb_status, box_in, box_out_to, c_tag, guard, ref_in, require_out,
-    slice_in, tag_in,
+    bdb_status, box_in, box_out_to, c_tag, guard, ref_in, require_out, slice_in, tag_in,
+    BridgeResult, Fail,
 };
 
 // ---------------------------------------------------------------------------
@@ -269,11 +269,33 @@ pub struct bdb_rec {
     pub rec_count: usize,
 }
 
-/// The whole query: named interiors, at most one rec, then the main
-/// answer. `rec` is nullable (`NULL` = no rec).
+/// Q1 discriminant: a CQ (no rec) or a Reach (rec by value).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum bdb_query_kind {
+    Cq,
+    Reach,
+}
+
+c_tag!(bdb_query_kind { Cq, Reach });
+
+/// CQ payload: named interiors, then the main answer. No rec slot.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct bdb_query {
+pub struct bdb_cq {
+    pub interiors: *const bdb_interior,
+    pub interior_count: usize,
+    pub head: *const bdb_head_term,
+    pub head_count: usize,
+    pub rules: *const bdb_rule,
+    pub rule_count: usize,
+}
+
+/// Reach payload: named interiors, a required rec, then the main answer.
+/// `rec` is never NULL.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_reach {
     pub interiors: *const bdb_interior,
     pub interior_count: usize,
     pub rec: *const bdb_rec,
@@ -281,6 +303,22 @@ pub struct bdb_query {
     pub head_count: usize,
     pub rules: *const bdb_rule,
     pub rule_count: usize,
+}
+
+/// Live arm of [`bdb_query`]: CQ or Reach. Read only the arm `kind` names.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union bdb_query_payload {
+    pub cq: bdb_cq,
+    pub reach: bdb_reach,
+}
+
+/// The whole query: tagged encoding of Q1 (`Cq | Reach`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_query {
+    pub kind: u32,
+    pub payload: bdb_query_payload,
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +380,9 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
         bdb_find_term_kind::Aggregate => {
             let op = agg_op_in(view.op)?;
             if matches!(op, AggOp::Count) {
-                return Err(fail_shape("Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE"));
+                return Err(fail_shape(
+                    "Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE",
+                ));
             }
             FindTerm::Aggregate {
                 op,
@@ -460,32 +500,94 @@ fn rec_in(view: &bdb_rec) -> BridgeResult<Rec> {
     })
 }
 
-/// The whole inbound query, copied into the engine's owned `Query`
-/// before `prepare`.
-pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
-    let interiors = slice_in(view.interiors, view.interior_count)?
-        .iter()
-        .map(interior_in)
-        .collect::<BridgeResult<Vec<_>>>()?;
-    let rec = if view.rec.is_null() {
-        None
-    } else {
-        // SAFETY: non-null was just checked; the header contract sizes
-        // the pointee as one initialized `bdb_rec` that outlives this call.
-        #[expect(
-            unsafe_code,
-            reason = "nullable rec pointer: NULL is None; non-NULL is one bdb_rec \
-                      alive for the call (header contract)"
-        )]
-        let rec_view = unsafe { &*view.rec };
-        Some(rec_in(rec_view)?)
-    };
-    Ok(Query {
-        interiors,
-        rec,
-        head: head_in(view.head, view.head_count)?,
-        rules: rules_in(view.rules, view.rule_count)?,
+fn query_from_cq(
+    interiors: *const bdb_interior,
+    interior_count: usize,
+    head: *const bdb_head_term,
+    head_count: usize,
+    rules: *const bdb_rule,
+    rule_count: usize,
+) -> BridgeResult<Query> {
+    Ok(Query::Cq {
+        interiors: slice_in(interiors, interior_count)?
+            .iter()
+            .map(interior_in)
+            .collect::<BridgeResult<Vec<_>>>()?,
+        head: head_in(head, head_count)?,
+        rules: rules_in(rules, rule_count)?,
     })
+}
+
+fn query_from_reach(
+    interiors: *const bdb_interior,
+    interior_count: usize,
+    rec: &bdb_rec,
+    head: *const bdb_head_term,
+    head_count: usize,
+    rules: *const bdb_rule,
+    rule_count: usize,
+) -> BridgeResult<Query> {
+    Ok(Query::Reach {
+        interiors: slice_in(interiors, interior_count)?
+            .iter()
+            .map(interior_in)
+            .collect::<BridgeResult<Vec<_>>>()?,
+        rec: rec_in(rec)?,
+        head: head_in(head, head_count)?,
+        rules: rules_in(rules, rule_count)?,
+    })
+}
+
+/// The whole inbound query, copied into the engine's owned `Query`
+/// before `prepare`. Reads only the live arm named by `kind`.
+pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
+    match tag_in::<bdb_query_kind>(view.kind)? {
+        bdb_query_kind::Cq => {
+            // SAFETY: `kind` selected the CQ arm; the header contract
+            // keeps that payload initialized for the call.
+            #[expect(
+                unsafe_code,
+                reason = "union arm: CQ kind names payload.cq (header contract)"
+            )]
+            let cq = unsafe { view.payload.cq };
+            query_from_cq(
+                cq.interiors,
+                cq.interior_count,
+                cq.head,
+                cq.head_count,
+                cq.rules,
+                cq.rule_count,
+            )
+        }
+        bdb_query_kind::Reach => {
+            // SAFETY: `kind` selected the Reach arm; the header contract
+            // keeps that payload initialized for the call.
+            #[expect(
+                unsafe_code,
+                reason = "union arm: Reach kind names payload.reach (header contract)"
+            )]
+            let reach = unsafe { view.payload.reach };
+            if reach.rec.is_null() {
+                return Err(fail_shape("reach rec is required (never NULL)"));
+            }
+            // SAFETY: non-null was just checked; the header contract sizes
+            // the pointee as one initialized `bdb_rec` that outlives this call.
+            #[expect(
+                unsafe_code,
+                reason = "Reach rec is one live bdb_rec for the call (header contract)"
+            )]
+            let rec_view = unsafe { &*reach.rec };
+            query_from_reach(
+                reach.interiors,
+                reach.interior_count,
+                rec_view,
+                reach.head,
+                reach.head_count,
+                reach.rules,
+                reach.rule_count,
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -207,7 +207,7 @@ interface RecHead {
 }
 
 /**
- * The optional linear rec's runtime description — identity keys the dense
+ * The linear rec's runtime description — identity keys the dense
  * `InteriorId` (`interiors.length`) at lowering. Base and rec arms are
  * nonempty by type and sealed in one assignment.
  */

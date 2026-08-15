@@ -466,14 +466,14 @@ fn scalar_comparisons_round_trip() {
 
 /// The `recursive` form (the notation's one linear rec): consecutive
 /// `recursive` lines union into one Rec (a line whose body names the
-/// pred is a rec arm, else base); bare rules are main. The org-hierarchy
-/// closure over `OrgParent`, rendered: rec rules carry the synthesized
-/// `p0` name under `recursive`, main rules render bare, dense interior
-/// atoms render as bare idents — and that normalized text reparses to
-/// the same bytes.
+/// derived table is a rec arm, else base); bare rules are main. The
+/// org-hierarchy closure over `OrgParent`, rendered: rec rules carry
+/// the nameless `rec(...)` prefix, main rules render bare, dense
+/// interior atoms render as `interior {id}` — and that normalized text
+/// reparses to the same bytes.
 const ORG_REACH_NORMALIZED: &str = "rec(v0, v1) | OrgParent(child: v0, parent: v1);\n\
-     rec(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
-     (v0, v1) | p0(v0, v1);";
+     rec(v0, v2) | OrgParent(child: v0, parent: v1), interior 0(v1, v2);\n\
+     (v0, v1) | interior 0(v0, v1);";
 
 #[test]
 fn recursive_reach_golden() {
@@ -488,9 +488,9 @@ fn recursive_reach_golden() {
 #[test]
 fn recursive_normalized_text_is_a_fixed_point() {
     let reparsed = query!(Ledger {
-        recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);
-        recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
-        (v0, v1) | p0(v0, v1);
+        rec(v0, v1) | OrgParent(child: v0, parent: v1);
+        rec(v0, v2) | OrgParent(child: v0, parent: v1), interior 0(v1, v2);
+        (v0, v1) | interior 0(v0, v1);
     });
     assert_eq!(
         pin("org-reach-fixed-point", Ledger, &reparsed),
@@ -532,13 +532,13 @@ fn recursive_lowers_to_the_exact_ir() {
         negated: vec![],
         conditions: vec![],
     };
-    let expected = bumbledb::Query {
+    let expected = bumbledb::Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![rule([0, 1], vec![parent_atom(0, 1)])],
             rec: vec![rule([0, 2], vec![parent_atom(0, 1), reach_atom(1, 2)])],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
     };
@@ -588,9 +588,9 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
         negated: vec![],
         conditions,
     };
-    let expected = bumbledb::Query {
+    let expected = bumbledb::Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![rule([0, 1], vec![parent_atom(0, 1)], vec![])],
             rec: vec![rule(
@@ -599,7 +599,7 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
                 // rec arms walk before main: `?skip` is ParamId(0).
                 vec![cond(CmpOp::Ne, 2, 0)],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule(
             [0, 1],
@@ -614,9 +614,10 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
 /// The indexed spellings survive for what the ordered form cannot say —
 /// sparse positions (`2: x`), position selections (`1 == …`), and
 /// position set membership (`0 in ?p`) — and render as `i:`/selection
-/// forms while dense interior atoms render bare. Both normalized texts
-/// reparse to their own bytes: the fixed-point law holds on both sides
-/// of the split. `interior` is the non-recursive derived table.
+/// forms while dense interior atoms render as `interior {id}`. Both
+/// normalized texts reparse to their own bytes: the fixed-point law
+/// holds on both sides of the split. `interior` is the non-recursive
+/// derived table.
 #[test]
 fn sparse_and_selection_positions_round_trip() {
     let sparse = query!(Ledger {
@@ -624,11 +625,11 @@ fn sparse_and_selection_positions_round_trip() {
         (x) | posted(2: x, 0 in ?wanted);
     });
     let sparse_normalized = "interior 0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
-         (v0) | p0(2: v0, 0 in ?0);";
+         (v0) | interior 0(2: v0, 0 in ?0);";
     assert_eq!(pin("sparse-positions", Ledger, &sparse), sparse_normalized);
     let sparse_reparsed = query!(Ledger {
-        interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
-        (v0) | p0(2: v0, 0 in ?0);
+        interior 0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
+        (v0) | interior 0(2: v0, 0 in ?0);
     });
     assert_eq!(
         pin("sparse-positions-fixed-point", Ledger, &sparse_reparsed),
@@ -643,14 +644,14 @@ fn sparse_and_selection_positions_round_trip() {
         (a) | acct(0: a, 1 == Currency::Usd);
     });
     let selected_normalized = "interior 0(v0, v1) | Account(id: v0, currency: v1);\n\
-         (v0) | p0(0: v0, 1 == 0);";
+         (v0) | interior 0(0: v0, 1 == 0);";
     assert_eq!(
         pin("selected-positions", Ledger, &selected),
         selected_normalized
     );
     let selected_reparsed = query!(Ledger {
-        interior p0(v0, v1) | Account(id: v0, currency: v1);
-        (v0) | p0(0: v0, 1 == 0);
+        interior 0(v0, v1) | Account(id: v0, currency: v1);
+        (v0) | interior 0(0: v0, 1 == 0);
     });
     assert_eq!(
         pin("selected-positions-fixed-point", Ledger, &selected_reparsed),
@@ -845,7 +846,7 @@ fn interval_literals_compile_prepare_and_render() {
         "(v0) | R(x: v0, w: v1), Allen(v1, INTERSECTS, 0..10);"
     );
     assert!(matches!(
-        &allen.rules[0].conditions[0],
+        &allen.rules()[0].conditions[0],
         ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen { mask },
             rhs: Term::Literal(Value::IntervalU64(_)),
@@ -909,7 +910,7 @@ fn primer_shaped_reach_diagonal_golden() {
 Requires(consumer: v2, capability: v1, state == Upheld), v0 != v2;\n\
 rec(v0, v3) | Produces(grp: v0, capability: v1), \
 Requires(consumer: v2, capability: v1, state == Upheld), \
-Requires(consumer: v3, state == Upheld), p0(v2, v3), v0 != v2;\n\
-(v0) | Grp(id: v0), p0(v0, v0);"
+Requires(consumer: v3, state == Upheld), interior 0(v2, v3), v0 != v2;\n\
+(v0) | Grp(id: v0), interior 0(v0, v0);"
     );
 }

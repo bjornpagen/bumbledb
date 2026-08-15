@@ -1042,13 +1042,7 @@
 [{"u64":1022},{"u64":260},{"u64":2},{"u64":23},{"i64":0},{"i64":1700000000051100},{"str":302},{"bool":false}],
 [{"u64":1023},{"u64":98},{"u64":3},{"u64":28},{"i64":-2000},{"i64":1700000000051150},{"str":933},{"bool":false}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":3}],
- "atoms":[{"relation":4,"bindings":[[4,{"var":0}],[2,{"var":1}]]},{"relation":1,"bindings":[[0,{"var":1}],[1,{"var":2}]]},{"relation":0,"bindings":[[0,{"var":2}],[1,{"var":3}]]}],
- "negated":[],
- "conditions":[],
- "width":4}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":3}],"atoms":[{"edb":4,"bindings":[[4,{"var":0}],[2,{"var":1}]]},{"edb":1,"bindings":[[0,{"var":1}],[1,{"var":2}]]},{"edb":0,"bindings":[[0,{"var":2}],[1,{"var":3}]]}],"negated":[],"conditions":[],"width":4}]}},
 "params":[],
 "answers":[
 [{"i64":-1000},{"str":0}],

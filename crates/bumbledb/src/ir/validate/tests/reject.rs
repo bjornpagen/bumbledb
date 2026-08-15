@@ -192,7 +192,6 @@ fn closed_schema() -> Schema {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -1281,16 +1280,15 @@ fn cross_domain_schema() -> Schema {
                 field("id", ValueType::U64),
                 field(
                     "ulane",
-                    ValueType::Interval {
+                    ValueType::FixedInterval {
                         element: IntervalElement::U64,
-                        width: Some(5),
+                        width: 5,
                     },
                 ),
                 field(
                     "iline",
                     ValueType::Interval {
                         element: IntervalElement::I64,
-                        width: None,
                     },
                 ),
             ],

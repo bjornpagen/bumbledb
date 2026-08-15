@@ -262,7 +262,7 @@ pub fn sqlite_expressible_on(case: &LaneCase<'_>, schema: &Schema) -> Result<(),
     match case {
         LaneCase::Query(query) => {
             if query
-                .head
+                .head()
                 .iter()
                 .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack)))
             {

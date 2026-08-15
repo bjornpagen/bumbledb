@@ -67,9 +67,9 @@ fn v(id: u16) -> Term {
 
 /// The transitive closure: rec identity-main, linear, one self-atom.
 fn closure_query() -> Query {
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -95,7 +95,7 @@ fn closure_query() -> Query {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -113,8 +113,8 @@ fn closure_query() -> Query {
 /// nodes that are nobody's reachable target.
 fn unreached_query() -> Query {
     let mut query = closure_query();
-    query.head = vec![HeadTerm::Var];
-    query.rules = vec![Rule {
+    *query.head_mut() = vec![HeadTerm::Var];
+    *query.rules_mut() = vec![Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             source: AtomSource::Edb(NODE),
@@ -188,7 +188,7 @@ fn sqlite_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
         .expect("insert edge");
     }
     let translated = translate(query, &schema, &[]).expect("translates");
-    let arity = query.head.len();
+    let arity = query.head().len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement
         .query_map([], |row| {
@@ -379,7 +379,6 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
                         "span",
                         ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -413,9 +412,8 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             conditions: vec![],
         }],
     };
-    let membership = Query {
+    let membership = Query::Cq {
         interiors: vec![carrier.clone()],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -433,9 +431,8 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             conditions: vec![],
         }],
     };
-    let equality = Query {
+    let equality = Query::Cq {
         interiors: vec![carrier],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

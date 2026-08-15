@@ -2,7 +2,7 @@ use crate::error::{CorruptionError, Error, Result, Violation};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::plan::FactOp;
+use super::plan::{FactOp, MarkWeight};
 use super::{Applier, crashpoint, decode_row_id, fact_by_row};
 
 impl Applier<'_, '_> {
@@ -278,8 +278,10 @@ impl Applier<'_, '_> {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             match edge.weight {
-                Some(weight) => self.put_data(r_len, weight.to_le_bytes().as_slice())?,
-                None => self.put_data(r_len, &[])?,
+                MarkWeight::Weighted(weight) => {
+                    self.put_data(r_len, weight.to_le_bytes().as_slice())?;
+                }
+                MarkWeight::Unit => self.put_data(r_len, &[])?,
             }
         }
         Ok(())

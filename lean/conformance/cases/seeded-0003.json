@@ -15,13 +15,7 @@
 [{"u64":3},{"u64":0},{"u64":2}],
 [{"u64":4},{"u64":0},{"u64":0}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0}],
- "atoms":[{"relation":1,"bindings":[[0,{"param":0}],[2,{"var":0}],[1,{"var":1}]]}],
- "negated":[{"relation":0,"bindings":[[0,{"var":1}]]}],
- "conditions":[{"cmp":{"op":"eq","lhs":{"var":0},"rhs":{"lit":{"u64":1}}}},{"cmp":{"op":"eq","lhs":{"var":1},"rhs":{"lit":{"u64":0}}}},{"cmp":{"op":"gt","lhs":{"var":1},"rhs":{"lit":{"u64":0}}}}],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"}],"rules":[{"finds":[{"var":0}],"atoms":[{"edb":1,"bindings":[[0,{"param":0}],[2,{"var":0}],[1,{"var":1}]]}],"negated":[{"edb":0,"bindings":[[0,{"var":1}]]}],"conditions":[{"cmp":{"op":"eq","lhs":{"var":0},"rhs":{"lit":{"u64":1}}}},{"cmp":{"op":"eq","lhs":{"var":1},"rhs":{"lit":{"u64":0}}}},{"cmp":{"op":"gt","lhs":{"var":1},"rhs":{"lit":{"u64":0}}}}],"width":2}]}},
 "params":[{"scalar":{"u64":0}}],
 "answers":[]
 }

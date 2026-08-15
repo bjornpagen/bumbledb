@@ -1119,7 +1119,7 @@ describe("the query surface against a real store", function suite() {
 			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).find({ acct })
 		})
 		assert.equal(lowerQuery(sameClass).interiors.length, 0)
-		assert.equal(lowerQuery(sameClass).rec, null)
+		assert.equal(lowerQuery(sameClass).kind, "cq")
 
 		// 2. Cross-class pairing fails at the use site (compile) and at construction (runtime twin).
 		assert.throws(function crossClass() {
@@ -1179,8 +1179,8 @@ describe("the query surface against a real store", function suite() {
 				}
 			]
 		})
-		type SecondRecPin = Expect<Equal<(typeof afterRec)["recursive"], never>>
-		type InteriorAfterRecPin = Expect<Equal<(typeof afterRec)["interior"], never>>
+		type SecondRecPin = Expect<Equal<"recursive" extends keyof typeof afterRec ? true : false, false>>
+		type InteriorAfterRecPin = Expect<Equal<"interior" extends keyof typeof afterRec ? true : false, false>>
 		void (0 as unknown as SecondRecPin)
 		void (0 as unknown as InteriorAfterRecPin)
 		function unwritableAfterRec() {
@@ -1191,15 +1191,8 @@ describe("the query surface against a real store", function suite() {
 		}
 		void unwritableAfterRec
 
-		assert.throws(function twoRecursives() {
-			const untyped: { recursive(name: string, arms: object): unknown } = afterRec
-			untyped.recursive("b", { base: [], rec: [] })
-		}, /second recursive/)
-
-		assert.throws(function interiorAfterRecursive() {
-			const untyped: { interior(name: string, ...builds: unknown[]): unknown } = afterRec
-			untyped.interior("mid")
-		}, /interior after recursive/)
+		assert.equal("recursive" in afterRec, false, "Reach start does not carry recursive")
+		assert.equal("interior" in afterRec, false, "Reach start does not carry interior")
 
 		assert.throws(function interiorAfterMain() {
 			query(Ledger)
@@ -1272,8 +1265,9 @@ describe("the query surface against a real store", function suite() {
 				return r.interior("reach", { h }).find({ h })
 			})
 		assert.ok(identityProjection, "the interior-only main rule is spellable — no re-grounding join exists")
-		const rec = identityProjection.data.rec
-		assert.ok(rec !== null, "the recursive query seals a RecData")
+		assert.equal(identityProjection.data.kind, "reach", "the recursive query is a Reach")
+		const rec = identityProjection.data.kind === "reach" ? identityProjection.data.rec : undefined
+		assert.ok(rec !== undefined, "the recursive query seals a RecData")
 		assert.ok(rec.base.length >= 1, "sealed RecData cannot carry an empty base")
 		assert.ok(rec.rec.length >= 1, "sealed RecData cannot carry an empty rec")
 		assert.ok(rec.finds.length >= 1, "arm scopes never observe empty rec finds — the head is sealed before rec arms")
@@ -1355,6 +1349,6 @@ describe("the query surface against a real store", function suite() {
 			return r.match(Holder, { id: h }).find({ h })
 		})
 		assert.equal(plain.data.interiors.length, 0, "a plain query carries no interiors")
-		assert.equal(plain.data.rec, null, "a plain query carries no rec")
+		assert.equal(plain.data.kind, "cq", "a plain query is a CQ")
 	})
 })

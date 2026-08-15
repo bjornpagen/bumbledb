@@ -256,10 +256,7 @@ pub(super) fn load_target_stores(
         // ordinary table (≤256 rows — pure win, never timed).
         let skip_id = usize::from(relation.body().closed_rows().is_some());
         for field in relation.fields().iter().skip(skip_id) {
-            let columns = if matches!(
-                field.value_type,
-                bumbledb::schema::ValueType::Interval { .. }
-            ) {
+            let columns = if field.value_type.is_interval() {
                 format!("\"{0}_start\", \"{0}_end\"", field.name)
             } else {
                 format!("\"{}\"", field.name)

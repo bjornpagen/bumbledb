@@ -21,10 +21,6 @@ impl fmt::Display for IntrospectionReport<'_> {
                 write!(f, "{pending}")?;
             }
         }
-        let rec_id = match &self.body {
-            ReportBody::Reach { rec_id, .. } => Some(*rec_id),
-            ReportBody::Cq { .. } => None,
-        };
         match &self.body {
             ReportBody::Cq { plans } => {
                 let multi = self.stats.rules().len() > 1;
@@ -35,7 +31,7 @@ impl fmt::Display for IntrospectionReport<'_> {
                     }
                     match rule {
                         RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
-                        RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats, rec_id)?,
+                        RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats, RecLabel::Cq)?,
                         RulePlan::Empty => writeln!(f, "access path: statically empty")?,
                     }
                     let Some(stats) = stats else { continue };
@@ -73,12 +69,14 @@ impl fmt::Display for IntrospectionReport<'_> {
                     }
                 }
             }
-            ReportBody::Reach { units, .. } => {
+            ReportBody::Reach { rec_id, units } => {
                 for (label, rule) in units {
                     writeln!(f, "{label}:")?;
                     match rule {
                         RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
-                        RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, None, rec_id)?,
+                        RulePlan::FreeJoin(plan) => {
+                            fmt_free_join(f, plan, None, RecLabel::Reach(*rec_id))?;
+                        }
                         RulePlan::Empty => writeln!(f, "access path: statically empty")?,
                     }
                 }
@@ -145,6 +143,12 @@ fn fmt_key_probe(f: &mut fmt::Formatter<'_>, plan: &KeyProbePlan) -> fmt::Result
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum RecLabel {
+    Cq,
+    Reach(crate::ir::InteriorId),
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one plan's rendering reads as one fixed-order artifact"
@@ -153,14 +157,18 @@ fn fmt_free_join(
     f: &mut fmt::Formatter<'_>,
     plan: &ValidatedPlan,
     stats: Option<&crate::api::stats::RuleStats>,
-    rec_id: Option<crate::ir::InteriorId>,
+    rec: RecLabel,
 ) -> fmt::Result {
     writeln!(f, "access path: free join ({} nodes)", plan.nodes().len())?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        let source = match occurrence.source {
-            crate::ir::AtomSource::Edb(relation) => format!("relation {}", relation.0),
-            crate::ir::AtomSource::Interior(pred) if rec_id == Some(pred) => "rec".to_string(),
-            crate::ir::AtomSource::Interior(pred) => format!("interior {}", pred.0),
+        let source = match occurrence.occ_bind() {
+            crate::plan::fj::OccBind::Edb(relation) => format!("relation {}", relation.0),
+            crate::plan::fj::OccBind::Finished(id)
+            | crate::plan::fj::OccBind::RecDelta(id)
+            | crate::plan::fj::OccBind::RecAcc(id) => match rec {
+                RecLabel::Reach(rec_id) if rec_id == id => "rec".to_string(),
+                RecLabel::Cq | RecLabel::Reach(_) => format!("interior {}", id.0),
+            },
         };
         writeln!(
             f,

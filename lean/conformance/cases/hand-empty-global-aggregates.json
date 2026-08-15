@@ -1030,13 +1030,7 @@
 [{"u64":1022},{"u64":396},{"u64":2},{"u64":9},{"i64":0},{"i64":1700000000051100},{"str":929},{"bool":true}],
 [{"u64":1023},{"u64":140},{"u64":3},{"u64":11},{"i64":0},{"i64":1700000000051150},{"str":930},{"bool":false}]
 ]}],
-"query":{"rules":[
-{"finds":[{"agg":{"op":"count"}},{"agg":{"op":"sum","over":1}}],
- "atoms":[{"relation":4,"bindings":[[2,{"lit":{"u64":999999}}],[4,{"var":1}]]}],
- "negated":[],
- "conditions":[],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"aggregate","op":"count"},{"kind":"aggregate","op":"sum"}],"rules":[{"finds":[{"agg":{"op":"count"}},{"agg":{"op":"sum","over":1}}],"atoms":[{"edb":4,"bindings":[[2,{"lit":{"u64":999999}}],[4,{"var":1}]]}],"negated":[],"conditions":[],"width":2}]}},
 "params":[],
 "answers":[]
 }

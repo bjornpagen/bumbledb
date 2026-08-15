@@ -36,13 +36,7 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004225,2000000000004481]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004248,2000000000004458]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":1},{"agg":{"op":"pack","over":0}}],
- "atoms":[{"relation":8,"bindings":[[2,{"var":0}],[1,{"var":1}]]}],
- "negated":[{"relation":7,"bindings":[]}],
- "conditions":[{"cmp":{"op":"ne","lhs":{"var":0},"rhs":{"lit":{"interval_i64":[2000000000027765,2000000000027784]}}}},{"cmp":{"op":"eq","lhs":{"var":0},"rhs":{"lit":{"interval_i64":[2000000000041053,2000000000041096]}}}}],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"aggregate","op":"pack"}],"rules":[{"finds":[{"var":1},{"agg":{"op":"pack","over":0}}],"atoms":[{"edb":8,"bindings":[[2,{"var":0}],[1,{"var":1}]]}],"negated":[{"edb":7,"bindings":[]}],"conditions":[{"cmp":{"op":"ne","lhs":{"var":0},"rhs":{"lit":{"interval_i64":[2000000000027765,2000000000027784]}}}},{"cmp":{"op":"eq","lhs":{"var":0},"rhs":{"lit":{"interval_i64":[2000000000041053,2000000000041096]}}}}],"width":2}]}},
 "params":[],
 "answers":[]
 }

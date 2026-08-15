@@ -243,7 +243,7 @@ pub trait Counters {
     }
     /// A D2 subtree skip propagated through this node.
     fn skip(&mut self, node: usize);
-    /// One predicate's frontier rows entering a reach round's delta
+    /// One derived table's frontier rows entering a reach round's delta
     /// image (`api/prepared/reach.rs`): fires once per round ≥ 1,
     /// before the round's rec arms run. Default no-op.
     #[inline]

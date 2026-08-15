@@ -68,12 +68,21 @@ pub fn random_query(rng: &mut Rng) -> Query {
     } else {
         vec![]
     };
-    let rec = rng.chance(1, 4).then(|| random_rec(rng));
-    Query {
-        interiors,
-        rec,
-        head,
-        rules,
+    // Same RNG stream as the old coin: chance then maybe `random_rec`.
+    // The arm is the constructor, not an option.
+    if rng.chance(1, 4) {
+        Query::Reach {
+            interiors,
+            rec: random_rec(rng),
+            head,
+            rules,
+        }
+    } else {
+        Query::Cq {
+            interiors,
+            head,
+            rules,
+        }
     }
 }
 
@@ -345,6 +354,7 @@ mod tests {
     use super::random_query;
     use crate::corpus_gen::Rng;
     use crate::querygen::target;
+    use bumbledb::Query;
 
     /// The arm is deterministic in its entropy: the same byte string
     /// yields the identical query, and a different one steers away.
@@ -384,8 +394,8 @@ mod tests {
         let mut saw_rec = false;
         for seed in 0..512 {
             let query = random_query(&mut Rng::new(seed));
-            saw_interiors |= !query.interiors.is_empty();
-            saw_rec |= query.rec.is_some();
+            saw_interiors |= !query.interiors().is_empty();
+            saw_rec |= matches!(query, Query::Reach { .. });
             match db.prepare(&query) {
                 Ok(_) => accepted += 1,
                 Err(_) => rejected += 1,

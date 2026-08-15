@@ -20,7 +20,11 @@ use bumbledb::{Schema, Value};
 /// they split into two INTEGER columns first ([`field_columns`]).
 fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
-        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::Interval { .. } => "INTEGER",
+        ValueType::Bool
+        | ValueType::U64
+        | ValueType::I64
+        | ValueType::Interval { .. }
+        | ValueType::FixedInterval { .. } => "INTEGER",
         ValueType::String => "TEXT",
         ValueType::FixedBytes { .. } => "BLOB",
     }
@@ -33,7 +37,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
 /// mapping, it cannot drift apart.
 pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     match &field.value_type {
-        ValueType::Interval { .. } => vec![
+        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => vec![
             (format!("{}_start", field.name), "INTEGER"),
             (format!("{}_end", field.name), "INTEGER"),
         ],
@@ -332,13 +336,7 @@ pub fn insert_sql(relation: &Relation) -> String {
     let count: usize = relation
         .fields()
         .iter()
-        .map(|field| {
-            if matches!(field.value_type, ValueType::Interval { .. }) {
-                2
-            } else {
-                1
-            }
-        })
+        .map(|field| if field.value_type.is_interval() { 2 } else { 1 })
         .sum();
     let placeholders = (1..=count)
         .map(|i| format!("?{i}"))
@@ -446,7 +444,7 @@ pub fn from_sql_value(
         (Sql::Integer(v), ValueType::I64) => Ok(Value::I64(*v)),
         (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into_bytes().into())),
         (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
-        (_, ValueType::Interval { .. }) => {
+        (_, ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
             Err("an interval spans two columns — decode through interval_from_sql".to_owned())
         }
         (got, want) => Err(format!("column class {got:?} for {want:?}")),
@@ -535,7 +533,6 @@ mod tests {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
-                                width: None,
                             },
                         ),
                     ],
@@ -549,7 +546,6 @@ mod tests {
                             "u",
                             ValueType::Interval {
                                 element: IntervalElement::U64,
-                                width: None,
                             },
                         ),
                     ],
@@ -736,7 +732,6 @@ mod tests {
                 &rusqlite::types::Value::Integer(0),
                 &ValueType::Interval {
                     element: IntervalElement::I64,
-                    width: None
                 }
             )
             .is_err()

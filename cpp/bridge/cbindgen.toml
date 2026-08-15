@@ -80,6 +80,7 @@ include = [
     "bdb_term_kind",
     "bdb_condition_kind",
     "bdb_cmp_op_kind",
+    "bdb_query_kind",
 ]
 # The ref-only capability types are opaque to C by design (§14): the
 # bridge never lets the caller construct or destroy one. The exception

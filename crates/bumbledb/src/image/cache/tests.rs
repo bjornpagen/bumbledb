@@ -237,7 +237,7 @@ fn closed_images_synthesize_once_and_survive_eviction() {
 
     // `peek` sees the resident slot without a build — same Arc.
     let peeked = cache
-        .peek(&txn, CURRENCY)
+        .peek(&txn, &schema, CURRENCY)
         .expect("peek")
         .expect("resident forever");
     assert!(Arc::ptr_eq(&first, &peeked));

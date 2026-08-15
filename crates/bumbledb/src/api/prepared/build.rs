@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
+use crate::ir::normalize::{NormalizedQuery, normalize_rules};
 use crate::ir::validate::{RuleWitness, ValidatedQuery, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
@@ -58,19 +58,28 @@ pub(crate) fn prepare<'s, S>(
         )?);
         signatures.push(witness.interiors()[i].signature());
     }
-    let rec = match &witness {
-        ValidatedQuery::Cq { .. } => None,
-        ValidatedQuery::Reach { rec, rec_id, .. } => {
+    let reach = match &witness {
+        ValidatedQuery::Cq { .. } => PreparedReach::Cq,
+        ValidatedQuery::Reach {
+            rec,
+            rec_id,
+            derived_count,
+            ..
+        } => {
             signatures.push(rec.signature());
-            Some(prepare_reach(
-                txn,
-                cache,
-                schema,
-                &witness,
-                rec,
-                *rec_id,
-                &signatures,
-            )?)
+            PreparedReach::Reach {
+                driver: Box::new(prepare_reach(
+                    txn,
+                    cache,
+                    schema,
+                    &witness,
+                    rec,
+                    *rec_id,
+                    &signatures,
+                )?),
+                rec_id: *rec_id,
+                derived_count: *derived_count,
+            }
         }
     };
     prepare_witnessed(
@@ -80,9 +89,20 @@ pub(crate) fn prepare<'s, S>(
         &witness,
         crate::ir::render::render(schema, query),
         interiors,
-        rec,
+        reach,
         &signatures,
     )
+}
+
+/// Prepared rec between the sealed witness and [`PreparedPipeline`].
+/// `Cq` carries no driver; `Reach` carries it by value.
+enum PreparedReach {
+    Cq,
+    Reach {
+        driver: Box<super::reach::ReachDriver>,
+        rec_id: crate::ir::InteriorId,
+        derived_count: u32,
+    },
 }
 
 /// The pipeline after interiors and rec are prepared — normalize → ground
@@ -101,12 +121,12 @@ fn prepare_witnessed<'s, S>(
     witness: &crate::ir::validate::ValidatedQuery,
     rendered: String,
     interiors: Vec<PreparedInterior>,
-    rec: Option<super::reach::ReachDriver>,
+    reach: PreparedReach,
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedQuery<'s, S>> {
     let normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
-        normalize_predicate(schema, witness, signatures)
+        normalize_rules(schema, signatures, witness.rules())
     };
 
     // The disjointness proof runs pre-grounding (the rewrite never changes
@@ -116,10 +136,10 @@ fn prepare_witnessed<'s, S>(
 
     let (survivors, subsumed) = ground_main(normalized, witness, schema);
 
-    // The predicate the query defines, sealed at validation (the ONE
+    // The signature the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
     // so the empty query still types its result columns.
-    let predicate = witness.signature().clone();
+    let signature = witness.signature().clone();
     let mut rules = Vec::with_capacity(survivors.len());
     // Written-rule provenance per surviving rule (R2): the sink regime
     // splits on it below. The first survivor's witness index feeds the
@@ -148,7 +168,7 @@ fn prepare_witnessed<'s, S>(
             schema,
             &rule,
             &normalized_rule,
-            &predicate.columns,
+            &signature.columns,
             signatures,
         )?);
     }
@@ -222,13 +242,16 @@ fn prepare_witnessed<'s, S>(
                 .flat_map(|set| set.probes.iter().map(|p| p.rule.plan.slot_count())),
         )
     });
-    let rec_slots = rec.as_ref().into_iter().flat_map(|driver| {
-        driver
+    let rec_max = match &reach {
+        PreparedReach::Cq => 0,
+        PreparedReach::Reach { driver, .. } => driver
             .base
             .iter()
             .map(PreparedRule::slot_count)
             .chain(driver.rec.iter().map(|arm| arm.rule.plan.slot_count()))
-    });
+            .max()
+            .unwrap_or(0),
+    };
     let bindings = Bindings::new(
         rules
             .iter()
@@ -239,9 +262,9 @@ fn prepare_witnessed<'s, S>(
                     .flat_map(|set| set.probes.iter().map(|p| p.rule.plan.slot_count())),
             )
             .chain(interior_slots)
-            .chain(rec_slots)
             .max()
-            .unwrap_or(0),
+            .unwrap_or(0)
+            .max(rec_max),
     );
 
     let unresolved_literals = rules.iter().map(pending_literals).sum::<u32>()
@@ -262,34 +285,31 @@ fn prepare_witnessed<'s, S>(
                 )
             })
             .sum::<u32>()
-        + rec.as_ref().map_or(0, |driver| {
-            driver.base.iter().map(pending_literals).sum::<u32>()
-                + driver
-                    .rec
-                    .iter()
-                    .map(|arm| plan_pending_literals(&arm.rule.plan))
-                    .sum::<u32>()
-        });
-    let pipeline = match (rec, witness) {
-        (
-            Some(driver),
-            crate::ir::validate::ValidatedQuery::Reach {
-                rec_id,
-                derived_count,
-                ..
-            },
-        ) => PreparedPipeline::Reach {
+        + match &reach {
+            PreparedReach::Cq => 0,
+            PreparedReach::Reach { driver, .. } => {
+                driver.base.iter().map(pending_literals).sum::<u32>()
+                    + driver
+                        .rec
+                        .iter()
+                        .map(|arm| plan_pending_literals(&arm.rule.plan))
+                        .sum::<u32>()
+            }
+        };
+    let pipeline = match reach {
+        PreparedReach::Cq => PreparedPipeline::Cq { interiors, rules },
+        PreparedReach::Reach {
+            driver,
+            rec_id,
+            derived_count,
+        } => PreparedPipeline::Reach {
             interiors,
-            driver: Box::new(driver),
+            driver,
             main: rules,
             rounds_budget: super::reach::DEFAULT_REACH_ROUNDS,
-            rec_id: *rec_id,
-            derived_count: *derived_count,
+            rec_id,
+            derived_count,
         },
-        (None, _) => PreparedPipeline::Cq { interiors, rules },
-        (Some(_), crate::ir::validate::ValidatedQuery::Cq { .. }) => {
-            unreachable!("a Reach driver is prepared only from a Reach witness")
-        }
     };
     let key_probe_direct = matches!(
         &pipeline,
@@ -312,7 +332,7 @@ fn prepare_witnessed<'s, S>(
         pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedImages::default(),
-        signature: predicate,
+        signature,
         params,
         resolved_params: Vec::new(),
         unresolved_literals,
@@ -1122,7 +1142,7 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
 /// from the rule's binding-slot layout (`slot_of`/`width_of` — the
 /// `SlotWidth` map): an interval variable's find spans two words, and no
 /// consumer assumes width 1. Result types are NOT derived here — they
-/// are the query's predicate (`ir/validate`); the specs are this rule's.
+/// are the query's signature (`ir/validate`); the specs are this rule's.
 trait SlotLayout {
     fn slot_of(&self, var: crate::ir::VarId) -> usize;
     fn width_of(&self, var: crate::ir::VarId) -> usize;
@@ -1260,7 +1280,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
 }
 
 /// The key-probe fast lane's find table: `Some` for key-probe plans whose finds
-/// are all plain variables. Types come from the predicate's columns —
+/// are all plain variables. Types come from the signature's columns —
 /// find order IS column order.
 fn key_probe_find_table(
     key_probe: &crate::exec::dispatch::KeyProbePlan,

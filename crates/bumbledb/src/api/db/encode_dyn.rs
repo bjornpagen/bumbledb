@@ -73,13 +73,13 @@ pub(super) fn dyn_value_refs(
             // width and Q2 bound, so the fixed ref just marks the
             // one-word encoding.
             Value::IntervalU64(interval) => match field.value_type {
-                bumbledb_theory::schema::ValueType::Interval { width: Some(_), .. } => {
+                bumbledb_theory::schema::ValueType::FixedInterval { .. } => {
                     ValueRef::FixedIntervalU64(*interval)
                 }
                 _ => ValueRef::IntervalU64(*interval),
             },
             Value::IntervalI64(interval) => match field.value_type {
-                bumbledb_theory::schema::ValueType::Interval { width: Some(_), .. } => {
+                bumbledb_theory::schema::ValueType::FixedInterval { .. } => {
                     ValueRef::FixedIntervalI64(*interval)
                 }
                 _ => ValueRef::IntervalI64(*interval),

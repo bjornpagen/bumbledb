@@ -89,8 +89,8 @@ and compares whole (format in `lean/conformance/README.md` § judgment cases).
 
 **All three oracles run recursion — and so does the engine.** The naive
 model evaluates a Query by materializing interior tables in declaration
-order, iterating `T(acc) = base ∪ rec(acc)` to least fixpoint when `rec`
-is present (no budget in the model; empty base ⇒ empty lfp is this
+order; on `Reach`, iterating `T(acc) = base ∪ rec(acc)` to least fixpoint
+(no budget in the model; empty base ⇒ empty lfp is this
 iteration), then evaluating main (`NaiveDb::query`). Staying on the
 plain chain loses nothing (`lean/Bumbledb/Exec/SemiNaive.lean:
 semi_naive_agrees`) and keeps the trust root definitional. The SQLite
@@ -104,9 +104,11 @@ reason; interval-typed derived columns remain a translator limit. The
 Lean lane judges every checked-in case as one `Query`
 (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`, sound against
 `evalQuery` by `lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
-Seeded cases are `Query` values (`interiors = []`, `rec = none`) in
-`seeded-*.json`. Reach cases are `Query` values with interiors / rec
-in `reach-*.json`. One type, one decoder. Each reach case is
+Seeded cases are `{ "cq": { "interiors", "head", "rules" } }` in
+`seeded-*.json`. Reach cases are
+`{ "reach": { "interiors", "rec", "head", "rules" } }` in
+`reach-*.json`. One tagged encoding; the rec payload uses `head`, not
+a second `arity` key. Each reach case is
 written only after the naive lfp — and SQLite, where the translator can
 speak the shape — agreed; the hand-verified closure goldens (a fixed
 tree, a fixed cyclic graph, the empty store) hold every reach-capable

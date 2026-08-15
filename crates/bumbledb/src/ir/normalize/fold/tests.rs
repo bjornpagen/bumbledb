@@ -1,8 +1,9 @@
-use super::super::{OccId, Role, normalize_predicate};
+use super::super::{OccId, Role, normalize_rules};
 use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, VarId};
+use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::dict::SENTINEL_ID;
 use bumbledb_theory::schema::{
@@ -20,7 +21,6 @@ fn schema() -> Schema {
     };
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -189,7 +189,8 @@ fn a_point_at_the_interval_start_survives() {
 // the verdict, and the off switch.
 
 fn one_rule(schema: &Schema, query: &Query) -> super::super::NormalizedQuery {
-    let mut rules = normalize_predicate(schema, &validate(schema, query).expect("valid"), &[]);
+    let witness = validate(schema, query).expect("valid");
+    let mut rules = normalize_rules(schema, &[], witness.rules());
     assert_eq!(rules.len(), 1, "one-rule fixtures");
     rules.remove(0)
 }

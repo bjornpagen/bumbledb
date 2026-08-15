@@ -8,21 +8,22 @@
 //! it, round-trip goldens pin the two together):
 //!
 //! ```text
-//! query     := interior* recblock? main
-//! interior  := 'interior' pred '(' head ')' '|' body ';'
-//! recblock  := 'recursive' pred '(' head ')' '|' body ';'
+//! query     := cq | reach
+//! cq        := interior* main
+//! reach     := interior* recblock main
+//! interior  := 'interior' derived '(' head ')' '|' body ';'
+//! recblock  := 'recursive' derived '(' head ')' '|' body ';'
 //! main      := barerule+
 //! barerule  := '(' head ')' '|' body ';'
-//!                                        // consecutive `interior pred(...)` lines
+//!                                        // consecutive `interior derived(...)` lines
 //!                                        //   union into one Interior; consecutive
-//!                                        //   `recursive pred(...)` lines union into
+//!                                        //   `recursive derived(...)` lines union into
 //!                                        //   one Rec (a line whose body has an atom
-//!                                        //   naming pred is a rec arm, else base);
-//!                                        //   an all-bare query is Query with empty
-//!                                        //   interiors and rec: None — text-level
-//!                                        //   backward compatibility; a named head
-//!                                        //   without `interior` / `recursive` is a
-//!                                        //   compile error (the former named-head sneak)
+//!                                        //   naming derived is a rec arm, else base);
+//!                                        //   an all-bare query is a CQ with empty
+//!                                        //   interiors; a named head without
+//!                                        //   `interior` / `recursive` is a compile
+//!                                        //   error (the former named-head sneak)
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
@@ -37,13 +38,17 @@
 //!          | 'and' '(' cond (',' cond)* ')'  // ConditionTree::And — comparison
 //!          | 'or'  '(' cond (',' cond)* ')'  //   leaves only (ruled 2026-07-23, R9)
 //! atom    := Relation '(' binding (',' binding)* ')'
-//!          | pred '(' var (',' var)* ')'
+//!          | derived '(' var (',' var)* ')'
 //!                                        // ordered dense: a body atom may name an
 //!                                        //   interior or the rec where it names a
 //!                                        //   relation; bare idents bind its head
 //!                                        //   POSITIONS left to right from 0 —
 //!                                        //   positional, never nominal
-//!          | pred '(' pbind (',' pbind)* ')'
+//!          | 'interior' integer '(' var (',' var)* ')'
+//!          | 'interior' integer '(' pbind (',' pbind)* ')'
+//!                                        // nameless: the renderer's `interior {id}`
+//!                                        //   spelling of a derived-table atom
+//!          | derived '(' pbind (',' pbind)* ')'
 //!                                        // indexed: the sparse/selection forms;
 //!                                        //   never mixed with the bare form, and an
 //!                                        //   explicit dense in-order `i: v` list is
@@ -58,7 +63,7 @@
 //!          | position 'in' ?param        // position set membership
 //! mask    := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
 //! term    := var | ?param | literal
-//! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
+//! derived := lowercase ident             // macro-LOCAL: resolved at expansion, never
 //!                                        //   in the IR or the fingerprint; relations
 //!                                        //   are UpperCamel, so an interior/rec spelled
 //!                                        //   like a relation is unwritable; `and`,
@@ -409,6 +414,48 @@ fn peek_ident_text(tokens: &mut Tokens) -> Option<String> {
     match tokens.peek() {
         Some(TokenTree::Ident(ident)) => Some(ident.to_string()),
         _ => None,
+    }
+}
+
+/// The renderer's nameless derived-table atom: `interior 0(…)`.
+fn nameless_interior_atom(tokens: &mut Tokens) -> bool {
+    if peek_ident_text(tokens).as_deref() != Some("interior") {
+        return false;
+    }
+    let mut ahead = tokens.clone();
+    ahead.next();
+    match ahead.next() {
+        Some(TokenTree::Literal(lit)) if lit.to_string().chars().all(|c| c.is_ascii_digit()) => {
+            matches!(ahead.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis)
+        }
+        _ => false,
+    }
+}
+
+/// Consumes `interior {id}` and synthesizes the local name `{id}` —
+/// the same mapping `parse_derived_name` uses on nameless declarations.
+fn take_nameless_interior(tokens: &mut Tokens) -> Parse<Name> {
+    let kw = expect_ident(tokens, "`interior`")?;
+    match tokens.next() {
+        Some(TokenTree::Literal(lit)) => {
+            let text = lit.to_string();
+            if text.chars().all(|c| c.is_ascii_digit()) {
+                Ok(Name {
+                    text,
+                    span: lit.span(),
+                })
+            } else {
+                fail(
+                    lit.span(),
+                    "query!: expected an interior id after `interior`",
+                )
+            }
+        }
+        Some(other) => fail(
+            other.span(),
+            "query!: expected an interior id after `interior`",
+        ),
+        None => fail(kw.span, "query!: expected an interior id after `interior`"),
     }
 }
 
@@ -1016,6 +1063,10 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     if peek_punct(tokens, '!') {
         // `!=` never begins an item; a lone `!` is negation.
         tokens.next();
+        if nameless_interior_atom(tokens) {
+            let name = take_nameless_interior(tokens)?;
+            return Ok(Item::Negated(parse_atom(tokens, name)?));
+        }
         let relation = expect_ident(tokens, "the negated atom's relation")?;
         return Ok(Item::Negated(parse_atom(tokens, relation)?));
     }
@@ -1026,6 +1077,10 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
             return datalog_refusal(span);
         }
         return fail(span, "query!: expected an atom, a comparison, or `in`");
+    }
+    if nameless_interior_atom(tokens) {
+        let name = take_nameless_interior(tokens)?;
+        return Ok(Item::Atom(parse_atom(tokens, name)?));
     }
     let call_shaped = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -1069,7 +1124,7 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
 }
 
 /// A derived-table name: lowercase, not a reserved word.
-fn validate_pred_name(name: &Name) -> Parse<()> {
+fn validate_derived_name(name: &Name) -> Parse<()> {
     if name.text == "and"
         || name.text == "or"
         || name.text == "interior"
@@ -1112,19 +1167,16 @@ fn validate_pred_name(name: &Name) -> Parse<()> {
 fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Parse<Name> {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
-            let pred = expect_ident(tokens, "a predicate name")?;
-            validate_pred_name(&pred)?;
-            Ok(pred)
+            let name = expect_ident(tokens, "a derived-table name")?;
+            validate_derived_name(&name)?;
+            Ok(name)
         }
         Some(TokenTree::Literal(lit)) if kind == RuleKind::Interior => {
             let text = lit.to_string();
             if text.chars().all(|c| c.is_ascii_digit()) {
                 let span = lit.span();
                 tokens.next();
-                Ok(Name {
-                    text: format!("p{text}"),
-                    span,
-                })
+                Ok(Name { text, span })
             } else {
                 fail(
                     lit.span(),
@@ -1138,13 +1190,16 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
         }),
         Some(other) => fail(
             other.span(),
-            "query!: expected a predicate name, an interior id, or a rec head",
+            "query!: expected a derived-table name, an interior id, or a rec head",
         ),
-        None => fail(kw_span, "query!: expected a predicate name or a rec head"),
+        None => fail(
+            kw_span,
+            "query!: expected a derived-table name or a rec head",
+        ),
     }
 }
 
-/// Parses one rule: `interior pred (head) | body ;`, `recursive pred
+/// Parses one rule: `interior derived (head) | body ;`, `recursive derived
 /// (head) | body ;`, `rec (head) | body ;`, or a bare `(head) | body ;`.
 /// A named head without the keyword is the former named-head sneak — a
 /// spanned compile error.
@@ -1157,7 +1212,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
         Some(TokenTree::Ident(_)) => {
             let ident = expect_ident(tokens, "a rule")?;
             if peek_punct(tokens, ':') {
-                // `pred :- …` must not parse — the refusal fires before
+                // `derived :- …` must not parse — the refusal fires before
                 // the head-group error would.
                 let span = peek_span(tokens);
                 tokens.next();
@@ -1184,8 +1239,8 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                     } else {
                         RuleKind::Recursive
                     };
-                    let pred = parse_derived_name(tokens, kind, ident.span)?;
-                    Some((kind == RuleKind::Interior, pred))
+                    let derived = parse_derived_name(tokens, kind, ident.span)?;
+                    Some((kind == RuleKind::Interior, derived))
                 }
                 _ => {
                     if !ident
@@ -1932,10 +1987,10 @@ fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
     Ok(theory)
 }
 
-/// Whether a rule body names `pred` as a positive or negated atom.
-fn names_pred(rule: &ParsedRule, pred: &str) -> bool {
+/// Whether a rule body names `derived` as a positive or negated atom.
+fn names_derived(rule: &ParsedRule, derived: &str) -> bool {
     rule.items().iter().any(|item| match item {
-        Item::Atom(atom) | Item::Negated(atom) => atom.relation.text == pred,
+        Item::Atom(atom) | Item::Negated(atom) => atom.relation.text == derived,
         Item::Cond(_) => false,
     })
 }
@@ -1951,6 +2006,18 @@ struct RecGroup {
     rec: Vec<ParsedRule>,
 }
 
+enum Classified {
+    Cq {
+        interiors: Vec<InteriorGroup>,
+        main: Vec<ParsedRule>,
+    },
+    Reach {
+        interiors: Vec<InteriorGroup>,
+        rec: RecGroup,
+        main: Vec<ParsedRule>,
+    },
+}
+
 enum Phase {
     Interiors,
     Rec,
@@ -1964,10 +2031,7 @@ enum Phase {
     clippy::too_many_lines,
     reason = "phase machine plus exhaustive compile errors for this cut live in one walk"
 )]
-fn classify(
-    parsed: Vec<ParsedRule>,
-    block: Span,
-) -> Parse<(Vec<InteriorGroup>, Option<RecGroup>, Vec<ParsedRule>)> {
+fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
     let mut interiors: Vec<InteriorGroup> = Vec::new();
     let mut rec: Option<RecGroup> = None;
     let mut main: Vec<ParsedRule> = Vec::new();
@@ -2053,11 +2117,11 @@ fn classify(
                     );
                 }
                 let self_atom = if name.text == "rec" {
-                    format!("p{}", interiors.len())
+                    interiors.len().to_string()
                 } else {
                     name.text.clone()
                 };
-                let is_rec_arm = names_pred(&rule, &self_atom);
+                let is_rec_arm = names_derived(&rule, &self_atom);
                 match &mut rec {
                     None => {
                         let mut group = RecGroup {
@@ -2123,7 +2187,14 @@ fn classify(
             );
         }
     }
-    Ok((interiors, rec, main))
+    Ok(match rec {
+        None => Classified::Cq { interiors, main },
+        Some(rec) => Classified::Reach {
+            interiors,
+            rec,
+            main,
+        },
+    })
 }
 
 fn emit_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
@@ -2151,62 +2222,100 @@ fn expand(input: TokenStream) -> Parse<String> {
     if parsed.is_empty() {
         return fail(group.span(), "query!: a query needs at least one rule");
     }
-    let (interiors, rec, main) = classify(parsed, group.span())?;
+    let classified = classify(parsed, group.span())?;
+    match classified {
+        Classified::Cq { interiors, main } => emit_cq(&theory, &interiors, &main),
+        Classified::Reach {
+            interiors,
+            rec,
+            main,
+        } => emit_reach(&theory, &interiors, &rec, &main),
+    }
+}
+
+fn rec_derived_name(rec: &RecGroup, rec_id: usize) -> String {
+    if rec.name.text == "rec" {
+        rec_id.to_string()
+    } else {
+        rec.name.text.clone()
+    }
+}
+
+fn emit_interiors(
+    emitter: &mut Emitter<'_>,
+    interiors: &[InteriorGroup],
+) -> Parse<(String, String)> {
+    let mut lets = String::new();
+    let mut defs = String::new();
+    for (index, group) in interiors.iter().enumerate() {
+        let rules = emit_rules(emitter, &group.rules)?;
+        let _ = write!(
+            lets,
+            "let interior{index}_rules = ::std::vec![{rules}]; \
+             let interior{index}_head = ::bumbledb::Rule::head(&interior{index}_rules[0]); "
+        );
+        let _ = write!(
+            defs,
+            "::bumbledb::Interior {{ head: interior{index}_head, rules: interior{index}_rules }},"
+        );
+    }
+    Ok((lets, defs))
+}
+
+fn emit_cq(theory: &str, interiors: &[InteriorGroup], main: &[ParsedRule]) -> Parse<String> {
+    let derived: Vec<String> = interiors
+        .iter()
+        .map(|group| group.name.text.clone())
+        .collect();
+    let mut emitter = Emitter {
+        theory,
+        params: Params::default(),
+        derived,
+    };
+    let (lets, interior_defs) = emit_interiors(&mut emitter, interiors)?;
+    let main_rules = emit_rules(&mut emitter, main)?;
+    Ok(format!(
+        "{{ {lets}let rules = ::std::vec![{main_rules}]; \
+             let head = ::bumbledb::Rule::head(&rules[0]); \
+             ::bumbledb::Query::Cq {{ \
+                 interiors: ::std::vec![{interior_defs}], \
+                 head, \
+                 rules }} }}"
+    ))
+}
+
+fn emit_reach(
+    theory: &str,
+    interiors: &[InteriorGroup],
+    rec: &RecGroup,
+    main: &[ParsedRule],
+) -> Parse<String> {
     let mut derived: Vec<String> = interiors
         .iter()
         .map(|group| group.name.text.clone())
         .collect();
-    if let Some(group) = &rec {
-        if group.name.text == "rec" {
-            derived.push(format!("p{}", interiors.len()));
-        } else {
-            derived.push(group.name.text.clone());
-        }
-    }
+    derived.push(rec_derived_name(rec, interiors.len()));
     let mut emitter = Emitter {
-        theory: &theory,
+        theory,
         params: Params::default(),
         derived,
     };
-    // Param ids mint in IR walk order: interiors, rec base, rec arms, main.
-    let mut lets = String::new();
-    let mut interior_defs = String::new();
-    for (index, group) in interiors.iter().enumerate() {
-        let rules = emit_rules(&mut emitter, &group.rules)?;
-        let _ = write!(
-            lets,
-            "let p{index}_rules = ::std::vec![{rules}]; \
-             let p{index}_head = ::bumbledb::Rule::head(&p{index}_rules[0]); "
-        );
-        let _ = write!(
-            interior_defs,
-            "::bumbledb::Interior {{ head: p{index}_head, rules: p{index}_rules }},"
-        );
-    }
-    let rec_expr = if let Some(group) = &rec {
-        let rec_index = interiors.len();
-        let base = emit_rules(&mut emitter, &group.base)?;
-        let step = emit_rules(&mut emitter, &group.rec)?;
-        let _ = write!(
-            lets,
-            "let p{rec_index}_base = ::std::vec![{base}]; \
-             let p{rec_index}_rec = ::std::vec![{step}]; \
-             let p{rec_index}_head = ::bumbledb::Rule::head(&p{rec_index}_base[0]); "
-        );
-        format!(
-            "::std::option::Option::Some(::bumbledb::Rec {{ \
-                 head: p{rec_index}_head, base: p{rec_index}_base, rec: p{rec_index}_rec }})"
-        )
-    } else {
-        "::std::option::Option::None".to_owned()
-    };
-    let main_rules = emit_rules(&mut emitter, &main)?;
+    let (mut lets, interior_defs) = emit_interiors(&mut emitter, interiors)?;
+    let base = emit_rules(&mut emitter, &rec.base)?;
+    let step = emit_rules(&mut emitter, &rec.rec)?;
+    let _ = write!(
+        lets,
+        "let rec_base = ::std::vec![{base}]; \
+         let rec_step = ::std::vec![{step}]; \
+         let rec_head = ::bumbledb::Rule::head(&rec_base[0]); "
+    );
+    let main_rules = emit_rules(&mut emitter, main)?;
     Ok(format!(
         "{{ {lets}let rules = ::std::vec![{main_rules}]; \
              let head = ::bumbledb::Rule::head(&rules[0]); \
-             ::bumbledb::Query {{ \
+             ::bumbledb::Query::Reach {{ \
                  interiors: ::std::vec![{interior_defs}], \
-                 rec: {rec_expr}, \
+                 rec: ::bumbledb::Rec {{ head: rec_head, base: rec_base, rec: rec_step }}, \
                  head, \
                  rules }} }}"
     ))

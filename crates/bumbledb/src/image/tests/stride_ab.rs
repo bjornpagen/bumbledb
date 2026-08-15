@@ -672,7 +672,6 @@ fn corpus_shapes_move_only_where_the_band_says() {
     use TypeDesc::{I64, Interval, String as Str, U64};
     let iv = Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     // (name, field types, [S rows, M rows, L rows])
     let shapes: Vec<(&str, Vec<TypeDesc>, [usize; 3])> = vec![

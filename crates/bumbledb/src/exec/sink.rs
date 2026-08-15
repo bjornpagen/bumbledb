@@ -303,6 +303,23 @@ enum MeasuredSource {
     MeasureKeys(usize, usize),
 }
 
+/// Clean vs poisoned-by-this-ray. First hit wins; later rows match
+/// `Hit` instead of re-testing a hole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RayPoison {
+    Clear,
+    Hit([u64; 2]),
+}
+
+impl RayPoison {
+    pub(crate) fn span(self) -> Option<[u64; 2]> {
+        match self {
+            Self::Clear => None,
+            Self::Hit(span) => Some(span),
+        }
+    }
+}
+
 /// The projection sink: dedups projected find tuples, and reports
 /// staleness (`SkipSuffix`) so the executor can unwind suffixes that bind
 /// nothing projection-relevant (D2 — legal for this sink only).
@@ -323,7 +340,7 @@ pub struct ProjectionSink {
     /// The measure poison: the first ray the projection reached
     /// (`end == MAX` has no finite measure) — surfaced after the run as
     /// the typed [`crate::Error::MeasureOfRay`].
-    ray: Option<[u64; 2]>,
+    ray: RayPoison,
     /// The measured paths' batch-resolved sources, aligned with
     /// `sources` (rebuilt at batch/scan entry; empty on the fast paths).
     measured_sources: Vec<MeasuredSource>,
@@ -449,7 +466,7 @@ pub struct AggregateSink {
     /// past it by one derived word per measure.
     real_slots: usize,
     /// The measure poison (see [`ProjectionSink::ray`]).
-    ray: Option<[u64; 2]>,
+    ray: RayPoison,
     /// Group-key slot spans (the `Var` specs, in find order): (first
     /// slot, width in words) — the `SlotWidth` layout, never assumed 1.
     group_spans: Vec<(usize, usize)>,
@@ -462,10 +479,6 @@ pub struct AggregateSink {
     /// Flat accumulator rows: `accs[group * n_aggs ..][..n_aggs]`.
     accs: Vec<Acc>,
     n_aggs: usize,
-    /// The Pack term's interval slot span start, when the head carries
-    /// one (validation: at most one, never beside folds).
-    /// Re-aimed per rule like every slot table.
-    pack: Option<usize>,
     /// Per group: `Pack`'s claim accumulation list — `[start, end]`
     /// encoded word pairs, appended raw at fold time (identical and
     /// overlapping claims collapse in the finalize sweep, never here)
@@ -476,8 +489,8 @@ pub struct AggregateSink {
     /// Measures and Pack fold per row — derived words exist only in
     /// the scratch row, and Pack's group state is a claim list, so no
     /// gather kernel or scan pushdown applies; batches route through
-    /// the per-row scratch fold. Tested as `pack.is_some() ||
-    /// !measures.is_empty()`, not a stored flag.
+    /// the per-row scratch fold. Pack presence is `SinkSpec::Pack` on
+    /// `finds`, not a stored option.
     pack_claims: Vec<Vec<[u64; 2]>>,
     /// Head-projection / DNF-span key assembly scratch (union regimes).
     union_scratch: Vec<u64>,

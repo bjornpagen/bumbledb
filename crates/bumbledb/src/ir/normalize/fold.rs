@@ -499,6 +499,9 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
     match value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
+        }
+        | ValueType::FixedInterval {
+            element: IntervalElement::I64,
             ..
         } => Value::IntervalI64(
             bumbledb_theory::Interval::<i64>::new(
@@ -685,6 +688,9 @@ fn point_in_picture(relation: &Relation, field: FieldId, pin: (u64, u64), point:
     let element_type = match &descriptor.value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
+        }
+        | ValueType::FixedInterval {
+            element: IntervalElement::I64,
             ..
         } => ValueType::I64,
         _ => ValueType::U64,
@@ -713,7 +719,6 @@ fn field_within_picture(
             ValueType::I64 => IntervalElement::I64,
             _ => IntervalElement::U64,
         },
-        width: None,
     };
     let mut out = format!("{}: {} == ", relation.name(), descriptor.name);
     literal(&mut out, &decoded_scalar(&descriptor.value_type, point));

@@ -587,7 +587,7 @@ vocabulary exists — or will exist — in the statement language, including und
 the landed recursion cut (query-side `InteriorId` and `RelationId` are separate
 identities that never pun, and the one-line `Interior` guard in both grounding
 rewrites — `plan/ground.rs`, `plan/ground/evaluate.rs` — is this law's
-mechanism, `20-query-ir.md` § interiors and rec's consumer guards). A containment between derived predicates is Datalog query
+mechanism, `20-query-ir.md` § interiors and rec's consumer guards). A containment between derived tables / queries is Datalog query
 containment — undecidable outright — and commit-time enforcement would require
 materializing every constrained view per commit. **Alternative:**
 deductive-database constraints over views. **Why it lost:** the undecidability
@@ -595,8 +595,8 @@ above, plus the acceptance gate's own rule — no O(log n) enforcement plan
 exists for a fixpoint's blast radius (the join blast radius is the countermodel,
 `lean/Bumbledb/Countermodels.lean: joined_window_blast`, composed into the gate
 type's uninhabitability,
-`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`). **Reverses if:** never for recursive
-predicates; a non-recursive-view variant re-opens only with its own theory
+`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`). **Reverses if:** never for
+Reach queries; a non-recursive-view variant re-opens only with its own theory
 review, as a new decision.
 
 ## Pointwise lifting (the interval semantics, derived)

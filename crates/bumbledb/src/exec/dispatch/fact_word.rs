@@ -61,12 +61,12 @@ pub(crate) fn fact_operand(
                 }
             }
         }
-        TypeDesc::Interval { width: None, .. } => FactOperand::Pair(word_at(0), word_at(1)),
+        TypeDesc::Interval { .. } => FactOperand::Pair(word_at(0), word_at(1)),
         // A fixed-width field stores one word; the end re-derives from the
         // TYPE's width through the one shared decoder, which convicts the
         // at-bound AND overflow starts as corruption (Q2's bound holds at
         // rest too — corrupt stored bytes never reach classification).
-        TypeDesc::Interval { width: Some(w), .. } => {
+        TypeDesc::FixedInterval { width: w, .. } => {
             let (start, end) = crate::encoding::decode_fixed_interval_start(word_bytes[0], w)?;
             FactOperand::Pair(start, end)
         }

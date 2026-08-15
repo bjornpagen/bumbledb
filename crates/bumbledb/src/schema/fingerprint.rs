@@ -276,17 +276,11 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         // DIFFERENT type and hashes under its own tag with the width fed
         // — a width change is a new theory, exactly as a `bytes<N>`
         // width change is (`docs/architecture/10-data-model.md`).
-        ValueType::Interval {
-            element,
-            width: None,
-        } => {
+        ValueType::Interval { element } => {
             out.push(6);
             out.push(element_tag(*element));
         }
-        ValueType::Interval {
-            element,
-            width: Some(width),
-        } => {
+        ValueType::FixedInterval { element, width } => {
             out.push(7);
             out.push(element_tag(*element));
             out.extend_from_slice(&width.to_le_bytes());
@@ -528,13 +522,7 @@ mod tests {
                 relations: vec![RelationDescriptor {
                     extension: None,
                     name: "R".into(),
-                    fields: vec![field(
-                        "during",
-                        ValueType::Interval {
-                            element,
-                            width: None,
-                        },
-                    )],
+                    fields: vec![field("during", ValueType::Interval { element })],
                 }],
                 statements: vec![],
             }))
@@ -550,24 +538,35 @@ mod tests {
         // A width change is a new theory — exactly as a bytes<N> width
         // change is — and the fixed family never aliases the general
         // type (distinct tags in the canonical stream).
-        let of_width = |width| {
+        let of = |ty: ValueType| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
                     extension: None,
                     name: "R".into(),
-                    fields: vec![field(
-                        "slot",
-                        ValueType::Interval {
-                            element: IntervalElement::U64,
-                            width,
-                        },
-                    )],
+                    fields: vec![field("slot", ty)],
                 }],
                 statements: vec![],
             }))
         };
-        assert_ne!(of_width(Some(1)), of_width(Some(2)));
-        assert_ne!(of_width(Some(1)), of_width(None));
+        assert_ne!(
+            of(ValueType::FixedInterval {
+                element: IntervalElement::U64,
+                width: 1,
+            }),
+            of(ValueType::FixedInterval {
+                element: IntervalElement::U64,
+                width: 2,
+            })
+        );
+        assert_ne!(
+            of(ValueType::FixedInterval {
+                element: IntervalElement::U64,
+                width: 1,
+            }),
+            of(ValueType::Interval {
+                element: IntervalElement::U64,
+            })
+        );
     }
 
     #[test]
@@ -703,7 +702,6 @@ mod tests {
         use crate::schema::tests::{capacity, capacity_weighted};
         let interval = ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         };
         let schema = schema_of(SchemaDescriptor {
             relations: vec![

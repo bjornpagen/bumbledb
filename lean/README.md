@@ -35,9 +35,10 @@ project needs no build programmability.
   (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, `Exec/Plan` — the
   Free Join plan formalism at the mathematical level: plan validity,
   plan soundness against the rule denotation, plannability — and
-  `Exec/Reach` — interior DAG once, optional linear `reachDen`, then
-  main `rulesAnswers`; `evalQueryList` is the executable listing,
-  proved equal to `evalQuery`. Fuel is not a Lean semantic
+  `Exec/Reach` — interior DAG once, then either main `rulesAnswers`
+  (`.cq`) or `reachDen` plus main `rulesAnswers` (`.reach`);
+  `evalQueryList` is the executable listing, proved equal to
+  `evalQuery`. Fuel is not a Lean semantic
   parameter).
   Where an algorithm needs a premise the denotation does not supply,
   Lean forces the premise to be named — those names are exactly the
@@ -151,6 +152,6 @@ is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
 the artifact's stratification lemma was structurally subsumed at port
 time (the then-modeled syntax had no head-referencing atoms). The
 linear-reach model lives in `Exec/Reach.lean` over
-`Query/Syntax.lean`'s interiors and one rec — interior DAG once,
-optional `reachDen`, then main `rulesAnswers`. `Bridge.lean` carries
+`Query/Syntax.lean`'s interiors and `cq | reach` — interior DAG once,
+then either main `rulesAnswers` or `reachDen` plus main. `Bridge.lean` carries
 the reach model's rows, landed with the mechanisms they ledger.

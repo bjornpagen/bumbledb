@@ -55,10 +55,7 @@ pub(super) enum ParamAnchor {
 pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
     let schema = target::schema();
     let is_interval = |rel: RelationId, field: FieldId| {
-        matches!(
-            schema.relation(rel).field(field).value_type,
-            ValueType::Interval { .. }
-        )
+        schema.relation(rel).field(field).value_type.is_interval()
     };
     let mut count = 0u16;
     for rule in walk::rules(query) {
@@ -267,7 +264,7 @@ fn param_value(
         // — equal/adjacent/nested/ray against the drawn group, whatever
         // the draw kind (hit-vs-miss for interval values is a corpus
         // alignment question, and the ladder IS the alignment sweep).
-        ValueType::Interval { element, .. } => {
+        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
             let group = rng.range(64);
             match element {
                 IntervalElement::U64 => {

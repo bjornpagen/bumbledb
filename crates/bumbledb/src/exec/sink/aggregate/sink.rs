@@ -27,7 +27,7 @@ impl Sink for AggregateSink {
         // Measures and Pack fold per row (derived words / claim lists
         // — no fold kernel exists); their leaves stay on
         // the batch path.
-        if self.pack.is_some() || !self.measures.is_empty() {
+        if self.pack_slot().is_some() || !self.measures.is_empty() {
             return ScanOffer::Declined;
         }
         // Group spans checked word-wise: an interval group variable is
@@ -207,7 +207,7 @@ impl Sink for AggregateSink {
         // the scratch row, and Pack's group state is a claim list, so
         // no gather kernel applies — the per-row scratch fold is the
         // correctness path.
-        if self.pack.is_some() || !self.measures.is_empty() {
+        if self.pack_slot().is_some() || !self.measures.is_empty() {
             self.fold_batch_rows(batch);
             return Flow::Continue;
         }

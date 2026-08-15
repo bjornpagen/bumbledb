@@ -34,7 +34,6 @@ fn event_schema() -> Schema {
                     name: "during".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::I64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -137,9 +136,8 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
     };
@@ -187,9 +185,8 @@ fn a_dead_rule_opens_no_rule_span() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
     };
@@ -211,7 +208,7 @@ fn a_dead_rule_opens_no_rule_span() {
 /// — the obs counters that would record either stay silent.
 #[cfg(feature = "trace")]
 #[test]
-fn the_empty_program_builds_no_image_and_binds_no_view() {
+fn the_empty_query_builds_no_image_and_binds_no_view() {
     use crate::obs;
 
     let dir = TempDir::new("statically-empty-no-images");
@@ -221,9 +218,8 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction())],
     };

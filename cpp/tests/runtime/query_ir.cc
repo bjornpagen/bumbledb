@@ -214,10 +214,10 @@ static_assert(LongOrShort.rules[0].conditions[1].form == bdb::condition_form::le
 static_assert(LongOrShort.rules[0].conditions[1].op == bdb::query_cmp::ge);
 static_assert(LongOrShort.rules[0].conditions[2].form == bdb::condition_form::leaf);
 static_assert(LongOrShort.rules[0].conditions[2].op == bdb::query_cmp::lt);
-static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].conditions[0].kind ==
+static_assert(bdb::foreign::query_of<LongOrShort>.payload.cq.rules[0].conditions[0].kind ==
               static_cast<std::uint32_t>(bdb::foreign::bdb_condition_kind::BDB_CONDITION_KIND_OR));
-static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].conditions[0].child_count == 2);
-static_assert(bdb::foreign::query_of<LongOrShort>.rules[0].condition_count == 1);
+static_assert(bdb::foreign::query_of<LongOrShort>.payload.cq.rules[0].conditions[0].child_count == 2);
+static_assert(bdb::foreign::query_of<LongOrShort>.payload.cq.rules[0].condition_count == 1);
 
 static_assert(WindowLen.head_count == 2);
 static_assert(WindowLen.rules[0].find_count == 2);
@@ -225,7 +225,7 @@ static_assert(WindowLen.rules[0].finds[1].form == bdb::find_form::measure);
 static_assert(WindowLen.rules[0].finds[1].over == 1);
 static_assert(text_is(WindowLen.head[1].name, "len"));
 static_assert(WindowLen.head[1].answer == bdb::field_class{bdb::value_kind::u64, 0});
-static_assert(bdb::foreign::query_of<WindowLen>.rules[0].finds[1].kind ==
+static_assert(bdb::foreign::query_of<WindowLen>.payload.cq.rules[0].finds[1].kind ==
               static_cast<std::uint32_t>(bdb::foreign::bdb_find_term_kind::BDB_FIND_TERM_KIND_MEASURE));
 static_assert(std::same_as<decltype(std::declval<bdb::row_of<WindowLen>>().len), std::uint64_t>);
 

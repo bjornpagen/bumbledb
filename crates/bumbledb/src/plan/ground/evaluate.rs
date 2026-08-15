@@ -96,6 +96,7 @@ use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
+use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
 use bumbledb_theory::schema::{FieldId, IntervalElement, RelationId, ValueType};
 
@@ -135,7 +136,7 @@ fn fold_positive(
     // THE GUARD (20-query-ir.md § engine recursion's consumer guards): sealed
     // extensions exist only for closed stored relations, so an `Interior`
     // occurrence has no stage-0 rows and never folds.
-    let Some(relation_id) = occurrence.source.edb() else {
+    let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
         return false;
     };
     let relation = schema.relation(relation_id);
@@ -192,8 +193,7 @@ fn fold_positive(
         return true;
     }
     attach_membership(normalized, &binders, &survivors);
-    normalized.occurrences[c_idx].role =
-        Role::Folded(FoldedMark::of(relation_id, survivors, false));
+    normalized.occurrences[c_idx].role = Role::Folded(folded_positive(relation_id, survivors));
     true
 }
 
@@ -203,7 +203,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     let occurrence = &normalized.occurrences[c_idx];
     // The positive fold's Interior guard, verbatim: no sealed extension,
     // no stage-0 rows, no fold (20-query-ir.md § engine recursion's consumer guards).
-    let Some(relation_id) = occurrence.source.edb() else {
+    let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
         return false;
     };
     let relation = schema.relation(relation_id);
@@ -220,8 +220,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         // outright (and the rule is NOT empty). Any binding shape
         // qualifies: emptiness of σ needs no key reasoning.
         remove_anti_probe(normalized, c_idx);
-        normalized.occurrences[c_idx].role =
-            Role::Folded(FoldedMark::of(relation_id, Vec::new(), true));
+        normalized.occurrences[c_idx].role = Role::Folded(folded_negated(relation_id, Vec::new()));
         return true;
     }
     if occurrence.vars.is_empty() {
@@ -264,11 +263,31 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         ));
         return true;
     }
-    let mark = FoldedMark::of(closed, survivors, true);
+    let mark = folded_negated(closed, survivors);
     attach_membership(normalized, &binders, &complement);
     remove_anti_probe(normalized, c_idx);
     normalized.occurrences[c_idx].role = Role::Folded(mark);
     true
+}
+
+fn assert_fold_cap(survivors: &[u64]) {
+    assert!(survivors.len() <= 256, "extensions cap at 256 rows");
+}
+
+fn folded_positive(relation: RelationId, survivors: Vec<u64>) -> FoldedMark {
+    assert_fold_cap(&survivors);
+    FoldedMark::Positive {
+        relation,
+        survivors: survivors.into_boxed_slice(),
+    }
+}
+
+fn folded_negated(relation: RelationId, survivors: Vec<u64>) -> FoldedMark {
+    assert_fold_cap(&survivors);
+    FoldedMark::Negated {
+        relation,
+        survivors: survivors.into_boxed_slice(),
+    }
 }
 
 // The foldability conditions, one named predicate each (the grounding
@@ -320,12 +339,10 @@ pub(crate) enum ResolvableFilter {
         op: CmpOp,
         word: u64,
     },
-    /// Eq/Ne against a canonical multi-word value.
-    BytesCompare {
-        field: FieldId,
-        bytes: Box<[u8]>,
-        equal: bool,
-    },
+    /// Eq against a canonical multi-word value.
+    BytesEq { field: FieldId, bytes: Box<[u8]> },
+    /// Ne against a canonical multi-word value.
+    BytesNe { field: FieldId, bytes: Box<[u8]> },
     /// Eq against a plan-constant word set (attached memberships).
     WordSetEq { field: FieldId, words: Box<[u64]> },
     /// A same-row comparison between two fields. The parser admits only
@@ -379,6 +396,13 @@ pub(crate) fn parse_resolvable(filters: &[FilterPredicate]) -> Option<Vec<Resolv
     filters.iter().map(parse_filter).collect()
 }
 
+fn interval_bytes(start: u64, end: u64) -> Box<[u8]> {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&start.to_be_bytes());
+    bytes.extend_from_slice(&end.to_be_bytes());
+    bytes.into_boxed_slice()
+}
+
 fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
     let ordinary = |op: CmpOp| {
         matches!(
@@ -392,21 +416,22 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
                 field: *field,
                 words: words.clone().into_boxed_slice(),
             }),
-            (CmpOp::Eq | CmpOp::Ne, Const::Words(words)) => Some(ResolvableFilter::BytesCompare {
+            (CmpOp::Eq, Const::Words(words)) => Some(ResolvableFilter::BytesEq {
                 field: *field,
                 bytes: words.iter().flat_map(|word| word.to_be_bytes()).collect(),
-                equal: matches!(op, CmpOp::Eq),
             }),
-            (CmpOp::Eq | CmpOp::Ne, Const::Interval { start, end }) => {
-                let mut bytes = Vec::with_capacity(16);
-                bytes.extend_from_slice(&start.to_be_bytes());
-                bytes.extend_from_slice(&end.to_be_bytes());
-                Some(ResolvableFilter::BytesCompare {
-                    field: *field,
-                    bytes: bytes.into_boxed_slice(),
-                    equal: matches!(op, CmpOp::Eq),
-                })
-            }
+            (CmpOp::Ne, Const::Words(words)) => Some(ResolvableFilter::BytesNe {
+                field: *field,
+                bytes: words.iter().flat_map(|word| word.to_be_bytes()).collect(),
+            }),
+            (CmpOp::Eq, Const::Interval { start, end }) => Some(ResolvableFilter::BytesEq {
+                field: *field,
+                bytes: interval_bytes(*start, *end),
+            }),
+            (CmpOp::Ne, Const::Interval { start, end }) => Some(ResolvableFilter::BytesNe {
+                field: *field,
+                bytes: interval_bytes(*start, *end),
+            }),
             (op, Const::Word(word)) if ordinary(*op) => Some(ResolvableFilter::WordCompare {
                 field: *field,
                 op: *op,
@@ -525,7 +550,8 @@ pub(super) fn domain_within_ids(
         .any(|(_, occ)| {
             occ.vars.iter().any(|(field, var)| {
                 *var == k
-                    && ((occ.source.edb() == Some(closed) && *field == FieldId(0))
+                    && ((OccBind::of_occurrence(occ) == OccBind::Edb(closed)
+                        && *field == FieldId(0))
                         || containment_into_id(schema, occ, *field, closed))
             })
         })
@@ -542,7 +568,7 @@ fn containment_into_id(
     closed: RelationId,
 ) -> bool {
     schema.containments().iter().any(|statement| {
-        occurrence.source.edb() == Some(statement.source.relation)
+        OccBind::of_occurrence(occurrence) == OccBind::Edb(statement.source.relation)
             && statement.source.projection.as_ref() == [field]
             && statement.target.relation == closed
             && statement.target.projection.as_ref() == [FieldId(0)]
@@ -613,11 +639,14 @@ fn row_satisfies(
             op,
             word: bound,
         } => op.compare(&word(*field), bound),
-        ResolvableFilter::BytesCompare {
+        ResolvableFilter::BytesEq {
             field,
             bytes: bound,
-            equal,
-        } => (bytes(*field) == bound.as_ref()) == *equal,
+        } => bytes(*field) == bound.as_ref(),
+        ResolvableFilter::BytesNe {
+            field,
+            bytes: bound,
+        } => bytes(*field) != bound.as_ref(),
         ResolvableFilter::WordSetEq { field, words } => words.binary_search(&word(*field)).is_ok(),
         ResolvableFilter::FieldsCompare { left, right, op } => match op {
             CmpOp::Eq => bytes(*left) == bytes(*right),
@@ -731,10 +760,6 @@ pub(crate) fn folded_picture(
 
 /// One prepare-resolved filter's picture (unresolvable shapes never
 /// reach a folded occurrence's list).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per FilterPredicate kind; splitting hides totality"
-)]
 fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
     use crate::ir::normalize::{decoded_interval, decoded_scalar, render_const};
     let name = |field: &FieldId| relation.field(*field).name.as_ref();
@@ -803,7 +828,6 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
                     ValueType::I64 => IntervalElement::I64,
                     _ => IntervalElement::U64,
                 },
-                width: None,
             };
             literal(out, &decoded_interval(&outer_type, (*start, *end)));
         }
@@ -870,6 +894,9 @@ pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
 fn element_type(value_type: &ValueType) -> ValueType {
     match value_type {
         ValueType::Interval {
+            element: IntervalElement::I64,
+        }
+        | ValueType::FixedInterval {
             element: IntervalElement::I64,
             ..
         } => ValueType::I64,

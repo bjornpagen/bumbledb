@@ -67,7 +67,6 @@ fn schema() -> SchemaDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -102,7 +101,6 @@ fn schema() -> SchemaDescriptor {
                         name: "span".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -246,7 +244,6 @@ fn canonical_field_schema() -> SchemaDescriptor {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -2020,9 +2017,9 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
                 },
                 FieldDescriptor {
                     name: "lane".into(),
-                    value_type: ValueType::Interval {
+                    value_type: ValueType::FixedInterval {
                         element: IntervalElement::U64,
-                        width: Some(5),
+                        width: 5,
                     },
                     generation: Generation::None,
                 },

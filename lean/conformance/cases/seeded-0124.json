@@ -1,20 +1,10 @@
 {
 "case":"seeded-0124",
-"provenance":{"world_seed":12603137,"case_seed":1245374,"draw":2},
+"provenance":{"world_seed":12603137,"case_seed":1245372,"draw":0},
 "strings":[],
-"theory":{"relations":[{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]},
-{"id":8,"name":"Mandate","closed":false,"fields":["u64","u64","interval_i64"]}],
+"theory":{"relations":[{"id":8,"name":"Mandate","closed":false,"fields":["u64","u64","interval_i64"]}],
 "ground_axioms":[]},
-"instance":[{"relation":7,"facts":[
-[{"u64":1},{"u64":0}],
-[{"u64":2},{"u64":1}],
-[{"u64":3},{"u64":1}],
-[{"u64":4},{"u64":2}],
-[{"u64":5},{"u64":2}],
-[{"u64":6},{"u64":3}],
-[{"u64":7},{"u64":3}]
-]},
-{"relation":8,"facts":[
+"instance":[{"relation":8,"facts":[
 [{"u64":0},{"u64":0},{"interval_i64":[2000000000000000,2000000000000067]}],
 [{"u64":0},{"u64":0},{"interval_i64":[2000000000000067,2000000000000130]}],
 [{"u64":0},{"u64":0},{"interval_i64":[2000000000000155,2000000000000411]}],
@@ -36,13 +26,7 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004225,2000000000004481]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004248,2000000000004458]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":1},{"agg":{"op":"pack","over":0}}],
- "atoms":[{"relation":8,"bindings":[[2,{"var":0}],[1,{"var":1}]]}],
- "negated":[{"relation":7,"bindings":[]}],
- "conditions":[],
- "width":2}
-]},
-"params":[],
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"},{"kind":"var"},{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":1},{"var":2},{"var":3},{"var":4}],"atoms":[{"edb":8,"bindings":[[0,{"param":0}],[1,{"var":0}],[2,{"var":1}]]},{"edb":8,"bindings":[[0,{"param":0}],[2,{"var":2}]]},{"edb":8,"bindings":[[0,{"param":0}],[2,{"var":3}]]},{"edb":8,"bindings":[[0,{"param":0}],[2,{"var":4}]]}],"negated":[],"conditions":[{"cmp":{"op":"ne","lhs":{"var":1},"rhs":{"var":4}}},{"cmp":{"op":"eq","lhs":{"var":1},"rhs":{"lit":{"interval_i64":[2000000000013254,2000000000013312]}}}}],"width":5}]}},
+"params":[{"scalar":{"u64":1}}],
 "answers":[]
 }

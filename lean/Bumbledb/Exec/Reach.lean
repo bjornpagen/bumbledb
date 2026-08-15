@@ -725,8 +725,9 @@ theorem evalInteriorTables_sound {C : Classify} {W : ListInstance}
       simp)
     hsafe hwt c t
 
-/-- Interior DAG once, optional `reachDen`, then main `rulesAnswers` —
-listed by `evalQueryList`. Premises: `Safe` / `WellTyped` per lane. -/
+/-- Interior DAG once, then either main `rulesAnswers` (`.cq`) or
+`reachDen` plus main `rulesAnswers` (`.reach`) — listed by
+`evalQueryList`. Premises: `Safe` / `WellTyped` per lane. -/
 theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {q : Query}
     (hInter : ∀ d, d ∈ q.interiors → ∀ r, r ∈ d.rules → Safe r ∧ r.WellTyped)

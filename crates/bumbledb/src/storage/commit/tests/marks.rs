@@ -522,7 +522,11 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     let [edge] = op.capacity_edges() else {
         panic!("one capacity edge");
     };
-    assert_eq!(edge.weight, Some(60), "the insert op derives the slot");
+    assert_eq!(
+        edge.weight,
+        crate::storage::commit::plan::MarkWeight::Weighted(60),
+        "the insert op derives the slot"
+    );
     drop(plan);
     drop(insert_delta);
 

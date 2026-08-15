@@ -27,7 +27,7 @@ impl ProjectionSink {
             finds: Vec::new(),
             measures: Vec::new(),
             sources,
-            ray: None,
+            ray: crate::exec::sink::RayPoison::Clear,
             measured_sources: Vec::new(),
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
@@ -122,12 +122,12 @@ impl ProjectionSink {
     /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
     #[must_use]
     pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
-        self.ray
+        self.ray.span()
     }
 
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
-        self.ray = None;
+        self.ray = crate::exec::sink::RayPoison::Clear;
     }
 }

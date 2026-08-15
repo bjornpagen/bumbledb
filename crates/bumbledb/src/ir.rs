@@ -46,7 +46,7 @@ pub const MAX_RULES: usize = 16;
 pub const MAX_CONDITION_DEPTH: usize = 64;
 
 /// Dense derived-table id — an index into a [`Query`]'s interiors,
-/// with the optional rec occupying `InteriorId(interiors.len())`
+/// with a Reach query's rec occupying `InteriorId(interiors.len())`
 /// (`lean/Bumbledb/Query/Syntax.lean: InteriorId`). Same width as
 /// [`crate::schema::RelationId`], deliberately: a **separate identity**,
 /// never a pun. Statements quantify over stored relations only
@@ -437,44 +437,105 @@ pub struct Rec {
     pub rec: Vec<Rule>,
 }
 
-/// A query: named interiors (a DAG, eval once), at most one linear rec
-/// SCC, then the main answer (`docs/architecture/20-query-ir.md`,
+/// A query: named interiors (a DAG, eval once), then either a finite
+/// CQ main or one linear rec SCC plus main
+/// (`docs/architecture/20-query-ir.md`,
 /// `lean/Bumbledb/Query/Syntax.lean: Query`).
 ///
-/// **Denotation:** interiors then rec lfp then main
+/// **Denotation:** interiors then (Reach: rec lfp) then main
 /// (`lean/Bumbledb/Query/Denotation.lean: evalQuery`). Set semantics
 /// means there is exactly one union per rule-list — no bag distinction
 /// exists or is representable. Disjunction is data, never an execution
 /// node.
 ///
 /// The single-rule query is the conjunctive query unchanged
-/// ([`Query::single`]): empty interiors, no rec.
+/// ([`Query::single`]): empty-prefix [`Query::Cq`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Query {
-    /// DAG, declaration order; no count cap. Empty is legal.
-    pub interiors: Vec<Interior>,
-    /// At most one recursive SCC this cut.
-    pub rec: Option<Rec>,
-    /// The find shape (arity + aggregate ops) every **main** rule aligns
-    /// against, position by position; at least one term, duplicates
-    /// within a rule rejected at validation. The positional type row is
-    /// computed at validation and pinned in the witness.
-    pub head: Vec<HeadTerm>,
-    /// Main rules: at least one, at most [`MAX_RULES`]. Empty main is
-    /// [`crate::error::ValidationError::EmptyRuleSet`].
-    pub rules: Vec<Rule>,
+pub enum Query {
+    /// Finite CQ: interiors (possibly empty) and main. Rec is
+    /// unrepresentable on this arm.
+    Cq {
+        /// DAG, declaration order; no count cap. Empty is legal.
+        interiors: Vec<Interior>,
+        /// The find shape (arity + aggregate ops) every **main** rule
+        /// aligns against, position by position; at least one term,
+        /// duplicates within a rule rejected at validation. The
+        /// positional type row is computed at validation and pinned in
+        /// the witness.
+        head: Vec<HeadTerm>,
+        /// Main rules: at least one, at most [`MAX_RULES`]. Empty main
+        /// is [`crate::error::ValidationError::EmptyRuleSet`].
+        rules: Vec<Rule>,
+    },
+    /// Reach: interiors, one rec SCC by value, then main.
+    Reach {
+        /// DAG, declaration order; no count cap. Empty is legal.
+        interiors: Vec<Interior>,
+        /// The one linear rec SCC. Stacked rec is unrepresentable
+        /// (`Rec` does not contain a [`Query`]).
+        rec: Rec,
+        /// The find shape every **main** rule aligns against.
+        head: Vec<HeadTerm>,
+        /// Main rules: at least one, at most [`MAX_RULES`]. Empty main
+        /// is [`crate::error::ValidationError::EmptyRuleSet`].
+        rules: Vec<Rule>,
+    },
 }
 
 impl Query {
-    /// The conjunctive query — empty interiors, no rec, head derived
-    /// from the rule's own find shape.
+    /// The conjunctive query — empty interiors, head derived from the
+    /// rule's own find shape. Constructs [`Query::Cq`].
     #[must_use]
     pub fn single(rule: Rule) -> Self {
-        Self {
+        Self::Cq {
             interiors: vec![],
-            rec: None,
             head: rule.head(),
             rules: vec![rule],
+        }
+    }
+
+    /// Named interiors in declaration order.
+    #[must_use]
+    pub fn interiors(&self) -> &[Interior] {
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    /// Named interiors, mutably.
+    pub fn interiors_mut(&mut self) -> &mut Vec<Interior> {
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    /// The find shape every main rule aligns against.
+    #[must_use]
+    pub fn head(&self) -> &[HeadTerm] {
+        match self {
+            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
+        }
+    }
+
+    /// The find shape, mutably.
+    pub fn head_mut(&mut self) -> &mut Vec<HeadTerm> {
+        match self {
+            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
+        }
+    }
+
+    /// Main rules.
+    #[must_use]
+    pub fn rules(&self) -> &[Rule] {
+        match self {
+            Self::Cq { rules, .. } | Self::Reach { rules, .. } => rules,
+        }
+    }
+
+    /// Main rules, mutably.
+    pub fn rules_mut(&mut self) -> &mut Vec<Rule> {
+        match self {
+            Self::Cq { rules, .. } | Self::Reach { rules, .. } => rules,
         }
     }
 }
@@ -504,7 +565,7 @@ mod tests {
             negated: vec![],
             conditions: vec![],
         });
-        assert_eq!(query.rules[0].atoms.len(), 1);
+        assert_eq!(query.rules()[0].atoms.len(), 1);
     }
 
     #[test]
@@ -534,8 +595,8 @@ mod tests {
                 rhs: Term::Literal(Value::I64(1_700_000_000_000_000)),
             })],
         });
-        assert_eq!(query.rules[0].atoms.len(), 2);
-        assert_eq!(query.rules[0].conditions.len(), 1);
+        assert_eq!(query.rules()[0].atoms.len(), 2);
+        assert_eq!(query.rules()[0].conditions.len(), 1);
     }
 
     #[test]
@@ -566,7 +627,7 @@ mod tests {
             conditions: vec![],
         });
         assert!(matches!(
-            query.rules[0].finds[1],
+            query.rules()[0].finds[1],
             FindTerm::Aggregate {
                 op: AggOp::Sum,
                 over: Some(_)
@@ -591,7 +652,7 @@ mod tests {
             negated: vec![],
             conditions: vec![],
         });
-        assert!(query.rules[0].atoms[1].bindings.is_empty());
+        assert!(query.rules()[0].atoms[1].bindings.is_empty());
     }
 
     #[test]
@@ -614,7 +675,7 @@ mod tests {
             }],
             conditions: vec![],
         });
-        assert_eq!(query.rules[0].negated.len(), 1);
+        assert_eq!(query.rules()[0].negated.len(), 1);
     }
 
     #[test]

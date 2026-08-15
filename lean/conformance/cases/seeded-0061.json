@@ -692,18 +692,7 @@
 [{"u64":508},{"u64":169}],
 [{"u64":511},{"u64":170}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0}],
- "atoms":[{"relation":3,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":1}}]]}],
- "negated":[],
- "conditions":[],
- "width":1},
-{"finds":[{"var":0}],
- "atoms":[{"relation":10,"bindings":[[0,{"var":0}]]}],
- "negated":[],
- "conditions":[],
- "width":1}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"}],"rules":[{"finds":[{"var":0}],"atoms":[{"edb":3,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":1}}]]}],"negated":[],"conditions":[],"width":1},{"finds":[{"var":0}],"atoms":[{"edb":10,"bindings":[[0,{"var":0}]]}],"negated":[],"conditions":[],"width":1}]}},
 "params":[],
 "answers":[
 [{"u64":100}],

@@ -396,11 +396,11 @@ struct rec_ir {
 };
 
 /**
- * One lowered query: interiors, optional rec (a member only on the
- * rec-present specialization), main rules, head, and the param registry
+ * One lowered query: interiors, then the rec member only on the
+ * rec-present specialization, main rules, head, and the param registry
  * (params-product synthesis — interiors' uses folded first, then rec
  * base, then rec arms, then main). Counts `NI` / `NR` are the pack
- * lengths; `HasRec` is the rec arm.
+ * lengths; `HasRec` is the Reach arm.
  */
 template<std::size_t NI, std::size_t NR>
 struct query_body {

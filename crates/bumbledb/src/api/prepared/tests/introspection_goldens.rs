@@ -206,9 +206,8 @@ fn aggregate_union_golden_and_stats_parity() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
         rules: vec![rule(3), rule(7)],
     };

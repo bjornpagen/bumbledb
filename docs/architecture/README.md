@@ -44,7 +44,7 @@ laws).
 |---|---|
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
 | `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
-| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, interiors + one linear rec — decisions whole, semantics by citation |
+| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, `Cq | Reach` — decisions whole, semantics by citation |
 | `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Capacity.lean`+`Txn.lean`: the three statement forms by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
 | `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
@@ -81,8 +81,8 @@ laws).
   gap).*
 - **Mutual-linear** (several names, each rule ≤1 rec atom). Same
   class as self-rec; even/odd encodes as one linear rec with a parity
-  column. Admitting it is a new IR (`List Rec` or named recs), not
-  `Option<Rec>`. *Trigger: a sighted query that is unnatural as one name **and** is
+  column. Admitting it is a new IR (`List Rec` or named recs), not a
+  second rec on `Reach` and not a hole on `Cq`. *Trigger: a sighted query that is unnatural as one name **and** is
   still linear.*
 - **Named interior of a finished rec** (inlining-equivalent, up to
   `MAX_RULES` / DNF caps: unfolding a k-rule view into m main rules is k·m
@@ -225,6 +225,6 @@ re-litigated by accident:
 - **A created value never re-enters a derivation** — heads bind, filters compare,
   folds create at the answer boundary only; future interval operators must be
   lattice-closed (`20-query-ir.md` § the creation quarantine).
-- **Queries stay query-shaped** — interiors + one linear rec, budgeted; the
+- **Queries stay query-shaped** — `Cq | Reach`, budgeted; the
   caps are product decisions; no stored rules, no magic sets; a deductive database is a named
   non-goal (`20-query-ir.md` § engine recursion, `00-product.md`).

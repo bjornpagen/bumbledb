@@ -36,13 +36,7 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004280,2000000000004536]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004288,2000000000004528]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"agg":{"op":"pack","over":0}}],
- "atoms":[{"relation":8,"bindings":[[2,{"var":0}]]}],
- "negated":[{"relation":7,"bindings":[]}],
- "conditions":[],
- "width":1}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"aggregate","op":"pack"}],"rules":[{"finds":[{"agg":{"op":"pack","over":0}}],"atoms":[{"edb":8,"bindings":[[2,{"var":0}]]}],"negated":[{"edb":7,"bindings":[]}],"conditions":[],"width":1}]}},
 "params":[],
 "answers":[]
 }

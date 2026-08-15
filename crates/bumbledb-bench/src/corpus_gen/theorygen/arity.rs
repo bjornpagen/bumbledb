@@ -343,7 +343,9 @@ fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
         ValueType::FixedBytes { len } => {
             Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
         }
-        ValueType::Interval { .. } => unreachable!("the arity mix is scalar"),
+        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+            unreachable!("the arity mix is scalar")
+        }
     }
 }
 
@@ -370,7 +372,9 @@ fn type_counts(types: &[ValueType]) -> [usize; 5] {
             ValueType::Bool => 2,
             ValueType::String => 3,
             ValueType::FixedBytes { .. } => 4,
-            ValueType::Interval { .. } => unreachable!("the arity mix is scalar"),
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+                unreachable!("the arity mix is scalar")
+            }
         };
         counts[index] += 1;
     }

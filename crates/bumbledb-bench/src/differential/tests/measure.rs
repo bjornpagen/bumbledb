@@ -33,7 +33,6 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                     field("cap", ValueType::U64),
@@ -48,7 +47,6 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],
@@ -259,9 +257,8 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
         // dedup over measure values (a stay and a shift sharing one
         // measure collapse).
         (
-            Query {
+            Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
                     Rule {

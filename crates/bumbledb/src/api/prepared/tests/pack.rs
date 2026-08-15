@@ -36,7 +36,6 @@ fn pack_schema() -> Schema {
                         "slot",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -51,7 +50,6 @@ fn pack_schema() -> Schema {
                         "slot",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],
@@ -336,9 +334,8 @@ fn multi_rule_pack_folds_the_union() {
             rhs: Term::Param(ParamId(param)),
         })],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             crate::ir::HeadTerm::Var,
             crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),

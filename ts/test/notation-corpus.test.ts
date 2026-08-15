@@ -247,6 +247,7 @@ function posVar(id: number): { readonly kind: "var"; readonly var: number } {
  */
 const handWritten: Readonly<Record<string, QueryIr>> = {
 	"org-reach": {
+		kind: "reach",
 		interiors: [],
 		rec: {
 			head: [{ kind: "var" }, { kind: "var" }],
@@ -309,6 +310,7 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 		]
 	},
 	"posted-sparse": {
+		kind: "cq",
 		interiors: [
 			{
 				head: [{ kind: "var" }, { kind: "var" }, { kind: "var" }],
@@ -331,7 +333,6 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 				]
 			}
 		],
-		rec: null,
 		head: [{ kind: "var" }],
 		rules: [
 			{
@@ -351,6 +352,7 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 		]
 	},
 	"usd-selected": {
+		kind: "cq",
 		interiors: [
 			{
 				head: [{ kind: "var" }, { kind: "var" }],
@@ -372,7 +374,6 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 				]
 			}
 		],
-		rec: null,
 		head: [{ kind: "var" }],
 		rules: [
 			{

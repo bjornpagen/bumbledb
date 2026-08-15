@@ -223,7 +223,8 @@ fn schema_value(
             }
             Ok(Value::FixedBytes(bytes.to_vec().into_boxed_slice()))
         }
-        ValueType::Interval { element, .. } => {
+        ValueType::Interval { element }
+        | ValueType::FixedInterval { element, .. } => {
             if got != JsType::Object {
                 return Err(mismatch("{ start, end } bigint pair"));
             }
@@ -426,7 +427,10 @@ fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
                 .get::<BigInt>("width")?
                 .map(|w| u64_in(&w, "interval width"))
                 .transpose()?;
-            Ok(ValueType::Interval { element, width })
+            Ok(match width {
+                Some(width) => ValueType::FixedInterval { element, width },
+                None => ValueType::Interval { element },
+            })
         }
         other => Err(err(format!(
             "bumbledb marshal: unknown value type kind `{other}`"
@@ -927,10 +931,15 @@ fn rules_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<Vec<Rule>> {
     Ok(rule_list)
 }
 
-/// The whole query IR, mirroring `bumbledb::ir::Query` 1:1: relations,
-/// fields, and interiors by numeric id — the TS layer resolves names
-/// through the manifest and sends ids; the bridge never sees names here.
-pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
+fn rec_in(obj: &Object) -> napi::Result<Rec> {
+    Ok(Rec {
+        head: head_in(obj, "rec head")?,
+        base: rules_in(obj, "base", "rec base")?,
+        rec: rules_in(obj, "rec", "rec arms")?,
+    })
+}
+
+fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     let interiors_arr: Array = req(obj, "interiors", "query")?;
     let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
     for index in 0..interiors_arr.len() {
@@ -940,37 +949,35 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
             rules: rules_in(&interior, "rules", "interior rules")?,
         });
     }
-    let rec = match obj.get::<Unknown>("rec")? {
-        None => None,
-        Some(value) => match value.get_type()? {
-            JsType::Undefined | JsType::Null => None,
-            JsType::Object => {
-                // SAFETY: `get_type` just proved this value is a JS object.
-                #[expect(
-                    unsafe_code,
-                    reason = "napi declares `Unknown::cast` unsafe; fenced by get_type"
-                )]
-                let rec_obj: Object = unsafe { value.cast()? };
-                Some(Rec {
-                    head: head_in(&rec_obj, "rec head")?,
-                    base: rules_in(&rec_obj, "base", "rec base")?,
-                    rec: rules_in(&rec_obj, "rec", "rec arms")?,
-                })
-            }
-            other => {
-                return Err(err(format!(
-                    "bumbledb marshal: `rec` in query must be an object or null, got {}",
-                    js_type_name(other)
-                )));
-            }
-        },
-    };
-    Ok(Query {
-        interiors,
-        rec,
-        head: head_in(obj, "query head")?,
-        rules: rules_in(obj, "rules", "query rules")?,
-    })
+    Ok(interiors)
+}
+
+/// The whole query IR: tagged Q1 (`cq` | `reach`). Relations, fields,
+/// and interiors by numeric id — the TS layer resolves names through
+/// the manifest and sends ids; the bridge never sees names here. CQ
+/// does not carry rec; Reach requires `rec` as an object.
+pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
+    let kind: String = req(obj, "kind", "query")?;
+    let interiors = interiors_in(obj)?;
+    match kind.as_str() {
+        tags::query::CQ => Ok(Query::Cq {
+            interiors,
+            head: head_in(obj, "query head")?,
+            rules: rules_in(obj, "rules", "query rules")?,
+        }),
+        tags::query::REACH => {
+            let rec_obj: Object = req(obj, "rec", "reach query")?;
+            Ok(Query::Reach {
+                interiors,
+                rec: rec_in(&rec_obj)?,
+                head: head_in(obj, "query head")?,
+                rules: rules_in(obj, "rules", "query rules")?,
+            })
+        }
+        other => Err(err(format!(
+            "bumbledb marshal: unknown query kind `{other}`"
+        ))),
+    }
 }
 
 /// One engine value crossing OUT as a natural JS value: `bool → boolean`,
@@ -1113,11 +1120,12 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
         ValueType::FixedBytes { len } => {
             obj.set("len", u32::from(*len))?;
         }
-        ValueType::Interval { element, width } => {
+        ValueType::Interval { element } => {
             obj.set("element", tags::interval_element::tag(element))?;
-            if let Some(width) = width {
-                obj.set("width", *width)?;
-            }
+        }
+        ValueType::FixedInterval { element, width } => {
+            obj.set("element", tags::interval_element::tag(element))?;
+            obj.set("width", *width)?;
         }
     }
     // SAFETY: `env` is the live environment the calling impl received from

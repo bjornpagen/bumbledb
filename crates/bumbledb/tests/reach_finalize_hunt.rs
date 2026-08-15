@@ -80,21 +80,21 @@ fn pair_rule(finds: (u16, u16), atoms: Vec<Atom>) -> Rule {
     }
 }
 
-/// `recursive p0(x, z) | Edge(x, z); p0(x, z) | Edge(x, y), p0(y, z)` —
+/// `rec(x, z) | Edge(x, z); rec(x, z) | Edge(x, y), interior 0(y, z)` —
 /// the right-linear closure with identity main: on a diameter-`d` graph
 /// the driver runs ~`d` rounds, so the accumulator appends and the delta
 /// ping-pong flip many times within one execution.
 fn closure_query() -> Query {
-    Query {
+    Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
             rec: vec![pair_rule(
                 (0, 2),
                 vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_pair_main()],
     }
@@ -237,19 +237,19 @@ fn a_finished_interior_feeds_a_linear_rec() {
         expected = next;
     }
 
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             rules: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
         }],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![pair_rule((0, 1), vec![link_atom(0, 1)])],
             rec: vec![pair_rule(
                 (0, 2),
                 vec![interior_atom(0, 0, 1), interior_atom(1, 1, 2)],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
     };
@@ -289,16 +289,16 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
         *expected.entry(x).or_insert(0) += 1;
     }
 
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
             base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
             rec: vec![pair_rule(
                 (0, 2),
                 vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
             )],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
             finds: vec![
@@ -367,9 +367,9 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
 
     // out(x, n, f, s) | Item(id: x, name: n, flag: f, span: s)
     // out(y, n, f, s) | out(x, n, f, s), Edge(x, y)
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![
@@ -412,7 +412,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![
@@ -539,7 +539,7 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
 }
 
 /// One recursive handle, alternating parameter envelopes: the source-
-/// anchored closure `p0(z) | Edge(src: ?0, dst: z); p0(z) | p0(y),
+/// anchored closure `interior 0(z) | Edge(src: ?0, dst: z); interior 0(z) | interior 0(y),
 /// Edge(y, z)` re-executes with sources whose reachable sets differ
 /// wildly in size and round count — every pooled half must be refilled
 /// (or appended) to exactly the new execution's rows, never the larger
@@ -571,9 +571,9 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
             .collect()
     };
 
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -596,7 +596,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

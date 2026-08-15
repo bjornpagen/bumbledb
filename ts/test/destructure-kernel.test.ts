@@ -117,8 +117,8 @@ test("reusing one var reference across binding positions IS the join — one Var
 		return r.match(Holder, { id: h.id }).match(Account, { holder: h.id }).find({ h: h.id })
 	})
 	assert.deepEqual(lowerQuery(q), {
+		kind: "cq",
 		interiors: [],
-		rec: null,
 		head: [{ kind: "var" }],
 		rules: [
 			{
@@ -233,7 +233,7 @@ test("the recursive query ports: rec find + named interior record lower and prep
 	type Pin = Expect<Equal<QueryParams<typeof reachable>, { readonly root: bigint }>>
 	const ir = lowerQuery(reachable)
 	assert.equal(ir.interiors.length, 0)
-	assert.ok(ir.rec !== null)
+	assert.equal(ir.kind, "reach")
 	const prepared = db.prepare(reachable)
 	const rows = db.execute(prepared, { root: 1n })
 	assert.deepEqual(

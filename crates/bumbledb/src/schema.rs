@@ -198,14 +198,6 @@ pub(crate) enum IntervalTail {
 }
 
 impl IntervalTail {
-    /// Parse the descriptor width Option into the sealed encoding.
-    pub(crate) const fn from_width(width: Option<u64>) -> Self {
-        match width {
-            None => Self::General,
-            Some(width) => Self::Fixed { width },
-        }
-    }
-
     /// Trailing encoded bytes: 16 general, 8 fixed.
     pub(crate) const fn bytes(self) -> usize {
         match self {
@@ -320,28 +312,6 @@ pub(crate) enum CapacityEnforcement {
     },
     /// A closed parent's stage-1-known answer set.
     Closed { members: MemberSet },
-}
-
-impl CapacityEnforcement {
-    /// Convert the shared target-key plan after capacity's projection
-    /// interval refusal: coverage cannot arise.
-    pub(crate) fn from_resolved(enforcement: Enforcement) -> Self {
-        match enforcement {
-            Enforcement::ScalarProbe {
-                target_key,
-                key_permutation,
-            } => Self::ScalarProbe {
-                target_key,
-                key_permutation,
-            },
-            Enforcement::Closed { members } => Self::Closed { members },
-            Enforcement::IntervalCoverage { .. } => {
-                unreachable!(
-                    "capacity statements refuse interval positions in projections at the gate"
-                )
-            }
-        }
-    }
 }
 
 /// Index of a ground axiom in a sealed closed extension. Arbitrary `u64`

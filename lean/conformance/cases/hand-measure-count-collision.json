@@ -26,13 +26,7 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004225,2000000000004481]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004248,2000000000004458]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"measure":0},{"agg":{"op":"count"}}],
- "atoms":[{"relation":8,"bindings":[[2,{"var":0}]]}],
- "negated":[],
- "conditions":[{"cmp":{"op":"allen","mask":["starts","during","finishes","equals"],"lhs":{"var":0},"rhs":{"lit":{"interval_i64":[-9223372036854775808,9223372036854775806]}}}}],
- "width":1}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"aggregate","op":"count"}],"rules":[{"finds":[{"measure":0},{"agg":{"op":"count"}}],"atoms":[{"edb":8,"bindings":[[2,{"var":0}]]}],"negated":[],"conditions":[{"cmp":{"op":"allen","mask":["starts","during","finishes","equals"],"lhs":{"var":0},"rhs":{"lit":{"interval_i64":[-9223372036854775808,9223372036854775806]}}}}],"width":1}]}},
 "params":[],
 "answers":[
 [{"u64":210},{"u64":1}],

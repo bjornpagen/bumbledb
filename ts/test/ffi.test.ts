@@ -457,6 +457,7 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("recursive closure query computes the reachable set", function closure() {
 		const queryIr: QueryIr = {
+			kind: "reach",
 			interiors: [],
 			rec: {
 				head: [{ kind: "var" }],
@@ -532,8 +533,8 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("dbPrepare returns roster errors as data", function irError() {
 		const bogus: QueryIr = {
+			kind: "cq",
 			interiors: [],
-			rec: null,
 			head: [{ kind: "var" }],
 			rules: [
 				{
@@ -553,8 +554,8 @@ describe("ffi round trip against a real store", function suite() {
 	test("count_with_over_is_refused", function countWithOver() {
 		assert.throws(function marshalCountOver() {
 			native.dbPrepare(db, {
+				kind: "cq",
 				interiors: [],
-				rec: null,
 				head: [{ kind: "aggregate", op: "count" }],
 				rules: [
 					{

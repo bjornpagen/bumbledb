@@ -24,11 +24,11 @@ impl Sink for ProjectionSink {
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        self.project_batch(batch, false)
+        self.project_batch(batch)
     }
 
     fn emit_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        self.project_batch(batch, true)
+        self.project_batch_until_skip(batch)
     }
 
     fn skip_capability(&self) -> crate::exec::run::SkipCapability {
@@ -144,15 +144,10 @@ impl Sink for ProjectionSink {
 }
 
 impl ProjectionSink {
-    /// Shared batch emit: `until_skip` is Licensed-projection first-emit
-    /// unwind; Forbidden nodes pass false so every surviving row lands.
-    fn project_batch(&mut self, batch: &LeafBatch<'_>, until_skip: bool) -> Flow {
+    fn prepare_plain_batch_sources(&mut self, batch: &LeafBatch<'_>) {
         let ProjectionSources::Plain(sources) = &self.sources else {
-            return self.emit_batch_measured(batch, until_skip);
+            unreachable!("plain batch path");
         };
-        // Sources resolved at batch entry (per-slot, not per-row); the
-        // outer values refresh per batch (bindings vary per parent), the
-        // row loop touches only the varying key words and the seen-set.
         for (i, source) in sources.iter().enumerate() {
             self.batch_sources[i] = batch.source_of(*source);
         }
@@ -161,14 +156,14 @@ impl ProjectionSink {
                 self.scratch[i] = batch.bindings.get(*source);
             }
         }
-        // Direct per-row insert — NO hash-ahead pipeline (measured):
-        // the ping-pong measured +1.2–2.4 ns/row in
-        // this exact shape once the window probe removed the flush
-        // exposure it was built to shadow; the deletion IS the
-        // optimization.
-        // Alias-hoisted locals: the row loop reads
-        // `batch_sources` and writes `scratch` — disjoint reborrows
-        // taken once keep both headers in registers.
+    }
+
+    /// Consume every surviving row. Forbidden nodes take this path.
+    fn project_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
+        if matches!(&self.sources, ProjectionSources::Measured(_)) {
+            return self.emit_batch_measured(batch);
+        }
+        self.prepare_plain_batch_sources(batch);
         let batch_sources = &self.batch_sources[..];
         let scratch = &mut self.scratch[..];
         let seen = &mut self.seen;
@@ -179,13 +174,30 @@ impl ProjectionSink {
                 }
             }
             seen.insert(scratch);
-            if until_skip {
-                // First-emit semantics (see `emit`): the remaining rows
-                // bind nothing sink-relevant — the executor unwinds.
-                return Flow::SkipSuffix;
-            }
         }
         Flow::Continue
+    }
+
+    /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
+    /// insert; remaining rows bind nothing sink-relevant.
+    fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
+        if matches!(&self.sources, ProjectionSources::Measured(_)) {
+            return self.emit_batch_measured_until_skip(batch);
+        }
+        self.prepare_plain_batch_sources(batch);
+        let batch_sources = &self.batch_sources[..];
+        let scratch = &mut self.scratch[..];
+        let seen = &mut self.seen;
+        let Some(&entry) = batch.survivors.first() else {
+            return Flow::Continue;
+        };
+        for (i, source) in batch_sources.iter().enumerate() {
+            if let LeafSource::Key(word) = source {
+                scratch[i] = batch.key(entry, *word);
+            }
+        }
+        seen.insert(scratch);
+        Flow::SkipSuffix
     }
 }
 

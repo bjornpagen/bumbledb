@@ -127,9 +127,8 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
             rhs: Term::Literal(Value::I64(0)),
         })],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(3), rule(7)],
     };
@@ -643,9 +642,9 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::Reach {
         interiors: vec![],
-        rec: Some(Rec {
+        rec: Rec {
             head: vec![HeadTerm::Var],
             base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -665,7 +664,7 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
                 negated: vec![],
                 conditions: vec![],
             }],
-        }),
+        },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

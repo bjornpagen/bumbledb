@@ -1,4 +1,5 @@
 use crate::ir::normalize::NormalizedQuery;
+use crate::plan::fj::OccBind;
 use crate::plan::pinned_fields;
 use crate::schema::Schema;
 use std::collections::BTreeSet;
@@ -9,6 +10,14 @@ use std::collections::BTreeSet;
 /// aggregate sink without a binding seen-set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DistinctWitness(());
+
+/// Proven vs unproven distinct-bindings. The witness arm is the elision
+/// observable; unproven is a constructor, not a missing `Option`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Distinctness {
+    Proven(DistinctWitness),
+    Unproven,
+}
 
 /// The distinct-bindings elision check (40-execution): every participating
 /// occurrence's bound fields — variable-bound or equality-pinned to one
@@ -39,12 +48,12 @@ pub(crate) fn provably_distinct(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .all(|occurrence| {
-            // An `Interior` occurrence carries no keys — a predicate is a
+            // An `Interior` occurrence carries no keys — a derived table is a
             // transient answer set, not a keyed store — so no rule
             // reading one can prove distinct bindings through key
             // coverage (40-execution.md § the linear reach driver: cross-round re-derivation
             // is the seen-set's job regardless).
-            let Some(stored) = occurrence.source.edb() else {
+            let OccBind::Edb(stored) = OccBind::of_occurrence(occurrence) else {
                 return false;
             };
             let relation = schema.relation(stored);

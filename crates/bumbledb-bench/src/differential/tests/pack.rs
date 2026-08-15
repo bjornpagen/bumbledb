@@ -21,10 +21,7 @@ use crate::naive::{Delta, NaiveDb, Tuple};
 /// Shift(id u64, person u64, slot interval<i64>). No statements: every
 /// write commits (ids are plain — the generator numbers them itself).
 fn schema() -> SchemaDescriptor {
-    let slot = |element: IntervalElement| ValueType::Interval {
-        element,
-        width: None,
-    };
+    let slot = |element: IntervalElement| ValueType::Interval { element };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -302,9 +299,8 @@ fn multi_rule_pack_folds_the_union_differentially() {
             rhs: Term::Literal(Value::U64(bound)),
         })],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![
             bumbledb::HeadTerm::Var,
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack),

@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::{RelationImage, append, build, synthesize_closed};
-use crate::schema::Schema;
+use crate::schema::{RelationBody, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
@@ -74,8 +74,15 @@ impl ImageCache {
         schema: &Schema,
         rel: RelationId,
     ) -> Result<Arc<RelationImage>> {
-        if let Some(slot) = self.closed_slot(rel) {
-            return Ok(self.get_or_synthesize(schema, rel, slot));
+        match schema.relation(rel).body() {
+            RelationBody::Closed { .. } => {
+                let slot = self
+                    .closed
+                    .get(&rel)
+                    .expect("Closed body implies a closed cache slot");
+                return Ok(self.get_or_synthesize(schema, rel, slot));
+            }
+            RelationBody::Ordinary { .. } => {}
         }
         let generation = txn.generation()?;
         let key = (rel, generation);

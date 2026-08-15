@@ -7,9 +7,9 @@ use super::*;
 use crate::image::view::{
     Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
 };
-use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
+use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, HeadTerm, Query, Rule, Term, Value};
+use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -111,7 +111,6 @@ fn theory() -> Schema {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                 )],
             },
@@ -151,8 +150,8 @@ fn var(id: u16) -> Term {
 /// grounding (elimination and evaluation in the one fixpoint).
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut normalized = normalize_predicate(schema, &witness, &[]).remove(0);
-    ground(&mut normalized, schema, &query.rules[0].finds);
+    let mut normalized = normalize_rules(schema, &[], witness.rules()).remove(0);
+    ground(&mut normalized, schema, &query.rules()[0].finds);
     normalized
 }
 
@@ -180,12 +179,18 @@ fn attached_sets(normalized: &NormalizedQuery, idx: usize) -> Vec<Vec<u64>> {
         .collect()
 }
 
-fn folded(relation: u32, survivors: &[u64], negated: bool) -> Role {
-    Role::Folded(FoldedMark::of(
-        bumbledb_theory::schema::RelationId(relation),
-        survivors.to_vec(),
-        negated,
-    ))
+fn folded_pos(relation: u32, survivors: &[u64]) -> Role {
+    Role::Folded(FoldedMark::Positive {
+        relation: bumbledb_theory::schema::RelationId(relation),
+        survivors: survivors.to_vec().into_boxed_slice(),
+    })
+}
+
+fn folded_neg(relation: u32, survivors: &[u64]) -> Role {
+    Role::Folded(FoldedMark::Negated {
+        relation: bumbledb_theory::schema::RelationId(relation),
+        survivors: survivors.to_vec().into_boxed_slice(),
+    })
 }
 
 /// `Q(i, v) :- Item(id = i, kind = x, score = v), Kind(id = x, rank == 20)`.
@@ -210,7 +215,7 @@ fn a_filtered_closed_atom_folds_to_a_membership_set() {
     let normalized = grounded(&schema, &selected_fold_query(20));
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(KIND, &[1, 2], false)],
+        vec![Role::Positive, folded_pos(KIND, &[1, 2])],
         "the Kind occurrence folded with |S| = 2"
     );
     assert_eq!(
@@ -228,8 +233,8 @@ fn the_off_switch_bypasses_the_evaluator() {
     let schema = theory();
     let query = selected_fold_query(20);
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut normalized = normalize_predicate(&schema, &witness, &[]).remove(0);
-    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
+    let mut normalized = normalize_rules(&schema, &[], witness.rules()).remove(0);
+    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules()[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     assert!(attached_sets(&normalized, 0).is_empty());
 }
@@ -271,7 +276,7 @@ fn a_dead_payload_variable_folds() {
     let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(KIND, &[0, 1, 2, 3], false)]
+        vec![Role::Positive, folded_pos(KIND, &[0, 1, 2, 3])]
     );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0, 1, 2, 3]]);
 }
@@ -369,32 +374,47 @@ fn assert_wide_compares_parse() {
         );
         let words = Box::new([3u64, 5]);
         let bytes: Box<[u8]> = words.iter().flat_map(|word| word.to_be_bytes()).collect();
+        let expected_words = match op {
+            CmpOp::Eq => ResolvableFilter::BytesEq {
+                field: f,
+                bytes: bytes.clone(),
+            },
+            CmpOp::Ne => ResolvableFilter::BytesNe {
+                field: f,
+                bytes: bytes.clone(),
+            },
+            _ => unreachable!(),
+        };
         assert_parse(
             FilterPredicate::Compare {
                 field: f,
                 op,
                 value: Const::Words(words),
             },
-            Some(ResolvableFilter::BytesCompare {
-                field: f,
-                bytes,
-                equal: op == CmpOp::Eq,
-            }),
+            Some(expected_words),
         );
         let mut interval_bytes = Vec::new();
         interval_bytes.extend_from_slice(&2u64.to_be_bytes());
         interval_bytes.extend_from_slice(&9u64.to_be_bytes());
+        let interval = interval_bytes.into_boxed_slice();
+        let expected_interval = match op {
+            CmpOp::Eq => ResolvableFilter::BytesEq {
+                field: f,
+                bytes: interval.clone(),
+            },
+            CmpOp::Ne => ResolvableFilter::BytesNe {
+                field: f,
+                bytes: interval.clone(),
+            },
+            _ => unreachable!(),
+        };
         assert_parse(
             FilterPredicate::Compare {
                 field: f,
                 op,
                 value: Const::Interval { start: 2, end: 9 },
             },
-            Some(ResolvableFilter::BytesCompare {
-                field: f,
-                bytes: interval_bytes.into_boxed_slice(),
-                equal: op == CmpOp::Eq,
-            }),
+            Some(expected_interval),
         );
     }
     assert_parse(
@@ -645,7 +665,7 @@ fn a_negated_closed_atom_folds_to_the_complement() {
     let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(KIND, &[1, 2], true)]
+        vec![Role::Positive, folded_neg(KIND, &[1, 2])]
     );
     assert_eq!(
         attached_sets(&normalized, 0),
@@ -701,7 +721,7 @@ fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
     let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(KIND, &[], true)]
+        vec![Role::Positive, folded_neg(KIND, &[])]
     );
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.anti_probes.is_empty());
@@ -746,7 +766,7 @@ fn a_satisfied_var_less_gate_deletes_outright() {
     let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(KIND, &[1, 2], false)]
+        vec![Role::Positive, folded_pos(KIND, &[1, 2])]
     );
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.dead.is_none());
@@ -829,11 +849,11 @@ fn a_fold_with_no_membership_home_refuses() {
     assert!(normalized.dead.is_none());
 }
 
-/// Multi-rule programs fold per rule, independently: the same closed
+/// Multi-rule queries fold per rule, independently: the same closed
 /// atom folds in the rule where its payload is dead and refuses in the
 /// rule projecting it (no cross-rule state — the grounding's per-rule law).
 #[test]
-fn multi_rule_programs_fold_per_rule_independently() {
+fn multi_rule_queries_fold_per_rule_independently() {
     let schema = theory();
     let fold_rule = Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -853,20 +873,18 @@ fn multi_rule_programs_fold_per_rule_independently() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
-        interiors: vec![],
-        rec: None,
-        head: vec![HeadTerm::Var],
-        rules: vec![fold_rule, refusing_rule],
-    };
+    // Q1 spelling: `Query::single` constructs `Cq` (no rec). Two-rule
+    // CQ via the public rules list — engine owns `ir.rs` field vis.
+    let mut query = Query::single(fold_rule);
+    query.rules_mut().push(refusing_rule);
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut rules = normalize_predicate(&schema, &witness, &[]);
+    let mut rules = normalize_rules(&schema, &[], witness.rules());
     for (idx, rule) in rules.iter_mut().enumerate() {
         ground(rule, &schema, &witness.rule(idx).rule().finds);
     }
     assert_eq!(
         roles(&rules[0]),
-        vec![Role::Positive, folded(KIND, &[1, 2], false)]
+        vec![Role::Positive, folded_pos(KIND, &[1, 2])]
     );
     assert_eq!(attached_sets(&rules[0], 0), vec![vec![1, 2]]);
     assert_eq!(
@@ -897,7 +915,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
     let normalized = grounded(&schema, &membership);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(CAL, &[0], false)]
+        vec![Role::Positive, folded_pos(CAL, &[0])]
     );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 
@@ -922,7 +940,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
     let normalized = grounded(&schema, &allen);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(CAL, &[0], false)]
+        vec![Role::Positive, folded_pos(CAL, &[0])]
     );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 }
@@ -955,8 +973,8 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
         roles(&normalized),
         vec![
             Role::Positive,
-            folded(KIND, &[1, 2], false),
-            folded(KIND, &[1, 2], false)
+            folded_pos(KIND, &[1, 2]),
+            folded_pos(KIND, &[1, 2])
         ],
         "both closed occurrences fold (the second sees the first's set as a filter)"
     );

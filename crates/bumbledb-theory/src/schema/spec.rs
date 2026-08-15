@@ -82,7 +82,7 @@ pub struct ClosedSpec {
 /// mark. [`ValueType`] is the one structural-type vocabulary — `bool`,
 /// `u64`, `i64`, `str` ([`ValueType::String`]), `bytes<N>`
 /// ([`ValueType::FixedBytes`]), and the interval family
-/// ([`ValueType::Interval`], general or fixed-width) — so the spec can
+/// ([`ValueType::Interval`] / [`ValueType::FixedInterval`]) — so the spec can
 /// state every type the grammar can.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldSpec {

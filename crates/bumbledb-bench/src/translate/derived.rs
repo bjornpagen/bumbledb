@@ -23,10 +23,29 @@ pub fn translate_query(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
+    match query {
+        Query::Cq {
+            interiors, rules, ..
+        } => translate_cq(interiors, rules, schema, sets),
+        Query::Reach {
+            interiors,
+            rec,
+            rules,
+            ..
+        } => translate_reach(interiors, rec, rules, schema, sets),
+    }
+}
+
+fn translate_cq(
+    interiors: &[bumbledb::Interior],
+    rules: &[Rule],
+    schema: &Schema,
+    sets: &[(ParamId, Vec<Value>)],
+) -> Result<Translated, String> {
     let mut params = SharedParams::default();
-    params.rec = rec_id(query);
+    params.rec = None;
     let mut ctes: Vec<String> = Vec::new();
-    for (index, interior) in query.interiors.iter().enumerate() {
+    for (index, interior) in interiors.iter().enumerate() {
         ctes.push(cte_from_rules(
             index,
             &interior.head,
@@ -36,29 +55,45 @@ pub fn translate_query(
             &mut params,
         )?);
     }
-    if let Some(rec) = &query.rec {
-        ctes.push(rec_cte(
-            query.interiors.len(),
-            rec,
-            schema,
-            sets,
-            &mut params,
-        )?);
-    }
-    let main = main_select(&query.rules, schema, sets, &mut params)?;
+    let main = main_select(rules, schema, sets, &mut params)?;
     if ctes.is_empty() {
         return Ok(Translated {
             sql: main,
             params: params.params,
         });
     }
-    let with = if query.rec.is_some() {
-        format!("WITH RECURSIVE {}", ctes.join(", "))
-    } else {
-        format!("WITH {}", ctes.join(", "))
-    };
     Ok(Translated {
-        sql: format!("{with} {main}"),
+        sql: format!("WITH {} {main}", ctes.join(", ")),
+        params: params.params,
+    })
+}
+
+fn translate_reach(
+    interiors: &[bumbledb::Interior],
+    rec: &Rec,
+    rules: &[Rule],
+    schema: &Schema,
+    sets: &[(ParamId, Vec<Value>)],
+) -> Result<Translated, String> {
+    let mut params = SharedParams::default();
+    params.rec = Some(InteriorId(
+        u32::try_from(interiors.len()).expect("interior id fits u32"),
+    ));
+    let mut ctes: Vec<String> = Vec::new();
+    for (index, interior) in interiors.iter().enumerate() {
+        ctes.push(cte_from_rules(
+            index,
+            &interior.head,
+            &interior.rules,
+            schema,
+            sets,
+            &mut params,
+        )?);
+    }
+    ctes.push(rec_cte(interiors.len(), rec, schema, sets, &mut params)?);
+    let main = main_select(rules, schema, sets, &mut params)?;
+    Ok(Translated {
+        sql: format!("WITH RECURSIVE {} {main}", ctes.join(", ")),
         params: params.params,
     })
 }
@@ -122,7 +157,7 @@ fn rule_arms(
                     Some(VarCols::Scalar(column)) => column.clone(),
                     Some(VarCols::Interval { .. }) => {
                         return Err(format!(
-                            "interval-typed predicate column c{position} \
+                            "interval-typed derived column c{position} \
                              (the recursive lane is scalar-shaped)"
                         ));
                     }
@@ -152,21 +187,36 @@ fn main_select(
     super::query::translate_rules(rules, schema, sets, params)
 }
 
-fn rec_id(query: &Query) -> Option<InteriorId> {
-    query
-        .rec
-        .is_some()
-        .then(|| InteriorId(u32::try_from(query.interiors.len()).expect("interior id fits u32")))
-}
-
 /// Interval-typed derived columns are the remaining translator limit.
 ///
 /// # Errors
 ///
 /// An interior or rec head column whose type is interval.
 pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
+    match query {
+        Query::Cq { interiors, .. } => {
+            refuse_interior_intervals(interiors, schema)?;
+            Ok(())
+        }
+        Query::Reach { interiors, rec, .. } => {
+            let flags = refuse_interior_intervals(interiors, schema)?;
+            let row = head_intervals(&rec.head, &rec.base, schema, &flags);
+            if row.iter().any(|b| *b) {
+                return Err(
+                    "interval-typed derived column (the recursive lane is scalar-shaped)".into(),
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+fn refuse_interior_intervals(
+    interiors: &[bumbledb::Interior],
+    schema: &Schema,
+) -> Result<Vec<Vec<bool>>, String> {
     let mut flags: Vec<Vec<bool>> = Vec::new();
-    for interior in &query.interiors {
+    for interior in interiors {
         flags.push(head_intervals(
             &interior.head,
             &interior.rules,
@@ -179,15 +229,7 @@ pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), Str
             );
         }
     }
-    if let Some(rec) = &query.rec {
-        let row = head_intervals(&rec.head, &rec.base, schema, &flags);
-        if row.iter().any(|b| *b) {
-            return Err(
-                "interval-typed derived column (the recursive lane is scalar-shaped)".into(),
-            );
-        }
-    }
-    Ok(())
+    Ok(flags)
 }
 
 fn head_intervals(
@@ -220,10 +262,9 @@ fn col_interval(
     prior: &[Vec<bool>],
 ) -> bool {
     match source {
-        AtomSource::Edb(relation) => matches!(
-            schema.relation(relation).fields()[usize::from(field.0)].value_type,
-            bumbledb::schema::ValueType::Interval { .. }
-        ),
+        AtomSource::Edb(relation) => schema.relation(relation).fields()[usize::from(field.0)]
+            .value_type
+            .is_interval(),
         AtomSource::Interior(InteriorId(id)) => prior
             .get(id as usize)
             .and_then(|row| row.get(usize::from(field.0)))

@@ -206,11 +206,9 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
                     let mut values = Vec::new();
                     let mut column = 0;
                     for field in relation.fields() {
-                        if matches!(
-                            field.value_type,
-                            bumbledb::schema::ValueType::Interval { element, .. }
-                                if matches!(element, bumbledb::schema::IntervalElement::I64)
-                        ) {
+                        if field.value_type.interval_element()
+                            == Some(bumbledb::schema::IntervalElement::I64)
+                        {
                             let start: rusqlite::types::Value = row.get(column)?;
                             let end: rusqlite::types::Value = row.get(column + 1)?;
                             values.push(

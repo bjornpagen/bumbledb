@@ -27,7 +27,6 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
-                            width: None,
                         },
                         generation: Generation::None,
                     },

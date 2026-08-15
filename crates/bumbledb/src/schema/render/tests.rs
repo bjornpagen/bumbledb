@@ -31,7 +31,6 @@ fn example() -> SchemaDescriptor {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],
@@ -58,7 +57,6 @@ fn example() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -574,7 +572,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
 
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     };
     let decl = SchemaDescriptor {
         relations: vec![

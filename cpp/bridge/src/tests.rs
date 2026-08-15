@@ -13,8 +13,8 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 
-use bumbledb::RelationId;
 use bumbledb::schema::StatementDescriptor;
+use bumbledb::RelationId;
 
 use crate::answers::{
     bdb_answers_arity, bdb_answers_clear, bdb_answers_destroy, bdb_answers_get, bdb_answers_len,
@@ -34,9 +34,10 @@ use crate::error::{
 };
 use crate::query::{
     bdb_agg_op, bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind,
-    bdb_comparison, bdb_condition, bdb_condition_kind, bdb_db_prepare, bdb_find_term,
+    bdb_comparison, bdb_condition, bdb_condition_kind, bdb_cq, bdb_db_prepare, bdb_find_term,
     bdb_find_term_kind, bdb_head_op, bdb_head_term, bdb_head_term_kind, bdb_prepared,
-    bdb_prepared_destroy, bdb_query, bdb_rule, bdb_term, bdb_term_kind,
+    bdb_prepared_destroy, bdb_query, bdb_query_kind, bdb_query_payload, bdb_rule, bdb_term,
+    bdb_term_kind,
 };
 use crate::schema::{
     bdb_bound, bdb_bound_kind, bdb_capacity_window, bdb_capacity_window_kind, bdb_field_spec,
@@ -495,13 +496,17 @@ fn with_down_at_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     }];
     let head = [head_var()];
     let query = bdb_query {
-        interiors: null(),
-        interior_count: 0,
-        rec: null(),
-        head: head.as_ptr(),
-        head_count: head.len(),
-        rules: rules.as_ptr(),
-        rule_count: rules.len(),
+        kind: u32::from(bdb_query_kind::Cq),
+        payload: bdb_query_payload {
+            cq: bdb_cq {
+                interiors: null(),
+                interior_count: 0,
+                head: head.as_ptr(),
+                head_count: head.len(),
+                rules: rules.as_ptr(),
+                rule_count: rules.len(),
+            },
+        },
     };
     f(&query)
 }
@@ -539,13 +544,17 @@ fn with_names_of_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     }];
     let head = [head_var()];
     let query = bdb_query {
-        interiors: null(),
-        interior_count: 0,
-        rec: null(),
-        head: head.as_ptr(),
-        head_count: head.len(),
-        rules: rules.as_ptr(),
-        rule_count: rules.len(),
+        kind: u32::from(bdb_query_kind::Cq),
+        payload: bdb_query_payload {
+            cq: bdb_cq {
+                interiors: null(),
+                interior_count: 0,
+                head: head.as_ptr(),
+                head_count: head.len(),
+                rules: rules.as_ptr(),
+                rule_count: rules.len(),
+            },
+        },
     };
     f(&query)
 }

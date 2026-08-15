@@ -43,7 +43,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
 fn interval() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     }
 }
 

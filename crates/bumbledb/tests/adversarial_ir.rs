@@ -272,19 +272,24 @@ fn random_query(rng: &mut Rng) -> Query {
             .map(|_| find_term(rng).head_term())
             .collect(),
     };
-    Query {
-        interiors: if rng.chance(4) {
-            (0..rng.below(4)).map(|_| random_interior(rng)).collect()
-        } else {
-            vec![]
-        },
-        rec: if rng.chance(5) {
-            Some(random_rec(rng))
-        } else {
-            None
-        },
-        head,
-        rules,
+    let interiors = if rng.chance(4) {
+        (0..rng.below(4)).map(|_| random_interior(rng)).collect()
+    } else {
+        vec![]
+    };
+    if rng.chance(5) {
+        Query::Reach {
+            interiors,
+            rec: random_rec(rng),
+            head,
+            rules,
+        }
+    } else {
+        Query::Cq {
+            interiors,
+            head,
+            rules,
+        }
     }
 }
 
@@ -348,9 +353,8 @@ fn plausible_query(rng: &mut Rng) -> Query {
         1 => {
             let busy = projection(BUSY, Gauntlet::BUSY_PERSON, Gauntlet::BUSY_DURING);
             let ooo = projection(OOO, Gauntlet::OOO_PERSON, Gauntlet::OOO_DURING);
-            Query {
+            Query::Cq {
                 interiors: vec![],
-                rec: None,
                 head: busy.head(),
                 rules: vec![busy, ooo],
             }
@@ -432,7 +436,11 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
     match rng.below(16) {
         // Unknown relation id.
         0 => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
+            if let Some(atom) = query
+                .rules_mut()
+                .first_mut()
+                .and_then(|r| r.atoms.first_mut())
+            {
                 atom.source =
                     bumbledb::AtomSource::Edb(RelationId(if rng.chance(2) { 3 } else { u32::MAX }));
             }
@@ -440,7 +448,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // Unknown field id.
         1 => {
             if let Some((field, _)) = query
-                .rules
+                .rules_mut()
                 .first_mut()
                 .and_then(|r| r.atoms.first_mut())
                 .and_then(|a| a.bindings.first_mut())
@@ -450,27 +458,27 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // Duplicate rule.
         2 => {
-            if let Some(rule) = query.rules.first().cloned() {
-                query.rules.push(rule);
+            if let Some(rule) = query.rules_mut().first().cloned() {
+                query.rules_mut().push(rule);
             }
         }
         // Head arity mismatch.
         3 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 rule.finds.push(FindTerm::Var(VarId(0)));
             }
         }
         // Rule cap + 1.
         4 => {
-            if let Some(rule) = query.rules.first().cloned() {
-                while query.rules.len() <= MAX_RULES {
-                    query.rules.push(rule.clone());
+            if let Some(rule) = query.rules_mut().first().cloned() {
+                while query.rules_mut().len() <= MAX_RULES {
+                    query.rules_mut().push(rule.clone());
                 }
             }
         }
         // The vacuous masks.
         5 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 rule.conditions.push(ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen {
                         mask: if rng.chance(2) {
@@ -486,7 +494,11 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // A MAX-point literal at an interval position (membership).
         6 => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
+            if let Some(atom) = query
+                .rules_mut()
+                .first_mut()
+                .and_then(|r| r.atoms.first_mut())
+            {
                 atom.bindings
                     .push((Gauntlet::BUSY_DURING, Term::Literal(Value::U64(u64::MAX))));
             }
@@ -498,7 +510,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // The DNF blowup: wide Or of Ands past the cap.
         8 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 let leaf = || {
                     ConditionTree::Leaf(Comparison {
                         op: CmpOp::Ge,
@@ -512,7 +524,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // Hostile nesting: a deep And/Or chain.
         9 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 let mut chain = ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Var(VarId(0)),
@@ -530,14 +542,22 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // A param-id gap.
         10 => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
+            if let Some(atom) = query
+                .rules_mut()
+                .first_mut()
+                .and_then(|r| r.atoms.first_mut())
+            {
                 atom.bindings
                     .push((Gauntlet::BUSY_NOTE, Term::Param(ParamId(7))));
             }
         }
         // The measure in a binding position.
         11 => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
+            if let Some(atom) = query
+                .rules_mut()
+                .first_mut()
+                .and_then(|r| r.atoms.first_mut())
+            {
                 atom.bindings
                     .push((Gauntlet::BUSY_PERSON, Term::Measure(VarId(1))));
             }
@@ -545,17 +565,17 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // The empty query / the empty head.
         12 => {
             if rng.chance(2) {
-                query.rules.clear();
+                query.rules_mut().clear();
             } else {
-                query.head.clear();
-                for rule in &mut query.rules {
+                query.head_mut().clear();
+                for rule in query.rules_mut() {
                     rule.finds.clear();
                 }
             }
         }
         // Occurrence cap + 1 (negated occurrences count too).
         13 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 let gate = Atom {
                     source: bumbledb::AtomSource::Edb(OOO),
                     bindings: vec![],
@@ -573,7 +593,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // variables while staying under the occurrence cap, so the
         // variable roster item is the one that fires.
         14 => {
-            if let Some(rule) = query.rules.first_mut() {
+            if let Some(rule) = query.rules_mut().first_mut() {
                 for atom_idx in 0..15u16 {
                     rule.atoms.push(Atom {
                         source: bumbledb::AtomSource::Edb(BUSY),
@@ -588,7 +608,10 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // A random term swapped into a random binding.
         _ => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut())
+            if let Some(atom) = query
+                .rules_mut()
+                .first_mut()
+                .and_then(|r| r.atoms.first_mut())
                 && let Some((_, term_slot)) = atom.bindings.first_mut()
             {
                 *term_slot = term(rng);
@@ -674,7 +697,7 @@ fn adversarial_query_with_interiors_never_panics() {
                     source: AtomSource::Interior(target),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 };
-                let rules = &mut query.rules;
+                let rules = query.rules_mut();
                 let slot =
                     usize::try_from(rng.below(u64::try_from(rules.len()).expect("small").max(1)))
                         .expect("small");
@@ -687,10 +710,28 @@ fn adversarial_query_with_interiors_never_panics() {
                 }
             }
             if rng.chance(3) {
-                query.interiors.push(random_interior(&mut rng));
+                query.interiors_mut().push(random_interior(&mut rng));
             }
             if rng.chance(4) {
-                query.rec = Some(random_rec(&mut rng));
+                let rec = random_rec(&mut rng);
+                query = match query {
+                    Query::Cq {
+                        interiors,
+                        head,
+                        rules,
+                    }
+                    | Query::Reach {
+                        interiors,
+                        head,
+                        rules,
+                        rec: _,
+                    } => Query::Reach {
+                        interiors,
+                        rec,
+                        head,
+                        rules,
+                    },
+                };
             }
             query
         };
@@ -749,9 +790,8 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
             rules: vec![rule.clone()],
         })
         .collect();
-    let query = Query {
+    let query = Query::Cq {
         interiors,
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

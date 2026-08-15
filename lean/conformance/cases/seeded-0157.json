@@ -1,6 +1,6 @@
 {
 "case":"seeded-0157",
-"provenance":{"world_seed":12603138,"case_seed":1245427,"draw":3},
+"provenance":{"world_seed":12603138,"case_seed":1245423,"draw":3},
 "strings":[],
 "theory":{"relations":[{"id":8,"name":"Mandate","closed":false,"fields":["u64","u64","interval_i64"]}],
 "ground_axioms":[]},
@@ -26,13 +26,13 @@
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004280,2000000000004536]}],
 [{"u64":4},{"u64":4},{"interval_i64":[2000000000004288,2000000000004528]}]
 ]}],
-"query":{"rules":[
-{"finds":[{"var":0},{"var":1}],
- "atoms":[{"relation":8,"bindings":[[0,{"lit":{"u64":4}}],[1,{"var":0}],[2,{"var":1}]]}],
- "negated":[],
- "conditions":[{"cmp":{"op":"point_in","lhs":{"var":1},"rhs":{"lit":{"i64":2000000000004249}}}},{"cmp":{"op":"ne","lhs":{"var":1},"rhs":{"lit":{"interval_i64":[2000000000030720,2000000000030776]}}}}],
- "width":2}
-]},
+"query":{"cq":{"interiors":[],"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"var":0},{"var":2}],"atoms":[{"edb":8,"bindings":[[0,{"var":0}],[2,{"var":1}],[1,{"var":2}]]},{"edb":8,"bindings":[[0,{"var":0}],[2,{"var":3}]]}],"negated":[],"conditions":[{"cmp":{"op":"allen","mask":["before","meets","finished_by","started_by"],"lhs":{"var":1},"rhs":{"var":3}}},{"cmp":{"op":"ne","lhs":{"var":1},"rhs":{"lit":{"interval_i64":[2000000000034264,9223372036854775807]}}}}],"width":4}]}},
 "params":[],
-"answers":[]
+"answers":[
+[{"u64":0},{"u64":0}],
+[{"u64":1},{"u64":1}],
+[{"u64":2},{"u64":2}],
+[{"u64":3},{"u64":3}],
+[{"u64":4},{"u64":4}]
+]
 }

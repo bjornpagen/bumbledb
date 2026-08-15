@@ -39,7 +39,6 @@ fn measure_schema() -> Schema {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -54,7 +53,6 @@ fn measure_schema() -> Schema {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],

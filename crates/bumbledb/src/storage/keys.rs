@@ -630,7 +630,6 @@ mod tests {
             TypeDesc::U64,
             TypeDesc::Interval {
                 element: IntervalElement::U64,
-                width: None,
             },
             TypeDesc::U64,
         ])

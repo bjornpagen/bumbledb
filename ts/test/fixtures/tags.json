@@ -16,6 +16,7 @@
 	"atomSource": ["edb", "interior"],
 	"cmpOp": ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	"condition": ["leaf", "and", "or"],
+	"query": ["cq", "reach"],
 	"direction": ["sourceUnsatisfied", "targetRequired"],
 	"param": ["set"]
 }

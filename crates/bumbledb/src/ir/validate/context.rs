@@ -25,8 +25,10 @@ fn element_type(element: IntervalElement) -> ValueType {
 /// element type (membership — a point carries no width) or the
 /// anchoring position's exact interval type (value equality — the
 /// family member, width included).
-fn bivalent_admits(element: IntervalElement, width: Option<u64>, candidate: &ValueType) -> bool {
-    *candidate == element_type(element) || *candidate == ValueType::Interval { element, width }
+fn bivalent_admits(interval: &ValueType, candidate: &ValueType) -> bool {
+    interval
+        .interval_element()
+        .is_some_and(|element| *candidate == element_type(element) || candidate == interval)
 }
 
 /// The structural type a literal contributes as a comparison anchor.
@@ -45,11 +47,9 @@ fn literal_anchor_type(value: &Value) -> ValueType {
         // positions check literals through `value_matches` instead.
         Value::IntervalU64(..) => ValueType::Interval {
             element: IntervalElement::U64,
-            width: None,
         },
         Value::IntervalI64(..) => ValueType::Interval {
             element: IntervalElement::I64,
-            width: None,
         },
     }
 }
@@ -69,10 +69,10 @@ fn at_domain_ceiling(value: &Value) -> bool {
 fn check_interval_field_literal(
     atom: usize,
     field: FieldId,
-    element: IntervalElement,
-    width: Option<u64>,
+    interval: &ValueType,
     value: &Value,
 ) -> Result<(), ValidationError> {
+    let element = interval.interval_element().expect("interval-field binding");
     match (value, element) {
         // Membership: `start <= t < end` — and the point domain is
         // `MIN ..= MAX−1`, so the ceiling can be inside no interval.
@@ -86,12 +86,10 @@ fn check_interval_field_literal(
         // Value equality against the field's intervals — through the one
         // shared width-aware check.
         (Value::IntervalU64(_), IntervalElement::U64)
-        | (Value::IntervalI64(_), IntervalElement::I64) => {
-            match literal_matches(value, &ValueType::Interval { element, width }) {
-                Ok(()) => Ok(()),
-                Err(_) => Err(ValidationError::LiteralTypeMismatch { atom, field }),
-            }
-        }
+        | (Value::IntervalI64(_), IntervalElement::I64) => match literal_matches(value, interval) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(ValidationError::LiteralTypeMismatch { atom, field }),
+        },
         _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
     }
 }
@@ -290,9 +288,7 @@ fn sealed_mask(mask: AllenMask, mirrored: bool) -> MaskConst {
 /// (ruled 2026-07-23, R3) — so it passes with U64 and I64.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
-        Some(ValueType::Interval { .. }) => {
-            Err(ValidationError::OrderComparisonOnInterval { index })
-        }
+        Some(ty) if ty.is_interval() => Err(ValidationError::OrderComparisonOnInterval { index }),
         Some(ValueType::FixedBytes { .. }) => {
             Err(ValidationError::OrderComparisonOnFixedBytes { index })
         }
@@ -321,8 +317,8 @@ impl Context {
                 Err(ValidationError::VariableTypeConflict { var })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
-            Some(TypeSlot::Bivalent { element, width }) => {
-                if bivalent_admits(*element, *width, value_type) {
+            Some(TypeSlot::Bivalent { interval }) => {
+                if bivalent_admits(interval, value_type) {
                     self.var_slots
                         .insert(var, TypeSlot::Mono(value_type.clone()));
                     Ok(())
@@ -341,30 +337,30 @@ impl Context {
     fn bind_var_bivalent(
         &mut self,
         var: VarId,
-        element: IntervalElement,
-        width: Option<u64>,
+        interval: &ValueType,
     ) -> Result<(), ValidationError> {
         match self.var_slots.get(&var) {
             Some(TypeSlot::Mono(existing)) => {
-                if bivalent_admits(element, width, existing) {
+                if bivalent_admits(interval, existing) {
                     Ok(())
                 } else {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
-            Some(TypeSlot::Bivalent {
-                element: existing,
-                width: existing_width,
-            }) => {
-                if *existing == element && *existing_width == width {
+            Some(TypeSlot::Bivalent { interval: existing }) => {
+                if existing == interval {
                     Ok(())
                 } else {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
             None => {
-                self.var_slots
-                    .insert(var, TypeSlot::Bivalent { element, width });
+                self.var_slots.insert(
+                    var,
+                    TypeSlot::Bivalent {
+                        interval: interval.clone(),
+                    },
+                );
                 Ok(())
             }
         }
@@ -380,8 +376,8 @@ impl Context {
                 Err(ValidationError::ParamTypeConflict { param })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
-            Some(TypeSlot::Bivalent { element, width }) => {
-                if bivalent_admits(*element, *width, value_type) {
+            Some(TypeSlot::Bivalent { interval }) => {
+                if bivalent_admits(interval, value_type) {
                     self.param_slots
                         .insert(param, TypeSlot::Mono(value_type.clone()));
                     Ok(())
@@ -400,30 +396,30 @@ impl Context {
     fn anchor_param_bivalent(
         &mut self,
         param: ParamId,
-        element: IntervalElement,
-        width: Option<u64>,
+        interval: &ValueType,
     ) -> Result<(), ValidationError> {
         match self.param_slots.get(&param) {
             Some(TypeSlot::Mono(existing)) => {
-                if bivalent_admits(element, width, existing) {
+                if bivalent_admits(interval, existing) {
                     Ok(())
                 } else {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
-            Some(TypeSlot::Bivalent {
-                element: existing,
-                width: existing_width,
-            }) => {
-                if *existing == element && *existing_width == width {
+            Some(TypeSlot::Bivalent { interval: existing }) => {
+                if existing == interval {
                     Ok(())
                 } else {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
             None => {
-                self.param_slots
-                    .insert(param, TypeSlot::Bivalent { element, width });
+                self.param_slots.insert(
+                    param,
+                    TypeSlot::Bivalent {
+                        interval: interval.clone(),
+                    },
+                );
                 Ok(())
             }
         }
@@ -462,9 +458,9 @@ impl Context {
     /// negation is a position, not a kind of atom, so the occurrence
     /// numbering (positives first, then negated) is the only difference a
     /// diagnostic shows. An `Edb` binding anchors at the stored field's
-    /// type; an `Interior` binding anchors at the target predicate's sealed
-    /// column — the SAME bivalent membership rule reads through both (an
-    /// interval-typed predicate column participates in point membership
+    /// type; an `Interior` binding anchors at the target's sealed
+    /// signature column — the SAME bivalent membership rule reads through both (an
+    /// interval-typed signature column participates in point membership
     /// exactly as an interval field does; 20-query-ir.md § engine recursion). Ends
     /// with the negation safety rule: a negated atom binds nothing, so
     /// its variables must come from positive atoms.
@@ -525,8 +521,8 @@ impl Context {
                         interiors.column(occ_idx, interior, *field)?
                     }
                 };
-                if let ValueType::Interval { element, width } = field_type {
-                    self.check_interval_binding(occ_idx, negated, *field, *element, *width, term)?;
+                if field_type.is_interval() {
+                    self.check_interval_binding(occ_idx, negated, *field, field_type, term)?;
                 } else {
                     self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
                     // A closed-reference position marks its variable for
@@ -567,13 +563,13 @@ impl Context {
         occ_idx: usize,
         negated: bool,
         field: FieldId,
-        element: IntervalElement,
-        width: Option<u64>,
+        interval: &ValueType,
         term: &Term,
     ) -> Result<(), ValidationError> {
+        let element = interval.interval_element().expect("interval-field binding");
         match term {
             Term::Var(var) => {
-                self.bind_var_bivalent(*var, element, width)?;
+                self.bind_var_bivalent(*var, interval)?;
                 if negated {
                     self.negated_vars.insert(*var);
                 } else {
@@ -582,7 +578,7 @@ impl Context {
             }
             Term::Param(param) => {
                 self.note_param_kind(*param, ParamKind::Scalar)?;
-                self.anchor_param_bivalent(*param, element, width)?;
+                self.anchor_param_bivalent(*param, interval)?;
                 self.interval_position_params.insert(*param);
             }
             // A set holds points, so an interval-field position anchors
@@ -594,7 +590,7 @@ impl Context {
                 self.interval_position_params.insert(*param);
             }
             Term::Literal(value) => {
-                check_interval_field_literal(occ_idx, field, element, width, value)?;
+                check_interval_field_literal(occ_idx, field, interval, value)?;
             }
             // The measure is a computation over a bound variable, not a
             // bindable value (docs/architecture/20-query-ir.md, § the
@@ -949,9 +945,7 @@ impl Context {
     fn collapse_term(&mut self, term: &Term, value_type: &ValueType) -> bool {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
-                Some(TypeSlot::Bivalent { element, width })
-                    if bivalent_admits(*element, *width, value_type) =>
-                {
+                Some(TypeSlot::Bivalent { interval }) if bivalent_admits(interval, value_type) => {
                     self.var_slots
                         .insert(*var, TypeSlot::Mono(value_type.clone()));
                     true
@@ -964,9 +958,7 @@ impl Context {
                         .insert(*param, TypeSlot::Mono(value_type.clone()));
                     true
                 }
-                Some(TypeSlot::Bivalent { element, width })
-                    if bivalent_admits(*element, *width, value_type) =>
-                {
+                Some(TypeSlot::Bivalent { interval }) if bivalent_admits(interval, value_type) => {
                     self.param_slots
                         .insert(*param, TypeSlot::Mono(value_type.clone()));
                     true
@@ -1018,14 +1010,14 @@ impl Context {
             .map(|(var, slot)| {
                 let value_type = match slot {
                     TypeSlot::Mono(value_type) => value_type,
-                    TypeSlot::Bivalent { element, width } => ValueType::Interval { element, width },
+                    TypeSlot::Bivalent { interval } => interval,
                 };
                 (var, value_type)
             })
             .collect();
         for slot in self.param_slots.values_mut() {
-            if let TypeSlot::Bivalent { element, width } = *slot {
-                *slot = TypeSlot::Mono(ValueType::Interval { element, width });
+            if let TypeSlot::Bivalent { interval } = slot {
+                *slot = TypeSlot::Mono(interval.clone());
             }
         }
     }
@@ -1067,7 +1059,7 @@ impl Context {
                 if *self.resolved_var_type(*rhs) != lhs_type {
                     return Err(ValidationError::IllegalComparison { index });
                 }
-                Ok(if matches!(lhs_type, ValueType::Interval { .. }) {
+                Ok(if lhs_type.is_interval() {
                     ClassifiedComparison::AllenVarVar {
                         lhs: *lhs,
                         rhs: *rhs,
@@ -1089,7 +1081,7 @@ impl Context {
             } => {
                 let var_type = self.resolved_var_type(*var).clone();
                 let value = self.check_const(index, constant, &var_type)?;
-                Ok(if matches!(var_type, ValueType::Interval { .. }) {
+                Ok(if var_type.is_interval() {
                     ClassifiedComparison::AllenVarConst {
                         var: *var,
                         other: value,
@@ -1108,7 +1100,7 @@ impl Context {
             // rejection.
             Shaped::EqVarSet { var, set } => {
                 let var_type = self.resolved_var_type(*var).clone();
-                if matches!(var_type, ValueType::Interval { .. }) {
+                if var_type.is_interval() {
                     return Err(ValidationError::IntervalParamSet { param: *set });
                 }
                 self.anchor_param_mono(*set, &var_type)?;
@@ -1180,10 +1172,7 @@ impl Context {
             } => {
                 screen_order_operand(index, Some(self.resolved_var_type(*scalar)))?;
                 self.screen_order_closed(index, *scalar)?;
-                if !matches!(
-                    self.resolved_var_type(*interval),
-                    ValueType::Interval { .. }
-                ) {
+                if !self.resolved_var_type(*interval).is_interval() {
                     return Err(ValidationError::DurationOverNonInterval { var: *interval });
                 }
                 if *self.resolved_var_type(*scalar) != ValueType::U64 {
@@ -1201,10 +1190,7 @@ impl Context {
                 constant,
             } => {
                 screen_order_operand(index, self.constant_screen(constant).as_ref())?;
-                if !matches!(
-                    self.resolved_var_type(*interval),
-                    ValueType::Interval { .. }
-                ) {
+                if !self.resolved_var_type(*interval).is_interval() {
                     return Err(ValidationError::DurationOverNonInterval { var: *interval });
                 }
                 let value = self.check_const(index, constant, &ValueType::U64)?;
@@ -1224,18 +1210,10 @@ impl Context {
             // u64-vs-i64 stays illegal
             // (`docs/architecture/30-dependencies.md` § Q1).
             Shaped::AllenVarVar { mask, lhs, rhs } => {
-                let ValueType::Interval {
-                    element: lhs_element,
-                    ..
-                } = *self.resolved_var_type(*lhs)
-                else {
+                let Some(lhs_element) = self.resolved_var_type(*lhs).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
-                let ValueType::Interval {
-                    element: rhs_element,
-                    ..
-                } = *self.resolved_var_type(*rhs)
-                else {
+                let Some(rhs_element) = self.resolved_var_type(*rhs).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 if lhs_element != rhs_element {
@@ -1253,7 +1231,7 @@ impl Context {
                 var_on_left,
                 constant,
             } => {
-                let ValueType::Interval { element, .. } = *self.resolved_var_type(*var) else {
+                let Some(element) = self.resolved_var_type(*var).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 // The constant side types by element domain too (Q1): an
@@ -1261,14 +1239,7 @@ impl Context {
                 // GENERAL type, and the comparison classifies over derived
                 // bounds — so a general constant against a fixed-width
                 // var is a legal mixed-width pair of one element.
-                let other = self.check_const(
-                    index,
-                    constant,
-                    &ValueType::Interval {
-                        element,
-                        width: None,
-                    },
-                )?;
+                let other = self.check_const(index, constant, &ValueType::Interval { element })?;
                 Ok(ClassifiedComparison::AllenVarConst {
                     var: *var,
                     other,
@@ -1285,7 +1256,7 @@ impl Context {
             // the closed wall screens it (R4).
             Shaped::PointInVarVar { lhs, rhs } => {
                 self.screen_order_closed(index, *rhs)?;
-                let ValueType::Interval { element, .. } = *self.resolved_var_type(*lhs) else {
+                let Some(element) = self.resolved_var_type(*lhs).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 if *self.resolved_var_type(*rhs) != element_type(element) {
@@ -1297,7 +1268,7 @@ impl Context {
                 })
             }
             Shaped::PointInVarConst { var, constant } => {
-                let ValueType::Interval { element, .. } = *self.resolved_var_type(*var) else {
+                let Some(element) = self.resolved_var_type(*var).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 match constant {
@@ -1343,20 +1314,14 @@ impl Context {
                     // A bound outer interval is the GENERAL type: the
                     // param carries both bounds, whatever any field's
                     // width — no width is nameable from a scalar side.
-                    self.anchor_param_mono(
-                        *param,
-                        &ValueType::Interval {
-                            element,
-                            width: None,
-                        },
-                    )?;
+                    self.anchor_param_mono(*param, &ValueType::Interval { element })?;
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
                         outer: SealedConst::Param(*param),
                     })
                 }
                 ConstSide::Literal(value) => {
-                    let ValueType::Interval { element, .. } = literal_anchor_type(value) else {
+                    let Some(element) = literal_anchor_type(value).interval_element() else {
                         return Err(ValidationError::IllegalComparison { index });
                     };
                     if *self.resolved_var_type(*var) != element_type(element) {
@@ -1434,7 +1399,7 @@ impl Context {
     /// membership — no enumerable domain.
     pub(super) fn check_membership_domains(&self) -> Result<(), ValidationError> {
         for (var, value_type) in &self.var_types {
-            if matches!(value_type, ValueType::Interval { .. }) {
+            if value_type.is_interval() {
                 continue;
             }
             if self.atom_vars.contains(var) && !self.scalar_bound_vars.contains(var) {

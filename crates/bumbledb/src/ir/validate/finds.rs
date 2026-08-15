@@ -1,6 +1,6 @@
 //! Find-list rules: Datalog safety and the aggregate roster
 //! (`docs/architecture/20-query-ir.md` § aggregation) — and the
-//! predicate's signature derivation, the ONE place result-column types
+//! query's signature derivation, the ONE place result-column types
 //! come from.
 
 use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
@@ -14,7 +14,7 @@ impl Signature {
     /// Derives the signature from one rule's find terms and resolved
     /// typing — called exactly once, at validation, on rule 0 (the
     /// per-rule alignment already proved every rule derives the same
-    /// predicate). No other derivation of the answer tuple exists.
+    /// signature). No other derivation of the answer tuple exists.
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types[var].clone();
         let columns = rule
@@ -94,7 +94,7 @@ impl Context {
                     if !self.atom_vars.contains(var) {
                         return Err(ValidationError::UnboundFindVariable { var: *var });
                     }
-                    if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
+                    if !self.resolved_var_type(*var).is_interval() {
                         return Err(ValidationError::DurationOverNonInterval { var: *var });
                     }
                 }
@@ -106,7 +106,7 @@ impl Context {
                     if !self.atom_vars.contains(over) {
                         return Err(ValidationError::UnboundFindVariable { var: *over });
                     }
-                    if !matches!(self.resolved_var_type(*over), ValueType::Interval { .. }) {
+                    if !self.resolved_var_type(*over).is_interval() {
                         return Err(ValidationError::DurationOverNonInterval { var: *over });
                     }
                     if group_key.contains(over) {
@@ -179,7 +179,7 @@ impl Context {
                                     find: find_idx,
                                 });
                             }
-                            if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
+                            if !self.resolved_var_type(*var).is_interval() {
                                 return Err(ValidationError::PackInputType { find: find_idx });
                             }
                         }

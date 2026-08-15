@@ -348,9 +348,10 @@ R17 — readers are lockless). Data beyond RAM. Intra-query parallelism.
 Encryption/access control. Compatibility with any prior on-disk format. A deductive
 database / logic-programming runtime: queries are query-sized against a
 theory-governed store, never the unit of an application — Turing-completeness lives
-in the host. Engine recursion exists under exactly this ruling: named interiors
-(a DAG of CQs, evaluated once) plus at most one linear rec, budgeted, never a
-rule-program runtime (`20-query-ir.md` § engine recursion); the closure idiom
+in the host. Engine recursion exists under exactly this ruling: a query is
+`Cq | Reach` — named interiors (a DAG of CQs, evaluated once) on both
+arms, `Reach` carrying one linear rec by value — budgeted, never a
+Datalog runtime (`20-query-ir.md` § engine recursion); the closure idiom
 remains the covenant for what the chain-window fence keeps outside, not a
 workaround.
 

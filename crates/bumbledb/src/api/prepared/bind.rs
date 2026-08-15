@@ -821,12 +821,17 @@ fn convert_scalar(
             BindValue::IntervalU64(start, end),
             ValueType::Interval {
                 element: IntervalElement::U64,
+            },
+        ) if start < end => Const::Interval { start, end },
+        (
+            BindValue::IntervalU64(start, end),
+            ValueType::FixedInterval {
+                element: IntervalElement::U64,
                 width,
             },
         ) if start < end
-            && width.is_none_or(|w| {
-                end - start == w && end < bumbledb_theory::Interval::<u64>::MAX_END
-            }) =>
+            && end - start == *width
+            && end < bumbledb_theory::Interval::<u64>::MAX_END =>
         {
             Const::Interval { start, end }
         }
@@ -834,12 +839,20 @@ fn convert_scalar(
             BindValue::IntervalI64(start, end),
             ValueType::Interval {
                 element: IntervalElement::I64,
+            },
+        ) if start < end => Const::Interval {
+            start: i64_word(start),
+            end: i64_word(end),
+        },
+        (
+            BindValue::IntervalI64(start, end),
+            ValueType::FixedInterval {
+                element: IntervalElement::I64,
                 width,
             },
         ) if start < end
-            && width.is_none_or(|w| {
-                end.abs_diff(start) == w && end < bumbledb_theory::Interval::<i64>::MAX_END
-            }) =>
+            && end.abs_diff(start) == *width
+            && end < bumbledb_theory::Interval::<i64>::MAX_END =>
         {
             Const::Interval {
                 start: i64_word(start),

@@ -73,14 +73,23 @@ type QueryParam = TaggedValue | { readonly kind: "set"; readonly values: readonl
 /**
  * The IR mirror (`bumbledb::ir`, 1:1): relations, fields, interiors, and
  * params by NUMERIC id — the SDK resolves names through the manifest and
- * sends ids; the bridge never sees names in queries.
+ * sends ids; the bridge never sees names in queries. Q1 is a tagged sum:
+ * CQ carries no rec; Reach carries `rec` by value.
  */
-interface QueryIr {
-	readonly interiors: readonly InteriorIr[]
-	readonly rec: RecIr | null
-	readonly head: readonly HeadTermIr[]
-	readonly rules: readonly RuleIr[]
-}
+type QueryIr =
+	| {
+			readonly kind: "cq"
+			readonly interiors: readonly InteriorIr[]
+			readonly head: readonly HeadTermIr[]
+			readonly rules: readonly RuleIr[]
+	  }
+	| {
+			readonly kind: "reach"
+			readonly interiors: readonly InteriorIr[]
+			readonly rec: RecIr
+			readonly head: readonly HeadTermIr[]
+			readonly rules: readonly RuleIr[]
+	  }
 
 /** One named interior: the head shape its rules align against, and the rules. */
 interface InteriorIr {
@@ -88,7 +97,7 @@ interface InteriorIr {
 	readonly rules: readonly RuleIr[]
 }
 
-/** The optional linear rec: shared head, base arms, rec arms. */
+/** The linear rec on a Reach query: shared head, base arms, rec arms. */
 interface RecIr {
 	readonly head: readonly HeadTermIr[]
 	readonly base: readonly RuleIr[]

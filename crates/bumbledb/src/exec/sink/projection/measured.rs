@@ -15,7 +15,7 @@ use crate::image::ColumnView;
 impl ProjectionSink {
     /// The per-binding measured emit (key probes and tests).
     pub(super) fn emit_measured(&mut self, bindings: &Bindings) -> Flow {
-        if self.ray.is_some() {
+        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
             return Flow::Continue;
         }
         let ProjectionSources::Measured(sources) = &self.sources else {
@@ -27,7 +27,7 @@ impl ProjectionSink {
                 ProjSource::Measure { start } => {
                     let (s, e) = (bindings.get(start), bindings.get(start + 1));
                     let Some(duration) = measure(s, e) else {
-                        self.ray = Some([s, e]);
+                        self.ray = crate::exec::sink::RayPoison::Hit([s, e]);
                         return Flow::Continue;
                     };
                     duration
@@ -69,7 +69,7 @@ impl ProjectionSink {
                     (None, None) => {
                         let (s, e) = (outer(start), outer(start + 1));
                         let Some(duration) = measure(s, e) else {
-                            self.ray = Some([s, e]);
+                            self.ray = crate::exec::sink::RayPoison::Hit([s, e]);
                             return Err(());
                         };
                         self.scratch[i] = duration;
@@ -86,43 +86,65 @@ impl ProjectionSink {
     }
 
     /// The measured batch emit — [`ProjectionSink::emit_batch`]'s
-    /// per-row twin.
-    pub(super) fn emit_batch_measured(&mut self, batch: &LeafBatch<'_>, until_skip: bool) -> Flow {
-        if self.ray.is_some() {
+    /// per-row twin. Consumes every surviving row.
+    pub(super) fn emit_batch_measured(&mut self, batch: &LeafBatch<'_>) -> Flow {
+        if !self.begin_measured_batch(batch) {
             return Flow::Continue;
         }
-        let resolved = self.resolve_measured(
+        for &entry in batch.survivors {
+            if !self.project_measured_entry(batch, entry) {
+                return Flow::Continue;
+            }
+            self.seen.insert(&self.scratch);
+        }
+        Flow::Continue
+    }
+
+    /// Licensed-projection first-emit unwind for the measured twin.
+    pub(super) fn emit_batch_measured_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
+        if !self.begin_measured_batch(batch) {
+            return Flow::Continue;
+        }
+        let Some(&entry) = batch.survivors.first() else {
+            return Flow::Continue;
+        };
+        if !self.project_measured_entry(batch, entry) {
+            return Flow::Continue;
+        }
+        self.seen.insert(&self.scratch);
+        Flow::SkipSuffix
+    }
+
+    fn begin_measured_batch(&mut self, batch: &LeafBatch<'_>) -> bool {
+        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
+            return false;
+        }
+        self.resolve_measured(
             |slot| match batch.source_of(slot) {
                 LeafSource::Key(word) => Some(word),
                 LeafSource::Outer => None,
             },
             |slot| batch.bindings.get(slot),
-        );
-        if resolved.is_err() {
-            return Flow::Continue;
+        )
+        .is_ok()
+    }
+
+    fn project_measured_entry(&mut self, batch: &LeafBatch<'_>, entry: u32) -> bool {
+        for (i, source) in self.measured_sources.iter().enumerate() {
+            self.scratch[i] = match *source {
+                MeasuredSource::Const => continue,
+                MeasuredSource::Key(word) => batch.key(entry, word),
+                MeasuredSource::MeasureKeys(start_word, end_word) => {
+                    let (s, e) = (batch.key(entry, start_word), batch.key(entry, end_word));
+                    let Some(duration) = measure(s, e) else {
+                        self.ray = crate::exec::sink::RayPoison::Hit([s, e]);
+                        return false;
+                    };
+                    duration
+                }
+            };
         }
-        for &entry in batch.survivors {
-            for (i, source) in self.measured_sources.iter().enumerate() {
-                self.scratch[i] = match *source {
-                    MeasuredSource::Const => continue,
-                    MeasuredSource::Key(word) => batch.key(entry, word),
-                    MeasuredSource::MeasureKeys(start_word, end_word) => {
-                        let (s, e) = (batch.key(entry, start_word), batch.key(entry, end_word));
-                        let Some(duration) = measure(s, e) else {
-                            self.ray = Some([s, e]);
-                            return Flow::Continue;
-                        };
-                        duration
-                    }
-                };
-            }
-            self.seen.insert(&self.scratch);
-            if until_skip {
-                // First-emit semantics (see `Sink::emit`).
-                return Flow::SkipSuffix;
-            }
-        }
-        Flow::Continue
+        true
     }
 
     /// The measured scan open — outer words (measures included) resolve
@@ -130,7 +152,7 @@ impl ProjectionSink {
     /// consumes the runs without inserting.
     pub(super) fn begin_scan_measured(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         self.scan_count = 0;
-        if self.ray.is_some() {
+        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
             return ScanOffer::Open;
         }
         let _ = self.resolve_measured(
@@ -146,7 +168,7 @@ impl ProjectionSink {
     /// this loop is Const-dominated).
     pub(super) fn scan_run_measured(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        if self.ray.is_some() {
+        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
             return;
         }
         let word_at = |word: usize, position: u32| match scan.colt.suffix_column(scan.level, word) {
@@ -161,7 +183,7 @@ impl ProjectionSink {
                     MeasuredSource::MeasureKeys(start_word, end_word) => {
                         let (s, e) = (word_at(start_word, position), word_at(end_word, position));
                         let Some(duration) = measure(s, e) else {
-                            self.ray = Some([s, e]);
+                            self.ray = crate::exec::sink::RayPoison::Hit([s, e]);
                             return false;
                         };
                         duration

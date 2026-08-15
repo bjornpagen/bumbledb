@@ -6,9 +6,8 @@
 //!
 //! One `reach-*.json` case per document (format:
 //! `lean/conformance/README.md` § reach cases): the shared
-//! theory/instance blocks, the Query (`interiors` / `rec` / main
-//! `rules`; atoms `edb` / `interior`), and the agreed answers. No
-//! `predicates` / `output` / `strata` / `idb`.
+//! theory/instance blocks, the tagged Query (`cq` or `reach`; atoms
+//! `edb` / `interior`), and the agreed answers.
 //!
 //! ## Scope fences (counted in [`ReachReport`], never silent)
 //!
@@ -93,14 +92,29 @@ fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
             }
         }
     };
-    for interior in &query.interiors {
-        visit(&interior.rules);
+    match query {
+        Query::Cq {
+            interiors, rules, ..
+        } => {
+            for interior in interiors {
+                visit(&interior.rules);
+            }
+            visit(rules);
+        }
+        Query::Reach {
+            interiors,
+            rec,
+            rules,
+            ..
+        } => {
+            for interior in interiors {
+                visit(&interior.rules);
+            }
+            visit(&rec.base);
+            visit(&rec.rec);
+            visit(rules);
+        }
     }
-    if let Some(rec) = &query.rec {
-        visit(&rec.base);
-        visit(&rec.rec);
-    }
-    visit(&query.rules);
     set
 }
 
@@ -237,7 +251,7 @@ fn sqlite_answers(world: &World, query: &Query) -> BTreeSet<Tuple> {
         }
     }
     let translated = translate(query, target::schema(), &[]).expect("translates");
-    let arity = query.head.len();
+    let arity = query.head().len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement
         .query_map([], |row| {
@@ -295,9 +309,9 @@ fn hand_queries() -> Vec<HandReach> {
     vec![
         HandReach {
             name: "reach-hand-closure",
-            query: Query {
+            query: Query::Reach {
                 interiors: vec![],
-                rec: Some(rec.clone()),
+                rec: rec.clone(),
                 head: vec![HeadTerm::Var, HeadTerm::Var],
                 rules: vec![rule(
                     vec![fv(0), fv(1)],
@@ -308,9 +322,9 @@ fn hand_queries() -> Vec<HandReach> {
         },
         HandReach {
             name: "reach-hand-unreached",
-            query: Query {
+            query: Query::Reach {
                 interiors: vec![],
-                rec: Some(rec),
+                rec,
                 head: vec![HeadTerm::Var],
                 rules: vec![rule(
                     vec![fv(0)],

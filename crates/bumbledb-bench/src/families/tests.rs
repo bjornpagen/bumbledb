@@ -306,10 +306,10 @@ fn deep_chain_is_the_four_atom_report_lane() {
         .expect("registered");
     assert_eq!(family.kind, Kind::Report, "measurement, not a gate claim");
     let query = (family.query)();
-    assert_eq!(query.rules[0].atoms.len(), 4, "the ≥ 4-node shape");
+    assert_eq!(query.rules()[0].atoms.len(), 4, "the ≥ 4-node shape");
     for other in all().iter().filter(|f| f.name != "deep_chain") {
         assert!(
-            (other.query)().rules.iter().all(|r| r.atoms.len() <= 3),
+            (other.query)().rules().iter().all(|r| r.atoms.len() <= 3),
             "{} would shadow the depth lane",
             other.name
         );

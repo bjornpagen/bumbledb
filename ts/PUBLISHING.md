@@ -11,11 +11,13 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.11.0` is the representation-finish release over `0.10.0` — trusted-layer
-sums (Query pipeline, sealed schema, exec Agg/Dedup, C++/TS dialect IR),
-`PreparedQuery::signature()` (was `predicate()`), introspection v5. Wire,
-manifest, storage format (v7), C ABI `bdb_query.rec`, and schema fingerprints
-are UNTOUCHED. Campaign detail is in git history.
+`0.11.0` is the trusted-layer representation release over `0.10.0` —
+trusted-layer sums (Query pipeline, sealed schema, exec Agg/Dedup,
+C++/TS dialect IR), `PreparedQuery::signature()` (was `predicate()`),
+introspection v5. Manifest, storage format (v7), and schema fingerprints
+are UNTOUCHED. Public Query on the wire is the tagged encoding of
+`Cq | Reach` (discriminant + payload; CQ does not carry a rec pointer).
+Campaign detail is in git history.
 
 `0.10.0` is the bugbash-perf campaign release over `0.9.0` — 44 verified
 findings fixed (12 bugs, 3 high), the read path measurably faster (report

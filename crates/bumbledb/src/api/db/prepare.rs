@@ -10,10 +10,10 @@ impl<S> Db<S> {
     /// across [`Db::read`] closures.
     ///
     /// Validation is [`crate::ir::validate::validate`] on `&Query`
-    /// only. Interiors evaluate once, then an optional rec least
-    /// fixpoint, then main. A query without a rec never enters the
-    /// reach driver. At execution a derived table may raise the
-    /// typed [`crate::error::Error::DerivedBudgetExceeded`]
+    /// only. Interiors evaluate once, then — on [`crate::ir::Query::Reach`]
+    /// — a rec least fixpoint, then main. A [`crate::ir::Query::Cq`]
+    /// never enters the reach driver. At execution a derived table may
+    /// raise the typed [`crate::error::Error::DerivedBudgetExceeded`]
     /// ([`PreparedQuery::set_derived_budget`] is the host policy knob).
     ///
     /// # Errors

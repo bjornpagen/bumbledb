@@ -301,7 +301,6 @@ pub fn descriptor() -> SchemaDescriptor {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
-                                width: None,
                             },
                         ),
                     ],
@@ -317,7 +316,6 @@ pub fn descriptor() -> SchemaDescriptor {
                                 "window",
                                 ValueType::Interval {
                                     element: IntervalElement::U64,
-                                    width: None,
                                 },
                             ),
                         ];
@@ -395,9 +393,9 @@ pub fn descriptor() -> SchemaDescriptor {
                         field("account", ValueType::U64),
                         field(
                             "lane",
-                            ValueType::Interval {
+                            ValueType::FixedInterval {
                                 element: IntervalElement::I64,
-                                width: Some(5),
+                                width: 5,
                             },
                         ),
                         field("tag", ValueType::U64),

@@ -35,7 +35,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
-pub use normalize::{normalize_predicate, normalize_ray_probe, normalize_rules};
+pub use normalize::{normalize_ray_probe, normalize_rules};
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
@@ -92,24 +92,6 @@ pub enum FoldedMark {
         relation: RelationId,
         survivors: Box<[u64]>,
     },
-}
-
-impl FoldedMark {
-    pub(crate) fn of(relation: RelationId, survivors: Vec<u64>, negated: bool) -> Self {
-        assert!(survivors.len() <= 256, "extensions cap at 256 rows");
-        let survivors = survivors.into_boxed_slice();
-        if negated {
-            Self::Negated {
-                relation,
-                survivors,
-            }
-        } else {
-            Self::Positive {
-                relation,
-                survivors,
-            }
-        }
-    }
 }
 
 /// How a derived occurrence binds at execution and planning. EDB
@@ -317,7 +299,7 @@ impl SlotWidth {
     #[must_use]
     pub fn of(value_type: &ValueType) -> Self {
         match value_type {
-            ValueType::Interval { .. } => Self::TWO,
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => Self::TWO,
             ValueType::FixedBytes { len } => Self(
                 u8::try_from(crate::encoding::fixed_bytes_words(*len))
                     .expect("bytes width is at most 8 words"),

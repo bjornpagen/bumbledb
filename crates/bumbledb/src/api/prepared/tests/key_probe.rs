@@ -178,7 +178,6 @@ fn booking_schema() -> Schema {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -369,7 +368,6 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -470,7 +468,6 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
-                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -656,9 +653,9 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
                 },
                 FieldDescriptor {
                     name: "span".into(),
-                    value_type: ValueType::Interval {
+                    value_type: ValueType::FixedInterval {
                         element: IntervalElement::U64,
-                        width: Some(5),
+                        width: 5,
                     },
                     generation: Generation::None,
                 },

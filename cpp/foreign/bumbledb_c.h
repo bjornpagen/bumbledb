@@ -251,6 +251,12 @@ typedef enum bdb_cmp_op_kind {
   BDB_CMP_OP_KIND_POINT_IN,
 } bdb_cmp_op_kind;
 
+// Q1 discriminant: a CQ (no rec) or a Reach (rec by value).
+typedef enum bdb_query_kind {
+  BDB_QUERY_KIND_CQ,
+  BDB_QUERY_KIND_REACH,
+} bdb_query_kind;
+
 // The opaque, reusable answers carrier.
 typedef struct bdb_answers bdb_answers;
 
@@ -518,8 +524,8 @@ typedef struct bdb_agg_op {
 } bdb_agg_op;
 
 // One find term. `var` is read for `Var`/`Measure`; `op` plus `over` for
-// `Aggregate` and `AggregateMeasure` (folds always carry `over`); `Count`
-// is nullary and does not read `over`.
+// `Aggregate`/`AggregateMeasure` (folds always carry `over`); `Count` is
+// nullary and does not read `over`.
 typedef struct bdb_find_term {
   uint32_t kind;
   uint16_t var;
@@ -598,6 +604,16 @@ typedef struct bdb_interior {
   size_t rule_count;
 } bdb_interior;
 
+// CQ payload: named interiors, then the main answer. No rec slot.
+typedef struct bdb_cq {
+  const struct bdb_interior *interiors;
+  size_t interior_count;
+  const struct bdb_head_term *head;
+  size_t head_count;
+  const struct bdb_rule *rules;
+  size_t rule_count;
+} bdb_cq;
+
 // One linear rec: base arms and rec arms.
 typedef struct bdb_rec {
   const struct bdb_head_term *head;
@@ -608,9 +624,9 @@ typedef struct bdb_rec {
   size_t rec_count;
 } bdb_rec;
 
-// The whole query: named interiors, at most one rec, then the main
-// answer. `rec` is nullable (`NULL` = no rec).
-typedef struct bdb_query {
+// Reach payload: named interiors, a required rec, then the main answer.
+// `rec` is never NULL.
+typedef struct bdb_reach {
   const struct bdb_interior *interiors;
   size_t interior_count;
   const struct bdb_rec *rec;
@@ -618,6 +634,18 @@ typedef struct bdb_query {
   size_t head_count;
   const struct bdb_rule *rules;
   size_t rule_count;
+} bdb_reach;
+
+// Live arm of [`bdb_query`]: CQ or Reach. Read only the arm `kind` names.
+typedef union bdb_query_payload {
+  struct bdb_cq cq;
+  struct bdb_reach reach;
+} bdb_query_payload;
+
+// The whole query: tagged encoding of Q1 (`Cq | Reach`).
+typedef struct bdb_query {
+  uint32_t kind;
+  union bdb_query_payload payload;
 } bdb_query;
 
 #ifdef __cplusplus

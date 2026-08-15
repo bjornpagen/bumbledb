@@ -37,10 +37,7 @@ fn const_bytes(
         }
         Const::Interval { start, end } => {
             out.extend_from_slice(&start.to_be_bytes());
-            if !matches!(
-                desc,
-                bumbledb_theory::TypeDesc::Interval { width: Some(_), .. }
-            ) {
+            if !matches!(desc, bumbledb_theory::TypeDesc::FixedInterval { .. }) {
                 out.extend_from_slice(&end.to_be_bytes());
             }
         }

@@ -25,8 +25,8 @@ struct agg_ref {
 
 /**
  * One named variable head column: the head column name decoupled from the
- * field name. Recursive predicates whose rules match different relations
- * need it. Passed to `.find` among the trailing columns.
+ * field name. Recursive derived tables whose rules match different
+ * relations need it. Passed to `.find` among the trailing columns.
  */
 template<fixed_string Name, class Var>
 struct named_find {

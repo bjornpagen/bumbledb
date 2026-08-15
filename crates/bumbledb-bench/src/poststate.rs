@@ -7,7 +7,7 @@
 //! field-declaration order, and judge the multisets through the same
 //! diff every read family already trusts ([`crate::compare::multisets`]).
 
-use bumbledb::schema::{Relation, ValueType};
+use bumbledb::schema::Relation;
 use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;
 
@@ -66,7 +66,7 @@ pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String
 pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>, String> {
     let mut columns: Vec<String> = Vec::new();
     for field in relation.fields() {
-        if matches!(field.value_type, ValueType::Interval { .. }) {
+        if field.value_type.is_interval() {
             columns.push(format!("\"{}_start\"", field.name));
             columns.push(format!("\"{}_end\"", field.name));
         } else {
@@ -81,11 +81,11 @@ pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>
         let mut answer = Vec::with_capacity(relation.fields().len());
         let mut column = 0usize;
         for field in relation.fields() {
-            let value = if let ValueType::Interval { element, .. } = &field.value_type {
+            let value = if let Some(element) = field.value_type.interval_element() {
                 let start: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
                 let end: rusqlite::types::Value = row.get(column + 1).map_err(|e| e.to_string())?;
                 column += 2;
-                sqlmap::interval_from_sql(&start, &end, *element)
+                sqlmap::interval_from_sql(&start, &end, element)
                     .map_err(|e| format!("{}: {e}", field.name))?
             } else {
                 let raw: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;

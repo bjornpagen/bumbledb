@@ -444,7 +444,7 @@ impl<S> PreparedQuery<'_, S> {
         };
         out.cells.reserve(key_probe_finds.len());
         for (field, ty) in key_probe_finds {
-            if let ValueType::Interval { element, .. } = ty {
+            if let Some(element) = ty.interval_element() {
                 let crate::exec::dispatch::FactOperand::Pair(start, end) =
                     crate::exec::dispatch::fact_operand(
                         self.schema,
@@ -455,7 +455,7 @@ impl<S> PreparedQuery<'_, S> {
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
-                out.cells.push(Answers::interval_cell(*element, start, end));
+                out.cells.push(Answers::interval_cell(element, start, end));
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {

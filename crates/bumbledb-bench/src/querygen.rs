@@ -19,7 +19,9 @@
 //! [`random_query`] is the one randomized entry (stamp/fuzz/contradict/
 //! opgen): it draws [`QueryClass`] then a CQ [`Shape`] or an
 //! interiors/rec shape. [`random_cq_query`] and [`random_reach_query`]
-//! stay the frozen corpus reconstructers (C1).
+//! are the corpus reconstructers: the RNG stream (`SHAPE_WEIGHTS`,
+//! `range(8)`) is pinned so replay keeps 268 answers; they construct
+//! `Query::Cq` / `Query::Reach`, not a product.
 
 use bumbledb::{AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
 

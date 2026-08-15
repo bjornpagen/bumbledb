@@ -75,7 +75,7 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
 /// On `String` — programmer invariant: callers peel the interned
 /// variant first.
 pub fn encode_literal(value: &Value, desc: TypeDesc, out: &mut Vec<u8>) {
-    let fixed_width = matches!(desc, TypeDesc::Interval { width: Some(_), .. });
+    let fixed_width = matches!(desc, TypeDesc::FixedInterval { .. });
     let value = match value {
         Value::Bool(v) => ValueRef::Bool(*v),
         Value::U64(v) => ValueRef::U64(*v),

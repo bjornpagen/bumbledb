@@ -121,7 +121,7 @@ pub(super) fn decode_plan(
                     offset,
                     start: words_start(columns[first]),
                 },
-                (ColumnWidth::WordPair, TypeDesc::Interval { width: Some(w), .. }) => {
+                (ColumnWidth::WordPair, TypeDesc::FixedInterval { width: w, .. }) => {
                     Decode::FixedInterval {
                         offset,
                         width: *w,

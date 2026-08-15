@@ -291,13 +291,20 @@ fn value_type_in(view: &bdb_value_type) -> BridgeResult<ValueType> {
         bdb_value_type_kind::FixedBytes => ValueType::FixedBytes {
             len: view.fixed_len,
         },
-        bdb_value_type_kind::Interval => ValueType::Interval {
-            element: match tag_in::<bdb_interval_element>(view.element)? {
+        bdb_value_type_kind::Interval => {
+            let element = match tag_in::<bdb_interval_element>(view.element)? {
                 bdb_interval_element::U64 => IntervalElement::U64,
                 bdb_interval_element::I64 => IntervalElement::I64,
-            },
-            width: bool_in(view.has_width)?.then_some(view.width),
-        },
+            };
+            if bool_in(view.has_width)? {
+                ValueType::FixedInterval {
+                    element,
+                    width: view.width,
+                }
+            } else {
+                ValueType::Interval { element }
+            }
+        }
     })
 }
 

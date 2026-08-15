@@ -508,7 +508,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     // Non-dense param ids are a prepare-time validation error: a gap is
     // a positional slot whose supplied value is never type-checked.
     let mut gapped = mixed_params_query();
-    gapped.rules[0].atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
+    gapped.rules_mut()[0].atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
     let Err(err) = db.prepare(&gapped).map(|_| ()) else {
         panic!("a gapped param id space must fail to prepare");
     };

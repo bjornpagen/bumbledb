@@ -505,10 +505,10 @@ is the consumer that names its shape.)
 
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries.
   `db.prepare(&query)` is the ONE prepare entry (the unified-prepare ruling,
-  frozen 2026-07-15): it takes `&Query` — pin-at-prepare, `40-execution.md`.
-  Empty interiors and `rec: None` is an ordinary `Query`
+  frozen 2026-07-15): it takes `&Query` (`Cq | Reach`) — pin-at-prepare, `40-execution.md`.
+  A `Cq` query (including `Query::single`) is an ordinary `Query`
   (`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`); interiors
-  run as a preamble (`PreparedPipeline::Cq`); a rec query executes
+  run as a preamble (`PreparedPipeline::Cq`); a `Reach` query executes
   under the linear reach driver with the host-settable budget
   `prepared.set_derived_budget(rounds, tuples)` — the tuples axis judges
   every query, the rounds axis is rec-only (`40-execution.md` § the linear

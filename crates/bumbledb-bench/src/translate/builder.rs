@@ -1,7 +1,6 @@
 use std::fmt::Write as _;
 
 use bumbledb::ir::{Atom, CmpOp, Comparison, Term};
-use bumbledb::schema::ValueType;
 use bumbledb::{ParamId, Value};
 
 use super::{Builder, ParamSlot, VarCols};
@@ -137,7 +136,7 @@ impl Builder<'_> {
                 let descriptor = &self.schema.relation(relation).fields()[usize::from(field.0)];
                 (
                     descriptor.name.to_string(),
-                    matches!(descriptor.value_type, ValueType::Interval { .. }),
+                    descriptor.value_type.is_interval(),
                 )
             }
             bumbledb::AtomSource::Interior(_) => (format!("c{}", field.0), false),

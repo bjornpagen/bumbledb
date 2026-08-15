@@ -864,10 +864,7 @@ impl NaiveDb {
     /// Whether a **sealed** field position is interval-typed (a closed
     /// relation's position 0 is the synthetic `U64` id).
     fn is_interval(&self, relation: RelationId, field: bumbledb::FieldId) -> bool {
-        matches!(
-            self.field_types[relation.0 as usize][field.0 as usize],
-            ValueType::Interval { .. }
-        )
+        self.field_types[relation.0 as usize][field.0 as usize].is_interval()
     }
 
     /// The sealed field-type table, for the query evaluator's membership

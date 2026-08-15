@@ -403,7 +403,7 @@ pub struct RayArbiter<'a> {
     /// The probed variable's first binding slot — the offending
     /// interval's words for the typed error payload.
     measured_slot: usize,
-    ray: Option<[u64; 2]>,
+    ray: crate::exec::sink::RayPoison,
 }
 
 impl<'a> RayArbiter<'a> {
@@ -416,23 +416,23 @@ impl<'a> RayArbiter<'a> {
             verdict,
             params,
             measured_slot,
-            ray: None,
+            ray: crate::exec::sink::RayPoison::Clear,
         }
     }
 
     /// The first Ray verdict's offending interval words, if any binding
     /// rendered one.
     pub(crate) fn measure_of_ray(&self) -> Option<[u64; 2]> {
-        self.ray
+        self.ray.span()
     }
 }
 
 impl crate::exec::run::Sink for RayArbiter<'_> {
     fn emit(&mut self, bindings: &crate::exec::run::Bindings) -> crate::exec::run::Flow {
-        if self.ray.is_none()
+        if matches!(self.ray, crate::exec::sink::RayPoison::Clear)
             && self.verdict.eval(&|slot| bindings.get(slot), self.params) == Verdict3::Ray
         {
-            self.ray = Some([
+            self.ray = crate::exec::sink::RayPoison::Hit([
                 bindings.get(self.measured_slot),
                 bindings.get(self.measured_slot + 1),
             ]);
@@ -442,7 +442,7 @@ impl crate::exec::run::Sink for RayArbiter<'_> {
 
     fn emit_batch(&mut self, batch: &crate::exec::run::LeafBatch<'_>) -> crate::exec::run::Flow {
         for &entry in batch.survivors {
-            if self.ray.is_some() {
+            if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
                 break;
             }
             let word = |slot: usize| match batch.source_of(slot) {
@@ -450,7 +450,10 @@ impl crate::exec::run::Sink for RayArbiter<'_> {
                 crate::exec::run::LeafSource::Outer => batch.bindings.get(slot),
             };
             if self.verdict.eval(&word, self.params) == Verdict3::Ray {
-                self.ray = Some([word(self.measured_slot), word(self.measured_slot + 1)]);
+                self.ray = crate::exec::sink::RayPoison::Hit([
+                    word(self.measured_slot),
+                    word(self.measured_slot + 1),
+                ]);
             }
         }
         crate::exec::run::Flow::Continue

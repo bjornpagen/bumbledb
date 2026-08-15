@@ -28,9 +28,8 @@ fn amount_rule(var: u16) -> Rule {
 
 #[test]
 fn the_empty_rule_set_is_rejected() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![],
     };
@@ -39,16 +38,14 @@ fn the_empty_rule_set_is_rejected() {
 
 #[test]
 fn the_rule_cap_is_rejected_one_past_the_line() {
-    let at_cap = Query {
+    let at_cap = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: (0..MAX_RULES).map(|_| account_rule(0)).collect(),
     };
     validate(&schema(), &at_cap).expect("MAX_RULES rules validate");
-    let over = Query {
+    let over = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: (0..=MAX_RULES).map(|_| account_rule(0)).collect(),
     };
@@ -71,9 +68,8 @@ fn head_arity_mismatch_names_the_rule() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), wide],
     };
@@ -100,9 +96,8 @@ fn head_aggregate_mismatch_names_the_position() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), counting],
     };
@@ -126,9 +121,8 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
         rules: vec![agg(crate::ir::AggOp::Sum), agg(crate::ir::AggOp::Min)],
     };
@@ -145,9 +139,8 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
 fn head_type_mismatch_names_rule_and_position() {
     // Rule 0 pins position 0 at U64 (Posting.account); rule 1 projects
     // I64 (Posting.amount) there.
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), amount_rule(0)],
     };
@@ -174,9 +167,8 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), second],
     };
@@ -207,16 +199,14 @@ fn params_are_query_global_and_unify_across_rules() {
     };
     // Agreeing anchors (amount and at are both I64) validate; amount
     // (I64) against flag (Bool) is the typed conflict.
-    let agree = Query {
+    let agree = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![with_param(2, 0), with_param(3, 0)],
     };
     validate(&schema(), &agree).expect("agreeing anchors validate");
-    let conflict = Query {
+    let conflict = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![with_param(2, 0), with_param(5, 0)],
     };
@@ -239,16 +229,14 @@ fn param_density_is_judged_across_the_whole_program() {
         negated: vec![],
         conditions: vec![],
     };
-    let dense = Query {
+    let dense = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![with_param(0), with_param(1)],
     };
     validate(&schema(), &dense).expect("jointly dense param ids validate");
-    let gapped = Query {
+    let gapped = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![with_param(0), with_param(2)],
     };
@@ -265,9 +253,8 @@ fn the_single_rule_program_is_the_degenerate_case() {
     // byte-identical witness (the artifact equality the port is pinned
     // by).
     let rule = account_rule(0);
-    let explicit = Query {
+    let explicit = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule.clone()],
     };

@@ -154,6 +154,14 @@ pub(crate) struct CapacityKeyOp {
     pub(crate) key_bytes: DeterminantImage,
 }
 
+/// Insert-side capacity `R` value slot: unit writes empty bytes; weighted
+/// writes a finite LE u64. Disk stays empty vs 8-byte (`FORMAT_VERSION` 7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarkWeight {
+    Unit,
+    Weighted(u64),
+}
+
 /// One capacity `R` edge of one fact: the statement-scoped key material,
 /// KEY-symmetric between the insert put and the delete removal (the
 /// applier consumes it exactly as a containment [`EdgeOp`]). The delete
@@ -165,11 +173,10 @@ pub(crate) struct MarkEdgeOp {
     /// The edge's key-bytes segment: the capacity statement's child
     /// projection in target-key determinant order.
     pub(crate) key_bytes: DeterminantImage,
-    /// The insert put's value slot: a weighted statement's child weight
-    /// (the C17 slot law), sliced from the source fact at plan time —
-    /// the plan stays pure, zero LMDB reads. `None` = the empty value
-    /// (unit edges).
-    pub(crate) weight: Option<u64>,
+    /// The insert put's value slot: unit or a weighted statement's child
+    /// weight (the C17 slot law), sliced from the source fact at plan
+    /// time — the plan stays pure, zero LMDB reads.
+    pub(crate) weight: MarkWeight,
 }
 
 /// The fresh-row derivation of one fact op (R16): the row id sliced from
@@ -382,6 +389,7 @@ struct FactScratch {
     edges: Vec<EdgeOp>,
     memberships: Vec<MembershipOp>,
     capacity_edges: Vec<MarkEdgeOp>,
+    capacity_keys: Vec<CapacityKeyOp>,
 }
 
 /// Derives one fact's op: determinant bytes per key statement, reverse-edge key
@@ -498,7 +506,7 @@ fn fact_op<'d>(
             }
         }
     }
-    let capacity_edges = mark_ops(
+    mark_ops(
         schema,
         selections,
         disposition,
@@ -514,14 +522,7 @@ fn fact_op<'d>(
             fact_hash: hash,
             determinants,
             edges: scratch.edges.drain(..).collect(),
-            capacity_keys: capacity_edges
-                .into_vec()
-                .into_iter()
-                .map(|edge| CapacityKeyOp {
-                    statement: edge.statement,
-                    key_bytes: edge.key_bytes,
-                })
-                .collect(),
+            capacity_keys: scratch.capacity_keys.drain(..).collect(),
         },
         Disposition::Insert => FactOp::Insert {
             relation: rel,
@@ -531,7 +532,7 @@ fn fact_op<'d>(
             determinants,
             edges: scratch.edges.drain(..).collect(),
             memberships: scratch.memberships.drain(..).collect(),
-            capacity_edges,
+            capacity_edges: scratch.capacity_edges.drain(..).collect(),
         },
     })
 }
@@ -552,7 +553,7 @@ fn mark_ops(
     fact: &[u8],
     touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
     scratch: &mut FactScratch,
-) -> Result<Box<[MarkEdgeOp]>> {
+) -> Result<()> {
     let layout = relation.layout();
     // Capacity edges and touched parents (`touchedParents`' two halves).
     // The source half is φ-BLIND: every delta child touches its parent
@@ -568,23 +569,28 @@ fn mark_ops(
             .or_default()
             .insert(scratch.image.clone());
         if satisfies(&selections.capacity(capacity_id).source, layout, fact) {
-            // The value slot is an INSERT-side concern: the delete
-            // removal is key-only, so a delete op never derives —
-            // the derive is fallible on a weighted statement (a
-            // ray-valued Duration weight refuses), and a value the
-            // applier never reads must not be able to refuse a delete.
-            let weight = if matches!(statement.weight, crate::schema::SealedWeight::Unit)
-                || disposition == Disposition::Delete
-            {
-                None
-            } else {
-                Some(child_weight(statement, layout, fact)?)
-            };
-            scratch.capacity_edges.push(MarkEdgeOp {
-                statement: statement.id,
-                key_bytes: scratch.image.clone(),
-                weight,
-            });
+            // Delete removal is key-only: a fallible weighted derive must
+            // not refuse a delete. Insert carries the sealed weight sum.
+            match disposition {
+                Disposition::Delete => scratch.capacity_keys.push(CapacityKeyOp {
+                    statement: statement.id,
+                    key_bytes: scratch.image.clone(),
+                }),
+                Disposition::Insert => {
+                    let weight = match statement.weight {
+                        crate::schema::SealedWeight::Unit => MarkWeight::Unit,
+                        crate::schema::SealedWeight::Field(_)
+                        | crate::schema::SealedWeight::Duration { .. } => {
+                            MarkWeight::Weighted(child_weight(statement, layout, fact)?)
+                        }
+                    };
+                    scratch.capacity_edges.push(MarkEdgeOp {
+                        statement: statement.id,
+                        key_bytes: scratch.image.clone(),
+                        weight,
+                    });
+                }
+            }
         }
     }
     // The target half: a delta parent inside ψ touches its own key tuple
@@ -604,7 +610,7 @@ fn mark_ops(
                 .insert(scratch.image.clone());
         }
     }
-    Ok(scratch.capacity_edges.drain(..).collect())
+    Ok(())
 }
 
 /// The target-side check set: every deleted determinant tuple, expanded per

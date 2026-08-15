@@ -28,7 +28,6 @@ fn schema() -> Schema {
     };
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -96,8 +95,9 @@ fn w(value: i64) -> u64 {
 
 fn normalized(query: &Query) -> NormalizedQuery {
     let schema = schema();
-    let mut rules = normalize_predicate(&schema, &validate(&schema, query).expect("valid"), &[]);
-    assert_eq!(rules.len(), 1, "these fixtures are one-rule programs");
+    let witness = validate(&schema, query).expect("valid");
+    let mut rules = normalize_rules(&schema, &[], witness.rules());
+    assert_eq!(rules.len(), 1, "these fixtures are one-rule queries");
     rules.remove(0)
 }
 
@@ -384,7 +384,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
         let Ok(witness) = validate(&schema, &query) else {
             continue;
         };
-        let norm = &normalize_predicate(&schema, &witness, &[])[0];
+        let norm = &normalize_rules(&schema, &[], witness.rules())[0];
         for occurrence in &norm.occurrences {
             let mut seen = std::collections::BTreeSet::new();
             for (_, v) in &occurrence.vars {

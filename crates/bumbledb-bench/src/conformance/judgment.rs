@@ -358,7 +358,6 @@ fn calendar_schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -372,7 +371,6 @@ fn calendar_schema() -> SchemaDescriptor {
                         "slot",
                         ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                     ),
                     field("num", ValueType::U64),
@@ -420,7 +418,6 @@ const CLAIM: RelationId = RelationId(1);
 fn permuted_schema() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: bumbledb::schema::IntervalElement::U64,
-        width: None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -479,7 +476,6 @@ fn playlist_schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: None,
                         },
                     ),
                 ],
@@ -491,9 +487,9 @@ fn playlist_schema() -> SchemaDescriptor {
                     field("playlist", ValueType::U64),
                     field(
                         "slot",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: Some(1),
+                            width: 1,
                         },
                     ),
                     field("track", ValueType::U64),
@@ -547,9 +543,9 @@ fn lanes_schema() -> SchemaDescriptor {
                     field("id", ValueType::U64),
                     field(
                         "lane",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: bumbledb::schema::IntervalElement::U64,
-                            width: Some(5),
+                            width: 5,
                         },
                     ),
                 ],
@@ -561,9 +557,9 @@ fn lanes_schema() -> SchemaDescriptor {
                     field("id", ValueType::U64),
                     field(
                         "lane",
-                        ValueType::Interval {
+                        ValueType::FixedInterval {
                             element: bumbledb::schema::IntervalElement::I64,
-                            width: Some(5),
+                            width: 5,
                         },
                     ),
                 ],
@@ -1021,7 +1017,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
 /// hand-authored and carry no strings or masks — the two tags that
 /// would need a per-case context.
 fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
-    if let Some(ValueType::Interval { width: Some(w), .. }) = ty {
+    if let Some(ValueType::FixedInterval { width: w, .. }) = ty {
         match value {
             Value::IntervalU64(iv) => {
                 debug_assert_eq!(iv.end() - iv.start(), *w, "typed writes checked the width");

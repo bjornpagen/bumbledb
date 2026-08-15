@@ -71,6 +71,9 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 }
 
 impl AggregateSink {
+    pub(super) fn pack_slot(&self) -> Option<usize> {
+        pack_slot(&self.finds)
+    }
     /// Builds the sink. `slot_count` is the plan's binding-slot count in
     /// **words** (an interval variable holds two — the `SlotWidth` layout);
     /// Unhinted, seen-set-retaining construction (tests).
@@ -207,7 +210,6 @@ impl AggregateSink {
             .iter()
             .filter(|f| matches!(f, SinkSpec::Agg(_)))
             .count();
-        let pack = pack_slot(&finds);
         // The union key by provenance (R2): head projection for a
         // hand-written rule set, the shared slot arrays for a
         // DNF-derived one. Live state is the arm, not a flattened product.
@@ -277,7 +279,6 @@ impl AggregateSink {
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
-            pack,
             pack_claims: Vec::new(),
             #[cfg(test)]
             group_probes: 0,
@@ -285,7 +286,7 @@ impl AggregateSink {
             finds,
             measures,
             real_slots: slot_count,
-            ray: None,
+            ray: crate::exec::sink::RayPoison::Clear,
             accs: Vec::new(),
             n_aggs,
         }
@@ -312,9 +313,6 @@ impl AggregateSink {
                 SinkSpec::Var { slot, width } => Some((*slot, *width)),
                 SinkSpec::Agg(_) | SinkSpec::Pack { .. } => None,
             }));
-        // The Pack slot is the rule's (the head position is fixed;
-        // validation aligned every rule's Pack term against it).
-        self.pack = pack_slot(&self.finds);
         match &mut self.dedup {
             DedupState::DnfUnion { spans, .. } => {
                 // DNF-derived provenance (R2): the caller supplies this
@@ -372,7 +370,7 @@ impl AggregateSink {
     pub fn reset(&mut self) {
         self.groups.clear();
         self.accs.clear();
-        self.ray = None;
+        self.ray = crate::exec::sink::RayPoison::Clear;
         if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();
         }
@@ -383,7 +381,7 @@ impl AggregateSink {
     /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
     #[must_use]
     pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
-        self.ray
+        self.ray.span()
     }
 }
 

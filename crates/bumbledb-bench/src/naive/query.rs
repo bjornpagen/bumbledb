@@ -16,7 +16,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bumbledb::schema::ValueType;
 use bumbledb::{
     AggOp, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, Query,
     Rule, Term, Value, VarId,
@@ -215,11 +214,11 @@ struct Env<'a> {
 
 impl Env<'_> {
     /// The fact set one source reads: a stored relation, or a
-    /// predicate's accumulated answers.
+    /// derived table's accumulated answers.
     fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
         match src {
             Src::Edb(relation) => &self.relations[*relation],
-            Src::Derived(pred) => &self.interiors[*pred],
+            Src::Derived(id) => &self.interiors[*id],
         }
     }
 }
@@ -228,7 +227,7 @@ impl NaiveDb {
     /// Evaluates a validated query with positional parameters, from the
     /// definition: the **set union of the rules' denotations**. Per rule,
     /// the set of distinct full bindings is projected and folded per its
-    /// find list; a one-rule program is exactly the conjunctive query.
+    /// find list; a one-rule query is exactly the conjunctive query.
     ///
     /// A multi-rule aggregate head folds over the union of the rules'
     /// binding sets projected to the head (the rules-IR definition; the
@@ -253,24 +252,46 @@ impl NaiveDb {
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
-        for interior in &query.interiors {
-            let preds = DerivedWorld {
+        let (interiors, rec, head, rules) = match query {
+            Query::Cq {
+                interiors,
+                head,
+                rules,
+            } => (
+                interiors.as_slice(),
+                None,
+                head.as_slice(),
+                rules.as_slice(),
+            ),
+            Query::Reach {
+                interiors,
+                rec,
+                head,
+                rules,
+            } => (
+                interiors.as_slice(),
+                Some(rec),
+                head.as_slice(),
+                rules.as_slice(),
+            ),
+        };
+        for interior in interiors {
+            let derived = DerivedWorld {
                 sets: &sets,
                 interval: &interval,
             };
-            let rows = self.rows_for(&interior.head, &interior.rules, params, &preds)?;
+            let rows = self.rows_for(&interior.head, &interior.rules, params, &derived)?;
             interval.push(self.seal_intervals(&interior.head, &interior.rules, &interval));
             sets.push(rows);
         }
-        match &query.rec {
-            None => {}
-            Some(rec) => self.rec_lfp(rec, params, &mut sets, &mut interval)?,
+        if let Some(rec) = rec {
+            self.rec_lfp(rec, params, &mut sets, &mut interval)?;
         }
-        let preds = DerivedWorld {
+        let derived = DerivedWorld {
             sets: &sets,
             interval: &interval,
         };
-        self.rows_for(&query.head, &query.rules, params, &preds)
+        self.rows_for(head, rules, params, &derived)
     }
 
     /// Naive full-T(I) least fixpoint: re-evaluate base ∪ rec each
@@ -288,9 +309,9 @@ impl NaiveDb {
         let rec_id = sets.len();
         sets.push(BTreeSet::new());
         loop {
-            let preds = DerivedWorld { sets, interval };
-            let mut next = self.rows_for(&rec.head, &rec.base, params, &preds)?;
-            next.extend(self.rows_for(&rec.head, &rec.rec, params, &preds)?);
+            let derived = DerivedWorld { sets, interval };
+            let mut next = self.rows_for(&rec.head, &rec.base, params, &derived)?;
+            next.extend(self.rows_for(&rec.head, &rec.rec, params, &derived)?);
             if next == sets[rec_id] {
                 break;
             }
@@ -335,7 +356,7 @@ impl NaiveDb {
             .collect()
     }
 
-    /// One predicate's denotation against a predicate world — the
+    /// One derived table's denotation against a derived world — the
     /// query dispatch (single rule / union fold / union of
     /// projections), source-generalized. [`NaiveDb::query`] is the
     /// empty-world reading; the fixpoint calls it per round.
@@ -344,23 +365,23 @@ impl NaiveDb {
         head: &[HeadTerm],
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &DerivedWorld<'_>,
+        derived: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         if let [rule] = rules {
-            let bindings = self.rule_bindings(rule, params, preds)?;
+            let bindings = self.rule_bindings(rule, params, derived)?;
             return project(&rule.finds, &bindings);
         }
         let aggregated = head
             .iter()
             .any(|term| matches!(term, HeadTerm::Aggregate(_)));
         if aggregated {
-            return self.union_fold(rules, params, preds);
+            return self.union_fold(rules, params, derived);
         }
         // Projection head: the union of the per-rule projected sets —
         // one union, set semantics.
         let mut rows = BTreeSet::new();
         for rule in rules {
-            let bindings = self.rule_bindings(rule, params, preds)?;
+            let bindings = self.rule_bindings(rule, params, derived)?;
             rows.extend(project(&rule.finds, &bindings)?);
         }
         Ok(rows)
@@ -368,20 +389,20 @@ impl NaiveDb {
 
     /// One rule's distinct full binding set — the conjunctive semantics
     /// over the rule's own variable scope, occurrences read through the
-    /// source world (stored relations, plus the predicate sets when a
+    /// source world (stored relations, plus the derived tables when a
     /// fixpoint is running).
     fn rule_bindings(
         &self,
         rule: &Rule,
         params: &[ParamValue],
-        preds: &DerivedWorld<'_>,
+        derived: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
         for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
                 if let Term::Var(var) = term
-                    && !self.source_field_is_interval(atom, *field, preds)
+                    && !self.source_field_is_interval(atom, *field, derived)
                 {
                     scalar_anchored[usize::from(var.0)] = true;
                 }
@@ -389,16 +410,16 @@ impl NaiveDb {
         }
         let env = Env {
             relations: &self.relations,
-            interiors: preds.sets,
+            interiors: derived.sets,
             atoms: rule
                 .atoms
                 .iter()
-                .map(|atom| self.flatten(atom, params, preds))
+                .map(|atom| self.flatten(atom, params, derived))
                 .collect(),
             negated: rule
                 .negated
                 .iter()
-                .map(|atom| self.flatten(atom, params, preds))
+                .map(|atom| self.flatten(atom, params, derived))
                 .collect(),
             conditions: rule
                 .conditions
@@ -435,12 +456,12 @@ impl NaiveDb {
         &self,
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &DerivedWorld<'_>,
+        derived: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let head = &rules[0].finds;
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
         for rule in rules {
-            for binding in &self.rule_bindings(rule, params, preds)? {
+            for binding in &self.rule_bindings(rule, params, derived)? {
                 let row: Result<Vec<Value>, QueryError> = rule
                     .finds
                     .iter()
@@ -521,7 +542,7 @@ impl NaiveDb {
         Ok(rows)
     }
 
-    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &DerivedWorld<'_>) -> FlatAtom {
+    fn flatten(&self, atom: &Atom, params: &[ParamValue], derived: &DerivedWorld<'_>) -> FlatAtom {
         FlatAtom {
             src: match atom.source {
                 AtomSource::Edb(relation) => Src::Edb(relation.0 as usize),
@@ -533,7 +554,7 @@ impl NaiveDb {
                 .map(|(field, term)| {
                     (
                         usize::from(field.0),
-                        self.source_field_is_interval(atom, *field, preds),
+                        self.source_field_is_interval(atom, *field, derived),
                         substitute(term, params),
                     )
                 })
@@ -546,23 +567,21 @@ impl NaiveDb {
         relation: bumbledb::RelationId,
         field: bumbledb::FieldId,
     ) -> bool {
-        matches!(
-            self.field_type(relation.0 as usize, usize::from(field.0)),
-            ValueType::Interval { .. }
-        )
+        self.field_type(relation.0 as usize, usize::from(field.0))
+            .is_interval()
     }
 
     /// The membership trigger per source: a stored field's declared
-    /// type, or a predicate column's derived one.
+    /// type, or a derived column's.
     fn source_field_is_interval(
         &self,
         atom: &Atom,
         field: bumbledb::FieldId,
-        preds: &DerivedWorld<'_>,
+        derived: &DerivedWorld<'_>,
     ) -> bool {
         match atom.source {
             AtomSource::Edb(relation) => self.edb_field_is_interval(relation, field),
-            AtomSource::Interior(id) => preds
+            AtomSource::Interior(id) => derived
                 .interval
                 .get(id.0 as usize)
                 .and_then(|row| row.get(usize::from(field.0)))

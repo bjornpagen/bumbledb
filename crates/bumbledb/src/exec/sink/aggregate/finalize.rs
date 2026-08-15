@@ -36,7 +36,7 @@ impl AggregateSink {
         // pooled radix over the start words stays unearned until a
         // bench shows this pass dominating a profile (t5_pack_key's
         // 35µs/44% warm-finalize share is the standing candidate).
-        if self.pack.is_some() {
+        if self.pack_slot().is_some() {
             let live = self.group_count();
             for claims in &mut self.pack_claims[..live] {
                 claims.sort_unstable_by_key(|&[start, _]| start);
@@ -78,7 +78,7 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        if self.pack.is_some() {
+        if self.pack_slot().is_some() {
             return self.emit_pack_group(key, group_idx, answer_scratch, emit);
         }
         let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];

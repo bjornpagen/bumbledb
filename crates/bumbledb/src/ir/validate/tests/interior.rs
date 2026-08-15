@@ -21,9 +21,8 @@ fn rule(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Rule {
 }
 
 fn query_with_interior(interior: Interior, main: Rule) -> Query {
-    Query {
+    Query::Cq {
         interiors: vec![interior],
-        rec: None,
         head: main.head(),
         rules: vec![main],
     }
@@ -40,9 +39,8 @@ fn more_than_sixteen_interiors_still_validate() {
             )],
         })
         .collect();
-    let query = Query {
+    let query = Query::Cq {
         interiors,
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -89,9 +87,8 @@ fn rejects_unknown_interior() {
 
 #[test]
 fn rejects_a_negated_phantom_read() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -135,7 +132,7 @@ fn rejects_interior_column_out_of_range() {
 
 #[test]
 fn rejects_interior_not_prior() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -143,7 +140,6 @@ fn rejects_interior_not_prior() {
                 vec![interior_atom(0, vec![(0, var(0))])],
             )],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -161,7 +157,7 @@ fn rejects_interior_not_prior() {
 
 #[test]
 fn rejects_an_interior_reading_a_later_interior() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![
             Interior {
                 head: vec![HeadTerm::Var],
@@ -178,7 +174,6 @@ fn rejects_an_interior_reading_a_later_interior() {
                 )],
             },
         ],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -248,7 +243,7 @@ fn rejects_aggregate_in_interior() {
 
 #[test]
 fn interior_anchors_resolve_against_sealed_columns() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -256,7 +251,6 @@ fn interior_anchors_resolve_against_sealed_columns() {
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
             )],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -274,7 +268,7 @@ fn interior_anchors_resolve_against_sealed_columns() {
 
 #[test]
 fn an_interval_interior_column_reads_bivalently() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -282,7 +276,6 @@ fn an_interval_interior_column_reads_bivalently() {
                 vec![atom(ACCOUNT, vec![(VALIDITY, var(0))])],
             )],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -297,7 +290,7 @@ fn an_interval_interior_column_reads_bivalently() {
 
 #[test]
 fn negation_of_an_interior_in_main_is_legal() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -305,7 +298,6 @@ fn negation_of_an_interior_in_main_is_legal() {
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
             )],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -319,7 +311,7 @@ fn negation_of_an_interior_in_main_is_legal() {
 
 #[test]
 fn query_global_params_unify_across_interiors() {
-    let query = Query {
+    let query = Query::Cq {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var],
             rules: vec![rule(
@@ -330,7 +322,6 @@ fn query_global_params_unify_across_interiors() {
                 )],
             )],
         }],
-        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
@@ -352,7 +343,7 @@ fn a_plain_query_still_validates() {
         vec![FindTerm::Var(VarId(0))],
         vec![atom(ACCOUNT, vec![(0, var(0))])],
     );
-    assert!(query.interiors.is_empty());
-    assert!(query.rec.is_none());
+    assert!(query.interiors().is_empty());
+    assert!(matches!(query, Query::Cq { .. }));
     validate(&schema(), &query).expect("plain query validates");
 }

@@ -119,7 +119,6 @@ fn hand_built() -> bumbledb::schema::Schema {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
-                            width: None,
                         },
                     ),
                 ],
@@ -482,15 +481,13 @@ mod interval_newtype {
         assert_eq!(
             relation.field(FieldId(1)).value_type,
             ValueType::Interval {
-                element: IntervalElement::I64,
-                width: None
+                element: IntervalElement::I64
             }
         );
         assert_eq!(
             relation.field(FieldId(2)).value_type,
             ValueType::Interval {
-                element: IntervalElement::U64,
-                width: None
+                element: IntervalElement::U64
             }
         );
     }
@@ -1522,9 +1519,9 @@ mod radix_literals {
         );
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
-            ValueType::Interval {
+            ValueType::FixedInterval {
                 element: IntervalElement::U64,
-                width: Some(10),
+                width: 10
             }
         );
         let schema = descriptor.validate().expect("the declared schema is valid");
@@ -1572,9 +1569,9 @@ mod fixed_width_intervals {
         let descriptor = Jukebox.descriptor();
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
-            ValueType::Interval {
+            ValueType::FixedInterval {
                 element: bumbledb::schema::IntervalElement::U64,
-                width: Some(5),
+                width: 5
             }
         );
         // …and the sealed layout stores ONE word for the position:

@@ -106,11 +106,11 @@ pub fn from_sqlite(
         let mut canonical = Vec::with_capacity(types.len());
         let mut column = 0usize;
         for ty in types {
-            let value = if let ValueType::Interval { element, .. } = ty {
+            let value = if let Some(element) = ty.interval_element() {
                 let start: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
                 let end: rusqlite::types::Value = row.get(column + 1).map_err(|e| e.to_string())?;
                 column += 2;
-                sqlmap::interval_from_sql(&start, &end, *element)
+                sqlmap::interval_from_sql(&start, &end, element)
                     .map_err(|e| format!("columns {}-{}: {e}", column - 2, column - 1))?
             } else {
                 let raw: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;

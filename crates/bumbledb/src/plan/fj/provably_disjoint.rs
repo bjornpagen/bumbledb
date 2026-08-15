@@ -1,6 +1,7 @@
 use crate::image::view::Const;
 use crate::ir::normalize::{NormalizedQuery, Occurrence};
 use crate::ir::{AggOp, FindTerm, VarId};
+use crate::plan::fj::OccBind;
 use crate::plan::pinned_fields;
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, RelationId};
@@ -57,14 +58,14 @@ pub fn provably_disjoint_rules(
         .occurrences
         .iter()
         .filter(|occurrence| occurrence.role.participates())
-        .flat_map(|occurrence| {
-            // Candidate pins name stored relations only: an `Interior`
-            // occurrence's extension is execution-local, so its pinned
-            // literals prove nothing about cross-rule head collisions.
-            let stored = occurrence.source.edb();
-            pinned_fields(occurrence).filter_map(move |(field, _)| {
-                stored.map(|relation| DisjointWitness { relation, field })
-            })
+        .filter_map(|occurrence| {
+            let OccBind::Edb(relation) = OccBind::of_occurrence(occurrence) else {
+                return None;
+            };
+            Some((occurrence, relation))
+        })
+        .flat_map(|(occurrence, relation)| {
+            pinned_fields(occurrence).map(move |(field, _)| DisjointWitness { relation, field })
         })
         .collect();
     candidates.dedup();
@@ -105,7 +106,7 @@ fn pins_of(
         .iter()
         .filter(move |occurrence| {
             occurrence.role.participates()
-                && occurrence.source == crate::ir::AtomSource::Edb(witness.relation)
+                && OccBind::of_occurrence(occurrence) == OccBind::Edb(witness.relation)
         })
         .filter_map(move |occurrence| {
             pinned_fields(occurrence)

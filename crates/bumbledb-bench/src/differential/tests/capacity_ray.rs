@@ -25,7 +25,6 @@ const DEVICE: RelationId = RelationId(1);
 fn span_type() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
-        width: None,
     }
 }
 
