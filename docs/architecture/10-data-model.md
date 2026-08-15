@@ -584,7 +584,7 @@ and mismatches are hard failures (`SchemaMismatch`). The fingerprint is
 **extra-theoretic engine identity**: Lean `Theory` has no hash of a theory
 (statement order, closed-row order, and the `bumbledb-schema-v5` label are
 engine/docs law, not a Lean theorem). Cross-host byte-exact fingerprint parity
-(`75-cpp-lowering.md`) is an engine obligation. No migration, no ALTER: schema
+(`76-c-abi.md`) is an engine obligation. No migration, no ALTER: schema
 change = ETL into a new database (export surface: `70-api.md`).
 
 **Fingerprint inputs, exhaustively:** an encoding-format version label; relations in

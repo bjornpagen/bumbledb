@@ -3,7 +3,8 @@
 The host-facing surface. Guiding rule: the API is plain data in, plain data out —
 builders/macros are host-side sugar, never the contract (`20-query-ir.md`). The one
 exception with teeth is the `schema!` macro, whose grammar is normative here because
-the schema is compiled into the binary (`10-data-model.md`).
+the schema is compiled into the binary (`10-data-model.md`). The C ABI (`bdb_*`) is a
+separate leaf (`76-c-abi.md`); this document is the Rust embedding surface.
 
 ## The two surfaces — theory and data
 

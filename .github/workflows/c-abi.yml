@@ -1,0 +1,66 @@
+# The C ABI leaf crate — workspace-excluded (engine stays heed+blake3-pure),
+# so it has its own lane: clippy -D warnings, cargo test (raw ABI + C
+# header compile smoke), cbindgen regen check against the committed header.
+#
+# rust-toolchain.toml owns the channel; `rustup show` from the checkout
+# root resolves it (the engine ci.yml precedent). cbindgen is pinned at
+# 0.29.4, matching crates/bumbledb-c/cbindgen.toml.
+
+name: c-abi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/bumbledb-c/**"
+      - "crates/bumbledb/**"
+      - "crates/bumbledb-theory/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/c-abi.yml"
+  pull_request:
+    paths:
+      - "crates/bumbledb-c/**"
+      - "crates/bumbledb/**"
+      - "crates/bumbledb-theory/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/c-abi.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  c-abi:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the repo Rust toolchain
+        run: rustup show
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            crates/bumbledb-c/target
+          key: c-abi-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-c/Cargo.lock', 'crates/bumbledb-c/cbindgen.toml') }}
+          restore-keys: |
+            c-abi-${{ runner.os }}-
+      - name: Clippy
+        working-directory: crates/bumbledb-c
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        working-directory: crates/bumbledb-c
+        run: cargo test
+      - name: Install pinned cbindgen
+        run: cargo install --locked cbindgen --version 0.29.4 --force
+      - name: cbindgen regen check
+        working-directory: crates/bumbledb-c
+        run: |
+          cbindgen --config cbindgen.toml --crate bumbledb-c --output /tmp/bumbledb_c.h
+          diff -u include/bumbledb_c.h /tmp/bumbledb_c.h
