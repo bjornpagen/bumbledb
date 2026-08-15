@@ -2,7 +2,7 @@ use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::image::view::apply;
 use crate::ir::normalize::{
-    AntiProbe, NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
+    AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
 };
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
@@ -177,7 +177,7 @@ fn colts_with_params(
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                    &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
                         .expect("small")],
                     &occurrence.filters,
                     params,
@@ -193,9 +193,8 @@ fn colts_with_params(
 fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        source: crate::ir::AtomSource::Edb(RelationId(relation)),
+        bind: OccBind::Edb(RelationId(relation)),
         role: Role::Positive,
-        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -205,7 +204,6 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
-        bind: None,
         ..occurrence(occ, relation, vars)
     }
 }

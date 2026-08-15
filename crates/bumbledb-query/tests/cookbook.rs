@@ -561,8 +561,8 @@ recipe!(r24, Closure, {
 }, queries {
     children: { (c) | Parent(child: c, parent in ?frontier); }
         => "(v0) | Parent(child: v0, parent in ?0);";
-    native: { recursive reach(c) | Node(id: c), c == ?root;
-              recursive reach(c) | Parent(child: c, parent: m), reach(m);
+    native: { rec reach(c) | Node(id: c), c == ?root;
+              rec reach(c) | Parent(child: c, parent: m), reach(m);
               (c) | reach(c); }
         => "rec(v0) | Node(id: v0), v0 == ?0;\n\
             rec(v0) | Parent(child: v0, parent: v1), interior 0(v1);\n\
@@ -585,8 +585,8 @@ recipe!(r25, Accounts, {
     AccountParent(parent) <= Account(id);
     Posting(account) <= Account(id);
 }, queries {
-    native: { recursive sub(a) | Account(id: a), a == ?root;
-              recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
+    native: { rec sub(a) | Account(id: a), a == ?root;
+              rec sub(a) | AccountParent(child: a, parent: p), sub(p);
               (total: Sum(minor)) | Posting(id, account: a, minor), sub(a); }
         => "rec(v0) | Account(id: v0), v0 == ?0;\n\
             rec(v0) | AccountParent(child: v0, parent: v1), interior 0(v1);\n\
@@ -1784,11 +1784,11 @@ fn r24_closure_idiom_reaches_the_exact_set() {
     });
     let mut prepared = db.prepare(&children).expect("prepare the frontier query");
     // The engine-native form (recipe 24's second dialect): the same
-    // closure as one linear rec — `recursive` seeds and steps, the bare
+    // closure as one linear rec — `rec` seeds and steps, the bare
     // rule is main — executed whole under the reach driver.
     let native = query!(r24::Closure {
-        recursive reach(c) | Node(id: c), c == ?root;
-        recursive reach(c) | Parent(child: c, parent: m), reach(m);
+        rec reach(c) | Node(id: c), c == ?root;
+        rec reach(c) | Parent(child: c, parent: m), reach(m);
         (c) | reach(c);
     });
     let mut native_q = db
@@ -1886,8 +1886,8 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     // converges first, then the main fold runs once over the finished
     // subtree — aggregation of a finished table, not through the cycle.
     let native = query!(r25::Accounts {
-        recursive sub(a) | Account(id: a), a == ?root;
-        recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
+        rec sub(a) | Account(id: a), a == ?root;
+        rec sub(a) | AccountParent(child: a, parent: p), sub(p);
         (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
     });
     let mut native_q = db

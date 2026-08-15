@@ -6,7 +6,7 @@
  * (renames are real), params still STRING-named. A multi-atom domain-equal
  * join with a param, negation as a safe anti-join, a union of two rules (set
  * semantics dedup), `count()` with implicit grouping, the recursive closure
- * and the finished-table aggregate fold as one query with `recursive`,
+ * and the finished-table aggregate fold as one query with `.reach()`,
  * point membership (literal, param, and `pointIn` — the one spelling),
  * `allen` with a literal and a bound mask, ∈-set params, the or-tree,
  * deterministic lowering (same query built twice → deeply-equal IR), the
@@ -319,7 +319,7 @@ describe("the query surface against a real store", function suite() {
 		 */
 		assert.throws(function pollutedRecHead() {
 			query(Ledger)
-				.recursive("reach", {
+				.reach("reach", {
 					base: [
 						(r) => {
 							const { id: c } = v(Holder)
@@ -362,7 +362,7 @@ describe("the query surface against a real store", function suite() {
 
 	test("the recursive closure runs as one query", function closure() {
 		const reachable = query(Ledger)
-			.recursive("reach", {
+			.reach("reach", {
 				base: [
 					(r) => {
 						const { id: c } = v(Holder)
@@ -409,7 +409,7 @@ describe("the query surface against a real store", function suite() {
 
 	test("a finished-rec aggregate fold sums over the closure (recipe 25's form)", function finishedRecFold() {
 		const reachBalance = query(Ledger)
-			.recursive("reach", {
+			.reach("reach", {
 				base: [
 					(r) => {
 						const { id: c } = v(Holder)
@@ -1165,7 +1165,7 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("RECURSION FENCES: the cut is typed and the quarantine unwritable", function recursionFences() {
-		const afterRec = query(Ledger).recursive("a", {
+		const afterRec = query(Ledger).reach("a", {
 			base: [
 				(r) => {
 					const { id: h } = v(Holder)
@@ -1179,19 +1179,19 @@ describe("the query surface against a real store", function suite() {
 				}
 			]
 		})
-		type SecondRecPin = Expect<Equal<"recursive" extends keyof typeof afterRec ? true : false, false>>
+		type SecondRecPin = Expect<Equal<"reach" extends keyof typeof afterRec ? true : false, false>>
 		type InteriorAfterRecPin = Expect<Equal<"interior" extends keyof typeof afterRec ? true : false, false>>
 		void (0 as unknown as SecondRecPin)
 		void (0 as unknown as InteriorAfterRecPin)
 		function unwritableAfterRec() {
-			// @ts-expect-error — a second recursive is unwritable
-			afterRec.recursive("b", { base: [], rec: [] })
-			// @ts-expect-error — interiors cannot follow a recursive
+			// @ts-expect-error — a second reach is unwritable
+			afterRec.reach("b", { base: [], rec: [] })
+			// @ts-expect-error — interiors cannot follow a reach
 			afterRec.interior("mid")
 		}
 		void unwritableAfterRec
 
-		assert.equal("recursive" in afterRec, false, "Reach start does not carry recursive")
+		assert.equal("reach" in afterRec, false, "Reach start does not carry reach")
 		assert.equal("interior" in afterRec, false, "Reach start does not carry interior")
 
 		assert.throws(function interiorAfterMain() {
@@ -1221,7 +1221,7 @@ describe("the query surface against a real store", function suite() {
 
 		// An aggregate (or the measure) in a recursive head is unwritable.
 		assert.throws(function aggregateThroughCycle() {
-			query(Ledger).recursive("reach", {
+			query(Ledger).reach("reach", {
 				base: [
 					(r) => {
 						const { holder: h, balance: b } = v(Account)
@@ -1246,7 +1246,7 @@ describe("the query surface against a real store", function suite() {
 		// projection of a finished rec builds with no re-grounding join. The
 		// class wall stands: an interior binding still joins only class-equal slots.
 		const identityProjection = query(Ledger)
-			.recursive("reach", {
+			.reach("reach", {
 				base: [
 					(r) => {
 						const { id: h } = v(Holder)
@@ -1274,7 +1274,7 @@ describe("the query surface against a real store", function suite() {
 		assert.ok(Object.isFrozen(rec), "RecData is sealed in one assignment")
 		assert.throws(function classUnequalInteriorVar() {
 			query(Ledger)
-				.recursive("reach", {
+				.reach("reach", {
 					base: [
 						(r) => {
 							const { id: h } = v(Holder)
@@ -1298,7 +1298,7 @@ describe("the query surface against a real store", function suite() {
 		// positively bound (the same safety rule as EDB negation)...
 		assert.throws(function unboundNegatedInteriorVar() {
 			query(Ledger)
-				.recursive("reach", {
+				.reach("reach", {
 					base: [
 						(r) => {
 							const { id: h } = v(Holder)
@@ -1324,7 +1324,7 @@ describe("the query surface against a real store", function suite() {
 		// ...and inside a recursive rule it is negation through the cycle, refused.
 		assert.throws(function negationThroughCycle() {
 			query(Ledger)
-				.recursive("reach", {
+				.reach("reach", {
 					base: [
 						(r) => {
 							const { id: h } = v(Holder)

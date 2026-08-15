@@ -11,10 +11,16 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+`0.12.0` is the Query-sum / signature-v6 / rec-keyword / `.reach()`
+release over `0.11.0` — the public Query is `Cq | Reach`, introspection
+is `signature` at v6, the host surface spells `rec` / `.reach()`, OccBind
+and the C ABI tagged union land with it. Wire, manifest, storage format
+(v7), and schema fingerprints are UNTOUCHED.
+
 `0.11.0` is the trusted-layer representation release over `0.10.0` —
 trusted-layer sums (Query pipeline, sealed schema, exec Agg/Dedup,
 C++/TS dialect IR), `PreparedQuery::signature()` (was `predicate()`),
-introspection v5. Manifest, storage format (v7), and schema fingerprints
+introspection v6. Manifest, storage format (v7), and schema fingerprints
 are UNTOUCHED. Public Query on the wire is the tagged encoding of
 `Cq | Reach` (discriminant + payload; CQ does not carry a rec pointer).
 Campaign detail is in git history.
@@ -125,22 +131,22 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits all three, then the build enforces the match. All
-three are set to `0.11.0` in this tree; `pnpm run build` asserts the
-lockstep on every run (`bumbledb build: version 0.11.0 (main == platform ==
+three are set to `0.12.0` in this tree; `pnpm run build` asserts the
+lockstep on every run (`bumbledb build: version 0.12.0 (main == platform ==
 crate manifest; the platform pin injects at pack)`).
 
-## Runbook (0.11.0, darwin-arm64 host, owner — staged 2026-08-14; recurs as the template for the next version)
+## Runbook (0.12.0, darwin-arm64 host, owner — staged 2026-08-15; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.11.0 in all THREE repo places (done in
+# 1. The lockstep is already set to 0.12.0 in all THREE repo places (done in
 #    this tree; the build asserts it — the platform pin is NOT a repo field,
 #    it injects at pack time):
-#    - ts/package.json                    "version": "0.11.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.11.0"
-#    - ts/crate/Cargo.toml                version = "0.11.0"
+#    - ts/package.json                    "version": "0.12.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.12.0"
+#    - ts/crate/Cargo.toml                version = "0.12.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -162,12 +168,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.11.0 version
-pnpm view @bjornpagen/bumbledb@0.11.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.12.0 version
+pnpm view @bjornpagen/bumbledb@0.12.0 version
 
 # 6. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.11.0 <release-commit> -m "bumbledb 0.11.0" && git push origin v0.11.0
+#    git tag -a v0.12.0 <release-commit> -m "bumbledb 0.12.0" && git push origin v0.12.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,

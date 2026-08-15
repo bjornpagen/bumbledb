@@ -55,7 +55,7 @@ fn union_query() -> Query {
 }
 
 #[test]
-fn a_multi_rule_program_prepares_with_every_rules_plan() {
+fn a_multi_rule_query_prepares_with_every_rules_plan() {
     let dir = TempDir::new("prepared-rules-build");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");

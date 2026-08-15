@@ -94,17 +94,52 @@ pub enum FoldedMark {
     },
 }
 
-/// How a derived occurrence binds at execution and planning. EDB
-/// occurrences carry `None` — the complement of EDB is this three-way
-/// role, not a single "not stored" path.
+/// How an occurrence binds: stored EDB vs a derived table, with the
+/// rec-arm stamp on the derived arms. EDB-with-a-derived-role and
+/// Interior-with-no-role are unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BindRole {
-    /// A finished interior, or main/base's read of a finished rec.
-    Finished,
-    /// A rec arm's marked delta occurrence — one round's frontier.
-    RecDelta,
-    /// A rec arm's other self-read — the accumulated table.
-    RecAcc,
+pub enum OccBind {
+    Edb(RelationId),
+    Finished(crate::ir::InteriorId),
+    RecDelta(crate::ir::InteriorId),
+    RecAcc(crate::ir::InteriorId),
+}
+
+impl OccBind {
+    /// The atom source this bind reads — stored relation or derived table.
+    #[must_use]
+    pub const fn source(self) -> crate::ir::AtomSource {
+        match self {
+            Self::Edb(relation) => crate::ir::AtomSource::Edb(relation),
+            Self::Finished(id) | Self::RecDelta(id) | Self::RecAcc(id) => {
+                crate::ir::AtomSource::Interior(id)
+            }
+        }
+    }
+
+    /// Stored relation, if this bind is EDB.
+    #[must_use]
+    pub const fn edb(self) -> Option<RelationId> {
+        match self {
+            Self::Edb(relation) => Some(relation),
+            Self::Finished(_) | Self::RecDelta(_) | Self::RecAcc(_) => None,
+        }
+    }
+
+    /// Derived table id, if this bind is not EDB.
+    #[must_use]
+    pub const fn interior(self) -> Option<crate::ir::InteriorId> {
+        match self {
+            Self::Edb(_) => None,
+            Self::Finished(id) | Self::RecDelta(id) | Self::RecAcc(id) => Some(id),
+        }
+    }
+
+    /// The bind already sealed on a normalized occurrence.
+    #[must_use]
+    pub const fn of_occurrence(occurrence: &Occurrence) -> Self {
+        occurrence.bind
+    }
 }
 
 impl Role {
@@ -140,20 +175,11 @@ impl Role {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence {
     pub occ_id: OccId,
-    /// The atom's source, carried through lowering verbatim
-    /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer guards:
-    /// filters and residuals are slot/word-shaped and indifferent to
-    /// it). An `Interior` occurrence reads a derived table of the same query:
-    /// its field types are the target's sealed signature columns, its
-    /// execution bind is the reach driver's transient image
-    /// (`api/prepared/run_join.rs`), and it pins no statistics
-    /// (`plan/selectivity.rs` — the delta/accumulated floors).
-    pub source: crate::ir::AtomSource,
     pub role: Role,
-    /// Derived-bind role, decided once past normalize. `None` is EDB.
-    /// Rec arms stamp [`BindRole::RecDelta`] / [`BindRole::RecAcc`] at
-    /// prepare; every other derived occurrence is [`BindRole::Finished`].
-    pub bind: Option<BindRole>,
+    /// How this occurrence binds: stored EDB or a derived table, with
+    /// the rec-arm stamp on Reach self-reads. The atom source is
+    /// [`OccBind::source`].
+    pub bind: OccBind,
     /// Distinct variables with the field each is read from (a repeated
     /// variable keeps its first field; later positions became filters).
     /// A membership-bound point variable is **not** a variable of the
@@ -162,6 +188,14 @@ pub struct Occurrence {
     pub vars: Vec<(FieldId, VarId)>,
     /// Per-occurrence filters, evaluated at the source (filtered view).
     pub filters: Vec<FilterPredicate>,
+}
+
+impl Occurrence {
+    /// The atom source this occurrence reads.
+    #[must_use]
+    pub const fn source(&self) -> crate::ir::AtomSource {
+        self.bind.source()
+    }
 }
 
 /// A comparison whose sides are variables — evaluated inside the join at

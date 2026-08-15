@@ -1,5 +1,5 @@
 //! Derived names are unique: an interior and the rec cannot share a name.
-//@ error: cannot be both `interior` and `recursive`
+//@ error: cannot be both `interior` and `rec`
 //@ line: 17
 
 bumbledb::schema! {
@@ -14,8 +14,8 @@ bumbledb::schema! {
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
         interior reach(c) | Parent(child: c, parent: p);
-        recursive reach(c) | Parent(child: c, parent: p);
-        recursive reach(c) | Parent(child: c, parent: p), reach(p);
+        rec reach(c) | Parent(child: c, parent: p);
+        rec reach(c) | Parent(child: c, parent: p), reach(p);
         (c) | reach(c);
     })
 }

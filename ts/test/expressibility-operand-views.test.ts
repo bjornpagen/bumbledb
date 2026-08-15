@@ -404,7 +404,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	})
 })
 
-describe("primer cycle detector: recursive reach(x,x) on a DAG is empty", function primerCycle() {
+describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function primerCycle() {
 	const State = closed("State", ["Upheld", "Broken"])
 	const Node = relation("Grp", { id: u64.fresh })
 	const Produces = relation("Produces", { grp: u64, capability: u64 })
@@ -416,7 +416,7 @@ describe("primer cycle detector: recursive reach(x,x) on a DAG is empty", functi
 	])
 
 	const requiresCycleQuery = query(Primer)
-		.recursive("reach", {
+		.reach("reach", {
 			base: [
 				function edge(r) {
 					const { grp: from, capability: cap } = v(Produces)

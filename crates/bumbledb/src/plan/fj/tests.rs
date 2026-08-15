@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Role};
+use crate::ir::normalize::{NormalizedQuery, OccBind, Occurrence, Role};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -51,9 +51,8 @@ fn schema(relations: usize, arity: usize) -> Schema {
 fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        source: crate::ir::AtomSource::Edb(RelationId(relation)),
+        bind: OccBind::Edb(RelationId(relation)),
         role: Role::Positive,
-        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), *v)).collect(),
         filters: vec![],
     }
@@ -62,7 +61,6 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
 fn negated(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
-        bind: None,
         ..occurrence(occ, relation, vars)
     }
 }

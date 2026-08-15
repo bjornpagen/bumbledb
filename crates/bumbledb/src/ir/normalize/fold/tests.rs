@@ -1,4 +1,4 @@
-use super::super::{OccId, Role, normalize_rules};
+use super::super::{OccBind, OccId, Role, normalize_rules};
 use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
@@ -399,9 +399,8 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
     ];
     let mut occurrences = vec![Occurrence {
         occ_id: OccId(0),
-        source: crate::ir::AtomSource::Edb(R),
+        bind: OccBind::Edb(R),
         role: Role::Negated,
-        bind: None,
         vars: vec![],
         filters: filters.clone(),
     }];
@@ -433,9 +432,8 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
     let schema = schema();
     let occurrence = |filters| Occurrence {
         occ_id: OccId(0),
-        source: crate::ir::AtomSource::Edb(R),
+        bind: OccBind::Edb(R),
         role: Role::Positive,
-        bind: None,
         vars: vec![],
         filters,
     };

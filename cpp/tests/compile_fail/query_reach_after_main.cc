@@ -16,7 +16,11 @@ inline constexpr auto S = bdb::schema<"S">(Node, Edge, bdb::contained(bdb::on(Ed
                                            bdb::contained(bdb::on(Edge.parent), bdb::on(Node.id)));
 
 inline constexpr auto Broken = bdb::query(S)
-                                   .recursive<"reach">(
+                                   .rule([](auto r) consteval {
+	                                   auto vars = r.vars(Node);
+	                                   return r.match(Node, {.id = vars.id}).find({.id = vars.id});
+                                   })
+                                   .reach<"reach">(
                                        bdb::base{[](auto r) consteval {
 	                                       auto vars = r.vars(Node);
 	                                       return r.match(Node, {.id = vars.id}).find({}, bdb::as<"c">(vars.id));
@@ -26,8 +30,4 @@ inline constexpr auto Broken = bdb::query(S)
 	                                       return r.match(Edge, {.child = vars.child, .parent = vars.parent})
 	                                           .template interior<"reach">(bdb::bind<"c">(vars.parent))
 	                                           .find({}, bdb::as<"c">(vars.child));
-                                       }})
-                                   .interior<"mid">([](auto r) consteval {
-	                                   auto vars = r.vars(Node);
-	                                   return r.match(Node, {.id = vars.id}).find({.id = vars.id});
-                                   });
+                                       }});

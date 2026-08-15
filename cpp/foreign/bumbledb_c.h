@@ -625,11 +625,11 @@ typedef struct bdb_rec {
 } bdb_rec;
 
 // Reach payload: named interiors, a required rec, then the main answer.
-// `rec` is never NULL.
+// `rec` is the Reach arm's rec by value — not a nullable pointer.
 typedef struct bdb_reach {
   const struct bdb_interior *interiors;
   size_t interior_count;
-  const struct bdb_rec *rec;
+  struct bdb_rec rec;
   const struct bdb_head_term *head;
   size_t head_count;
   const struct bdb_rule *rules;

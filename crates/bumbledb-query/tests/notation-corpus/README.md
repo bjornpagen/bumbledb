@@ -124,7 +124,7 @@ production fails the test, as does a case naming an unknown production.
 | `duration` | the measure: `Duration(v)` finds, folds, and comparisons |
 | `named-columns` | `name: Agg(…)` head naming (call-site only; the IR is positional) |
 | `multi-rule-union` | several rules, one head — set union |
-| `recursive` | `recursive pred(...)` lines union into one Rec |
+| `rec` | `rec name(...)` lines union into one Rec |
 | `interior-ordered-dense` | dense in-order interior bindings written BARE (`reach(m, a)`) |
 | `interior-sparse` | a sparse interior position (`2: x`) |
 | `interior-position-selection` | a position selection / membership (`1 == …`, `0 in ?p`) |

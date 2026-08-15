@@ -206,7 +206,7 @@ test("aggregates ride find over var references: count, sum, min, max, pack, dura
 
 test("the recursive query ports: rec find + named interior record lower and prepare", function recPorts() {
 	const reachable = query(Theory)
-		.recursive("reach", {
+		.reach("reach", {
 			base: [
 				function rule(r) {
 					const n = v(Holder)

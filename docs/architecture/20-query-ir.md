@@ -996,7 +996,7 @@ notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
 The renderer emits `interior {id}(...) | ...;` then, on `Reach`,
-`recursive {id}(...) | ...;` then bare main rules — total, and golden-pinned.
+`rec(...) | ...;` then bare main rules — total, and golden-pinned.
 
 **Handles print as handles.** A literal word at a closed-reference position — a
 binding on a field whose declared containment targets a closed relation's id, or
@@ -1041,7 +1041,7 @@ query     := cq | reach
 cq        := interior* main
 reach     := interior* recblock main
 interior  := 'interior' dname '(' head ')' '|' body ';'
-recblock  := 'recursive' dname '(' head ')' '|' body ';'
+recblock  := 'rec' dname '(' head ')' '|' body ';'
 main      := barerule+
 barerule  := '(' head ')' '|' body ';'
 head      := headterm (',' headterm)*
@@ -1096,7 +1096,7 @@ admit any boolean combination of comparisons as one item — comparison leaves
 only, exactly the IR's `ConditionTree` (negated atoms and membership stay
 leaf-level, § the input condition grammar) and an exact mirror of the TS
 condition grammar: one condition language, two identical surfaces, one
-renderer. `and`, `or`, `interior`, and `recursive` are reserved — a derived
+renderer. `and`, `or`, `interior`, and `rec` are reserved — a derived
 name cannot take any of them — and the renderer's functional forms are grammar,
 closing the render→parse round trip over the full input grammar.
 
@@ -1108,10 +1108,10 @@ parser owning the law, so no position has a private dialect. The renderer
 normalizes to **canonical decimal**: the round-trip law is canonical-form,
 not verbatim — `0x64` lowers, renders, and reparses as `100`.
 
-**`interior` / `recursive` are the notation's derived-table form — bare
-rules ARE the main query.** A named head requires `interior` or `recursive`.
+**`interior` / `rec` are the notation's derived-table form — bare
+rules ARE the main query.** A named head requires `interior` or `rec`.
 Bare rules are the main query. `interior mid(x) | Edge(src: x);`
-declares a named interior; `recursive reach(c) | …;` declares the rec;
+declares a named interior; `rec reach(c) | …;` declares the rec;
 `(c) | reach(c);` is the required main. A body atom naming a derived table is an
 `Interior` atom whose bindings address **head positions** — positional,
 never nominal: derived columns have no fields to name. Bare idents are the
@@ -1131,7 +1131,7 @@ constructor case). Names are a **macro-local sidecar**, exactly as variable name
 are: resolution happens at expansion, the emitted `Query` carries bare
 `InteriorId`s, and no name ever enters the IR, the fingerprint, or any
 engine surface. The renderer prints interiors as `interior {id}(...)` and
-the rec as `recursive {id}(...)` (`InteriorId` in the same id convention
+the rec as `rec(...)` (`InteriorId` in the same id convention
 as `v{id}` / `?{id}`) and main rules bare, so the rendered text of any macro-written
 query is its own fixed point — pinned byte-exact by the round-trip goldens
 (`bumbledb-query/tests/notation.rs`).

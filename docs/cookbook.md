@@ -1112,7 +1112,7 @@ the loop runs depth-many rounds and each round is one ∈-set query — a
 `ParamSet` probe, microsecond-class — against the engine as it stands. The
 frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
 is a loop: the host. The engine-native form (below) is the same closure as
-one linear rec (`20-query-ir.md` § engine recursion): `recursive` declares
+one linear rec (`20-query-ir.md` § engine recursion): `rec` declares
 the rec, the bare rule is the required main, and the driver runs the rounds
 inside one plan (`40-execution.md` § the linear reach driver). Primer-shaped
 `reach(x, x)` is the same family — linear rec plus a main join of the
@@ -1163,8 +1163,8 @@ the required main —
 
 ```rust
 let native = query!(Closure {
-    recursive reach(c) | Node(id: c), c == ?root;
-    recursive reach(c) | Parent(child: c, parent: m), reach(m);
+    rec reach(c) | Node(id: c), c == ?root;
+    rec reach(c) | Parent(child: c, parent: m), reach(m);
     (c) | reach(c);
 });
 ```
@@ -1196,8 +1196,8 @@ ordinary main —
 
 ```rust
 let native = query!(Accounts {
-    recursive sub(a) | Account(id: a), a == ?root;
-    recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
+    rec sub(a) | Account(id: a), a == ?root;
+    rec sub(a) | AccountParent(child: a, parent: p), sub(p);
     (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
 });
 ```

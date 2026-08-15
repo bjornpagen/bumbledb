@@ -1,4 +1,4 @@
-//! A query needs a bare main rule: `interior` / `recursive` declare
+//! A query needs a bare main rule: `interior` / `rec` declare
 //! derived tables; the answer is the unnamed rules.
 //@ error: a query needs a bare main rule
 
@@ -13,7 +13,7 @@ bumbledb::schema! {
 
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        recursive reach(c, a) | Parent(child: c, parent: a);
-        recursive reach(c, a) | Parent(child: c, parent: m), reach(m, a);
+        rec reach(c, a) | Parent(child: c, parent: a);
+        rec reach(c, a) | Parent(child: c, parent: m), reach(m, a);
     })
 }

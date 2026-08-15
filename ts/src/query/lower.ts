@@ -114,7 +114,7 @@ type HeadShape = Readonly<Record<string, ClassedField>> | undefined
 
 /**
  * One finished rule as a plain value: the runtime data plus the inferred
- * row/params carrier (and, for an interior or recursive rule, the head
+ * row/params carrier (and, for an interior or rec rule, the head
  * record of classed slots an `.interior(name)` join pairs against).
  * `.rule(...)` consumes it.
  */
@@ -265,7 +265,7 @@ interface InteriorRuleChain<
 	find<const F extends FindShape>(entries: F & CheckRecFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
-/** The rule builder a `recursive("reach", { base, rec })` arm receives. */
+/** The rule builder a `.reach("reach", { base, rec })` arm receives. */
 interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -278,10 +278,10 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 }
 
 /**
- * The chain of a recursive arm. `.interior("reach", …)` is the self-atom
+ * The chain of a rec arm. `.interior("reach", …)` is the self-atom
  * on rec arms (and a prior interior on either list). `find` takes bound
  * variables only — aggregates and the measure are unrepresentable in a
- * recursive head.
+ * rec head.
  */
 interface RecRuleChain<
 	Rels extends SchemaRelations,
@@ -348,8 +348,8 @@ interface Query<
 	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes>
 	/** Construction error: interiors precede main rules. Uncallable after `.rule()`. */
 	interior(name: string, ...builds: never[]): never
-	/** Construction error: recursive precedes main rules. Uncallable after `.rule()`. */
-	recursive(name: string, arms: never): never
+	/** Construction error: reach precedes main rules. Uncallable after `.rule()`. */
+	reach(name: string, arms: never): never
 	readonly [inferred]?: { readonly row: Row; readonly params: Params }
 }
 
@@ -366,9 +366,9 @@ type QueryRow<Q extends AnyQuery> = RowOf<Q>
 type QueryParams<Q extends AnyQuery> = ParamsOf<Q>
 
 /**
- * The entry value of `query(S)`: interiors, then recursive (moves to
+ * The entry value of `query(S)`: interiors, then reach (moves to
  * {@link QueryReachStart}), then the first `.rule` mints the query.
- * `interior` / `recursive` exist only on this CQ start.
+ * `interior` / `reach` exist only on this CQ start.
  */
 type QueryStart<
 	Rels extends SchemaRelations,
@@ -382,16 +382,13 @@ type QueryStart<
 		name: string,
 		...builds: Builds
 	): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>>
-	recursive<
-		const Base extends readonly RecBuild<Rels, Classes>[],
-		const Step extends readonly RecBuild<Rels, Classes>[]
-	>(
+	reach<const Base extends readonly RecBuild<Rels, Classes>[], const Step extends readonly RecBuild<Rels, Classes>[]>(
 		name: string,
 		arms: { readonly base: Base; readonly rec: Step }
 	): QueryReachStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>
 }
 
-/** After `.recursive()`: interior/recursive are unrepresentable; only `.rule` remains. */
+/** After `.reach()`: interior/reach are unrepresentable; only `.rule` remains. */
 type QueryReachStart<
 	Rels extends SchemaRelations,
 	Classes extends SchemaClasses = SchemaClasses,
@@ -1118,9 +1115,9 @@ function contextLabel(context: ChainContext): string {
 		case "interior":
 			return `interior ${context.self} rule`
 		case "rec-base":
-			return `recursive ${context.self.name} base`
+			return `rec ${context.self.name} base`
 		case "rec-arm":
-			return `recursive ${context.self.name} rec`
+			return `rec ${context.self.name} rec`
 	}
 }
 
@@ -1148,10 +1145,10 @@ function lookupDerived(context: ChainContext, name: string): DerivedTable {
 			throw errors.new(`interior ${context.self}: interiors cannot read the rec — this cut's interiors are a prefix`)
 		}
 		if (context.kind === "rec-base") {
-			throw errors.new(`recursive ${rec.name}: a base arm does not read the rec — self-atoms belong on rec arms`)
+			throw errors.new(`rec ${rec.name}: a base arm does not read the rec — self-atoms belong on rec arms`)
 		}
 		if (!isRecHead(rec)) {
-			throw errors.new(`recursive ${rec.name}: rec arms resolve the rec head after base arms seal it`)
+			throw errors.new(`rec ${rec.name}: rec arms resolve the rec head after base arms seal it`)
 		}
 		return rec
 	}
@@ -1181,7 +1178,7 @@ function notInteriorAdvance(
 ): RuleBuildState {
 	if (context.kind === "rec-base" || context.kind === "rec-arm") {
 		throw errors.new(
-			`recursive ${context.self.name}: a recursive rule negates no table — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished table's fold belongs in the main rules`
+			`rec ${context.self.name}: a rec rule negates no table — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished table's fold belongs in the main rules`
 		)
 	}
 	return advanceInterior(state, lookupDerived(context, name), bindings, "negatedInterior")
@@ -1196,9 +1193,9 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 			continue
 		}
 		if (derivedHead && !(isTerm(entry) && entry[term] === "var")) {
-			const who = context.kind === "interior" ? `interior ${context.self}` : `recursive ${context.self.name}`
+			const who = context.kind === "interior" ? `interior ${context.self}` : `rec ${context.self.name}`
 			throw errors.new(
-				`${who}: a recursive head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
+				`${who}: a rec head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
 			)
 		}
 		columns.push(findColumnOf(name, entry))
@@ -1315,7 +1312,7 @@ function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 					...env
 				})
 	if (!isTypedScope<RecRuleScope<Rels, Classes>>(raw)) {
-		throw errors.new("recursive rule builder construction incomplete")
+		throw errors.new("rec rule builder construction incomplete")
 	}
 	return raw
 }
@@ -1469,7 +1466,7 @@ interface RawQuery {
 	readonly data: QueryData
 	rule(build: (r: RawScope) => RuleValue<never, never>): RawQuery
 	interior(name: string, ...builds: never[]): never
-	recursive(name: string, arms: never): never
+	reach(name: string, arms: never): never
 }
 
 /** Asserts every rule in a list derives the same head (name, aggregate shape, closed slice, class). */
@@ -1560,8 +1557,8 @@ function makeRawQuery(
 		interior() {
 			throw afterMainError("interior")
 		},
-		recursive() {
-			throw afterMainError("recursive")
+		reach() {
+			throw afterMainError("reach")
 		}
 	}
 	Object.freeze(value)
@@ -1607,24 +1604,24 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	recBuilds: readonly RecBuild<Rels, Classes>[]
 ): RecData {
 	if (baseBuilds.length === 0) {
-		throw errors.new(`query: recursive ${name} has no base arms`)
+		throw errors.new(`query: rec ${name} has no base arms`)
 	}
 	if (recBuilds.length === 0) {
-		throw errors.new(`query: recursive ${name} has no rec arms`)
+		throw errors.new(`query: rec ${name} has no rec arms`)
 	}
 	const handle: RecHandle = Object.freeze({ name })
 	const baseEnv: DerivedEnv = { interiors, rec: handle }
 	const base = baseBuilds.map(function buildBase(buildOne) {
 		return buildOne(makeRecRuleScope<Rels, Classes>(theory, baseEnv, handle, "rec-base")).rule
 	})
-	assertAlignedHeads(`recursive ${name}`, base)
+	assertAlignedHeads(`rec ${name}`, base)
 	const first = base[0]
 	if (first === undefined) {
-		throw errors.new(`query: recursive ${name} has no base arms`)
+		throw errors.new(`query: rec ${name} has no base arms`)
 	}
 	const firstFind = first.finds[0]
 	if (firstFind === undefined) {
-		throw errors.new(`query: recursive ${name} has no head`)
+		throw errors.new(`query: rec ${name} has no head`)
 	}
 	const finds: RecHead["finds"] = [firstFind, ...first.finds.slice(1)]
 	const head: RecHead = Object.freeze({ name, finds })
@@ -1632,10 +1629,10 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const rec = recBuilds.map(function buildRec(buildOne) {
 		return buildOne(makeRecRuleScope<Rels, Classes>(theory, recEnv, head, "rec-arm")).rule
 	})
-	assertAlignedHeads(`recursive ${name}`, [...base, ...rec])
+	assertAlignedHeads(`rec ${name}`, [...base, ...rec])
 	const firstRec = rec[0]
 	if (firstRec === undefined) {
-		throw errors.new(`query: recursive ${name} has no rec arms`)
+		throw errors.new(`query: rec ${name} has no rec arms`)
 	}
 	const sealedBase: RecData["base"] = [first, ...base.slice(1)]
 	const sealedRec: RecData["rec"] = [firstRec, ...rec.slice(1)]
@@ -1648,7 +1645,7 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	return recData
 }
 
-/** Builds the CQ query start (interiors, then recursive or the first main rule). */
+/** Builds the CQ query start (interiors, then reach or the first main rule). */
 function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClasses, P extends ParamsRecord>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[]
@@ -1672,10 +1669,7 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 			const data = collectInterior(theory, env, name, builds)
 			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>>(theory, [...interiors, data])
 		},
-		recursive<
-			const Base extends readonly RecBuild<Rels, Classes>[],
-			const Step extends readonly RecBuild<Rels, Classes>[]
-		>(
+		reach<const Base extends readonly RecBuild<Rels, Classes>[], const Step extends readonly RecBuild<Rels, Classes>[]>(
 			name: string,
 			arms: { readonly base: Base; readonly rec: Step }
 		): QueryReachStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>> {
@@ -1684,10 +1678,10 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 					return interior.name === name
 				})
 			) {
-				throw errors.new(`query: interior and recursive share the name ${name}`)
+				throw errors.new(`query: interior and rec share the name ${name}`)
 			}
 			if (name.length === 0) {
-				throw errors.new("query: recursive needs a name")
+				throw errors.new("query: reach needs a name")
 			}
 			const data = collectRec(theory, interiors, name, arms.base, arms.rec)
 			return makeQueryReachStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>(
@@ -1728,7 +1722,7 @@ function makeQueryReachStart<Rels extends SchemaRelations, Classes extends Schem
 
 /**
  * Opens a query over a schema: `query(S).rule(r => ...)`, optionally with
- * `interior` / `recursive` first. Each `.rule` adds one conjunctive rule;
+ * `interior` / `reach` first. Each `.rule` adds one conjunctive rule;
  * multiple rules are the set union. The schema's law-computed class map and
  * theory value ride into every rule builder — the join walls compare
  * against the mint slots off it.

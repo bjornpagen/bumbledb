@@ -946,10 +946,11 @@ introspection — EXPLAIN, colloquially — is an in-workspace bench harness
 surface (`#[doc(hidden)]` on the embedding crate), not a host-facing SDK
 API. `snap.introspect(..)`
 returns an ANALYZE-semantics rendered artifact beginning
-with `introspection v4`, then the query in rule notation (`20-query-ir.md` § the
+with `introspection v6`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string),
+then `signature:` (`PreparedQuery::signature()` — the buffer-typing authority),
 plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
-structured `ExecutionStats`, carrying `introspection_version: 4`, each rule's
+structured `ExecutionStats`, carrying `introspection_version: 6`, each rule's
 `distinct_bindings` proof status, main-rule / node ordering, and — when
 present — `interiors:` then optional one `reach` then main (`40-execution.md`
 § observability).

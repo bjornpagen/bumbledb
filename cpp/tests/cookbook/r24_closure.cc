@@ -32,7 +32,7 @@ inline constexpr auto Step = bdb::query(Closure).rule([](auto r) consteval {
 });
 
 inline constexpr auto Reach = bdb::query(Closure)
-                                  .recursive<"reach">(
+                                  .reach<"reach">(
                                       bdb::base{[](auto r) consteval {
 	                                      auto vars = r.vars(Node);
 	                                      return r.match(Node, {.id = vars.id})
@@ -56,7 +56,7 @@ inline constexpr auto Roots = bdb::query(Closure).rule([](auto r) consteval {
 });
 
 inline constexpr auto Unreached = bdb::query(Closure)
-                                      .recursive<"reach">(
+                                      .reach<"reach">(
                                           bdb::base{[](auto r) consteval {
 	                                          auto vars = r.vars(Node);
 	                                          return r.match(Node, {.id = vars.id})

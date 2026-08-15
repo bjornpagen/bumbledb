@@ -16,7 +16,7 @@ impl fmt::Display for IntrospectionReport<'_> {
         )?;
         if let Some(header) = &self.header {
             writeln!(f, "query:\n{}", header.query)?;
-            writeln!(f, "predicate: {}", header.predicate)?;
+            writeln!(f, "signature: {}", header.signature)?;
             if let Some(pending) = &header.pending_literal {
                 write!(f, "{pending}")?;
             }

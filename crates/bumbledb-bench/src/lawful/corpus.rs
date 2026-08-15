@@ -20,7 +20,6 @@ use super::{LawSizes, ids};
 /// `Verdict` seeds none: verdicts are what the judged write lanes mint,
 /// and an empty relation keeps every seeded key and containment
 /// trivially clean on both twins.
-#[must_use]
 pub fn relation_rows(sizes: LawSizes, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         // Task i: kind cycles the three-row TaskKind roster, subject is

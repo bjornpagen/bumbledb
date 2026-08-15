@@ -253,7 +253,6 @@ pub const FORCED_MAP_DISTINCT: u64 = 453_241;
 /// keys (`1 − e^-2` of 2^19); each pass's 2^19 hub-side probes then
 /// hash-scatter across the full ≥ 32 MiB structure, far past any
 /// predictor's capacity.
-#[must_use]
 pub fn relation_rows(
     sizes: DispSizes,
     seed: u64,

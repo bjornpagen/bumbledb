@@ -242,11 +242,11 @@ template<class Ir>
 		if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
 			if (self != no_interior) {
 				if (item.form == body_form::negated_interior) {
-					a_recursive_rule_does_not_negate_a_derived_table();
+					a_rec_rule_does_not_negate_a_derived_table();
 				}
 				if constexpr (requires { ir.rec; }) {
 					if (!(item.interior.name == ir.rec.name)) {
-						a_recursive_rule_matches_only_its_own_rec();
+						a_rec_rule_matches_only_its_own_rec();
 					}
 				}
 			}
@@ -264,7 +264,7 @@ template<class Ir>
 	for (auto index = std::size_t{0}; index != rule.find_count; ++index) {
 		auto const& column = rule.finds[index];
 		if (self != no_interior && column.form != find_form::variable) {
-			a_recursive_rule_head_projects_bound_variables_only();
+			a_rec_rule_head_projects_bound_variables_only();
 		}
 		if (column.form == find_form::aggregate || column.form == find_form::aggregate_measure) {
 			if (column.op == fold_form::pack) {

@@ -96,7 +96,7 @@ fn build_occurrences(
             // positional reading `lean/Bumbledb/Query/Denotation.lean:
             // tupleFact` promises; the transient image is built with
             // exactly these types, so the spans agree by construction).
-            let field_types: Vec<bumbledb_theory::TypeDesc> = match occurrence.source {
+            let field_types: Vec<bumbledb_theory::TypeDesc> = match occurrence.source() {
                 crate::ir::AtomSource::Edb(relation) => {
                     let layout = schema.relation(relation).layout();
                     (0..layout.field_count())
@@ -141,7 +141,6 @@ fn build_occurrences(
             };
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
-                source: occurrence.source,
                 role: occurrence.role.clone(),
                 bind: occurrence.bind,
                 vars: occurrence.vars.clone(),

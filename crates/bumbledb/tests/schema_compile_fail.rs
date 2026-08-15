@@ -10,10 +10,12 @@
 //! type mismatch — any way, no `//@ line` directives.
 //!
 //! The runner drives `rustc` directly against the workspace's own build
-//! artifacts: this integration test lives in `target/…/deps`, so its
-//! parent directory holds the `bumbledb` rlib (and, transitively
-//! discoverable through `-L dependency=`, the `bumbledb-macros`
-//! proc-macro library) — no second cargo build, no version skew.
+//! artifacts — no second cargo build, no version skew. Nightly-2026-08-15
+//! cargo (build-dir layout v2) stores each unit under
+//! `target/<profile>/build/<pkg>/<hash>/out/` instead of a single `deps`
+//! directory; the runner searches those `out` dirs (and still understands
+//! the legacy `deps` layout if an opt-out restored it). Proc-macro dylibs
+//! resolve through the `-L dependency=` search paths.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,60 +35,130 @@ fn expected_errors(source: &str, fixture: &Path) -> Vec<String> {
     errors
 }
 
-/// The deps directory of the build that produced this test binary.
-fn deps_dir() -> PathBuf {
+/// Cargo search directories for rlibs and proc-macro dylibs.
+///
+/// Nightly-2026-08-15 cargo (build-dir layout v2) stores each unit under
+/// `target/<profile>/build/<pkg>/<hash>/out/` instead of a single `deps`
+/// directory. The runner still understands the legacy `deps` layout.
+fn search_dirs() -> Vec<PathBuf> {
     let exe = std::env::current_exe().expect("the test binary knows its path");
-    exe.parent().expect("deps dir").to_path_buf()
+    if let Some(deps) = legacy_deps(&exe) {
+        return vec![deps];
+    }
+    unit_out_dirs(&exe)
 }
 
-/// The newest artifact for one crate: `lib{name}-{hash}.{ext…}` in the
-/// deps dir. Newest-by-mtime picks the current build when feature
-/// variants left siblings behind; any variant carries the surface the
-/// fixtures use.
-fn newest_artifact(deps: &Path, name: &str, extensions: &[&str]) -> PathBuf {
-    let prefix = format!("lib{name}-");
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(deps).expect("read deps dir") {
-        let entry = entry.expect("deps entry");
-        let path = entry.path();
-        let Some(file) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
+fn legacy_deps(exe: &Path) -> Option<PathBuf> {
+    for ancestor in exe.ancestors() {
+        let candidate = if ancestor.file_name().and_then(|n| n.to_str()) == Some("deps") {
+            ancestor.to_path_buf()
+        } else {
+            ancestor.join("deps")
         };
-        let matches = file.starts_with(&prefix)
-            && extensions
-                .iter()
-                .any(|ext| path.extension().and_then(|e| e.to_str()) == Some(*ext));
-        if !matches {
+        if candidate.is_dir() && dir_has_artifact(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn unit_out_dirs(exe: &Path) -> Vec<PathBuf> {
+    let build = exe
+        .ancestors()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("build"))
+        .unwrap_or_else(|| panic!("no cargo build directory above {}", exe.display()));
+    let mut dirs = Vec::new();
+    for pkg in std::fs::read_dir(build).expect("read cargo build dir") {
+        let pkg = pkg.expect("pkg entry").path();
+        if !pkg.is_dir() {
             continue;
         }
-        let modified = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .expect("artifact mtime");
-        if best.as_ref().is_none_or(|(when, _)| modified > *when) {
-            best = Some((modified, path));
+        let Ok(hashes) = std::fs::read_dir(&pkg) else {
+            continue;
+        };
+        for hash in hashes {
+            let out = hash.expect("hash entry").path().join("out");
+            if out.is_dir() {
+                dirs.push(out);
+            }
+        }
+    }
+    assert!(
+        !dirs.is_empty(),
+        "no unit out directories under {}",
+        build.display()
+    );
+    dirs
+}
+
+fn dir_has_artifact(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            matches!(
+                entry.path().extension().and_then(|ext| ext.to_str()),
+                Some("rlib" | "dylib" | "so")
+            )
+        })
+    })
+}
+
+/// The newest artifact for one crate: `lib{name}-{hash}.{ext…}`.
+/// Newest-by-mtime picks the current build when feature variants left
+/// siblings behind; any variant carries the surface the fixtures use.
+fn newest_artifact(dirs: &[PathBuf], name: &str, extensions: &[&str]) -> PathBuf {
+    let prefix = format!("lib{name}-");
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.expect("artifact entry");
+            let path = entry.path();
+            let Some(file) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let matches = file.starts_with(&prefix)
+                && extensions
+                    .iter()
+                    .any(|ext| path.extension().and_then(|e| e.to_str()) == Some(*ext));
+            if !matches {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .expect("artifact mtime");
+            if best.as_ref().is_none_or(|(when, _)| modified > *when) {
+                best = Some((modified, path));
+            }
         }
     }
     best.map_or_else(
-        || panic!("no lib{name} artifact under {}", deps.display()),
+        || panic!("no lib{name} artifact in cargo unit out dirs"),
         |(_, path)| path,
     )
 }
 
 /// Compiles one fixture, expecting failure with the pinned diagnostics.
-fn check_fixture(fixture: &Path, deps: &Path, out_dir: &Path) {
+fn check_fixture(fixture: &Path, search: &[PathBuf], out_dir: &Path) {
     let source = std::fs::read_to_string(fixture).expect("read fixture");
     let expected = expected_errors(&source, fixture);
-    let bumbledb = newest_artifact(deps, "bumbledb", &["rlib"]);
+    let bumbledb = newest_artifact(search, "bumbledb", &["rlib"]);
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
-    let output = Command::new(rustc)
+    let mut command = Command::new(rustc);
+    command
         .arg("--edition=2021")
         .arg("--crate-type=lib")
         .arg("--emit=metadata")
         .arg("--out-dir")
-        .arg(out_dir)
-        .arg("-L")
-        .arg(format!("dependency={}", deps.display()))
+        .arg(out_dir);
+    for dir in search {
+        command
+            .arg("-L")
+            .arg(format!("dependency={}", dir.display()));
+    }
+    let output = command
         .arg("--extern")
         .arg(format!("bumbledb={}", bumbledb.display()))
         .arg(fixture)
@@ -110,7 +182,7 @@ fn check_fixture(fixture: &Path, deps: &Path, out_dir: &Path) {
 #[test]
 fn schema_compile_fail_fixtures() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schema-compile-fail");
-    let deps = deps_dir();
+    let search = search_dirs();
     let out_dir = std::env::temp_dir().join(format!(
         "bumbledb-schema-compile-fail-{}",
         std::process::id()
@@ -125,7 +197,7 @@ fn schema_compile_fail_fixtures() {
         .collect();
     entries.sort();
     for fixture in entries {
-        check_fixture(&fixture, &deps, &out_dir);
+        check_fixture(&fixture, &search, &out_dir);
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);

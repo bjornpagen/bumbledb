@@ -795,10 +795,10 @@ impl fmt::Display for ValidationError {
                 write!(f, "interior {} has no rules", interior.0)
             }
             Self::EmptyRecursiveBase => {
-                write!(f, "recursive block has no base arms — that lfp is empty")
+                write!(f, "rec has no base arms — that lfp is empty")
             }
             Self::EmptyRecursiveStep => {
-                write!(f, "recursive block has no rec arms — write an interior")
+                write!(f, "rec has no rec arms — write an interior")
             }
             Self::SelfInBase => {
                 write!(f, "a base arm names the rec")
@@ -810,7 +810,7 @@ impl fmt::Display for ValidationError {
                 write!(f, "a rec arm names the rec more than once")
             }
             Self::NegationInRec => {
-                write!(f, "negation inside the recursive block")
+                write!(f, "negation inside the rec")
             }
             Self::UnknownInterior { atom, interior } => {
                 write!(
@@ -840,7 +840,7 @@ impl fmt::Display for ValidationError {
                 interior.0
             ),
             Self::MeasureInRec => {
-                write!(f, "a measure site inside the recursive block")
+                write!(f, "a measure site inside the rec")
             }
         }
     }

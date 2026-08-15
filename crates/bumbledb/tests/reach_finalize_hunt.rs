@@ -336,7 +336,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
     .expect("read");
 }
 
-/// Typed payload THROUGH the accumulator: the output predicate itself is
+/// Typed payload THROUGH the accumulator: the Reach query itself is
 /// recursive and its head carries `(u64, str, bool, interval<u64>)` — the
 /// transient delta/accumulated images must transpose an intern word, a
 /// bool (stored as a BYTE column and read back as 0/1), and a two-word

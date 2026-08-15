@@ -34,7 +34,6 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
 /// One relation's full row stream — a pure function of `(seed, sizes)`:
 /// `Doc` rows `0..docs+delete_pool` (the pool rides above the standing
 /// mass, [`CrudSizes`]), `Counter` rows `0..counters` starting at zero.
-#[must_use]
 pub fn relation_rows(
     sizes: CrudSizes,
     seed: u64,

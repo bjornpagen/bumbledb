@@ -43,7 +43,7 @@ pub struct PreparedFamily<'c> {
     stmt: rusqlite::Statement<'c>,
     param_order: Vec<ParamSlot>,
     /// The family's output signature — the column types the drain walks
-    /// (mirroring the bumbledb query's predicate).
+    /// (mirroring the bumbledb query's signature).
     signature: Vec<ValueType>,
 }
 

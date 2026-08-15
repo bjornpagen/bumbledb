@@ -13,7 +13,7 @@
  * join), the head a `find` RECORD whose keys name the answer columns
  * (renames are real), params still STRING-named, plus negation,
  * conditions, aggregates, and interiors / one linear rec via
- * `q.interior` / `q.recursive` —
+ * `q.interior` / `q.reach` —
  * `db.prepare` as a plain value; the comparison/connective builders are
  * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
  * common host identifiers — import aliasing is the answer; the SDK does

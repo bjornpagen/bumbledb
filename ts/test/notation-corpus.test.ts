@@ -210,7 +210,7 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 			return r.match(Account, { id, currency: "Eur" }).find({ id })
 		}),
 	"org-reach-rooted": query(Ledger)
-		.recursive("reach", {
+		.reach("reach", {
 			base: [
 				(r) => {
 					const { id: n } = v(Org)

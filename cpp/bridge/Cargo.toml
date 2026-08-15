@@ -38,6 +38,8 @@ unsafe_op_in_unsafe_fn = "deny"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# nightly-2026-08-15: same workspace allow; this leaf inherits nothing.
+assert_is_empty = "allow"
 # The one crate-level carve-out (the ts/crate precedent): every export
 # reports failure through the `bdb_status` + `bdb_error` out-param protocol
 # and the error taxonomy has ONE owner — the lib.rs module doc — restated

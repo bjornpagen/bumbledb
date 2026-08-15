@@ -1,5 +1,5 @@
 //! Declaration order is interiors, then rec, then main.
-//@ error: `interior` cannot follow `recursive`
+//@ error: `interior` cannot follow `rec`
 //@ line: 18
 
 bumbledb::schema! {
@@ -13,8 +13,8 @@ bumbledb::schema! {
 
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        recursive reach(c) | Parent(child: c, parent: p);
-        recursive reach(c) | Parent(child: c, parent: p), reach(p);
+        rec reach(c) | Parent(child: c, parent: p);
+        rec reach(c) | Parent(child: c, parent: p), reach(p);
         interior mid(c) | Parent(child: c, parent: p);
         (c) | reach(c);
     })

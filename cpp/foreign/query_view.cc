@@ -549,7 +549,7 @@ export namespace bdb::foreign {
 /**
  * The whole lowered query as ONE static constant view graph: interiors
  * in declaration order, then the live arm — CQ (no rec) or Reach (rec
- * by value, never NULL). Every pointer in the graph aims at
+ * by value, never a nullable rec pointer). Every pointer in the graph aims at
  * `static constexpr` storage, so the view outlives any `bdb_db_prepare`
  * call by construction.
  */
@@ -566,7 +566,7 @@ template<auto Query>
 		out.kind = abi_tag(bdb_query_kind::BDB_QUERY_KIND_REACH);
 		out.payload.reach.interiors = interiors;
 		out.payload.reach.interior_count = interior_count;
-		out.payload.reach.rec = &query_rec<Query>;
+		out.payload.reach.rec = query_rec<Query>;
 		out.payload.reach.head = head;
 		out.payload.reach.head_count = head_count;
 		out.payload.reach.rules = rules;

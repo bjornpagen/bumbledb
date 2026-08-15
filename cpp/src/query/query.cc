@@ -96,7 +96,7 @@ struct rule_scope {
 };
 
 /**
- * Tagged pack of base arms for `query_value::recursive`.
+ * Tagged pack of base arms for `query_value::reach`.
  */
 template<class... Builds>
 struct base {
@@ -105,7 +105,7 @@ struct base {
 };
 
 /**
- * Tagged pack of rec arms for `query_value::recursive`.
+ * Tagged pack of rec arms for `query_value::reach`.
  */
 template<class... Builds>
 struct rec {
@@ -117,7 +117,7 @@ struct rec {
  * A whole query as one structural literal: the lowered IR rides the value
  * (NTTP-friendly — `db.prepare<DownAt>()`), the schema ties the type.
  * Phase lives in the template: `NI` interiors, `HasRec` the rec arm,
- * `NR` main rules. `.interior` / `.recursive` exist only before rec and
+ * `NR` main rules. `.interior` / `.reach` exist only before rec and
  * main; `prepare` requires `NR >= 1`.
  */
 template<class S, std::size_t NI = 0, bool HasRec = false, std::size_t NR = 0>
@@ -216,12 +216,12 @@ struct query_value : query_ir<NI, HasRec, NR> {
 	 */
 	template<fixed_string Name, class... BaseBuilds, class... RecBuilds>
 	    requires (!HasRec && NR == 0)
-	[[nodiscard]] consteval auto recursive(bdb::base<BaseBuilds...> const& bases, bdb::rec<RecBuilds...> const& recs) const
+	[[nodiscard]] consteval auto reach(bdb::base<BaseBuilds...> const& bases, bdb::rec<RecBuilds...> const& recs) const
 	    -> query_value<S, NI, true, 0> {
-		static_assert(sizeof...(BaseBuilds) >= 1, "bumbledb query.recursive(): needs at least one base rule");
-		static_assert(sizeof...(RecBuilds) >= 1, "bumbledb query.recursive(): needs at least one rec rule");
+		static_assert(sizeof...(BaseBuilds) >= 1, "bumbledb query.reach(): needs at least one base rule");
+		static_assert(sizeof...(RecBuilds) >= 1, "bumbledb query.reach(): needs at least one rec rule");
 		static_assert(sizeof...(BaseBuilds) + sizeof...(RecBuilds) <= max_query_rules,
-		              "bumbledb query.recursive(): base and rec arms together exceed max_query_rules");
+		              "bumbledb query.reach(): base and rec arms together exceed max_query_rules");
 		auto const name = detail::to_name_text(Name.view());
 		for (auto index = std::size_t{0}; index != NI; ++index) {
 			if (this->interiors[index].name == name) {
@@ -236,7 +236,7 @@ struct query_value : query_ir<NI, HasRec, NR> {
 		auto const add_base = [&](auto const& build) {
 			auto const result = build(rule_scope<S>{});
 			static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
-			              "bumbledb query.recursive(): a base rule body must end in .find(...)");
+			              "bumbledb query.reach(): a base rule body must end in .find(...)");
 			if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
 				base_rules[base_count] = result;
 				++base_count;
@@ -245,7 +245,7 @@ struct query_value : query_ir<NI, HasRec, NR> {
 		auto const add_rec = [&](auto const& build) {
 			auto const result = build(rule_scope<S>{});
 			static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
-			              "bumbledb query.recursive(): a rec rule body must end in .find(...)");
+			              "bumbledb query.reach(): a rec rule body must end in .find(...)");
 			if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
 				rec_rules[rec_count] = result;
 				++rec_count;
@@ -262,10 +262,10 @@ struct query_value : query_ir<NI, HasRec, NR> {
 		    },
 		    recs.builds);
 		if (base_count == 0) {
-			detail::recursive_needs_at_least_one_base_rule();
+			detail::reach_needs_at_least_one_base_rule();
 		}
 		if (rec_count == 0) {
-			detail::recursive_needs_at_least_one_rec_rule();
+			detail::reach_needs_at_least_one_rec_rule();
 		}
 
 		auto next = query_value<S, NI, true, 0>{};

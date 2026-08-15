@@ -1908,7 +1908,7 @@ fn reach_profile_reports_rounds_and_deltas() {
         );
         assert_eq!(stats.emits, 16, "emits is the main sink");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
-        assert!(report.starts_with("introspection v5\n"), "{report}");
+        assert!(report.starts_with("introspection v6\n"), "{report}");
         assert!(report.contains("reach base 0:"), "{report}");
         assert!(report.contains("reach rec 0 (delta occ"), "{report}");
         assert!(report.contains("reach:"), "{report}");

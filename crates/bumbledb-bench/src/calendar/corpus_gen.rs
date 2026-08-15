@@ -488,7 +488,6 @@ fn work_rows(seed: u64, person: u64) -> Vec<Vec<Value>> {
 /// Bookings are the events of persons `0..rooms` — one dedicated room
 /// per head person (the Zipf head, so rooms are busy), per-room
 /// disjointness inherited from the person's own chain.
-#[must_use]
 pub fn relation_rows(cfg: GenConfig, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     let sizes = CalSizes::of(cfg.scale);
     relation_rows_sized(cfg, sizes, rel)
@@ -501,7 +500,6 @@ pub fn relation_rows(cfg: GenConfig, rel: RelationId) -> Box<dyn Iterator<Item =
 ///
 /// Never in practice: row arithmetic stays inside the generated
 /// domains.
-#[must_use]
 pub fn relation_rows_sized(
     cfg: GenConfig,
     sizes: CalSizes,

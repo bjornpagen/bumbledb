@@ -160,7 +160,6 @@ pub fn edge_row(sizes: &ClosSizes, i: u64) -> Vec<Value> {
 }
 
 /// One relation's full row stream — pure function of the sizes.
-#[must_use]
 pub fn relation_rows(sizes: ClosSizes, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         ids::NODE => Box::new((0..sizes.nodes()).map(|i| vec![Value::U64(i)])),

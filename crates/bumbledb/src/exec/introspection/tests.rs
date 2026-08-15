@@ -6,7 +6,9 @@ use crate::exec::dispatch::classify;
 use crate::exec::run::{Bindings, Executor, NoopCounters};
 use crate::exec::sink::ProjectionSink;
 use crate::image::view::{Const, FilterPredicate, apply};
-use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
+use crate::ir::normalize::{
+    AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth,
+};
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
@@ -112,7 +114,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                    &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
                         .expect("small")],
                     &[],
                     &[],
@@ -128,9 +130,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
 fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        source: crate::ir::AtomSource::Edb(RelationId(relation)),
+        bind: OccBind::Edb(RelationId(relation)),
         role: Role::Positive,
-        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -140,7 +141,6 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
-        bind: None,
         ..occurrence(occ, relation, vars)
     }
 }
@@ -292,9 +292,8 @@ fn key_probe_queries_report_their_classification() {
     let schema = schema(1);
     let normalized = normalized(vec![Occurrence {
         occ_id: OccId(0),
-        source: crate::ir::AtomSource::Edb(RelationId(0)),
+        bind: OccBind::Edb(RelationId(0)),
         role: Role::Positive,
-        bind: None,
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
             field: FieldId(0),

@@ -82,7 +82,7 @@ impl<S> PreparedQuery<'_, S> {
         let report = IntrospectionReport {
             header: Some(IntrospectionHeader {
                 query: self.rendered.clone(),
-                predicate: self.signature.to_string(),
+                signature: self.signature.to_string(),
                 pending_literal: pending,
             }),
             body,

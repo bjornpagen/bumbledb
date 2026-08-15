@@ -502,7 +502,7 @@ fn atoms_match(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool {
         &participating(keeper),
         &participating(candidate),
         |atom, other| {
-            atom.source == other.source
+            atom.source() == other.source()
                 && atom.vars == other.vars
                 && subset(&atom.filters, &other.filters)
         },
@@ -518,7 +518,9 @@ fn negated_within(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool
         &negated(keeper),
         &negated(candidate),
         |atom, other| {
-            atom.source == other.source && atom.vars == other.vars && atom.filters == other.filters
+            atom.source() == other.source()
+                && atom.vars == other.vars
+                && atom.filters == other.filters
         },
         false,
     )

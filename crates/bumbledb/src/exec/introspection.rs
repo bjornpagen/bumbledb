@@ -106,7 +106,8 @@ pub enum ReportBody<'p> {
 #[derive(Debug)]
 pub struct IntrospectionHeader {
     pub query: String,
-    pub predicate: String,
+    /// [`crate::api::prepared::PreparedQuery::signature()`], rendered.
+    pub signature: String,
     pub pending_literal: Option<String>,
 }
 

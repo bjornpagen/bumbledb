@@ -1,19 +1,11 @@
-# One toolchain, dated (the crucible packet (git ecec1dc3)). Pinned
-# 2026-07-13 to nightly-2026-07-12 after verifying the three selection
-# checks:
-#   (a) the workspace compiles on it (edition 2024, all crates);
-#   (b) miri and llvm-tools components install and work on
-#       aarch64-apple-darwin;
-#   (c) cargo-fuzz (0.13.1) accepted it — a selection check that died
-#       with the fuzzing apparatus (2026-07-20 ruling,
-#       docs/architecture/60-validation.md § the deletion record).
-# The pin moves DELIBERATELY, never implicitly: moving it is a PRD-sized
-# action that carries the #[ignore]d microbench re-earn session with it
+# One toolchain, dated. Pinned 2026-08-15 to nightly-2026-08-15 at
+# Bjorn's request (the previous pin was nightly-2026-07-12). The pin
+# moves DELIBERATELY, never implicitly: moving it is a PRD-sized action
+# that carries the #[ignore]d microbench re-earn session with it
 # (codegen changes invalidate every pinned margin).
 #
 # Nightly features adopted (each a dividend — it deletes code or guards,
-# never adopted because it exists; the crucible packet (git ecec1dc3)
-# carries the refusal ledger):
+# never adopted because it exists):
 #   - try_blocks (crates/bumbledb): kills the immediately-invoked-closure
 #     error idiom — a fallible region is a block, not a fake call.
 #   - portable_simd (crates/bumbledb): the predicate-scan, dense-fold,
@@ -23,6 +15,6 @@
 #     `unsafe`; the Allen configuration kernel alone stays intrinsic per
 #     the crucible packet's measured verdict matrix (git ecec1dc3).
 [toolchain]
-channel = "nightly-2026-07-12"
+channel = "nightly-2026-08-15"
 components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]
 targets = ["x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]

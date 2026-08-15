@@ -1,6 +1,6 @@
-//! A named head without `interior` / `recursive` is the former named-head
+//! A named head without `interior` / `rec` is the former named-head
 //! sneak — refused at the name, telling the author to write the keyword.
-//@ error: named heads require `interior` or `recursive`
+//@ error: named heads require `interior` or `rec`
 //@ line: 17
 
 bumbledb::schema! {

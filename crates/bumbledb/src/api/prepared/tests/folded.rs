@@ -251,7 +251,7 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
 /// with the evaluator's rendered reason, and an all-dead query
 /// prepares to the statically-empty query.
 #[test]
-fn an_empty_fold_prepares_the_statically_empty_program() {
+fn an_empty_fold_prepares_the_statically_empty_query() {
     let dir = TempDir::new("folded-empty");
     let schema = closed_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");

@@ -310,7 +310,7 @@ impl RecursiveVariant {
         match self {
             Self::InteriorsDag | Self::InteriorsAntiJoin | Self::ManyInteriors => "interiors",
             Self::Linear | Self::Negation | Self::Fold | Self::EmptyDelta | Self::PrimerReachXx => {
-                "recursive"
+                "reach"
             }
         }
     }

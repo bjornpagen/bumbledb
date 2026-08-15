@@ -196,7 +196,7 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
-- **Plan introspection output** is the versioned `introspection v4` contract
+- **Plan introspection output** is the versioned `introspection v6` contract
   (harness-only, not embedding API): deterministic content and ordering within
   a version, with rendered and structured surfaces incremented together
   (`40-execution.md`, `70-api.md`).

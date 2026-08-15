@@ -291,8 +291,8 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
     assert_eq!(norm.occurrences.len(), 2);
     assert_eq!(norm.occurrences[0].occ_id, OccId(0));
     assert_eq!(norm.occurrences[1].occ_id, OccId(1));
-    assert_eq!(norm.occurrences[0].source.edb(), Some(R));
-    assert_eq!(norm.occurrences[1].source.edb(), Some(R));
+    assert_eq!(norm.occurrences[0].source().edb(), Some(R));
+    assert_eq!(norm.occurrences[1].source().edb(), Some(R));
     assert_ne!(norm.occurrences[0].filters, norm.occurrences[1].filters);
 }
 
@@ -629,7 +629,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     let negated = &norm.occurrences[1];
     assert_eq!(negated.occ_id, OccId(1));
     assert_eq!(negated.role, Role::Negated);
-    assert_eq!(negated.source.edb(), Some(S));
+    assert_eq!(negated.source().edb(), Some(S));
     assert_eq!(negated.vars, vec![(FieldId(0), VarId(0))]);
     assert_eq!(
         negated.filters,

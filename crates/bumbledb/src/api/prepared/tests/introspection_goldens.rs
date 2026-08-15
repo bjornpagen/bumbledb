@@ -1,13 +1,13 @@
-//! Byte-exact contract fixtures for introspection v5. These deliberately
+//! Byte-exact contract fixtures for introspection v6. These deliberately
 //! exercise every plan-class/diagnostic family whose wording is public.
 
 use super::*;
 use crate::ir::{AggOp, HeadOp, HeadTerm};
 
-const JOIN_WITH_GROUND_FOLD: &str = r"introspection v5
+const JOIN_WITH_GROUND_FOLD: &str = r"introspection v6
 query:
 (v0, v2) | Reading(id: v0, kind: v1, value: v2), Kind(id: v1, rank == 20);
-predicate: (u64, i64)
+signature: (u64, i64)
 access path: free join (1 nodes)
   occurrence 0: relation 0 trie schema [[0, 1, 2]] (0 filters)
     estimated from (pinned rows at prepare): 5, filtered-view survivors 2
@@ -22,18 +22,18 @@ access path: free join (1 nodes)
   emitted bindings: 3, absorbed by the union seen-set: 0
 ";
 
-const STATICALLY_EMPTY: &str = r"introspection v5
+const STATICALLY_EMPTY: &str = r"introspection v6
 query:
 (v0, v2) | Reading(id: v0, kind: v1, value: v2), Kind(id: v1, rank == 99);
-predicate: (u64, i64)
+signature: (u64, i64)
 access path: statically empty
 statically empty: rule 0: folded to ∅: Kind{rank == 99}
 ";
 
-const KEY_PROBE: &str = r"introspection v5
+const KEY_PROBE: &str = r"introspection v6
 query:
 (v0) | Posting(id == 1, amount: v0);
-predicate: (i64)
+signature: (i64)
 access path: key probe
   relation: 0
   key statement: 0
@@ -43,11 +43,11 @@ access path: key probe
   emitted bindings: 1, absorbed by the union seen-set: 0
 ";
 
-const AGGREGATE_UNION: &str = r"introspection v5
+const AGGREGATE_UNION: &str = r"introspection v6
 query:
 (v0, Sum(v1)) | Posting(account == 3, memo: v0, amount: v1);
 (v0, Sum(v1)) | Posting(account == 7, memo: v0, amount: v1);
-predicate: (string, Sum i64)
+signature: (string, Sum i64)
 rule 0:
 access path: free join (2 nodes)
   occurrence 0: relation 0 trie schema [[0], [1]] (0 filters)
@@ -84,10 +84,10 @@ head union: 3 emitted across 2 rules, 1 absorbed
 disjoint_rules: unproven
 ";
 
-const UNRESOLVED_LITERAL: &str = r#"introspection v5
+const UNRESOLVED_LITERAL: &str = r#"introspection v6
 query:
 (v0) | Posting(memo == "z-unresolved", amount: v0), Posting(memo == "a-unresolved", amount: v0);
-predicate: (i64)
+signature: (i64)
 pending literals: "z-unresolved", "a-unresolved" — an unresolved Eq literal empties its rule at execution until latched
 access path: free join (2 nodes)
   occurrence 0: relation 0 trie schema [[0], []] (0 filters)
@@ -216,7 +216,7 @@ fn aggregate_union_golden_and_stats_parity() {
         .introspect(&txn, &cache, &[])
         .expect("introspection");
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(stats.introspection_version, 5);
+    assert_eq!(stats.introspection_version, 6);
     assert_eq!(display.matches("rule ").count(), stats.rules().len());
     assert_eq!(
         display.matches("  node ").count(),

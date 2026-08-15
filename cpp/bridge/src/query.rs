@@ -292,13 +292,13 @@ pub struct bdb_cq {
 }
 
 /// Reach payload: named interiors, a required rec, then the main answer.
-/// `rec` is never NULL.
+/// `rec` is the Reach arm's rec by value — not a nullable pointer.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_reach {
     pub interiors: *const bdb_interior,
     pub interior_count: usize,
-    pub rec: *const bdb_rec,
+    pub rec: bdb_rec,
     pub head: *const bdb_head_term,
     pub head_count: usize,
     pub rules: *const bdb_rule,
@@ -567,20 +567,10 @@ pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
                 reason = "union arm: Reach kind names payload.reach (header contract)"
             )]
             let reach = unsafe { view.payload.reach };
-            if reach.rec.is_null() {
-                return Err(fail_shape("reach rec is required (never NULL)"));
-            }
-            // SAFETY: non-null was just checked; the header contract sizes
-            // the pointee as one initialized `bdb_rec` that outlives this call.
-            #[expect(
-                unsafe_code,
-                reason = "Reach rec is one live bdb_rec for the call (header contract)"
-            )]
-            let rec_view = unsafe { &*reach.rec };
             query_from_reach(
                 reach.interiors,
                 reach.interior_count,
-                rec_view,
+                &reach.rec,
                 reach.head,
                 reach.head_count,
                 reach.rules,

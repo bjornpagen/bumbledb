@@ -208,7 +208,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		// always carries the closed descriptor — the plumb succeeds through
 		// rec outputs by construction, no bigint limitation remains.
 		const reach = query(Oncall)
-			.recursive("seen", {
+			.reach("seen", {
 				base: [
 					(r) => {
 						const { id, sev } = v(Incident)

@@ -3,7 +3,9 @@ use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::ViewWordSource;
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth};
+use crate::ir::normalize::{
+    NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
+};
 use crate::ir::{CmpOp, ParamId, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -146,9 +148,8 @@ const REL: RelationId = RelationId(0);
 fn occurrence(vars: &[(u16, u16)], filters: Vec<FilterPredicate>) -> Occurrence {
     Occurrence {
         occ_id: OccId(0),
-        source: crate::ir::AtomSource::Edb(REL),
+        bind: OccBind::Edb(REL),
         role: Role::Positive,
-        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters,
     }

@@ -1186,7 +1186,7 @@ Reachability, in two dialects. The host-loop idiom remains the depth-bounded
 answer: the loop runs depth-many rounds and each round is one ∈-set query —
 an `inSet` probe, microsecond-class. The frontier discipline below *is*
 semi-naive evaluation's Δ, spent where a loop is a loop: the host. The
-engine-native form is the same closure as one query with `recursive`.
+engine-native form is the same closure as one query with `.reach()`.
 
 ```ts
 const Node = relation("Node", { id: u64.fresh, name: str })
@@ -1243,7 +1243,7 @@ grounds its variables — no re-grounding join over a domain relation exists):
 
 ```ts
 const reach = query(Closure)
-	.recursive("reach", {
+	.reach("reach", {
 		base: [
 			(r) => {
 				const { id: c } = v(Node)
@@ -1275,7 +1275,7 @@ main rule:
 
 ```ts
 const unreached = query(Closure)
-	.recursive("reach", {
+	.reach("reach", {
 		base: [
 			(r) => {
 				const { id: c } = v(Node)
@@ -1346,7 +1346,7 @@ const subtreeRollup = query(Accounts).rule((r) => {
 // The engine-native form: the rec converges first, then the
 // main fold runs once over the finished subtree.
 const nativeRollup = query(Accounts)
-	.recursive("sub", {
+	.reach("sub", {
 		base: [
 			(r) => {
 				const { id: a } = v(Account)

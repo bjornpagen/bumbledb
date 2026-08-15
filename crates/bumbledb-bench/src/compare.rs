@@ -25,7 +25,7 @@ pub enum Owned {
 pub type Answer = Vec<Owned>;
 
 /// Decodes bumbledb [`Answers`] into canonical answers (column types
-/// from the prepared query's predicate — the answer-typing authority).
+/// from the prepared query's signature — the answer-typing authority).
 #[must_use]
 pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
     answers

@@ -7,7 +7,7 @@
 use bumbledb::ir::{FindTerm, Rec};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 
-use super::query::{SharedParams, arm_body, rule_core};
+use super::query::{QueryShape, SharedParams, arm_body, rule_core};
 use super::{Translated, VarCols, derived_cte_name};
 
 /// Translate a Query: derived tables as CTEs in declaration order, then
@@ -43,7 +43,7 @@ fn translate_cq(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     let mut params = SharedParams::default();
-    params.rec = None;
+    params.shape = QueryShape::Cq;
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in interiors.iter().enumerate() {
         ctes.push(cte_from_rules(
@@ -76,9 +76,9 @@ fn translate_reach(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     let mut params = SharedParams::default();
-    params.rec = Some(InteriorId(
-        u32::try_from(interiors.len()).expect("interior id fits u32"),
-    ));
+    params.shape = QueryShape::Reach {
+        rec: InteriorId(u32::try_from(interiors.len()).expect("interior id fits u32")),
+    };
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in interiors.iter().enumerate() {
         ctes.push(cte_from_rules(
@@ -112,7 +112,7 @@ fn cte_from_rules(
         "{}({}) AS ({})",
         derived_cte_name(
             InteriorId(u32::try_from(index).expect("interior id fits u32")),
-            params.rec
+            params.shape
         ),
         columns.join(", "),
         arms.join(" UNION ")

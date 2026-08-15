@@ -923,7 +923,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// identity projection — an interior atom is a positive occurrence, so it
 		// grounds its variables and no re-grounding join exists):
 		const reach = query(Closure)
-			.recursive("reach", {
+			.reach("reach", {
 				base: [
 					(r) => {
 						const { id: c } = v(Node)
@@ -947,7 +947,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// The complement — negation OF the finished rec is engine-legal
 		// (negation in rec is refused):
 		const unreached = query(Closure)
-			.recursive("reach", {
+			.reach("reach", {
 				base: [
 					(r) => {
 						const { id: c } = v(Node)
@@ -1043,7 +1043,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// The engine-native form: the rec converges first, then the
 		// main fold runs once over the finished subtree.
 		const nativeRollup = query(Accounts)
-			.recursive("sub", {
+			.reach("sub", {
 				base: [
 					(r) => {
 						const { id: a } = v(Account)

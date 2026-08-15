@@ -268,7 +268,7 @@ pub struct PreparedQuery<'s, S> {
     /// compiled Kleene fold ([`RayProbeSet`] — the verdict algebra,
     /// ruled 2026-07-23, R6), run after the rule loop; the first Ray
     /// verdict raises the typed `MeasureOfRay`. Empty for measure-free
-    /// programs and (deferred) recursive programs.
+    /// queries and Reach queries.
     ray_probes: Vec<RayProbeSet>,
     /// The rule-shared binding-slot scratch (docs/architecture/
     /// 40-execution.md § the rule loop): written in place by each rule's

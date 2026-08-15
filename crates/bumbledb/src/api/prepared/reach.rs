@@ -509,7 +509,7 @@ fn unbind_interior_views(interior: &mut PreparedInterior, retired: &mut Vec<Vec<
 
 fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u32>>) {
     for (occ_idx, occurrence) in rule.plan.occurrences().iter().enumerate() {
-        if occurrence.role.discharged() || occurrence.bind.is_none() {
+        if occurrence.role.discharged() || occurrence.bind.edb().is_some() {
             continue;
         }
         let old = rule.memo.colts[occ_idx].reset(crate::image::view::View::Unbound);
@@ -545,22 +545,15 @@ fn fill_plan_images(
             continue;
         }
         let image = match occurrence.bind {
-            None => continue,
-            Some(crate::ir::normalize::BindRole::Finished) => {
-                let q = occurrence
-                    .source
-                    .interior()
-                    .expect("Finished bind is a derived occurrence")
-                    .index();
-                derived.published[q].clone()
-            }
-            Some(crate::ir::normalize::BindRole::RecDelta) => match bind {
+            crate::plan::fj::OccBind::Edb(_) => continue,
+            crate::plan::fj::OccBind::Finished(id) => derived.published[id.index()].clone(),
+            crate::plan::fj::OccBind::RecDelta(_) => match bind {
                 DerivedBind::Rec { delta, .. } => delta.clone(),
                 DerivedBind::Finished => {
                     unreachable!("RecDelta is stamped only on rec arms")
                 }
             },
-            Some(crate::ir::normalize::BindRole::RecAcc) => match bind {
+            crate::plan::fj::OccBind::RecAcc(_) => match bind {
                 DerivedBind::Rec { acc, .. } => acc.clone(),
                 DerivedBind::Finished => {
                     unreachable!("RecAcc is stamped only on rec arms")

@@ -203,7 +203,7 @@ pub struct ProbeRun {
     pub sample: ProbeSample,
     /// The reference answers, one multiset per draw, in draw order.
     pub reference: Vec<Vec<compare::Answer>>,
-    /// The probe's output signature — the prepared query's predicate
+    /// The probe's output signature — the prepared query's signature
     /// columns, the answer-typing authority.
     pub types: Vec<bumbledb::schema::ValueType>,
 }

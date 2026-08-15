@@ -1,5 +1,6 @@
 use super::*;
 use crate::image::view::FilterPredicate;
+use crate::ir::normalize::OccBind;
 use bumbledb_theory::schema::ValueType;
 
 /// The batched membership probe at a MIDDLE node (`probe_pass`'s point
@@ -129,9 +130,8 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
@@ -140,17 +140,15 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(1)),
+            bind: OccBind::Edb(RelationId(1)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(2),
-            source: crate::ir::AtomSource::Edb(RelationId(2)),
+            bind: OccBind::Edb(RelationId(2)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },

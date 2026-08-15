@@ -389,7 +389,7 @@ mod tests {
     use super::*;
     use crate::encoding::{ValueRef, encode_fact};
     use crate::image::view::Const;
-    use crate::ir::normalize::{OccId, Role};
+    use crate::ir::normalize::{OccBind, OccId, Role};
     use crate::schema::ValidateDescriptor as _;
     use crate::storage::commit::commit;
     use crate::storage::delta::WriteDelta;
@@ -498,9 +498,8 @@ mod tests {
     fn eq_on(field: u16, occ_relation: RelationId) -> Occurrence {
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(occ_relation),
+            bind: OccBind::Edb(occ_relation),
             role: Role::Positive,
-            bind: None,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
                 field: FieldId(field),

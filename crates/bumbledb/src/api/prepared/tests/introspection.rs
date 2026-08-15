@@ -26,11 +26,11 @@ fn introspection_reports_the_join_plan_with_actuals() {
 
 /// The report's header renders the signature the query defines — the
 /// signature authority (`ir/validate`), one column per head position,
-/// fold kinds by their rule-notation names. The sealed v5 header still
-/// spells the line `predicate:`.
+/// fold kinds by their rule-notation names. The sealed header spells
+/// the line `signature:`.
 #[test]
-fn the_introspection_header_renders_the_predicate() {
-    let dir = TempDir::new("prepared-introspect-predicate");
+fn the_introspection_header_renders_the_signature() {
+    let dir = TempDir::new("prepared-introspect-signature");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
@@ -48,7 +48,7 @@ fn the_introspection_header_renders_the_predicate() {
             ],
         )
         .expect("introspect");
-    assert!(report.contains("predicate: (string, i64)"), "{report}");
+    assert!(report.contains("signature: (string, i64)"), "{report}");
 
     // The fold-bearing head: the column renders its producing kind.
     let count_query = Query::single(Rule {
@@ -68,7 +68,7 @@ fn the_introspection_header_renders_the_predicate() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &count_query).expect("prepare");
     let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(report.contains("predicate: (u64, Count u64)"), "{report}");
+    assert!(report.contains("signature: (u64, Count u64)"), "{report}");
 }
 
 /// The stats surface carries the pin record — golden on one introspection

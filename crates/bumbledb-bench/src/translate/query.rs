@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bumbledb::ir::{FindTerm, Rule};
-use bumbledb::{AggOp, ParamId, Query, Schema, Value, VarId};
+use bumbledb::{AggOp, InteriorId, ParamId, Query, Schema, Value, VarId};
 
 use super::{Builder, ParamSlot, Translated, VarCols, types};
 
@@ -70,6 +70,17 @@ pub(super) fn translate_rules(
     }
 }
 
+/// Whether the query under translation is CQ or Reach. Names the rec
+/// CTE when Reach; CQ has no rec slot.
+#[derive(Clone, Copy, Default)]
+pub(super) enum QueryShape {
+    #[default]
+    Cq,
+    Reach {
+        rec: InteriorId,
+    },
+}
+
 /// The query-global positional param space, threaded through the
 /// per-rule builders (a param repeated across rules keeps one `?N`).
 /// Interiors and rec share it too: every CTE arm draws from one `?N`
@@ -78,7 +89,7 @@ pub(super) fn translate_rules(
 pub(super) struct SharedParams {
     index: BTreeMap<ParamSlot, usize>,
     pub(super) params: Vec<ParamSlot>,
-    pub(super) rec: Option<bumbledb::InteriorId>,
+    pub(super) shape: QueryShape,
 }
 
 /// Builds one rule's core (FROM entries, WHERE conjuncts, variable
@@ -100,7 +111,7 @@ pub(super) fn rule_core<'q>(
         columns: BTreeMap::new(),
         param_index: std::mem::take(&mut params.index),
         params: std::mem::take(&mut params.params),
-        rec: params.rec,
+        shape: params.shape,
     };
     for atom in &rule.atoms {
         b.render_atom(atom)?;

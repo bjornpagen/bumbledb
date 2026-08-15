@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
+    AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth,
     lower_literal::{lower_literal, point_word},
     place_comparisons::place_comparisons,
 };
@@ -344,11 +344,10 @@ fn lower_atom(
 
     Occurrence {
         occ_id,
-        source: atom.source,
         role,
         bind: match atom.source {
-            crate::ir::AtomSource::Edb(_) => None,
-            crate::ir::AtomSource::Interior(_) => Some(crate::ir::normalize::BindRole::Finished),
+            crate::ir::AtomSource::Edb(relation) => OccBind::Edb(relation),
+            crate::ir::AtomSource::Interior(id) => OccBind::Finished(id),
         },
         vars,
         filters,

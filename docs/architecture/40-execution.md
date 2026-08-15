@@ -1062,7 +1062,7 @@ absorbed), populated on counted paths; interiors add one `INTERIORS` span
 tuples) with one `fixpoint_round` span per round under it, args (emitted,
 absorbed). There is no `STRATUM` span and no 16-slot interior span array.
 Interiors-only: `reach: None`, no `REACH` span.
-The output contract is `introspection v4`: byte-identical within the version for
+The output contract is `introspection v6`: byte-identical within the version for
 identical schema fingerprint, canonical query, parameter types, and features, with
 the fixed ordering specified in `70-api.md`. Any content or ordering change bumps
 the rendered and structured version together. Release builds contain no other instrumentation: no per-tuple labels, no

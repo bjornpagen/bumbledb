@@ -72,11 +72,11 @@ bdb_compile_fail_case(query_interior_after_main
     "no matching function for call"
 )
 
-bdb_compile_fail_case(query_interior_after_recursive
+bdb_compile_fail_case(query_interior_after_reach
     "no matching function for call"
 )
 
-bdb_compile_fail_case(query_second_recursive
+bdb_compile_fail_case(query_second_reach
     "no matching function for call"
 )
 
@@ -84,7 +84,7 @@ bdb_compile_fail_case(query_duplicate_interior
     "interior_names_must_be_distinct"
 )
 
-bdb_compile_fail_case(query_recursive_after_main
+bdb_compile_fail_case(query_reach_after_main
     "no matching function for call"
 )
 
@@ -93,7 +93,7 @@ bdb_compile_fail_case(query_prepare_without_main
 )
 
 bdb_compile_fail_case(query_negation_in_rec
-    "a_recursive_rule_does_not_negate_a_derived_table"
+    "a_rec_rule_does_not_negate_a_derived_table"
 )
 
 bdb_compile_fail_case(closed_handle_wrong_vocabulary

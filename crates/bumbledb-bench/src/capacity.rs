@@ -163,7 +163,6 @@ pub const BOOKED_LEN: u64 = 10;
 
 /// One power-twin relation's seeded row stream (both twins share it —
 /// the corpus is the theory-independent mass).
-#[must_use]
 pub fn power_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         ids::PARENT => Box::new((0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(SUPPLY)])),
@@ -186,7 +185,6 @@ pub fn power_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Va
 /// # Panics
 ///
 /// Never: every constructed slice is nonempty by [`BOOKED_LEN`].
-#[must_use]
 pub fn calendar_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     let interval = |start: u64, end: u64| {
         Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"))

@@ -53,7 +53,7 @@ inline constexpr auto SubtreeRollup = bdb::query(Accounts).rule([](auto r) const
 });
 
 inline constexpr auto NativeRollup = bdb::query(Accounts)
-                                         .recursive<"sub">(
+                                         .reach<"sub">(
                                              bdb::base{[](auto r) consteval {
 	                                             auto vars = r.vars(Account);
 	                                             return r.match(Account, {.id = vars.id})

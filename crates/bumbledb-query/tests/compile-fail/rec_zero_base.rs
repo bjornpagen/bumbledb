@@ -1,5 +1,5 @@
-//! A `recursive` block needs at least one base arm after classification
-//! (a line whose body does not name the pred).
+//! A `rec` block needs at least one base arm after classification
+//! (a line whose body does not name the rec).
 //@ error: has no base arm
 
 bumbledb::schema! {
@@ -13,7 +13,7 @@ bumbledb::schema! {
 
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        recursive reach(c) | Parent(child: c, parent: p), reach(p);
+        rec reach(c) | Parent(child: c, parent: p), reach(p);
         (c) | reach(c);
     })
 }

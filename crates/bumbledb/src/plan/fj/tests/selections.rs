@@ -102,9 +102,8 @@ fn residuals_and_field_compares_stay_filters() {
 fn a_leaked_eq_filter_fails_selection_validation() {
     let bad = PlanOccurrence {
         occ_id: OccId(3),
-        source: crate::ir::AtomSource::Edb(RelationId(0)),
+        bind: OccBind::Edb(RelationId(0)),
         role: crate::ir::normalize::Role::Positive,
-        bind: None,
         vars: vec![],
         selections: vec![],
         filters: vec![FilterPredicate::Compare {

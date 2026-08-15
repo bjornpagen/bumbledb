@@ -5,7 +5,7 @@ use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
 use crate::image::view::apply;
 use crate::ir::VarId;
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
+use crate::ir::normalize::{NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
@@ -211,7 +211,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                    &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
                         .expect("small")],
                     &[],
                     &[],
@@ -227,9 +227,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
 fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        source: crate::ir::AtomSource::Edb(relation),
+        bind: OccBind::Edb(relation),
         role: Role::Positive,
-        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -247,7 +246,7 @@ fn normalized(
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
         .flat_map(|o| {
-            let relation = schema.relation(o.source.edb().expect("fixture"));
+            let relation = schema.relation(o.source().edb().expect("fixture"));
             o.vars
                 .iter()
                 .map(move |(f, v)| (*v, SlotWidth::of(&relation.field(*f).value_type)))

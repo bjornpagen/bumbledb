@@ -12,17 +12,17 @@
 //! cq        := interior* main
 //! reach     := interior* recblock main
 //! interior  := 'interior' derived '(' head ')' '|' body ';'
-//! recblock  := 'recursive' derived '(' head ')' '|' body ';'
+//! recblock  := 'rec' derived '(' head ')' '|' body ';'
 //! main      := barerule+
 //! barerule  := '(' head ')' '|' body ';'
 //!                                        // consecutive `interior derived(...)` lines
 //!                                        //   union into one Interior; consecutive
-//!                                        //   `recursive derived(...)` lines union into
+//!                                        //   `rec derived(...)` lines union into
 //!                                        //   one Rec (a line whose body has an atom
 //!                                        //   naming derived is a rec arm, else base);
 //!                                        //   an all-bare query is a CQ with empty
 //!                                        //   interiors; a named head without
-//!                                        //   `interior` / `recursive` is a compile
+//!                                        //   `interior` / `rec` is a compile
 //!                                        //   error (the former named-head sneak)
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
@@ -67,7 +67,7 @@
 //!                                        //   in the IR or the fingerprint; relations
 //!                                        //   are UpperCamel, so an interior/rec spelled
 //!                                        //   like a relation is unwritable; `and`,
-//!                                        //   `or`, `interior`, and `recursive` are
+//!                                        //   `or`, `interior`, and `rec` are
 //!                                        //   reserved
 //! ```
 //!
@@ -344,7 +344,7 @@ enum HeadTerm {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleKind {
     Interior,
-    Recursive,
+    Rec,
 }
 
 /// One parsed rule: the keyword (or bare main) carries the name.
@@ -358,7 +358,7 @@ enum ParsedRule {
         head: Vec<HeadTerm>,
         items: Vec<Item>,
     },
-    Recursive {
+    Rec {
         name: Name,
         head: Vec<HeadTerm>,
         items: Vec<Item>,
@@ -368,17 +368,15 @@ enum ParsedRule {
 impl ParsedRule {
     fn head(&self) -> &[HeadTerm] {
         match self {
-            Self::Bare { head, .. }
-            | Self::Interior { head, .. }
-            | Self::Recursive { head, .. } => head,
+            Self::Bare { head, .. } | Self::Interior { head, .. } | Self::Rec { head, .. } => head,
         }
     }
 
     fn items(&self) -> &[Item] {
         match self {
-            Self::Bare { items, .. }
-            | Self::Interior { items, .. }
-            | Self::Recursive { items, .. } => items,
+            Self::Bare { items, .. } | Self::Interior { items, .. } | Self::Rec { items, .. } => {
+                items
+            }
         }
     }
 }
@@ -1125,17 +1123,12 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
 
 /// A derived-table name: lowercase, not a reserved word.
 fn validate_derived_name(name: &Name) -> Parse<()> {
-    if name.text == "and"
-        || name.text == "or"
-        || name.text == "interior"
-        || name.text == "recursive"
-        || name.text == "rec"
-    {
+    if name.text == "and" || name.text == "or" || name.text == "interior" || name.text == "rec" {
         return fail(
             name.span,
             format!(
                 "query!: `{}` is reserved — `and`/`or` are the condition grammar, \
-                 `interior`/`recursive` introduce derived tables \
+                 `interior`/`rec` introduce derived tables \
                  (docs/architecture/20-query-ir.md § the query notation)",
                 name.text
             ),
@@ -1161,7 +1154,7 @@ fn validate_derived_name(name: &Name) -> Parse<()> {
     Ok(())
 }
 
-/// The derived-table name after `interior` / `recursive` / `rec`.
+/// The derived-table name after `interior` / `rec`.
 /// Render's prefixes (`interior {id}` / `rec`) are the nameless spellings:
 /// an integer after `interior`, or the head group immediately after `rec`.
 fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Parse<Name> {
@@ -1184,7 +1177,7 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
                 )
             }
         }
-        Some(TokenTree::Group(_)) if kind == RuleKind::Recursive => Ok(Name {
+        Some(TokenTree::Group(_)) if kind == RuleKind::Rec => Ok(Name {
             text: "rec".into(),
             span: kw_span,
         }),
@@ -1199,7 +1192,7 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
     }
 }
 
-/// Parses one rule: `interior derived (head) | body ;`, `recursive derived
+/// Parses one rule: `interior derived (head) | body ;`, `rec derived
 /// (head) | body ;`, `rec (head) | body ;`, or a bare `(head) | body ;`.
 /// A named head without the keyword is the former named-head sneak — a
 /// spanned compile error.
@@ -1233,11 +1226,11 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         ),
                     );
                 }
-                "interior" | "recursive" | "rec" => {
+                "interior" | "rec" => {
                     let kind = if ident.text == "interior" {
                         RuleKind::Interior
                     } else {
-                        RuleKind::Recursive
+                        RuleKind::Rec
                     };
                     let derived = parse_derived_name(tokens, kind, ident.span)?;
                     Some((kind == RuleKind::Interior, derived))
@@ -1263,8 +1256,8 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                     return fail(
                         ident.span,
                         format!(
-                            "query!: named heads require `interior` or `recursive` — \
-                             write `interior {}(...)` or `recursive {}(...)`",
+                            "query!: named heads require `interior` or `rec` — \
+                             write `interior {}(...)` or `rec {}(...)`",
                             ident.text, ident.text
                         ),
                     );
@@ -1328,7 +1321,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     Ok(match intro {
         None => ParsedRule::Bare { head, items },
         Some((true, name)) => ParsedRule::Interior { name, head, items },
-        Some((false, name)) => ParsedRule::Recursive { name, head, items },
+        Some((false, name)) => ParsedRule::Rec { name, head, items },
     })
 }
 
@@ -2024,7 +2017,7 @@ enum Phase {
     Main,
 }
 
-/// Groups consecutive same-name interiors / recursive lines and splits
+/// Groups consecutive same-name interiors / rec lines and splits
 /// rec arms by whether a body atom names the rec. Exhaustive
 /// compile errors for this cut live here.
 #[expect(
@@ -2047,7 +2040,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                 if matches!(phase, Phase::Rec) {
                     return fail(
                         name.span,
-                        "query!: `interior` cannot follow `recursive` — declaration \
+                        "query!: `interior` cannot follow `rec` — declaration \
                          order is interiors, then rec, then main",
                     );
                 }
@@ -2065,7 +2058,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                     return fail(
                         name.span,
                         format!(
-                            "query!: `{0}` cannot be both `interior` and `recursive` — \
+                            "query!: `{0}` cannot be both `interior` and `rec` — \
                              derived names are unique",
                             name.text
                         ),
@@ -2092,8 +2085,8 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                     rules: vec![rule],
                 });
             }
-            ParsedRule::Recursive { name, head, items } => {
-                let rule = ParsedRule::Recursive {
+            ParsedRule::Rec { name, head, items } => {
+                let rule = ParsedRule::Rec {
                     name: name.clone(),
                     head,
                     items,
@@ -2101,7 +2094,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                 if matches!(phase, Phase::Main) {
                     return fail(
                         name.span,
-                        "query!: `recursive` cannot follow a bare rule — declaration \
+                        "query!: `rec` cannot follow a bare rule — declaration \
                          order is interiors, then rec, then main",
                     );
                 }
@@ -2110,7 +2103,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                     return fail(
                         name.span,
                         format!(
-                            "query!: `{0}` cannot be both `interior` and `recursive` — \
+                            "query!: `{0}` cannot be both `interior` and `rec` — \
                              derived names are unique",
                             name.text
                         ),
@@ -2146,8 +2139,8 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
                     Some(_) => {
                         return fail(
                             name.span,
-                            "query!: at most one `recursive` name this cut — a \
-                             second recursive is unwritable",
+                            "query!: at most one `rec` name this cut — a \
+                             second rec is unwritable",
                         );
                     }
                 }
@@ -2161,7 +2154,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
     if main.is_empty() {
         return fail(
             block,
-            "query!: a query needs a bare main rule — `interior` / `recursive` \
+            "query!: a query needs a bare main rule — `interior` / `rec` \
              declare derived tables; the answer is the unnamed rules",
         );
     }
@@ -2170,7 +2163,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
             return fail(
                 group.name.span,
                 format!(
-                    "query!: `recursive {}` has no base arm — a line whose body \
+                    "query!: `rec {}` has no base arm — a line whose body \
                      does not name `{}` is a base arm",
                     group.name.text, group.name.text
                 ),
@@ -2180,7 +2173,7 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
             return fail(
                 group.name.span,
                 format!(
-                    "query!: `recursive {}` has no rec arm — a line whose body \
+                    "query!: `rec {}` has no rec arm — a line whose body \
                      names `{}` (positive or negated) is a rec arm",
                     group.name.text, group.name.text
                 ),
@@ -2334,12 +2327,12 @@ fn emit_reach(
 ///     (person, during) | Busy(person, during), Allen(during, INTERSECTS, ?window);
 ///     (person, during) | Ooo(person, during),  Allen(during, INTERSECTS, ?window);
 /// });
-/// // `recursive` / `interior` declare derived tables; a body atom may
+/// // `rec` / `interior` declare derived tables; a body atom may
 /// // name one (bare idents bind head POSITIONS, ordered dense — left to
 /// // right from 0); bare rules are the main query.
 /// let reachable = bumbledb_query::query!(Ledger {
-///     recursive reach(c, a) | OrgParent(child: c, parent: a);
-///     recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+///     rec reach(c, a) | OrgParent(child: c, parent: a);
+///     rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
 ///     (c, a) | reach(c, a);
 /// });
 /// ```

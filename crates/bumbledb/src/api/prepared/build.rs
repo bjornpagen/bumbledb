@@ -727,7 +727,7 @@ fn prepare_rec_arm(
         normalized
             .occurrences
             .iter()
-            .any(|occ| occ.bind == Some(crate::ir::normalize::BindRole::RecDelta)),
+            .any(|occ| matches!(occ.bind, crate::ir::normalize::OccBind::RecDelta(_))),
         "self_occ is the rec atom normalize numbered"
     );
     let prepared =
@@ -744,17 +744,17 @@ fn stamp_rec_bind(
     delta: crate::ir::normalize::OccId,
 ) {
     for occ in &mut normalized.occurrences {
-        let Some(id) = occ.source.interior() else {
+        let Some(id) = occ.bind.interior() else {
             continue;
         };
         if id != rec_id {
             continue;
         }
-        occ.bind = Some(if occ.occ_id == delta {
-            crate::ir::normalize::BindRole::RecDelta
+        occ.bind = if occ.occ_id == delta {
+            crate::ir::normalize::OccBind::RecDelta(id)
         } else {
-            crate::ir::normalize::BindRole::RecAcc
-        });
+            crate::ir::normalize::OccBind::RecAcc(id)
+        };
     }
 }
 
@@ -816,13 +816,16 @@ fn prepare_rule_variant(
         // picks delta vs accumulated. The staleness surface already
         // knows the shape (negated and grounding-discharged
         // occurrences carry no pin today).
-        if occurrence.bind.is_some() {
+        if occurrence.bind.edb().is_none() {
             stats.push(crate::plan::selectivity::occurrence_stats(
                 txn, cache, schema, occurrence, 0,
             )?);
             continue;
         }
-        let relation = occurrence.source.edb().expect("bind None is EDB");
+        let relation = occurrence
+            .bind
+            .edb()
+            .expect("EDB bind is a stored relation");
         let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
         let occ_stats =
             crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
@@ -1017,13 +1020,16 @@ fn prepare_ray_probe(
         .iter()
         .filter(|o| o.role.participates())
     {
-        let rows = if occurrence.bind.is_some() {
+        let rows = if occurrence.bind.edb().is_none() {
             0
         } else {
             crate::plan::selectivity::relation_rows(
                 txn,
                 schema,
-                occurrence.source.edb().expect("bind None is EDB"),
+                occurrence
+                    .bind
+                    .edb()
+                    .expect("EDB bind is a stored relation"),
             )?
         };
         stats.push(crate::plan::selectivity::occurrence_stats(

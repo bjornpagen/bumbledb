@@ -1,5 +1,5 @@
 //! Declaration order is interiors, then rec, then main.
-//@ error: `recursive` cannot follow a bare rule
+//@ error: `rec` cannot follow a bare rule
 //@ line: 17
 
 bumbledb::schema! {
@@ -14,7 +14,7 @@ bumbledb::schema! {
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
         (c) | Parent(child: c, parent: p);
-        recursive reach(c) | Parent(child: c, parent: p);
-        recursive reach(c) | Parent(child: c, parent: p), reach(p);
+        rec reach(c) | Parent(child: c, parent: p);
+        rec reach(c) | Parent(child: c, parent: p), reach(p);
     })
 }

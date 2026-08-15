@@ -16,7 +16,7 @@ inline constexpr auto S = bdb::schema<"S">(Node, Edge, bdb::contained(bdb::on(Ed
                                            bdb::contained(bdb::on(Edge.parent), bdb::on(Node.id)));
 
 inline constexpr auto Broken = bdb::query(S)
-                                   .recursive<"reach">(
+                                   .reach<"reach">(
                                        bdb::base{[](auto r) consteval {
 	                                       auto vars = r.vars(Node);
 	                                       return r.match(Node, {.id = vars.id}).find({}, bdb::as<"c">(vars.id));

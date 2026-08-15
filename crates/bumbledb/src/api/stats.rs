@@ -6,7 +6,7 @@
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 
 /// The version shared by rendered and structured plan introspection.
-pub const INTROSPECTION_VERSION: u16 = 5;
+pub const INTROSPECTION_VERSION: u16 = 6;
 
 /// One execution's counted statistics. The body is a sum matching the
 /// prepared pipeline: `reach` exists exactly on the Reach arm; interiors

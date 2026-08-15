@@ -1,5 +1,5 @@
-//! At most one `recursive` name this cut.
-//@ error: at most one `recursive` name
+//! At most one `rec` name this cut.
+//@ error: at most one `rec` name
 //@ line: 17
 
 bumbledb::schema! {
@@ -13,8 +13,8 @@ bumbledb::schema! {
 
 pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        recursive a(c) | Parent(child: c, parent: p);
-        recursive b(c) | Parent(child: c, parent: p), b(p);
+        rec a(c) | Parent(child: c, parent: p);
+        rec b(c) | Parent(child: c, parent: p), b(p);
         (c) | a(c);
     })
 }

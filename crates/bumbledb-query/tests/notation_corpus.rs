@@ -599,12 +599,12 @@ fn cases() -> Vec<Case> {
           (v0) | Account(id: v0, currency == Eur); });
 
     corpus_case!(cases, true, "org-reach-rooted",
-        ["recursive", "interior-ordered-dense"],
-        "recursive reach(o) | Org(id: o), o == ?root;\n\
-         recursive reach(p) | OrgParent(child: c, parent: p), reach(c);\n\
+        ["rec", "interior-ordered-dense"],
+        "rec reach(o) | Org(id: o), o == ?root;\n\
+         rec reach(p) | OrgParent(child: c, parent: p), reach(c);\n\
          (p) | Org(id: p), reach(p);",
-        { recursive reach(o) | Org(id: o), o == ?root;
-          recursive reach(p) | OrgParent(child: c, parent: p), reach(c);
+        { rec reach(o) | Org(id: o), o == ?root;
+          rec reach(p) | OrgParent(child: c, parent: p), reach(c);
           (p) | Org(id: p), reach(p); },
         { rec(v0) | Org(id: v0), v0 == ?0;
           rec(v1) | OrgParent(child: v0, parent: v1), interior 0(v0);
@@ -615,12 +615,12 @@ fn cases() -> Vec<Case> {
     // join-position law (interior vars must be relation-bound) cannot spell —
     // hand-written `QueryIr` on the TS side, still prepared.
     corpus_case!(cases, false, "org-reach",
-        ["recursive", "interior-ordered-dense"],
-        "recursive reach(c, a) | OrgParent(child: c, parent: a);\n\
-         recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n\
+        ["rec", "interior-ordered-dense"],
+        "rec reach(c, a) | OrgParent(child: c, parent: a);\n\
+         rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n\
          (c, a) | reach(c, a);",
-        { recursive reach(c, a) | OrgParent(child: c, parent: a);
-          recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        { rec reach(c, a) | OrgParent(child: c, parent: a);
+          rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
           (c, a) | reach(c, a); },
         { rec(v0, v1) | OrgParent(child: v0, parent: v1);
           rec(v0, v2) | OrgParent(child: v0, parent: v1), interior 0(v1, v2);
@@ -674,7 +674,7 @@ const REQUIRED_PRODUCTIONS: &[&str] = &[
     "duration",
     "named-columns",
     "multi-rule-union",
-    "recursive",
+    "rec",
     "interior-ordered-dense",
     "interior-sparse",
     "interior-position-selection",

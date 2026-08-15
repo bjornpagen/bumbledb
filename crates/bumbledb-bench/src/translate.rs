@@ -37,7 +37,7 @@
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
 //! - **Derived tables = `WITH [RECURSIVE]`** ([`derived`], the lossy
-//!   SQLite image of this cut): interiors then optional rec as CTEs,
+//!   SQLite image of this cut): interiors then, on Reach, rec as CTEs,
 //!   main as the SELECT. Zero CTEs is a plain query. No `UNION ALL`.
 //!   No CTE after the rec. Interval-typed derived columns are the
 //!   remaining translator limit
@@ -176,17 +176,16 @@ struct Builder<'q> {
     /// [`ParamSlot`] → positional index (params may repeat; one `?N` each).
     param_index: BTreeMap<ParamSlot, usize>,
     params: Vec<ParamSlot>,
-    /// Rec identity when the query has a rec (C2: `interiors.len()`).
-    rec: Option<InteriorId>,
+    /// CQ vs Reach: Reach names the rec CTE (`interiors.len()`).
+    shape: query::QueryShape,
 }
 
 /// CTE identifier: `interior{id}` for interiors, `rec` for the rec.
 #[must_use]
-pub(super) fn derived_cte_name(id: InteriorId, rec: Option<InteriorId>) -> String {
-    if rec == Some(id) {
-        "rec".to_owned()
-    } else {
-        format!("interior{}", id.0)
+fn derived_cte_name(id: InteriorId, shape: query::QueryShape) -> String {
+    match shape {
+        query::QueryShape::Reach { rec } if rec == id => "rec".to_owned(),
+        query::QueryShape::Cq | query::QueryShape::Reach { .. } => format!("interior{}", id.0),
     }
 }
 

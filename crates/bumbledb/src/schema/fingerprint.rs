@@ -7,7 +7,7 @@
 //! relation, field, and statement ids are pinned by declaration/materialized
 //! order and therefore covered without being hashed separately.
 //!
-//! Sealed enforcement data (target keys, key permutations, interval flags)
+//! Sealed enforcement data (target keys, key permutations, interval tails)
 //! and the sealed `==` pairing ([`super::ContainmentStatement::mirror`])
 //! are **not** hashed:
 //! the acceptance gate computes both as deterministic functions of the

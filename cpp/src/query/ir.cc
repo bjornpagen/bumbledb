@@ -459,14 +459,14 @@ auto every_rule_of_a_query_must_derive_the_same_head() -> void;
 auto negated_atom_binds_a_variable_no_positive_atom_binds() -> void;
 auto pack_stands_alone_never_beside_another_aggregate() -> void;
 auto interior_atom_names_no_declared_table() -> void;
-auto a_recursive_rule_matches_only_its_own_rec() -> void;
-auto a_recursive_rule_does_not_negate_a_derived_table() -> void;
-auto a_recursive_rule_head_projects_bound_variables_only() -> void;
+auto a_rec_rule_matches_only_its_own_rec() -> void;
+auto a_rec_rule_does_not_negate_a_derived_table() -> void;
+auto a_rec_rule_head_projects_bound_variables_only() -> void;
 auto interior_atom_omits_a_head_column() -> void;
 auto interior_atom_binds_a_name_the_head_does_not_carry() -> void;
 auto interior_binding_joins_only_its_head_columns_class() -> void;
 auto interior_names_must_be_distinct() -> void;
-auto recursive_needs_at_least_one_base_rule() -> void;
-auto recursive_needs_at_least_one_rec_rule() -> void;
+auto reach_needs_at_least_one_base_rule() -> void;
+auto reach_needs_at_least_one_rec_rule() -> void;
 
 }

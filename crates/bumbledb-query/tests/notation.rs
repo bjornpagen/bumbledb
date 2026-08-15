@@ -464,8 +464,8 @@ fn scalar_comparisons_round_trip() {
     );
 }
 
-/// The `recursive` form (the notation's one linear rec): consecutive
-/// `recursive` lines union into one Rec (a line whose body names the
+/// The `rec` form (the notation's one linear rec): consecutive
+/// `rec` lines union into one Rec (a line whose body names the
 /// derived table is a rec arm, else base); bare rules are main. The
 /// org-hierarchy closure over `OrgParent`, rendered: rec rules carry
 /// the nameless `rec(...)` prefix, main rules render bare, dense
@@ -478,8 +478,8 @@ const ORG_REACH_NORMALIZED: &str = "rec(v0, v1) | OrgParent(child: v0, parent: v
 #[test]
 fn recursive_reach_golden() {
     let reachable = query!(Ledger {
-        recursive reach(c, a) | OrgParent(child: c, parent: a);
-        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        rec reach(c, a) | OrgParent(child: c, parent: a);
+        rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
         (c, a) | reach(c, a);
     });
     assert_eq!(pin("org-reach", Ledger, &reachable), ORG_REACH_NORMALIZED);
@@ -508,8 +508,8 @@ fn recursive_lowers_to_the_exact_ir() {
     use bumbledb::ir::HeadTerm;
     use bumbledb::{Atom, AtomSource, FieldId, FindTerm, InteriorId, Rec, Rule, Term, VarId};
     let lowered = query!(Ledger {
-        recursive reach(c, a) | OrgParent(child: c, parent: a);
-        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        rec reach(c, a) | OrgParent(child: c, parent: a);
+        rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
         (c, a) | reach(c, a);
     });
     let parent_atom = |child: u16, parent: u16| Atom {
@@ -547,7 +547,7 @@ fn recursive_lowers_to_the_exact_ir() {
 
 /// Named params get dense ids by first occurrence in IR walk order —
 /// interiors, then rec base, then rec arms, then main. Consecutive
-/// `recursive` lines union; non-consecutive reuse is a compile error, so
+/// `rec` lines union; non-consecutive reuse is a compile error, so
 /// groups cannot interleave around main.
 #[test]
 fn rec_then_main_mint_param_ids_in_walk_order() {
@@ -557,8 +557,8 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
         Rec, Rule, Term, VarId,
     };
     let lowered = query!(Ledger {
-        recursive reach(c, a) | OrgParent(child: c, parent: a);
-        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a), a != ?skip;
+        rec reach(c, a) | OrgParent(child: c, parent: a);
+        rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a), a != ?skip;
         (c, a) | reach(c, a), c == ?root;
     });
     let parent_atom = |child: u16, parent: u16| Atom {
@@ -897,9 +897,9 @@ use primer::{Primer, State};
 #[test]
 fn primer_shaped_reach_diagonal_golden() {
     let cycle = query!(Primer {
-        recursive reach(from, to) | Produces(grp: from, capability: cap),
+        rec reach(from, to) | Produces(grp: from, capability: cap),
             Requires(consumer: to, capability: cap, state == State::Upheld), from != to;
-        recursive reach(from, to) | Produces(grp: from, capability: cap),
+        rec reach(from, to) | Produces(grp: from, capability: cap),
             Requires(consumer: mid, capability: cap, state == State::Upheld),
             Requires(consumer: to, state == State::Upheld), from != mid, reach(mid, to);
         (node) | Grp(id: node), reach(node, node);

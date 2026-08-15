@@ -24,3 +24,14 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# nightly-2026-08-15: `assert!(xs.is_empty())` is the readable empty check;
+# clippy's rewrite (`assert_eq!(xs, [] as [T; 0])`) is worse.
+assert_is_empty = "allow"
+
+# Portable release: fat LTO + one codegen unit. No target-cpu=native
+# (published darwin-arm64 must run on any Apple Silicon). panic=unwind
+# stays: catch_unwind is load-bearing in the engine, bench, and C ABI.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3

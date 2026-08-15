@@ -228,7 +228,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
     // print stored field names, and constant contradictions on predicate
     // columns are the rare shape — skipping is sound (the fold is an
     // optimization; the rule just executes and denotes ∅ honestly).
-    let relation = schema.relation(occurrence.source.edb()?);
+    let relation = schema.relation(occurrence.bind.edb()?);
 
     // Pass 1 — the Eq pins: the first constant Eq per field (params are
     // stage-3 and never fold), judging rules (b) and (d) as later

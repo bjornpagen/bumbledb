@@ -93,7 +93,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         // `spare_buffers` ping-pong — and every generation-keyed
         // mechanism never learns recursion exists
         // (`docs/architecture/40-execution.md` § the linear reach driver).
-        if occurrence.bind.is_some() {
+        if occurrence.bind.edb().is_none() {
             let image = derived_images.image(occ_idx);
             let mut build_span = obs::span_args(
                 obs::names::VIEW_BUILD,
@@ -120,7 +120,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             );
             continue;
         }
-        let relation = match occurrence.source {
+        let relation = match occurrence.source() {
             crate::ir::AtomSource::Edb(relation) => relation,
             crate::ir::AtomSource::Interior(_) => {
                 unreachable!("Interior continued above")
@@ -250,7 +250,7 @@ fn dedup_source(
     generation: ViewGeneration,
     resolved_filters: &[Vec<FilterPredicate>],
 ) -> Option<usize> {
-    let crate::ir::AtomSource::Edb(relation) = plan.occurrences()[occ].source else {
+    let crate::ir::AtomSource::Edb(relation) = plan.occurrences()[occ].source() else {
         return None;
     };
     plan.occurrences()
@@ -258,7 +258,7 @@ fn dedup_source(
         .enumerate()
         .position(|(other, occurrence)| {
             other != occ
-                && occurrence.source.edb() == Some(relation)
+                && occurrence.source().edb() == Some(relation)
                 && memo.generation[other] == Some(generation)
                 && memo.filters[other] == resolved_filters[occ]
                 && memo.colts[other].same_shape(&memo.colts[occ])

@@ -10,12 +10,12 @@
 
 use crate::image::ColumnSpan;
 use crate::image::view::{Const, FilterPredicate};
+use crate::ir::VarId;
 use crate::ir::normalize::{
-    AntiProbe, BindRole, OccId, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration,
-    PlacedWordComparison, Role, SlotWidth,
+    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
+    SlotWidth,
 };
-use crate::ir::{InteriorId, VarId};
-use bumbledb_theory::schema::{FieldId, RelationId};
+use bumbledb_theory::schema::FieldId;
 
 mod binary2fj;
 mod check_occurrence_coverage;
@@ -37,38 +37,7 @@ pub use gj_split::gj_split;
 pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use provably_distinct::{DistinctWitness, Distinctness, provably_distinct};
 
-/// How an occurrence binds: stored EDB vs a derived table, with the
-/// rec-arm stamp on the derived arms. Collapses `AtomSource` +
-/// `Option<BindRole>` so EDB-with-a-derived-role and Interior-with-no-role
-/// are unrepresentable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OccBind {
-    Edb(RelationId),
-    Finished(InteriorId),
-    RecDelta(InteriorId),
-    RecAcc(InteriorId),
-}
-
-impl OccBind {
-    pub(crate) fn of(source: crate::ir::AtomSource, bind: Option<BindRole>) -> Self {
-        match (source, bind) {
-            (crate::ir::AtomSource::Edb(relation), None) => Self::Edb(relation),
-            (crate::ir::AtomSource::Interior(id), Some(BindRole::Finished)) => Self::Finished(id),
-            (crate::ir::AtomSource::Interior(id), Some(BindRole::RecDelta)) => Self::RecDelta(id),
-            (crate::ir::AtomSource::Interior(id), Some(BindRole::RecAcc)) => Self::RecAcc(id),
-            (crate::ir::AtomSource::Edb(_), Some(_)) => {
-                unreachable!("EDB occurrence cannot carry a derived bind")
-            }
-            (crate::ir::AtomSource::Interior(_), None) => {
-                unreachable!("derived occurrence carries a bind role")
-            }
-        }
-    }
-
-    pub(crate) fn of_occurrence(occurrence: &Occurrence) -> Self {
-        Self::of(occurrence.source, occurrence.bind)
-    }
-}
+pub(crate) use crate::ir::normalize::OccBind;
 
 pub(crate) use split_filters::split_filters;
 #[cfg(test)]
@@ -185,25 +154,14 @@ pub struct PointProbe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
-    /// The atom's source, carried whole through plan validation
-    /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer
-    /// guards): an
-    /// `Edb` occurrence binds through the image cache and the view memo
-    /// as ever; an `Interior` occurrence binds to the reach driver's
-    /// per-round transient image (`api/prepared/run_join.rs` — never
-    /// the cache, never the memo), its `spans` derived from the target
-    /// signature's sealed columns.
-    pub source: crate::ir::AtomSource,
     /// The occurrence's planning state, carried from normalization —
     /// execution's view-bind and filter-resolution loops read it to
     /// skip eliminated occurrences, and PRD 12's introspection reads the
     /// `Eliminated` marks directly.
     pub role: Role,
-    /// Derived-bind role from the normalized occurrence. `None` is EDB;
-    /// `run_join` and `fill_plan_images` dispatch on this, never on the
-    /// complement of an EDB source. Plan/exec match [`OccBind`], minted
-    /// once from `source` + `bind`.
-    pub bind: Option<crate::ir::normalize::BindRole>,
+    /// How this occurrence binds: stored EDB or a derived table, with
+    /// the rec-arm stamp on Reach self-reads.
+    pub bind: OccBind,
     /// The field each variable reads from.
     pub vars: Vec<(FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
@@ -256,7 +214,11 @@ pub struct PlanOccurrence {
 
 impl PlanOccurrence {
     pub(crate) fn occ_bind(&self) -> OccBind {
-        OccBind::of(self.source, self.bind)
+        self.bind
+    }
+
+    pub(crate) fn source(&self) -> crate::ir::AtomSource {
+        self.bind.source()
     }
 }
 

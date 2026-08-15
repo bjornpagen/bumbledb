@@ -130,7 +130,6 @@ pub fn parent_kind(i: u64) -> u64 {
 
 /// One relation's seeded row stream (both twins share it — the corpus
 /// is the theory-independent mass).
-#[must_use]
 pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         ids::PARENT => {

@@ -7,7 +7,9 @@
 
 use super::*;
 use crate::image::view::FilterPredicate;
-use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
+use crate::ir::normalize::{
+    IntervalWord, OccBind, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord,
+};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
 
@@ -90,17 +92,15 @@ fn interval_pair_query(
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), VarId(0)), (FieldId(1), VarId(1))],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(1)),
+            bind: OccBind::Edb(RelationId(1)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), VarId(2)), (FieldId(1), VarId(3))],
             filters: vec![],
         },
@@ -347,10 +347,6 @@ fn membership_schema() -> Schema {
 /// the join. Returns exactly the events whose time falls in the payroll
 /// interval — both boundaries asserted (start in, end out).
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one fixture asserts both interval boundaries of the membership join"
-)]
 fn membership_point_var_join_keeps_exactly_the_contained_events() {
     let dir = TempDir::new("run-membership");
     let schema = membership_schema();
@@ -405,9 +401,8 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
@@ -416,9 +411,8 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(1)),
+            bind: OccBind::Edb(RelationId(1)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -579,9 +573,8 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
@@ -590,17 +583,15 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(1)),
+            bind: OccBind::Edb(RelationId(1)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(2),
-            source: crate::ir::AtomSource::Edb(RelationId(2)),
+            bind: OccBind::Edb(RelationId(2)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -695,17 +686,15 @@ fn negated_membership_rejects_only_covered_events() {
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(1)),
+            bind: OccBind::Edb(RelationId(1)),
             role: Role::Positive,
-            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bind: OccBind::Edb(RelationId(0)),
             role: Role::Negated,
-            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
@@ -916,9 +905,8 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(outer)),
+            bind: OccBind::Edb(RelationId(outer)),
             role: Role::Positive,
-            bind: None,
             vars: vec![
                 (FieldId(0), VarId(0)),
                 (FieldId(1), VarId(1)),
@@ -928,9 +916,8 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(inner)),
+            bind: OccBind::Edb(RelationId(inner)),
             role: Role::Positive,
-            bind: None,
             vars: vec![
                 (FieldId(0), VarId(3)),
                 (FieldId(1), VarId(1)),
@@ -1369,9 +1356,8 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let occurrences = (0..3u16)
         .map(|occ| Occurrence {
             occ_id: OccId(occ),
-            source: crate::ir::AtomSource::Edb(RelationId(u32::from(occ))),
+            bind: OccBind::Edb(RelationId(u32::from(occ))),
             role: Role::Positive,
-            bind: None,
             vars: vec![
                 (FieldId(0), VarId(occ * 2)),
                 (FieldId(1), VarId(occ * 2 + 1)),
@@ -1509,9 +1495,8 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     let occurrences = (0..3u16)
         .map(|occ| Occurrence {
             occ_id: OccId(occ),
-            source: crate::ir::AtomSource::Edb(RelationId(u32::from(occ))),
+            bind: OccBind::Edb(RelationId(u32::from(occ))),
             role: Role::Positive,
-            bind: None,
             vars: vec![
                 (FieldId(0), VarId(occ * 2)),
                 (FieldId(1), VarId(occ * 2 + 1)),

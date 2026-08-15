@@ -122,7 +122,7 @@ impl Builder<'_> {
     fn source_table(&self, atom: &Atom) -> String {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
-            bumbledb::AtomSource::Interior(id) => super::derived_cte_name(id, self.rec),
+            bumbledb::AtomSource::Interior(id) => super::derived_cte_name(id, self.shape),
         }
     }
 
