@@ -7,7 +7,8 @@
 //! keys (group, claim) pairs).
 
 use super::*;
-use crate::ir::{AggOp, ParamId};
+use crate::ir::FoldOp;
+use crate::ir::ParamId;
 use bumbledb_theory::schema::{Generation, IntervalElement};
 
 /// Busy(id fresh u64, person u64, cap u64, slot interval<u64>);
@@ -112,13 +113,7 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
 /// Q(person, Pack(slot)) :- Busy(person, slot).
 fn pack_query() -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
@@ -198,13 +193,7 @@ fn pack_absorbs_rays_over_i64_spans() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(SHIFT),
             bindings: vec![
@@ -255,8 +244,8 @@ fn pack_groups_exactly_as_sum_does() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
         ],
         atoms: vec![Atom {
@@ -312,13 +301,7 @@ fn multi_rule_pack_folds_the_union() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let rule = |op: CmpOp, param: u16| Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![

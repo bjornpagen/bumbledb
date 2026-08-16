@@ -36,9 +36,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import * as errors from "@superbuilders/errors"
-
 import {
 	bool,
 	bytes,
@@ -56,6 +54,7 @@ import {
 	str,
 	u64
 } from "#index.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-exhume-"))
 const packageRoot = path.resolve(import.meta.dirname, "..")
@@ -142,7 +141,7 @@ describe("the exhume surface against real stores", function suite() {
 	test("every field type survives the theory-less read of a process-fresh copy", async function everyFieldType() {
 		const db = await Db.create(storeDir, Exhumable)
 		const written = db.write(function seed(tx) {
-			const alpha = tx.insert(Specimen, {
+			const alpha = put(tx, Specimen, {
 				label: "alpha",
 				grade: "Pass",
 				flag: true,
@@ -150,7 +149,7 @@ describe("the exhume surface against real stores", function suite() {
 				digest: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
 				window: span(1n, 4n)
 			})
-			const beta = tx.insert(Specimen, {
+			const beta = put(tx, Specimen, {
 				label: "βeta — π ≤ 4",
 				grade: "Fail",
 				flag: false,
@@ -158,8 +157,8 @@ describe("the exhume surface against real stores", function suite() {
 				digest: new Uint8Array([255, 0, 254, 1, 253, 2, 252, 3]),
 				window: span(5n, 9n)
 			})
-			tx.insert(Reading, { specimen: alpha.id, note: "first contact", at: span(-3n, 3n) })
-			tx.insert(Reading, { specimen: beta.id, note: "second contact", at: span(-9n, -1n) })
+			put(tx, Reading, { specimen: alpha.id, note: "first contact", at: span(-3n, 3n) })
+			put(tx, Reading, { specimen: beta.id, note: "second contact", at: span(-9n, -1n) })
 		})
 		assert.ok(written.ok, "the seed commit lands")
 

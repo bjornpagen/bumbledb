@@ -85,7 +85,7 @@ use crate::allen::AllenMask;
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::{LoweredRule, OccId};
-use crate::ir::{CmpOp, FindTerm, InteriorId, ParamId, Value, VarId};
+use crate::ir::{FindTerm, InteriorId, ParamId, Value, VarId};
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
@@ -122,10 +122,10 @@ impl std::fmt::Display for Signature {
             if index > 0 {
                 f.write_str(", ")?;
             }
-            if let Some(op) = column.op {
+            if let Some(op) = column.op() {
                 write!(f, "{op} ")?;
             }
-            match &column.ty {
+            match column.ty() {
                 ValueType::Bool => f.write_str("bool")?,
                 ValueType::U64 => f.write_str("u64")?,
                 ValueType::I64 => f.write_str("i64")?,
@@ -151,19 +151,35 @@ impl std::fmt::Display for Signature {
     }
 }
 
-/// One column of the sealed signature.
+/// One column of the sealed signature: a projection, or a fold. The
+/// two are a sum — `op: Option` would re-admit a fold without a type
+/// or a projection carrying a fold kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignatureColumn {
-    /// The RESULT type — what lands in the buffer. Count is U64 here
-    /// whatever it counted; Duration's measure is U64; Min/Max/Sum
-    /// carry their input's type; Pack carries the interval type; the
-    /// Arg forms carry the projected payload's type.
-    pub ty: ValueType,
-    /// None = plain projection; Some = the fold producing the column.
-    /// Kept together deliberately: the sink needs both jointly, and a
-    /// signature-only split would re-create a parallel table (decided
-    /// here, not inherited from the sketch).
-    pub op: Option<AggKind>,
+pub enum SignatureColumn {
+    /// A projected (group-key) position, including a projected measure.
+    Project { ty: ValueType },
+    /// The fold producing the column. Count is U64; Min/Max/Sum carry
+    /// their input's type; Pack carries the interval type.
+    Fold { op: AggKind, ty: ValueType },
+}
+
+impl SignatureColumn {
+    /// The RESULT type — what lands in the buffer.
+    #[must_use]
+    pub fn ty(&self) -> &ValueType {
+        match self {
+            Self::Project { ty } | Self::Fold { ty, .. } => ty,
+        }
+    }
+
+    /// The fold producing the column, if any.
+    #[must_use]
+    pub fn op(&self) -> Option<AggKind> {
+        match self {
+            Self::Project { .. } => None,
+            Self::Fold { op, .. } => Some(*op),
+        }
+    }
 }
 
 /// The fold producing a signature column, by kind alone: an Arg key is a
@@ -222,11 +238,15 @@ impl std::fmt::Display for AggKind {
 pub(crate) enum ClassifiedComparison {
     /// Scalar var-vs-var under `Eq`/`Ne`/order — one shared non-interval
     /// type (interval equality seals as [`Self::AllenVarVar`]).
-    VarVar { op: CmpOp, lhs: VarId, rhs: VarId },
+    VarVar {
+        op: crate::ir::WordCmp,
+        lhs: VarId,
+        rhs: VarId,
+    },
     /// Scalar var-vs-constant under `Eq`/`Ne`/order, the operator sealed
     /// variable-on-left (a constant-first order comparison mirrors).
     VarConst {
-        op: CmpOp,
+        op: crate::ir::WordCmp,
         var: VarId,
         value: SealedConst,
     },
@@ -257,7 +277,7 @@ pub(crate) enum ClassifiedComparison {
     /// `Duration(interval) <op> other`.
     Duration {
         interval: VarId,
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         other: DurationOperand,
     },
 }
@@ -399,7 +419,7 @@ impl InteriorSignatures<'_> {
         self.lookup(interior)
             .columns
             .get(usize::from(field.0))
-            .map(|column| &column.ty)
+            .map(SignatureColumn::ty)
             .ok_or(ValidationError::InteriorColumnOutOfRange { atom, field })
     }
 }
@@ -430,33 +450,7 @@ impl ValidatedInterior {
 /// A nonempty list: first plus rest. Empty rec arms are roster refusals
 /// ([`ValidationError::EmptyRecursiveBase`] /
 /// [`ValidationError::EmptyRecursiveStep`]); the witness cannot spell them.
-#[derive(Debug)]
-pub(crate) struct NonEmpty<T> {
-    first: T,
-    rest: Vec<T>,
-}
-
-impl<T> NonEmpty<T> {
-    fn from_vec(items: Vec<T>) -> Option<Self> {
-        let mut iter = items.into_iter();
-        let first = iter.next()?;
-        Some(Self {
-            first,
-            rest: iter.collect(),
-        })
-    }
-
-    fn len(&self) -> usize {
-        1 + self.rest.len()
-    }
-
-    fn get(&self, index: usize) -> Option<&T> {
-        match index {
-            0 => Some(&self.first),
-            n => self.rest.get(n - 1),
-        }
-    }
-}
+pub(crate) use crate::ir::NonEmpty;
 
 /// One lowered rec *base* arm: the rule plus its typing. Base arms
 /// cannot name self ([`ValidationError::SelfInBase`]).
@@ -860,11 +854,15 @@ impl<'a> RuleWitness<'a> {
     /// plan is absorbed at the node that produced it.
     #[must_use]
     pub fn sink_vars(&self) -> BTreeSet<VarId> {
-        let has_aggregate = self
-            .rule
-            .finds
-            .iter()
-            .any(|term| matches!(term, FindTerm::Aggregate { .. }));
+        let has_aggregate = self.rule.finds.iter().any(|term| {
+            matches!(
+                term,
+                FindTerm::Count
+                    | FindTerm::Aggregate { .. }
+                    | FindTerm::Pack { .. }
+                    | FindTerm::AggregateMeasure { .. }
+            )
+        });
         if has_aggregate {
             self.typing.var_types.keys().copied().collect()
         } else {

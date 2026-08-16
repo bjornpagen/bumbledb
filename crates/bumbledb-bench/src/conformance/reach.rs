@@ -83,36 +83,11 @@ impl ReachReport {
 /// negated).
 fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
-    let mut visit = |rules: &[Rule]| {
-        for rule in rules {
-            for atom in rule.atoms.iter().chain(&rule.negated) {
-                if let AtomSource::Edb(relation) = atom.source {
-                    set.insert(relation);
-                }
+    for rule in crate::walk::rules(query) {
+        for atom in rule.atoms.iter().chain(&rule.negated) {
+            if let AtomSource::Edb(relation) = atom.source {
+                set.insert(relation);
             }
-        }
-    };
-    match query {
-        Query::Cq {
-            interiors, rules, ..
-        } => {
-            for interior in interiors {
-                visit(&interior.rules);
-            }
-            visit(rules);
-        }
-        Query::Reach {
-            interiors,
-            rec,
-            rules,
-            ..
-        } => {
-            for interior in interiors {
-                visit(&interior.rules);
-            }
-            visit(&rec.base);
-            visit(&rec.rec);
-            visit(rules);
         }
     }
     set
@@ -125,7 +100,10 @@ fn carries_fold(query: &Query) -> bool {
         rule.finds.iter().any(|find| {
             matches!(
                 find,
-                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+                FindTerm::Count
+                    | FindTerm::Aggregate { .. }
+                    | FindTerm::Pack { .. }
+                    | FindTerm::AggregateMeasure { .. }
             )
         })
     })
@@ -298,13 +276,17 @@ fn hand_queries() -> Vec<HandReach> {
         conditions: vec![],
     };
     let rec = Rec {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        base: vec![rule(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
-        rec: vec![rule(
-            vec![fv(0), fv(2)],
-            vec![edge(v(0), v(1)), interior(0, vec![(0, v(1)), (1, v(2))])],
-            vec![],
-        )],
+        base: bumbledb::NonEmpty::one(bumbledb::RecRule {
+            finds: vec![VarId(0), VarId(1)],
+            atoms: vec![edge(v(0), v(1))],
+            conditions: vec![],
+        }),
+        rec: bumbledb::NonEmpty::one(bumbledb::RecStep {
+            finds: vec![VarId(0), VarId(2)],
+            self_bindings: vec![(FieldId(0), v(1)), (FieldId(1), v(2))],
+            atoms: vec![edge(v(0), v(1))],
+            conditions: vec![],
+        }),
     };
     vec![
         HandReach {

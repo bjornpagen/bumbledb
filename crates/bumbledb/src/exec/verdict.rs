@@ -21,9 +21,9 @@
 //! this compiled verdict per binding and poisons on the first Ray.
 
 use crate::image::view::{Const, MaskConst, mask_of};
-use crate::ir::CmpOp;
 use crate::ir::normalize::lower_literal;
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
+use crate::ir::{OrderCmp, WordCmp};
 
 /// The three-valued verdict of one condition evaluation — the strong
 /// Kleene lattice: `Fails` absorbs `and`, `Holds` absorbs `or`, `Ray`
@@ -59,12 +59,16 @@ struct Span {
 #[derive(Debug)]
 enum Leaf {
     /// Scalar (or `bytes<N>` span) var-vs-var under `Eq`/`Ne`/order.
-    VarVar { op: CmpOp, lhs: Span, rhs: Span },
+    VarVar { op: WordCmp, lhs: Span, rhs: Span },
     /// Var-vs-constant under `Eq`/`Ne`/order, operator variable-on-left.
     /// A `PendingIntern` constant evaluates as the never-minted
     /// dictionary sentinel until [`CompiledVerdict::resolve_interns`]
     /// latches it (the dictionary is append-only, so a hit is final).
-    VarConst { op: CmpOp, var: Span, value: Const },
+    VarConst {
+        op: WordCmp,
+        var: Span,
+        value: Const,
+    },
     /// `Eq` against a bound set: span-wise membership in the sorted
     /// flat element-major word rows.
     VarInSet { var: Span, set: crate::ir::ParamId },
@@ -90,7 +94,7 @@ enum Leaf {
     /// the Ray verdict, never Fails.
     Duration {
         interval: usize,
-        op: CmpOp,
+        op: OrderCmp,
         rhs: DurationSide,
     },
 }
@@ -300,8 +304,8 @@ fn leaf_verdict(leaf: &Leaf, word: &impl Fn(usize) -> u64, params: &[Const]) -> 
                 // validation.
                 let identical = (0..lhs.width).all(|i| word(lhs.slot + i) == word(rhs.slot + i));
                 match op {
-                    CmpOp::Eq => identical,
-                    CmpOp::Ne => !identical,
+                    WordCmp::Eq => identical,
+                    WordCmp::Ne => !identical,
                     _ => unreachable!("validated: spans compare under Eq/Ne only"),
                 }
             })
@@ -314,8 +318,8 @@ fn leaf_verdict(leaf: &Leaf, word: &impl Fn(usize) -> u64, params: &[Const]) -> 
                     .enumerate()
                     .all(|(i, expected)| word(var.slot + i) == *expected);
                 match op {
-                    CmpOp::Eq => identical,
-                    CmpOp::Ne => !identical,
+                    WordCmp::Eq => identical,
+                    WordCmp::Ne => !identical,
                     _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                 }
             }

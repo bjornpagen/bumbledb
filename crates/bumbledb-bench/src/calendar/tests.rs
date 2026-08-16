@@ -250,7 +250,7 @@ fn the_hand_coalesce_matches_pack() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);

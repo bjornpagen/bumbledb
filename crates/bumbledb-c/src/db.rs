@@ -1,9 +1,8 @@
 //! Database ownership and the lexical read/write boundary: the opaque
 //! [`bdb_db`] handle, the three store constructors,
 //! the fingerprint readback, synchronous callback-scoped snapshots and
-//! write transactions, the dynamic fact surface, fresh allocation, bulk
-//! import, and the owned [`bdb_row_set`] carrier for scans and point
-//! reads.
+//! write transactions, the dynamic fact surface, fresh reservation, and
+//! the owned [`bdb_row_set`] carrier for scans and point reads.
 //!
 //! # The nesting SAFETY argument (§18)
 //!
@@ -29,10 +28,10 @@ use bumbledb::{
 
 use crate::error::{bdb_error, bdb_error_kind, fail_engine, fail_locked};
 use crate::schema::{bdb_schema_spec, schema_spec_in};
-use crate::value::{bdb_string_view, bdb_value, row_in, value_out};
+use crate::value::{bdb_string_view, bdb_value, row_in, rows_in, value_out};
 use crate::{
     BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out_to, guard, guard_value,
-    out, ref_in, require_out, slice_in, tag_in,
+    out, ref_in, require_out, tag_in,
 };
 
 /// The engine typestate every handle shares: runtime-built schemas all
@@ -76,7 +75,7 @@ pub struct bdb_snapshot_ref {
 
 /// A borrowed write-transaction capability, valid ONLY inside the write
 /// callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
-/// its engine pointer so `bdb_tx_alloc` can resolve fresh fields without
+/// its engine pointer so `bdb_tx_reserve` can resolve fresh fields without
 /// a second handle argument. `in_op` makes `transaction()` exclusive
 /// across threads for the duration of one `bdb_tx_*` entry.
 pub struct bdb_tx_ref {
@@ -92,17 +91,53 @@ pub struct bdb_tx_ref {
 /// The owned row carrier for scans and point reads: engine values copied
 /// out whole (one crossing), decoded cell by cell on the host. Views handed
 /// out by [`bdb_row_set_get`] borrow this carrier and die with it.
+/// Arity is a property of the set (the relation's width), not of a row
+/// index — inbound collections are already rectangular.
 pub struct bdb_row_set {
     rows: Vec<Vec<Value>>,
+    arity: usize,
 }
 
-/// One borrowed bulk-import row: `value_count` tagged values in
-/// declaration order.
+impl bdb_row_set {
+    fn from_rows(rows: Vec<Vec<Value>>) -> Self {
+        let arity = rows.first().map_or(0, Vec::len);
+        Self { rows, arity }
+    }
+}
+
+/// Facts consumed vs facts that changed the in-memory final-state view.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct bdb_row_view {
-    pub values: *const bdb_value,
-    pub value_count: usize,
+pub struct bdb_mutation_report {
+    pub submitted: u64,
+    pub changed: u64,
+}
+
+/// Wire encoding of a fresh-id range from one `bdb_tx_reserve`.
+/// Empty is `{ start: 0, end_exclusive: 0 }` **at this boundary only** —
+/// `start` is not a minted id when `start == end_exclusive`. Hosts must
+/// not treat 0 as minted on empty (0 is also the first legal minted id).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_fresh_range {
+    pub start: u64,
+    pub end_exclusive: u64,
+}
+
+/// Engine [`bumbledb::FreshRange`] → C wire. Empty stays `{0, 0}` here;
+/// that encoding is not the engine type. `start` is a minted id only on
+/// the nonempty arm.
+fn fresh_range_wire(range: bumbledb::FreshRange<u64>) -> bdb_fresh_range {
+    match range {
+        bumbledb::FreshRange::Empty => bdb_fresh_range {
+            start: 0,
+            end_exclusive: 0,
+        },
+        bumbledb::FreshRange::NonEmpty { start, count } => bdb_fresh_range {
+            start,
+            end_exclusive: start + count.get(),
+        },
+    }
 }
 
 /// The read callback: synchronous, on the calling thread, with a
@@ -306,7 +341,7 @@ fn abort_sentinel() -> Error {
 }
 
 /// The bridge-level writer guard (§17): set for the duration of
-/// `write`/`write_from`/`bulk_load`, cleared on every exit by drop.
+/// `write`/`write_from`, cleared on every exit by drop.
 struct InWriteReset<'a>(&'a AtomicBool);
 
 impl Drop for InWriteReset<'_> {
@@ -676,10 +711,11 @@ pub extern "C" fn bdb_db_write_from(
 // Transaction operations (write-callback scope)
 // ---------------------------------------------------------------------------
 
-/// Records an insert into the delta; `out_changed` = whether the final
-/// state changed. Values are the relation's sealed fields in declaration
-/// order; shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` — nothing is
-/// judged until commit.
+/// Records a collection of inserts into the delta. `values` is
+/// `row_count × value_count` cells in row-major order (`value_count` is
+/// the relation arity). `row_count == 0` is lawful and does not read
+/// `values`. Shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` —
+/// the whole collection is checked before any row enters the delta.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -690,24 +726,32 @@ pub extern "C" fn bdb_tx_insert(
     relation: u32,
     values: *const bdb_value,
     value_count: usize,
-    out_changed: *mut bool,
+    row_count: usize,
+    out_report: *mut bdb_mutation_report,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        require_out(out_report)?;
         let _op = tx_ref.enter_op()?;
-        let row = row_in(values, value_count)?;
-        let changed = tx_ref
+        let rows = rows_in(values, value_count, row_count)?;
+        let report = tx_ref
             .transaction()?
-            .insert_dyn(RelationId(relation), &row)
+            .insert_dyn(RelationId(relation), rows)
             .map_err(|error| fail_engine(error, None))?;
-        out(out_changed, changed)?;
+        out(
+            out_report,
+            bdb_mutation_report {
+                submitted: report.submitted,
+                changed: report.changed,
+            },
+        )?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Records a delete into the delta; `out_changed` = whether the final
-/// state changed.
+/// Records a collection of deletes into the delta. Layout as
+/// [`bdb_tx_insert`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -718,18 +762,26 @@ pub extern "C" fn bdb_tx_delete(
     relation: u32,
     values: *const bdb_value,
     value_count: usize,
-    out_changed: *mut bool,
+    row_count: usize,
+    out_report: *mut bdb_mutation_report,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        require_out(out_report)?;
         let _op = tx_ref.enter_op()?;
-        let row = row_in(values, value_count)?;
-        let changed = tx_ref
+        let rows = rows_in(values, value_count, row_count)?;
+        let report = tx_ref
             .transaction()?
-            .delete_dyn(RelationId(relation), &row)
+            .delete_dyn(RelationId(relation), rows)
             .map_err(|error| fail_engine(error, None))?;
-        out(out_changed, changed)?;
+        out(
+            out_report,
+            bdb_mutation_report {
+                submitted: report.submitted,
+                changed: report.changed,
+            },
+        )?;
         Ok(bdb_status::Ok)
     })
 }
@@ -751,6 +803,7 @@ pub extern "C" fn bdb_tx_contains(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        require_out(out_contains)?;
         let _op = tx_ref.enter_op()?;
         let row = row_in(values, value_count)?;
         let contains = tx_ref
@@ -781,50 +834,53 @@ pub extern "C" fn bdb_tx_get(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
-        let _op = tx_ref.enter_op()?;
         require_out(out_row)?;
+        let _op = tx_ref.enter_op()?;
         let keys = row_in(key_values, key_value_count)?;
         let found = tx_ref
             .transaction()?
             .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
             .map_err(|error| fail_engine(error, None))?;
         match found {
-            Some(values) => box_out_to(out_row, bdb_row_set { rows: vec![values] })?,
+            Some(values) => box_out_to(out_row, bdb_row_set::from_rows(vec![values]))?,
             None => out(out_row, std::ptr::null_mut())?,
         }
         Ok(bdb_status::Ok)
     })
 }
 
-/// Mints the next fresh value for `(relation, field)` — resolve-once,
-/// mint-per-row is the engine's own split (`Db::fresh_field` +
-/// `WriteTx::alloc_at`); the bridge re-resolves per call because the C
-/// surface carries no witness type (ids at this surface are data; a
-/// mis-aimed pair is typed `BDB_ERROR_KIND_FACT_SHAPE`).
+/// Mints `count` consecutive fresh values for `(relation, field)`.
+/// `count == 0` is the empty wire range `{0, 0}` and does not read or
+/// advance the sequence — `start` is not a minted id on empty. The bridge
+/// re-resolves the field per call because the C surface carries no witness
+/// type (ids at this surface are data; a mis-aimed pair is typed
+/// `BDB_ERROR_KIND_FACT_SHAPE`).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_tx_alloc(
+pub extern "C" fn bdb_tx_reserve(
     transaction: *const bdb_tx_ref,
     relation: u32,
     field: u16,
-    out_id: *mut u64,
+    count: u64,
+    out_range: *mut bdb_fresh_range,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        require_out(out_range)?;
         let _op = tx_ref.enter_op()?;
         let fresh = tx_ref
             .engine()?
             .fresh_field(RelationId(relation), FieldId(field))
             .map_err(|error| fail_engine(Error::FactShape(error), None))?;
-        let minted = tx_ref
+        let range = tx_ref
             .transaction()?
-            .alloc_at(fresh)
+            .reserve_at(fresh, count)
             .map_err(|error| fail_engine(error, None))?;
-        out(out_id, minted)?;
+        out(out_range, fresh_range_wire(range))?;
         Ok(bdb_status::Ok)
     })
 }
@@ -849,6 +905,7 @@ pub extern "C" fn bdb_snapshot_contains(
 ) -> bdb_status {
     guard(out_error, || {
         let snap = ref_in(snapshot)?.snapshot()?;
+        require_out(out_contains)?;
         let row = row_in(values, value_count)?;
         let contains = snap
             .contains_dyn(RelationId(relation), &row)
@@ -883,7 +940,7 @@ pub extern "C" fn bdb_snapshot_get(
             .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
             .map_err(|error| fail_engine(error, None))?;
         match found {
-            Some(values) => box_out_to(out_row, bdb_row_set { rows: vec![values] })?,
+            Some(values) => box_out_to(out_row, bdb_row_set::from_rows(vec![values]))?,
             None => out(out_row, std::ptr::null_mut())?,
         }
         Ok(bdb_status::Ok)
@@ -916,67 +973,10 @@ pub extern "C" fn bdb_snapshot_scan(
             Ok(rows)
         })()
         .map_err(|error| fail_engine(error, None))?;
-        box_out_to(out_rows, bdb_row_set { rows })?;
+        box_out_to(out_rows, bdb_row_set::from_rows(rows))?;
         Ok(bdb_status::Ok)
     })
 }
-
-// ---------------------------------------------------------------------------
-// Bulk import
-// ---------------------------------------------------------------------------
-
-/// Bulk import (`Db::bulk_load_dyn`): atomic 4096-row chunks; prior
-/// chunks stay committed on failure — `out_committed` always carries the
-/// durable count (§24), and a failure is `BDB_ERROR_KIND_BULK_LOAD` (the same
-/// count readable via `bdb_error_get_bulk_committed`, the underlying
-/// cause in the message). The importer owns dependency ordering: a
-/// bidirectional statement cluster must land within one chunk.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "extern export: the unsafe(no_mangle) ABI attribute"
-)]
-pub extern "C" fn bdb_db_bulk_load(
-    db: *const bdb_db,
-    relation: u32,
-    rows: *const bdb_row_view,
-    row_count: usize,
-    out_committed: *mut u64,
-    out_error: *mut *mut bdb_error,
-) -> bdb_status {
-    guard(out_error, || {
-        require_out(out_committed)?;
-        let handle = ref_in(db)?;
-        // Copied whole before the engine runs: a marshal refusal is a
-        // clean typed error with ZERO facts durable, never a mid-import
-        // surprise.
-        let facts = slice_in(rows, row_count)?
-            .iter()
-            .map(|row| row_in(row.values, row.value_count))
-            .collect::<BridgeResult<Vec<_>>>()?;
-        let _writer = enter_write(handle)?;
-        match handle.db.bulk_load_dyn(RelationId(relation), facts) {
-            Ok(total) => {
-                out(out_committed, total)?;
-                Ok(bdb_status::Ok)
-            }
-            Err(bulk) => {
-                out(out_committed, bulk.committed)?;
-                Err(fail_engine(
-                    Error::BulkLoad {
-                        committed: bulk.committed,
-                        error: Box::new(bulk.error),
-                    },
-                    Some(&handle.descriptor),
-                ))
-            }
-        }
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Row sets
-// ---------------------------------------------------------------------------
 
 /// Number of rows.
 #[unsafe(no_mangle)]
@@ -991,16 +991,16 @@ pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
     })
 }
 
-/// The row's cell count (sealed field order — every row of one scan has
-/// the relation's arity).
+/// The set's cell count (sealed field order — one width for the
+/// relation, not per row). Empty sets answer 0.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set, row: usize) -> usize {
+pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set) -> usize {
     guard_value(0, || match ref_in(rows) {
-        Ok(rows) => rows.rows.get(row).map_or(0, Vec::len),
+        Ok(rows) => rows.arity,
         Err(_) => 0,
     })
 }

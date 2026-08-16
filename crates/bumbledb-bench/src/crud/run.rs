@@ -449,7 +449,7 @@ fn gate(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let translated = translate::translate(&query, schema(), &[])
         .map_err(|e| format!("crud/crud_read_point [{}]: {e}", lane.label()))?;

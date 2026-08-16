@@ -7,7 +7,7 @@
 //!   mis-aimed key-statement ids, and out-of-roster closed handles are
 //!   all typed [`bumbledb::FactShapeError`]s (or honest misses), never
 //!   panics: ids at this surface are data.
-//! - **The dyn fresh-mint lane** — `Db::fresh_field` + `alloc_at`
+//! - **The dyn fresh-mint lane** — `Db::fresh_field` + `reserve_at`
 //!   returns minted ids to the caller; explicit re-supply preserves
 //!   identity (the delete+insert idiom).
 //! - **The violation wire** — a rejected commit carries decoded cited
@@ -78,10 +78,10 @@ fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>
         .write(|tx| {
             (0..nodes)
                 .map(|n| {
-                    let id = tx.alloc_at(fresh)?;
+                    let id = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
                     tx.insert_dyn(
                         Graph::NODE,
-                        &node_row(id, &format!("node-{n}"), Kind::Lesson.id()),
+                        [&node_row(id, &format!("node-{n}"), Kind::Lesson.id())],
                     )?;
                     Ok(id)
                 })
@@ -98,11 +98,22 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
     assert_eq!(ids.len(), 2);
     // Explicit re-supply: the delete+insert identity idiom, entirely dyn.
     db.write(|tx| {
-        assert!(tx.delete_dyn(Graph::NODE, &node_row(ids[0], "node-0", Kind::Lesson.id()))?);
-        assert!(tx.insert_dyn(
-            Graph::NODE,
-            &node_row(ids[0], "renamed", Kind::Assessment.id())
-        )?);
+        assert_eq!(
+            tx.delete_dyn(
+                Graph::NODE,
+                [&node_row(ids[0], "node-0", Kind::Lesson.id())]
+            )?
+            .changed,
+            1
+        );
+        assert_eq!(
+            tx.insert_dyn(
+                Graph::NODE,
+                [&node_row(ids[0], "renamed", Kind::Assessment.id())]
+            )?
+            .changed,
+            1
+        );
         Ok(())
     })
     .expect("identity rewrite commits");
@@ -114,8 +125,14 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
     // Minting is monotone past explicit values: the next mint is fresh.
     let next = db
         .write(|tx| {
-            let fresh = tx.alloc_at(db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh"))?;
-            tx.insert_dyn(Graph::NODE, &node_row(fresh, "next", Kind::Lesson.id()))?;
+            let fresh = tx
+                .reserve_at(
+                    db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh"),
+                    1,
+                )?
+                .start()
+                .expect("nonempty");
+            tx.insert_dyn(Graph::NODE, [&node_row(fresh, "next", Kind::Lesson.id())])?;
             Ok(fresh)
         })
         .expect("mint past explicit ids");
@@ -153,14 +170,14 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
             (&wrong_type, "type"),
             (&bad_utf8, "utf8"),
         ] {
-            let insert = tx.insert_dyn(Graph::NODE, values).expect_err(expect);
+            let insert = tx.insert_dyn(Graph::NODE, [values]).expect_err(expect);
             assert!(matches!(insert, Error::FactShape(_)), "{insert:?}");
-            let delete = tx.delete_dyn(Graph::NODE, values).expect_err(expect);
+            let delete = tx.delete_dyn(Graph::NODE, [values]).expect_err(expect);
             assert!(matches!(delete, Error::FactShape(_)), "{delete:?}");
         }
         for outcome in [
-            tx.insert_dyn(unknown, &[]).expect_err("unknown relation"),
-            tx.delete_dyn(unknown, &[]).expect_err("unknown relation"),
+            tx.insert_dyn(unknown, [&[]]).expect_err("unknown relation"),
+            tx.delete_dyn(unknown, [&[]]).expect_err("unknown relation"),
         ] {
             assert!(matches!(
                 outcome,
@@ -169,7 +186,7 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
         }
         // A closed relation refuses writes at entry, typed.
         let closed = tx
-            .insert_dyn(Graph::KIND, &[Value::U64(0)])
+            .insert_dyn(Graph::KIND, [&[Value::U64(0)]])
             .expect_err("ground axioms are never written");
         assert!(matches!(closed, Error::ClosedRelationWrite { .. }));
         Ok(())
@@ -291,15 +308,15 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     let fresh = db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh");
     let err = db
         .write(|tx| {
-            let hub = tx.alloc_at(fresh)?;
+            let hub = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
             tx.insert_dyn(
                 Graph::NODE,
-                &node_row(hub, "provisional-title", Kind::Lesson.id()),
+                [&node_row(hub, "provisional-title", Kind::Lesson.id())],
             )?;
             for dst in &ids {
-                tx.insert_dyn(Graph::EDGE, &edge_row(hub, *dst))?;
+                tx.insert_dyn(Graph::EDGE, [&edge_row(hub, *dst)])?;
             }
-            tx.insert_dyn(Graph::EDGE, &edge_row(ids[0], 9999))?;
+            tx.insert_dyn(Graph::EDGE, [&edge_row(ids[0], 9999)])?;
             Ok(hub)
         })
         .expect_err("three outgoing edges and a dangling target");
@@ -372,7 +389,10 @@ fn an_fd_rejection_renders_the_key_form() {
     let (db, ids) = seeded(&dir, 1);
     let err = db
         .write(|tx| {
-            tx.insert_dyn(Graph::NODE, &node_row(ids[0], "usurper", Kind::Lesson.id()))?;
+            tx.insert_dyn(
+                Graph::NODE,
+                [&node_row(ids[0], "usurper", Kind::Lesson.id())],
+            )?;
             Ok(())
         })
         .expect_err("two live facts claim one key");

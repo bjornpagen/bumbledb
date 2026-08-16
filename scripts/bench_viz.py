@@ -87,7 +87,7 @@ passed through its lane-contract loader so the contract stays honest as
 the adapter's output shape: adversarial from scenarios.json's
 exceeded_cap lanes (the DNF data's one real home while the adversarial
 subcommand remains unlanded), and write_throughput from
-writes-report.json's commit/delete batch ladders (bulk_append is a
+writes-report.json's commit/delete batch ladders (insert_stream is a
 single point, fully drawn in bench-writes-rates.svg). A real lane
 payload of the same name, once an emitter writes one, wins over the
 derivation.
@@ -137,7 +137,7 @@ READ_ORDER = [
     "conflict_pairs", "conflict_free", "free_busy", "claim_hours",
 ]
 WRITE_ORDER = ["commit_single", "commit_witnessed", "commit_batch",
-               "cold_containment_walk", "bulk"]
+               "cold_containment_walk", "insert_stream"]
 
 
 def ordered(table, order):
@@ -515,7 +515,7 @@ def derive_write_throughput(inputs):
     write_throughput lane payload, THROUGH the lane's contract loader
     (the contract is the adapter's output shape). One derived
     durability lane per (report lane × ladder): the batch ladder is the
-    x-axis, rows/sec both engines the y. bulk_append is a single point,
+    x-axis, rows/sec both engines the y. insert_stream is a single point,
     not a ladder — it stays fully drawn in bench-writes-rates.svg. A
     real write_throughput lane payload, once an emitter writes one,
     wins over this derivation."""

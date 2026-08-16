@@ -98,7 +98,7 @@ pub fn write_families() -> &'static [WriteFamily] {
             },
         },
         WriteFamily {
-            name: "bulk",
+            name: "insert_stream",
             kind: Kind::Report,
             protocol: Protocol {
                 warmups: 1,

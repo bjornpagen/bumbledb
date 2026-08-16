@@ -6,7 +6,7 @@ use crate::image::view::{
     Const, FilterPredicate, IntervalConst, MaskConst, ViewWordSource, WordOrParam,
 };
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{CmpOp, VarId};
+use crate::ir::{OrderCmp, VarId};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::FieldId;
 
@@ -157,7 +157,7 @@ pub(super) fn place_comparisons(
                     .filters
                     .push(FilterPredicate::Compare {
                         field,
-                        op: CmpOp::Eq,
+                        op: crate::ir::WordCmp::Eq,
                         value: Const::ParamSet(*set),
                     });
             }
@@ -207,12 +207,12 @@ pub(super) fn place_comparisons(
                         }),
                     None => word_residuals.extend([
                         PlacedWordComparison {
-                            op: CmpOp::Le,
+                            op: crate::ir::WordCmp::Le,
                             lhs: word(*interval, IntervalWord::Start),
                             rhs: word(*point, IntervalWord::Start),
                         },
                         PlacedWordComparison {
-                            op: CmpOp::Lt,
+                            op: crate::ir::WordCmp::Lt,
                             lhs: word(*point, IntervalWord::Start),
                             rhs: word(*interval, IntervalWord::End),
                         },
@@ -273,7 +273,7 @@ fn place_duration(
     occurrences: &mut [Occurrence],
     duration_residuals: &mut Vec<PlacedDuration>,
     interval: VarId,
-    op: CmpOp,
+    op: OrderCmp,
     other: &DurationOperand,
 ) {
     let (occ_idx, interval_field) = field_of(occurrences, interval);

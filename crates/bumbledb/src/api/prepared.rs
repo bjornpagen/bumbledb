@@ -286,11 +286,6 @@ pub struct PreparedQuery<'s, S> {
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
     /// on diagnostic surfaces, never on the warm path.
     rendered: String,
-    /// Direct point-lane parsed at build: a Cq with no interiors and
-    /// exactly one key probe whose finds are all plain variables.
-    /// Execute and profile consume this flag; they do not re-match the
-    /// pipeline at run time.
-    key_probe_direct: bool,
     /// Marker: a prepared query is single-threaded scratch (`Cell` makes
     /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
     /// independent of `S`).
@@ -358,6 +353,23 @@ impl PreparedPipeline {
         matches!(
             self,
             Self::Cq { interiors, rules } if interiors.is_empty() && rules.is_empty()
+        )
+    }
+
+    /// No-interior Cq whose single main rule is a key probe with
+    /// variable finds — the point fast lane, parsed from the pipeline.
+    pub(super) fn is_key_probe_direct(&self) -> bool {
+        matches!(
+            self,
+            Self::Cq { interiors, rules }
+                if interiors.is_empty()
+                    && matches!(
+                        rules.as_slice(),
+                        [PreparedRule::KeyProbe(KeyProbeRule {
+                            key_probe_finds: Some(_),
+                            ..
+                        })]
+                    )
         )
     }
 }

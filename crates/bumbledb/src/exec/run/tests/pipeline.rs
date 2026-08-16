@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::WordCmp;
 
 /// The pipelined executor matches the nested-loop oracle bit for bit
 /// across both all-variable and projected shapes, across batch
@@ -33,7 +34,7 @@ fn pipelined_executor_matches_oracle() {
                 occurrence(2, 2, &[(0, 2), (1, 3)]),
             ],
             vec![PlacedComparison {
-                op: CmpOp::Ne,
+                op: WordCmp::Ne,
                 lhs: VarId(0),
                 rhs: VarId(3),
             }],

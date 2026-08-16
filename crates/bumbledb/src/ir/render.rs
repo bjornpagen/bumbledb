@@ -50,8 +50,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
-    VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 use crate::schema::{Enforcement, Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
@@ -154,12 +153,20 @@ pub fn render(schema: &Schema, query: &Query) -> String {
             ..
         } => {
             render_interiors(&mut out, schema, &refs, interiors);
-            for rule in rec.base.iter().chain(&rec.rec) {
+            let rec_id = crate::ir::InteriorId(u32::try_from(interiors.len()).unwrap_or(u32::MAX));
+            for rule in rec.base.iter().map(crate::ir::RecRule::to_rule) {
                 if !out.is_empty() {
                     out.push('\n');
                 }
                 out.push_str("rec");
-                render_rule(&mut out, schema, &refs, rule);
+                render_rule(&mut out, schema, &refs, &rule);
+            }
+            for step in rec.rec.iter() {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str("rec");
+                render_rule(&mut out, schema, &refs, &step.to_written_rule(rec_id));
             }
             render_main(&mut out, schema, &refs, rules);
         }
@@ -179,7 +186,7 @@ fn render_interiors(
                 out.push('\n');
             }
             let _ = write!(out, "interior {id}");
-            render_rule(out, schema, refs, rule);
+            render_rule(out, schema, refs, &rule.to_rule());
         }
     }
 }
@@ -231,34 +238,37 @@ fn find_term(out: &mut String, term: &FindTerm) {
             var_name(out, *var);
             out.push(')');
         }
-        FindTerm::Aggregate { op, over } => aggregate(out, *op, *over, false),
-        FindTerm::AggregateMeasure { op, over } => aggregate(out, *op, Some(*over), true),
+        FindTerm::Count => out.push_str("Count"),
+        FindTerm::Aggregate { op, over } => {
+            aggregate(out, *op, *over, false);
+        }
+        FindTerm::Pack { over } => {
+            out.push_str("Pack(");
+            var_name(out, *over);
+            out.push(')');
+        }
+        FindTerm::AggregateMeasure { op, over } => {
+            aggregate(out, *op, *over, true);
+        }
     }
 }
 
 /// One aggregate head term: `Sum(v0)`, `Count`, `Pack(v1)`,
 /// `Sum(Duration(v0))`.
-fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
+fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId, measure: bool) {
     let name = match op {
-        AggOp::Sum => "Sum",
-        AggOp::Min => "Min",
-        AggOp::Max => "Max",
-        AggOp::Count => "Count",
-        AggOp::Pack => "Pack",
+        crate::ir::FoldOp::Sum => "Sum",
+        crate::ir::FoldOp::Min => "Min",
+        crate::ir::FoldOp::Max => "Max",
     };
     out.push_str(name);
-    if over.is_none() {
-        return;
-    }
     out.push('(');
-    if let Some(var) = over {
-        if measure {
-            out.push_str("Duration(");
-            var_name(out, var);
-            out.push(')');
-        } else {
-            var_name(out, var);
-        }
+    if measure {
+        out.push_str("Duration(");
+        var_name(out, over);
+        out.push(')');
+    } else {
+        var_name(out, over);
     }
     out.push(')');
 }

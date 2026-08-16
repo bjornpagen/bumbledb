@@ -1,9 +1,9 @@
-//! The PRD-22 stress harness (test-only): loops bulk loads against
-//! throwaway stores under synthetic CPU/IO contention, hunting the
-//! chunk-commit-boundary EINVAL observed once on 2026-07-10
+//! The PRD-22 stress harness (test-only): loops one collection insert
+//! against throwaway stores under synthetic CPU/IO contention, hunting the
+//! commit-boundary EINVAL observed once on 2026-07-10
 //! (`driver::tests::bench_refuses_without_a_stamp`, failing inside
-//! `ensure_corpus` with `BulkLoad { committed: 65536, error:
-//! Lmdb(Io(EINVAL)) }` alongside a concurrent cargo build).
+//! `ensure_corpus` with `Lmdb(Io(EINVAL))` alongside a concurrent cargo
+//! build).
 //!
 //! Mechanism under test: LMDB's commit durability boundary. On macOS,
 //! `mdb_txn_commit` issues `fcntl(fd, F_FULLFSYNC)` (`lmdb-master-sys`
@@ -18,8 +18,8 @@
 //! under worst-case contention) is this harness run with
 //! `BUMBLEDB_STRESS_ITERS=500` next to a live `cargo build`.
 //!
-//! Repro outcome, recorded honestly: the 500-iteration budget (1500
-//! chunk commits under three sync-storm writers, three CPU spinners,
+//! Repro outcome, recorded honestly: the 500-iteration budget (one
+//! collection insert per iteration under three sync-storm writers, three CPU spinners,
 //! and a live release rebuild loop, 2026-07-10, pre-fix) did **not**
 //! reproduce the EINVAL. The fix — the typed `CommitSync` boundary plus
 //! the bounded observable retry in `storage/commit/write.rs` — stands
@@ -35,9 +35,8 @@ use bumbledb::{Db, Value};
 
 use crate::schema::{Ledger, ids};
 
-/// Facts per iteration: two full bulk chunks plus a remainder, so every
-/// iteration crosses three chunk-commit boundaries — the observed
-/// failure site (`committed: 65536` = exactly 16 chunks).
+/// Facts per iteration: one collection insert under contention
+/// (`2 * 4096 + 512` — a large write, not engine chunking).
 const FACTS: u64 = 2 * 4096 + 512;
 
 fn iterations() -> u64 {
@@ -92,11 +91,11 @@ fn cpu_pressure(stop: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     })
 }
 
-/// N bulk loads against fresh temp stores under synthetic contention:
-/// every chunk commit must land (transient durability faults absorbed by
+/// N collection inserts against fresh temp stores under synthetic contention:
+/// every commit must land (transient durability faults absorbed by
 /// the bounded commit-boundary retry), never a `Lmdb(Io(...))` escape.
 #[test]
-fn bulk_load_survives_commit_pressure() {
+fn collection_insert_survives_commit_pressure() {
     let iters = iterations();
     let root = std::env::temp_dir().join("bumbledb-bench-stress");
     let _ = std::fs::remove_dir_all(&root);
@@ -117,7 +116,7 @@ fn bulk_load_survives_commit_pressure() {
         let dir = root.join(format!("db-{i}"));
         let db = Db::create(&dir, Ledger).expect("create store");
         let loaded = db
-            .bulk_load_dyn(ids::HOLDER, rows())
+            .write(|tx| tx.insert_dyn(ids::HOLDER, rows()).map(|r| r.changed))
             .unwrap_or_else(|e| panic!("iteration {i}: {e}"));
         assert_eq!(loaded, FACTS, "iteration {i}: short load");
         drop(db);

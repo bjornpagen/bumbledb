@@ -39,18 +39,22 @@ impl LoadStats {
 }
 
 /// Loads the corpus into a bumbledb store, relation by relation in the
-/// containment-safe declaration order, through the ordinary `bulk_load` path.
+/// containment-safe declaration order, through one collection `insert_dyn`
+/// per relation inside `db.write`.
 ///
 /// # Errors
 ///
-/// Engine errors from `bulk_load` (dropping the committed count into the
-/// message — a corpus load has no resume story; regenerate).
+/// Engine errors from `insert_dyn` (a corpus load has no resume story;
+/// regenerate).
 pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     let start = Instant::now();
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
-        facts += db.bulk_load_dyn(rel, relation_rows(cfg, rel))?;
+        facts += db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(cfg, rel))
+                .map(|r| r.changed)
+        })?;
     }
     Ok(LoadStats::of(facts, start.elapsed()))
 }
@@ -93,7 +97,8 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Loads one row stream into a `SQLite` table: prepared-statement inserts
-/// in transactions of 4096 rows (mirroring the engine's bulk chunk),
+/// in transactions of 4096 rows (the SQLite oracle's chosen commit size,
+/// not an engine chunk),
 /// interval fields split through the normative mapping. The one insert
 /// loop every `SQLite` mirror shares — the ledger corpus, the verify
 /// target corpus, and the scenario worlds.

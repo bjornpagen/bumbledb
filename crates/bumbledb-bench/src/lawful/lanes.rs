@@ -20,20 +20,20 @@
 //! — an explicit fresh-field value above the high-water mark advances
 //! it, and an abort flushes the advanced mark exactly as a commit does
 //! — while `SQLite`'s host counter does not move on a refusal. The
-//! rejection lanes therefore mint NOTHING through `tx.alloc`: the
+//! rejection lanes therefore mint NOTHING through `tx.reserve`: the
 //! violating rows carry EXPLICIT ids from [`REJECT_ID_BASE`] (legal —
 //! the ETL explicit-fresh surface), mirrored verbatim on the `SQLite`
 //! binding so a hypothetical acceptance would still be twin-identical.
 //! Because every such commit refuses, no id is ever committed on
 //! either side and the post-state fold stays green; the burned engine
 //! mark is why the rejection lanes sit LAST in registry order — no
-//! legal lane ever allocs after them.
+//! legal lane ever mints after them.
 //!
 //! **Fresh minting on the legal lanes** threads a [`LawCursor`] through
 //! ONE engine's pass (each engine pass gets its own cursor, constructed
 //! at the shared base, so the two passes mint identical Attempt/Steer
 //! id sequences by construction — the symmetry the post-state fold
-//! certifies). The engine side asserts every `tx.alloc` mint equals its
+//! certifies). The engine side asserts every `tx.reserve` mint equals its
 //! cursor inside the closure: mint drift is a loud abort, never a
 //! divergent measurement.
 
@@ -198,18 +198,18 @@ fn mint_attempt(
     op: AttemptOp,
     cursor: &mut LawCursor,
 ) -> bumbledb::Result<LawAttemptId> {
-    let id: LawAttemptId = tx.alloc()?;
+    let id: LawAttemptId = tx.reserve(1)?.start().expect("nonempty");
     if id.0 != cursor.attempt {
         return Err(refuse(&format!(
             "the Attempt mint drifted from the shared cursor: minted {}, expected {}",
             id.0, cursor.attempt
         )));
     }
-    tx.insert(&Attempt {
+    tx.insert([&Attempt {
         id,
         task: LawTaskId(op.task),
         n: op.n,
-    })?;
+    }])?;
     cursor.attempt += 1;
     Ok(id)
 }
@@ -221,18 +221,18 @@ fn mint_steer(
     task: u64,
     cursor: &mut LawCursor,
 ) -> bumbledb::Result<LawSteerId> {
-    let id: LawSteerId = tx.alloc()?;
+    let id: LawSteerId = tx.reserve(1)?.start().expect("nonempty");
     if id.0 != cursor.steer {
         return Err(refuse(&format!(
             "the Steer mint drifted from the shared cursor: minted {}, expected {}",
             id.0, cursor.steer
         )));
     }
-    tx.insert(&Steer {
+    tx.insert([&Steer {
         id,
         kind: SteerKinds::Repartition.id(),
         task: LawTaskId(task),
-    })?;
+    }])?;
     cursor.steer += 1;
     Ok(id)
 }
@@ -308,7 +308,7 @@ pub fn fill_window_target_sqlite(
 }
 
 /// `law_commit_attempt` on bumbledb: one sample = one `db.write`
-/// allocating and inserting one stream Attempt under the FULL roster —
+/// reserving and inserting one stream Attempt under the FULL roster —
 /// the fresh key, the declared `(task, n)` key, the `Attempt(task) <=
 /// Task(id)` containment, and the `{0..8}` window all judged per
 /// commit. work = 1 per sample.
@@ -396,15 +396,15 @@ pub fn commit_cluster_engine(
             .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| {
             let attempt = mint_attempt(tx, op, cursor)?;
-            tx.insert(&Verdict {
+            tx.insert([&Verdict {
                 attempt,
                 outcome: Outcome::Accepted.id(),
-            })?;
+            }])?;
             let steer = mint_steer(tx, op.task, cursor)?;
-            tx.insert(&SteerScope {
+            tx.insert([&SteerScope {
                 steer,
                 grp: op.task,
-            })?;
+            }])?;
             Ok(())
         })
         .map(|()| 4)
@@ -584,11 +584,11 @@ pub fn reject_key_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measur
             "Functionality",
             cites_functionality,
             |tx| {
-                tx.insert(&Attempt {
+                tx.insert([&Attempt {
                     id,
                     task: LawTaskId(1),
                     n: 0,
-                })
+                }])
                 .map(|_| ())
             },
         )
@@ -635,11 +635,11 @@ pub fn reject_containment_engine(
             "Containment",
             cites_containment,
             |tx| {
-                tx.insert(&Attempt {
+                tx.insert([&Attempt {
                     id,
                     task: LawTaskId(absent),
                     n: 0,
-                })
+                }])
                 .map(|_| ())
             },
         )
@@ -686,11 +686,11 @@ pub fn reject_window_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Mea
         let id = LawAttemptId(REJECT_ID_BASE + sample);
         sample += 1;
         refused_commit(db, "law_reject_window", "Capacity", cites_capacity, |tx| {
-            tx.insert(&Attempt {
+            tx.insert([&Attempt {
                 id,
                 task: LawTaskId(0),
                 n: WINDOW_CAP,
-            })
+            }])
             .map(|_| ())
         })
     })
@@ -734,10 +734,10 @@ pub fn reject_scope_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Meas
             "ψ-statement Containment",
             cites_psi,
             |tx| {
-                tx.insert(&SteerScope {
+                tx.insert([&SteerScope {
                     steer: LawSteerId(0),
                     grp: 0,
-                })
+                }])
                 .map(|_| ())
             },
         )

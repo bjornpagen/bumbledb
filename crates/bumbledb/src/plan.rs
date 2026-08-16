@@ -24,7 +24,7 @@ pub(crate) fn pinned_fields(
     occurrence.filters.iter().filter_map(|filter| match filter {
         FilterPredicate::Compare {
             field,
-            op: crate::ir::CmpOp::Eq,
+            op: crate::ir::WordCmp::Eq,
             value,
         } if matches!(
             value,

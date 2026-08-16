@@ -38,9 +38,9 @@ fn crash_child_commit_loop() {
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for k in 1..u64::MAX {
         db.write(|tx| {
-            tx.insert(&item(k))?;
+            tx.insert([&item(k)])?;
             if k > 1 {
-                tx.delete(&item(k - 1))?;
+                tx.delete([&item(k - 1)])?;
             }
             Ok(())
         })
@@ -89,19 +89,20 @@ fn kill_during_commit_leaves_a_consistent_database() {
         db.write(|tx| {
             // M consistency: re-inserting the live fact is a no-op.
             if let Some(existing) = live.first() {
-                assert!(
-                    !tx.insert(existing)?,
+                assert_eq!(
+                    tx.insert([existing])?.changed,
+                    0,
                     "round {round}: committed fact not visible to membership"
                 );
             }
             // Q consistency: the fresh-id generator continues past every
             // committed id (a collision would break the fresh's auto-key statement).
-            let next: ItemId = tx.alloc()?;
+            let next: ItemId = tx.reserve(1)?.start().expect("nonempty");
             assert!(
                 next.0 > max_seen || live.is_empty(),
                 "round {round}: fresh {next:?} at or below committed {max_seen}"
             );
-            tx.insert(&item(next.0))?;
+            tx.insert([&item(next.0)])?;
             Ok(())
         })
         .expect("write after crash");
@@ -120,43 +121,39 @@ fn kill_during_commit_leaves_a_consistent_database() {
 /// transaction. Run only via the parent test below.
 #[test]
 #[ignore = "crash-child body; spawned by kill_during_counters_only_commit_leaves_q_consistent"]
-fn crash_child_alloc_loop() {
-    let Ok(dir) = std::env::var("BUMBLEDB_CRASH_ALLOC_DIR") else {
+fn crash_child_reserve_loop() {
+    let Ok(dir) = std::env::var("BUMBLEDB_CRASH_RESERVE_DIR") else {
         return; // ran directly (e.g. `--ignored` sweeps): nothing to do
     };
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for _ in 0..u64::MAX {
         db.write(|tx| {
-            let _: ItemId = tx.alloc()?;
+            let _: ItemId = tx.reserve(1)?.start().expect("nonempty");
             Ok(())
         })
-        .expect("child alloc");
+        .expect("child reserve");
     }
 }
 
 /// Kill during the counters-only commit shape. The
 /// reopened `Q` mark is either an old or a new committed value, never
 /// torn — a torn 8-byte counter would surface as `Corruption` (or a
-/// non-monotonic allocation) on the very next alloc.
+/// non-monotonic reserve) on the very next reserve.
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the method path does not satisfy the higher-ranked bound"
-)] // HRTB: the method path does not unify
 fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {
-        let dir = common::TempDir::new(&format!("crash-alloc-{round}"));
+        let dir = common::TempDir::new(&format!("crash-reserve-{round}"));
         drop(Db::create(dir.path(), Store).expect("create"));
 
         let mut child = Command::new(&exe)
             .args([
-                "crash_child_alloc_loop",
+                "crash_child_reserve_loop",
                 "--exact",
                 "--ignored",
                 "--test-threads=1",
             ])
-            .env("BUMBLEDB_CRASH_ALLOC_DIR", dir.path())
+            .env("BUMBLEDB_CRASH_RESERVE_DIR", dir.path())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -171,20 +168,24 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
         let count = db
             .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
             .expect("scan after crash");
-        assert_eq!(count, 0, "round {round}: alloc-only child wrote a fact");
+        assert_eq!(count, 0, "round {round}: reserve-only child wrote a fact");
         assert_eq!(
             db.generation().expect("generation").value(),
             0,
             "round {round}: a counters-only commit moved the generation"
         );
         // Q is readable (not torn) and strictly monotonic across writes.
-        let a: ItemId = db.write(|tx| tx.alloc()).expect("alloc after crash");
-        let b: ItemId = db.write(|tx| tx.alloc()).expect("alloc after crash");
+        let a: ItemId = db
+            .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
+            .expect("reserve after crash");
+        let b: ItemId = db
+            .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
+            .expect("reserve after crash");
         assert_eq!(b.0, a.0 + 1, "round {round}: Q mark torn or regressed");
         // And a real insert with the minted id commits cleanly.
         db.write(|tx| {
-            let id: ItemId = tx.alloc()?;
-            tx.insert(&item(id.0)).map(|_| ())
+            let id: ItemId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&item(id.0)]).map(|_| ())
         })
         .expect("write after crash");
     }

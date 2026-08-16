@@ -25,10 +25,11 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
-    ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest,
-    ParamId, Query, Rec, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
-    StatementId, StatementKind, StatsBody, Term, Value, VarId,
+    AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
+    ExecutionStats, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm, Interior, InteriorId, Interval,
+    Manifest, NonEmpty, ParamId, ProjectionRule, Query, Rec, RecRule, RecStep, RelationId,
+    RenderedViolation, Rule, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, StatsBody,
+    Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     i64n, Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array,
@@ -274,6 +275,37 @@ pub(crate) fn fact_row(
     let rel = RelationId(relation);
     let fields = sealed_fields(descriptor, rel)?;
     let name = relation_name(descriptor, rel);
+    Ok((rel, one_fact_row(&name, &fields, values)?))
+}
+
+/// A collection of dynamic fact rows. Relation lookup and the field
+/// roster run once. Empty is lawful and still a mutation (the engine
+/// observes poison). Every nonempty row is parsed against the relation's
+/// arity — mixed width is refused before any row enters the delta.
+pub(crate) fn fact_rows(
+    descriptor: &SchemaDescriptor,
+    relation: u32,
+    rows: &Array,
+) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
+    let rel = RelationId(relation);
+    if rows.len() == 0 {
+        return Ok((rel, Vec::new()));
+    }
+    let fields = sealed_fields(descriptor, rel)?;
+    let name = relation_name(descriptor, rel);
+    let mut out = Vec::with_capacity(rows.len() as usize);
+    for index in 0..rows.len() {
+        let row: Array = req_at(rows, index, &format!("relation `{name}` collection"))?;
+        out.push(one_fact_row(&name, &fields, &row)?);
+    }
+    Ok((rel, out))
+}
+
+fn one_fact_row(
+    name: &str,
+    fields: &[(Box<str>, ValueType)],
+    values: &Array,
+) -> napi::Result<Vec<Value>> {
     if values.len() as usize != fields.len() {
         return Err(err(format!(
             "bumbledb marshal: relation `{name}`: expected {} values, got {}",
@@ -282,13 +314,11 @@ pub(crate) fn fact_row(
         )));
     }
     let mut row = Vec::with_capacity(fields.len());
-    // The index rides the Array's own u32 space (arity-checked equal above),
-    // so no usize→u32 cast exists to go wrong.
     for (index, (field, expected)) in (0..values.len()).zip(fields.iter()) {
         let value = req_at::<Unknown>(values, index, &format!("relation `{name}` row"))?;
-        row.push(schema_value(expected, &value, &name, field)?);
+        row.push(schema_value(expected, &value, name, field.as_ref())?);
     }
-    Ok((rel, row))
+    Ok(row)
 }
 
 /// One point-read key row: natural JS values in the key statement's
@@ -690,22 +720,6 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
     }
 }
 
-/// The tag parses through THE one table (`tags::head_op::parse`); the
-/// exhaustive `HeadOp` → `AggOp` lift below attaches the Arg keys — a new
-/// `HeadOp` variant breaks THIS match at compile, never a runtime refusal.
-fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
-    let kind: String = req(obj, "kind", "aggregate op")?;
-    let op = tags::head_op::parse(&kind)
-        .ok_or_else(|| err(format!("bumbledb marshal: unknown aggregate op `{kind}`")))?;
-    Ok(match op {
-        HeadOp::Sum => AggOp::Sum,
-        HeadOp::Min => AggOp::Min,
-        HeadOp::Max => AggOp::Max,
-        HeadOp::Count => AggOp::Count,
-        HeadOp::Pack => AggOp::Pack,
-    })
-}
-
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
     let kind: String = req(obj, "kind", "head term")?;
     match kind.as_str() {
@@ -722,42 +736,48 @@ fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
     }
 }
 
+fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
+    let kind: String = req(obj, "kind", "fold op")?;
+    let op = tags::head_op::parse(&kind)
+        .ok_or_else(|| err(format!("bumbledb marshal: unknown fold op `{kind}`")))?;
+    match op {
+        HeadOp::Sum => Ok(FoldOp::Sum),
+        HeadOp::Min => Ok(FoldOp::Min),
+        HeadOp::Max => Ok(FoldOp::Max),
+        HeadOp::Count => Err(err(
+            "bumbledb marshal: Count is find kind `count`, not a fold".to_string(),
+        )),
+        HeadOp::Pack => Err(err(
+            "bumbledb marshal: Pack is find kind `pack`, not a fold".to_string(),
+        )),
+    }
+}
+
 fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     let kind: String = req(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
         tags::find_term::MEASURE => Ok(FindTerm::Measure(var_in(obj, "var", "measure find")?)),
+        tags::find_term::COUNT => {
+            if obj.get::<f64>("over")?.is_some() {
+                return Err(err("bumbledb marshal: Count carries no over".to_string()));
+            }
+            Ok(FindTerm::Count)
+        }
+        tags::find_term::PACK => Ok(FindTerm::Pack {
+            over: var_in(obj, "over", "pack find")?,
+        }),
         tags::find_term::AGGREGATE => {
             let op: Object = req(obj, "op", "aggregate find")?;
-            let op = agg_op_in(&op)?;
-            match op {
-                AggOp::Count => {
-                    if obj.get::<f64>("over")?.is_some() {
-                        return Err(err("bumbledb marshal: Count carries no over".to_string()));
-                    }
-                    Ok(FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    })
-                }
-                fold => {
-                    let over = obj.get::<f64>("over")?.ok_or_else(|| {
-                        err("bumbledb marshal: fold aggregate requires over".to_string())
-                    })?;
-                    Ok(FindTerm::Aggregate {
-                        op: fold,
-                        over: Some(VarId(u16_id(
-                            ordinal(over, "aggregate over")?,
-                            "aggregate over",
-                        )?)),
-                    })
-                }
-            }
+            Ok(FindTerm::Aggregate {
+                op: fold_op_in(&op)?,
+                over: var_in(obj, "over", "aggregate find")?,
+            })
         }
         tags::find_term::AGGREGATE_MEASURE => {
             let op: Object = req(obj, "op", "aggregateMeasure find")?;
             Ok(FindTerm::AggregateMeasure {
-                op: agg_op_in(&op)?,
+                op: fold_op_in(&op)?,
                 over: var_in(obj, "over", "aggregateMeasure find")?,
             })
         }
@@ -931,11 +951,94 @@ fn rules_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<Vec<Rule>> {
     Ok(rule_list)
 }
 
-fn rec_in(obj: &Object) -> napi::Result<Rec> {
+fn vars_only(finds: &[FindTerm]) -> napi::Result<Vec<VarId>> {
+    finds
+        .iter()
+        .map(|term| match term {
+            FindTerm::Var(var) => Ok(*var),
+            _ => Err(err(
+                "bumbledb marshal: derived-table finds are variables only".to_string(),
+            )),
+        })
+        .collect()
+}
+
+fn projection_rule_in(obj: &Object) -> napi::Result<ProjectionRule> {
+    let rule = rule_in(obj)?;
+    Ok(ProjectionRule {
+        finds: vars_only(&rule.finds)?,
+        atoms: rule.atoms,
+        negated: rule.negated,
+        conditions: rule.conditions,
+    })
+}
+
+fn rec_rule_in(obj: &Object) -> napi::Result<RecRule> {
+    let rule = rule_in(obj)?;
+    if !rule.negated.is_empty() {
+        return Err(err(
+            "bumbledb marshal: negation is unrepresentable in rec".to_string(),
+        ));
+    }
+    Ok(RecRule {
+        finds: vars_only(&rule.finds)?,
+        atoms: rule.atoms,
+        conditions: rule.conditions,
+    })
+}
+
+fn rec_step_in(obj: &Object, rec_id: InteriorId) -> napi::Result<RecStep> {
+    let rule = rule_in(obj)?;
+    if !rule.negated.is_empty() {
+        return Err(err(
+            "bumbledb marshal: negation is unrepresentable in rec".to_string(),
+        ));
+    }
+    let mut self_bindings = None;
+    let mut atoms = Vec::new();
+    for atom in rule.atoms {
+        if atom.source.interior() == Some(rec_id) {
+            if self_bindings.is_some() {
+                return Err(err(
+                    "bumbledb marshal: rec step has two self-atoms".to_string(),
+                ));
+            }
+            self_bindings = Some(atom.bindings);
+        } else {
+            atoms.push(atom);
+        }
+    }
+    Ok(RecStep {
+        finds: vars_only(&rule.finds)?,
+        self_bindings: self_bindings.ok_or_else(|| {
+            err("bumbledb marshal: rec step missing self-atom".to_string())
+        })?,
+        atoms,
+        conditions: rule.conditions,
+    })
+}
+
+fn nonempty<T>(items: Vec<T>, what: &str) -> napi::Result<NonEmpty<T>> {
+    NonEmpty::from_vec(items).ok_or_else(|| err(format!("bumbledb marshal: empty {what}")))
+}
+
+fn rec_in(obj: &Object, rec_id: InteriorId) -> napi::Result<Rec> {
+    let _ = head_in(obj, "rec head")?;
+    let base_arr: Array = req(obj, "base", "rec base")?;
+    let mut base = Vec::with_capacity(base_arr.len() as usize);
+    for index in 0..base_arr.len() {
+        let rule = req_at::<Object>(&base_arr, index, "rec base")?;
+        base.push(rec_rule_in(&rule)?);
+    }
+    let rec_arr: Array = req(obj, "rec", "rec arms")?;
+    let mut rec = Vec::with_capacity(rec_arr.len() as usize);
+    for index in 0..rec_arr.len() {
+        let rule = req_at::<Object>(&rec_arr, index, "rec arms")?;
+        rec.push(rec_step_in(&rule, rec_id)?);
+    }
     Ok(Rec {
-        head: head_in(obj, "rec head")?,
-        base: rules_in(obj, "base", "rec base")?,
-        rec: rules_in(obj, "rec", "rec arms")?,
+        base: nonempty(base, "rec base")?,
+        rec: nonempty(rec, "rec step")?,
     })
 }
 
@@ -944,10 +1047,14 @@ fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
     for index in 0..interiors_arr.len() {
         let interior = req_at::<Object>(&interiors_arr, index, "query interiors")?;
-        interiors.push(Interior {
-            head: head_in(&interior, "interior head")?,
-            rules: rules_in(&interior, "rules", "interior rules")?,
-        });
+        let _ = head_in(&interior, "interior head")?;
+        let rules_arr: Array = req(&interior, "rules", "interior rules")?;
+        let mut rules = Vec::with_capacity(rules_arr.len() as usize);
+        for rule_index in 0..rules_arr.len() {
+            let rule = req_at::<Object>(&rules_arr, rule_index, "interior rules")?;
+            rules.push(projection_rule_in(&rule)?);
+        }
+        interiors.push(Interior { rules });
     }
     Ok(interiors)
 }
@@ -967,9 +1074,12 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
         }),
         tags::query::REACH => {
             let rec_obj: Object = req(obj, "rec", "reach query")?;
+            let rec_id = InteriorId(u32::try_from(interiors.len()).map_err(|_| {
+                err("bumbledb marshal: interior count".to_string())
+            })?);
             Ok(Query::Reach {
                 interiors,
-                rec: rec_in(&rec_obj)?,
+                rec: rec_in(&rec_obj, rec_id)?,
                 head: head_in(obj, "query head")?,
                 rules: rules_in(obj, "rules", "query rules")?,
             })

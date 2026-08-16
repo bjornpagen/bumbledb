@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bumbledb::ir::{FindTerm, Rule};
-use bumbledb::{AggOp, InteriorId, ParamId, Query, Schema, Value, VarId};
+use bumbledb::{FoldOp, InteriorId, ParamId, Query, Schema, Value, VarId};
 
 use super::{Builder, ParamSlot, Translated, VarCols, types};
 
@@ -51,7 +51,10 @@ pub(super) fn translate_rules(
     let aggregated = rules[0].finds.iter().any(|f| {
         matches!(
             f,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+            FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::AggregateMeasure { .. }
         )
     });
     let mut arms: Vec<String> = Vec::new();
@@ -156,7 +159,10 @@ fn single_rule_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     if rule.finds.iter().any(|f| {
         matches!(
             f,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+            FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::AggregateMeasure { .. }
         )
     }) {
         let (from, where_clause) = from_where(b);
@@ -193,7 +199,10 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
+            FindTerm::Count
+            | FindTerm::Aggregate { .. }
+            | FindTerm::Pack { .. }
+            | FindTerm::AggregateMeasure { .. } => {
                 unreachable!("no aggregates here")
             }
         }
@@ -217,9 +226,8 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     for (position, find) in rule.finds.iter().enumerate() {
         match find {
             FindTerm::Var(var)
-            | FindTerm::Aggregate {
-                over: Some(var), ..
-            } => match b.columns.get(var) {
+            | FindTerm::Aggregate { over: var, .. }
+            | FindTerm::Pack { over: var } => match b.columns.get(var) {
                 Some(VarCols::Scalar(column)) => cols.push(format!("{column} AS h{position}")),
                 Some(VarCols::Interval { start, end }) => {
                     cols.push(format!("{start} AS h{position}_start"));
@@ -235,7 +243,7 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
                     _ => return Err(format!("Duration over non-interval variable {}", var.0)),
                 }
             }
-            FindTerm::Aggregate { over: None, .. } => cols.push(format!("0 AS h{position}")),
+            FindTerm::Count => cols.push(format!("0 AS h{position}")),
         }
     }
     Ok(format!(
@@ -270,22 +278,23 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             }
             FindTerm::AggregateMeasure { op, .. } => outer.push({
                 let agg = match op {
-                    AggOp::Sum => "SUM",
-                    AggOp::Min => "MIN",
-                    AggOp::Max => "MAX",
-                    _ => return Err("measure folds are Sum/Min/Max".to_owned()),
+                    FoldOp::Sum => "SUM",
+                    FoldOp::Min => "MIN",
+                    FoldOp::Max => "MAX",
                 };
                 format!("{agg}(h{position})")
             }),
+            FindTerm::Count => outer.push("COUNT(*)".to_owned()),
             FindTerm::Aggregate { op, .. } => outer.push(match op {
-                AggOp::Sum => format!("SUM(h{position})"),
-                AggOp::Min => format!("MIN(h{position})"),
-                AggOp::Max => format!("MAX(h{position})"),
-                AggOp::Count => "COUNT(*)".to_owned(),
+                FoldOp::Sum => format!("SUM(h{position})"),
+                FoldOp::Min => format!("MIN(h{position})"),
+                FoldOp::Max => format!("MAX(h{position})"),
+            }),
+            FindTerm::Pack { .. } => {
                 // The expressibility gate (`super::sqlite_expressible`)
                 // routes Pack heads to the naive lane before translation.
-                AggOp::Pack => return Err("Pack is naive-only (no SQL coalesce)".to_owned()),
-            }),
+                return Err("Pack is naive-only (no SQL coalesce)".to_owned());
+            }
         }
     }
     let tail = if group.is_empty() {
@@ -374,26 +383,24 @@ fn fold_sql(
             }
             FindTerm::AggregateMeasure { op, over } => outer.push({
                 let agg = match op {
-                    AggOp::Sum => "SUM",
-                    AggOp::Min => "MIN",
-                    AggOp::Max => "MAX",
-                    _ => return Err("measure folds are Sum/Min/Max".to_owned()),
+                    FoldOp::Sum => "SUM",
+                    FoldOp::Min => "MIN",
+                    FoldOp::Max => "MAX",
                 };
                 format!("{agg}(v{0}_end - v{0}_start)", over.0)
             }),
-            FindTerm::Aggregate { op, over } => outer.push(match op {
-                AggOp::Sum | AggOp::Min | AggOp::Max => {
-                    let var = over.ok_or("fold aggregate without a variable")?;
-                    let agg = match op {
-                        AggOp::Sum => "SUM",
-                        AggOp::Min => "MIN",
-                        _ => "MAX",
-                    };
-                    format!("{agg}(v{})", var.0)
-                }
-                AggOp::Count => "COUNT(*)".to_owned(),
-                AggOp::Pack => return Err("Pack is naive-only (no SQL coalesce)".to_owned()),
+            FindTerm::Count => outer.push("COUNT(*)".to_owned()),
+            FindTerm::Aggregate { op, over } => outer.push({
+                let agg = match op {
+                    FoldOp::Sum => "SUM",
+                    FoldOp::Min => "MIN",
+                    FoldOp::Max => "MAX",
+                };
+                format!("{agg}(v{})", over.0)
             }),
+            FindTerm::Pack { .. } => {
+                return Err("Pack is naive-only (no SQL coalesce)".to_owned());
+            }
         }
     }
     let tail = if group.is_empty() {

@@ -68,20 +68,20 @@ fn a_macro_declared_store_exhumes_every_relation_by_name() {
     {
         let db = Db::create(&dir.0, Exhumable).expect("create");
         db.write(|tx| {
-            let learner: LearnerId = tx.alloc()?;
-            tx.insert(&Learner {
+            let learner: LearnerId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Learner {
                 id: learner,
                 name: "ada",
                 window: Interval::<u64>::new(1, 4).expect("interval"),
-            })?;
-            let attempt: AttemptId = tx.alloc()?;
-            tx.insert(&Attempt {
+            }])?;
+            let attempt: AttemptId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Attempt {
                 id: attempt,
                 learner,
                 grade: Grade::Pass.id(),
                 digest: *b"01234567",
                 lease: Lease(Interval::<i64>::new(-1, 2).expect("width 3")),
-            })?;
+            }])?;
             Ok(())
         })
         .expect("write");

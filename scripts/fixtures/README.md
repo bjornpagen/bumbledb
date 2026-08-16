@@ -11,7 +11,7 @@ be quoted as a claim.
 - `fixture-storage-report.json` — 2 scales × 2 worlds + 2 churn rows
   (`bench-storage.svg`).
 - `fixture-writes-report.json` — 2 durability lanes × the commit ladder
-  + deletes + bulk (`bench-writes-rates.svg`).
+  + deletes + insert_stream (`bench-writes-rates.svg`).
 - `fixture-curves-report.json` — 4 families × 3 scale points, with one
   capped point, one hand-tuned twin, and one warmth object
   (`bench-curves.svg`, `bench-warmth.svg`).

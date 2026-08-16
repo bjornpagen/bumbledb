@@ -1,6 +1,6 @@
 use super::{PlanError, PlanOccurrence};
 use crate::image::view::FilterPredicate;
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 
 /// The selection invariant for **participating** occurrences, asserted
 /// at the boundary because [`PlanOccurrence`] is plain data anyone can
@@ -29,10 +29,15 @@ pub(crate) fn check_selections(occurrences: &[PlanOccurrence]) -> Result<(), Pla
             )
         });
         let leaked = !measured
-            && occurrence
-                .filters
-                .iter()
-                .any(|f| matches!(f, FilterPredicate::Compare { op: CmpOp::Eq, .. }));
+            && occurrence.filters.iter().any(|f| {
+                matches!(
+                    f,
+                    FilterPredicate::Compare {
+                        op: WordCmp::Eq,
+                        ..
+                    }
+                )
+            });
         if leaked {
             return Err(PlanError::SelectionOnFilteredField {
                 occ: occurrence.occ_id,

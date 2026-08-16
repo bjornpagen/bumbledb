@@ -1,6 +1,6 @@
 //! THE ALLOCATION DEEP CENSUS (perf/alloc-census): whole-flow allocation
 //! accounting — counts, bytes, and call-path attribution — across the five
-//! flow families (prepare, open, commit, execute, bulk/scan). The release
+//! flow families (prepare, open, commit, execute, insert/scan). The release
 //! alloc gate (`tests/alloc_gate.rs`) proves steady-state zero on gated
 //! scenarios; this harness measures EVERYTHING ELSE: the sanctioned cold
 //! paths, the per-commit arena, the per-prepare pipeline, the fixpoint
@@ -29,14 +29,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, Interior, InteriorId, ParamId,
-    Query, Rec, Rule, Term, Value, VarId,
+    Atom, AtomSource, CmpOp, Comparison, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, ParamId,
+    Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
     Side, StatementDescriptor, ValueType, Weight,
 };
-use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db};
+use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db, NonEmpty, ProjectionRule};
 
 // =====================================================================
 // The census allocator: counting always, backtrace capture when armed.
@@ -433,21 +433,21 @@ const CHAIN: u64 = 64;
 fn populate(db: &Db<SchemaDescriptor>) {
     db.write(|tx| {
         for account in 0..20u64 {
-            tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(account % 5)])?;
+            tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(account % 5)]])?;
         }
         // The holder chain for recursion-round scaling.
         for id in 100..100 + CHAIN {
-            tx.insert_dyn(ACCOUNT, &[Value::U64(id), Value::U64(id + 1)])?;
+            tx.insert_dyn(ACCOUNT, [&[Value::U64(id), Value::U64(id + 1)]])?;
         }
         for id in 0..500u64 {
             tx.insert_dyn(
                 POSTING,
-                &[
+                [&[
                     Value::U64(id),
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
                     Value::String(format!("memo-{}", id % 4).into_bytes().into()),
-                ],
+                ]],
             )?;
         }
         for id in 0..120u64 {
@@ -460,13 +460,13 @@ fn populate(db: &Db<SchemaDescriptor>) {
             };
             tx.insert_dyn(
                 BUSY,
-                &[
+                [&[
                     Value::U64(id),
                     Value::U64(person),
                     Value::IntervalU64(
                         bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
                     ),
-                ],
+                ]],
             )?;
         }
         // The capacity floor: every account parents an Item chain.
@@ -474,17 +474,17 @@ fn populate(db: &Db<SchemaDescriptor>) {
             for pos in 1..=8u64 {
                 tx.insert_dyn(
                     ITEM,
-                    &[
+                    [&[
                         Value::U64(doc),
                         Value::U64(pos),
                         Value::U64(doc * 10_000 + pos),
-                    ],
+                    ]],
                 )?;
             }
         }
         // The determinant rows.
         for account in 0..20u64 {
-            tx.insert_dyn(PROFILE, &[Value::U64(account), Value::U64(account * 3)])?;
+            tx.insert_dyn(PROFILE, [&[Value::U64(account), Value::U64(account * 3)]])?;
         }
         Ok(())
     })
@@ -608,13 +608,10 @@ fn aggregate_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             edb(
@@ -670,13 +667,7 @@ fn string_query() -> Query {
 /// Q(person, Pack(slot)) — the coalescing fold.
 fn pack_query() -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![edb(
             BUSY,
             vec![
@@ -760,28 +751,20 @@ fn recursive_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![account(0, 1)],
-                negated: vec![],
                 conditions: vec![cap.clone()],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    account(0, 1),
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(1))),
-                            (FieldId(1), Term::Var(VarId(2))),
-                        ],
-                    },
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
                 ],
-                negated: vec![],
+                atoms: vec![account(0, 1)],
                 conditions: vec![cap],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -827,8 +810,12 @@ fn interiors_only_query() -> Query {
     };
     Query::Cq {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![join],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: join.atoms,
+                negated: join.negated,
+                conditions: join.conditions,
+            }],
         }],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -847,7 +834,7 @@ fn interiors_only_query() -> Query {
 }
 
 // =====================================================================
-// The typed world for the typed bulk/scan lanes.
+// The typed world for the typed insert/scan lanes.
 // =====================================================================
 
 bumbledb::schema! {
@@ -950,12 +937,12 @@ fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u6
             for id in base..base + k {
                 tx.insert_dyn(
                     POSTING,
-                    &[
+                    [&[
                         Value::U64(id),
                         Value::U64(id % 20),
                         Value::I64((id.cast_signed() % 100) - 50),
                         Value::String(format!("memo-{}", id % 4).into_bytes().into()),
-                    ],
+                    ]],
                 )?;
             }
             Ok(())
@@ -999,16 +986,16 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         };
         let append = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             for doc in 0..5u64 {
-                tx.insert_dyn(ITEM, &[Value::U64(doc), Value::U64(9), Value::U64(round)])?;
+                tx.insert_dyn(ITEM, [&[Value::U64(doc), Value::U64(9), Value::U64(round)]])?;
                 let head = [Value::U64(doc), Value::U64(1), Value::U64(doc * 10_000 + 1)];
-                tx.delete_dyn(ITEM, &head)?;
-                tx.insert_dyn(ITEM, &head)?;
+                tx.delete_dyn(ITEM, [&head])?;
+                tx.insert_dyn(ITEM, [&head])?;
             }
             Ok(())
         };
         let restore = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             for doc in 0..5u64 {
-                tx.delete_dyn(ITEM, &[Value::U64(doc), Value::U64(9), Value::U64(round)])?;
+                tx.delete_dyn(ITEM, [&[Value::U64(doc), Value::U64(9), Value::U64(round)]])?;
             }
             Ok(())
         };
@@ -1023,11 +1010,11 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
             for account in 0..8u64 {
                 tx.delete_dyn(
                     PROFILE,
-                    &[Value::U64(account), Value::U64(account * 3 + round)],
+                    [&[Value::U64(account), Value::U64(account * 3 + round)]],
                 )?;
                 tx.insert_dyn(
                     PROFILE,
-                    &[Value::U64(account), Value::U64(account * 3 + round + 1)],
+                    [&[Value::U64(account), Value::U64(account * 3 + round + 1)]],
                 )?;
             }
             Ok(())
@@ -1036,8 +1023,11 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         let seeded = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             if round == 0 {
                 for account in 0..8u64 {
-                    tx.delete_dyn(PROFILE, &[Value::U64(account), Value::U64(account * 3)])?;
-                    tx.insert_dyn(PROFILE, &[Value::U64(account), Value::U64(account * 3 + 1)])?;
+                    tx.delete_dyn(PROFILE, [&[Value::U64(account), Value::U64(account * 3)]])?;
+                    tx.insert_dyn(
+                        PROFILE,
+                        [&[Value::U64(account), Value::U64(account * 3 + 1)]],
+                    )?;
                 }
                 Ok(())
             } else {
@@ -1159,12 +1149,12 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
     db.write(|tx| {
         tx.insert_dyn(
             POSTING,
-            &[
+            [&[
                 Value::U64(99_000),
                 Value::U64(3),
                 Value::I64(7),
                 Value::String(b"memo-1".to_vec().into()),
-            ],
+            ]],
         )?;
         Ok(())
     })
@@ -1188,23 +1178,20 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
     .expect("read");
 }
 
-fn flow_bulk_and_scan() {
+fn flow_insert_and_scan() {
     use bumbledb::Fresh as _;
-    // The dynamic bulk lane: 10_000 Item facts (3 chunks) into a fresh db.
-    let dir = common::TempDir::new("census-bulk");
+    // One collection insert of 10_000 Item facts into a fresh db.
+    let dir = common::TempDir::new("census-insert");
     let db = Db::create(dir.path(), schema()).expect("create");
     let rows: Vec<Vec<Value>> = (0..10_000u64)
         .map(|i| vec![Value::U64(i % 97), Value::U64(i / 97 + 1), Value::U64(i)])
         .collect();
-    measured(
-        "bulk",
-        "bulk_load_dyn 10k Item rows (3 chunks)",
-        true,
-        || {
-            let n = db.bulk_load_dyn(ITEM, rows.clone()).expect("bulk");
-            assert_eq!(n, 10_000);
-        },
-    );
+    measured("insert", "insert_dyn 10k Item rows", true, || {
+        let n = db
+            .write(|tx| tx.insert_dyn(ITEM, rows.clone()).map(|r| r.changed))
+            .expect("insert");
+        assert_eq!(n, 10_000);
+    });
 
     // The dynamic scan/export lane over the loaded relation.
     db.read(|snap| {
@@ -1221,24 +1208,24 @@ fn flow_bulk_and_scan() {
     .expect("read");
     drop(db);
 
-    // The typed lanes: bulk_load of str-bearing facts + scan_facts.
-    let tdir = common::TempDir::new("census-bulk-typed");
+    // The typed lanes: collection insert of str-bearing facts + scan_facts.
+    let tdir = common::TempDir::new("census-insert-typed");
     let tdb = Db::create(tdir.path(), CensusLedger).expect("create typed");
     let memos: Vec<String> = (0..64).map(|i| format!("memo-{i}")).collect();
-    measured(
-        "bulk",
-        "typed bulk_load 10k str facts (3 chunks)",
-        true,
-        || {
-            let n = tdb
-                .bulk_load((0..10_000u64).map(|i| CItem {
-                    id: CItemId::from_fresh(i),
-                    memo: &memos[(i % 64) as usize],
-                }))
-                .expect("typed bulk");
-            assert_eq!(n, 10_000);
-        },
-    );
+    measured("insert", "typed insert 10k str facts", true, || {
+        let n = tdb
+            .write(|tx| {
+                let rows: Vec<_> = (0..10_000u64)
+                    .map(|i| CItem {
+                        id: CItemId::from_fresh(i),
+                        memo: &memos[(i % 64) as usize],
+                    })
+                    .collect();
+                Ok(tx.insert(&rows)?.changed)
+            })
+            .expect("typed insert");
+        assert_eq!(n, 10_000);
+    });
     tdb.read(|snap| {
         measured("scan", "scan_facts 10k typed str facts", true, || {
             let n = snap.scan_facts::<CItem>().expect("scan").count();
@@ -1266,5 +1253,5 @@ fn allocation_deep_census() {
     flow_execute(&db);
     drop(db);
 
-    flow_bulk_and_scan();
+    flow_insert_and_scan();
 }

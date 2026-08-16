@@ -10,7 +10,7 @@
 use crate::image::ColumnWidth;
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use crate::ir::normalize::Occurrence;
 use crate::plan::fj::OccBind;
 use crate::plan::fj::split_filters;
@@ -227,7 +227,7 @@ fn occurrence_estimate(
         // twin's.
         if let FilterPredicate::Compare {
             field,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value,
         } = residual
         {
@@ -237,7 +237,7 @@ fn occurrence_estimate(
         }
         if let FilterPredicate::Compare {
             field,
-            op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge,
+            op: WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge,
             value: Const::Word(_),
         } = residual
         {
@@ -250,20 +250,14 @@ fn occurrence_estimate(
         }
         let keep_den = match residual {
             FilterPredicate::Compare { op, .. } => match op {
-                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
-                CmpOp::Ne => 1,
-                CmpOp::Eq => unreachable!("Eq residuals priced above"),
-                CmpOp::Allen { .. } | CmpOp::PointIn => {
-                    unreachable!("interval conditions lower to their fixed shapes")
-                }
+                WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge => RANGE_KEEP_DEN,
+                WordCmp::Ne => 1,
+                WordCmp::Eq => unreachable!("Eq residuals priced above"),
             },
             FilterPredicate::FieldsCompare { op, .. } => match op {
-                CmpOp::Eq => FIELDS_EQ_KEEP_DEN,
-                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
-                CmpOp::Ne => 1,
-                CmpOp::Allen { .. } | CmpOp::PointIn => {
-                    unreachable!("same-atom interval conditions lower to their fixed shapes")
-                }
+                WordCmp::Eq => FIELDS_EQ_KEEP_DEN,
+                WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge => RANGE_KEEP_DEN,
+                WordCmp::Ne => 1,
             },
             // The fixed membership compositions (word ranges over the
             // start/end pair), and the measure comparisons — a range
@@ -272,7 +266,6 @@ fn occurrence_estimate(
             // validation admits order operators only, so the range class
             // is exact, not a default).
             FilterPredicate::PointIn { .. }
-            | FilterPredicate::PointVar { .. }
             | FilterPredicate::AnyPointIn { .. }
             | FilterPredicate::FieldsPointIn { .. }
             | FilterPredicate::FieldWithin { .. }
@@ -503,9 +496,10 @@ mod tests {
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
                 field: FieldId(field),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::Param(crate::ir::ParamId(0)),
             }],
+            point_vars: vec![],
         }
     }
 
@@ -578,17 +572,17 @@ mod tests {
         occ.filters = vec![
             FilterPredicate::Compare {
                 field: FieldId(0),
-                op: CmpOp::Ge,
+                op: WordCmp::Ge,
                 value: Const::Param(crate::ir::ParamId(0)),
             },
             FilterPredicate::Compare {
                 field: FieldId(0),
-                op: CmpOp::Lt,
+                op: WordCmp::Lt,
                 value: Const::Param(crate::ir::ParamId(1)),
             },
             FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Ne,
+                op: WordCmp::Ne,
                 value: Const::Param(crate::ir::ParamId(2)),
             },
         ];
@@ -600,7 +594,7 @@ mod tests {
         occ.filters = vec![FilterPredicate::FieldsCompare {
             left: FieldId(0),
             right: FieldId(1),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
         }];
         let est = occurrence_stats(&txn, &cache, &schema, &occ, 128)
             .expect("estimate")
@@ -634,12 +628,12 @@ mod tests {
         occ.filters = vec![
             FilterPredicate::Compare {
                 field: FieldId(0),
-                op: CmpOp::Ge,
+                op: WordCmp::Ge,
                 value: Const::Word(8),
             },
             FilterPredicate::Compare {
                 field: FieldId(0),
-                op: CmpOp::Le,
+                op: WordCmp::Le,
                 value: Const::Word(19),
             },
         ];
@@ -651,7 +645,7 @@ mod tests {
         // Distinct fields are distinct summaries and still compose.
         occ.filters.push(FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Word(3),
         });
         let est = occurrence_stats(&txn, &cache, &schema, &occ, 1600)
@@ -788,7 +782,7 @@ mod tests {
         let mut occ = eq_on(0, R);
         occ.filters = vec![FilterPredicate::Compare {
             field: FieldId(0),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::ParamSet(crate::ir::ParamId(0)),
         }];
         let est = occurrence_stats(&txn, &cache, &schema, &occ, 6400)

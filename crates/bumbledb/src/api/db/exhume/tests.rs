@@ -94,9 +94,9 @@ fn note(id: u64, title: &str, status: u64) -> Vec<Value> {
 /// row ids follow commit order, so the scan order below is pinned.
 fn build_store(dir: &TempDir) {
     let db = Db::create(dir.path(), theory()).expect("create");
-    db.write(|tx| tx.insert_dyn(NOTE, &note(1, "alpha", 0)).map(|_| ()))
+    db.write(|tx| tx.insert_dyn(NOTE, [&note(1, "alpha", 0)]).map(|_| ()))
         .expect("write");
-    db.write(|tx| tx.insert_dyn(NOTE, &note(2, "beta", 1)).map(|_| ()))
+    db.write(|tx| tx.insert_dyn(NOTE, [&note(2, "beta", 1)]).map(|_| ()))
         .expect("write");
 }
 
@@ -244,7 +244,7 @@ fn an_ephemeral_store_exhumes_too_and_reports_its_kind() {
     let dir = TempDir::new("exhume-ephemeral");
     {
         let db = Db::ephemeral(dir.path(), theory()).expect("ephemeral");
-        db.write(|tx| tx.insert_dyn(NOTE, &note(7, "gamma", 0)).map(|_| ()))
+        db.write(|tx| tx.insert_dyn(NOTE, [&note(7, "gamma", 0)]).map(|_| ()))
             .expect("write");
     }
     let exhumed = exhume(dir.path()).expect("exhume");

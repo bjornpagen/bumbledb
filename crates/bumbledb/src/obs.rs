@@ -329,8 +329,6 @@ pub mod names {
     /// commit-sync failure (`docs/architecture/50-storage.md` § write
     /// path, phase 5) — never silent. (retry number, OS errno)
     pub const COMMIT_SYNC_RETRY: &str = "commit_sync_retry";
-    /// One `bulk_load` chunk. (facts submitted, facts changed)
-    pub const BULK_CHUNK: &str = "bulk_chunk";
     /// `Db::compact`'s durability chain completed: the copied file, its
     /// dirent in `dest`, and `dest`'s own dirent in the parent directory
     /// all fsynced — fires only after the last sync succeeds, so its

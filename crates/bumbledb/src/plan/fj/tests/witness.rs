@@ -106,7 +106,10 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
         .iter()
         .filter_map(|f| match f {
             FindTerm::Var(v) | FindTerm::Measure(v) => Some(*v),
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
+            FindTerm::Count
+            | FindTerm::Pack { .. }
+            | FindTerm::Aggregate { .. }
+            | FindTerm::AggregateMeasure { .. } => None,
         })
         .collect();
     validate(

@@ -17,7 +17,6 @@
  */
 
 import * as errors from "@superbuilders/errors"
-
 import type { Fact } from "#index.ts"
 import { Db } from "#index.ts"
 import {
@@ -32,6 +31,7 @@ import {
 	unit,
 	verdict
 } from "#test/fixtures/run-store-schema.ts"
+import { put } from "#test/put.ts"
 
 const mode = process.argv[2]
 const dir = process.argv[3]
@@ -52,50 +52,50 @@ const seeded: {
 } = { objectives: [] }
 
 const written = db.write(function seed(tx) {
-	const sheetRow = tx.insert(sheet, {
+	const sheetRow = put(tx, sheet, {
 		name: "child-sheet",
 		grade: "G7",
 		contentHash: new Uint8Array(32)
 	})
 	seeded.sheet = sheetRow.id
-	const unitRow = tx.insert(unit, {
+	const unitRow = put(tx, unit, {
 		sheet: sheetRow.id,
 		sourceUnitId: "u1",
 		title: "unit one",
 		description: "d",
 		scope: "s"
 	})
-	const staging = tx.insert(grp, {
+	const staging = put(tx, grp, {
 		sheet: sheetRow.id,
 		label: "STAGING",
 		context: "partition pending"
 	})
 	seeded.stagingGrp = staging.id
 	for (const ref of ["G7_a", "G7_b"]) {
-		const minted = tx.insert(objective, {
+		const minted = put(tx, objective, {
 			sheet: sheetRow.id,
 			unit: unitRow.id,
 			ref,
 			goal: `goal ${ref}`
 		})
 		seeded.objectives.push(minted.id)
-		tx.insert(grpMember, { grp: staging.id, objective: minted.id })
+		put(tx, grpMember, { grp: staging.id, objective: minted.id })
 	}
-	const taskRow = tx.insert(task, {
+	const taskRow = put(tx, task, {
 		kind: "Enrich",
 		sheet: sheetRow.id,
 		subject: 1n
 	})
 	seeded.task = taskRow.id
-	const attemptRow = tx.insert(attempt, {
+	const attemptRow = put(tx, attempt, {
 		task: taskRow.id,
 		n: 1n,
 		pin: "Gpt56Max",
 		promptHash: new Uint8Array(32)
 	})
 	seeded.attempt = attemptRow.id
-	tx.insert(attemptText, { attempt: attemptRow.id, prompt: "p", output: "o" })
-	tx.insert(verdict, { attempt: attemptRow.id, outcome: "Rejected" })
+	put(tx, attemptText, { attempt: attemptRow.id, prompt: "p", output: "o" })
+	put(tx, verdict, { attempt: attemptRow.id, outcome: "Rejected" })
 })
 if (!written.ok) {
 	process.stderr.write(`child seed rejected: ${JSON.stringify(written.violations.length)}\n`)
@@ -110,7 +110,7 @@ if (seededSheet === undefined) {
 
 /** The revert shape: mint a second grp (now the max grp id), then delete it in a committed write. */
 const doomed = db.write(function mintDoomed(tx) {
-	const minted = tx.insert(grp, {
+	const minted = put(tx, grp, {
 		sheet: seededSheet,
 		label: "doomed",
 		context: "to be reverted"
@@ -130,7 +130,7 @@ const reverted = db.write(function revertDoomed(tx) {
 	if (row === undefined) {
 		throw errors.new("doomed grp vanished")
 	}
-	tx.delete(grp, row)
+	tx.delete(grp, [row])
 })
 if (!reverted.ok) {
 	process.stderr.write("child revert rejected\n")

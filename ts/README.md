@@ -6,7 +6,7 @@ bumbledb models data as relations judged by statements (functionality, containme
 
 The surface is structural to the bone. Relation declarations are pure structure — kind, width, element, fresh, nothing else — and domains are never declared anywhere: **the laws type the columns**. `schema()` computes every field's equivalence class from the statement list itself, so the containments and mirrors you already write ARE the typing, at compile time and again at construction. Values stay bare (`bigint`, `string`, …); identity lives in the class the laws compute, not in a wrapper.
 
-> **Research-grade, one platform.** This is a `0.x` release of an embedded engine under active development. It targets a single platform today (below), the API is not yet frozen across `0.x`, and the FFI ABI is pinned exactly per version. Treat it as an early adopter's tool, not a production datastore.
+> **Research-grade, one platform.** This is **0.14.0**, a `0.x` release of an embedded engine under active development. It targets a single platform today (below), the API is not yet frozen across `0.x`, and the FFI ABI is pinned exactly per version (`bdb_abi_version()` is **2** — collection insert/delete, `reserve`). Treat it as an early adopter's tool, not a production datastore.
 
 ## Platform support
 
@@ -63,8 +63,9 @@ const db = await Db.create("./review.db", Review)
 // column takes the handle name — a wrong string is a compile error AND a
 // marshal refusal.
 const result = db.write((tx) => {
-	const attempt = tx.insert(Attempt, { kind: "DirectPass" }) // attempt.id minted, a bare bigint
-	tx.insert(Certificate, { attempt: attempt.id, kind: "DirectPass" })
+	const id = tx.reserve(Attempt, "id", 1n).at(0n)!
+	tx.insert(Attempt, [{ id, kind: "DirectPass" }])
+	tx.insert(Certificate, [{ attempt: id, kind: "DirectPass" }])
 })
 
 // Rejection-as-data: no throw — a rejected commit is a typed value carrying
@@ -128,7 +129,7 @@ The drizzle law governs this surface: the SDK's job at the host boundary is tran
 
 - The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
 - The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `capacity`; faces via `on` (set membership is a plain array in `.where`); windows via `within` (`within(n)` exact, `within(lo, hi)` range, `within(lo, "*")` floor), measures via `weigh` (`weigh("f")` a u64 field, `weigh(duration("f"))` an interval's measure), dependent bounds via `ref`/`duration` read from the target row; ψ-selection via `.where` on relations and closed rosters.
-- The `Db` runtime — `Db.create`/`Db.open` (exclusive-lock stores; a second open of the same path is `EnvironmentLocked`), transactions, typed violations, scoped snapshot reads (`db.read(fn)`, or `using snap = db.read()` — lifetimes are disposables, never `close()`), the write verbs with `abandon` (returning `abandon(payload)` from `write` or `writeFrom` rolls the transaction back; the outcome arm is in the result type).
+- The `Db` runtime — `Db.create`/`Db.open` (exclusive-lock stores; a second open of the same path is `EnvironmentLocked`), transactions, typed violations, scoped snapshot reads (`db.read(fn)`, or `using snap = db.read()` — lifetimes are disposables, never `close()`), the write verbs with `abandon` (returning `abandon(payload)` from `write` or `writeFrom` rolls the transaction back; the outcome arm is in the result type). Collection writes: `tx.insert(Rel, [{...}])` / `tx.delete(Rel, facts)` return `MutationReport { submitted, changed }`; mint is `tx.reserve(Rel, field, 1n)` (empty is not a minted id). ETL is a host loop of `write`.
 - The query surface — `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); named interiors and one linear rec via `q.interior` / `q.reach`; `db.prepare` as a plain value.
 - The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`). A disposable lifetime: `using exhumed = await Db.exhume(path)` releases the store's exclusive lock at scope exit.
 

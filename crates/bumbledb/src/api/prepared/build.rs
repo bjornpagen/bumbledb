@@ -10,7 +10,7 @@ use crate::image::cache::ImageCache;
 use crate::image::view::View;
 use crate::ir::normalize::{NormalizedQuery, normalize_rules};
 use crate::ir::validate::{RuleWitness, ValidatedQuery, validate};
-use crate::ir::{AggOp, FindTerm, Query};
+use crate::ir::{FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
     DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
@@ -311,18 +311,6 @@ fn prepare_witnessed<'s, S>(
             derived_count,
         },
     };
-    let key_probe_direct = matches!(
-        &pipeline,
-        PreparedPipeline::Cq { interiors, rules }
-            if interiors.is_empty()
-                && matches!(
-                    rules.as_slice(),
-                    [PreparedRule::KeyProbe(KeyProbeRule {
-                        key_probe_finds: Some(_),
-                        ..
-                    })]
-                )
-    );
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -345,7 +333,6 @@ fn prepare_witnessed<'s, S>(
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
         rendered,
-        key_probe_direct,
         marker: std::marker::PhantomData,
     })
 }
@@ -409,7 +396,7 @@ fn prepare_interior(
     Ok(PreparedInterior {
         rules,
         sink,
-        field_types: columns.iter().map(|c| c.ty.type_desc()).collect(),
+        field_types: columns.iter().map(|c| c.ty().type_desc()).collect(),
         units,
         ray_probes,
     })
@@ -500,7 +487,7 @@ fn prepare_reach(
     Ok(super::reach::ReachDriver {
         base,
         rec: rec_rules,
-        field_types: columns.iter().map(|c| c.ty.type_desc()).collect(),
+        field_types: columns.iter().map(|c| c.ty().type_desc()).collect(),
         sink,
         units,
         scratch: super::reach::RecPingPong::default(),
@@ -761,6 +748,10 @@ fn stamp_rec_bind(
 /// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
 /// statistics → DP → lowering → plan validation. Rec-arm bind roles
 /// are already stamped on the occurrences.
+#[expect(
+    clippy::too_many_lines,
+    reason = "classify then statistics then DP then lowering is one pipeline"
+)]
 fn prepare_rule_variant(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -854,7 +845,10 @@ fn prepare_rule_variant(
     if rule.rule().finds.iter().any(|term| {
         matches!(
             term,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+            FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::AggregateMeasure { .. }
         )
     }) {
         let group_key: std::collections::BTreeSet<crate::ir::VarId> = rule
@@ -863,7 +857,10 @@ fn prepare_rule_variant(
             .iter()
             .filter_map(|term| match term {
                 FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
-                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
+                FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::AggregateMeasure { .. } => None,
             })
             .collect();
         fold_split(&mut fj, &group_key, &mut estimates);
@@ -1250,37 +1247,19 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 slot: layout.slot_of(*var),
             },
             FindTerm::AggregateMeasure { op, over } => FindSpec::AggDuration {
-                op: match op {
-                    AggOp::Sum => crate::exec::sink::FoldOp::Sum,
-                    AggOp::Min => crate::exec::sink::FoldOp::Min,
-                    AggOp::Max => crate::exec::sink::FoldOp::Max,
-                    AggOp::Count | AggOp::Pack => {
-                        unreachable!("validated: measure folds are Sum/Min/Max")
-                    }
-                },
+                op: *op,
                 slot: layout.slot_of(*over),
             },
-            FindTerm::Aggregate { op, over } => match op {
-                AggOp::Pack => FindSpec::Pack {
-                    slot: layout.slot_of(over.expect("validated: Pack carries a variable")),
-                },
-                AggOp::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
-                AggOp::Sum | AggOp::Min | AggOp::Max => {
-                    let var = over.expect("validated: Sum/Min/Max carry a variable");
-                    let fold = match op {
-                        AggOp::Sum => crate::exec::sink::FoldOp::Sum,
-                        AggOp::Min => crate::exec::sink::FoldOp::Min,
-                        AggOp::Max => crate::exec::sink::FoldOp::Max,
-                        AggOp::Count | AggOp::Pack => unreachable!("handled above"),
-                    };
-                    FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
-                        op: fold,
-                        slot: layout.slot_of(var),
-                        width: layout.width_of(var),
-                        signed: matches!(rule.var_type(var), ValueType::I64),
-                    })
-                }
+            FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
+            FindTerm::Pack { over } => FindSpec::Pack {
+                slot: layout.slot_of(*over),
             },
+            FindTerm::Aggregate { op, over } => FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
+                op: *op,
+                slot: layout.slot_of(*over),
+                width: layout.width_of(*over),
+                signed: matches!(rule.var_type(*over), ValueType::I64),
+            }),
         })
         .collect()
 }
@@ -1303,7 +1282,7 @@ fn key_probe_find_table(
                     .iter()
                     .find(|v| v.slot == *slot)
                     .expect("find slots come from the key-probe plan's layout");
-                Some((var.field, column.ty.clone()))
+                Some((var.field, column.ty().clone()))
             }
             // aggregate and measure key_probes keep the sink path
             FindSpec::Agg(_)
@@ -1363,7 +1342,10 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
                 _ => return Vec::new(),
             },
             FindTerm::Measure(_) => return Vec::new(),
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {}
+            FindTerm::Count
+            | FindTerm::Aggregate { .. }
+            | FindTerm::Pack { .. }
+            | FindTerm::AggregateMeasure { .. } => {}
         }
     }
     if radixes.is_empty() {

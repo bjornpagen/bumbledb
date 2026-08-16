@@ -7,7 +7,7 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 
@@ -148,8 +148,8 @@ fn revenue_by_region() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -177,13 +177,10 @@ fn category_window() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {
@@ -232,8 +229,8 @@ fn promo_split() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -255,10 +252,7 @@ fn segment_category() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Var(VarId(1)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {
@@ -290,12 +284,12 @@ fn store_extremes() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Min,
-                over: Some(VarId(1)),
+                op: FoldOp::Min,
+                over: VarId(1),
             },
             FindTerm::Aggregate {
-                op: AggOp::Max,
-                over: Some(VarId(1)),
+                op: FoldOp::Max,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -315,8 +309,8 @@ fn store_extremes() -> Query {
 fn brand_drill() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(0)),
+            op: FoldOp::Sum,
+            over: VarId(0),
         }],
         atoms: vec![
             Atom {

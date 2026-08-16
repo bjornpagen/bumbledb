@@ -23,8 +23,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-
-import type { Db as DbValue, InsertFact, ReadScope, Tx } from "#index.ts"
+import type { Db as DbValue, Fact, ReadScope, Tx } from "#index.ts"
 import {
 	abandon,
 	bool,
@@ -47,6 +46,7 @@ import {
 	u64,
 	within
 } from "#index.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-db-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -153,9 +153,9 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("fresh-mint insert returns bare usable ids; final-state point reads see the delta", function freshMint() {
 		const result = db.write(function seed(tx) {
-			const holder = tx.insert(Holder, { name: "ada" })
+			const holder = put(tx, Holder, { name: "ada" })
 			ids.ada = holder.id
-			const account = tx.insert(Account, {
+			const account = put(tx, Account, {
 				holder: holder.id,
 				kind: "Checking",
 				active: span(0n, 10n)
@@ -175,8 +175,8 @@ describe("the Db runtime against a real store", function suite() {
 	test("delete + reinsert with the resupplied id preserves identity (scan proves)", function resupply() {
 		const ada = must(ids.ada)
 		const result = db.write(function rename(tx) {
-			assert.equal(tx.delete(Holder, { id: ada, name: "ada" }), true)
-			const reinserted = tx.insert(Holder, { id: ada, name: "ada lovelace" })
+			assert.equal(tx.delete(Holder, [{ id: ada, name: "ada" }]).changed, 1n)
+			const reinserted = put(tx, Holder, { id: ada, name: "ada lovelace" })
 			assert.equal(reinserted.id, ada)
 		})
 		assert.ok(result.ok)
@@ -187,7 +187,7 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("scoped reads round-trip every field type", function roundTrip() {
 		const written = db.write(function seedAudit(tx) {
-			const audit = tx.insert(Audit, {
+			const audit = put(tx, Audit, {
 				flag: true,
 				note: "π ≤ 4",
 				tag: new Uint8Array([1, 2, 3, 4]),
@@ -240,18 +240,18 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("keyed get reads through a declared (non-fresh) primary key", function declaredKey() {
 		const setup = db.write(function seedSavings(tx) {
-			const grace = tx.insert(Holder, { name: "grace" })
+			const grace = put(tx, Holder, { name: "grace" })
 			ids.grace = grace.id
-			const account = tx.insert(Account, {
+			const account = put(tx, Account, {
 				holder: grace.id,
 				kind: "Savings",
 				active: span(0n, 5n)
 			})
 			ids.graceAccount = account.id
-			tx.insert(SavingsTerms, { account: account.id, rate: 3n })
-			const kurt = tx.insert(Holder, { name: "kurt" })
+			put(tx, SavingsTerms, { account: account.id, rate: 3n })
+			const kurt = put(tx, Holder, { name: "kurt" })
 			ids.kurt = kurt.id
-			tx.insert(Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
+			put(tx, Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
 		})
 		assert.ok(setup.ok)
 		assert.deepStrictEqual(db.get(SavingsTerms, { account: must(ids.graceAccount) }), {
@@ -268,10 +268,10 @@ describe("the Db runtime against a real store", function suite() {
 		const ada = must(ids.ada)
 		const kurt = must(ids.kurt)
 		const rejected = db.write(function violate(tx) {
-			tx.insert(Account, { holder: ada, kind: "Checking", active: span(1n, 2n) })
-			tx.insert(Account, { holder: ada, kind: "Checking", active: span(2n, 3n) })
-			tx.insert(Account, { holder: ada, kind: "Checking", active: span(3n, 4n) })
-			tx.delete(Holder, { id: kurt, name: "kurt" })
+			put(tx, Account, { holder: ada, kind: "Checking", active: span(1n, 2n) })
+			put(tx, Account, { holder: ada, kind: "Checking", active: span(2n, 3n) })
+			put(tx, Account, { holder: ada, kind: "Checking", active: span(3n, 4n) })
+			tx.delete(Holder, [{ id: kurt, name: "kurt" }])
 		})
 		assert.ok(!rejected.ok, "the statement judgment rejects")
 		assert.equal(rejected.violations.length, 2, "the statement phase is scan-complete")
@@ -303,7 +303,7 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("an FD violation cites its declared key statement (key phase preempts)", function fdViolation() {
 		const rejected = db.write(function duplicateTerms(tx) {
-			tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 9n })
+			put(tx, SavingsTerms, { account: must(ids.graceAccount), rate: 9n })
 		})
 		assert.ok(!rejected.ok, "the key judgment rejects")
 		assert.equal(rejected.violations.length, 1, "key violations preempt the statement phase")
@@ -319,7 +319,7 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("a fresh-implied key violation carries statement: undefined", function impliedKey() {
 		const rejected = db.write(function forkAda(tx) {
-			tx.insert(Holder, { id: must(ids.ada), name: "imposter" })
+			put(tx, Holder, { id: must(ids.ada), name: "imposter" })
 		})
 		assert.ok(!rejected.ok)
 		const violation = must(rejected.violations[0])
@@ -354,7 +354,7 @@ describe("the Db runtime against a real store", function suite() {
 		})
 		assert.ok(captured.ok)
 		assert.throws(function useAfterSpend() {
-			must(escaped).insert(Holder, { name: "late" })
+			put(must(escaped), Holder, { name: "late" })
 		}, /spent/)
 	})
 
@@ -363,7 +363,7 @@ describe("the Db runtime against a real store", function suite() {
 			const holders = snap.scan(Holder)
 			assert.ok(holders.length > 0)
 			return db.writeFrom(snap, function insert(tx) {
-				tx.insert(Holder, { name: "witnessed" })
+				put(tx, Holder, { name: "witnessed" })
 			})
 		})
 		assert.ok(outcome.ok, "the witnessed commit lands")
@@ -375,11 +375,11 @@ describe("the Db runtime against a real store", function suite() {
 			return db.read(function compute(snap) {
 				const holders = snap.scan(Holder)
 				const mover = db.write(function race(inner) {
-					inner.insert(Holder, { name: "wit-mover" })
+					put(inner, Holder, { name: "wit-mover" })
 				})
 				assert.ok(mover.ok, "the interleaved write lands and moves the generation")
 				return db.writeFrom(snap, function insert(tx) {
-					tx.insert(Holder, { name: `wit-count-${holders.length}` })
+					put(tx, Holder, { name: `wit-count-${holders.length}` })
 				})
 			})
 		})
@@ -395,7 +395,7 @@ describe("the Db runtime against a real store", function suite() {
 		const rejected = db.read(function violate(snap) {
 			assert.equal(typeof snap.generation, "bigint")
 			return db.writeFrom(snap, function insert(tx) {
-				tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 11n })
+				put(tx, SavingsTerms, { account: must(ids.graceAccount), rate: 11n })
 			})
 		})
 		assert.ok(!rejected.ok)
@@ -411,7 +411,7 @@ describe("the Db runtime against a real store", function suite() {
 		const outcome = db.read(function bail(snap) {
 			assert.equal(snap.generation, before)
 			return db.writeFrom(snap, function decline(tx) {
-				tx.insert(Holder, { name: "never-lands" })
+				put(tx, Holder, { name: "never-lands" })
 				return abandon({ reason: "stale premise" })
 			})
 		})
@@ -453,7 +453,7 @@ describe("the Db runtime against a real store", function suite() {
 			return snap.generation
 		})
 		const outcome = db.write(function bail(tx) {
-			tx.insert(Holder, { name: "write-abandon-never-lands" })
+			put(tx, Holder, { name: "write-abandon-never-lands" })
 			return abandon({ reason: "declined" })
 		})
 		assert.ok(!outcome.ok)
@@ -472,45 +472,75 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
 	})
 
-	test("tx.insert returns { changed, ...fresh } — the Rust-surface bijection (R11)", function insertChanged() {
+	test("tx.insert returns MutationReport { submitted, changed }", function insertChanged() {
 		const committed = db.write(function replay(tx) {
-			const first = tx.insert(Holder, { name: "changed-bit" })
-			assert.equal(first.changed, true, "a fresh insert changes the final state")
-			assert.equal(typeof first.id, "bigint", "the minted cell rides beside the bit")
-			const replayed = tx.insert(Holder, { id: first.id, name: "changed-bit" })
-			assert.equal(replayed.changed, false, "the resupplied replay reports no state change — no contains round trip")
-			assert.equal(replayed.id, first.id, "resupply preserves identity")
-			const noFresh = tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 777n })
-			assert.equal(noFresh.changed, true, "a fresh-field-less relation's insert carries the bit too")
-			assert.equal(tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 777n }).changed, false)
+			const id = tx.reserve(Holder, "id", 1n).at(0n)
+			assert.ok(id !== undefined)
+			const first = tx.insert(Holder, [{ id, name: "changed-bit" }])
+			assert.equal(first.submitted, 1n)
+			assert.equal(first.changed, 1n, "a fresh insert changes the final state")
+			const replayed = tx.insert(Holder, [{ id, name: "changed-bit" }])
+			assert.equal(replayed.submitted, 1n)
+			assert.equal(replayed.changed, 0n, "the resupplied replay reports no state change — no contains round trip")
+			const created = tx.insert(SavingsTerms, [{ account: must(ids.graceAccount), rate: 777n }])
+			assert.equal(created.changed, 1n, "a fresh-field-less relation's insert carries the bit too")
+			assert.equal(tx.insert(SavingsTerms, [{ account: must(ids.graceAccount), rate: 777n }]).changed, 0n)
 			return abandon("probe only")
 		})
 		assert.ok(!committed.ok, "the probe delta abandons — the store is untouched")
 	})
 
-	test("a fresh field named `changed` is an admission refusal — the flattened return never shadows the report (R11)", async function freshChangedRefused() {
+	test("empty insert/delete/reserve still enter the transaction", function emptyIsAMutation() {
+		const Other = relation("Holder", { id: u64.fresh, name: str })
+		const committed = db.write(function emptyOps(tx) {
+			const inserted = tx.insert(Holder, [])
+			assert.equal(inserted.submitted, 0n)
+			assert.equal(inserted.changed, 0n)
+			const deleted = tx.delete(Holder, [])
+			assert.equal(deleted.submitted, 0n)
+			assert.equal(deleted.changed, 0n)
+			const empty = tx.reserve(Holder, "id", 0n)
+			assert.equal(empty.empty, true)
+			assert.equal(empty.count, 0n)
+			assert.equal(empty.at(0n), undefined)
+			const next = tx.reserve(Holder, "id", 1n)
+			if (next.empty) {
+				throw new Error("reserve(1) must be nonempty")
+			}
+			assert.equal(typeof next.start, "bigint")
+			assert.throws(function foreignEmptyInsert() {
+				tx.insert(Other, [])
+			}, /not a member of schema/)
+			return abandon("probe only")
+		})
+		assert.ok(!committed.ok)
+	})
+
+	test("a field named `changed` is a legal cell — MutationReport is a separate value", async function changedFieldIsLegal() {
 		const Shadow = relation("Shadow", { changed: u64.fresh, note: str })
 		const Shadowed = schema("Shadowed", { Shadow }, [])
-		await assert.rejects(async function shadowCreate() {
-			await Db.create(path.join(tmpRoot, "shadow"), Shadowed)
-		}, /fresh field named "changed" would shadow/)
-		assert.ok(
-			!fs.existsSync(path.join(tmpRoot, "shadow")),
-			"the refusal precedes the bridge — no store is ever created"
-		)
-		// A SUPPLIED field named `changed` never rides the return record — the name stays legal.
+		const shadowDb = await Db.create(path.join(tmpRoot, "shadow"), Shadowed)
+		const shadowed = shadowDb.write(function insertShadow(tx) {
+			const id = tx.reserve(Shadow, "changed", 1n).at(0n)
+			assert.ok(id !== undefined)
+			const report = tx.insert(Shadow, [{ changed: id, note: "ok" }])
+			assert.equal(report.changed, 1n)
+			return abandon("probe only")
+		})
+		assert.ok(!shadowed.ok)
 		const Legal = relation("Legal", { id: u64.fresh, changed: bool })
 		const Kept = schema("Kept", { Legal }, [])
 		const legalDb = await Db.create(path.join(tmpRoot, "legal-changed"), Kept)
 		const outcome = legalDb.write(function insertLegal(tx) {
-			const first = tx.insert(Legal, { changed: true })
-			assert.equal(first.changed, true, "a fresh insert changes the final state")
-			assert.equal(typeof first.id, "bigint", "the minted cell rides beside the bit")
-			const replay = tx.insert(Legal, { id: first.id, changed: true })
+			const id = tx.reserve(Legal, "id", 1n).at(0n)
+			assert.ok(id !== undefined)
+			const first = tx.insert(Legal, [{ id, changed: true }])
+			assert.equal(first.changed, 1n, "a fresh insert changes the final state")
+			const replay = tx.insert(Legal, [{ id, changed: true }])
 			assert.equal(
 				replay.changed,
-				false,
-				"the report is the engine's boolean — the supplied `changed` cell (true) never shadows it"
+				0n,
+				"the report is the engine's count — the supplied `changed` cell (true) never shadows it"
 			)
 			return abandon("probe only")
 		})
@@ -538,7 +568,7 @@ describe("the Db runtime against a real store", function suite() {
 			}, /read scope is invalidated/)
 		})
 		const landed = db.write(function probe(tx) {
-			tx.insert(Holder, { name: "post-dispose-write" })
+			put(tx, Holder, { name: "post-dispose-write" })
 		})
 		assert.ok(landed.ok, "no reader slot leaked — the write begins cleanly")
 	})
@@ -558,45 +588,60 @@ describe("the Db runtime against a real store", function suite() {
  * control.
  */
 function marshalShapesAreTyped(tx: Tx<(typeof Ledger)["relations"]>): void {
-	tx.insert(Audit, {
-		flag: true,
-		note: "well-shaped",
-		tag: new Uint8Array([1, 2, 3, 4]),
-		score: -1n,
-		at: span(0n, 1n)
-	})
-	tx.insert(Audit, {
-		// @ts-expect-error — a bool field takes boolean, never a string
-		flag: "yes",
-		note: "ill-shaped bool",
-		tag: new Uint8Array([1, 2, 3, 4]),
-		score: -1n,
-		at: span(0n, 1n)
-	})
-	tx.insert(Audit, {
-		flag: true,
-		note: "ill-shaped i64",
-		tag: new Uint8Array([1, 2, 3, 4]),
-		// @ts-expect-error — an i64 field takes bigint, never number
-		score: -1,
-		at: span(0n, 1n)
-	})
-	tx.insert(Audit, {
-		flag: true,
-		note: "ill-shaped bytes",
-		// @ts-expect-error — a bytes<N> field takes Uint8Array, never a number array
-		tag: [1, 2, 3, 4],
-		score: -1n,
-		at: span(0n, 1n)
-	})
-	tx.insert(Audit, {
-		flag: true,
-		note: "ill-shaped interval",
-		tag: new Uint8Array([1, 2, 3, 4]),
-		score: -1n,
-		// @ts-expect-error — an interval field takes { start, end } bigints, never a bare point
-		at: 5n
-	})
+	tx.insert(Audit, [
+		{
+			id: 1n,
+			flag: true,
+			note: "well-shaped",
+			tag: new Uint8Array([1, 2, 3, 4]),
+			score: -1n,
+			at: span(0n, 1n)
+		}
+	])
+	// @ts-expect-error — a bool field takes boolean, never a string
+	tx.insert(Audit, [
+		{
+			id: 1n,
+			flag: "yes",
+			note: "ill-shaped bool",
+			tag: new Uint8Array([1, 2, 3, 4]),
+			score: -1n,
+			at: span(0n, 1n)
+		}
+	])
+	// @ts-expect-error — an i64 field takes bigint, never number
+	tx.insert(Audit, [
+		{
+			id: 1n,
+			flag: true,
+			note: "ill-shaped i64",
+			tag: new Uint8Array([1, 2, 3, 4]),
+			score: -1,
+			at: span(0n, 1n)
+		}
+	])
+	// @ts-expect-error — a bytes<N> field takes Uint8Array, never a number array
+	tx.insert(Audit, [
+		{
+			id: 1n,
+			flag: true,
+			note: "ill-shaped bytes",
+			tag: [1, 2, 3, 4],
+			score: -1n,
+			at: span(0n, 1n)
+		}
+	])
+	// @ts-expect-error — an interval field takes { start, end } bigints, never a bare point
+	tx.insert(Audit, [
+		{
+			id: 1n,
+			flag: true,
+			note: "ill-shaped interval",
+			tag: new Uint8Array([1, 2, 3, 4]),
+			score: -1n,
+			at: 5n
+		}
+	])
 }
 
 /** The Calendar theory the typestate probe holds against the Ledger. */
@@ -613,14 +658,14 @@ const Calendar = schema("Calendar", { Booking }, [key(Booking, ["room", "during"
 function dbTypestateHoldsTheWall(
 	ledgerDb: DbValue<(typeof Ledger)["relations"]>,
 	calendarDb: DbValue<(typeof Calendar)["relations"]>,
-	account: InsertFact<typeof Account>
+	account: Fact<typeof Account>
 ): void {
 	ledgerDb.write(function accepts(tx) {
-		tx.insert(Account, account)
+		tx.insert(Account, [account])
 	})
 	calendarDb.write(function rejects(tx) {
 		// @ts-expect-error — a Ledger fact belongs to Db<Ledger>, never Db<Calendar>
-		tx.insert(Account, account)
+		tx.insert(Account, [account])
 	})
 }
 

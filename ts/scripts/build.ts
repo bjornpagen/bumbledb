@@ -22,7 +22,8 @@ import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH
  * tarball proof — so a linux host builds, links, and verifies its own `.so`
  * under its own name instead of misfiling it under the darwin one.
  *
- * Order: assert version lockstep (one source of truth, the main manifest) →
+ * Order: assert version lockstep (one source of truth — npm main, platform
+ * package, napi crate, engine crate, C ABI crate, workspace members) →
  * clean dist → cargo-compile the napi bridge against the in-repo engine →
  * place the `.node` in the LOCAL platform package dir → link that package
  * into `node_modules` so it resolves by name exactly as the published
@@ -48,7 +49,7 @@ function build(): void {
 
 	const version = assertVersionLockstep(packageRoot, publishPackageDir, crateManifest)
 	console.log(
-		`bumbledb build: version ${version} (main == platform == crate manifest; the platform pin injects at pack)`
+		`bumbledb build: version ${version} (main == platform == napi crate == engine == C ABI; the platform pin injects at pack)`
 	)
 
 	fs.rmSync(distDir, { recursive: true, force: true })
@@ -89,22 +90,40 @@ function build(): void {
 }
 
 /**
- * The version-lockstep gate (PRD-03 item 5): the main manifest's `version` is
- * the single source; the PUBLISH platform manifest's `version` and the
- * bridge crate's `Cargo.toml` version must equal it EXACTLY (the FFI ABI is
- * not semver-stable — a main package may only ever resolve its own-version
- * binary; and `engineVersion()` bakes CARGO_PKG_VERSION into the shipped
- * binary, so the crate manifest is the third spelling of the release). The
- * platform PIN is not a repo field: the repo manifest must carry NO
- * `optionalDependencies` (a committed exact pin of the current unpublished
- * version made every release a red-CI window — the frozen lockfile can
- * never resolve it); `scripts/pin.ts` injects the pin into the PACKED
- * manifest at prepack, exact-version by construction from the one source,
- * and `verifyPack` proves the injected pin on a real tarball. A divergence
- * fails the build before anything is produced, so a release bump is one
- * conceptual edit that this gate then enforces. Pure manifest reads, so
- * the gate holds on EVERY build host, not just the publishing one.
+ * The version-lockstep gate: the main manifest's `version` is the single
+ * source. The PUBLISH platform manifest, the napi crate, the engine crate,
+ * `bumbledb-c`, and the other workspace members must equal it EXACTLY.
+ * The FFI ABI is not semver-stable — a main package may only ever resolve
+ * its own-version binary; `engineVersion()` and `bdb_version()` bake
+ * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
+ * repo field: the repo manifest must carry NO `optionalDependencies` (a
+ * committed exact pin of the current unpublished version made every
+ * release a red-CI window — the frozen lockfile can never resolve it);
+ * `scripts/pin.ts` injects the pin into the PACKED manifest at prepack,
+ * exact-version by construction from the one source, and `verifyPack`
+ * proves the injected pin on a real tarball. A divergence fails the build
+ * before anything is produced. Pure manifest reads, so the gate holds on
+ * EVERY build host, not just the publishing one.
  */
+function cargoPackageVersion(manifestPath: string): string {
+	const crate = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
+	if (crate.error) {
+		throw errors.wrap(crate.error, `read ${manifestPath}`)
+	}
+	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.data)?.[1]
+	if (typeof crateVersion !== "string" || crateVersion === "") {
+		throw errors.new(`${manifestPath} is missing a package version`)
+	}
+	return crateVersion
+}
+
+function assertCargoLockstep(manifestPath: string, version: string, label: string): void {
+	const got = cargoPackageVersion(manifestPath)
+	if (got !== version) {
+		throw errors.new(`version lockstep broken: main is ${version} but ${label} is ${got}`)
+	}
+}
+
 function assertVersionLockstep(packageRoot: string, publishPackageDir: string, crateManifest: string): string {
 	const main = readJson(path.join(packageRoot, "package.json"))
 	const platform = readJson(path.join(publishPackageDir, "package.json"))
@@ -127,17 +146,41 @@ function assertVersionLockstep(packageRoot: string, publishPackageDir: string, c
 	if (platform.name !== platformName) {
 		throw errors.new(`platform package.json name is ${String(platform.name)}, expected ${platformName}`)
 	}
-	const crate = errors.trySync(() => fs.readFileSync(crateManifest, "utf8"))
-	if (crate.error) {
-		throw errors.wrap(crate.error, `read ${crateManifest}`)
-	}
-	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.data)?.[1]
-	if (crateVersion !== version) {
-		throw errors.new(
-			`version lockstep broken: main is ${version} but ts/crate/Cargo.toml is ${String(crateVersion)} (engineVersion() bakes CARGO_PKG_VERSION into the shipped binary — a release bump edits all three spellings)`
-		)
+
+	const repoRoot = path.join(packageRoot, "..")
+	assertCargoLockstep(crateManifest, version, "ts/crate/Cargo.toml")
+	assertCargoLockstep(path.join(repoRoot, "crates/bumbledb-c/Cargo.toml"), version, "crates/bumbledb-c/Cargo.toml")
+	for (const member of workspaceMemberManifests(repoRoot)) {
+		assertCargoLockstep(member, version, path.relative(repoRoot, member))
 	}
 	return version
+}
+
+/**
+ * Every engine-workspace member must share the product identity. Parsed
+ * from the root `members = [...]` list so a new crate cannot skip the
+ * gate. `bumbledb-c` and `ts/crate` are workspace-excluded leaves and
+ * are asserted separately — those are the C ABI and napi spellings the
+ * TS three-way used to miss.
+ */
+function workspaceMemberManifests(repoRoot: string): string[] {
+	const manifestPath = path.join(repoRoot, "Cargo.toml")
+	const text = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
+	if (text.error) {
+		throw errors.wrap(text.error, `read ${manifestPath}`)
+	}
+	const block = /members\s*=\s*\[([\s\S]*?)\]/.exec(text.data)
+	if (block === null || typeof block[1] !== "string") {
+		throw errors.new(`${manifestPath} is missing a workspace members list`)
+	}
+	const members = [...block[1].matchAll(/"([^"]+)"/g)].flatMap((match) => {
+		const member = match[1]
+		return member === undefined ? [] : [path.join(repoRoot, member, "Cargo.toml")]
+	})
+	if (members.length === 0) {
+		throw errors.new(`${manifestPath} workspace members list is empty`)
+	}
+	return members
 }
 
 /** Reads and parses a JSON file, wrapping either failure. */

@@ -83,7 +83,7 @@ use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
-use crate::ir::{CmpOp, FindTerm, VarId};
+use crate::ir::{FindTerm, VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Enforcement, Schema};
 use bumbledb_theory::schema::{FieldId, Side, StatementId};
@@ -273,7 +273,7 @@ fn target_otherwise_unused(
     let selections_within_psi = b.filters.iter().all(|filter| match filter {
         FilterPredicate::Compare {
             field,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value,
         } => psi.iter().any(|(f, v)| f == field && v == value),
         _ => false,
@@ -282,7 +282,7 @@ fn target_otherwise_unused(
         a.filters.iter().any(|filter| {
             matches!(
                 filter,
-                FilterPredicate::Compare { field: f, op: CmpOp::Eq, value: v }
+                FilterPredicate::Compare { field: f, op: WordCmp::Eq, value: v }
                     if f == field && v == value
             )
         })
@@ -380,12 +380,7 @@ fn var_is_dead(
         idx == b_idx
             || occ.role.discharged()
             || (!occ.vars.iter().any(|(_, v)| *v == var)
-                && !occ.filters.iter().any(|filter| {
-                    matches!(
-                        filter,
-                        FilterPredicate::PointVar { var: v, .. } if *v == var
-                    )
-                }))
+                && !occ.point_vars.iter().any(|(_, v)| *v == var))
     })
 }
 
@@ -616,11 +611,10 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             | FindTerm::AggregateMeasure { over: var, .. } => {
                 vars.insert(*var);
             }
-            FindTerm::Aggregate { over, .. } => {
-                if let Some(var) = over {
-                    vars.insert(*var);
-                }
+            FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => {
+                vars.insert(*over);
             }
+            FindTerm::Count => {}
         }
     }
     vars

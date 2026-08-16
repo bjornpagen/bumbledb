@@ -23,19 +23,19 @@ use crate::querygen::{ParamDraw, interval_data, params_for, random_query};
 
 use super::{GenConfig, Rng, Scale};
 
-/// The op alphabet — the ten lifecycle verbs. Batches STAGE facts into
-/// a pending delta (batching is the transaction); `Commit` is the one
-/// verb that judges, `Rollback` the one that abandons. The runner's
+/// The op alphabet — the ten lifecycle verbs. Collection insert/delete
+/// STAGE facts into a pending delta (`Commit` is the one verb that
+/// judges, `Rollback` the one that abandons). The runner's
 /// model-mapping table (fuzz/src/lib.rs, the `ops` runner) states what
 /// each verb means on the engine and on the naive model.
 #[derive(Debug, Clone)]
 pub enum FuzzOp {
     /// Stage inserts into the pending delta.
-    InsertBatch(Delta),
+    Insert(Delta),
     /// Stage deletes into the pending delta.
-    DeleteBatch(Delta),
+    Delete(Delta),
     /// Stage deletes and inserts together.
-    MixedBatch(Delta),
+    Mixed(Delta),
     /// Send the pending delta through one write transaction — the
     /// dependency judgment fires here, verdicts compared typed.
     Commit,
@@ -74,11 +74,11 @@ pub struct OpScenario {
 ///
 /// One in four scenarios is an **insert streak** (the copy-on-append
 /// direction's stress, `the retired I1 copy-on-append packet (git history)`):
-/// the step alphabet narrows to insert batches, commits, and reads, so
+/// the step alphabet narrows to collection inserts, commits, and reads, so
 /// long chains of delete-free commits — each read at a new generation
 /// extending the previous image rather than rebuilding it — stop being
-/// rare at the general 20-way weighting. Delete and mixed batches are
-/// excluded by the mode, and insert batches are delete-free by
+/// rare at the general 20-way weighting. Delete and mixed collections are
+/// excluded by the mode, and inserts are delete-free by
 /// construction ([`batch`] filters the closed-case arm's delete cases
 /// out of `Kind::Inserts`), so a streak really is append-on-append.
 pub fn random_scenario(rng: &mut Rng) -> OpScenario {
@@ -88,7 +88,7 @@ pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     };
     let world = world(rng);
     let queries: Vec<Query> = (0..=rng.range(3)).map(|_| random_query(rng, cfg)).collect();
-    let mut ops = vec![FuzzOp::InsertBatch(seed_world(cfg, &world)), FuzzOp::Commit];
+    let mut ops = vec![FuzzOp::Insert(seed_world(cfg, &world)), FuzzOp::Commit];
     let streak = rng.chance(1, 4);
     for _ in 0..6 + rng.range(19) {
         ops.push(if streak {
@@ -213,9 +213,9 @@ fn replace(from: &Delta, to: Delta) -> Delta {
 /// staged batches actually reach the judgment.
 fn step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> FuzzOp {
     match rng.range(20) {
-        0..=3 => FuzzOp::InsertBatch(batch(rng, cfg, world, Kind::Inserts)),
-        4..=5 => FuzzOp::DeleteBatch(batch(rng, cfg, world, Kind::Deletes)),
-        6..=7 => FuzzOp::MixedBatch(batch(rng, cfg, world, Kind::Mixed)),
+        0..=3 => FuzzOp::Insert(batch(rng, cfg, world, Kind::Inserts)),
+        4..=5 => FuzzOp::Delete(batch(rng, cfg, world, Kind::Deletes)),
+        6..=7 => FuzzOp::Mixed(batch(rng, cfg, world, Kind::Mixed)),
         8..=11 => FuzzOp::Commit,
         12 => FuzzOp::Rollback,
         13..=15 => execute_step(rng, cfg, queries),
@@ -239,7 +239,7 @@ fn step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> Fu
 /// well-covered by the general alphabet.
 fn streak_step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> FuzzOp {
     match rng.range(20) {
-        0..=6 => FuzzOp::InsertBatch(batch(rng, cfg, world, Kind::Inserts)),
+        0..=6 => FuzzOp::Insert(batch(rng, cfg, world, Kind::Inserts)),
         7..=12 => FuzzOp::Commit,
         13..=17 => execute_step(rng, cfg, queries),
         18 => FuzzOp::ViewRead {
@@ -468,9 +468,9 @@ mod tests {
 
     fn verb(op: &FuzzOp) -> &'static str {
         match op {
-            FuzzOp::InsertBatch(_) => "insert",
-            FuzzOp::DeleteBatch(_) => "delete",
-            FuzzOp::MixedBatch(_) => "mixed",
+            FuzzOp::Insert(_) => "insert",
+            FuzzOp::Delete(_) => "delete",
+            FuzzOp::Mixed(_) => "mixed",
             FuzzOp::Commit => "commit",
             FuzzOp::Rollback => "rollback",
             FuzzOp::Execute { .. } => "execute",
@@ -515,7 +515,7 @@ mod tests {
             assert!(
                 matches!(
                     scenario.ops.as_slice(),
-                    [FuzzOp::InsertBatch(_), FuzzOp::Commit, ..]
+                    [FuzzOp::Insert(_), FuzzOp::Commit, ..]
                 ),
                 "the seed world commits first"
             );
@@ -554,7 +554,7 @@ mod tests {
         for seed in 0..256u64 {
             let scenario = random_scenario(&mut Rng::new(seed));
             for op in &scenario.ops {
-                if let FuzzOp::InsertBatch(delta) = op {
+                if let FuzzOp::Insert(delta) = op {
                     assert!(
                         delta.deletes.is_empty(),
                         "seed {seed}: an insert batch staged a delete"
@@ -588,10 +588,7 @@ mod tests {
                 let forbidden = scenario.ops.iter().any(|op| {
                     matches!(
                         op,
-                        FuzzOp::DeleteBatch(_)
-                            | FuzzOp::MixedBatch(_)
-                            | FuzzOp::Rollback
-                            | FuzzOp::Reopen
+                        FuzzOp::Delete(_) | FuzzOp::Mixed(_) | FuzzOp::Rollback | FuzzOp::Reopen
                     )
                 });
                 commits >= 4 && executes >= 1 && !forbidden

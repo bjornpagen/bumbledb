@@ -37,12 +37,13 @@ const ORDER: [RelationId; 8] = [
     ids::SLOT,
 ];
 
-/// The joint chunk size of the `==` cluster (the engine's bulk chunk).
+/// The joint chunk size of the `==` cluster (host policy: keep a
+/// bidirectional cluster inside one write).
 const CHUNK: usize = 4096;
 
 /// Loads the calendar corpus into a bumbledb store: the containment-safe
-/// prefix through `bulk_load`, then the `Attendance == Claim` cluster
-/// through joint chunked write transactions.
+/// prefix through one collection `insert_dyn` per relation, then the
+/// `Attendance == Claim` cluster through joint chunked write transactions.
 ///
 /// # Errors
 ///
@@ -66,7 +67,10 @@ pub fn load_bumbledb_sized(
     let start = Instant::now();
     let mut facts = 0u64;
     for rel in ORDER {
-        facts += db.bulk_load_dyn(rel, relation_rows_sized(cfg, sizes, rel))?;
+        facts += db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows_sized(cfg, sizes, rel))
+                .map(|r| r.changed)
+        })?;
     }
     let mut pending: Vec<(RelationId, Vec<Value>)> = Vec::with_capacity(CHUNK + 4);
     for (attendances, claim) in du_cluster_rows(cfg, sizes) {
@@ -92,7 +96,7 @@ fn flush(
     }
     db.write(|tx| {
         for (rel, row) in pending.iter() {
-            tx.insert_dyn(*rel, row)?;
+            tx.insert_dyn(*rel, [row])?;
         }
         Ok(())
     })?;

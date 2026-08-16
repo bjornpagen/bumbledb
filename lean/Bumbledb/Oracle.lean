@@ -149,9 +149,10 @@ fact-level fidelity to its delta-restricted check.
   per-walk verdicts those checks run.
 * **The neighbor-probe theorem is per-insert over the standing
   group.** The applier probes each inserted fact against the index as
-  it stands, earlier inserts included — the multi-insert composition
-  is that Level-2 sequencing, unmodeled here; the theorem is the one
-  insert's decision, which is the probe's whole algorithmic content.
+  it stands, earlier inserts included — a collection insert is the
+  fold of those singleton probes (`Txn.insert_is_fold`); the theorem
+  is the one insert's decision, which is the probe's whole
+  algorithmic content.
 * **The coverage plan walks the whole group.** The engine clips the
   walk to the touched window via the entry seek;
   `Exec/Sweep.lean: sweep_ignores_spent_segments` is the clipping

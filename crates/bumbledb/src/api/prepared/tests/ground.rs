@@ -4,8 +4,8 @@
 //! bit-identical claim, exercised end to end.
 
 use super::*;
+use crate::ir::FoldOp;
 
-use crate::ir::AggOp;
 use crate::ir::normalize::Role;
 use crate::plan::ground::with_grounding_disabled;
 use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
@@ -341,8 +341,8 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         finds: vec![
             FindTerm::Var(VarId(1)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
         ],
         atoms: walk_atoms(),

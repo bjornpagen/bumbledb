@@ -182,7 +182,7 @@ impl<S> PreparedQuery<'_, S> {
             );
             self.bind_param_args(txn, params)?;
         }
-        if self.key_probe_direct {
+        if self.pipeline.is_key_probe_direct() {
             self.execute_key_probe_direct(txn, &mut out)?;
             let emitted = out.len() as u64;
             let distinct_bindings = self.pipeline.main_rules()[0].distinct_witness().is_some();

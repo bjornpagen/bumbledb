@@ -1,12 +1,13 @@
-use super::{Db, Fresh, WriteTx};
+use super::{Db, Fresh, FreshRange, WriteTx};
 use crate::error::{FactShapeError, Result};
 use crate::schema::FreshField;
 use bumbledb_theory::schema::{FieldId, RelationId};
+use std::num::NonZeroU64;
 
 impl<S> Db<S> {
     /// Resolves `(relation, field)` to the schema-bound [`FreshField`]
     /// witness — ids and generation validated here, once per relation;
-    /// [`WriteTx::alloc_at`] mints per row thereafter (`70-api.md` § ETL).
+    /// [`WriteTx::reserve_at`] mints a range thereafter (`70-api.md` § ETL).
     /// The witness carries this handle's schema typestate `S`, so handing
     /// it to another schema's transaction is a compile error (the witness
     /// binding — see [`FreshField`] for the dyn-boundary half of the law).
@@ -28,8 +29,10 @@ impl<S> Db<S> {
 }
 
 impl<S> WriteTx<'_, S> {
-    /// Mints the next fresh value for the newtype's field — insert new
-    /// rows without reading a max (`10-data-model.md`).
+    /// Mints `count` consecutive fresh values for the newtype's field —
+    /// insert new rows without reading a max (`10-data-model.md`).
+    /// `count == 0` is [`FreshRange::Empty`] and does not read or advance
+    /// the sequence. `count == 1` is a singleton range.
     ///
     /// # Errors
     ///
@@ -38,18 +41,25 @@ impl<S> WriteTx<'_, S> {
     /// so only a hand-written impl can reach this); `FreshExhausted` at
     /// `u64::MAX`; `FactShape` when the sequence init's generation check
     /// refuses the constants (same story: only a hand-written impl can
-    /// mis-aim them); `Lmdb` on the sequence read.
-    pub fn alloc<T: Fresh<Schema = S>>(&mut self) -> Result<T> {
+    /// mis-aim them); `Lmdb` on the sequence read;
+    /// `TransactionPoisoned` if a prior apply in this transaction failed
+    /// after a prefix entered the delta.
+    pub fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {
+        self.refuse_poisoned()?;
+        let Some(count) = NonZeroU64::new(count) else {
+            return Ok(FreshRange::Empty);
+        };
         self.refuse_closed(T::RELATION)?;
-        self.delta
-            .alloc(&self.view, T::RELATION, T::FIELD)
-            .map(T::from_fresh)
+        match self.delta.reserve(&self.view, T::RELATION, T::FIELD, count) {
+            Ok(start) => Ok(FreshRange::minted(start, count)),
+            Err(error) => Err(self.poison(error)),
+        }
     }
 
     /// Untyped fresh minting for ETL tooling: the witness
     /// [`Db::fresh_field`] resolves is bound to this transaction's schema
     /// typestate `S`, so a foreign schema's witness is a compile error —
-    /// resolve once per relation, mint per row (`70-api.md` § ETL). At
+    /// resolve once per relation, mint a range (`70-api.md` § ETL). At
     /// the dyn boundary (`Db<SchemaDescriptor>` handles share one
     /// typestate) the binding proves nothing across descriptors, so the
     /// sequence's per-transaction lazy init re-checks the generation and
@@ -67,10 +77,19 @@ impl<S> WriteTx<'_, S> {
     ///
     /// # Errors
     ///
-    /// As [`WriteTx::alloc`]; `FactShape` here is the dyn boundary's
+    /// As [`WriteTx::reserve`]; `FactShape` here is the dyn boundary's
     /// foreign-witness refusal.
-    pub fn alloc_at(&mut self, field: FreshField<S>) -> Result<u64> {
-        self.delta
-            .alloc(&self.view, field.relation(), field.field())
+    pub fn reserve_at(&mut self, field: FreshField<S>, count: u64) -> Result<FreshRange<u64>> {
+        self.refuse_poisoned()?;
+        let Some(count) = NonZeroU64::new(count) else {
+            return Ok(FreshRange::Empty);
+        };
+        match self
+            .delta
+            .reserve(&self.view, field.relation(), field.field(), count)
+        {
+            Ok(start) => Ok(FreshRange::minted(start, count)),
+            Err(error) => Err(self.poison(error)),
+        }
     }
 }

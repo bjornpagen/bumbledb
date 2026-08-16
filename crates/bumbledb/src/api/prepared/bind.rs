@@ -5,7 +5,7 @@ use super::{
 
 use crate::error::{Error, Result};
 use crate::image::view::{IntervalConst, SetConst, ViewWordSource, WordOrParam};
-use crate::ir::{CmpOp, ParamId, Value};
+use crate::ir::{ParamId, Value, WordCmp};
 use crate::obs;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
@@ -538,7 +538,7 @@ fn resolve_filter_into(
                         *latched += 1;
                         obs::event(obs::names::LITERAL_LATCH, obs::Category::Execute, id, 0);
                     }
-                    None if *op == CmpOp::Eq && !negated => return Ok(false),
+                    None if *op == WordCmp::Eq && !negated => return Ok(false),
                     None => {
                         write_compare(dst, *field, *op, Some(Const::Word(dict::SENTINEL_ID)));
                         return Ok(true);
@@ -559,7 +559,7 @@ fn resolve_filter_into(
                     return Ok(true);
                 }
                 Const::Param(param) => {
-                    if missed[usize::from(param.0)] && *op == CmpOp::Eq && !negated {
+                    if missed[usize::from(param.0)] && *op == WordCmp::Eq && !negated {
                         return Ok(false);
                     }
                     // A negated Eq miss keeps the sentinel word bind
@@ -574,7 +574,7 @@ fn resolve_filter_into(
                     }
                 }
                 Const::ParamSet(param) => {
-                    debug_assert_eq!(*op, CmpOp::Eq, "validated: sets only under Eq");
+                    debug_assert_eq!(*op, WordCmp::Eq, "validated: sets only under Eq");
                     if missed[usize::from(param.0)] && !negated {
                         return Ok(false); // the empty set matches nothing
                     }
@@ -596,7 +596,7 @@ fn resolve_filter_into(
                 // residual — the measured atom is this arm's one live
                 // path.)
                 Const::WordSet(words) => {
-                    debug_assert_eq!(*op, CmpOp::Eq, "plan-constant sets ride Eq");
+                    debug_assert_eq!(*op, WordCmp::Eq, "plan-constant sets ride Eq");
                     write_compare(dst, *field, *op, None);
                     write_word_set_value(dst, words);
                     return Ok(true);
@@ -619,9 +619,6 @@ fn resolve_filter_into(
                 field: *field,
                 point: ViewWordSource::Word(word),
             };
-        }
-        FilterPredicate::PointVar { .. } => {
-            unreachable!("plan validation routes var points to membership probes")
         }
         FilterPredicate::AnyPointIn { field, set } => {
             let SetConst::ParamSet(param) = set else {
@@ -726,7 +723,7 @@ fn resolve_filter_into(
 fn write_compare(
     dst: &mut FilterPredicate,
     field: bumbledb_theory::schema::FieldId,
-    op: CmpOp,
+    op: WordCmp,
     value: Option<Const>,
 ) {
     if let FilterPredicate::Compare {

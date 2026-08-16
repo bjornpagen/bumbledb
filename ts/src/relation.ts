@@ -7,28 +7,14 @@
  * verified against their roster at construction). Fields are addressed by
  * NAME everywhere — statements (`on(R, "holder")`), selections, and match
  * records all spell the field's own name, checked by type
- * (`FaceFields`/`MatchShape`). `Fact<>`/`InsertFact<>` are the inferred
- * row object types at BARE structural value types (no brands): fresh
- * fields are optional on insert input (omit-to-mint) and present on read
- * (resupply-to-preserve-identity), typed exactly.
+ * (`FaceFields`/`MatchShape`). `Fact<>` is the inferred row object type
+ * at BARE structural value types (no brands): every field is present,
+ * including fresh cells. Mint with `tx.reserve` before insert.
  */
 
 import * as errors from "@superbuilders/errors"
 import { type AnyField, assertDeclarationOrderKey, assertDeclarationRecord, type Infer, literalOf } from "#fields.ts"
 import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
-
-/** Flattens an intersection into one displayed object type (hover legibility). */
-type Flatten<T> = { [K in keyof T]: T[K] }
-
-/**
- * An optional property that may be omitted OR explicitly `undefined`.
- * `Partial<T>` under `exactOptionalPropertyTypes` is omit-only (`key?: T`),
- * which rejects `key: T | undefined` — insert must accept both (omit-to-mint,
- * and a host binding that is already `bigint | undefined`).
- */
-type ExactOptional<T> = {
-	[K in keyof T]?: T[K] | undefined
-}
 
 /**
  * Resolves one selection entry to its lowered literal set: a plain ARRAY
@@ -188,16 +174,6 @@ type FreshKeys<R extends AnyRelation> = {
 }[keyof RelationFields<R>]
 
 /**
- * The inferred row object type of a relation as INSERTED: fresh fields
- * optional — omitted, the engine mints; supplied, identity is preserved
- * (the ETL resupply idiom). Explicit `undefined` is the same as omit
- * (`exactOptionalPropertyTypes`: `id?: bigint | undefined`, not omit-only).
- */
-type InsertFact<R extends AnyRelation> = Flatten<
-	Omit<Fact<R>, FreshKeys<R>> & ExactOptional<Pick<Fact<R>, FreshKeys<R>>>
->
-
-/**
  * Declares one relation: `relation("Account", { id: u64.fresh,
  * holder: u64, kind: Kind.id, ... })` — every field is a pure-structure
  * descriptor (the constructor values themselves; domains are never
@@ -241,7 +217,6 @@ export type {
 	Fact,
 	FieldsShape,
 	FreshKeys,
-	InsertFact,
 	Relation,
 	RelationData,
 	RelationField,

@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, InteriorId, Query, Rec, Rule, Term,
-    Value, VarId,
+    Atom, AtomSource, FieldId, FindTerm, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule,
+    RecStep, Rule, Term, Value, VarId,
 };
 
 use crate::fixture::field;
@@ -95,13 +95,20 @@ fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![projection(&[0, 1], vec![edge_atom(0, 1)], vec![])],
-            rec: vec![projection(
-                &[0, 2],
-                vec![edge_atom(0, 1), interior_atom(0, &[(0, 1), (1, 2)])],
-                vec![],
-            )],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_pair_main()],
@@ -115,23 +122,24 @@ fn a_fold_reads_the_finished_fixpoint() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![projection(&[0, 1], vec![edge_atom(0, 1)], vec![])],
-            rec: vec![projection(
-                &[0, 2],
-                vec![edge_atom(0, 1), interior_atom(0, &[(0, 1), (1, 2)])],
-                vec![],
-            )],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
-            ],
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             atoms: vec![interior_atom(0, &[(0, 0), (1, 1)])],
             negated: vec![],
             conditions: vec![],

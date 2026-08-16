@@ -412,7 +412,7 @@ enum CursorSrc {
 /// order over multi-word values is a validation-typed refusal, so a wide
 /// residual is whole-value identity only).
 fn compare_wide(
-    op: crate::ir::CmpOp,
+    op: crate::ir::WordCmp,
     width: usize,
     lhs: impl Fn(usize) -> u64,
     rhs: impl Fn(usize) -> u64,
@@ -421,8 +421,8 @@ fn compare_wide(
         return op.compare(&lhs(0), &rhs(0));
     }
     match op {
-        crate::ir::CmpOp::Eq => (0..width).all(|i| lhs(i) == rhs(i)),
-        crate::ir::CmpOp::Ne => (0..width).any(|i| lhs(i) != rhs(i)),
+        crate::ir::WordCmp::Eq => (0..width).all(|i| lhs(i) == rhs(i)),
+        crate::ir::WordCmp::Ne => (0..width).any(|i| lhs(i) != rhs(i)),
         _ => unreachable!("validated: multi-word values admit Eq/Ne only as whole values"),
     }
 }
@@ -760,8 +760,8 @@ enum LeafPrecompute {
     Generic,
     Fast {
         residual_sources: Vec<(Source, Source)>,
-        scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
-        const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
+        scan_residuals: Vec<(crate::ir::WordCmp, Source, Source)>,
+        const_residuals: Vec<(crate::ir::WordCmp, usize, usize)>,
         row: Vec<u64>,
     },
 }

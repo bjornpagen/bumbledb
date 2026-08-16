@@ -6,7 +6,7 @@
 //! § normalization; 40-execution, § access paths).
 
 use super::*;
-use crate::image::view::FilterPredicate;
+use crate::ir::WordCmp;
 use crate::ir::normalize::{
     IntervalWord, OccBind, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord,
 };
@@ -96,6 +96,7 @@ fn interval_pair_query(
             role: Role::Positive,
             vars: vec![(FieldId(0), VarId(0)), (FieldId(1), VarId(1))],
             filters: vec![],
+            point_vars: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -103,6 +104,7 @@ fn interval_pair_query(
             role: Role::Positive,
             vars: vec![(FieldId(0), VarId(2)), (FieldId(1), VarId(3))],
             filters: vec![],
+            point_vars: vec![],
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [
@@ -185,12 +187,12 @@ fn allen_residual(mask: AllenMask) -> Vec<PlacedAllen> {
 fn point_membership_word_residuals_evaluate_over_slot_words() {
     let point_in = vec![
         PlacedWordComparison {
-            op: CmpOp::Le,
+            op: WordCmp::Le,
             lhs: side(1, IntervalWord::Start),
             rhs: side(3, IntervalWord::Start),
         },
         PlacedWordComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: side(3, IntervalWord::Start),
             rhs: side(1, IntervalWord::End),
         },
@@ -404,10 +406,8 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointVar {
-                field: FieldId(1),
-                var: t,
-            }],
+            filters: vec![],
+            point_vars: vec![(FieldId(1), t)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -415,6 +415,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
+            point_vars: vec![],
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [(x, SlotWidth::ONE), (t, SlotWidth::ONE)]
@@ -576,10 +577,8 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointVar {
-                field: FieldId(1),
-                var: t,
-            }],
+            filters: vec![],
+            point_vars: vec![(FieldId(1), t)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -587,6 +586,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
+            point_vars: vec![],
         },
         Occurrence {
             occ_id: OccId(2),
@@ -594,6 +594,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
+            point_vars: vec![],
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [
@@ -690,16 +691,15 @@ fn negated_membership_rejects_only_covered_events() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
+            point_vars: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
             bind: OccBind::Edb(RelationId(0)),
             role: Role::Negated,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointVar {
-                field: FieldId(1),
-                var: t,
-            }],
+            filters: vec![],
+            point_vars: vec![(FieldId(1), t)],
         },
     ];
     let query = NormalizedQuery {
@@ -913,6 +913,7 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
                 (FieldId(2), VarId(2)),
             ],
             filters: vec![],
+            point_vars: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -924,13 +925,14 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
                 (FieldId(2), VarId(4)),
             ],
             filters: vec![],
+            point_vars: vec![],
         },
     ];
     NormalizedQuery {
         dead: None,
         occurrences,
         residuals: vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: VarId(0),
             rhs: VarId(3),
         }],
@@ -1363,6 +1365,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
                 (FieldId(1), VarId(occ * 2 + 1)),
             ],
             filters: vec![],
+            point_vars: vec![],
         })
         .collect::<Vec<_>>();
     let slot_widths: BTreeMap<VarId, SlotWidth> = (0..3u16)
@@ -1502,6 +1505,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
                 (FieldId(1), VarId(occ * 2 + 1)),
             ],
             filters: vec![],
+            point_vars: vec![],
         })
         .collect::<Vec<_>>();
     let slot_widths: BTreeMap<VarId, SlotWidth> = (0..3u16)

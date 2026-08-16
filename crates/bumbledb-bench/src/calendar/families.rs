@@ -13,8 +13,8 @@
 //! the engine and the naive model before any timing.
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, Rule,
+    Term, Value, VarId,
 };
 
 use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, HOUR, created_at};
@@ -294,13 +294,7 @@ fn conflict_free_params(cfg: &GenConfig) -> Vec<Draw> {
 /// hand-written window-function coalesce ([`FREE_BUSY_SQL`]).
 fn free_busy_query() -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(2)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(2) }],
         atoms: vec![
             Atom {
                 source: bumbledb::AtomSource::Edb(ids::PERSON),
@@ -345,7 +339,7 @@ fn claim_hours_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(2),
             },
         ],

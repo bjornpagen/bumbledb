@@ -7,7 +7,7 @@ use super::{
 };
 use crate::image::view::{Const, FilterPredicate, SetConst, ViewWordSource};
 use crate::ir::validate::RuleWitness;
-use crate::ir::{Atom, CmpOp, Term, Value, VarId};
+use crate::ir::{Atom, Term, Value, VarId, WordCmp};
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, ValueType};
 
@@ -226,7 +226,7 @@ fn lower_atom(
                 &schema.relation(relation_id).field(field).value_type
             }
             crate::ir::AtomSource::Interior(pred) => {
-                &signatures[pred.index()].columns[usize::from(field.0)].ty
+                signatures[pred.index()].columns[usize::from(field.0)].ty()
             }
         }
     };
@@ -251,6 +251,7 @@ fn lower_atom(
 
     // Pass 2 — filters, in binding order.
     let mut filters = Vec::new();
+    let mut point_vars = Vec::new();
     for (field, term) in &atom.bindings {
         let field_type = field_type(*field);
         match term {
@@ -261,16 +262,13 @@ fn lower_atom(
                     // a same-fact field composition; otherwise it reads the
                     // variable's binding once bound (the point-membership
                     // scan, docs/architecture/40-execution.md).
-                    filters.push(match vars.iter().find(|(_, v)| v == var) {
-                        Some((point_field, _)) => FilterPredicate::FieldsPointIn {
+                    match vars.iter().find(|(_, v)| v == var) {
+                        Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
                             interval: *field,
                             point: *point_field,
-                        },
-                        None => FilterPredicate::PointVar {
-                            field: *field,
-                            var: *var,
-                        },
-                    });
+                        }),
+                        None => point_vars.push((*field, *var)),
+                    }
                 } else {
                     // A repeated variable keeps its first field binding as
                     // the variable position; subsequent positions lower to
@@ -283,7 +281,7 @@ fn lower_atom(
                         filters.push(FilterPredicate::FieldsCompare {
                             left: *first_field,
                             right: *field,
-                            op: CmpOp::Eq,
+                            op: WordCmp::Eq,
                         });
                     }
                 }
@@ -297,7 +295,7 @@ fn lower_atom(
                 } else {
                     filters.push(FilterPredicate::Compare {
                         field: *field,
-                        op: CmpOp::Eq,
+                        op: WordCmp::Eq,
                         value: Const::Param(*param),
                     });
                 }
@@ -317,7 +315,7 @@ fn lower_atom(
                     // sets; executor side is PRD 17).
                     filters.push(FilterPredicate::Compare {
                         field: *field,
-                        op: CmpOp::Eq,
+                        op: WordCmp::Eq,
                         value: Const::ParamSet(*param),
                     });
                 }
@@ -334,7 +332,7 @@ fn lower_atom(
                 } else {
                     filters.push(FilterPredicate::Compare {
                         field: *field,
-                        op: CmpOp::Eq,
+                        op: WordCmp::Eq,
                         value: lower_literal(value),
                     });
                 }
@@ -351,5 +349,6 @@ fn lower_atom(
         },
         vars,
         filters,
+        point_vars,
     }
 }

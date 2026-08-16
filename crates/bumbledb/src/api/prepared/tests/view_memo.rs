@@ -645,25 +645,20 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: crate::ir::NonEmpty::one(crate::ir::RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(POSTING),
                     bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
-                atoms: vec![Atom {
-                    source: AtomSource::Interior(InteriorId(0)),
-                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-                }],
-                negated: vec![],
+            }),
+            rec: crate::ir::NonEmpty::one(crate::ir::RecStep {
+                finds: vec![VarId(0)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {

@@ -1,10 +1,10 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::image::view::apply;
+use crate::ir::VarId;
 use crate::ir::normalize::{
     AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
 };
-use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
@@ -197,6 +197,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
+        point_vars: vec![],
     }
 }
 

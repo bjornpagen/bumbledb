@@ -18,7 +18,7 @@ import { test } from "node:test"
 
 import { type Axioms, closed } from "#closed.ts"
 import { type BoolField, bool, bytes, type Infer, type IntervalValue, i64, interval, str, u64 } from "#fields.ts"
-import { type AnyRelation, type Fact, type FreshKeys, type InsertFact, relation } from "#relation.ts"
+import { type AnyRelation, type Fact, type FreshKeys, relation } from "#relation.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -76,8 +76,8 @@ test("the minimal kernel loads and the roster is pure data at runtime", function
 
 /**
  * The pinned cases, exported so the compiler counts every probe as used.
- * Hover-quality pins lead: `Fact` and `InsertFact` must BE plain object
- * types with bare structural values, and the descriptor types must BE
+ * Hover-quality pins lead: `Fact` must BE a plain object
+ * type with bare structural values, and the descriptor types must BE
  * their evaluated-literal structural shapes — the `Equal` probe fails on
  * any conditional tangle that is not identical to the spelled-out object.
  */
@@ -108,17 +108,6 @@ type Cases = [
 				kind: "Checking" | "Savings"
 				at: IntervalValue
 				stay: IntervalValue
-			}
-		>
-	>,
-	Expect<
-		Equal<
-			InsertFact<typeof Account>,
-			{
-				holder: bigint
-				kind: "Checking" | "Savings"
-				active: IntervalValue
-				id?: bigint | undefined
 			}
 		>
 	>,
@@ -284,6 +273,17 @@ type OrderCases = [
 	Expect<Equal<keyof Infer<typeof Stay>, "start" | "end">>
 ]
 
+/** Insert takes a collection of complete facts — omitted fresh cells are a type error. */
+function insertTakesCompleteFacts(): unknown {
+	// @ts-expect-error — Fact requires every field, including the fresh cell; mint with reserve first
+	const omitted: Fact<typeof Account> = {
+		holder: 1n,
+		kind: "Checking",
+		active: { start: 0n, end: 1n }
+	}
+	return omitted
+}
+
 /** No comparator method exists on a bytes or interval value — a type-level absence. */
 function orderStaysRefused(
 	tag: Infer<typeof Tag>,
@@ -300,4 +300,4 @@ function orderStaysRefused(
 }
 
 export type { BrandIsGone, Cases, OrderCases }
-export { asIsDeleted, freshStaysU64Only, newtypeIsGone, orderStaysRefused }
+export { asIsDeleted, freshStaysU64Only, insertTakesCompleteFacts, newtypeIsGone, orderStaysRefused }

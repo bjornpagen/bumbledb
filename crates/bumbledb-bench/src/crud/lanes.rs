@@ -135,19 +135,19 @@ fn mint_doc(
     seed: u64,
     cursor: &mut FreshCursor,
 ) -> bumbledb::Result<()> {
-    let id: CrudDocId = tx.alloc()?;
+    let id: CrudDocId = tx.reserve(1)?.start().expect("nonempty");
     if id.0 != cursor.0 {
         return Err(refuse(&format!(
             "the fresh mint drifted from the shared cursor: minted {}, expected {}",
             id.0, cursor.0
         )));
     }
-    tx.insert(&Doc {
+    tx.insert([&Doc {
         id,
         key: cursor.0,
         val: i64::try_from(cursor.0).expect("mints stay below 2^63"),
         payload: ops::fresh_payload(seed, cursor.0),
-    })?;
+    }])?;
     cursor.0 += 1;
     Ok(())
 }
@@ -249,18 +249,22 @@ pub fn update_bumbledb(
             .next()
             .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| {
-            if !tx.delete(&Counter {
-                key: op.key,
-                val: op.prev,
-            })? {
+            if tx
+                .delete([&Counter {
+                    key: op.key,
+                    val: op.prev,
+                }])?
+                .changed
+                == 0
+            {
                 return Err(refuse(
                     "the update must be delete-bearing: the stream's prev value was absent",
                 ));
             }
-            tx.insert(&Counter {
+            tx.insert([&Counter {
                 key: op.key,
                 val: op.next,
-            })?;
+            }])?;
             Ok(())
         })
         .map(|()| 1)
@@ -347,17 +351,17 @@ pub fn upsert_bumbledb(
             }
             match old {
                 Some(old) => {
-                    tx.delete(&old)?;
-                    tx.insert(&Counter {
+                    tx.delete([&old])?;
+                    tx.insert([&Counter {
                         key: op.key,
                         val: op.next,
-                    })?;
+                    }])?;
                 }
                 None => {
-                    tx.insert(&Counter {
+                    tx.insert([&Counter {
                         key: op.key,
                         val: op.next,
-                    })?;
+                    }])?;
                 }
             }
             Ok(())
@@ -423,8 +427,8 @@ pub fn rmw_bumbledb(
                 return Err(refuse("the rmw round trip needs an existing counter row"));
             };
             let next = old.val + 1;
-            tx.delete(&old)?;
-            tx.insert(&Counter { key, val: next })?;
+            tx.delete([&old])?;
+            tx.insert([&Counter { key, val: next }])?;
             Ok(())
         })
         .map(|()| 1)
@@ -506,7 +510,7 @@ pub fn delete_bumbledb(
             .next()
             .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| {
-            if !tx.delete_dyn(ids::DOC, row)? {
+            if tx.delete_dyn(ids::DOC, [row])?.changed == 0 {
                 return Err(refuse(
                     "the delete must be delete-bearing: the pool row was absent",
                 ));

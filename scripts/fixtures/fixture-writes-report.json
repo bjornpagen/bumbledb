@@ -80,12 +80,12 @@
           "ghz": null
         },
         {
-          "name": "bulk_append",
-          "batch": 4096,
+          "name": "insert_stream",
+          "batch": 200000,
           "ours": {"min": 41000000, "p50": 46000000, "p90": 52000000, "p95": 55000000, "p99": 60000000, "max": 67000000, "mean_ns": 47000000},
           "theirs": {"min": 52000000, "p50": 58000000, "p90": 65000000, "p95": 69000000, "p99": 75000000, "max": 83000000, "mean_ns": 59000000},
-          "commits_per_sec_ours": 519.31,
-          "commits_per_sec_theirs": 411.65,
+          "commits_per_sec_ours": 10.64,
+          "commits_per_sec_theirs": 8.43,
           "rows_per_sec_ours": 2127104.0,
           "rows_per_sec_theirs": 1686118.4,
           "ghz": {"pre": 3.5, "post": 3.41, "retried": true, "contaminated": false}
@@ -163,12 +163,12 @@
           "ghz": null
         },
         {
-          "name": "bulk_append",
-          "batch": 4096,
+          "name": "insert_stream",
+          "batch": 200000,
           "ours": {"min": 52000000, "p50": 58000000, "p90": 66000000, "p95": 70000000, "p99": 77000000, "max": 85000000, "mean_ns": 59500000},
           "theirs": {"min": 61000000, "p50": 68000000, "p90": 77000000, "p95": 81000000, "p99": 89000000, "max": 98000000, "mean_ns": 69500000},
-          "commits_per_sec_ours": 410.26,
-          "commits_per_sec_theirs": 351.2,
+          "commits_per_sec_ours": 8.40,
+          "commits_per_sec_theirs": 7.19,
           "rows_per_sec_ours": 1680424.96,
           "rows_per_sec_theirs": 1438515.2,
           "ghz": null

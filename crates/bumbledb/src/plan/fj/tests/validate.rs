@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use std::collections::BTreeSet;
 
 /// The suffix-skip evidence encodes aggregate skip-illegality. A projection over one variable leaves deeper
@@ -266,7 +266,7 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
     let query = normalized(
         clover().occurrences,
         vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: A,
             rhs: B,
         }],
@@ -292,7 +292,7 @@ fn placement_rechecks_every_variable_at_every_node() {
     let query = normalized(
         clover().occurrences,
         vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: A,
             rhs: C,
         }],

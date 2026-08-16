@@ -17,8 +17,8 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value,
-    VarId, with_grounding_disabled,
+    CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
+    with_grounding_disabled,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -118,7 +118,7 @@ fn stores(
     naive.apply(&delta).expect("the corpus commits");
     db.write(|tx| {
         for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, fact)?;
+            tx.insert_dyn(*rel, [fact])?;
         }
         Ok(())
     })
@@ -173,13 +173,7 @@ fn selected(rank: u64) -> Query {
 /// Kind(id = x, rank == r)` — the fold is sink-independent.
 fn selected_count(rank: u64) -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(1)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(1)), FindTerm::Count],
         atoms: vec![
             atom(READING, &[(0, var(0)), (1, var(1))]),
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
@@ -341,7 +335,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
     naive.apply(&delta).expect("the seed commits");
     db.write(|tx| {
         for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, fact)?;
+            tx.insert_dyn(*rel, [fact])?;
         }
         Ok(())
     })

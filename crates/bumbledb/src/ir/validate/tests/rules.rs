@@ -88,10 +88,7 @@ fn head_aggregate_mismatch_names_the_position() {
     // A variable where the head names a variable — but the second rule
     // projects an aggregate at that position.
     let counting = Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: crate::ir::AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![atom(POSTING, vec![(1, Term::Var(VarId(0)))])],
         negated: vec![],
         conditions: vec![],
@@ -113,10 +110,7 @@ fn head_aggregate_mismatch_names_the_position() {
 #[test]
 fn head_aggregate_op_kind_mismatch_is_the_same_error() {
     let agg = |op| Rule {
-        finds: vec![FindTerm::Aggregate {
-            op,
-            over: Some(VarId(0)),
-        }],
+        finds: vec![FindTerm::Aggregate { op, over: VarId(0) }],
         atoms: vec![atom(POSTING, vec![(2, Term::Var(VarId(0)))])],
         negated: vec![],
         conditions: vec![],
@@ -124,7 +118,7 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
     let query = Query::Cq {
         interiors: vec![],
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
-        rules: vec![agg(crate::ir::AggOp::Sum), agg(crate::ir::AggOp::Min)],
+        rules: vec![agg(crate::ir::FoldOp::Sum), agg(crate::ir::FoldOp::Min)],
     };
     assert_eq!(
         expect_err(&query),
@@ -179,7 +173,7 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     assert_eq!(types, vec![ValueType::U64]);
 }

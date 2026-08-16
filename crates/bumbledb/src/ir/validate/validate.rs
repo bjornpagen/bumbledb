@@ -4,10 +4,10 @@ use super::{
     ValidatedRecArm,
 };
 use crate::error::ValidationError;
-use crate::ir::normalize::OccId;
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 use crate::ir::{
-    AggOp, FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, Term, VarId,
+    FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, RecRule, RecStep,
+    Term, VarId,
 };
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -111,10 +111,9 @@ fn validate_reach(
         &mut params,
     )?;
     let id = InteriorId(u32::try_from(interiors.len()).expect("derived count fits u32"));
-    rec_roster(rec, id)?;
-    let (base, rec_low) = lower_rec_pool(rec)?;
-    refuse_derived_head(&rec.head, &base, id)?;
-    refuse_derived_head(&rec.head, &rec_low, id)?;
+    refuse_self_in_base(rec, id)?;
+    let rec_head = rec.head();
+    let (base, rec_low) = lower_rec_pool(rec, id)?;
     let base_typing = type_rules(
         schema,
         &InteriorSignatures::ReachOpen {
@@ -122,7 +121,7 @@ fn validate_reach(
             reader: None,
             derived_count: derived,
         },
-        &rec.head,
+        &rec_head,
         &base,
         &mut params,
         true,
@@ -136,7 +135,7 @@ fn validate_reach(
             rec: &rec_signature,
             derived_count: derived,
         },
-        &rec.head,
+        &rec_head,
         &rec_low,
         &mut params,
         true,
@@ -164,7 +163,7 @@ fn validate_reach(
             .into_iter()
             .zip(rec_typing)
             .map(|(rule, typing)| ValidatedRecArm {
-                self_occ: rec_arm_self_occ(&rule, id),
+                self_occ: crate::ir::normalize::OccId(0),
                 rule,
                 typing,
             })
@@ -219,21 +218,19 @@ fn seal_interiors(
         if interior.rules.is_empty() {
             return Err(ValidationError::EmptyInterior { interior: id });
         }
+        let as_rules: Vec<crate::ir::Rule> = interior
+            .rules
+            .iter()
+            .map(crate::ir::ProjectionRule::to_rule)
+            .collect();
+        let head = interior.head();
         let lowered = lower_rules(
-            &interior.head,
-            &interior.rules,
+            &head,
+            &as_rules,
             ValidationError::EmptyInterior { interior: id },
             false,
         )?;
-        refuse_derived_head(&interior.head, &lowered, id)?;
-        let typings = type_rules(
-            schema,
-            &sigs(&sealed, id),
-            &interior.head,
-            &lowered,
-            params,
-            false,
-        )?;
+        let typings = type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
         rule_count += typings.len() as u64;
         let signature = super::Signature::derive(&lowered[0], &typings[0]);
         sealed.push(signature.clone());
@@ -358,97 +355,44 @@ fn type_rules(
     Ok(rules)
 }
 
-/// Bound-var law on an interior or rec head: folds and measure finds
-/// are [`ValidationError::AggregateInInterior`] /
-/// [`ValidationError::MeasureInInterior`].
-fn refuse_derived_head(
-    head: &[crate::ir::HeadTerm],
-    lowered: &[LoweredRule],
-    interior: InteriorId,
-) -> Result<(), ValidationError> {
-    if head
-        .iter()
-        .any(|term| matches!(term, crate::ir::HeadTerm::Aggregate(_)))
-    {
-        return Err(ValidationError::AggregateInInterior { interior });
+/// Bound-var law is in the type: interior/rec finds are [`VarId`].
+/// A `RecRule` atom that names the rec is still a positional coincidence
+/// ([`InteriorId`] is `interiors.len()`), parsed here once. A `RecStep`'s
+/// `self_bindings` is the unique self-atom; a leftover Interior(rec)
+/// among `atoms` is a second self-read.
+fn refuse_self_in_base(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
+    let is_self = |atom: &crate::ir::Atom| atom.source.interior() == Some(rec_id);
+    if rec.base.iter().any(|rule| rule.atoms.iter().any(is_self)) {
+        return Err(ValidationError::SelfInBase);
     }
-    if lowered.iter().flat_map(|rule| &rule.finds).any(|term| {
-        matches!(
-            term,
-            FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. }
-        )
-    }) {
-        return Err(ValidationError::MeasureInInterior { interior });
+    if rec.rec.iter().any(|step| step.atoms.iter().any(is_self)) {
+        return Err(ValidationError::NonlinearRecArm);
     }
     Ok(())
 }
 
-/// The unique positive self-atom's occurrence on a lowered rec arm —
-/// positives first, same numbering normalize later mints as [`OccId`].
-fn rec_arm_self_occ(rule: &LoweredRule, rec_id: InteriorId) -> OccId {
-    let idx = rule
-        .atoms
-        .iter()
-        .position(|atom| atom.source.interior() == Some(rec_id))
-        .expect("roster proved unique self");
-    OccId(u16::try_from(idx).expect("occurrence count fits u16"))
-}
-
-/// Rec structural roster, on the written (pre-DNF) rules, in declaration
-/// order: empty lists, self in base, missing/nonlinear self, negation.
-/// Returns each rec arm's unique positive self-atom index (the proof
-/// stored on the witness as `self_occ` after lowering).
-fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<Vec<usize>, ValidationError> {
-    if rec.base.is_empty() {
-        return Err(ValidationError::EmptyRecursiveBase);
-    }
-    if rec.rec.is_empty() {
-        return Err(ValidationError::EmptyRecursiveStep);
-    }
-    let is_self = |atom: &crate::ir::Atom| atom.source.interior() == Some(rec_id);
-    for rule in &rec.base {
-        if rule.atoms.iter().chain(&rule.negated).any(is_self) {
-            return Err(ValidationError::SelfInBase);
-        }
-    }
-    let mut self_at = Vec::with_capacity(rec.rec.len());
-    for rule in &rec.rec {
-        let mut found = None;
-        for (index, atom) in rule.atoms.iter().enumerate() {
-            if is_self(atom) {
-                if found.is_some() {
-                    return Err(ValidationError::NonlinearRecArm);
-                }
-                found = Some(index);
-            }
-        }
-        match found {
-            None => return Err(ValidationError::RecArmMissingSelf),
-            Some(index) => self_at.push(index),
-        }
-    }
-    let negated = rec
-        .base
-        .iter()
-        .chain(&rec.rec)
-        .any(|rule| !rule.negated.is_empty());
-    if negated {
-        return Err(ValidationError::NegationInRec);
-    }
-    Ok(self_at)
-}
-
 /// Rec pool lowering: one [`MAX_RULES`] on `base.len() + rec.len()` and
-/// on DNF width of both lists together — not 16+16.
-fn lower_rec_pool(rec: &Rec) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), ValidationError> {
+/// on DNF width of both lists together — not 16+16. Step arms reconstruct
+/// the unique self-atom as the first positive atom, so `self_occ` is 0.
+fn lower_rec_pool(
+    rec: &Rec,
+    rec_id: InteriorId,
+) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), ValidationError> {
     let count = rec.base.len() + rec.rec.len();
     if count > MAX_RULES {
         return Err(ValidationError::TooManyRules { count });
     }
-    if rec.head.is_empty() {
+    let head = rec.head();
+    if head.is_empty() {
         return Err(ValidationError::EmptyFinds);
     }
-    for (rule_idx, rule) in rec.base.iter().chain(&rec.rec).enumerate() {
+    let base_rules: Vec<crate::ir::Rule> = rec.base.iter().map(RecRule::to_rule).collect();
+    let rec_rules: Vec<crate::ir::Rule> = rec
+        .rec
+        .iter()
+        .map(|step| RecStep::to_rule(step, rec_id))
+        .collect();
+    for (rule_idx, rule) in base_rules.iter().chain(&rec_rules).enumerate() {
         let depth = nesting_depth(&rule.conditions);
         if depth > MAX_CONDITION_DEPTH {
             return Err(ValidationError::ConditionNestingTooDeep {
@@ -458,10 +402,9 @@ fn lower_rec_pool(rec: &Rec) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), Val
             });
         }
     }
-    let produced = rec
-        .base
+    let produced = base_rules
         .iter()
-        .chain(&rec.rec)
+        .chain(&rec_rules)
         .map(disjunct_count)
         .fold(0, usize::saturating_add);
     if produced > MAX_RULES {
@@ -470,13 +413,11 @@ fn lower_rec_pool(rec: &Rec) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), Val
             cap: MAX_RULES,
         });
     }
-    let base = distribute_list(&rec.base);
-    let rec_low = distribute_list(&rec.rec);
-    // Written-empty arms are refused in `rec_roster` (`EmptyRecursiveBase` /
-    // `EmptyRecursiveStep`). A nonempty written arm can still DNF to
-    // nothing — `Or([])` is false, `distribute` yields zero rules — and
-    // that is a distinct fact, observed here, with the same locked names
-    // (tests pin both stages to those variants).
+    let base = distribute_list(&base_rules);
+    let rec_low = distribute_list(&rec_rules);
+    // Written-empty arms are unrepresentable (`NonEmpty`). A nonempty
+    // written arm can still DNF to nothing — `Or([])` is false — and
+    // that is a distinct fact, observed here.
     if base.is_empty() {
         return Err(ValidationError::EmptyRecursiveBase);
     }
@@ -655,7 +596,10 @@ fn validate_rule(
         .iter()
         .filter_map(|term| match term {
             FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
+            FindTerm::Count
+            | FindTerm::Aggregate { .. }
+            | FindTerm::Pack { .. }
+            | FindTerm::AggregateMeasure { .. } => None,
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
@@ -688,13 +632,10 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .iter()
         .map(|term| match term {
             FindTerm::Var(var) => var_type(var),
-            FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => ValueType::U64,
-            FindTerm::Aggregate { op, over } => match op {
-                AggOp::Count => ValueType::U64,
-                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Pack => {
-                    var_type(&over.expect("validated: only Count is nullary"))
-                }
-            },
+            FindTerm::Measure(_) | FindTerm::Count | FindTerm::AggregateMeasure { .. } => {
+                ValueType::U64
+            }
+            FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => var_type(over),
         })
         .collect()
 }

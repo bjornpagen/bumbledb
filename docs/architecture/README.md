@@ -50,9 +50,9 @@ laws).
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
 | `60-validation.md` | The three oracles (SQLite + naive model + the Lean denotation, `lean/conformance/`), ledger benchmark protocol, test families |
 | `61-bench-lanes.md` | Report-class bench lanes: the lane registry, SQLite parity configs, the DNF-cap law, the churn protocol, lane artifact contracts, the night runbook |
-| `70-api.md` | Embedding surface: the schema! grammar, transactions (semantics by `lean/Bumbledb/Txn.lean` citation), point reads, results, ETL |
+| `70-api.md` | Embedding surface: the schema! grammar, collection `insert`/`delete`/`reserve` inside `write`, point reads, ETL as a host loop of `write` |
 | `75-cpp-lowering.md` | Retired: the C++ frontend is deleted; pointer to `76-c-abi.md` |
-| `76-c-abi.md` | The C ABI (`bdb_*`): leaf crate, dumb marshal, C-only link; hosts lower, the engine judges |
+| `76-c-abi.md` | The C ABI (`bdb_*`): ABI 2 (collections, `reserve`); leaf crate, dumb marshal, C-only link; hosts lower, the engine judges |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative; `Guarantee:` labels cite `lean/` theorems, census-checked (reader: the owner and any agent writing a theory) |
 | `../../lean/` | The specification itself: the value universe through the lifecycle, `Bridge.lean` (the obligation ledger), `Countermodels.lean` (the design scratchpad), the conformance corpus — `lean/README.md` carries the laws and the provenance history |
 
@@ -60,7 +60,7 @@ laws).
 
 - **Scale-L claims are informational only**: the oracle stamp, the benchmark
   ALL-WIN, and the pinned denominators are earned at scale S (most recently
-  the 2026-08-03 rebench, code rev `3b31cd84`, verify-stamped per binary;
+  the 2026-08-16 shared-machine night, code rev `d2a62728`, verify-stamped per binary;
   charts in `assets/`, raw traces in git history) — but no L corpus exists, so the
   10 ms budget and every L-scale claim bind nothing yet (`00-product.md`).
   (The ephemeral-lane numbers ride the like-for-like NOSYNC pairing

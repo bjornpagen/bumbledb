@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::CmpOp;
 use crate::ir::normalize::{NormalizedQuery, OccId, normalize_rules};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, Query, Rule, Term, Value};

@@ -2,7 +2,7 @@ use super::KeyProbePlan;
 use super::fact_word::{FactOperand, fact_operand};
 use crate::error::Result;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use crate::obs;
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
@@ -147,14 +147,14 @@ fn fact_matches(
                 // Interval-vs-interval-constant: value equality only
                 // (interval-pair *predicates* are the Allen kinds below).
                 (FactOperand::Pair(s, e), FactOperand::Pair(start, end)) => match op {
-                    CmpOp::Eq => s == start && e == end,
+                    WordCmp::Eq => s == start && e == end,
                     _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
                 // bytes<N>: word-wise identity — Eq/Ne only by validation.
                 (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
                     match op {
-                        CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                        CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                        WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                        WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
                         _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                     }
                 }
@@ -167,15 +167,15 @@ fn fact_matches(
                 // Interval fields compare pairwise; validation admits
                 // Eq/Ne only.
                 (FactOperand::Pair(a_s, a_e), FactOperand::Pair(b_s, b_e)) => match op {
-                    CmpOp::Eq => a_s == b_s && a_e == b_e,
-                    CmpOp::Ne => a_s != b_s || a_e != b_e,
+                    WordCmp::Eq => a_s == b_s && a_e == b_e,
+                    WordCmp::Ne => a_s != b_s || a_e != b_e,
                     _ => unreachable!("validated: no order comparison over intervals"),
                 },
                 // bytes<N> fields compare word-wise, Eq/Ne only.
                 (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
                     match op {
-                        CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                        CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                        WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                        WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
                         _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                     }
                 }
@@ -220,12 +220,6 @@ fn fact_matches(
                 }
             }
         }
-        FilterPredicate::PointVar { .. } => {
-            unreachable!("classification: a var-sourced point never reaches the key-probe path")
-        }
-        // Measure filters disqualify key-probe classification (`classify`):
-        // their evaluation is fallible and filter-ordered — the filtered
-        // view's job, never the key_probe's.
         FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
             unreachable!("classify refused measure filters")
         }

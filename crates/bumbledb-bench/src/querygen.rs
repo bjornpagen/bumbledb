@@ -123,7 +123,7 @@ enum Shape {
     /// The fold-shaped pattern PRD 07 targets, under its own family
     /// knob: a closed atom whose only escaping variable is the join id.
     GroundFold,
-    /// The coalescing fold over the Mandate claims (`AggOp::Pack`):
+    /// The coalescing fold over the Mandate claims (`FindTerm::Pack`):
     /// grouped (account or closed-org key) and global, composed with
     /// the shared dressing/param/negation machinery. `SQLite` cannot
     /// spell it — the verify lane routes Pack draws to the naive leg by

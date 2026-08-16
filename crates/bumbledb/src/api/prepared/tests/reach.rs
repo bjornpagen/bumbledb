@@ -2,14 +2,13 @@
 
 use super::*;
 use crate::api::stats::StatsBody;
-use crate::ir::Rec;
+use crate::ir::{CmpOp, NonEmpty, ProjectionRule, Rec, RecRule, RecStep};
 
 fn interiors_only() -> Query {
     Query::Cq {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var],
-            rules: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(POSTING),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
@@ -92,31 +91,33 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
     insert_postings(&env, &schema, &[(1, 7, "a", 100), (2, 7, "b", 200)]);
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    let mut query = interiors_only();
     // Main is an EDB rule whose constant conditions refute themselves —
     // the known fold kernel (`score > 5 ∧ score < 3` on i64). Interiors
     // stay live; the pipeline is Cq with empty main rules.
-    *query.head_mut() = vec![HeadTerm::Var];
-    *query.rules_mut() = vec![Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: AtomSource::Edb(POSTING),
-            bindings: vec![(FieldId(3), Term::Var(VarId(0)))],
+    let query = Query::Cq {
+        interiors: interiors_only().interiors().to_vec(),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Edb(POSTING),
+                bindings: vec![(FieldId(3), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![
+                ConditionTree::Leaf(Comparison {
+                    op: CmpOp::Gt,
+                    lhs: Term::Var(VarId(0)),
+                    rhs: Term::Literal(Value::I64(5)),
+                }),
+                ConditionTree::Leaf(Comparison {
+                    op: CmpOp::Lt,
+                    lhs: Term::Var(VarId(0)),
+                    rhs: Term::Literal(Value::I64(3)),
+                }),
+            ],
         }],
-        negated: vec![],
-        conditions: vec![
-            ConditionTree::Leaf(Comparison {
-                op: CmpOp::Gt,
-                lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::I64(5)),
-            }),
-            ConditionTree::Leaf(Comparison {
-                op: CmpOp::Lt,
-                lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::I64(3)),
-            }),
-        ],
-    }];
+    };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     match &prepared.pipeline {
         PreparedPipeline::Cq { interiors, rules } => {
@@ -152,25 +153,20 @@ fn rec_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(POSTING),
                     bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
-                atoms: vec![Atom {
-                    source: AtomSource::Interior(InteriorId(0)),
-                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-                }],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {

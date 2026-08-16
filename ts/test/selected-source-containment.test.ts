@@ -17,9 +17,9 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import type { Db as DbValue } from "#index.ts"
 import { closed, contained, Db, on, relation, renderStatement, schema, str, u64 } from "#index.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cind-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -71,7 +71,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 
 	test("a fresh Author task with a dangling subject is unwritable (source side)", function danglingMint() {
 		const rejected = db.write(function mintDead(tx) {
-			tx.insert(Task, { kind: "Author", subject: 999n })
+			put(tx, Task, { kind: "Author", subject: 999n })
 		})
 		assert.ok(!rejected.ok, "the CIND judges the inserted source fact")
 		const violation = must(rejected.violations[0])
@@ -81,21 +81,21 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 
 	test("a non-Author task's subject is outside φ — kind-scoping holds", function scopedFreedom() {
 		const accepted = db.write(function mintEnrich(tx) {
-			tx.insert(Task, { kind: "Enrich", subject: 999n })
+			put(tx, Task, { kind: "Enrich", subject: 999n })
 		})
 		assert.ok(accepted.ok, "the selection scopes the law to Author rows only")
 	})
 
 	test("the repartition shape — deleting a grp whose Author task survives — is unwritable (target side)", function repartition() {
 		const seeded = db.write(function seed(tx) {
-			const grp = tx.insert(Grp, { label: "sheet-1" })
+			const grp = put(tx, Grp, { label: "sheet-1" })
 			grpId = grp.id
-			tx.insert(Task, { kind: "Author", subject: grp.id })
+			put(tx, Task, { kind: "Author", subject: grp.id })
 		})
 		assert.ok(seeded.ok, "the well-founded pair lands")
 
 		const rejected = db.write(function honorRepartition(tx) {
-			assert.equal(tx.delete(Grp, { id: grpId, label: "sheet-1" }), true)
+			assert.equal(tx.delete(Grp, [{ id: grpId, label: "sheet-1" }]).changed, 1n)
 		})
 		assert.ok(!rejected.ok, "the surviving Author task pins its grp")
 		const violation = must(rejected.violations[0])

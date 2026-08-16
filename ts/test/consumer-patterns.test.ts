@@ -30,9 +30,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
-
 import * as errors from "@superbuilders/errors"
-
 import type { Db as DbValue, Fact, Violation, WriteResult } from "#index.ts"
 import { Db } from "#index.ts"
 import type { RunStoreSchema } from "#test/fixtures/run-store-schema.ts"
@@ -54,6 +52,7 @@ import {
 	unit,
 	verdict
 } from "#test/fixtures/run-store-schema.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-consumer-"))
 const packageRoot = path.resolve(import.meta.dirname, "..")
@@ -163,7 +162,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		 */
 		const state: { minted?: bigint } = {}
 		const written = db.write(function mintAfterResume(tx) {
-			const row = tx.insert(grp, { sheet: sheetRow.id, label: "post-resume", context: "c" })
+			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-resume", context: "c" })
 			state.minted = row.id
 		})
 		assert.ok(written.ok, "the post-resume grp insert commits")
@@ -192,7 +191,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		const state: { minted?: bigint } = {}
 		const sheetRow = must(db.scan(sheet)[0])
 		const written = db.write(function mintAfterKill(tx) {
-			const row = tx.insert(grp, { sheet: sheetRow.id, label: "post-kill", context: "c" })
+			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-kill", context: "c" })
 			state.minted = row.id
 		})
 		assert.ok(written.ok, "the post-kill grp insert commits")
@@ -224,13 +223,13 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("the enrich-commit shape lands atomically (sheet + units + objectives + staging partition + task)", function enrichShape() {
 		const written = db.write(function build(tx) {
-			const sheetRow = tx.insert(sheet, {
+			const sheetRow = put(tx, sheet, {
 				name: "sheet-7",
 				grade: "G7",
 				contentHash: new Uint8Array(32)
 			})
 			ids.sheet = sheetRow.id
-			const unitRow = tx.insert(unit, {
+			const unitRow = put(tx, unit, {
 				sheet: sheetRow.id,
 				sourceUnitId: "u1",
 				title: "unit one",
@@ -238,23 +237,23 @@ describe("the repair loop against the real theory", function repairLoop() {
 				scope: "s"
 			})
 			ids.unit = unitRow.id
-			const staging = tx.insert(grp, {
+			const staging = put(tx, grp, {
 				sheet: sheetRow.id,
 				label: "STAGING",
 				context: "partition pending"
 			})
 			ids.staging = staging.id
 			for (const ref of ["G7_a", "G7_b"]) {
-				const minted = tx.insert(objective, {
+				const minted = put(tx, objective, {
 					sheet: sheetRow.id,
 					unit: unitRow.id,
 					ref,
 					goal: `goal ${ref}`
 				})
 				ids.objectives.push(minted.id)
-				tx.insert(grpMember, { grp: staging.id, objective: minted.id })
+				put(tx, grpMember, { grp: staging.id, objective: minted.id })
 			}
-			const taskRow = tx.insert(task, {
+			const taskRow = put(tx, task, {
 				kind: "Cartograph",
 				sheet: sheetRow.id,
 				subject: 1n
@@ -269,14 +268,14 @@ describe("the repair loop against the real theory", function repairLoop() {
 		const membersBefore = db.scan(grpMember)
 		const written = db.write(function badSwap(tx) {
 			for (const row of membersBefore) {
-				tx.delete(grpMember, row)
+				tx.delete(grpMember, [row])
 			}
 			for (const row of grpsBefore) {
-				tx.delete(grp, row)
+				tx.delete(grp, [row])
 			}
-			const only = tx.insert(grp, { sheet: must(ids.sheet), label: "g-one", context: "c" })
+			const only = put(tx, grp, { sheet: must(ids.sheet), label: "g-one", context: "c" })
 			/** Only one of the two objectives is re-covered: the other's within(1n) capacity law drops to 0. */
-			tx.insert(grpMember, { grp: only.id, objective: must(ids.objectives[0]) })
+			put(tx, grpMember, { grp: only.id, objective: must(ids.objectives[0]) })
 		})
 		const violations = rejected(written)
 		assert.equal(violations.length, 1, "exactly one statement is violated")
@@ -298,19 +297,19 @@ describe("the repair loop against the real theory", function repairLoop() {
 		const membersBefore = db.scan(grpMember)
 		const written = db.write(function goodSwap(tx) {
 			for (const row of membersBefore) {
-				tx.delete(grpMember, row)
+				tx.delete(grpMember, [row])
 			}
 			for (const row of grpsBefore) {
-				tx.delete(grp, row)
+				tx.delete(grp, [row])
 			}
 			for (const [index, objectiveId] of ids.objectives.entries()) {
-				const minted = tx.insert(grp, {
+				const minted = put(tx, grp, {
 					sheet: must(ids.sheet),
 					label: `plan-${index}`,
 					context: "c"
 				})
 				ids.planGrps.push(minted.id)
-				tx.insert(grpMember, { grp: minted.id, objective: objectiveId })
+				put(tx, grpMember, { grp: minted.id, objective: objectiveId })
 			}
 		})
 		assert.ok(written.ok, "the corrected swap satisfies partition totality")
@@ -320,11 +319,11 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("a misauthored hierarchy program is rejected citing BOTH the parent-count capacity law and the entry-form ban by identity", function rejectedAuthor() {
 		const written = db.write(function badAuthor(tx) {
-			const programRow = tx.insert(program, {
+			const programRow = put(tx, program, {
 				grp: must(ids.planGrps[0]),
 				kind: "hierarchy_program"
 			})
-			const capsuleRow = tx.insert(capsule, {
+			const capsuleRow = put(tx, capsule, {
 				program: programRow.id,
 				ref: "fin_entry",
 				toi: "RegularNoun",
@@ -333,7 +332,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				exitCondition: "e",
 				transferRange: "r"
 			})
-			tx.insert(member, {
+			put(tx, member, {
 				program: programRow.id,
 				capsule: capsuleRow.id,
 				pos: 1n,
@@ -365,12 +364,12 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("the corrected author payload commits", function acceptedAuthor() {
 		const written = db.write(function goodAuthor(tx) {
-			const programRow = tx.insert(program, {
+			const programRow = put(tx, program, {
 				grp: must(ids.planGrps[0]),
 				kind: "hierarchy_program"
 			})
 			ids.program = programRow.id
-			const parent = tx.insert(capsule, {
+			const parent = put(tx, capsule, {
 				program: programRow.id,
 				ref: "fin_parent",
 				toi: "HigherOrderNoun",
@@ -379,7 +378,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				exitCondition: "e",
 				transferRange: "r"
 			})
-			const intro = tx.insert(capsule, {
+			const intro = put(tx, capsule, {
 				program: programRow.id,
 				ref: "fin_intro",
 				toi: "RegularNoun",
@@ -388,14 +387,14 @@ describe("the repair loop against the real theory", function repairLoop() {
 				exitCondition: "e",
 				transferRange: "r"
 			})
-			tx.insert(member, {
+			put(tx, member, {
 				program: programRow.id,
 				capsule: parent.id,
 				pos: 1n,
 				kind: "Taught",
 				toi: "HigherOrderNoun"
 			})
-			tx.insert(member, {
+			put(tx, member, {
 				program: programRow.id,
 				capsule: intro.id,
 				pos: 2n,
@@ -414,7 +413,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		)
 		const before = db.scan(grp)
 		const written = db.write(function badDelete(tx) {
-			tx.delete(grp, target)
+			tx.delete(grp, [target])
 		})
 		const violations = rejected(written)
 		const statements = new Set(
@@ -436,8 +435,8 @@ describe("the repair loop against the real theory", function repairLoop() {
 	test("the sheet resupply update (delete + insert with the SAME fresh id) commits in one delta", function sheetResupply() {
 		const sheetRow = must(db.scan(sheet)[0])
 		const written = db.write(function resupply(tx) {
-			tx.delete(sheet, sheetRow)
-			tx.insert(sheet, {
+			tx.delete(sheet, [sheetRow])
+			put(tx, sheet, {
 				id: sheetRow.id,
 				name: sheetRow.name,
 				grade: "G8",
@@ -454,22 +453,22 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("the verdict revise idiom (delete + insert under the one-verdict-per-attempt key) commits in one delta", function verdictRevise() {
 		const seeded = db.write(function seedAttempt(tx) {
-			const attemptRow = tx.insert(attempt, {
+			const attemptRow = put(tx, attempt, {
 				task: must(ids.task),
 				n: 1n,
 				pin: "Gpt56Max",
 				promptHash: new Uint8Array(32)
 			})
 			ids.attempt = attemptRow.id
-			tx.insert(verdict, { attempt: attemptRow.id, outcome: "Accepted" })
+			put(tx, verdict, { attempt: attemptRow.id, outcome: "Accepted" })
 		})
 		assert.ok(seeded.ok)
 		const attemptId = must(ids.attempt)
 		const current = must(db.get(verdict, { attempt: attemptId }))
 		assert.equal(current.outcome, "Accepted")
 		const revised = db.write(function revise(tx) {
-			tx.delete(verdict, current)
-			tx.insert(verdict, { attempt: attemptId, outcome: "Rejected" })
+			tx.delete(verdict, [current])
+			put(tx, verdict, { attempt: attemptId, outcome: "Rejected" })
 		})
 		assert.ok(revised.ok, "the settleReviewEdge refutation write commits")
 		assert.equal(must(db.get(verdict, { attempt: attemptId })).outcome, "Rejected")
@@ -477,7 +476,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("the revert-capture idiom: a db.read INSIDE a db.write callback sees the committed pre-delta state", function nestedRead() {
 		const written = db.write(function revertShaped(tx) {
-			tx.insert(steer, { kind: "Observe", task: must(ids.task), note: "diary" })
+			put(tx, steer, { kind: "Observe", task: must(ids.task), note: "diary" })
 			/** The nested snapshot must NOT see the pending insert — it reads committed state. */
 			const captured = db.read(function capture(snap) {
 				return snap.scan(steer)
@@ -492,7 +491,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		db.read(function observe(snap) {
 			const before = snap.scan(steer).length
 			const written = db.write(function interleaved(tx) {
-				tx.insert(steer, { kind: "Observe", task: must(ids.task), note: "second" })
+				put(tx, steer, { kind: "Observe", task: must(ids.task), note: "second" })
 			})
 			assert.ok(written.ok)
 			assert.equal(snap.scan(steer).length, before, "the open scope never sees the new commit")
@@ -521,7 +520,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 	test("a resupplied duplicate fresh id violates the engine-materialized auto-key: statement is undefined (the repair loop's identity gap)", function autoKeyGap() {
 		const existing = must(db.scan(grp)[0])
 		const written = db.write(function duplicateId(tx) {
-			tx.insert(grp, {
+			put(tx, grp, {
 				id: existing.id,
 				sheet: must(ids.sheet),
 				label: "impostor",
@@ -543,10 +542,10 @@ describe("the repair loop against the real theory", function repairLoop() {
 	test("fresh mint identity across a REJECTED commit: what ids persisted diagnostics may cite", function rejectedMint() {
 		const state: { doomed?: bigint; next?: bigint } = {}
 		const written = db.write(function doomedMint(tx) {
-			const minted = tx.insert(grp, { sheet: must(ids.sheet), label: "doomed-mint", context: "c" })
+			const minted = put(tx, grp, { sheet: must(ids.sheet), label: "doomed-mint", context: "c" })
 			state.doomed = minted.id
 			/** Force rejection through the objective ref key. */
-			tx.insert(objective, {
+			put(tx, objective, {
 				sheet: must(ids.sheet),
 				unit: must(ids.unit),
 				ref: "G7_a",
@@ -555,7 +554,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		})
 		rejected(written)
 		const again = db.write(function nextMint(tx) {
-			const minted = tx.insert(grp, { sheet: must(ids.sheet), label: "next-mint", context: "c" })
+			const minted = put(tx, grp, { sheet: must(ids.sheet), label: "next-mint", context: "c" })
 			state.next = minted.id
 		})
 		assert.ok(again.ok)

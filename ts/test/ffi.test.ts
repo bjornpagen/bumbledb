@@ -33,6 +33,13 @@ const KIND = 1
 const PERSON = 2
 const EDGE = 3
 
+function mintedStart(range: { empty: true } | { empty: false; start: bigint }): bigint {
+	if (range.empty) {
+		throw new Error("expected nonempty fresh range")
+	}
+	return range.start
+}
+
 /**
  * The test theory: every field type (bool, u64 incl. fresh, i64, str,
  * bytes<4>, interval<i64>), both closed tiers (bare Status, columned Kind),
@@ -344,10 +351,10 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("delta writes: fresh mint, final-state point reads, commit", function writes() {
 		const tx = native.dbWriteBegin(db)
-		p1 = native.txAlloc(tx, PERSON, 0)
-		p2 = native.txAlloc(tx, PERSON, 0)
-		p3 = native.txAlloc(tx, PERSON, 0)
-		p4 = native.txAlloc(tx, PERSON, 0)
+		p1 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+		p2 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+		p3 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+		p4 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
 		assert.equal(typeof p1, "bigint")
 		assert.equal(new Set([p1, p2, p3, p4]).size, 4, "fresh mints are distinct")
 
@@ -359,9 +366,7 @@ describe("ffi round trip against a real store", function suite() {
 			personRow(p3, "alan", 0n, 0n, new Uint8Array([9, 10, 11, 12]), active, true),
 			personRow(p4, "kurt", 1n, 42n, new Uint8Array([13, 14, 15, 16]), active, false)
 		]
-		for (const row of rows) {
-			assert.equal(native.txInsert(tx, PERSON, row), true)
-		}
+		assert.deepEqual(native.txInsert(tx, PERSON, rows), { submitted: 4n, changed: 4n })
 
 		assert.equal(native.txContains(tx, PERSON, adaRow), true, "final-state view sees the pending insert")
 		const got = native.txGet(tx, PERSON, personKeyId, [p1])
@@ -370,19 +375,37 @@ describe("ffi round trip against a real store", function suite() {
 		assert.deepEqual(got[4], new Uint8Array([1, 2, 3, 4]))
 		assert.deepEqual(got[5], active)
 
-		assert.equal(native.txInsert(tx, EDGE, [p1, p2, 1n]), true)
-		assert.equal(native.txInsert(tx, EDGE, [p2, p3, 1n]), true)
-		assert.equal(native.txInsert(tx, EDGE, [p3, p1, 1n]), true)
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 1n]]), { submitted: 1n, changed: 1n })
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p2, p3, 1n]]), { submitted: 1n, changed: 1n })
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p3, p1, 1n]]), { submitted: 1n, changed: 1n })
 
-		assert.equal(native.txInsert(tx, EDGE, [p1, p3, 7n]), true)
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p3, 7n]]), { submitted: 1n, changed: 1n })
 		assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), true)
-		assert.equal(native.txDelete(tx, EDGE, [p1, p3, 7n]), true, "delta delete cancels the pending insert")
+		assert.deepEqual(
+			native.txDelete(tx, EDGE, [[p1, p3, 7n]]),
+			{ submitted: 1n, changed: 1n },
+			"delta delete cancels the pending insert"
+		)
 		assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), false)
 
 		const committed = native.txCommit(tx)
 		assert.ok(committed.ok, "the clean commit lands")
 		assert.equal(typeof committed.generation, "bigint")
 		assert.equal(native.dbGeneration(db), committed.generation)
+	})
+
+	test("empty insert/delete/reserve still enter the transaction", function emptyIsAMutation() {
+		const tx = native.dbWriteBegin(db)
+		assert.deepEqual(native.txInsert(tx, PERSON, []), { submitted: 0n, changed: 0n })
+		assert.deepEqual(native.txDelete(tx, PERSON, []), { submitted: 0n, changed: 0n })
+		const empty = native.txReserve(tx, PERSON, 0, 0n)
+		assert.equal(empty.empty, true)
+		const next = native.txReserve(tx, PERSON, 0, 1n)
+		if (next.empty) {
+			throw new Error("reserve(1) must be nonempty")
+		}
+		assert.equal(typeof next.start, "bigint")
+		native.txAbort(tx)
 	})
 
 	test("snapshot reads: scan, contains, keyed get", function reads() {
@@ -405,7 +428,7 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("a functionality violation arrives canonical and decoded", function fdViolation() {
 		const tx = native.dbWriteBegin(db)
-		assert.equal(native.txInsert(tx, EDGE, [p1, p2, 9n]), true)
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 9n]]), { submitted: 1n, changed: 1n })
 		const outcome = native.txCommit(tx)
 		assert.ok(!outcome.ok, "the key judgment rejects")
 		assert.equal(outcome.violations.length, 1, "key violations preempt the statement phase")
@@ -424,8 +447,8 @@ describe("ffi round trip against a real store", function suite() {
 	test("containment + window violations arrive together, complete", function statementViolations() {
 		const ghost = 999_999n
 		const tx = native.dbWriteBegin(db)
-		assert.equal(native.txInsert(tx, EDGE, [ghost, p1, 1n]), true)
-		assert.equal(native.txInsert(tx, EDGE, [p4, p1, 1n]), true)
+		assert.deepEqual(native.txInsert(tx, EDGE, [[ghost, p1, 1n]]), { submitted: 1n, changed: 1n })
+		assert.deepEqual(native.txInsert(tx, EDGE, [[p4, p1, 1n]]), { submitted: 1n, changed: 1n })
 		const outcome = native.txCommit(tx)
 		assert.ok(!outcome.ok, "the statement judgment rejects")
 		assert.equal(outcome.violations.length, 2, "the statement phase is scan-complete")
@@ -559,7 +582,7 @@ describe("ffi round trip against a real store", function suite() {
 				head: [{ kind: "aggregate", op: "count" }],
 				rules: [
 					{
-						finds: [{ kind: "aggregate", op: { kind: "count" }, over: 0 }],
+						finds: [{ kind: "count", over: 0 }],
 						atoms: [],
 						negated: [],
 						conditions: []
@@ -573,14 +596,12 @@ describe("ffi round trip against a real store", function suite() {
 		const stale = snapshot()
 
 		const mover = native.dbWriteBegin(db)
-		const p5 = native.txAlloc(mover, PERSON, 0)
-		assert.equal(
-			native.txInsert(
-				mover,
-				PERSON,
+		const p5 = mintedStart(native.txReserve(mover, PERSON, 0, 1n))
+		assert.deepEqual(
+			native.txInsert(mover, PERSON, [
 				personRow(p5, "kay", 0n, 1n, new Uint8Array([21, 22, 23, 24]), { start: 0n, end: 1n }, true)
-			),
-			true
+			]),
+			{ submitted: 1n, changed: 1n }
 		)
 		const moved = native.txCommit(mover)
 		assert.ok(moved.ok)
@@ -596,7 +617,7 @@ describe("ffi round trip against a real store", function suite() {
 		const witnessed = native.dbWriteFrom(db, fresh)
 		assert.ok(witnessed.ok, "a fresh witness admits the write")
 		native.snapshotClose(fresh)
-		assert.equal(native.txInsert(witnessed.tx, EDGE, [p2, p1, 3n]), true)
+		assert.deepEqual(native.txInsert(witnessed.tx, EDGE, [[p2, p1, 3n]]), { submitted: 1n, changed: 1n })
 		const landed = native.txCommit(witnessed.tx)
 		assert.ok(landed.ok, "the witnessed commit survives its snapshot's mid-transaction close")
 	})
@@ -633,7 +654,7 @@ describe("ffi round trip against a real store", function suite() {
 		const spent = native.dbWriteBegin(db)
 		native.txAbort(spent)
 		function insertOnSpent(): void {
-			native.txInsert(spent, EDGE, [1n, 2n, 3n])
+			native.txInsert(spent, EDGE, [[1n, 2n, 3n]])
 		}
 		assert.throws(insertOnSpent, /closed/, "a spent transaction handle throws typed")
 

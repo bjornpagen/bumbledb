@@ -34,7 +34,7 @@ fn write_path_traces_phases_with_counts() {
     let dir = TempDir::new("db-trace-write");
     let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(R, &[Value::U64(99)])?;
+        tx.insert_dyn(R, [&[Value::U64(99)]])?;
         Ok(())
     })
     .expect("seed");
@@ -44,9 +44,9 @@ fn write_path_traces_phases_with_counts() {
     obs::start_capture();
     db.write(|tx| {
         for v in 0..3 {
-            tx.insert_dyn(R, &[Value::U64(v)])?;
+            tx.insert_dyn(R, [&[Value::U64(v)]])?;
         }
-        tx.delete_dyn(R, &[Value::U64(99)])?;
+        tx.delete_dyn(R, [&[Value::U64(99)]])?;
         Ok(())
     })
     .expect("write");
@@ -87,7 +87,7 @@ fn write_path_traces_phases_with_counts() {
     // A net-no-op write: commit_noop, no phase spans.
     obs::start_capture();
     db.write(|tx| {
-        tx.insert_dyn(R, &[Value::U64(0)])?; // already present
+        tx.insert_dyn(R, [&[Value::U64(0)]])?; // already present
         Ok(())
     })
     .expect("noop write");
@@ -155,8 +155,8 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     let dir = TempDir::new("db-trace-redundant-insert");
     let db = Db::create(dir.path(), containment_schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(TARGET, &[Value::U64(5)])?;
-        tx.insert_dyn(CLAIM, &[Value::U64(5)])?;
+        tx.insert_dyn(TARGET, [&[Value::U64(5)]])?;
+        tx.insert_dyn(CLAIM, [&[Value::U64(5)]])?;
         Ok(())
     })
     .expect("seed");
@@ -166,8 +166,8 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     // source-side judgment probes nothing.
     obs::start_capture();
     db.write(|tx| {
-        tx.insert_dyn(CLAIM, &[Value::U64(5)])?;
-        tx.insert_dyn(EXTRA, &[Value::U64(1)])?;
+        tx.insert_dyn(CLAIM, [&[Value::U64(5)]])?;
+        tx.insert_dyn(EXTRA, [&[Value::U64(1)]])?;
         Ok(())
     })
     .expect("write");
@@ -181,8 +181,8 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     // Contrast: a genuinely added source costs exactly its one probe.
     obs::start_capture();
     db.write(|tx| {
-        tx.insert_dyn(TARGET, &[Value::U64(6)])?;
-        tx.insert_dyn(CLAIM, &[Value::U64(6)])?;
+        tx.insert_dyn(TARGET, [&[Value::U64(6)]])?;
+        tx.insert_dyn(CLAIM, [&[Value::U64(6)]])?;
         Ok(())
     })
     .expect("write");
@@ -224,8 +224,8 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     // Resolve once, mint per row: the witness is the untyped mint handle.
     let id_field = db.fresh_field(rel, FieldId(0)).expect("fresh field");
     db.write(|tx| {
-        let id = tx.alloc_at(id_field)?;
-        tx.insert_dyn(rel, &[Value::U64(id), Value::U64(42)])
+        let id = tx.reserve_at(id_field, 1)?.start().expect("nonempty");
+        tx.insert_dyn(rel, [&[Value::U64(id), Value::U64(42)]])
             .map(|_| ())
     })
     .expect("seed");
@@ -251,8 +251,10 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
         .expect("first execute builds");
 
-    // The no-op commit: an escaped allocation, no facts.
-    let escaped = db.write(|tx| tx.alloc_at(id_field)).expect("bare alloc");
+    // The no-op commit: an escaped reserve, no facts.
+    let escaped = db
+        .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
+        .expect("bare reserve");
     assert_eq!(escaped, 1);
     assert_eq!(
         db.generation().expect("generation").value(),
@@ -270,30 +272,35 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     assert!(!ns.contains(&obs::names::VIEW_BUILD), "{ns:?}");
     assert!(!ns.contains(&obs::names::IMAGE_BUILD), "{ns:?}");
 
-    // And the escaped id persisted: the next allocation continues.
-    let next = db.write(|tx| tx.alloc_at(id_field)).expect("alloc");
+    // And the escaped id persisted: the next reserve continues.
+    let next = db
+        .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
+        .expect("reserve");
     assert_eq!(next, 2);
 }
 
 #[test]
-fn bulk_load_traces_one_span_per_chunk() {
-    let dir = TempDir::new("db-trace-bulk");
+fn a_collection_insert_is_one_write() {
+    let dir = TempDir::new("db-trace-insert");
     let db = Db::create(dir.path(), schema()).expect("create");
-    // 2.5 chunks: 4096 + 4096 + 2048.
-    let n = 4096 * 2 + 2048;
+    let n = 8_192u64;
     obs::start_capture();
     let loaded = db
-        .bulk_load_dyn(R, (0..n).map(|v| vec![Value::U64(v)]))
-        .expect("bulk");
+        .write(|tx| {
+            tx.insert_dyn(R, (0..n).map(|v| vec![Value::U64(v)]))
+                .map(|r| r.changed)
+        })
+        .expect("insert");
     let events = obs::finish_capture();
     assert_eq!(loaded, n);
-    let chunks: Vec<&obs::TraceEvent> = events
+    let writes = events
         .iter()
-        .filter(|e| e.name() == obs::names::BULK_CHUNK)
-        .collect();
-    assert_eq!(chunks.len(), 3);
-    assert_eq!(chunks.iter().map(|c| c.a0()).sum::<u64>(), n);
-    assert_eq!(chunks.iter().map(|c| c.a1()).sum::<u64>(), n);
+        .filter(|e| e.name() == obs::names::WRITE_TXN)
+        .count();
+    assert_eq!(
+        writes, 1,
+        "a collection insert is one commit, not chunked writes"
+    );
 }
 
 /// `compact`'s durability chain runs to its end. Power-loss semantics
@@ -307,7 +314,7 @@ fn compact_records_its_completed_durability_chain() {
     let dir = TempDir::new("db-trace-compact");
     let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(R, &[Value::U64(1)])?;
+        tx.insert_dyn(R, [&[Value::U64(1)]])?;
         Ok(())
     })
     .expect("seed");
@@ -389,7 +396,7 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     // The Err abort: the guard's one counters-only commit.
     obs::start_capture();
     let aborted: Result<()> = db.write(|tx| {
-        tx.alloc_at(id_field)?;
+        tx.reserve_at(id_field, 1)?.start().expect("nonempty");
         Err(crate::error::Error::Overflow(
             crate::error::OverflowKind::Aggregate { find: 0 },
         ))
@@ -406,7 +413,11 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     obs::start_capture();
     let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _: Result<()> = db.write(|tx| {
-            assert_eq!(tx.alloc_at(id_field)?, 1, "past the Err abort's burn");
+            assert_eq!(
+                tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
+                1,
+                "past the Err abort's burn"
+            );
             panic!("mid-closure");
         });
     }));
@@ -420,7 +431,7 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
 
     // Never zero: both aborts' ids are gone; the mint continues past.
     db.write(|tx| {
-        assert_eq!(tx.alloc_at(id_field)?, 2);
+        assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 2);
         Ok(())
     })
     .expect("mint after both aborts");
@@ -435,7 +446,7 @@ fn verify_store_traces_every_namespace_pass_in_order() {
     let dir = TempDir::new("db-trace-verify");
     let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(R, &[Value::U64(1)])?;
+        tx.insert_dyn(R, [&[Value::U64(1)]])?;
         Ok(())
     })
     .expect("seed");
@@ -499,7 +510,7 @@ fn an_aborting_write_records_no_lmdb_commit() {
     let db = Db::create(dir.path(), schema()).expect("create");
     obs::start_capture();
     let result: Result<()> = db.write(|tx| {
-        tx.insert_dyn(R, &[Value::U64(1)])?;
+        tx.insert_dyn(R, [&[Value::U64(1)]])?;
         Err(crate::error::Error::Overflow(
             crate::error::OverflowKind::Aggregate { find: 0 },
         ))
@@ -545,7 +556,7 @@ fn point_reads_trace_hits_and_misses() {
     };
     let db = Db::create(dir.path(), keyed).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(RelationId(0), &[Value::U64(7), Value::U64(70)])?;
+        tx.insert_dyn(RelationId(0), [&[Value::U64(7), Value::U64(70)]])?;
         Ok(())
     })
     .expect("seed");

@@ -46,7 +46,7 @@ use super::Occurrence;
 use crate::encoding::decode_i64;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::render::{literal, mask_names};
-use crate::ir::{CmpOp, Value};
+use crate::ir::{Value, WordCmp};
 use crate::schema::{Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
@@ -126,19 +126,19 @@ impl RangeSummary {
     /// Narrows by one order filter `slot <op> word`. Strict bounds at
     /// the domain edge (`> MAX`, `< 0`) have no satisfying word and
     /// empty the summary outright.
-    fn narrow(&mut self, op: CmpOp, word: u64) {
+    fn narrow(&mut self, op: WordCmp, word: u64) {
         match op {
-            CmpOp::Ge => self.lo = self.lo.max(word),
-            CmpOp::Le => self.hi = self.hi.min(word),
-            CmpOp::Gt => match word.checked_add(1) {
+            WordCmp::Ge => self.lo = self.lo.max(word),
+            WordCmp::Le => self.hi = self.hi.min(word),
+            WordCmp::Gt => match word.checked_add(1) {
                 Some(above) => self.lo = self.lo.max(above),
                 None => self.mark_empty(),
             },
-            CmpOp::Lt => match word.checked_sub(1) {
+            WordCmp::Lt => match word.checked_sub(1) {
                 Some(below) => self.hi = self.hi.min(below),
                 None => self.mark_empty(),
             },
-            CmpOp::Eq | CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::PointIn => {
+            WordCmp::Eq | WordCmp::Ne => {
                 unreachable!("only order filters narrow the summary")
             }
         }
@@ -237,7 +237,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
     for filter in &occurrence.filters {
         let FilterPredicate::Compare {
             field,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value,
         } = filter
         else {
@@ -407,10 +407,10 @@ fn interval_contradictions(
 /// `Lt`/`Le`/`Gt`/`Ge`-against-`Const::Word` shape folds (order
 /// operators are validated U64/I64-only, so the word IS the slot's
 /// encoded comparison domain).
-fn constant_order_bound(filter: &FilterPredicate) -> Option<(FieldId, CmpOp, u64)> {
+fn constant_order_bound(filter: &FilterPredicate) -> Option<(FieldId, WordCmp, u64)> {
     let FilterPredicate::Compare {
         field,
-        op: op @ (CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge),
+        op: op @ (WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge),
         value: Const::Word(word),
     } = filter
     else {
@@ -442,14 +442,14 @@ fn emit(
             if summary.lo > 0 {
                 emitted.push(FilterPredicate::Compare {
                     field: *field,
-                    op: CmpOp::Ge,
+                    op: WordCmp::Ge,
                     value: Const::Word(summary.lo),
                 });
             }
             if summary.hi < u64::MAX {
                 emitted.push(FilterPredicate::Compare {
                     field: *field,
-                    op: CmpOp::Le,
+                    op: WordCmp::Le,
                     value: Const::Word(summary.hi),
                 });
             }
@@ -591,10 +591,10 @@ fn order_filters_picture(
         first = false;
         out.push_str(&descriptor.name);
         out.push_str(match op {
-            CmpOp::Lt => " < ",
-            CmpOp::Le => " <= ",
-            CmpOp::Gt => " > ",
-            CmpOp::Ge => " >= ",
+            WordCmp::Lt => " < ",
+            WordCmp::Le => " <= ",
+            WordCmp::Gt => " > ",
+            WordCmp::Ge => " >= ",
             _ => unreachable!("constant_order_bound admits order operators only"),
         });
         literal(&mut out, &decoded_scalar(&descriptor.value_type, word));

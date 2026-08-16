@@ -1175,18 +1175,18 @@ fn r26_exact_partition_commit_matrix() {
     let db = Db::create(dir.path(), ExactPartition).expect("create exact partition store");
     db.write(|tx| {
         let policy = PolicyId(1);
-        tx.insert(&Policy {
+        tx.insert([&Policy {
             id: policy,
             live: span(0, 5),
-        })?;
-        tx.insert(&Version {
+        }])?;
+        tx.insert([&Version {
             policy,
             valid: span(0, 2),
-        })?;
-        tx.insert(&Version {
+        }])?;
+        tx.insert([&Version {
             policy,
             valid: span(2, 5),
-        })
+        }])
     })
     .expect("adjacent segments form an exact partition");
 
@@ -1197,18 +1197,18 @@ fn r26_exact_partition_commit_matrix() {
     let error = db
         .write(|tx| {
             let policy = PolicyId(2);
-            tx.insert(&Policy {
+            tx.insert([&Policy {
                 id: policy,
                 live: span(0, 10),
-            })?;
-            tx.insert(&Version {
+            }])?;
+            tx.insert([&Version {
                 policy,
                 valid: span(0, 4),
-            })?;
-            tx.insert(&Version {
+            }])?;
+            tx.insert([&Version {
                 policy,
                 valid: span(5, 10),
-            })
+            }])
         })
         .expect_err("the forward coverage statement rejects the gap");
     assert_containment_statement(error, StatementId(4));
@@ -1220,14 +1220,14 @@ fn r26_exact_partition_commit_matrix() {
     let error = db
         .write(|tx| {
             let policy = PolicyId(3);
-            tx.insert(&Policy {
+            tx.insert([&Policy {
                 id: policy,
                 live: span(0, 10),
-            })?;
-            tx.insert(&Version {
+            }])?;
+            tx.insert([&Version {
                 policy,
                 valid: span(0, 20),
-            })
+            }])
         })
         .expect_err("reverse coverage rejects target overhang");
     assert_containment_statement(error, StatementId(5));
@@ -1239,15 +1239,15 @@ fn r26_exact_partition_commit_matrix() {
     let db = Db::create(dir.path(), Payroll).expect("create one-way cover store");
     db.write(|tx| {
         let year = FiscalYearId(4);
-        tx.insert(&FiscalYear {
+        tx.insert([&FiscalYear {
             id: year,
             span: span(0, 10),
-        })?;
-        tx.insert(&PayPeriod {
+        }])?;
+        tx.insert([&PayPeriod {
             year,
             seq: 1,
             span: span(0, 20),
-        })
+        }])
     })
     .expect("one-way source coverage permits target overhang");
 
@@ -1256,21 +1256,21 @@ fn r26_exact_partition_commit_matrix() {
     let dir = TempDir::new("r26-composite-prefix");
     let db = Db::create(dir.path(), CompositePartition).expect("create composite store");
     db.write(|tx| {
-        tx.insert(&Domain {
+        tx.insert([&Domain {
             group: 7,
             lane: 3,
             live: span(0, 5),
-        })?;
-        tx.insert(&Segment {
+        }])?;
+        tx.insert([&Segment {
             group: 7,
             lane: 3,
             valid: span(0, 2),
-        })?;
-        tx.insert(&Segment {
+        }])?;
+        tx.insert([&Segment {
             group: 7,
             lane: 3,
             valid: span(2, 5),
-        })
+        }])
     })
     .expect("two-field scalar prefixes support exact partitions");
 }
@@ -1298,21 +1298,21 @@ fn r09_ordering_triple_commit_matrix() {
     let db = Db::create(dir.path(), Playlists).expect("create playlists store");
     let list = db
         .write(|tx| {
-            let list = tx.alloc()?;
-            tx.insert(&Playlist {
+            let list = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Playlist {
                 id: list,
                 name: "road trip",
-            })?;
-            tx.insert(&Extent {
+            }])?;
+            tx.insert([&Extent {
                 playlist: list,
                 span: uspan(0, 3),
-            })?;
+            }])?;
             for (position, track) in [(0, "first"), (1, "second"), (2, "third")] {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: list,
                     slot: unit(position),
                     track,
-                })?;
+                }])?;
             }
             Ok(list)
         })
@@ -1321,27 +1321,27 @@ fn r09_ordering_triple_commit_matrix() {
     // The middle insert, honestly O(k) and atomic: making room at
     // position 1 shifts slots 1..3 up and grows the extent — one delta.
     db.write(|tx| {
-        tx.delete(&Extent {
+        tx.delete([&Extent {
             playlist: list,
             span: uspan(0, 3),
-        })?;
-        tx.insert(&Extent {
+        }])?;
+        tx.insert([&Extent {
             playlist: list,
             span: uspan(0, 4),
-        })?;
+        }])?;
         for (position, track) in [(1, "second"), (2, "third")] {
-            tx.delete(&Slot {
+            tx.delete([&Slot {
                 playlist: list,
                 slot: unit(position),
                 track,
-            })?;
+            }])?;
         }
         for (position, track) in [(1, "interlude"), (2, "second"), (3, "third")] {
-            tx.insert(&Slot {
+            tx.insert([&Slot {
                 playlist: list,
                 slot: unit(position),
                 track,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -1363,25 +1363,25 @@ fn r09_gap_and_overlap_deltas_abort() {
     let db = Db::create(dir.path(), Playlists).expect("create gap store");
     let error = db
         .write(|tx| {
-            let list = tx.alloc()?;
-            tx.insert(&Playlist {
+            let list = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Playlist {
                 id: list,
                 name: "gapped",
-            })?;
-            tx.insert(&Extent {
+            }])?;
+            tx.insert([&Extent {
                 playlist: list,
                 span: uspan(0, 3),
-            })?;
-            tx.insert(&Slot {
+            }])?;
+            tx.insert([&Slot {
                 playlist: list,
                 slot: unit(0),
                 track: "first",
-            })?;
-            tx.insert(&Slot {
+            }])?;
+            tx.insert([&Slot {
                 playlist: list,
                 slot: unit(2),
                 track: "third",
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("a gap delta aborts");
@@ -1393,27 +1393,27 @@ fn r09_gap_and_overlap_deltas_abort() {
     let db = Db::create(dir.path(), Playlists).expect("create overlap store");
     let error = db
         .write(|tx| {
-            let list = tx.alloc()?;
-            tx.insert(&Playlist {
+            let list = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Playlist {
                 id: list,
                 name: "doubled",
-            })?;
-            tx.insert(&Extent {
+            }])?;
+            tx.insert([&Extent {
                 playlist: list,
                 span: uspan(0, 2),
-            })?;
+            }])?;
             for (position, track) in [(0, "first"), (1, "second")] {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: list,
                     slot: unit(position),
                     track,
-                })?;
+                }])?;
             }
-            tx.insert(&Slot {
+            tx.insert([&Slot {
                 playlist: list,
                 slot: unit(1),
                 track: "usurper",
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("an overlap delta aborts");
@@ -1437,31 +1437,31 @@ fn r29_zone_ledger_commit_matrix() {
     let dir = TempDir::new("r29-compose");
     let db = Db::create(dir.path(), ZoneLedger).expect("create zone ledger store");
     db.write(|tx| {
-        let ledger = tx.alloc()?;
-        tx.insert(&Ledger {
+        let ledger = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Ledger {
             id: ledger,
             name: "day plan",
-        })?;
-        tx.insert(&Zone {
+        }])?;
+        tx.insert([&Zone {
             ledger,
             kind: Kind::Unit.id(),
             at: uspan(0, 1),
-        })?;
-        tx.insert(&Zone {
+        }])?;
+        tx.insert([&Zone {
             ledger,
             kind: Kind::Pair.id(),
             at: uspan(1, 3),
-        })?;
-        tx.insert(&UnitSlot {
+        }])?;
+        tx.insert([&UnitSlot {
             ledger,
             at: unit(0),
             entry: 10,
-        })?;
-        tx.insert(&PairSlot {
+        }])?;
+        tx.insert([&PairSlot {
             ledger,
             at: pair(1),
             entry: 20,
-        })
+        }])
     })
     .expect("the two-kind composition commits");
 
@@ -1472,31 +1472,31 @@ fn r29_zone_ledger_commit_matrix() {
     let db = Db::create(dir.path(), ZoneLedger).expect("create overlap store");
     let error = db
         .write(|tx| {
-            let ledger = tx.alloc()?;
-            tx.insert(&Ledger {
+            let ledger = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Ledger {
                 id: ledger,
                 name: "collided",
-            })?;
-            tx.insert(&Zone {
+            }])?;
+            tx.insert([&Zone {
                 ledger,
                 kind: Kind::Unit.id(),
                 at: uspan(0, 1),
-            })?;
-            tx.insert(&Zone {
+            }])?;
+            tx.insert([&Zone {
                 ledger,
                 kind: Kind::Pair.id(),
                 at: uspan(0, 2),
-            })?;
-            tx.insert(&UnitSlot {
+            }])?;
+            tx.insert([&UnitSlot {
                 ledger,
                 at: unit(0),
                 entry: 10,
-            })?;
-            tx.insert(&PairSlot {
+            }])?;
+            tx.insert([&PairSlot {
                 ledger,
                 at: pair(0),
                 entry: 20,
-            })
+            }])
         })
         .expect_err("a cross-sidecar overlap aborts on the zone key");
     assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
@@ -1515,26 +1515,26 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     let dir = TempDir::new("r29-coalesced");
     let db = Db::create(dir.path(), ZoneLedger).expect("create coalesced store");
     db.write(|tx| {
-        let ledger = tx.alloc()?;
-        tx.insert(&Ledger {
+        let ledger = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Ledger {
             id: ledger,
             name: "coalesced",
-        })?;
-        tx.insert(&Zone {
+        }])?;
+        tx.insert([&Zone {
             ledger,
             kind: Kind::Unit.id(),
             at: uspan(4, 6),
-        })?;
-        tx.insert(&UnitSlot {
+        }])?;
+        tx.insert([&UnitSlot {
             ledger,
             at: unit(4),
             entry: 40,
-        })?;
-        tx.insert(&UnitSlot {
+        }])?;
+        tx.insert([&UnitSlot {
             ledger,
             at: unit(5),
             entry: 50,
-        })
+        }])
     })
     .expect("the coalesced witness satisfies both point-support directions");
 
@@ -1544,16 +1544,16 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     let db = Db::create(dir.path(), ZoneLedger).expect("create width store");
     let error = db
         .write(|tx| {
-            let ledger = tx.alloc()?;
-            tx.insert(&Ledger {
+            let ledger = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Ledger {
                 id: ledger,
                 name: "wide",
-            })?;
-            tx.insert(&UnitSlot {
+            }])?;
+            tx.insert([&UnitSlot {
                 ledger,
                 at: uspan(0, 2),
                 entry: 10,
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("a wrong-width arm value is a typed shape error");
@@ -1627,21 +1627,21 @@ fn r03_a_second_optional_child_is_rejected() {
     let db = Db::create(dir.path(), Optionality).expect("create optionality store");
     let error = db
         .write(|tx| {
-            let business = tx.alloc()?;
-            tx.insert(&Business {
+            let business = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Business {
                 id: business,
                 name: "one",
-            })?;
-            tx.insert(&MailingAddress {
+            }])?;
+            tx.insert([&MailingAddress {
                 business,
                 line: "first",
                 city: "here",
-            })?;
-            tx.insert(&MailingAddress {
+            }])?;
+            tx.insert([&MailingAddress {
                 business,
                 line: "second",
                 city: "there",
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("the child key permits at most one address");
@@ -1660,18 +1660,18 @@ fn r22_a_double_arm_payment_is_rejected() {
     let payment = PaymentId(7);
     let error = db
         .write(|tx| {
-            tx.insert(&Payment {
+            tx.insert([&Payment {
                 id: payment,
                 kind: Kind::Card.id(),
-            })?;
-            tx.insert(&Card {
+            }])?;
+            tx.insert([&Card {
                 payment,
                 last4: 1234,
-            })?;
-            tx.insert(&Ach {
+            }])?;
+            tx.insert([&Ach {
                 payment,
                 routing: 99,
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("one id cannot inhabit Card and Ach simultaneously");
@@ -1687,31 +1687,31 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
     let dir = TempDir::new("r08-subvocab");
     let db = Db::create(dir.path(), Oncall).expect("create the Oncall store");
     db.write(|tx| {
-        let id: IncidentId = tx.alloc()?;
-        tx.insert(&Incident {
+        let id: IncidentId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Incident {
             id,
             severity: Severity::Critical.id(),
-        })?;
-        tx.insert(&Escalation {
+        }])?;
+        tx.insert([&Escalation {
             incident: id,
             severity: Severity::Critical.id(),
             at: 1,
-        })?;
+        }])?;
         Ok(())
     })
     .expect("a paging escalation commits");
     let err = db
         .write(|tx| {
-            let id: IncidentId = tx.alloc()?;
-            tx.insert(&Incident {
+            let id: IncidentId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Incident {
                 id,
                 severity: Severity::Info.id(),
-            })?;
-            tx.insert(&Escalation {
+            }])?;
+            tx.insert([&Escalation {
                 incident: id,
                 severity: Severity::Info.id(),
                 at: 2,
-            })?;
+            }])?;
             Ok(())
         })
         .unwrap_err();
@@ -1763,17 +1763,17 @@ fn r24_closure_idiom_reaches_the_exact_set() {
         .write(|tx| {
             let mut ids: Vec<NodeId> = Vec::new();
             for name in ["root", "a", "b", "c", "d", "e", "stray"] {
-                let id: NodeId = tx.alloc()?;
-                tx.insert(&Node { id, name })?;
+                let id: NodeId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Node { id, name }])?;
                 ids.push(id);
             }
             // Three levels: root → {a, b}, a → {c, d}, b → {e};
             // `stray` is a second root the closure must never reach.
             for (child, parent) in [(1usize, 0usize), (2, 0), (3, 1), (4, 1), (5, 2)] {
-                tx.insert(&Parent {
+                tx.insert([&Parent {
                     child: ids[child],
                     parent: ids[parent],
-                })?;
+                }])?;
             }
             Ok(ids)
         })
@@ -1841,16 +1841,16 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         .write(|tx| {
             let mut ids: Vec<AccountId> = Vec::new();
             for name in ["assets", "cash", "receivables", "checking", "savings"] {
-                let id: AccountId = tx.alloc()?;
-                tx.insert(&Account { id, name })?;
+                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Account { id, name }])?;
                 ids.push(id);
             }
             // Three levels: assets → {cash, receivables}, cash → {checking, savings}.
             for (child, parent) in [(1usize, 0usize), (2, 0), (3, 1), (4, 1)] {
-                tx.insert(&AccountParent {
+                tx.insert([&AccountParent {
                     child: ids[child],
                     parent: ids[parent],
-                })?;
+                }])?;
             }
             // Postings — the two equal 700s to checking are distinct facts
             // (the fresh id keeps both bindings; recipe 19's discipline).
@@ -1863,12 +1863,12 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
                 (2, 9_999),
                 (0, 1),
             ] {
-                let id: PostingId = tx.alloc()?;
-                tx.insert(&Posting {
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Posting {
                     id,
                     account: ids[account],
                     minor,
-                })?;
+                }])?;
             }
             Ok(ids)
         })
@@ -1979,16 +1979,16 @@ fn maintain_busy_spans(
             before_commit(retries)?;
             db.write_from(snap, |tx| {
                 for (person, start, end) in &removes {
-                    tx.delete(&r27::BusySpan {
+                    tx.delete([&r27::BusySpan {
                         person: *person,
                         span: span(*start, *end),
-                    })?;
+                    }])?;
                 }
                 for (person, start, end) in &inserts {
-                    tx.insert(&r27::BusySpan {
+                    tx.insert([&r27::BusySpan {
                         person: *person,
                         span: span(*start, *end),
-                    })?;
+                    }])?;
                 }
                 Ok(())
             })
@@ -2016,12 +2016,12 @@ fn r27_maintenance_rederives_after_generation_movement() {
             (2, 7, Arm::Busy.id(), span(2, 4)),
             (9, 8, Arm::Ooo.id(), span(100, 110)),
         ] {
-            tx.insert(&Claim {
+            tx.insert([&Claim {
                 source,
                 person,
                 arm,
                 span: claim_span,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -2035,12 +2035,12 @@ fn r27_maintenance_rederives_after_generation_movement() {
     let retries = maintain_busy_spans(&db, &mut prepared, |attempt| {
         if attempt == 0 {
             db.write(|tx| {
-                tx.insert(&Claim {
+                tx.insert([&Claim {
                     source: 3,
                     person: 7,
                     arm: Arm::Busy.id(),
                     span: span(4, 6),
-                })?;
+                }])?;
                 Ok(())
             })?;
         }
@@ -2083,12 +2083,12 @@ fn r28_migration_is_etl() {
         .write(|tx| {
             let mut max = 0;
             for (name, amount) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)] {
-                let id: r28_old::EmployeeId = tx.alloc()?;
-                tx.insert(&r28_old::Employee { id, name })?;
-                tx.insert(&r28_old::Salary {
+                let id: r28_old::EmployeeId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&r28_old::Employee { id, name }])?;
+                tx.insert([&r28_old::Salary {
                     employee: id,
                     amount,
-                })?;
+                }])?;
                 max = max.max(id.0);
             }
             Ok(max)
@@ -2131,17 +2131,23 @@ fn r28_migration_is_etl() {
     // Load containment targets first; explicit fresh values keep identity.
     let v2 = Db::create(dir_v2.path(), r28::Payroll).expect("create the v2 store");
     let loaded = v2
-        .bulk_load_dyn(r28::Employee::RELATION, employees)
+        .write(|tx| {
+            tx.insert_dyn(r28::Employee::RELATION, employees)
+                .map(|r| r.changed)
+        })
         .expect("load employees");
     assert_eq!(loaded, 3);
     let loaded = v2
-        .bulk_load_dyn(r28::Salary::RELATION, salaries)
+        .write(|tx| {
+            tx.insert_dyn(r28::Salary::RELATION, salaries)
+                .map(|r| r.changed)
+        })
         .expect("load salaries");
     assert_eq!(loaded, 3);
 
     // The mint sequence cleared the imported high water: no collision.
     v2.write(|tx| {
-        let next: r28::EmployeeId = tx.alloc()?;
+        let next: r28::EmployeeId = tx.reserve(1)?.start().expect("nonempty");
         assert!(
             next.0 > high_water,
             "minted {} at or below the imported high water {high_water}",
@@ -2197,22 +2203,22 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
     let db = Db::create(dir.path(), KeyedRead).expect("create the KeyedRead store");
     let (grp, empty_grp, course) = db
         .write(|tx| {
-            let grp: GrpId = tx.alloc()?;
-            tx.insert(&Grp {
+            let grp: GrpId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Grp {
                 id: grp,
                 label: "algebra",
-            })?;
-            let empty_grp: GrpId = tx.alloc()?;
-            tx.insert(&Grp {
+            }])?;
+            let empty_grp: GrpId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Grp {
                 id: empty_grp,
                 label: "geometry",
-            })?;
-            let course: CourseId = tx.alloc()?;
-            tx.insert(&Course {
+            }])?;
+            let course: CourseId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Course {
                 id: course,
                 grp,
                 title: "linear equations",
-            })?;
+            }])?;
             Ok((grp, empty_grp, course))
         })
         .expect("seed the keyed-read store");
@@ -2305,24 +2311,24 @@ fn r31_power_budget_commit_matrix() {
     // Within budget: 40 + 40 = 80 ≤ supply 100 — the weighted walk admits.
     let (pool, model) = db
         .write(|tx| {
-            let pool: PoolId = tx.alloc()?;
-            tx.insert(&Pool {
+            let pool: PoolId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Pool {
                 id: pool,
                 supply: 100,
-            })?;
-            let model: ModelId = tx.alloc()?;
-            tx.insert(&Model {
+            }])?;
+            let model: ModelId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Model {
                 id: model,
                 watts: 40,
-            })?;
+            }])?;
             for _ in 0..2 {
-                let id = tx.alloc()?;
-                tx.insert(&Device {
+                let id = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Device {
                     id,
                     pool,
                     model,
                     watts: 40,
-                })?;
+                }])?;
             }
             Ok((pool, model))
         })
@@ -2332,13 +2338,13 @@ fn r31_power_budget_commit_matrix() {
     // reports the full group total, not the clipped prefix.
     let error = db
         .write(|tx| {
-            let id = tx.alloc()?;
-            tx.insert(&Device {
+            let id = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Device {
                 id,
                 pool,
                 model,
                 watts: 40,
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("the pool's dependent bound rejects the over-draw");
@@ -2348,13 +2354,13 @@ fn r31_power_budget_commit_matrix() {
     // dies on the two-column containment — the join stated as a law.
     let error = db
         .write(|tx| {
-            let id = tx.alloc()?;
-            tx.insert(&Device {
+            let id = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Device {
                 id,
                 pool,
                 model,
                 watts: 10,
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("a desynced watts column dies on the pinned-column law");
@@ -2387,14 +2393,14 @@ fn r32_calendar_capacity_commit_matrix() {
     // room's own Duration([0,100)) — both window ends inclusive.
     let room = db
         .write(|tx| {
-            let room: RoomId = tx.alloc()?;
-            tx.insert(&Room {
+            let room: RoomId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Room {
                 id: room,
                 span: span(0, 100),
-            })?;
+            }])?;
             for booked in [span(0, 50), span(50, 100)] {
-                let id = tx.alloc()?;
-                tx.insert(&Booking { id, room, booked })?;
+                let id = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Booking { id, room, booked }])?;
             }
             Ok(room)
         })
@@ -2405,12 +2411,12 @@ fn r32_calendar_capacity_commit_matrix() {
     // cannot, with the full weighted total as the witness.
     let error = db
         .write(|tx| {
-            let id = tx.alloc()?;
-            tx.insert(&Booking {
+            let id = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Booking {
                 id,
                 room,
                 booked: span(200, 260),
-            })?;
+            }])?;
             Ok(())
         })
         .expect_err("the Duration bound rejects the over-booked room");

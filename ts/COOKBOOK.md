@@ -1043,9 +1043,9 @@ const outcome = db.read(function attempt(snap) {
 			return abandon("nothing queued")
 		}
 		for (const row of queued) {
-			tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
-			tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
-			tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
+			tx.delete(Job, [{ id: row.id, state: "Queued", payload: row.payload }])
+			tx.insert(Job, [{ id: row.id, state: "Running", payload: row.payload }])
+			tx.insert(Lease, [{ job: row.id, worker: 7n, until: 60n }])
 		}
 		return undefined
 	})
@@ -1599,9 +1599,11 @@ const db = await Db.create("./courses.db", KeyedRead)
 
 const minted: { grp?: bigint } = {}
 db.write((tx) => {
-	const g = tx.insert(Grp, { label: "algebra" })
-	tx.insert(Course, { grp: g.id, title: "linear equations" })
-	minted.grp = g.id
+	const g = tx.reserve(Grp, "id", 1n).at(0n)!
+	tx.insert(Grp, [{ id: g, label: "algebra" }])
+	const course = tx.reserve(Course, "id", 1n).at(0n)!
+	tx.insert(Course, [{ id: course, grp: g, title: "linear equations" }])
+	minted.grp = g
 })
 const grp = minted.grp ?? 0n
 
@@ -1616,8 +1618,8 @@ const viaSnap = db.read((snap) => snap.get(Course, courseGrpKey, { grp }))
 db.write((tx) => {
 	const current = tx.get(Course, courseGrpKey, { grp })
 	if (current !== undefined) {
-		tx.delete(Course, current)
-		tx.insert(Course, { id: current.id, grp: current.grp, title: "linear equations II" })
+		tx.delete(Course, [current])
+		tx.insert(Course, [{ id: current.id, grp: current.grp, title: "linear equations II" }])
 	}
 })
 

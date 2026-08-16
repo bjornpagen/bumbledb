@@ -1,26 +1,34 @@
-use super::{InternMode, WriteTx};
+use super::{MutationReport, WriteTx};
 use crate::error::Result;
 use crate::ir::Value;
+use crate::storage::delta::Disposition;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
-    /// Records a dynamic insert (the ETL form): one [`Value`] per field in
-    /// declaration order.
+    /// Records a collection of dynamic inserts: one [`Value`] row per
+    /// fact, in declaration order. Empty is lawful. Singleton is `[row]`.
+    ///
+    /// The whole collection is parsed before any row enters the delta.
+    /// Then each row is interned and inserted. Relation lookup, closed
+    /// refusal, and the field roster run once.
     ///
     /// # Errors
     ///
-    /// `ClosedRelationWrite` on a closed relation (`bulk_load_dyn` shares
-    /// this entry per fact); `FactShape` on an arity, type-kind,
-    /// fixed-interval width/ray, `bytes<N>` length, or UTF-8 mismatch
-    /// between `values` and the relation's declaration
-    /// (`schema::value_matches` is the rule set — ETL input is
-    /// data, so shape problems are typed; a closed-relation *handle*
-    /// value is a plain `u64` here, range-judged only by a declared
-    /// containment at commit); otherwise as [`WriteTx::insert`].
-    pub fn insert_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.refuse_closed(rel)?;
-        let encoded = self.encode_dyn(rel, values, InternMode::Mint)?;
-        debug_assert!(encoded, "the minting mode always encodes");
-        self.delta.insert(&self.view, rel, &self.scratch)
+    /// `ClosedRelationWrite` on a closed relation; `FactShape` on an
+    /// arity, type-kind, fixed-interval width/ray, `bytes<N>` length, or
+    /// UTF-8 mismatch (`schema::value_matches` is the rule set — ETL
+    /// input is data, so shape problems are typed); otherwise as
+    /// [`WriteTx::insert`].
+    pub fn insert_dyn(
+        &mut self,
+        rel: RelationId,
+        facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
+    ) -> Result<MutationReport> {
+        let rows: Vec<_> = facts.into_iter().collect();
+        let parsed = self.parse_dyn_collection(rel, &rows)?;
+        self.apply_collection(rel, Disposition::Insert, parsed, |tx, row, bytes| {
+            let layout = tx.schema.relation(rel).layout();
+            tx.encode_parsed_mint(&row, layout, bytes)
+        })
     }
 }

@@ -1,6 +1,6 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, Rule,
+    Term, Value, VarId,
 };
 
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
@@ -245,8 +245,8 @@ pub(super) fn balance_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -288,17 +288,14 @@ fn stats_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Min,
-                over: Some(VarId(2)),
+                op: FoldOp::Min,
+                over: VarId(2),
             },
             FindTerm::Aggregate {
-                op: AggOp::Max,
-                over: Some(VarId(1)),
+                op: FoldOp::Max,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {
@@ -612,8 +609,8 @@ fn latest_posting_per_account_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Max,
-                over: Some(VarId(2)),
+                op: FoldOp::Max,
+                over: VarId(2),
             },
         ],
         atoms: vec![Atom {

@@ -40,7 +40,7 @@ pub enum bdb_error_kind {
     FactShape,
     ClosedRelationWrite,
     FreshExhausted,
-    BulkLoad,
+    TransactionPoisoned,
     Param,
     MeasureOfRay,
     CapacityRayMeasure,
@@ -105,7 +105,6 @@ pub struct bdb_error {
     kind: bdb_error_kind,
     message: String,
     generation_moved: Option<(u64, u64)>,
-    bulk_committed: Option<u64>,
     violations: Vec<OwnedViolation>,
 }
 
@@ -133,7 +132,7 @@ fn kind_of(error: &Error) -> bdb_error_kind {
         Error::ClosedRelationWrite { .. } => bdb_error_kind::ClosedRelationWrite,
         Error::GenerationMoved { .. } => bdb_error_kind::GenerationMoved,
         Error::CommitSync { .. } => bdb_error_kind::CommitSync,
-        Error::BulkLoad { .. } => bdb_error_kind::BulkLoad,
+        Error::TransactionPoisoned { .. } => bdb_error_kind::TransactionPoisoned,
         Error::ForeignPreparedQuery => bdb_error_kind::ForeignPrepared,
         Error::ForeignSnapshot => bdb_error_kind::ForeignSnapshot,
         Error::ParamCountMismatch { .. }
@@ -171,10 +170,6 @@ impl bdb_error {
             }
             _ => None,
         };
-        let bulk_committed = match &error {
-            Error::BulkLoad { committed, .. } => Some(*committed),
-            _ => None,
-        };
         let violations = match (&error, descriptor) {
             (Error::CommitRejected { violations }, Some(descriptor)) => {
                 render_rejection(descriptor, violations)
@@ -208,7 +203,6 @@ impl bdb_error {
             kind,
             message: format!("bumbledb: {error}"),
             generation_moved,
-            bulk_committed,
             violations,
         }
     }
@@ -235,7 +229,6 @@ impl bdb_error {
             kind,
             message,
             generation_moved: None,
-            bulk_committed: None,
             violations: Vec::new(),
         }
     }
@@ -318,26 +311,6 @@ pub extern "C" fn bdb_error_get_generation_moved(
         let (witnessed, current) = error.generation_moved.ok_or(Fail::Misuse)?;
         out(out_witnessed, witnessed)?;
         out(out_current, current)?;
-        Ok(bdb_status::Ok)
-    })
-}
-
-/// The `BulkLoad` payload: facts durable in the chunks committed before
-/// the failure. `BDB_STATUS_MISUSE` when the error is
-/// not `BDB_ERROR_KIND_BULK_LOAD`.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "extern export: the unsafe(no_mangle) ABI attribute"
-)]
-pub extern "C" fn bdb_error_get_bulk_committed(
-    error: *const bdb_error,
-    out_committed: *mut u64,
-) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
-        let error = ref_in(error)?;
-        let committed = error.bulk_committed.ok_or(Fail::Misuse)?;
-        out(out_committed, committed)?;
         Ok(bdb_status::Ok)
     })
 }

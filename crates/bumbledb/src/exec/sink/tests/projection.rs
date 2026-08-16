@@ -20,7 +20,7 @@ fn projection_scan_filters_residuals_like_the_oracle() {
             occurrence(1, POSTING, &[(1, 0), (2, 2)]),
         ],
         vec![crate::ir::normalize::PlacedComparison {
-            op: crate::ir::CmpOp::Lt,
+            op: crate::ir::WordCmp::Lt,
             lhs: VarId(1),
             rhs: VarId(2),
         }],

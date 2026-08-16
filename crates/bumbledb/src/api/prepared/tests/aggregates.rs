@@ -2,7 +2,7 @@
 //! (validate → plan → execute → result buffer), including interval finds.
 
 use super::*;
-use crate::ir::AggOp;
+use crate::ir::FoldOp;
 use bumbledb_theory::schema::IntervalElement;
 
 /// Payroll(id fresh u64, emp u64, during Interval<I64>).
@@ -96,7 +96,7 @@ fn interval_find_round_trips_through_answers() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     assert_eq!(
         types,
@@ -145,13 +145,10 @@ fn a_closed_group_key_takes_the_dense_table() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
@@ -197,8 +194,8 @@ fn a_closed_group_key_takes_the_dense_table() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -280,13 +277,7 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
         ],
     };
     let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(2)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(2)), FindTerm::Count],
         atoms: vec![edge(0, 1), edge(1, 2), edge(0, 2)],
         negated: vec![],
         conditions: vec![],
@@ -302,7 +293,7 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
         })
         .collect();
     answers.sort_unstable();
-    // The triangles are (x,y,z) ∈ {(1,2,3), (2,1,3), (2,3,1)}: apex 3
+    // The triangles are (x,y,z) ∈ {(1,2,3), (2,1,3), (2,3,1 }: apex 3
     // closes twice, apex 1 once.
     assert_eq!(answers, vec![(1, 1), (3, 2)]);
 }

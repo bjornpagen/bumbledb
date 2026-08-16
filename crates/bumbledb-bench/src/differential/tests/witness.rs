@@ -298,8 +298,8 @@ fn assert_generation_moved(error: &Error) {
 fn update_where_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-update-where");
     db.write(|tx| {
-        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, false))?;
-        tx.insert_dyn(MAINTENANCE_SOURCE, &source(2, false))?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, false)])?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, [&source(2, false)])?;
         Ok(())
     })
     .expect("seed sources");
@@ -309,7 +309,7 @@ fn update_where_refuses_generation_movement() {
             .scan(MAINTENANCE_SOURCE)?
             .collect::<bumbledb::Result<_>>()?;
         db.write(|tx| {
-            tx.insert_dyn(MAINTENANCE_SOURCE, &source(3, false))?;
+            tx.insert_dyn(MAINTENANCE_SOURCE, [&source(3, false)])?;
             Ok(())
         })?;
         let ran = std::cell::Cell::new(false);
@@ -320,8 +320,8 @@ fn update_where_refuses_generation_movement() {
                     let Value::U64(id) = fact[0] else {
                         unreachable!("source id is u64")
                     };
-                    tx.delete_dyn(MAINTENANCE_SOURCE, fact)?;
-                    tx.insert_dyn(MAINTENANCE_SOURCE, &source(id, true))?;
+                    tx.delete_dyn(MAINTENANCE_SOURCE, [fact])?;
+                    tx.insert_dyn(MAINTENANCE_SOURCE, [&source(id, true)])?;
                 }
                 Ok(())
             })
@@ -339,7 +339,7 @@ fn update_where_refuses_generation_movement() {
 fn insert_select_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-insert-select");
     db.write(|tx| {
-        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
         Ok(())
     })
     .expect("seed source");
@@ -356,7 +356,7 @@ fn insert_select_refuses_generation_movement() {
             })
             .collect::<bumbledb::Result<_>>()?;
         db.write(|tx| {
-            tx.insert_dyn(MAINTENANCE_SOURCE, &source(2, true))?;
+            tx.insert_dyn(MAINTENANCE_SOURCE, [&source(2, true)])?;
             Ok(())
         })?;
         let ran = std::cell::Cell::new(false);
@@ -364,7 +364,7 @@ fn insert_select_refuses_generation_movement() {
             .write_from(witness, |tx| {
                 ran.set(true);
                 for id in &selected {
-                    tx.insert_dyn(MAINTENANCE_DERIVED, &[Value::U64(*id)])?;
+                    tx.insert_dyn(MAINTENANCE_DERIVED, [&[Value::U64(*id)]])?;
                 }
                 Ok(())
             })
@@ -383,7 +383,7 @@ fn insert_select_refuses_generation_movement() {
 fn snapshot_read_modify_write_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-read-modify-write");
     db.write(|tx| {
-        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, false))?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, false)])?;
         Ok(())
     })
     .expect("seed source");
@@ -394,16 +394,16 @@ fn snapshot_read_modify_write_refuses_generation_movement() {
             .next()
             .expect("one source")?;
         db.write(|tx| {
-            tx.delete_dyn(MAINTENANCE_SOURCE, &old)?;
-            tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+            tx.delete_dyn(MAINTENANCE_SOURCE, [&old])?;
+            tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
             Ok(())
         })?;
         let ran = std::cell::Cell::new(false);
         let error = db
             .write_from(witness, |tx| {
                 ran.set(true);
-                tx.delete_dyn(MAINTENANCE_SOURCE, &old)?;
-                tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+                tx.delete_dyn(MAINTENANCE_SOURCE, [&old])?;
+                tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
                 Ok(())
             })
             .expect_err("movement must refuse stale read-modify-write");
@@ -421,15 +421,15 @@ fn snapshot_read_modify_write_refuses_generation_movement() {
 fn stale_derived_fact_is_rejected_after_source_movement() {
     let (_dir, db) = maintenance_world("witness-stale-derived");
     db.write(|tx| {
-        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
-        tx.insert_dyn(MAINTENANCE_DERIVED, &[Value::U64(1)])?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
+        tx.insert_dyn(MAINTENANCE_DERIVED, [&[Value::U64(1)]])?;
         Ok(())
     })
     .expect("seed sound derived fact");
 
     let error = db
         .write(|tx| {
-            tx.delete_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+            tx.delete_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
             Ok(())
         })
         .expect_err("a surviving derived fact requires its source");
@@ -462,8 +462,8 @@ fn increment(db: &Db<SchemaDescriptor>) -> u64 {
             }
             let current = value.expect("slot 0 is seeded");
             db.write_from(snap, |tx| {
-                tx.delete_dyn(REGISTER, &[Value::U64(0), Value::U64(current)])?;
-                tx.insert_dyn(REGISTER, &[Value::U64(0), Value::U64(current + 1)])?;
+                tx.delete_dyn(REGISTER, [&[Value::U64(0), Value::U64(current)]])?;
+                tx.insert_dyn(REGISTER, [&[Value::U64(0), Value::U64(current + 1)]])?;
                 Ok(())
             })
         });
@@ -486,7 +486,7 @@ fn two_threads_of_witnessed_increments_equal_the_serial_schedule() {
     let dir = TempDir::new("witness-threads");
     let db = Db::create(dir.path(), register_schema()).expect("create engine store");
     db.write(|tx| {
-        tx.insert_dyn(REGISTER, &[Value::U64(0), Value::U64(0)])?;
+        tx.insert_dyn(REGISTER, [&[Value::U64(0), Value::U64(0)]])?;
         Ok(())
     })
     .expect("seed slot 0");

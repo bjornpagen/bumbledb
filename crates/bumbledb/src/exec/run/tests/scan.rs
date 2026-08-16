@@ -9,6 +9,7 @@
 use super::*;
 use crate::exec::SCAN_HOIST_THRESHOLD;
 use crate::exec::colt::SuffixRun;
+use crate::ir::WordCmp;
 
 /// One relation of `fields` U64 columns f0..fn — the wide-projection
 /// fixture ([`schema`] is binary-only).
@@ -190,7 +191,7 @@ fn leaf_scan_residuals_past_eight() {
     // under test.
     let residuals: Vec<PlacedComparison> = (0..9)
         .map(|k| PlacedComparison {
-            op: if k % 2 == 0 { CmpOp::Ne } else { CmpOp::Ge },
+            op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },
             lhs: VarId(2),
             rhs: VarId(0),
         })
@@ -236,7 +237,7 @@ fn scan_and_batch_paths_agree_across_fixtures() {
         let views = views_of(&dir, &schema, &[r0, r1]);
         let residuals: Vec<PlacedComparison> = (0..residuals)
             .map(|k| PlacedComparison {
-                op: if k % 2 == 0 { CmpOp::Ne } else { CmpOp::Ge },
+                op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },
                 lhs: VarId(2),
                 rhs: VarId(0),
             })

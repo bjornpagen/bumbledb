@@ -1,14 +1,14 @@
 //! The `docs/architecture/70-api.md` integration tests: the usage shapes
-//! end to end through the public surface — create → write{alloc+insert} →
+//! end to end through the public surface — create → write{reserve+insert} →
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
 //! again; the write-closure abort contracts; the threading contract; the
 //! commit-time statement judgments with their rendered diagnostics; and
-//! the export → bulk-import ETL round trip on both lanes (`bulk_load`
-//! typed, `bulk_load_dyn` dynamic).
+//! the export → collection-insert ETL round trip on both lanes (`insert`
+//! typed, `insert_dyn` dynamic).
 
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, ParamId, Query, Rec, Rule,
-    Term, Value, VarId,
+    Atom, AtomSource, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, NonEmpty, ParamId,
+    ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::FieldId;
 use bumbledb::schema::ValidateDescriptor as _;
@@ -75,8 +75,8 @@ fn aggregate_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -142,24 +142,24 @@ fn usage_shapes_end_to_end() {
     // Write: fresh minting + typed inserts.
     let accounts = db
         .write(|tx| {
-            let alice: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let alice: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id: alice,
                 name: "alice",
-            })?;
-            let bob: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            }])?;
+            let bob: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id: bob,
                 name: "bob",
-            })?;
+            }])?;
             let mut accounts = Vec::new();
             for (holder, balance) in [(alice, 100), (alice, -25), (bob, 40)] {
-                let id: AccountId = tx.alloc()?;
-                tx.insert(&Account {
+                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Account {
                     id,
                     holder,
                     balance,
-                })?;
+                }])?;
                 accounts.push(Account {
                     id,
                     holder,
@@ -202,8 +202,8 @@ fn usage_shapes_end_to_end() {
     // is equally blessed (the delta is set arithmetic).
     let old = accounts[0];
     db.write(|tx| {
-        tx.insert(&Account { balance: 90, ..old })?;
-        tx.delete(&old)?;
+        tx.insert([&Account { balance: 90, ..old }])?;
+        tx.delete([&old])?;
         Ok(())
     })
     .expect("mutate");
@@ -231,19 +231,19 @@ fn aborted_writes_leave_prior_state_intact() {
     let dir = common::TempDir::new("api-abort");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder { id, name: "keep" })
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder { id, name: "keep" }])
     })
     .expect("seed");
 
     // A panicking closure: the delta dies in the unwind, LMDB untouched.
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _: bumbledb::Result<()> = db.write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id,
                 name: "doomed-by-panic",
-            })?;
+            }])?;
             panic!("boom");
         });
     }));
@@ -251,11 +251,11 @@ fn aborted_writes_leave_prior_state_intact() {
 
     // An `Err` closure aborts the same way.
     let failed: bumbledb::Result<()> = db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder {
             id,
             name: "doomed-by-error",
-        })?;
+        }])?;
         Err(bumbledb::Error::Overflow(
             bumbledb::OverflowKind::Aggregate { find: 0 },
         ))
@@ -264,8 +264,8 @@ fn aborted_writes_leave_prior_state_intact() {
 
     // The writer mutex is released and prior state intact.
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder { id, name: "after" })
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder { id, name: "after" }])
     })
     .expect("mutex usable after a panic");
 
@@ -295,17 +295,17 @@ fn concurrent_readers_while_writing() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     // Seed one pair so readers always see data.
     db.write(|tx| {
-        let holder: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
+        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder {
             id: holder,
             name: "seed",
-        })?;
-        let id: AccountId = tx.alloc()?;
-        tx.insert(&Account {
+        }])?;
+        let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Account {
             id,
             holder,
             balance: 1,
-        })
+        }])
     })
     .expect("seed");
 
@@ -315,17 +315,17 @@ fn concurrent_readers_while_writing() {
         let writer = scope.spawn(|| {
             for round in 0..20 {
                 db.write(|tx| {
-                    let holder: HolderId = tx.alloc()?;
-                    tx.insert(&Holder {
+                    let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                    tx.insert([&Holder {
                         id: holder,
                         name: &format!("holder-{round}"),
-                    })?;
-                    let id: AccountId = tx.alloc()?;
-                    tx.insert(&Account {
+                    }])?;
+                    let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                    tx.insert([&Account {
                         id,
                         holder,
                         balance: round,
-                    })
+                    }])
                 })
                 .expect("paired write");
             }
@@ -351,7 +351,7 @@ fn concurrent_readers_while_writing() {
 }
 
 #[test]
-fn export_scan_bulk_loads_into_a_fresh_database() {
+fn export_scan_inserts_into_a_fresh_database() {
     let dir_old = common::TempDir::new("api-etl-old");
     let dir_new = common::TempDir::new("api-etl-new");
     let old = Db::create(dir_old.path(), Ledger).expect("create old");
@@ -360,14 +360,14 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
         .write(|tx| {
             let mut max = 0;
             for (name, balance) in [("alice", 100i64), ("bob", -7), ("carol", 40)] {
-                let holder: HolderId = tx.alloc()?;
-                tx.insert(&Holder { id: holder, name })?;
-                let id: AccountId = tx.alloc()?;
-                tx.insert(&Account {
+                let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Holder { id: holder, name }])?;
+                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Account {
                     id,
                     holder,
                     balance,
-                })?;
+                }])?;
                 max = max.max(holder.0);
             }
             Ok(max)
@@ -389,11 +389,14 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
     // identity.
     let new = Db::create(dir_new.path(), Ledger).expect("create new");
     let loaded = new
-        .bulk_load_dyn(Holder::RELATION, holders)
+        .write(|tx| tx.insert_dyn(Holder::RELATION, holders).map(|r| r.changed))
         .expect("load holders");
     assert_eq!(loaded, 3);
     let loaded = new
-        .bulk_load_dyn(Account::RELATION, accounts)
+        .write(|tx| {
+            tx.insert_dyn(Account::RELATION, accounts)
+                .map(|r| r.changed)
+        })
         .expect("load accounts");
     assert_eq!(loaded, 3);
 
@@ -413,7 +416,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 
     // The fresh high-water advanced past the explicit imports.
     new.write(|tx| {
-        let next: HolderId = tx.alloc()?;
+        let next: HolderId = tx.reserve(1)?.start().expect("nonempty");
         assert!(
             next.0 > max_holder,
             "minted {} at or below the imported high water {max_holder}",
@@ -434,8 +437,8 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id, name: "alice" })?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id, name: "alice" }])?;
             Ok(id)
         })
         .expect("seed");
@@ -445,16 +448,16 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     // and the WHOLE transaction aborts (the good insert too).
     let err = db
         .write(|tx| {
-            tx.insert(&Account {
+            tx.insert([&Account {
                 id: AccountId(7),
                 holder,
                 balance: 1,
-            })?;
-            tx.insert(&Account {
+            }])?;
+            tx.insert([&Account {
                 id: AccountId(7),
                 holder,
                 balance: 2,
-            })?;
+            }])?;
             Ok(())
         })
         .unwrap_err();
@@ -481,11 +484,11 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     // rendered back in the algebra, and the judgment direction.
     let err = db
         .write(|tx| {
-            tx.insert(&Account {
+            tx.insert([&Account {
                 id: AccountId(1),
                 holder: HolderId(404),
                 balance: 5,
-            })
+            }])
         })
         .unwrap_err();
     assert!(matches!(
@@ -509,19 +512,19 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     // Containment, target side: deleting a holder a surviving account
     // still requires — the requiring source is named by its fact.
     db.write(|tx| {
-        tx.insert(&Account {
+        tx.insert([&Account {
             id: AccountId(1),
             holder,
             balance: 5,
-        })
+        }])
     })
     .expect("reference the holder");
     let err = db
         .write(|tx| {
-            tx.delete(&Holder {
+            tx.delete([&Holder {
                 id: holder,
                 name: "alice",
-            })
+            }])
         })
         .unwrap_err();
     let bumbledb::Error::CommitRejected { ref violations } = err else {
@@ -581,8 +584,8 @@ fn open_mismatches_and_snapshot_usability() {
     // path works through the public surface.
     let db = Db::open(dir.path(), Ledger).expect("open");
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder { id, name: "bo" })
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder { id, name: "bo" }])
     })
     .expect("seed");
     let mut join = db.prepare(&join_query()).expect("prepare");
@@ -606,8 +609,8 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     let dir = common::TempDir::new("api-pinned");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder { id, name: "first" })
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder { id, name: "first" }])
     })
     .expect("seed");
 
@@ -619,11 +622,11 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
         // never block the writer; MDB_NOTLS reader slots).
         for round in 0..2 {
             db.write(|tx| {
-                let id: HolderId = tx.alloc()?;
-                tx.insert(&Holder {
+                let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Holder {
                     id,
                     name: &format!("later-{round}"),
-                })
+                }])
             })?;
         }
         // The pinned snapshot still answers at its own generation.
@@ -642,13 +645,12 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
 }
 
 #[test]
-fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
-    let dir_bulk = common::TempDir::new("api-bulk-a");
-    let dir_seq = common::TempDir::new("api-bulk-b");
-    let bulk = Db::create(dir_bulk.path(), Ledger).expect("create");
+fn collection_insert_equals_sequential_inserts() {
+    let dir_all = common::TempDir::new("api-insert-all");
+    let dir_seq = common::TempDir::new("api-insert-seq");
+    let all = Db::create(dir_all.path(), Ledger).expect("create");
     let seq = Db::create(dir_seq.path(), Ledger).expect("create");
 
-    // > one chunk of holders (chunk = 4096).
     let n = 4_100u64;
     let facts: Vec<Vec<Value>> = (0..n)
         .map(|i| {
@@ -658,23 +660,19 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
             ]
         })
         .collect();
-    let loaded = bulk
-        .bulk_load_dyn(Holder::RELATION, facts.clone())
-        .expect("bulk load");
+    let loaded = all
+        .write(|tx| {
+            tx.insert_dyn(Holder::RELATION, facts.clone())
+                .map(|r| r.changed)
+        })
+        .expect("collection insert");
     assert_eq!(loaded, n);
     for chunk in facts.chunks(512) {
-        seq.write(|tx| {
-            for f in chunk {
-                tx.insert_dyn(Holder::RELATION, f)?;
-            }
-            Ok(())
-        })
-        .expect("sequential insert");
+        seq.write(|tx| tx.insert_dyn(Holder::RELATION, chunk).map(|_| ()))
+            .expect("sequential insert");
     }
 
     // Set equality of the full export: an ETL bug is a data-loss bug.
-    // (Scan order is row-id order, and row ids depend on chunk boundaries
-    // — relations are sets, so the comparison sorts by the fresh id.)
     let by_id = |mut rows: Vec<Vec<Value>>| {
         rows.sort_by_key(|f| match f[0] {
             Value::U64(id) => id,
@@ -683,8 +681,8 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
         rows
     };
     let a = by_id(
-        bulk.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
-            .expect("scan bulk"),
+        all.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+            .expect("scan all"),
     );
     let b = by_id(
         seq.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
@@ -693,64 +691,69 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
     assert_eq!(a, b);
     assert_eq!(a.len(), usize::try_from(n).expect("64-bit"));
 
-    // Mid-stream failure: prior chunks stay committed and the error
-    // carries the committed count.
-    let dir_fail = common::TempDir::new("api-bulk-fail");
+    // Shape failure of a collection that never entered: the write
+    // persists nothing.
+    let dir_fail = common::TempDir::new("api-insert-fail");
     let fail = Db::create(dir_fail.path(), Ledger).expect("create");
     let mut bad = facts;
-    bad[4_099] = vec![Value::U64(0)]; // arity mismatch in the second chunk
-    let err = fail.bulk_load_dyn(Holder::RELATION, bad).unwrap_err();
-    assert_eq!(err.committed, 4_096, "the complete first chunk persisted");
-    assert!(matches!(err.error, bumbledb::Error::FactShape(_)));
+    bad[4_099] = vec![Value::U64(0)];
+    let err = fail
+        .write(|tx| tx.insert_dyn(Holder::RELATION, bad).map(|r| r.changed))
+        .unwrap_err();
+    assert!(matches!(err, bumbledb::Error::FactShape(_)), "{err:?}");
     let persisted = fail
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
-    assert_eq!(persisted, 4_096);
+    assert_eq!(persisted, 0);
 }
 
-/// The typed bulk lane (`70-api.md` § ETL, the unified-surface ruling):
-/// the generated fact structs as the bulk surface — same chunking, same
-/// changed-state count, same partial-import contract as the dynamic
-/// lane, with the judgment running per chunk exactly as any write.
+/// The typed collection is the same insert as the dynamic lane: one
+/// write, changed-state count, whole-write judgment.
 #[test]
-fn typed_bulk_load_spans_chunks_and_carries_the_committed_count() {
+fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     use bumbledb::Fresh as _;
-    let dir = common::TempDir::new("api-bulk-typed");
+    let dir = common::TempDir::new("api-insert-typed");
     let db = Db::create(dir.path(), Ledger).expect("create");
 
-    // > one chunk (chunk = 4096), straight from the generated structs.
     let n = 4_100u64;
     let names = ["ada", "bob", "eve"];
     let holder = |i: u64| Holder {
         id: HolderId::from_fresh(i),
         name: names[usize::try_from(i % 3).expect("small")],
     };
-    let loaded = db.bulk_load((0..n).map(holder)).expect("typed bulk load");
+    let holders: Vec<_> = (0..n).map(holder).collect();
+    let loaded = db
+        .write(|tx| Ok(tx.insert(&holders)?.changed))
+        .expect("typed insert");
     assert_eq!(loaded, n);
-    // Changed-state semantics: the idempotent re-import consumes every
-    // fact and counts none.
-    let again = db.bulk_load((0..n).map(holder)).expect("typed re-import");
+    let again = db
+        .write(|tx| Ok(tx.insert(&holders)?.changed))
+        .expect("typed re-import");
     assert_eq!(again, 0);
     let persisted = db
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
     assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
 
-    // Mid-stream judgment failure: `Account(holder) <= Holder(id)` — the
-    // second chunk's dangling holder rejects that chunk whole at commit,
-    // prior chunks stay committed, and the count rides the error.
+    // Judgment failure: `Account(holder) <= Holder(id)` — the whole
+    // write is rejected, nothing from this insert persists.
     let account = |i: u64| Account {
         id: AccountId::from_fresh(i),
         holder: HolderId::from_fresh(if i == 4_099 { n + 7 } else { i % 3 }),
         balance: 1,
     };
-    let err = db.bulk_load((0..n).map(account)).unwrap_err();
-    assert_eq!(err.committed, 4_096, "the complete first chunk persisted");
-    assert!(matches!(err.error, bumbledb::Error::CommitRejected { .. }));
-    let accounts = db
+    let accounts: Vec<_> = (0..n).map(account).collect();
+    let err = db
+        .write(|tx| Ok(tx.insert(&accounts)?.changed))
+        .unwrap_err();
+    assert!(
+        matches!(err, bumbledb::Error::CommitRejected { .. }),
+        "{err:?}"
+    );
+    let account_count = db
         .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
         .expect("scan accounts");
-    assert_eq!(accounts, 4_096);
+    assert_eq!(account_count, 0);
 }
 
 #[test]
@@ -763,15 +766,15 @@ fn disk_size_and_generation_report_store_state() {
 
     db.write(|tx| {
         for _ in 0..10_000u64 {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id,
                 name: &format!("holder-{}", id.0),
-            })?;
+            }])?;
         }
         Ok(())
     })
-    .expect("bulk write");
+    .expect("collection write");
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
     assert_eq!(db.generation().expect("gen").value(), 1);
@@ -783,7 +786,7 @@ fn disk_size_and_generation_report_store_state() {
 /// never the reverse. Work is pinned by counters, not wall clock.
 #[test]
 fn cover_choice_iterates_the_selected_side() {
-    use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, VarId};
+    use bumbledb::ir::{Atom, FindTerm, FoldOp, ParamId, Query, Term, VarId};
 
     let dir = common::TempDir::new("api-cover-choice");
     let db = Db::create(dir.path(), Ledger).expect("create");
@@ -791,22 +794,22 @@ fn cover_choice_iterates_the_selected_side() {
     db.write(|tx| {
         let mut holders = Vec::new();
         for i in 0..500u64 {
-            let id: HolderId = tx.alloc()?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             let name = if i < 7 {
                 "target".to_owned()
             } else {
                 format!("h{i}")
             };
-            tx.insert(&Holder { id, name: &name })?;
+            tx.insert([&Holder { id, name: &name }])?;
             holders.push(id);
         }
         for i in 0..10_000u64 {
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder: holders[usize::try_from(i % 500).expect("small")],
                 balance: i64::try_from(i).expect("fits"),
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -818,8 +821,8 @@ fn cover_choice_iterates_the_selected_side() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -878,11 +881,11 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     for round in 0..40u64 {
         db.write(|tx| {
             for i in 0..250u64 {
-                let id: HolderId = tx.alloc()?;
-                tx.insert(&Holder {
+                let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Holder {
                     id,
                     name: &format!("h{round}-{i}"),
-                })?;
+                }])?;
             }
             Ok(())
         })
@@ -918,11 +921,11 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     // A first-class store: writes commit and read back.
     compacted
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id,
                 name: "post-compaction",
-            })
+            }])
         })
         .expect("write");
     assert_eq!(
@@ -944,14 +947,14 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     let db_b = Db::create(dir_b.path(), Ledger).expect("create b");
     for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
         db.write(|tx| {
-            let holder: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id: holder, name })?;
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id: holder, name }])?;
+            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder,
                 balance,
-            })
+            }])
         })
         .expect("seed one distinct fact pair");
     }
@@ -1105,45 +1108,11 @@ fn nested_write_panics_instead_of_deadlocking() {
 
     // Sequential writes on the same thread still work: the write lock cleared.
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder {
             id,
             name: "after the panic",
-        })
-    })
-    .expect("the writer survives");
-}
-
-/// `Db::bulk_load` chunks through `Db::write` internally, so calling it
-/// inside a write closure inherits the non-reentrancy panic — now part
-/// of `bulk_load`'s documented contract (`# Panics`). The assert fires
-/// before the delta or LMDB is touched, and the outer transaction
-/// aborts cleanly by unwind: the store stays writable afterwards.
-#[test]
-fn bulk_load_inside_a_write_closure_panics_per_its_documented_contract() {
-    let dir = common::TempDir::new("api-nested-bulk-load");
-    let db = Db::create(dir.path(), Ledger).expect("create");
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = db.write(|_| {
-            let _ = db.bulk_load_dyn(Holder::RELATION, Vec::new());
-            Ok(())
-        });
-    }));
-    let payload = result.expect_err("must panic");
-    let message = payload
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| payload.downcast_ref::<&str>().copied())
-        .expect("string panic payload");
-    assert!(message.contains("nested Db::write"), "{message}");
-
-    // The unwind left nothing poisoned: the next write commits.
-    db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
-            id,
-            name: "after the panic",
-        })
+        }])
     })
     .expect("the writer survives");
 }
@@ -1158,22 +1127,22 @@ fn prepared_executions_observe_exactly_one_generation() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let (hx, hy, ax, ay) = db
         .write(|tx| {
-            let hx: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id: hx, name: "x" })?;
-            let hy: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id: hy, name: "y" })?;
-            let ax: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let hx: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id: hx, name: "x" }])?;
+            let hy: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id: hy, name: "y" }])?;
+            let ax: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id: ax,
                 holder: hx,
                 balance: 0,
-            })?;
-            let ay: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            }])?;
+            let ay: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id: ay,
                 holder: hy,
                 balance: 0,
-            })?;
+            }])?;
             Ok((hx, hy, ax, ay))
         })
         .expect("seed");
@@ -1183,26 +1152,26 @@ fn prepared_executions_observe_exactly_one_generation() {
         let writer = scope.spawn(move || {
             for round in 1..=40i64 {
                 db.write(|tx| {
-                    tx.delete(&Account {
+                    tx.delete([&Account {
                         id: ax,
                         holder: hx,
                         balance: round - 1,
-                    })?;
-                    tx.insert(&Account {
+                    }])?;
+                    tx.insert([&Account {
                         id: ax,
                         holder: hx,
                         balance: round,
-                    })?;
-                    tx.delete(&Account {
+                    }])?;
+                    tx.delete([&Account {
                         id: ay,
                         holder: hy,
                         balance: round - 1,
-                    })?;
-                    tx.insert(&Account {
+                    }])?;
+                    tx.insert([&Account {
                         id: ay,
                         holder: hy,
                         balance: round,
-                    })
+                    }])
                 })
                 .expect("paired rewrite");
             }
@@ -1233,28 +1202,26 @@ fn prepared_executions_observe_exactly_one_generation() {
 /// A *successful* commit persists every fresh
 /// value it issued, even when no facts changed — an id the closure
 /// returned to the host is never re-issued. Both no-op shapes: the
-/// empty delta (alloc, nothing else) and the nets-to-nothing delta
+/// empty delta (`reserve`, nothing else) and the nets-to-nothing delta
 /// (insert then delete of the same absent fact). The generation must
 /// not move for either — `Q` marks are not query-visible state.
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the method path does not satisfy the higher-ranked bound"
-)] // HRTB: the method path does not unify
 fn escaped_fresh_ids_survive_noop_commits() {
     let dir = common::TempDir::new("api-fresh-escape");
     let db = Db::create(dir.path(), Ledger).expect("create");
 
     // The empty-delta path.
-    let a: HolderId = db.write(|tx| tx.alloc()).expect("bare alloc");
+    let a: HolderId = db
+        .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
+        .expect("bare reserve");
     let generation_after_a = db.generation().expect("generation");
     let b: HolderId = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id,
                 name: "first real holder",
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("real write");
@@ -1263,21 +1230,21 @@ fn escaped_fresh_ids_survive_noop_commits() {
     // The nets-to-nothing path (`changed: false`, non-empty delta).
     let c: HolderId = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             let ghost = Holder { id, name: "ghost" };
-            tx.insert(&ghost)?;
-            tx.delete(&ghost)?;
+            tx.insert([&ghost])?;
+            tx.delete([&ghost])?;
             Ok(id)
         })
         .expect("nets to nothing");
     let generation_after_c = db.generation().expect("generation");
     let d: HolderId = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id,
                 name: "second real holder",
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("real write");
@@ -1288,7 +1255,7 @@ fn escaped_fresh_ids_survive_noop_commits() {
     assert_eq!(
         generation_after_a.value(),
         0,
-        "a bare alloc is not a state change"
+        "a bare reserve is not a state change"
     );
     assert_eq!(
         generation_after_c.value(),
@@ -1307,8 +1274,8 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id, name: "real" })?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id, name: "real" }])?;
             Ok(id)
         })
         .expect("seed");
@@ -1317,11 +1284,11 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     // whole write is a no-op commit (generation unmoved).
     let generation = db.generation().expect("generation");
     db.write(|tx| {
-        let changed = tx.delete(&Holder {
+        let changed = tx.delete([&Holder {
             id: holder,
             name: "never interned",
-        })?;
-        assert!(!changed, "a never-interned value matches no fact");
+        }])?;
+        assert_eq!(changed.changed, 0, "a never-interned value matches no fact");
         Ok(())
     })
     .expect("typed delete");
@@ -1329,12 +1296,12 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     db.write(|tx| {
         let changed = tx.delete_dyn(
             Holder::RELATION,
-            &[
+            [&[
                 Value::U64(holder.0),
                 Value::String("also never interned".as_bytes().into()),
-            ],
+            ]],
         )?;
-        assert!(!changed);
+        assert_eq!(changed.changed, 0);
         Ok(())
     })
     .expect("dynamic delete");
@@ -1344,13 +1311,13 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     // transaction still cancels exactly (the pending map serves the
     // delete path).
     db.write(|tx| {
-        let id: HolderId = tx.alloc()?;
+        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         let transient = Holder {
             id,
             name: "transient",
         };
-        assert!(tx.insert(&transient)?);
-        assert!(tx.delete(&transient)?);
+        assert_eq!(tx.insert([&transient])?.changed, 1);
+        assert_eq!(tx.delete([&transient])?.changed, 1);
         Ok(())
     })
     .expect("cancel");
@@ -1366,10 +1333,9 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 
 /// An out-of-range relation id at the dynamic
 /// (ETL) surface is a typed `FactShape` error at every public boundary —
-/// `insert_dyn`, `delete_dyn`, `bulk_load_dyn`, and `scan` — never a
-/// panic. (The typed `Db::bulk_load` lane takes no `RelationId`, so an
-/// out-of-range relation is unrepresentable there — the fact type names
-/// its relation.)
+/// `insert_dyn`, `delete_dyn`, and `scan` — never a panic. The typed
+/// `insert` lane takes no `RelationId`, so an out-of-range relation is
+/// unrepresentable there — the fact type names its relation.
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
@@ -1385,20 +1351,22 @@ fn out_of_range_relation_ids_are_typed_errors() {
     };
 
     db.write(|tx| {
-        let err = tx.insert_dyn(bogus, &[Value::U64(1)]).unwrap_err();
+        let err = tx.insert_dyn(bogus, [&[Value::U64(1)]]).unwrap_err();
         assert!(is_unknown(&err), "{err:?}");
-        let err = tx.delete_dyn(bogus, &[Value::U64(1)]).unwrap_err();
+        let err = tx.delete_dyn(bogus, [&[Value::U64(1)]]).unwrap_err();
         assert!(is_unknown(&err), "{err:?}");
         Ok(())
     })
     .expect("write closes cleanly");
 
     let err = db
-        .bulk_load_dyn(bogus, vec![vec![Value::U64(1)]])
+        .write(|tx| {
+            tx.insert_dyn(bogus, vec![vec![Value::U64(1)]])
+                .map(|r| r.changed)
+        })
         .map(|_| ())
         .unwrap_err();
-    assert!(is_unknown(&err.error), "{:?}", err.error);
-    assert_eq!(err.committed, 0);
+    assert!(is_unknown(&err), "{err:?}");
 
     db.read(|snap| {
         let err = snap.scan(bogus).map(|_| ()).unwrap_err();
@@ -1419,18 +1387,18 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let holder = db
         .write(|tx| {
-            let holder: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
+            let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder {
                 id: holder,
                 name: "alice",
-            })?;
+            }])?;
             for balance in 0..8 {
-                let id: AccountId = tx.alloc()?;
-                tx.insert(&Account {
+                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Account {
                     id,
                     holder,
                     balance,
-                })?;
+                }])?;
             }
             Ok(holder)
         })
@@ -1452,12 +1420,12 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
     // Grow Account 8 → 32 (~4x); Holder stays put.
     db.write(|tx| {
         for balance in 8..32 {
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder,
                 balance,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -1505,7 +1473,7 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
         .expect("collect accounts");
     db.write(|tx| {
         for account in accounts.iter().take(24) {
-            tx.delete(account)?;
+            tx.delete([account])?;
         }
         Ok(())
     })
@@ -1534,15 +1502,15 @@ fn a_plain_query_executes_as_today() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
-            let holder: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id: holder, name })?;
+            let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id: holder, name }])?;
             for balance in balances {
-                let id: AccountId = tx.alloc()?;
-                tx.insert(&Account {
+                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Account {
                     id,
                     holder,
                     balance,
-                })?;
+                }])?;
             }
         }
         Ok(())
@@ -1590,18 +1558,18 @@ fn prepare_executes_recursion_under_the_driver() {
     let dir = common::TempDir::new("api-reach-driver");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        let holder: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
+        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder {
             id: holder,
             name: "alice",
-        })?;
+        }])?;
         for balance in [100, -25, 40] {
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder,
                 balance,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -1616,21 +1584,20 @@ fn prepare_executes_recursion_under_the_driver() {
         negated: vec![],
         conditions: vec![],
     };
-    let recursive = Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: AtomSource::Interior(InteriorId(0)),
-            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    };
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![base.clone()],
-            rec: vec![recursive],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
+                atoms: base.atoms.clone(),
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
@@ -1683,28 +1650,20 @@ fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge(0, 1)],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    edge(0, 1),
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(1))),
-                            (FieldId(1), Term::Var(VarId(2))),
-                        ],
-                    },
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
                 ],
-                negated: vec![],
+                atoms: vec![edge(0, 1)],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_main(2)],
@@ -1724,28 +1683,20 @@ fn primer_reach_xx() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge(0, 1)],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    edge(0, 1),
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(1))),
-                            (FieldId(1), Term::Var(VarId(2))),
-                        ],
-                    },
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
                 ],
-                negated: vec![],
+                atoms: vec![edge(0, 1)],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -1774,7 +1725,7 @@ fn recursive_answers_agree_scalar_and_vectorized() {
     let db = Db::create(dir.path(), Graph).expect("create");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
-            tx.insert(&GraphEdge { src, dst })?;
+            tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
@@ -1834,7 +1785,7 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     let db = Db::create(dir.path(), Graph).expect("create");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3)] {
-            tx.insert(&GraphEdge { src, dst })?;
+            tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
@@ -1848,7 +1799,7 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     .expect("read");
 
     db.write(|tx| {
-        tx.insert(&GraphEdge { src: 3, dst: 0 })?;
+        tx.insert([&GraphEdge { src: 3, dst: 0 }])?;
         Ok(())
     })
     .expect("close the cycle");
@@ -1871,7 +1822,7 @@ fn reach_profile_reports_rounds_and_deltas() {
     let db = Db::create(dir.path(), Graph).expect("create");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
-            tx.insert(&GraphEdge { src, dst })?;
+            tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
@@ -1928,7 +1879,7 @@ fn a_tight_derived_budget_trips_under_reach() {
     let db = Db::create(dir.path(), Graph).expect("create");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
-            tx.insert(&GraphEdge { src, dst })?;
+            tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
@@ -1957,18 +1908,18 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
     let dir = common::TempDir::new("api-interiors-budget");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        let holder: HolderId = tx.alloc()?;
-        tx.insert(&Holder {
+        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&Holder {
             id: holder,
             name: "alice",
-        })?;
+        }])?;
         for balance in [100, -25, 40] {
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
+            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder,
                 balance,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -1999,9 +1950,8 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
 fn interiors_only_accounts() -> Query {
     Query::Cq {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var],
-            rules: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(Account::RELATION),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],

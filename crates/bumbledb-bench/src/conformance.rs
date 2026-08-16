@@ -92,9 +92,9 @@ use std::time::Instant;
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId,
-    FindTerm, HeadOp, HeadTerm, Interior, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term,
-    Value, VarId,
+    AllenMask, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
+    FoldOp, HeadOp, HeadTerm, Interior, InteriorId, ParamId, ProjectionRule, Query, Rec, RecRule,
+    RecStep, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -205,7 +205,7 @@ impl Drop for ScratchDir {
     }
 }
 
-/// Builds one Tiny world: engine bulk loads in declaration order (the
+/// Builds one Tiny world: engine collection inserts in declaration order (the
 /// DU cluster in joint chunks, as the verify harness loads it), the
 /// naive model seeded from the descriptor and judged over the whole
 /// corpus as one delta, and the intern dictionary collected from the
@@ -231,8 +231,11 @@ pub fn build_world(seed: u64) -> World {
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {} // loaded with its entries
             _ => {
-                db.bulk_load_dyn(rel, target::corpus_relation_rows(cfg, rel))
-                    .expect("conformance target bulk load");
+                db.write(|tx| {
+                    tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
+                        .map(|r| r.changed)
+                })
+                .expect("conformance target insert");
             }
         }
         for fact in target::corpus_relation_rows(cfg, rel) {
@@ -243,11 +246,14 @@ pub fn build_world(seed: u64) -> World {
     // vocabulary, so the `0..TARGET_RELATIONS` sweep skips it — its own
     // load here (statement-free payload, no draws: every earlier
     // relation's corpus stream is byte-stable).
-    db.bulk_load_dyn(
-        target::ids::LANE,
-        target::corpus_relation_rows(cfg, target::ids::LANE),
-    )
-    .expect("conformance lane bulk load");
+    db.write(|tx| {
+        tx.insert_dyn(
+            target::ids::LANE,
+            target::corpus_relation_rows(cfg, target::ids::LANE),
+        )
+        .map(|r| r.changed)
+    })
+    .expect("conformance lane insert");
     for fact in target::corpus_relation_rows(cfg, target::ids::LANE) {
         delta.inserts.push((target::ids::LANE, fact));
     }
@@ -296,11 +302,11 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
         db.write(|tx| {
             for i in start..end {
                 let fact = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
-                tx.insert_dyn(target::ids::JOURNAL_ENTRY, &fact)?;
+                tx.insert_dyn(target::ids::JOURNAL_ENTRY, [&fact])?;
             }
             while next_batch < batches && target::import_batch_entry(next_batch) < end {
                 let fact = target::corpus_row(cfg, &domains, target::ids::IMPORT_BATCH, next_batch);
-                tx.insert_dyn(target::ids::IMPORT_BATCH, &fact)?;
+                tx.insert_dyn(target::ids::IMPORT_BATCH, [&fact])?;
                 next_batch += 1;
             }
             Ok(())
@@ -559,28 +565,23 @@ fn push_find(out: &mut String, find: &FindTerm) {
         FindTerm::Measure(v) => {
             let _ = write!(out, "{{\"measure\":{}}}", v.0);
         }
-        FindTerm::Aggregate { op, over } => match (op, over) {
-            (AggOp::Count, None) => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
-            (AggOp::Sum, Some(v)) => {
-                let _ = write!(out, "{{\"agg\":{{\"op\":\"sum\",\"over\":{}}}}}", v.0);
-            }
-            (AggOp::Min, Some(v)) => {
-                let _ = write!(out, "{{\"agg\":{{\"op\":\"min\",\"over\":{}}}}}", v.0);
-            }
-            (AggOp::Max, Some(v)) => {
-                let _ = write!(out, "{{\"agg\":{{\"op\":\"max\",\"over\":{}}}}}", v.0);
-            }
-            (AggOp::Pack, Some(v)) => {
-                let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", v.0);
-            }
-            other => unreachable!("validated: no such aggregate shape {other:?}"),
-        },
+        FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
+        FindTerm::Pack { over } => {
+            let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
+        }
+        FindTerm::Aggregate { op, over } => {
+            let name = match op {
+                FoldOp::Sum => "sum",
+                FoldOp::Min => "min",
+                FoldOp::Max => "max",
+            };
+            let _ = write!(out, "{{\"agg\":{{\"op\":\"{name}\",\"over\":{}}}}}", over.0);
+        }
         FindTerm::AggregateMeasure { op, over } => {
             let name = match op {
-                AggOp::Sum => "sum",
-                AggOp::Min => "min",
-                AggOp::Max => "max",
-                other => unreachable!("validated: measure folds are Sum/Min/Max, got {other:?}"),
+                FoldOp::Sum => "sum",
+                FoldOp::Min => "min",
+                FoldOp::Max => "max",
             };
             let _ = write!(
                 out,
@@ -640,12 +641,10 @@ fn count_vars(rule: &Rule) -> u16 {
     for find in &rule.finds {
         match find {
             FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
-            FindTerm::AggregateMeasure { over, .. } => see(&mut count, *over),
-            FindTerm::Aggregate { over, .. } => {
-                if let Some(var) = over {
-                    see(&mut count, *var);
-                }
-            }
+            FindTerm::AggregateMeasure { over, .. }
+            | FindTerm::Aggregate { over, .. }
+            | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Count => {}
         }
     }
     count
@@ -1066,7 +1065,7 @@ fn render_reach_doc(
     let _ = write!(out, "{{\"reach\":{{\"interiors\":[");
     push_interiors(world, used, &mut out, interiors)?;
     out.push_str("],\"rec\":");
-    push_reach_rec(world, used, &mut out, rec)?;
+    push_reach_rec(world, used, &mut out, interiors.len(), rec)?;
     out.push_str(",\"head\":");
     push_head(&mut out, head);
     out.push_str(",\"rules\":");
@@ -1086,9 +1085,10 @@ fn push_interiors(
             out.push(',');
         }
         out.push_str("{\"head\":");
-        push_head(out, &interior.head);
+        push_head(out, &interior.head());
         out.push_str(",\"rules\":");
-        push_reach_rules(world, used, out, &interior.rules)?;
+        let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
+        push_reach_rules(world, used, out, &rules)?;
         out.push('}');
     }
     Ok(())
@@ -1166,14 +1166,22 @@ fn push_reach_rec(
     world: &World,
     used: &mut BTreeSet<u64>,
     out: &mut String,
+    rec_index: usize,
     rec: &Rec,
 ) -> Result<(), Exclusion> {
     out.push_str("{\"head\":");
-    push_head(out, &rec.head);
+    push_head(out, &rec.head());
     out.push_str(",\"base\":");
-    push_reach_rules(world, used, out, &rec.base)?;
+    let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
+    push_reach_rules(world, used, out, &base)?;
     out.push_str(",\"step\":");
-    push_reach_rules(world, used, out, &rec.rec)?;
+    let rec_id = InteriorId(u32::try_from(rec_index).expect("interior id fits u32"));
+    let step: Vec<Rule> = rec
+        .rec
+        .iter()
+        .map(|arm| RecStep::to_written_rule(arm, rec_id))
+        .collect();
+    push_reach_rules(world, used, out, &step)?;
     out.push('}');
     Ok(())
 }
@@ -1390,11 +1398,15 @@ fn fv(id: u16) -> FindTerm {
     FindTerm::Var(VarId(id))
 }
 
-fn agg(op: AggOp, over: u16) -> FindTerm {
+fn agg(op: FoldOp, over: u16) -> FindTerm {
     FindTerm::Aggregate {
         op,
-        over: Some(VarId(over)),
+        over: VarId(over),
     }
+}
+
+fn pack(over: u16) -> FindTerm {
+    FindTerm::Pack { over: VarId(over) }
 }
 
 /// The hand-picked shapes the PRD names: exact partition (Pack over the
@@ -1422,7 +1434,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         HandCase {
             name: "hand-pack-exact-partition",
             query: Query::single(rule(
-                vec![fv(0), agg(AggOp::Pack, 1)],
+                vec![fv(0), pack(1)],
                 vec![atom(
                     ids::MANDATE,
                     &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
@@ -1437,13 +1449,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         HandCase {
             name: "hand-empty-global-aggregates",
             query: Query::single(rule(
-                vec![
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                    agg(AggOp::Sum, 1),
-                ],
+                vec![FindTerm::Count, agg(FoldOp::Sum, 1)],
                 vec![atom(
                     ids::POSTING,
                     &[
@@ -1534,7 +1540,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 vec![
                     fv(0),
                     FindTerm::AggregateMeasure {
-                        op: AggOp::Sum,
+                        op: FoldOp::Sum,
                         over: VarId(1),
                     },
                 ],
@@ -1564,13 +1570,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         HandCase {
             name: "hand-measure-count-collision",
             query: Query::single(rule(
-                vec![
-                    FindTerm::Measure(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ],
+                vec![FindTerm::Measure(VarId(0)), FindTerm::Count],
                 vec![atom(ids::MANDATE, &[(ids::mandate::ACTIVE, v(0))])],
                 vec![],
                 vec![ConditionTree::Leaf(Comparison {
@@ -1932,6 +1932,7 @@ mod tests {
     use std::process::Command;
 
     use super::*;
+    use bumbledb::FoldOp;
 
     /// Membership under an additive fold is LICENSED (finding 087,
     /// discharged): the lowering fires, and the rule carries its
@@ -1961,24 +1962,18 @@ mod tests {
         // (per-binding repetition), the measure Sum — lower cleanly,
         // the fresh mint sitting above the recorded surface width.
         for finds in [
+            vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
-            ],
-            vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: AggOp::Sum,
-                    over: Some(VarId(0)),
+                    op: FoldOp::Sum,
+                    over: VarId(0),
                 },
             ],
             vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::AggregateMeasure {
-                    op: AggOp::Sum,
+                    op: FoldOp::Sum,
                     over: VarId(0),
                 },
             ],
@@ -2004,8 +1999,8 @@ mod tests {
         );
         // … a set-reading fold (insensitive to the binding split) …
         let max_rule = rule(vec![FindTerm::Aggregate {
-            op: AggOp::Max,
-            over: Some(VarId(0)),
+            op: FoldOp::Max,
+            over: VarId(0),
         }]);
         let max = lower_rule(&max_rule, &[]);
         assert_eq!(
@@ -2016,13 +2011,7 @@ mod tests {
         // … and an additive fold whose rule has NO fired lowering
         // (the interval field bound to an interval-typed variable).
         let no_membership = Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
-            ],
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             atoms: vec![Atom {
                 source: bumbledb::AtomSource::Edb(target::ids::MANDATE),
                 bindings: vec![

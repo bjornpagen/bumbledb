@@ -93,8 +93,8 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
     let db = Db::ephemeral(dir.path(), Staging).expect("create ephemeral");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id, name: "ada" })?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id, name: "ada" }])?;
             Ok(id)
         })
         .expect("commit");
@@ -142,8 +142,8 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
     let db = Db::create(dir.path(), Staging).expect("create durable");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id, name: "ada" })?;
+            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Holder { id, name: "ada" }])?;
             Ok(id)
         })
         .expect("commit one row");
@@ -276,15 +276,15 @@ fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
     step(
         db.write(|tx| {
             for (holder, name, account, balance) in [(1, "ada", 10, 100), (2, "bob", 20, 250)] {
-                tx.insert(&Holder {
+                tx.insert([&Holder {
                     id: HolderId::from_fresh(holder),
                     name,
-                })?;
-                tx.insert(&Account {
+                }])?;
+                tx.insert([&Account {
                     id: AccountId::from_fresh(account),
                     holder: HolderId::from_fresh(holder),
                     balance,
-                })?;
+                }])?;
             }
             Ok(())
         }),
@@ -293,16 +293,16 @@ fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
     // Step 2 (key violation): two facts, one account id.
     step(
         db.write(|tx| {
-            tx.insert(&Account {
+            tx.insert([&Account {
                 id: AccountId::from_fresh(30),
                 holder: HolderId::from_fresh(1),
                 balance: 1,
-            })?;
-            tx.insert(&Account {
+            }])?;
+            tx.insert([&Account {
                 id: AccountId::from_fresh(30),
                 holder: HolderId::from_fresh(2),
                 balance: 2,
-            })?;
+            }])?;
             Ok(())
         }),
         30,
@@ -311,11 +311,11 @@ fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
     // does not exist.
     step(
         db.write(|tx| {
-            tx.insert(&Account {
+            tx.insert([&Account {
                 id: AccountId::from_fresh(40),
                 holder: HolderId::from_fresh(9),
                 balance: 9,
-            })?;
+            }])?;
             Ok(())
         }),
         40,
@@ -323,16 +323,16 @@ fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
     // Step 4 (accepted mutation): the blessed delete+insert idiom.
     step(
         db.write(|tx| {
-            tx.delete(&Account {
+            tx.delete([&Account {
                 id: AccountId::from_fresh(10),
                 holder: HolderId::from_fresh(1),
                 balance: 100,
-            })?;
-            tx.insert(&Account {
+            }])?;
+            tx.insert([&Account {
                 id: AccountId::from_fresh(10),
                 holder: HolderId::from_fresh(1),
                 balance: 175,
-            })?;
+            }])?;
             Ok(())
         }),
         10,

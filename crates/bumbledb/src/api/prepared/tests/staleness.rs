@@ -114,7 +114,7 @@ fn a_kept_closed_occurrence_never_reads_as_drift() {
     let db = Db::create(dir.path(), closed_descriptor()).expect("create");
     db.write(|tx| {
         for (kind, value) in [(0u64, 100i64), (1, 210), (2, 220)] {
-            tx.insert_dyn(READING, &[Value::U64(kind), Value::I64(value)])?;
+            tx.insert_dyn(READING, [&[Value::U64(kind), Value::I64(value)]])?;
         }
         Ok(())
     })
@@ -150,7 +150,7 @@ fn a_kept_closed_occurrence_never_reads_as_drift() {
         for i in 0..9i64 {
             #[expect(clippy::cast_sign_loss, reason = "0..9 is nonnegative")]
             let kind = (i as u64) % 4;
-            tx.insert_dyn(READING, &[Value::U64(kind), Value::I64(1000 + i)])?;
+            tx.insert_dyn(READING, [&[Value::U64(kind), Value::I64(1000 + i)]])?;
         }
         Ok(())
     })

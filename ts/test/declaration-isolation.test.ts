@@ -173,8 +173,8 @@ function consumerProgram(): string {
 	CapacityViolation,
 	ContainmentViolation,
 	DeclaredKeyViolation,
+	Fact,
 	ImpliedKeyViolation,
-	InsertFact,
 	MirrorViolation,
 	Violation
 } from "@bjornpagen/bumbledb"
@@ -231,7 +231,7 @@ impliedStatement(implied)
 declaredStatement(declared)
 declaredStatement(containment)
 
-const insert: InsertFact<typeof Holder> = { name: "Ada", id: undefined }
+const insert: Fact<typeof Holder> = { name: "Ada", id: 1n }
 export const inserted = insert
 
 function containmentRejectsUndefined(): Violation<Rels> {

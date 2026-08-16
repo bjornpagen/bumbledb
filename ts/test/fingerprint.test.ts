@@ -26,7 +26,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import { duration, ref, weigh, within } from "#capacity.ts"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
@@ -36,6 +35,7 @@ import { native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { capacity, contained, key, mirrors } from "#statements.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-fingerprint-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -166,38 +166,38 @@ describe("the cross-host fingerprint lock", function suite() {
 		const { Db } = await import("#db.ts")
 		const db = await Db.open(storeDir, CrossHost)
 		const result = db.write(function seed(tx) {
-			const ada = tx.insert(Holder, {
+			const ada = put(tx, Holder, {
 				name: "ada",
 				digest: DIGEST,
 				at: span(5n, RAY_END)
 			})
-			const frozenA = tx.insert(Account, {
+			const frozenA = put(tx, Account, {
 				holder: ada.id,
 				kind: "DirectPass",
 				status: "Frozen",
 				active: span(-5n, 5n),
 				lease: span(0n, 7n)
 			})
-			const frozenB = tx.insert(Account, {
+			const frozenB = put(tx, Account, {
 				holder: ada.id,
 				kind: "DirectPass",
 				status: "Frozen",
 				active: span(-1n, 1n),
 				lease: span(7n, 14n)
 			})
-			tx.insert(Account, {
+			put(tx, Account, {
 				holder: ada.id,
 				kind: "DirectPass",
 				status: "Open",
 				active: span(0n, 10n),
 				lease: span(14n, 21n)
 			})
-			tx.insert(SavingsTerms, { account: frozenA.id, rate_bps: -3n })
-			tx.insert(SavingsTerms, { account: frozenB.id, rate_bps: 25n })
+			put(tx, SavingsTerms, { account: frozenA.id, rate_bps: -3n })
+			put(tx, SavingsTerms, { account: frozenB.id, rate_bps: 25n })
 			// The generator-less mirrors demands the audit twins in the same
 			// delta — SavingsTerms == AuditTrail commits whole or not at all.
-			tx.insert(AuditTrail, { account: frozenA.id, rate_bps: -3n })
-			tx.insert(AuditTrail, { account: frozenB.id, rate_bps: 25n })
+			put(tx, AuditTrail, { account: frozenA.id, rate_bps: -3n })
+			put(tx, AuditTrail, { account: frozenB.id, rate_bps: 25n })
 		})
 		assert.ok(result.ok, "the seeded state satisfies every statement of the theory")
 		assert.equal(db.scan(Account).length, 3)

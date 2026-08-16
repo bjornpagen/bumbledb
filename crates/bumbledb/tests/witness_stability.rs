@@ -74,21 +74,21 @@ fn parent_bytes(id: u64, kind: u64) -> [u8; 16] {
 
 fn insert_parent(db: &Db<WitnessWorld>, id: u64) {
     db.write(|tx| {
-        tx.insert(&WParent {
+        tx.insert([&WParent {
             id: WParentId(id),
             kind: 0,
-        })
+        }])
     })
     .expect("seed parent");
 }
 
 fn insert_child(db: &Db<WitnessWorld>, id: u64, parent: u64) {
     db.write(|tx| {
-        tx.insert(&WChild {
+        tx.insert([&WChild {
             id: WChildId(id),
             parent: WParentId(parent),
             flag: 0,
-        })
+        }])
     })
     .expect("seed child");
 }
@@ -136,24 +136,24 @@ fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations 
         // The delete rides at a different position per order too: odd
         // permutations lead with it.
         if order[0] != 0 {
-            tx.delete(&WParent {
+            tx.delete([&WParent {
                 id: WParentId(3),
                 kind: 0,
-            })?;
+            }])?;
         }
         for &slot in order {
             let (id, parent) = calls[slot];
-            tx.insert(&WChild {
+            tx.insert([&WChild {
                 id: WChildId(id),
                 parent: WParentId(parent),
                 flag: 0,
-            })?;
+            }])?;
         }
         if order[0] == 0 {
-            tx.delete(&WParent {
+            tx.delete([&WParent {
                 id: WParentId(3),
                 kind: 0,
-            })?;
+            }])?;
         }
         Ok(())
     }))
@@ -263,11 +263,11 @@ fn the_source_witness_is_the_key_least_violator() {
                 order.reverse();
             }
             for (id, parent) in order {
-                tx.insert(&WChild {
+                tx.insert([&WChild {
                     id: WChildId(id),
                     parent: WParentId(parent),
                     flag: 0,
-                })?;
+                }])?;
             }
             Ok(())
         }))
@@ -311,11 +311,11 @@ fn the_capacity_witness_is_the_key_least_violating_parent() {
             (501, 10),
             (502, 10),
         ] {
-            tx.insert(&WChild {
+            tx.insert([&WChild {
                 id: WChildId(id),
                 parent: WParentId(parent),
                 flag: 0,
-            })?;
+            }])?;
         }
         Ok(())
     }));
@@ -347,10 +347,10 @@ fn the_target_witness_is_the_first_committed_survivor() {
     insert_child(&db, 600, 30);
     insert_child(&db, 601, 30);
     let violations = rejection(db.write(|tx| {
-        tx.delete(&WParent {
+        tx.delete([&WParent {
             id: WParentId(30),
             kind: 0,
-        })
+        }])
     }));
     let [
         Violation::Containment {

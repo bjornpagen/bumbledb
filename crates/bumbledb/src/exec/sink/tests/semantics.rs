@@ -1,6 +1,7 @@
 use super::*;
 use crate::error::Error;
 use crate::exec::run::{Bindings, Flow, Sink};
+use crate::ir::FoldOp;
 
 #[test]
 fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {

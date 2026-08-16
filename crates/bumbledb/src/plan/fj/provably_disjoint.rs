@@ -1,6 +1,6 @@
 use crate::image::view::Const;
 use crate::ir::normalize::{NormalizedQuery, Occurrence};
-use crate::ir::{AggOp, FindTerm, VarId};
+use crate::ir::{FindTerm, VarId};
 use crate::plan::fj::OccBind;
 use crate::plan::pinned_fields;
 use crate::schema::Schema;
@@ -183,16 +183,10 @@ fn var_at(occurrence: &Occurrence, field: FieldId) -> Option<VarId> {
 fn head_reads(term: &FindTerm) -> Option<VarId> {
     match term {
         FindTerm::Var(var) => Some(*var),
-        FindTerm::Aggregate {
-            op: AggOp::Sum | AggOp::Min | AggOp::Max,
-            over,
-        } => *over,
-        // The remaining positions witness nothing: the nullary Count and
-        // Arg terms as before, and the measure positions — `end − start`
-        // is a NON-injective map of its variable, so equal head answers do
-        // not force equal interval values.
-        FindTerm::Aggregate { .. } | FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => {
-            None
-        }
+        FindTerm::Aggregate { over, .. } => Some(*over),
+        FindTerm::Count
+        | FindTerm::Pack { .. }
+        | FindTerm::Measure(_)
+        | FindTerm::AggregateMeasure { .. } => None,
     }
 }

@@ -121,7 +121,7 @@ pub(crate) fn write_families(
     }
     // The window-judgment lane (the roster extension): its own twin
     // scratch worlds, engine-only rows — after the ledger commit rows
-    // (same fsync-bound class), before bulk (which stays last).
+    // (same fsync-bound class), before insert_stream (which stays last).
     out.extend(crate::windowed::write_families(
         cfg,
         &scratch.join("windowed"),
@@ -141,36 +141,36 @@ pub(crate) fn write_families(
         flames,
     )?);
 
-    // bulk stays LAST: seconds of fsync — nothing
+    // insert_stream stays LAST: seconds of fsync — nothing
     // may measure after it in this process.
-    if selected("bulk") {
-        eprintln!("bench: bulk");
+    if selected("insert_stream") {
+        eprintln!("bench: insert_stream");
         let proto = families::write_families()
             .iter()
-            .find(|f| f.name == "bulk")
+            .find(|f| f.name == "insert_stream")
             .expect("registered")
             .protocol;
         let ((ours, theirs), ghz) = clockproxy::stamped(|| {
             Ok((
-                writebench::bulk_bumbledb(cfg, scratch, lane.store_mode())?,
-                sqlite_run::bulk(cfg, scratch, lane)?,
+                writebench::insert_stream_bumbledb(cfg, scratch, lane.store_mode())?,
+                sqlite_run::insert_stream(cfg, scratch, lane)?,
             ))
         })?;
         out.push(report::WriteFamilyReport {
-            name: "bulk".to_owned(),
+            name: "insert_stream".to_owned(),
             facts_per_sec: Some(harness::facts_per_sec(&ours, proto.samples)),
             ours: ours.stats,
             theirs: Some(theirs.stats),
             ghz: Some(ghz.into()),
         });
     }
-    // The write-order pin (measured): bulk's seconds of fsync
+    // The write-order pin (measured): insert_stream's seconds of fsync
     // leave the deepest clock shadow — nothing measures after it.
     debug_assert!(
         out.iter()
-            .position(|w| w.name == "bulk")
+            .position(|w| w.name == "insert_stream")
             .is_none_or(|i| i == out.len() - 1),
-        "bulk must be the last write family"
+        "insert_stream must be the last write family"
     );
     Ok(out)
 }

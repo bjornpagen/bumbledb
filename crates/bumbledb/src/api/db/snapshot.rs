@@ -178,13 +178,10 @@ impl<S> Snapshot<'_, S> {
             return Err(FactShapeError::UnknownRelation { relation: rel }.into());
         };
         self.with_scratch(|scratch| {
-            if !super::encode_dyn::dyn_value_refs(
-                rel,
-                values,
-                relation.fields(),
-                &mut scratch.refs,
-                |text| dict::lookup_str(&self.txn, text),
-            )? {
+            let parsed = super::encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
+            if !super::encode_dyn::intern_parsed_row(&parsed, &mut scratch.refs, |text| {
+                dict::lookup_str(&self.txn, text)
+            })? {
                 return Ok(false);
             }
             crate::encoding::encode_fact(&scratch.refs, relation.layout(), &mut scratch.bytes);
@@ -347,10 +344,11 @@ impl<S> Snapshot<'_, S> {
 
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its
     /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
-    /// remains the ETL pairing for [`Db::bulk_load`]; this one is for
-    /// hosts that want their own types back. Variable-width fields borrow
-    /// from the snapshot's dictionary at the snapshot lifetime — copy
-    /// (`to_owned()`) what must outlive it.
+    /// is the ETL pairing for [`crate::WriteTx::insert_dyn`] under
+    /// [`crate::Db::write`]; this one is for hosts that want their own
+    /// types back. Variable-width fields borrow from the snapshot's
+    /// dictionary at the snapshot lifetime — copy (`to_owned()`) what
+    /// must outlive it.
     ///
     /// # Errors
     ///

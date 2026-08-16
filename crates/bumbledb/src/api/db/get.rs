@@ -6,7 +6,7 @@
 //! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{Fact, InternMode, Key, WriteTx, plumbing};
+use super::{Fact, Key, WriteTx, plumbing};
 use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
@@ -162,13 +162,13 @@ pub(super) fn closed_fact_by_determinant<'rel>(
 }
 
 impl<S> WriteTx<'_, S> {
-    /// Whether `fact` is in the transaction's **final state** — reads
-    /// observe the final-state view the judgment phase will judge
+    /// Whether `fact` is in the transaction's **final state** — a point
+    /// membership probe (`Result<bool>`), not a [`super::MutationReport`].
+    /// Reads observe the final-state view the judgment phase will judge
     /// (`docs/architecture/70-api.md`): the delta's own disposition when
     /// this transaction touched the fact, the committed `M` probe
-    /// otherwise. The read-only sibling of [`WriteTx::insert`]/
-    /// [`WriteTx::delete`]'s changed report; before commit it answers
-    /// exactly what a post-commit read transaction would.
+    /// otherwise. Before commit it answers exactly what a post-commit
+    /// read transaction would.
     ///
     /// Encodes through the transaction's read context — pending intern ids
     /// first, then the committed dictionary, **never minting**: a string
@@ -217,11 +217,11 @@ impl<S> WriteTx<'_, S> {
     ///     db.write(|tx| {
     ///         match tx.get(id)? {
     ///             Some(old) => {
-    ///                 tx.delete(&old)?;
-    ///                 tx.insert(&Account { balance: old.balance + x, ..old })?;
+    ///                 tx.delete([&old])?;
+    ///                 tx.insert([&Account { balance: old.balance + x, ..old }])?;
     ///             }
     ///             None => {
-    ///                 tx.insert(&Account { id, balance: x })?;
+    ///                 tx.insert([&Account { id, balance: x }])?;
     ///             }
     ///         }
     ///         Ok(())
@@ -231,7 +231,7 @@ impl<S> WriteTx<'_, S> {
     /// # let _ = std::fs::remove_dir_all(&dir);
     /// # std::fs::create_dir_all(&dir).unwrap();
     /// # let db = bumbledb::Db::create(&dir, Ledger).unwrap();
-    /// # let id = db.write(|tx| tx.alloc::<AccountId>()).unwrap();
+    /// # let id = db.write(|tx| Ok(tx.reserve::<AccountId>(1)?.start().expect("count 1"))).unwrap();
     /// # add(&db, id, 10).unwrap();
     /// # add(&db, id, 32).unwrap();
     /// # db.write(|tx| {
@@ -362,7 +362,7 @@ impl<S> WriteTx<'_, S> {
     /// mismatch (typed, never a panic — the id-addressed surface is
     /// data); `Lmdb` on the membership probe or dictionary reads.
     pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        if !self.encode_dyn(rel, values, InternMode::Resolve)? {
+        if !self.encode_dyn(rel, values)? {
             return Ok(false);
         }
         if let Some(extension) = self.schema.relation(rel).body().closed_rows() {

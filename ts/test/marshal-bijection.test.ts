@@ -28,9 +28,9 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import type { Db as DbValue, RelationFields, Selected } from "#index.ts"
 import { closed, contained, Db, key, mirrors, on, relation, renderStatement, schema, u64 } from "#index.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-marshal-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -102,9 +102,9 @@ describe("the marshal bijection over closed rosters", function suite() {
 	test("insert with the handle NAME round-trips through tx reads, scan, and get", async function roundTrip() {
 		db = await Db.create(storeDir, Ledger)
 		const written = db.write(function seed(tx) {
-			const minted = tx.insert(Account, { kind: "Savings" })
+			const minted = put(tx, Account, { kind: "Savings" })
 			ids.savings = minted.id
-			tx.insert(SavingsTerms, { account: minted.id })
+			put(tx, SavingsTerms, { account: minted.id })
 			assert.equal(
 				tx.contains(Account, { id: minted.id, kind: "Savings" }),
 				true,
@@ -124,10 +124,10 @@ describe("the marshal bijection over closed rosters", function suite() {
 
 	test("delete lowers the NAME through the same seam", function deletePath() {
 		const cycle = db.write(function insertAndDelete(tx) {
-			const minted = tx.insert(Account, { kind: "Checking" })
+			const minted = put(tx, Account, { kind: "Checking" })
 			assert.equal(
-				tx.delete(Account, { id: minted.id, kind: "Checking" }),
-				true,
+				tx.delete(Account, [{ id: minted.id, kind: "Checking" }]).changed,
+				1n,
 				"delete reaches the closed arm through rowOf"
 			)
 		})
@@ -175,14 +175,14 @@ describe("the marshal bijection over closed rosters", function suite() {
 				 * (before the engine ever sees a row) pins the runtime half.
 				 */
 				// @ts-expect-error — "DirectPas" is not in Kind's handle union
-				tx.insert(Account, { kind: "DirectPas" })
+				tx.insert(Account, [{ id: 1n, kind: "DirectPas" }])
 			})
 		}, /"DirectPas" is not a handle of Kind — the roster is Checking, Savings/)
 		assert.throws(function bigintShape() {
 			db.write(function tryInsert(tx) {
 				/** The 0.3.0 spelling is dead: a bare bigint no longer crosses the closed seam. */
 				// @ts-expect-error — a bigint is not a handle name
-				tx.insert(Account, { kind: 1n })
+				tx.insert(Account, [{ id: 1n, kind: 1n }])
 			})
 		}, /expected a Kind handle name \(string\), got bigint/)
 		assert.equal(db.scan(Account).length, 1, "both refusals aborted before any commit")
@@ -190,7 +190,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 
 	test("a violation's offending fact speaks the NAME and agrees with canonical", function violationNames() {
 		const rejected = db.write(function orphanSavings(tx) {
-			tx.insert(Account, { kind: "Savings" })
+			put(tx, Account, { kind: "Savings" })
 		})
 		assert.ok(!rejected.ok, "a savings account without terms violates the mirror")
 		const violation = must(
@@ -214,7 +214,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 		const writer = await Db.create(lawlessDir, LawlessWriter)
 		const seeded = writer.write(function seedRaw(tx) {
 			/** The writer twin types the column as plain u64 — no law pins it, so any bigint commits. */
-			tx.insert(RawLawlessAccount, { kind: 7n })
+			put(tx, RawLawlessAccount, { kind: 7n })
 		})
 		assert.ok(seeded.ok, "the lawless writer commits a raw out-of-roster id")
 		copyStore(lawlessDir, lawlessCopyDir)

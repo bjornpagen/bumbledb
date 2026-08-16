@@ -1,4 +1,4 @@
-use bumbledb::{AggOp, Atom, FieldId, FindTerm, Query, Rule, VarId};
+use bumbledb::{Atom, FieldId, FindTerm, FoldOp, Query, Rule, VarId};
 
 use super::ids;
 use super::term::var;
@@ -10,13 +10,10 @@ pub(super) fn country_rollup() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Min,
-                over: Some(VarId(1)),
+                op: FoldOp::Min,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {

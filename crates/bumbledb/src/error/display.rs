@@ -1007,11 +1007,8 @@ impl fmt::Display for Error {
             Self::Overflow(super::OverflowKind::OriginCapacity) => {
                 write!(f, "origin capacity exceeded")
             }
-            Self::BulkLoad { committed, error } => {
-                write!(
-                    f,
-                    "bulk load failed after {committed} committed facts: {error}"
-                )
+            Self::TransactionPoisoned { source } => {
+                write!(f, "write transaction poisoned: {source}")
             }
             Self::ResultBytesOverflow => {
                 write!(

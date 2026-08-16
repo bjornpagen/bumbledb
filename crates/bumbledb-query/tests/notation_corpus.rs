@@ -23,8 +23,8 @@ use bumbledb::ir::render::render;
 use bumbledb::ir::{HeadOp, HeadTerm};
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, Interior, Query, Rec,
-    Rule, Schema, Term, Theory, Value,
+    Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, Interior, InteriorId,
+    Query, Rec, RecRule, RecStep, Rule, Schema, Term, Theory, Value,
 };
 use bumbledb_query::query;
 
@@ -198,13 +198,11 @@ fn term_json(term: &Term) -> String {
     }
 }
 
-fn agg_op_json(op: AggOp) -> String {
+fn fold_op_json(op: FoldOp) -> String {
     match op {
-        AggOp::Sum => "{\"kind\":\"sum\"}".to_string(),
-        AggOp::Min => "{\"kind\":\"min\"}".to_string(),
-        AggOp::Max => "{\"kind\":\"max\"}".to_string(),
-        AggOp::Count => "{\"kind\":\"count\"}".to_string(),
-        AggOp::Pack => "{\"kind\":\"pack\"}".to_string(),
+        FoldOp::Sum => "{\"kind\":\"sum\"}".to_string(),
+        FoldOp::Min => "{\"kind\":\"min\"}".to_string(),
+        FoldOp::Max => "{\"kind\":\"max\"}".to_string(),
     }
 }
 
@@ -212,20 +210,16 @@ fn find_json(find: &FindTerm) -> String {
     match find {
         FindTerm::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
         FindTerm::Measure(v) => format!("{{\"kind\":\"measure\",\"var\":{}}}", v.0),
-        FindTerm::Aggregate { op, over: None } => {
-            format!("{{\"kind\":\"aggregate\",\"op\":{}}}", agg_op_json(*op))
-        }
-        FindTerm::Aggregate {
-            op,
-            over: Some(over),
-        } => format!(
+        FindTerm::Count => "{\"kind\":\"count\"}".to_string(),
+        FindTerm::Pack { over } => format!("{{\"kind\":\"pack\",\"over\":{}}}", over.0),
+        FindTerm::Aggregate { op, over } => format!(
             "{{\"kind\":\"aggregate\",\"op\":{},\"over\":{}}}",
-            agg_op_json(*op),
+            fold_op_json(*op),
             over.0
         ),
         FindTerm::AggregateMeasure { op, over } => format!(
             "{{\"kind\":\"aggregateMeasure\",\"op\":{},\"over\":{}}}",
-            agg_op_json(*op),
+            fold_op_json(*op),
             over.0
         ),
     }
@@ -341,7 +335,7 @@ fn interior_json(interior: &Interior) -> String {
     format!(
         "{{\"head\":[{}],\"rules\":[{}]}}",
         interior
-            .head
+            .head()
             .iter()
             .map(|term| head_term_json(*term))
             .collect::<Vec<_>>()
@@ -349,22 +343,30 @@ fn interior_json(interior: &Interior) -> String {
         interior
             .rules
             .iter()
-            .map(rule_json)
+            .map(|rule| rule_json(&rule.to_rule()))
             .collect::<Vec<_>>()
             .join(",")
     )
 }
 
-fn rec_json(rec: &Rec) -> String {
+fn rec_json(rec: &Rec, rec_id: InteriorId) -> String {
     format!(
         "{{\"head\":[{}],\"base\":[{}],\"rec\":[{}]}}",
-        rec.head
+        rec.head()
             .iter()
             .map(|term| head_term_json(*term))
             .collect::<Vec<_>>()
             .join(","),
-        rec.base.iter().map(rule_json).collect::<Vec<_>>().join(","),
-        rec.rec.iter().map(rule_json).collect::<Vec<_>>().join(",")
+        rec.base
+            .iter()
+            .map(|rule| rule_json(&RecRule::to_rule(rule)))
+            .collect::<Vec<_>>()
+            .join(","),
+        rec.rec
+            .iter()
+            .map(|step| rule_json(&RecStep::to_written_rule(step, rec_id)))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 
@@ -404,7 +406,10 @@ fn query_json(query: &Query) -> String {
                 .map(interior_json)
                 .collect::<Vec<_>>()
                 .join(",");
-            let rec = rec_json(rec);
+            let rec = rec_json(
+                rec,
+                InteriorId(u32::try_from(interiors.len()).expect("fit")),
+            );
             let head = head
                 .iter()
                 .map(|term| head_term_json(*term))

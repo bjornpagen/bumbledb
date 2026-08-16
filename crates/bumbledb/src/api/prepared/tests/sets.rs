@@ -26,9 +26,19 @@ fn by_account_set_query() -> Query {
 
 /// Q(id, amount) :- Posting(id, account = ?0, amount) — the scalar twin.
 fn by_account_scalar_query() -> Query {
-    let mut query = by_account_set_query();
-    query.rules_mut()[0].atoms[0].bindings[1] = (FieldId(1), Term::Param(ParamId(0)));
-    query
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(POSTING),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Param(ParamId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
 }
 
 fn id_amount_answers(buffer: &Answers) -> Vec<(u64, i64)> {

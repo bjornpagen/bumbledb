@@ -1,7 +1,7 @@
 //! The churn lane registry — pure data, mechanically banned from the
 //! clock (timing belongs to [`super::run`] alone). A run is a
 //! [`RunSpec`] row: every run structurally carries EXACTLY ONE ours
-//! lane — the id-minter whose alloc stream names the fresh ids all
+//! lane — the id-minter whose reserve stream names the fresh ids all
 //! twins share — so "which store mints" is never a runtime question.
 //! The five mandated lanes are three registry rows, not five code
 //! paths: the driver ([`super::run`]) folds over [`all`] and nothing

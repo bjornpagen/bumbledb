@@ -23,7 +23,7 @@ use bumbledb::schema::{
     ValueType,
 };
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, HeadOp, HeadTerm,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, HeadOp, HeadTerm,
     ParamId, Query, RelationId, Rule, Term, Value, VarId,
 };
 
@@ -265,9 +265,9 @@ fn booking_atom() -> Atom {
 )] // a fixed list, one entry per query
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
-    let agg = |op: AggOp, over: Option<u16>| FindTerm::Aggregate {
+    let fold = |op: FoldOp, over: u16| FindTerm::Aggregate {
         op,
-        over: over.map(VarId),
+        over: VarId(over),
     };
     vec![
         // 1: every booking.
@@ -323,32 +323,29 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         ),
         // 7: bookings per room.
         (
-            plain(vec![v(0), agg(AggOp::Count, None)], vec![booking_atom()]),
+            plain(vec![v(0), FindTerm::Count], vec![booking_atom()]),
             vec![],
         ),
         // 8: global booking count (empty input ⇒ empty set).
-        (
-            plain(vec![agg(AggOp::Count, None)], vec![booking_atom()]),
-            vec![],
-        ),
+        (plain(vec![FindTerm::Count], vec![booking_atom()]), vec![]),
         // 9: sum of references per room.
         (
-            plain(vec![v(0), agg(AggOp::Sum, Some(2))], vec![booking_atom()]),
+            plain(vec![v(0), fold(FoldOp::Sum, 2)], vec![booking_atom()]),
             vec![],
         ),
         // 10: global Max of the booking reference.
         (
-            plain(vec![agg(AggOp::Max, Some(2))], vec![booking_atom()]),
+            plain(vec![fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
         // 11: Max reference per room.
         (
-            plain(vec![v(0), agg(AggOp::Max, Some(2))], vec![booking_atom()]),
+            plain(vec![v(0), fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
         // 12: global Min of the booking reference.
         (
-            plain(vec![agg(AggOp::Min, Some(2))], vec![booking_atom()]),
+            plain(vec![fold(FoldOp::Min, 2)], vec![booking_atom()]),
             vec![],
         ),
         // 13: overlapping spans across distinct bookings.
@@ -520,7 +517,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 ],
                 rules: vec![
                     Rule {
-                        finds: vec![agg(AggOp::Sum, Some(1)), agg(AggOp::Count, None)],
+                        finds: vec![fold(FoldOp::Sum, 1), FindTerm::Count],
                         atoms: vec![atom(
                             BOOKING,
                             &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
@@ -529,7 +526,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         conditions: vec![],
                     },
                     Rule {
-                        finds: vec![agg(AggOp::Sum, Some(2)), agg(AggOp::Count, None)],
+                        finds: vec![fold(FoldOp::Sum, 2), FindTerm::Count],
                         atoms: vec![booking_atom()],
                         negated: vec![],
                         conditions: vec![ConditionTree::Leaf(Comparison {

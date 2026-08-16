@@ -9,7 +9,7 @@
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, ParamId, Query,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, ParamId, Query,
     RelationId, Rule, Term, Value, VarId,
 };
 
@@ -162,7 +162,7 @@ fn bounded_corpus() -> Delta {
     reason = "the linear table or protocol is clearer kept together"
 )] // a fixed list, one entry per query
 fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
-    let dur = |op: AggOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
+    let dur = |op: FoldOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
     vec![
         // The measure in a find position, u64 spans.
         (
@@ -188,9 +188,9 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
             single(
                 vec![
                     FindTerm::Var(VarId(0)),
-                    dur(AggOp::Sum),
-                    dur(AggOp::Min),
-                    dur(AggOp::Max),
+                    dur(FoldOp::Sum),
+                    dur(FoldOp::Min),
+                    dur(FoldOp::Max),
                 ],
                 vec![stay_atom()],
                 vec![],
@@ -338,7 +338,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
     };
     let overflow_query = single(
         vec![FindTerm::AggregateMeasure {
-            op: AggOp::Sum,
+            op: FoldOp::Sum,
             over: VarId(1),
         }],
         vec![atom(

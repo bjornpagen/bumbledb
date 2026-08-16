@@ -242,8 +242,28 @@ fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
     // intern flush, no dict counter.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 6);
-    assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 7);
+    assert_eq!(
+        delta
+            .reserve(
+                &view,
+                TARGET,
+                FieldId(0),
+                std::num::NonZeroU64::new(1).unwrap()
+            )
+            .expect("reserve"),
+        6
+    );
+    assert_eq!(
+        delta
+            .reserve(
+                &view,
+                TARGET,
+                FieldId(0),
+                std::num::NonZeroU64::new(1).unwrap()
+            )
+            .expect("reserve"),
+        7
+    );
     delta.intern_str(&view, "ghost").expect("intern");
     drop(view);
     let report = commit(delta, &env).expect("commit");
@@ -254,7 +274,17 @@ fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
     assert_eq!(rtxn.generation().expect("generation").value(), 1, "no bump");
     // The escaped fresh ids persisted: a later delta continues past them.
     let mut fresh = WriteDelta::new(&schema);
-    assert_eq!(fresh.alloc(&rtxn, TARGET, FieldId(0)).expect("alloc"), 8);
+    assert_eq!(
+        fresh
+            .reserve(
+                &rtxn,
+                TARGET,
+                FieldId(0),
+                std::num::NonZeroU64::new(1).unwrap()
+            )
+            .expect("reserve"),
+        8
+    );
     // The pending intern was dropped, counter untouched.
     assert_eq!(
         crate::storage::dict::lookup_str(&rtxn, "ghost").expect("lookup"),
@@ -330,9 +360,9 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
 }
 
 #[test]
-fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
-    // The never-reissue law is unconditional: an id `alloc` handed the
-    // host is burned even when the commit is REJECTED — `alloc` returns it
+fn fresh_ids_reserved_in_a_rejected_txn_are_burned() {
+    // The never-reissue law is unconditional: an id `reserve` handed the
+    // host is burned even when the commit is REJECTED — `reserve` returns it
     // before the commit's fate is known, and a rejection carries the
     // offending facts back as data, so re-issue would break observability
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`;
@@ -346,7 +376,14 @@ fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     // Mint a fresh TARGET id and use it...
-    let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+    let id = delta
+        .reserve(
+            &view,
+            TARGET,
+            FieldId(0),
+            std::num::NonZeroU64::new(1).unwrap(),
+        )
+        .expect("reserve");
     assert_eq!(id, 0);
     delta
         .insert(&view, TARGET, &target_fact(&schema, id))
@@ -367,7 +404,14 @@ fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     assert_eq!(
-        delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"),
+        delta
+            .reserve(
+                &view,
+                TARGET,
+                FieldId(0),
+                std::num::NonZeroU64::new(1).unwrap()
+            )
+            .expect("reserve"),
         1,
         "0 was handed to the host and is gone forever, the abort notwithstanding"
     );
@@ -375,7 +419,7 @@ fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
 
 // ---------- 50-storage § Write path, phase 5: the durability boundary ----------
 //
-// PRD 22: the one-observed bulk-load EINVAL (`fcntl(F_FULLFSYNC)` /
+// PRD 22: the one-observed write-path EINVAL (`fcntl(F_FULLFSYNC)` /
 // commit-path `pwrite` surfacing a raw errno under I/O pressure). The
 // boundary is typed (`Error::CommitSync`) and the transient class gets
 // the bounded, observable retry — asserted here on the mechanism
@@ -491,7 +535,7 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
 /// so one thread exhausts it alone): `env.read_txn()` fails typed while
 /// the burn's own WRITE transaction still succeeds. Both pre-plan exits
 /// are pinned: the plan block (non-empty delta) and the no-op path's
-/// generation read (alloc-only delta).
+/// generation read (reserve-only delta).
 #[test]
 fn a_pre_plan_infra_failure_still_burns_the_escaped_fresh_ids() {
     use crate::storage::env::MAX_READERS;
@@ -502,7 +546,14 @@ fn a_pre_plan_infra_failure_still_burns_the_escaped_fresh_ids() {
     let mint = |env: &Environment, insert: bool| {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
-        let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+        let id = delta
+            .reserve(
+                &view,
+                TARGET,
+                FieldId(0),
+                std::num::NonZeroU64::new(1).unwrap(),
+            )
+            .expect("reserve");
         if insert {
             delta
                 .insert(&view, TARGET, &target_fact(&schema, id))
@@ -523,12 +574,12 @@ fn a_pre_plan_infra_failure_still_burns_the_escaped_fresh_ids() {
     assert!(matches!(err, Error::ReadersFull { .. }), "{err:?}");
     drop(held);
 
-    // The no-op path's generation-read exit: an alloc-only (empty)
+    // The no-op path's generation-read exit: a reserve-only (empty)
     // delta, same injected fault. Its mint continuing past `id` also
     // proves the first abort burned.
     let (id, delta) = mint(&env, false);
     assert_eq!(id, 1, "the plan-block abort burned its escaped id");
-    assert!(delta.is_empty(), "alloc-only deltas take the no-op path");
+    assert!(delta.is_empty(), "reserve-only deltas take the no-op path");
     let held: Vec<_> = (0..MAX_READERS)
         .map(|_| env.read_txn().expect("slot within the table"))
         .collect();
@@ -548,7 +599,14 @@ fn a_failed_escaped_flush_still_never_reissues_in_process() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+    let id = delta
+        .reserve(
+            &view,
+            TARGET,
+            FieldId(0),
+            std::num::NonZeroU64::new(1).unwrap(),
+        )
+        .expect("reserve");
     assert_eq!(id, 0);
     delta
         .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
@@ -574,7 +632,13 @@ fn a_failed_escaped_flush_still_never_reissues_in_process() {
     let view = env.read_txn().expect("txn");
     let mut next = WriteDelta::new(&schema);
     assert_eq!(
-        next.alloc(&view, TARGET, FieldId(0)).expect("alloc"),
+        next.reserve(
+            &view,
+            TARGET,
+            FieldId(0),
+            std::num::NonZeroU64::new(1).unwrap()
+        )
+        .expect("reserve"),
         1,
         "in-process high-water forbids reissuing 0"
     );

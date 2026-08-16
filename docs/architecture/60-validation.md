@@ -893,7 +893,7 @@ no per-family sentence, nothing.
   the delta's net dispositions (`50-storage.md`) make the engine agree by
   representation. The `==`/totality corner (no-op parent re-insert + child
   delete) is the same class, caught via the parent's standing reverse edge.
-- Operation-sequence property tests for the write path: random insert/delete/alloc
+- Operation-sequence property tests for the write path: random insert/delete/reserve
   interleavings with judgment checks, asserting idempotence, determinant consistency,
   reverse-edge consistency, and fresh monotonicity across commits and aborts —
   **plus WriteTx point reads asserted against the delta-overlaid view** (a read

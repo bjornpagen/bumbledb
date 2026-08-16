@@ -171,8 +171,11 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
 
     let mut seed = Delta::default();
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
-        db.bulk_load_dyn(rel, corpus::relation_rows(sizes, rel))
-            .expect("engine corpus");
+        db.write(|tx| {
+            tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .expect("engine corpus");
         for row in corpus::relation_rows(sizes, rel) {
             seed.inserts.push((rel, row));
         }
@@ -416,8 +419,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     let sizes = LawSizes::of(Scale::Tiny);
     let db = Db::create(&dir, LawfulWorld).expect("create");
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
-        db.bulk_load_dyn(rel, corpus::relation_rows(sizes, rel))
-            .expect("corpus");
+        db.write(|tx| {
+            tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .expect("corpus");
     }
     let mut cursor = LawCursor::at_base(sizes);
     lanes::fill_window_target_engine(&db, sizes, &mut cursor).expect("window setup");
@@ -436,11 +442,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
 
     let base = lanes::REJECT_ID_BASE;
     let cited = rejected("duplicate (task, n) key", &|tx| {
-        tx.insert(&Attempt {
+        tx.insert([&Attempt {
             id: LawAttemptId(base),
             task: LawTaskId(1),
             n: 0,
-        })
+        }])
         .map(|_| ())
     });
     assert!(
@@ -451,11 +457,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     );
 
     let cited = rejected("absent task reference", &|tx| {
-        tx.insert(&Attempt {
+        tx.insert([&Attempt {
             id: LawAttemptId(base + 1),
             task: LawTaskId(sizes.tasks + 1_000_000),
             n: 0,
-        })
+        }])
         .map(|_| ())
     });
     assert!(
@@ -464,11 +470,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     );
 
     let cited = rejected("over-cap attempt on task 0", &|tx| {
-        tx.insert(&Attempt {
+        tx.insert([&Attempt {
             id: LawAttemptId(base + 2),
             task: LawTaskId(0),
             n: lanes::WINDOW_CAP,
-        })
+        }])
         .map(|_| ())
     });
     assert!(
@@ -477,10 +483,10 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     );
 
     let cited = rejected("scope under an Observe steer", &|tx| {
-        tx.insert(&SteerScope {
+        tx.insert([&SteerScope {
             steer: LawSteerId(0),
             grp: 0,
-        })
+        }])
         .map(|_| ())
     });
     assert!(

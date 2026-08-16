@@ -229,7 +229,7 @@ pub(super) fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
 /// mirror gets one index per column (interval halves as a composite):
 /// an unindexed oracle turns random joins into minutes of nested loops
 /// — this is the correctness lane, never timed, so indexes are pure
-/// win. Engine loading is `bulk_load` in declaration order (every
+/// win. Engine loading is collection `insert_dyn` in declaration order (every
 /// containment's target precedes its source), except the
 /// discriminated-union cluster: `JournalEntry == ImportBatch` holds in
 /// neither one-relation prefix, so the pair loads through joint chunked
@@ -281,8 +281,11 @@ pub(super) fn load_target_stores(
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {} // loaded with its entries
             _ => {
-                db.bulk_load_dyn(rel, target::corpus_relation_rows(cfg, rel))
-                    .expect("target bulk load");
+                db.write(|tx| {
+                    tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
+                        .map(|r| r.changed)
+                })
+                .expect("target insert");
             }
         }
         corpus::insert_rows(
@@ -313,11 +316,11 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: crate::corpus_gen::GenConfig) {
         db.write(|tx| {
             for i in start..end {
                 let row = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
-                tx.insert_dyn(target::ids::JOURNAL_ENTRY, &row)?;
+                tx.insert_dyn(target::ids::JOURNAL_ENTRY, [&row])?;
             }
             while next_batch < batches && target::import_batch_entry(next_batch) < end {
                 let row = target::corpus_row(cfg, &domains, target::ids::IMPORT_BATCH, next_batch);
-                tx.insert_dyn(target::ids::IMPORT_BATCH, &row)?;
+                tx.insert_dyn(target::ids::IMPORT_BATCH, [&row])?;
                 next_batch += 1;
             }
             Ok(())

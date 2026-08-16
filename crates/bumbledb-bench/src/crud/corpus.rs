@@ -69,8 +69,11 @@ pub fn load_stores(
     std::fs::create_dir_all(dir).map_err(|e| format!("crud scratch: {e}"))?;
     let db = lane.store_mode().create(&dir.join("db"), CrudWorld)?;
     for rel in [ids::DOC, ids::COUNTER] {
-        db.bulk_load_dyn(rel, relation_rows(sizes, seed, rel))
-            .map_err(|e| format!("load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(sizes, seed, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("load: {e:?}"))?;
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;

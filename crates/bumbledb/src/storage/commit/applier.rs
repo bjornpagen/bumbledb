@@ -288,25 +288,22 @@ impl Applier<'_, '_> {
     }
 
     /// The one phase-2 put: every `M`/`F`/`U`/`R` landing funnels through
-    /// here. PRD-C1 gravestone — the bulk-lane `MDB_APPEND` candidate
-    /// died at this site (the retired C1 heed-flags packet, git history).
-    /// The refutation is structural: the bulk lanes
-    /// (`Db::bulk_load`/`bulk_load_dyn`) route through this same
-    /// applier, and its put stream is NEVER key-ordered — a fact's `M`
-    /// key embeds the blake3 fact hash (hash order, never input order,
-    /// so no caller-side sort can order it), its own `F` key (`F` < `M`
-    /// in first-byte namespace order) immediately follows the
-    /// byte-greater `M` put, and the 4096-fact chunking breaks ordering
-    /// across transactions besides (`MDB_APPEND` compares against the
-    /// database's last key, not the transaction's). The armed twin
-    /// (`PutFlags::APPEND` on this put) proved the failure loud and
-    /// atomic, never silent corruption: LMDB rejected the first
-    /// unordered append with `MDB_KEYEXIST` (surfaced typed —
-    /// `BulkLoadError { committed: 0, error: Lmdb(Mdb(KeyExist)) }` on
-    /// the armed bulk run), the transaction aborted whole, and the
-    /// store read clean after. So append mode is unreachable for this
-    /// key architecture — landing it would need input-order `M` keys,
-    /// which the content-hash fact identity forbids by design.
+    /// here. PRD-C1 gravestone — the `MDB_APPEND` candidate died at this
+    /// site (the retired C1 heed-flags packet, git history). The
+    /// refutation is structural: this put stream is NEVER key-ordered —
+    /// a fact's `M` key embeds the blake3 fact hash (hash order, never
+    /// input order, so no caller-side sort can order it), its own `F`
+    /// key (`F` < `M` in first-byte namespace order) immediately follows
+    /// the byte-greater `M` put, and host-looped `Db::write` commits
+    /// cannot restore append order across transactions besides
+    /// (`MDB_APPEND` compares against the database's last key, not the
+    /// transaction's). The armed twin (`PutFlags::APPEND` on this put)
+    /// proved the failure loud and atomic, never silent corruption: LMDB
+    /// rejected the first unordered put with `MDB_KEYEXIST` (surfaced
+    /// typed as `Lmdb`), the transaction aborted whole, and the store
+    /// read clean after. So append mode is unreachable for this key
+    /// architecture — landing it would need input-order `M` keys, which
+    /// the content-hash fact identity forbids by design.
     fn put_data(&mut self, len: usize, value: &[u8]) -> Result<()> {
         self.data.put(self.txn.raw_mut(), &self.key[..len], value)?;
         Ok(())

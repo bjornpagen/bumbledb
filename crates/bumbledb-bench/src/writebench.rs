@@ -1,12 +1,12 @@
 //! Write and cold benchmark runners (docs/architecture/60-validation.md): single-commit
-//! latency (fsync-bound), batch commit, bulk throughput, and the cold
+//! latency (fsync-bound), batch commit, insert-stream throughput, and the cold
 //! first-execution spike. All `Kind::Report` — described honestly, never
 //! gated.
 //!
 //! Corpus discipline: these runners mutate the store they are handed, so
 //! bench NEVER points them at a verified corpus in place — it loads (or
 //! copies) its own scratch corpus per invocation, keeping the verify
-//! stamp honest. Inserted posting ids are minted via `tx.alloc`, so
+//! stamp honest. Inserted posting ids are minted via `tx.reserve`, so
 //! samples cannot collide with corpus ids.
 
 use std::cell::RefCell;
@@ -47,19 +47,23 @@ pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> P
     }
 }
 
-/// `commit_single` on bumbledb: one sample = one `db.write` allocating a
+/// `commit_single` on bumbledb: one sample = one `db.write` reserving a
 /// `PostingId` and inserting one seeded posting through the typed path.
 ///
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
     harness::measure(write_protocol("commit_single"), || {
         db.write(|tx| {
-            let id: PostingId = tx.alloc()?;
-            tx.insert(&prepared_posting(&mut rng, &sizes, id))
+            let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&prepared_posting(&mut rng, &sizes, id)])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_single: {e:?}"))
@@ -77,14 +81,18 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
     harness::measure(write_protocol("commit_witnessed"), || {
         db.read(|snap| {
             db.write_from(snap, |tx| {
-                let id: PostingId = tx.alloc()?;
-                tx.insert(&prepared_posting(&mut rng, &sizes, id))
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&prepared_posting(&mut rng, &sizes, id)])
             })
         })
         .map(|_| 1)
@@ -98,14 +106,18 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
     harness::measure(write_protocol("commit_batch"), || {
         db.write(|tx| {
             for _ in 0..512 {
-                let id: PostingId = tx.alloc()?;
-                tx.insert(&prepared_posting(&mut rng, &sizes, id))?;
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&prepared_posting(&mut rng, &sizes, id)])?;
             }
             Ok(())
         })
@@ -114,20 +126,20 @@ pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
     })
 }
 
-/// The relations a bulk sample's throwaway store is pre-seeded with: the
-/// whole corpus minus the posting mass (the timed part is the posting
-/// load; `PostingTag` rides with it — its containment targets postings,
-/// so it cannot precede them).
+/// The relations an insert-stream sample's throwaway store is pre-seeded
+/// with: the whole corpus minus the posting mass (the timed part is the
+/// posting load; `PostingTag` rides with it — its containment targets
+/// postings, so it cannot precede them).
 pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
     (0..ids::RELATIONS)
         .map(RelationId)
         .filter(|rel| *rel != ids::POSTING && *rel != ids::POSTING_TAG)
 }
 
-/// `bulk` on bumbledb: one sample = `bulk_load` of the full posting stream
-/// into a pre-seeded throwaway store under `scratch` (S-minus-postings,
-/// built before any timing starts). Facts/sec derives from
-/// `work / stats`.
+/// `insert_stream` on bumbledb: one sample = one `db.write` inserting the
+/// full posting stream (and its tags) into a pre-seeded throwaway store
+/// under `scratch` (S-minus-postings, built before any timing starts).
+/// Facts/sec derives from `work / stats`.
 ///
 /// # Errors
 ///
@@ -136,19 +148,22 @@ pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
 /// # Panics
 ///
 /// On scratch I/O failures.
-pub fn bulk_bumbledb(
+pub fn insert_stream_bumbledb(
     cfg: GenConfig,
     scratch: &Path,
     mode: crate::storemode::StoreMode,
 ) -> Result<Measurement, String> {
-    let proto = write_protocol("bulk");
+    let proto = write_protocol("insert_stream");
     let mut pending = VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
-        let dir = scratch.join(format!("bulk-bumbledb-{sample}"));
+        let dir = scratch.join(format!("insert-stream-bumbledb-{sample}"));
         let db = mode.create(&dir, Ledger)?;
         for rel in non_posting_relations() {
-            db.bulk_load_dyn(rel, corpus_gen::relation_rows(cfg, rel))
-                .map_err(|e| format!("seed: {e:?}"))?;
+            db.write(|tx| {
+                tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
+                    .map(|r| r.changed)
+            })
+            .map_err(|e| format!("seed: {e:?}"))?;
         }
         pending.push_back(db);
     }
@@ -156,15 +171,20 @@ pub fn bulk_bumbledb(
     let done = RefCell::new(Vec::new());
     harness::measure(proto, || {
         let db = pending.borrow_mut().pop_front().expect("pre-seeded store");
-        let mut facts = db
-            .bulk_load_dyn(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))
-            .map_err(|e| format!("bulk: {e:?}"))?;
-        facts += db
-            .bulk_load_dyn(
-                ids::POSTING_TAG,
-                corpus_gen::relation_rows(cfg, ids::POSTING_TAG),
-            )
-            .map_err(|e| format!("bulk tags: {e:?}"))?;
+        let facts = db
+            .write(|tx| {
+                let postings = tx
+                    .insert_dyn(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))?
+                    .changed;
+                let tags = tx
+                    .insert_dyn(
+                        ids::POSTING_TAG,
+                        corpus_gen::relation_rows(cfg, ids::POSTING_TAG),
+                    )?
+                    .changed;
+                Ok(postings + tags)
+            })
+            .map_err(|e| format!("insert_stream: {e:?}"))?;
         // Keep the store alive: its Drop must not land inside a sample.
         done.borrow_mut().push(db);
         Ok(facts)
@@ -229,6 +249,10 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
 /// # Errors
 ///
 /// Engine errors, stringified; a non-delete-bearing swap, named.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub(crate) fn posting_swap(
     db: &Db<Ledger>,
     rng: &mut Rng,
@@ -236,7 +260,7 @@ pub(crate) fn posting_swap(
     prev: &Posting,
 ) -> Result<Posting, String> {
     db.write(|tx| {
-        if !tx.delete(prev)? {
+        if tx.delete([prev])?.changed == 0 {
             // The in-closure sentinel abort (the fuzz harness's
             // deliberate-abandon precedent): returning `Err` here drops
             // the delta whole, so nothing below ever reaches the store.
@@ -244,9 +268,9 @@ pub(crate) fn posting_swap(
                 "the swap touch must be delete-bearing: the previous revision was absent",
             )));
         }
-        let id: PostingId = tx.alloc()?;
+        let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
         let next = prepared_posting(rng, sizes, id);
-        tx.insert(&next)?;
+        tx.insert([&next])?;
         Ok(next)
     })
     .map_err(|e| format!("posting swap: {e:?}"))
@@ -258,15 +282,19 @@ pub(crate) fn posting_swap(
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub(crate) fn posting_swap_seed(
     db: &Db<Ledger>,
     rng: &mut Rng,
     sizes: &Sizes,
 ) -> Result<Posting, String> {
     db.write(|tx| {
-        let id: PostingId = tx.alloc()?;
+        let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
         let seed = prepared_posting(rng, sizes, id);
-        tx.insert(&seed)?;
+        tx.insert([&seed])?;
         Ok(seed)
     })
     .map_err(|e| format!("posting swap seed: {e:?}"))
@@ -359,8 +387,11 @@ mod tests {
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
         let db = Db::create(dir, Ledger).expect("create");
         for rel in non_posting_relations() {
-            db.bulk_load_dyn(rel, corpus_gen::relation_rows(CFG, rel))
-                .expect("seed");
+            db.write(|tx| {
+                tx.insert_dyn(rel, corpus_gen::relation_rows(CFG, rel))
+                    .map(|r| r.changed)
+            })
+            .expect("seed");
         }
         db
     }
@@ -410,13 +441,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The bulk runner completes its protocol with positive
+    /// The insert-stream runner completes its protocol with positive
     /// throughput.
     #[test]
-    fn bulk_reports_positive_throughput() {
-        let dir = scratch("bulk");
-        let ours =
-            bulk_bumbledb(CFG, &dir, crate::storemode::StoreMode::Durable).expect("bulk bumbledb");
+    fn insert_stream_reports_positive_throughput() {
+        let dir = scratch("insert-stream");
+        let ours = insert_stream_bumbledb(CFG, &dir, crate::storemode::StoreMode::Durable)
+            .expect("insert_stream bumbledb");
         let sizes = Sizes::of(CFG.scale);
         assert_eq!(
             ours.work,

@@ -8,7 +8,7 @@
 //! → u64 boundary as the existing typed overflow error.
 
 use super::*;
-use crate::ir::{AggOp, ParamId};
+use crate::ir::{FoldOp, ParamId};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{Generation, IntervalElement};
 
@@ -253,13 +253,13 @@ fn sum_min_max_over_the_measure() {
     );
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    let over = |op: AggOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
+    let over = |op: FoldOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            over(AggOp::Sum),
-            over(AggOp::Min),
-            over(AggOp::Max),
+            over(FoldOp::Sum),
+            over(FoldOp::Min),
+            over(FoldOp::Max),
         ],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(SESSION),
@@ -473,7 +473,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(1),
             },
         ],
@@ -565,7 +565,7 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(1),
             },
         ],
@@ -718,13 +718,7 @@ fn the_ray_verdict_folds_in_the_kleene_lattice() {
     // verdict is Fails, the result is empty, and no error exists (the
     // reach-based poison this pins against raised here).
     let negated = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
         atoms: vec![session_atom.clone()],
         negated: vec![Atom {
             source: crate::ir::AtomSource::Edb(WINDOW),

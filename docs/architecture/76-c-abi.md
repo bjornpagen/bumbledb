@@ -52,8 +52,39 @@ borrow the named carrier and die with it.
 
 The header is generated: pinned cbindgen 0.29.4, committed at
 `crates/bumbledb-c/include/bumbledb_c.h`. `bdb_version()` is the crate version
-string (program lifetime, NUL-terminated). `bdb_abi_version()` is `1` — bump
+string (program lifetime, NUL-terminated) — the product identity, lockstep
+with the engine and the TypeScript SDK at **0.14.0**. `bdb_abi_version()` is
+`2` — layout generation, not the release spelling: collection-valued
+insert/delete, `reserve`, and the retirement of `alloc` / `bulk_load`. Bump
 on a layout-visible change.
+
+```text
+bdb_abi_version() == 2           layout generation (not the release spelling)
+bdb_version()                    "bumbledb-c 0.14.0"
+
+bdb_tx_reserve(tx, rel, field, count, &range, &err)
+  empty wire: {start: 0, end_exclusive: 0} — start is not a minted id
+bdb_tx_insert(tx, rel, values, arity, row_count, &report, &err)
+bdb_tx_delete(...)               same rectangular layout
+  report: { submitted, changed }
+```
+
+Writes are `bdb_tx_insert` / `bdb_tx_delete` with `row_count` (empty is
+lawful; `row_count == 1` is the singleton) and `bdb_tx_reserve` with `count`.
+There is no `bdb_tx_alloc` and no `bdb_db_bulk_load`. ETL is a host loop of
+`bdb_db_write`. Poison is `BDB_ERROR_KIND_TRANSACTION_POISONED` — the engine
+nests the original apply `Error`; this surface carries the kind.
+
+```c
+bdb_fresh_range ids;
+bdb_tx_reserve(tx, ACCOUNT, /* id field */ 0, 1, &ids, &err);
+/* empty is {0, 0}: ids.start is not minted when start == end_exclusive */
+bdb_value row[ARITY];
+/* fill row; row[0].u64 = ids.start when the range is nonempty */
+bdb_mutation_report report;
+bdb_tx_insert(tx, ACCOUNT, row, ARITY, /* row_count */ 1, &report, &err);
+/* report.submitted / report.changed */
+```
 
 ## Host lowering
 

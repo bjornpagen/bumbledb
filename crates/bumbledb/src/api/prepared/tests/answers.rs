@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::FoldOp;
 
 /// A finalize-time Overflow leaves `Answers`
 /// discardable — the same prepared query re-executes cleanly into
@@ -19,8 +20,8 @@ fn overflow_errors_leave_answers_reusable() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: crate::ir::AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {

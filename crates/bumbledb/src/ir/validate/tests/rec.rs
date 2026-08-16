@@ -1,12 +1,26 @@
-//! Rec roster: one linear SCC, empty/self/nonlinear/negation/measure.
+//! Rec roster: one linear SCC. Empty/missing-self/negation/measure
+//! shapes are unrepresentable on [`Rec`]; remaining checks are DNF
+//! emptiness, self-in-base, nonlinearity, head alignment, and the pool cap.
 
 use super::*;
-use crate::ir::{AtomSource, ConditionTree, HeadTerm, Interior, InteriorId, Rec};
+use crate::ir::{
+    AtomSource, ConditionTree, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule, Rec,
+    RecRule, RecStep,
+};
 
 fn interior_atom(id: u32, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {
         source: AtomSource::Interior(InteriorId(id)),
         bindings: bindings.into_iter().map(|(f, t)| (FieldId(f), t)).collect(),
+    }
+}
+
+fn proj(finds: Vec<VarId>, atoms: Vec<crate::ir::Atom>) -> ProjectionRule {
+    ProjectionRule {
+        finds,
+        atoms,
+        negated: vec![],
+        conditions: vec![],
     }
 }
 
@@ -19,13 +33,40 @@ fn rule(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Rule {
     }
 }
 
-fn reach_query(base: Vec<Rule>, rec: Vec<Rule>, main: Rule) -> Query {
+fn rec_rule(finds: Vec<VarId>, atoms: Vec<crate::ir::Atom>) -> RecRule {
+    RecRule {
+        finds,
+        atoms,
+        conditions: vec![],
+    }
+}
+
+fn rec_step(
+    finds: Vec<VarId>,
+    self_bindings: Vec<(u16, Term)>,
+    atoms: Vec<crate::ir::Atom>,
+) -> RecStep {
+    RecStep {
+        finds,
+        self_bindings: self_bindings
+            .into_iter()
+            .map(|(f, t)| (FieldId(f), t))
+            .collect(),
+        atoms,
+        conditions: vec![],
+    }
+}
+
+fn nonempty<T>(items: Vec<T>) -> NonEmpty<T> {
+    NonEmpty::from_vec(items).expect("nonempty fixture")
+}
+
+fn reach_query(base: Vec<RecRule>, rec: Vec<RecStep>, main: Rule) -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base,
-            rec,
+            base: nonempty(base),
+            rec: nonempty(rec),
         },
         head: main.head(),
         rules: vec![main],
@@ -34,14 +75,11 @@ fn reach_query(base: Vec<Rule>, rec: Vec<Rule>, main: Rule) -> Query {
 
 fn linear_reach() -> Query {
     reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
+        vec![rec_rule(
+            vec![VarId(0)],
             vec![atom(ACCOUNT, vec![(0, var(0))])],
         )],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
+        vec![rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])],
         rule(
             vec![FindTerm::Var(VarId(0))],
             vec![interior_atom(0, vec![(0, var(0))])],
@@ -55,32 +93,16 @@ fn a_linear_reach_validates() {
 }
 
 #[test]
-fn rejects_empty_recursive_base() {
-    let query = reach_query(
-        vec![],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
-        rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        ),
-    );
-    assert_eq!(expect_err(&query), ValidationError::EmptyRecursiveBase);
-}
-
-#[test]
 fn a_rec_step_whose_dnf_is_empty_is_empty_recursive_step() {
     let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
+        vec![rec_rule(
+            vec![VarId(0)],
             vec![atom(ACCOUNT, vec![(0, var(0))])],
         )],
-        vec![Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![interior_atom(0, vec![(0, var(0))])],
-            negated: vec![],
+        vec![RecStep {
+            finds: vec![VarId(0)],
+            self_bindings: vec![(FieldId(0), var(0))],
+            atoms: vec![],
             conditions: vec![ConditionTree::Or(vec![])],
         }],
         rule(
@@ -92,32 +114,13 @@ fn a_rec_step_whose_dnf_is_empty_is_empty_recursive_step() {
 }
 
 #[test]
-fn rejects_empty_recursive_step() {
-    let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![atom(ACCOUNT, vec![(0, var(0))])],
-        )],
-        vec![],
-        rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        ),
-    );
-    assert_eq!(expect_err(&query), ValidationError::EmptyRecursiveStep);
-}
-
-#[test]
 fn rejects_self_in_base() {
     let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
+        vec![rec_rule(
+            vec![VarId(0)],
             vec![interior_atom(0, vec![(0, var(0))])],
         )],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
+        vec![rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])],
         rule(
             vec![FindTerm::Var(VarId(0))],
             vec![interior_atom(0, vec![(0, var(0))])],
@@ -127,37 +130,16 @@ fn rejects_self_in_base() {
 }
 
 #[test]
-fn rejects_rec_arm_missing_self() {
-    let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![atom(ACCOUNT, vec![(0, var(0))])],
-        )],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![atom(ACCOUNT, vec![(0, var(0))])],
-        )],
-        rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        ),
-    );
-    assert_eq!(expect_err(&query), ValidationError::RecArmMissingSelf);
-}
-
-#[test]
 fn rejects_nonlinear_rec_arm() {
     let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
+        vec![rec_rule(
+            vec![VarId(0)],
             vec![atom(ACCOUNT, vec![(0, var(0))])],
         )],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![
-                interior_atom(0, vec![(0, var(0))]),
-                interior_atom(0, vec![(0, var(1))]),
-            ],
+        vec![rec_step(
+            vec![VarId(0)],
+            vec![(0, var(0))],
+            vec![interior_atom(0, vec![(0, var(1))])],
         )],
         rule(
             vec![FindTerm::Var(VarId(0))],
@@ -168,118 +150,15 @@ fn rejects_nonlinear_rec_arm() {
 }
 
 #[test]
-fn rejects_negation_in_rec() {
-    let query = Query::Reach {
-        interiors: vec![],
-        rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![atom(ACCOUNT, vec![(0, var(0))])],
-            )],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
-                atoms: vec![
-                    atom(ACCOUNT, vec![(0, var(0))]),
-                    interior_atom(0, vec![(0, var(1))]),
-                ],
-                negated: vec![atom(POSTING, vec![(1, var(0))])],
-                conditions: vec![],
-            }],
-        },
-        head: vec![HeadTerm::Var],
-        rules: vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
-    };
-    assert_eq!(expect_err(&query), ValidationError::NegationInRec);
-}
-
-#[test]
-fn rejects_measure_in_interior_on_rec_head() {
-    let query = Query::Reach {
-        interiors: vec![],
-        rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![rule(
-                vec![FindTerm::Measure(VarId(0))],
-                vec![atom(ACCOUNT, vec![(VALIDITY, var(0))])],
-            )],
-            rec: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![interior_atom(0, vec![(0, var(0))])],
-            )],
-        },
-        head: vec![HeadTerm::Var],
-        rules: vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
-    };
-    assert_eq!(
-        expect_err(&query),
-        ValidationError::MeasureInInterior {
-            interior: InteriorId(0)
-        }
-    );
-}
-
-#[test]
-fn rejects_aggregate_in_interior_on_rec_head() {
-    let query = Query::Reach {
-        interiors: vec![],
-        rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
-            base: vec![rule(
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: crate::ir::AggOp::Count,
-                        over: None,
-                    },
-                ],
-                vec![atom(ACCOUNT, vec![(0, var(0))])],
-            )],
-            rec: vec![rule(
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: crate::ir::AggOp::Count,
-                        over: None,
-                    },
-                ],
-                vec![interior_atom(0, vec![(0, var(0))])],
-            )],
-        },
-        head: vec![HeadTerm::Var],
-        rules: vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![atom(ACCOUNT, vec![(0, var(0))])],
-        )],
-    };
-    assert_eq!(
-        expect_err(&query),
-        ValidationError::AggregateInInterior {
-            interior: InteriorId(0)
-        }
-    );
-}
-
-#[test]
 fn a_measure_on_main_over_finished_rec_is_legal() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(rec_rule(
+                vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(VALIDITY, var(0))])],
-            )],
-            rec: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![interior_atom(0, vec![(0, var(0))])],
-            )],
+            )),
+            rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
         },
         head: vec![HeadTerm::Var],
         rules: vec![rule(
@@ -295,15 +174,11 @@ fn negation_of_finished_rec_in_main_is_legal() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(rec_rule(
+                vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
-            )],
-            rec: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![interior_atom(0, vec![(0, var(0))])],
-            )],
+            )),
+            rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -319,16 +194,14 @@ fn negation_of_finished_rec_in_main_is_legal() {
 #[test]
 fn recursive_arms_align_against_the_base_row() {
     let query = reach_query(
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
+        vec![rec_rule(
+            vec![VarId(0)],
             vec![atom(ACCOUNT, vec![(0, var(0))])],
         )],
-        vec![rule(
-            vec![FindTerm::Var(VarId(0))],
-            vec![
-                interior_atom(0, vec![(0, var(1))]),
-                atom(POSTING, vec![(2, var(0)), (1, var(1))]),
-            ],
+        vec![rec_step(
+            vec![VarId(0)],
+            vec![(0, var(1))],
+            vec![atom(POSTING, vec![(2, var(0)), (1, var(1))])],
         )],
         rule(
             vec![FindTerm::Var(VarId(0))],
@@ -346,21 +219,11 @@ fn recursive_arms_align_against_the_base_row() {
 
 #[test]
 fn rec_pool_caps_base_plus_rec() {
-    let base: Vec<Rule> = (0..10)
-        .map(|_| {
-            rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![atom(ACCOUNT, vec![(0, var(0))])],
-            )
-        })
+    let base: Vec<RecRule> = (0..10)
+        .map(|_| rec_rule(vec![VarId(0)], vec![atom(ACCOUNT, vec![(0, var(0))])]))
         .collect();
-    let rec: Vec<Rule> = (0..7)
-        .map(|_| {
-            rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![interior_atom(0, vec![(0, var(0))])],
-            )
-        })
+    let rec: Vec<RecStep> = (0..7)
+        .map(|_| rec_step(vec![VarId(0)], vec![(0, var(0))], vec![]))
         .collect();
     let query = reach_query(
         base,
@@ -380,22 +243,17 @@ fn rec_pool_caps_base_plus_rec() {
 fn an_interior_reading_the_rec_is_not_prior() {
     let query = Query::Reach {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var],
-            rules: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
+            rules: vec![proj(
+                vec![VarId(0)],
                 vec![interior_atom(1, vec![(0, var(0))])],
             )],
         }],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(rec_rule(
+                vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
-            )],
-            rec: vec![rule(
-                vec![FindTerm::Var(VarId(0))],
-                vec![interior_atom(1, vec![(0, var(0))])],
-            )],
+            )),
+            rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
         },
         head: vec![HeadTerm::Var],
         rules: vec![rule(

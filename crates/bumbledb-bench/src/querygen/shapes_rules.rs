@@ -20,7 +20,7 @@
 //! variants' bands are the point, so nothing is appended.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, Query, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::Rng;
@@ -174,8 +174,8 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
         // Sum over quantized amounts: |amount| ≤ 4 000, distinct head
         // rows ≤ postings — bounded far below 2⁶³ at every scale.
         0 => FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(1)),
+            op: FoldOp::Sum,
+            over: VarId(1),
         },
         // Min keeps the union fold's stable arity where the nullary
         // Count once sat: the fold-free Count across written rules is
@@ -183,12 +183,12 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
         // R1 — one Count per disjunct, host-merged), so the generator
         // draws the third input-carrying fold instead.
         1 => FindTerm::Aggregate {
-            op: AggOp::Min,
-            over: Some(VarId(1)),
+            op: FoldOp::Min,
+            over: VarId(1),
         },
         _ => FindTerm::Aggregate {
-            op: AggOp::Max,
-            over: Some(VarId(1)),
+            op: FoldOp::Max,
+            over: VarId(1),
         },
     };
     let over_amount = true;

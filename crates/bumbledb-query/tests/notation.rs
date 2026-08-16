@@ -506,7 +506,10 @@ fn recursive_normalized_text_is_a_fixed_point() {
 #[test]
 fn recursive_lowers_to_the_exact_ir() {
     use bumbledb::ir::HeadTerm;
-    use bumbledb::{Atom, AtomSource, FieldId, FindTerm, InteriorId, Rec, Rule, Term, VarId};
+    use bumbledb::{
+        Atom, AtomSource, FieldId, FindTerm, InteriorId, NonEmpty, Rec, RecRule, RecStep, Rule,
+        Term, VarId,
+    };
     let lowered = query!(Ledger {
         rec reach(c, a) | OrgParent(child: c, parent: a);
         rec reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
@@ -535,9 +538,20 @@ fn recursive_lowers_to_the_exact_ir() {
     let expected = bumbledb::Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![rule([0, 1], vec![parent_atom(0, 1)])],
-            rec: vec![rule([0, 2], vec![parent_atom(0, 1), reach_atom(1, 2)])],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![parent_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![parent_atom(0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
@@ -553,8 +567,8 @@ fn recursive_lowers_to_the_exact_ir() {
 fn rec_then_main_mint_param_ids_in_walk_order() {
     use bumbledb::ir::HeadTerm;
     use bumbledb::{
-        Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, InteriorId, ParamId,
-        Rec, Rule, Term, VarId,
+        Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, InteriorId,
+        NonEmpty, ParamId, Rec, RecRule, RecStep, Rule, Term, VarId,
     };
     let lowered = query!(Ledger {
         rec reach(c, a) | OrgParent(child: c, parent: a);
@@ -591,14 +605,21 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
     let expected = bumbledb::Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![rule([0, 1], vec![parent_atom(0, 1)], vec![])],
-            rec: vec![rule(
-                [0, 2],
-                vec![parent_atom(0, 1), reach_atom(1, 2)],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![parent_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![parent_atom(0, 1)],
                 // rec arms walk before main: `?skip` is ParamId(0).
-                vec![cond(CmpOp::Ne, 2, 0)],
-            )],
+                conditions: vec![cond(CmpOp::Ne, 2, 0)],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule(

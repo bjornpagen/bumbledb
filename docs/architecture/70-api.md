@@ -408,9 +408,9 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   directory stays `AlreadyInitialized` (create never reads a store, so the kind
   never gets a say).
 - **The two-store staging pattern** (the sighting the surface exists for): build
-  an ephemeral store — bulk imports, judged exactly as a durable store judges —
+  an ephemeral store — collection inserts, judged exactly as a durable store judges —
   read/repair until the theory holds, then ETL the survivors into the durable
-  store (`snap.scan` → `bulk_load_dyn`, § ETL below) and delete the directory. The
+  store (`snap.scan` then `insert_dyn` under host-chosen `write`s, § ETL below) and delete the directory. The
   staging side pays no fullfsync per commit (the small-commit shape measures
   43–70x over durable-on-SSD for the staging pattern and 3.1–3.5x over a
   plain ramdisk store across the `NOSYNC`-only re-earn sessions, device tax
@@ -528,18 +528,37 @@ is the consumer that names its shape.)
   Non-reentrant: a nested `write` from within a write closure on the same thread
   panics with a named message ("nested Db::write") rather than self-deadlocking on
   the writer mutex forever.
-  Write operations: typed `alloc::<NewType>()` via the generated `Fresh` newtypes
-  (untyped: `alloc_at(FreshField<S>) -> u64`, taking the schema-bound witness
-  `Db::fresh_field(relation, field)` resolves — see the ETL section) — fresh
-  minting, insert new facts
-  without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
-  report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
-  `FreshExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
-  immediately), not at commit. Bulk import is `Db::bulk_load` (typed) /
-  `Db::bulk_load_dyn` (the ETL/FFI lane) — `Db`-level methods,
-  not write-closure operations (see the ETL section).
-- **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
-  return value's read-only sibling) and `tx.get(key) -> Option<K::Fact>` — lookup
+  Write operations, one algebra:
+
+  ```text
+  db.write(|tx| …)                 one WriteDelta, judged at commit
+    tx.reserve::<Id>(n)            → FreshRange  (empty ≠ a minted id)
+    tx.insert([&fact, …])          → MutationReport { submitted, changed }
+    tx.delete([&fact, …])          → MutationReport { submitted, changed }
+    insert_dyn / delete_dyn        same collection, Value rows (ETL)
+
+  ETL is a host loop of write (scan then insert_dyn). No bulk_load. No alloc.
+  After a failed apply, later mutation is Error::TransactionPoisoned { source }
+  — nested Error, never a formatted string.
+  ```
+
+  `insert(facts)` / `delete(facts)` take a
+  collection and return `MutationReport { submitted, changed }`
+  (`lean/Bumbledb/Txn.lean: insert_is_fold`, `delete_is_fold` — empty is a
+  no-op, singleton is `[&fact]`, many is the same call). `_dyn` forms of both
+  for ETL tooling. Fresh minting is `reserve::<NewType>(n)` via the generated
+  `Fresh` newtypes (untyped: `reserve_at(FreshField<S>, n) -> FreshRange<u64>`,
+  taking the schema-bound witness `Db::fresh_field(relation, field)` resolves —
+  see the ETL section) — mint without reading a max (`10-data-model.md`;
+  `lean/Bumbledb/Txn/Fresh.lean: reserve_advances_by_count`). `reserve(0)` is
+  empty (`FreshRange::Empty`); `start()` is `None` — empty is not a minted
+  id. `reserve(1)` is the singleton mint. `FreshExhausted` raises eagerly at
+  the `reserve` call (the sequence state is knowable immediately), not at
+  commit. There is no second bulk verb and no engine-owned chunker: a host that
+  splits a load is a sequence of ordinary `write`s (§ ETL).
+- **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the
+  read-only sibling of the write-time membership probe that feeds
+  `MutationReport.changed`) and `tx.get(key) -> Option<K::Fact>` — lookup
   of the full fact through a typed key value: `key` implements the `Key` trait,
   whose TYPE carries the fact type it determines and the key statement it reads
   through (`K::STATEMENT`, computed at `schema!` expansion from the materialized
@@ -567,8 +586,13 @@ is the consumer that names its shape.)
   ```rust
   db.write(|tx| {
       match tx.get(id)? {
-          Some(old) => { tx.delete(&old)?; tx.insert(&Account { balance: old.balance + x, ..old })?; }
-          None      => { tx.insert(&Account { id, balance: x, ..default })?; }
+          Some(old) => {
+              tx.delete([&old])?;
+              tx.insert([&Account { balance: old.balance + x, ..old }])?;
+          }
+          None => {
+              tx.insert([&Account { id, balance: x, ..default }])?;
+          }
       }
       Ok(())
   })?
@@ -632,7 +656,7 @@ The public write surface has exactly three epistemic classes:
 |---|---|---|
 | snapshot-derived, generation-witnessed | `Db::write_from` | the snapshot's generation is compared inside the writer critical section before the closure runs |
 | final-state point-read inside the write transaction | `Db::write` plus `WriteTx::{contains,get,get_dyn}` | the point read observes base + pending delta while the single-writer lock is held |
-| unconditional | `Db::write` without a point-read premise; `Db::bulk_load` / `Db::bulk_load_dyn` | there is no read-derived premise to witness |
+| unconditional | `Db::write` without a point-read premise | there is no read-derived premise to witness |
 
 **Dependencies prove surviving derived facts sound; the WITNESS proves the
 derivation saw the state it claims; nothing proves completeness — recompute
@@ -831,6 +855,8 @@ proposition the commit checks in one integer compare.
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `FactShape` (the dynamic surface's shape roster — including the dyn-boundary
   foreign-`FreshField` refusal at the mint's sequence init, § ETL),
+  `TransactionPoisoned { source }` (a later mutation after a failed apply —
+  `source` is the nested `Error`, never a formatted string),
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction. An
   abort never wrote a fact; escaped fresh high-water still flushes through a
   counters-only `Q` commit (`10-data-model.md`).
@@ -850,33 +876,32 @@ surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
 over `F` in row_id order (a storage iteration, not a query — streams, not sets); the
 typed sibling `snap.scan_facts::<F>()` decodes into the generated structs.
 
-**Bulk import is two lanes over ONE chunking mechanism** (the typed-bulk ruling,
-frozen 2026-07-15 — it closed the "typed everywhere except bulk" gap):
-`Db::bulk_load(facts)` takes an iterator of **generated fact structs** (the
-relation is `F::RELATION` — no id parameter to mismatch), and
-`Db::bulk_load_dyn(relation, facts)` takes `Vec<Value>` rows — the ETL/FFI lane
-that pairs with `snap.scan`'s dynamic export and with foreign hosts speaking the
-manifest's ids. Both lanes share the contract verbatim: chunks of 4096 per
-transaction, each chunk atomic and fully judged, prior chunks committed on failure
-with the committed count carried on `BulkLoadError` — and kept through `?`: the
-conversion into the workspace error lands in `Error::BulkLoad { committed, error }`,
-never dropping the count (it is the resumability payload the type exists for). The
-returned/carried count is **facts that changed
-state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
-semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids)
-are typed `FactShape` errors (decided: ETL input is data, not code — no panics on the
-import path); the typed lane makes shape errors unrepresentable and keeps only the
+**Import is collection insert inside `db.write`.** Empty, singleton, and many
+are one collection (`lean/Bumbledb/Txn.lean: insert_is_fold`). Typed:
+`tx.insert(facts)` takes an iterator of **generated fact structs** (the
+relation is `F::RELATION` — no id parameter to mismatch). Dyn:
+`tx.insert_dyn(relation, facts)` takes `Value` rows — the ETL/FFI lane that
+pairs with `snap.scan`'s dynamic export and with foreign hosts speaking the
+manifest's ids. Both return `MutationReport { submitted, changed }` —
+**facts that changed state** (idempotent re-inserts are consumed but not
+counted). Empty is lawful (`MutationReport::EMPTY`); singleton is `[&fact]` /
+`[row]`. A host that splits a load issues a sequence of ordinary `write`s —
+that loop is host policy, not an engine API (`lean/Bumbledb/Txn.lean`). There
+is no engine chunker, no prefix-commit, and no `BulkLoadError`. Mis-shaped
+dynamic facts (including out-of-range relation ids) are typed `FactShape`
+errors (decided: ETL input is data, not code — no panics on the import path);
+the typed lane makes shape errors unrepresentable and keeps only the
 judgment. Interval fields accept only the checked `Interval<T>` carried by
 `Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
 identity (high-water advances past them). Untyped fresh minting is
-resolve-once/mint-per-fact:
+resolve-once/mint-a-range:
 `Db::fresh_field(relation, field) -> Result<FreshField<S>, FactShapeError>`
 validates the ids and the `Fresh` generation once and returns a `Copy`
 **schema-bound** witness (private fields, one construction site, and the
 resolving handle's typestate `S` in the witness's type), so handing the witness
 to another schema's transaction is a compile error
-(`tests/schema-compile-fail/foreign_fresh_witness.rs`); `tx.alloc_at(witness)`
-mints with no generation re-check on the steady-state path. (REVERSED
+(`tests/schema-compile-fail/foreign_fresh_witness.rs`); `tx.reserve_at(witness, n)`
+mints a `FreshRange` with no generation re-check on the steady-state path. (REVERSED
 2026-07-15, the cross-schema witness ruling: the original decision — "the type
 is the proof", resolved by `Schema::fresh_field` with no re-check anywhere, a
 per-call typed error rejected as validating on every call and throwing the
@@ -891,10 +916,10 @@ mint's per-transaction sequence init re-checks the generation beside the `Q`
 read it already does and refuses a foreign witness as the typed `FactShape`
 error, never a panic, never a silent mint — pinned by
 `a_foreign_witness_is_refused_typed_not_minted`.) **Import order under bidirectional statements is
-the importer's obligation:** a `==` statement's cluster must land within one chunk's
-transaction, so the documented import order is dependency-cluster order — parent and
-arm facts interleaved — and a straddled cluster fails its chunk loudly
-(`50-storage.md`). `Fact::encode_read`'s reader-side encode is host-reachable
+the importer's obligation:** a `==` statement's cluster must land within one
+`write`, so the documented import order is dependency-cluster order — parent and
+arm facts interleaved — and a straddled cluster fails that write loudly
+(`50-storage.md`; recipe 28: load containment targets first). `Fact::encode_read`'s reader-side encode is host-reachable
 surface — a stated decision: it reports "this fact cannot exist" for never-interned
 values and is the membership-probe building block. `Db::compact` is safe concurrent
 with a writer (LMDB's copy transaction reads one consistent snapshot; the copy simply
@@ -906,14 +931,15 @@ A schema-generic bridge — the Node bindings, ETL tooling, any host without the
 generated fact structs — drives the FULL write-and-read surface through ids and
 `Value` rows alone. The roster, complete:
 
-- **Writes:** `tx.insert_dyn(relation, &[Value])` / `tx.delete_dyn(...)` (the
-  delete+insert identity idiom included: explicit fresh values preserve
-  identity, high-waters advance past them), `Db::bulk_load_dyn` (§ ETL).
+- **Writes:** `tx.insert_dyn(relation, rows)` / `tx.delete_dyn(...)` —
+  collections; empty is lawful; singleton is `[row]`. The delete+insert
+  identity idiom included: explicit fresh values preserve identity,
+  high-waters advance past them (§ ETL).
 - **Fresh minting:** `Db::fresh_field(relation, field)` resolves the witness
-  once; `tx.alloc_at(witness) -> u64` mints per row and RETURNS the minted id
-  to the caller — the dyn lane's mint is the same alloc-then-insert shape the
-  typed lane uses (`alloc::<NewType>()` then `insert`), so there is no second
-  insert-with-omitted-fields spelling (one meaning, one spelling).
+  once; `tx.reserve_at(witness, n)` mints a range and RETURNS it to the
+  caller — the dyn lane's mint is the same reserve-then-insert shape the
+  typed lane uses (`reserve::<NewType>(n)` then `insert([&fact])`), so there
+  is no second insert-with-omitted-fields spelling (one meaning, one spelling).
 - **Point reads, both transaction kinds:** `tx.contains_dyn` / `tx.get_dyn`
   observe the final-state view the judgment judges (base + pending delta);
   `snap.contains_dyn` / `snap.get_dyn` observe the snapshot's committed state.
@@ -1146,12 +1172,11 @@ in the type. A caller's explicit decline to commit can never be silently
 discarded: the hole where an abandon-returning callback typechecked under
 TypeScript's void-return rule and committed anyway is unrepresentable.
 
-**`Tx.insert` returns `{ changed, ...fresh }`** (R11). The engine computes a
-changed-state boolean on every insert and the bridge already carries it
-across the FFI; the SDK surfaces it beside the minted fresh cells, restoring
-the bijection with the Rust surface (`insert(&fact) -> bool`, § Transactions)
-that `delete` always honored. The idempotent-replay lane reads the bit from
-the insert itself; the extra `contains` round trip per fact dies.
+**`Tx.insert` / `Tx.delete` return `MutationReport { submitted, changed }`**
+(R11). Collection writes: `tx.insert(Rel, [{...}])`, `tx.delete(Rel, facts)`.
+Mint is `tx.reserve(Rel, field, 1n)`, not a side-channel on insert. The
+idempotent-replay lane reads `changed` from the report; the extra `contains`
+round trip per fact dies.
 
 ### Resource lifetimes are disposables (ruled 2026-07-23, R12)
 
@@ -1175,8 +1200,9 @@ profiling stays engine-internal (§ observability).
 **FREEZE IS DECLARED at this commit (2026-07-15).** The surface above — the
 `schema!` grammar (owner-evolvable by its own standing ruling), the environment
 lifecycle (`create`/`open`/`ephemeral`), the unified `db.prepare`, the
-transaction closures with their point reads and the generation witness, the two
-bulk lanes, the scan exports, and the error taxonomy — is the v0 embedding API.
+transaction closures with their point reads and the generation witness,
+collection `insert`/`delete`/`reserve` inside `write`, the scan exports, and
+the error taxonomy — is the v0 embedding API.
 Everything below was DEFERRED at the freeze, each item with the **trigger**
 that reopens it. **The ledger is CLOSED (2026-07-17):** the Phase C census
 judged every row against the real consumer (graph-builder — the driver, ETL,
@@ -1186,21 +1212,6 @@ be debt). Each row below keeps its trigger as the record and carries its final
 state with the evidence that earned it; a FIRED row lands as its own
 engine-first change, and nothing re-enters without a new ruling.
 
-- **`tx.insert_all` batch sugar** (one call, many typed facts inside a write
-  closure). Trigger: **dogfooding pain** — a real host import loop inside
-  `db.write` where the per-fact `insert` call reads as noise or measures as
-  overhead. Until then the `for` loop is the surface, and bulk import already
-  has `Db::bulk_load`. **DECLINED (census 2026-07-17).** The motivating shape
-  — per-fact *transactions* in an import loop — never appears: every insert
-  loop in the consumer sits inside one write closure
-  (`driver/dispatch.ts :: settleEnrich`/`insertCartographPlan`/`settleAuthor`,
-  `driver/mint.ts :: seedSheets`/`mintTasks`), and the high-volume loops
-  consume each insert's minted id to build id maps — flat batch sugar cannot
-  serve them unless it returns minted ids positionally, which is the recorded
-  useful shape should the trigger ever truly fire. ETL's bulk writes go to
-  Postgres; its one store write is a single receipt row
-  (`etl/etl.ts :: writeReceipt`). No contortion sighted, only verbosity; the
-  `for` loop stays the surface.
 - **Multi-key typed `tx.get` disambiguation** — the typed signature when a
   relation carries several key FDs over the same newtype. Trigger: a **real
   schema** exhibiting the collision (the `_dyn` form is unambiguous today; the
@@ -1280,5 +1291,5 @@ engine-first change, and nothing re-enters without a new ruling.
 
 Resolved by ruling or implementation (recorded above): the `Answers` shape;
 the dynamic-fact ETL form; WriteTx point reads; the unified `prepare`;
-the typed bulk lane. Plan introspection (`introspect` / `profile` /
+the collection insert lane. Plan introspection (`introspect` / `profile` /
 `staleness` / `ExecutionStats`) is harness-only, not embedding API.

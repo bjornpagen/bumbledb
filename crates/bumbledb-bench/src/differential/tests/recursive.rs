@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, Rule, Term,
-    Value, VarId,
+    Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule,
+    Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 
 use crate::fixture::field;
@@ -70,31 +70,23 @@ fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(EDGE),
                     bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    Atom {
-                        source: AtomSource::Edb(EDGE),
-                        bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
-                    },
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(FieldId(0), v(1)), (FieldId(1), v(2))],
-                    },
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![(FieldId(0), v(1)), (FieldId(1), v(2))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(EDGE),
+                    bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
+                }],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -113,19 +105,23 @@ fn closure_query() -> Query {
 /// nodes that are nobody's reachable target.
 fn unreached_query() -> Query {
     let mut query = closure_query();
-    *query.head_mut() = vec![HeadTerm::Var];
-    *query.rules_mut() = vec![Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: AtomSource::Edb(NODE),
-            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-        }],
-        negated: vec![Atom {
-            source: AtomSource::Interior(InteriorId(0)),
-            bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
-        }],
-        conditions: vec![],
-    }];
+    match &mut query {
+        Query::Cq { head, rules, .. } | Query::Reach { head, rules, .. } => {
+            *head = vec![HeadTerm::Var];
+            *rules = vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(NODE),
+                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                }],
+                negated: vec![Atom {
+                    source: AtomSource::Interior(InteriorId(0)),
+                    bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
+                }],
+                conditions: vec![],
+            }];
+        }
+    }
     query
 }
 
@@ -231,10 +227,10 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
     let db = bumbledb::Db::create(dir.path(), descriptor).expect("create engine store");
     db.write(|tx| {
         for node in 0..nodes {
-            tx.insert_dyn(NODE, &[Value::U64(node)])?;
+            tx.insert_dyn(NODE, [&[Value::U64(node)]])?;
         }
         for (src, dst) in edges {
-            tx.insert_dyn(EDGE, &[Value::U64(*src), Value::U64(*dst)])?;
+            tx.insert_dyn(EDGE, [&[Value::U64(*src), Value::U64(*dst)]])?;
         }
         Ok(())
     })
@@ -401,9 +397,8 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
     let probes = [5u64, 25, 45, 100];
 
     let carrier = Interior {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![Rule {
-            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        rules: vec![ProjectionRule {
+            finds: vec![VarId(0), VarId(1)],
             atoms: vec![Atom {
                 source: AtomSource::Edb(CLAIM),
                 bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
@@ -480,17 +475,17 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         for (account, (start, end)) in &claims {
             tx.insert_dyn(
                 CLAIM,
-                &[
+                [&[
                     Value::U64(*account),
                     Value::IntervalU64(
                         bumbledb::Interval::<u64>::new(*start, *end)
                             .expect("nonempty fixture interval"),
                     ),
-                ],
+                ]],
             )?;
         }
         for at in &probes {
-            tx.insert_dyn(PROBE, &[Value::U64(*at)])?;
+            tx.insert_dyn(PROBE, [&[Value::U64(*at)]])?;
         }
         Ok(())
     })

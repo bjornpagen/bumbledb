@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use crate::image::RelationImage;
-use crate::ir::CmpOp;
 use bumbledb_theory::schema::FieldId;
 
 mod apply;
@@ -114,8 +113,8 @@ pub enum IntervalConst {
 /// point variable is bound by another occurrence — evaluated once the
 /// variable is bound; the point-membership scan of
 /// `docs/architecture/40-execution.md`). A `Var` source never reaches the
-/// view evaluator: plan validation routes [`FilterPredicate::PointVar`]
-/// into the executor's membership probes (`PlanNode::point_probes` for
+/// view evaluator: plan validation routes occurrence `point_vars` into
+/// the executor's membership probes (`PlanNode::point_probes` for
 /// positive occurrences, the anti-probe's point checks for negated ones),
 /// because a view is built per execution while a variable binds per join
 /// row.
@@ -151,7 +150,7 @@ pub enum FilterPredicate {
     /// is an `Allen` kind below.
     Compare {
         field: FieldId,
-        op: CmpOp,
+        op: crate::ir::WordCmp,
         value: Const,
     },
     /// Same-fact comparison between two fields of one atom: `Eq` is the
@@ -166,7 +165,7 @@ pub enum FilterPredicate {
     FieldsCompare {
         left: FieldId,
         right: FieldId,
-        op: CmpOp,
+        op: crate::ir::WordCmp,
     },
     /// Point membership in the interval field: `start ≤ p AND p < end`
     /// over the field's two column words (the lowering of a membership
@@ -174,13 +173,6 @@ pub enum FilterPredicate {
     PointIn {
         field: FieldId,
         point: ViewWordSource,
-    },
-    /// Var-sourced point membership: plan validation lifts this into
-    /// membership probes and strips it from the view filter list. The
-    /// view evaluator never sees it.
-    PointVar {
-        field: FieldId,
-        var: crate::ir::VarId,
     },
     /// Point-set membership in the interval field: any element of the
     /// bound set lies in the interval (`Term::ParamSet` on an interval
@@ -240,7 +232,7 @@ pub enum FilterPredicate {
     /// verdict is Ray (`exec/verdict.rs`).
     DurationCompare {
         field: FieldId,
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         value: WordOrParam,
     },
     /// The same-atom measure comparison: `(end − start) <op> scalar`
@@ -250,7 +242,7 @@ pub enum FilterPredicate {
     /// [`FilterPredicate::DurationCompare`].
     DurationFieldsCompare {
         interval: FieldId,
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         scalar: FieldId,
     },
 }

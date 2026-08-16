@@ -6,11 +6,15 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 use super::{FreshMark, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Mints the next fresh value for a `Fresh`-generation field: reads
-    /// `Q` once per `(relation, field)` per transaction, then increments in
-    /// memory. A minted value that escapes to the host is burned even when
-    /// the transaction aborts (the escaped high-water flushes on every
-    /// abort path — `commit`'s reject/infra exits, and `Db::write`'s
+    /// Mints `count` consecutive fresh values for a `Fresh`-generation
+    /// field: reads `Q` once per `(relation, field)` per transaction, then
+    /// advances the in-memory mark by `count` in one step. Returns the
+    /// inclusive start of `[start, start + count)`. Empty is
+    /// [`crate::FreshRange::Empty`] at the API and never reaches here.
+    ///
+    /// A minted value that escapes to the host is burned even when the
+    /// transaction aborts (the escaped high-water flushes on every abort
+    /// path — `commit`'s reject/infra exits, and `Db::write`'s
     /// `EscapedIdBurn` drop guard for the closure region, which covers
     /// the `Err`-returning and the PANICKING closure alike): the
     /// generator never re-issues an id it handed out, the transaction's
@@ -19,20 +23,25 @@ impl WriteDelta<'_> {
     ///
     /// # Errors
     ///
-    /// `FreshExhausted` when the sequence reaches `u64::MAX`; `FactShape`
-    /// from the sequence init's generation check (the dyn boundary's
-    /// foreign-witness refusal — see [`WriteDelta::fresh_mark`]); `Lmdb`
-    /// on a failed `Q` read.
-    pub fn alloc(&mut self, view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
+    /// `FreshExhausted` when `start.checked_add(count)` overflows
+    /// `u64::MAX`; `FactShape` from the sequence init's generation check
+    /// (the dyn boundary's foreign-witness refusal — see
+    /// [`WriteDelta::fresh_mark`]); `Lmdb` on a failed `Q` read.
+    pub fn reserve(
+        &mut self,
+        view: &ReadTxn<'_>,
+        rel: RelationId,
+        field: FieldId,
+        count: std::num::NonZeroU64,
+    ) -> Result<u64> {
+        let count = count.get();
         let mark = self.fresh_mark(view, rel, field)?;
         let next = mark.next;
-        if next == u64::MAX {
-            return Err(Error::FreshExhausted {
-                relation: rel,
-                field,
-            });
-        }
-        mark.next = next + 1;
+        let end = next.checked_add(count).ok_or(Error::FreshExhausted {
+            relation: rel,
+            field,
+        })?;
+        mark.next = end;
         Ok(next)
     }
 
@@ -44,7 +53,7 @@ impl WriteDelta<'_> {
     /// (`70-api.md` § ETL): the schema-bound [`crate::FreshField`] makes
     /// a cross-schema witness a compile error, but `Db<SchemaDescriptor>`
     /// handles share one typestate, so another descriptor's witness can
-    /// reach `alloc` well-typed. The generation check here refuses it
+    /// reach `reserve` well-typed. The generation check here refuses it
     /// typed before any `Q` key is touched — priced once per
     /// `(relation, field)` per transaction beside the `Q` read it
     /// precedes, zero on the steady-state mint (an occupied mark exists

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::ir::{AggOp, ParamId};
+use crate::ir::ParamId;
 use crate::storage::dict;
 use bumbledb_theory::schema::{IntervalElement, StatementDescriptor};
 
@@ -400,10 +400,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     // Q(count()) :- Stay(owner = 2, span = [5, 10)) — the existence shape.
     let count_stay = |span: (u64, u64)| {
         Query::single(Rule {
-            finds: vec![FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            }],
+            finds: vec![FindTerm::Count],
             atoms: vec![Atom {
                 source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
@@ -497,10 +494,7 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: vec![

@@ -31,5 +31,5 @@ pub fn cross_schema_mint(
     let witness = away
         .fresh_field(bumbledb::RelationId(0), bumbledb::FieldId(0))
         .expect("fresh in its own schema");
-    home.write(|tx| tx.alloc_at(witness))
+    home.write(|tx| Ok(tx.reserve_at(witness, 1)?.start().expect("nonempty")))
 }

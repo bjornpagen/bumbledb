@@ -24,7 +24,8 @@ fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = Db::create(&dir, bumbledb::Theory::descriptor(super::Temporal)).expect("create");
     for (rel, rows) in super::corpus::rows_smoke(7) {
-        db.bulk_load_dyn(rel, rows).expect("bulk load");
+        db.write(|tx| tx.insert_dyn(rel, rows).map(|r| r.changed))
+            .expect("insert");
     }
     (db, dir)
 }

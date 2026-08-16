@@ -702,11 +702,11 @@ def pcInst : Instance := fun _ => fun f => f = linkFact
 
 /-- The parent-first deletion order. -/
 def parentFirst : List Txn.Op :=
-  [.delete parentRel linkFact, .delete childRel linkFact]
+  [.delete parentRel [linkFact], .delete childRel [linkFact]]
 
 /-- The child-first deletion order. -/
 def childFirst : List Txn.Op :=
-  [.delete childRel linkFact, .delete parentRel linkFact]
+  [.delete childRel [linkFact], .delete parentRel [linkFact]]
 
 /-- The two orders reach the SAME final state — deletion of distinct
 rows is commutative set algebra. -/
@@ -733,7 +733,7 @@ theorem per_op_final_holds :
 while the child survives — the transient orphan. -/
 theorem per_op_mid_violates :
     ¬ holds pcTheory
-      (Txn.applyOps pcInst [.delete parentRel linkFact]) := by
+      (Txn.applyOps pcInst [.delete parentRel [linkFact]]) := by
   intro h
   have hj := h pcStatement (List.mem_singleton.mpr rfl)
   obtain ⟨g, hg, -, -⟩ :=
@@ -756,7 +756,7 @@ theorem per_op_judgment_wrong :
     holds pcTheory (Txn.applyOps pcInst parentFirst) ∧
     Txn.applyOps pcInst parentFirst = Txn.applyOps pcInst childFirst ∧
     ¬ holds pcTheory
-      (Txn.applyOps pcInst [.delete parentRel linkFact]) :=
+      (Txn.applyOps pcInst [.delete parentRel [linkFact]]) :=
   ⟨per_op_final_holds, per_op_orders_agree, per_op_mid_violates⟩
 
 /-! ## The stale-but-sound countermodel (PRD 09)

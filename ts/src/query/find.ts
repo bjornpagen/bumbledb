@@ -24,19 +24,25 @@ import type { IntervalVarOk, NumericVarOk, OrderVarOk } from "#query/atom.ts"
 import type { AnyVar, Duration, MintSlotOf } from "#query/scope.ts"
 
 /** One aggregate operator name of the find vocabulary. */
-type AggOpName = "count" | "sum" | "min" | "max" | "pack"
+type FoldOpName = "sum" | "min" | "max" | "pack"
+type AggOpName = "count" | FoldOpName
+
+/** Nullary count: no `over` exists to inhabit. */
+interface CountAgg {
+	readonly agg: "count"
+}
 
 /**
- * One aggregate find VALUE: the op and the variable (or measure) it folds
- * BY REFERENCE. The variable's own descriptor types the result.
+ * One fold aggregate: the op and the variable (or measure) it folds
+ * BY REFERENCE. Count is [`CountAgg`], not this type with `undefined`.
  */
-interface Agg<Op extends AggOpName, Over extends AnyVar | Duration | undefined> {
+interface Agg<Op extends FoldOpName, Over extends AnyVar | Duration> {
 	readonly agg: Op
 	readonly over: Over
 }
 
 /** Any aggregate find value. */
-type AnyAgg = Agg<AggOpName, AnyVar | Duration | undefined>
+type AnyAgg = CountAgg | Agg<FoldOpName, AnyVar | Duration>
 
 /** One find entry: a projected variable, the measure, or an aggregate. */
 type FindEntry = AnyVar | Duration | AnyAgg
@@ -44,17 +50,14 @@ type FindEntry = AnyVar | Duration | AnyAgg
 /** The `find` record: column name → find entry. Keys ARE the answer columns. */
 type FindShape = Readonly<Record<string, FindEntry>>
 
-/** Builds one aggregate value. */
-function aggregate<Op extends AggOpName, Over extends AnyVar | Duration | undefined>(
-	op: Op,
-	over: Over
-): Agg<Op, Over> {
+/** Builds one fold aggregate value. */
+function aggregate<Op extends FoldOpName, Over extends AnyVar | Duration>(op: Op, over: Over): Agg<Op, Over> {
 	return Object.freeze({ agg: op, over })
 }
 
 /** Nullary count: |the group's set of distinct full bindings|, `bigint`. */
-function count(): Agg<"count", undefined> {
-	return aggregate("count", undefined)
+function count(): CountAgg {
+	return Object.freeze({ agg: "count" })
 }
 
 /**
@@ -119,7 +122,7 @@ type FindEntryOk<E> = E extends AnyVar
 	? true
 	: E extends Duration<infer V extends AnyVar>
 		? IntervalVarOk<V>
-		: E extends Agg<"count", undefined>
+		: E extends CountAgg
 			? true
 			: E extends Agg<"sum", infer O>
 				? SumOverOk<O>
@@ -151,7 +154,7 @@ type FindValue<E> = E extends AnyVar
 	? Infer<E["field"]>
 	: E extends Duration<AnyVar>
 		? bigint
-		: E extends Agg<"count", undefined>
+		: E extends CountAgg
 			? bigint
 			: E extends Agg<"sum" | "min" | "max", infer O>
 				? O extends AnyVar
@@ -179,10 +182,12 @@ export type {
 	AnyAgg,
 	CheckFind,
 	CheckRecFind,
+	CountAgg,
 	FindEntry,
 	FindEntryOk,
 	FindShape,
 	FindValue,
+	FoldOpName,
 	HeadRecordOf,
 	RowOfFind
 }

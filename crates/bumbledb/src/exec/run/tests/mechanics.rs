@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::WordCmp;
 
 #[test]
 fn dynamic_cover_prefers_the_forced_small_side() {
@@ -172,7 +173,7 @@ fn results_are_identical_across_batch_sizes() {
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
         vec![PlacedComparison {
-            op: CmpOp::Ne,
+            op: WordCmp::Ne,
             lhs: VarId(0),
             rhs: VarId(3),
         }],
@@ -393,7 +394,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
         vec![PlacedComparison {
-            op: CmpOp::Ne,
+            op: WordCmp::Ne,
             lhs: VarId(0),
             rhs: VarId(1),
         }],
@@ -442,7 +443,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
             occurrence(1, 1, &[(0, 0), (1, 1)]),
         ],
         vec![PlacedComparison {
-            op: CmpOp::Ne,
+            op: WordCmp::Ne,
             lhs: VarId(0),
             rhs: VarId(1),
         }],

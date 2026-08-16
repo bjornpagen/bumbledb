@@ -4,7 +4,7 @@
  * "DirectPass" | "JudgedPass" | "Failed">` — the name literal keeps two
  * same-shaped vocabularies distinct, 063), `Infer` yields the union as the
  * column's VALUE TYPE, and
- * every `Infer`-reading surface (`Fact`, `InsertFact`) sees it. A wrong
+ * every `Infer`-reading surface (`Fact`) sees it. A wrong
  * string is a COMPILE error (real `@ts-expect-error` fail-probes), and a
  * bigint is no longer assignable to a closed-referencing column. The
  * type-lie law's runtime twin: the precise type's carrier is the SAME
@@ -18,7 +18,7 @@ import { test } from "node:test"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
 import { type ClosedIdField, type ClosedRoster, type Infer, u64 } from "#fields.ts"
-import { type Fact, type InsertFact, relation } from "#relation.ts"
+import { type Fact, relation } from "#relation.ts"
 import { contained } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
@@ -42,10 +42,10 @@ const Certificate = relation("Certificate", {
 })
 
 /**
- * `InsertFact` ACCEPTS the handle spelled as its string literal — the ONE
+ * `Fact` ACCEPTS the handle spelled as its string literal — the ONE
  * spelling (used at runtime below so the claim carries its twin).
  */
-const wellTyped: InsertFact<typeof Certificate> = { student: 7n, kind: "DirectPass" }
+const wellTyped: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPass" }
 
 type Cases = [
 	// ——— Infer yields the exact handle union ———
@@ -54,11 +54,11 @@ type Cases = [
 	Expect<Equal<Fact<typeof Certificate>["kind"], "DirectPass" | "JudgedPass" | "Failed">>,
 	Expect<
 		Equal<
-			InsertFact<typeof Certificate>,
+			Fact<typeof Certificate>,
 			{
+				id: bigint
 				student: bigint
 				kind: "DirectPass" | "JudgedPass" | "Failed"
-				id?: bigint | undefined
 			}
 		>
 	>,
@@ -98,9 +98,9 @@ function sharedHandleAssignsAcrossVocabularies(shared: "DirectPass"): [Infer<typ
  */
 function insertRefusals(): unknown[] {
 	// @ts-expect-error — H1: "DirectPas" is a typo off the roster — a wrong string is a compile error
-	const typo: InsertFact<typeof Certificate> = { student: 7n, kind: "DirectPas" }
+	const typo: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPas" }
 	// @ts-expect-error — H1: a bigint no longer types a closed-referencing column — the value type is the handle union
-	const forgedId: InsertFact<typeof Certificate> = { student: 7n, kind: 0n }
+	const forgedId: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: 0n }
 	return [typo, forgedId]
 }
 

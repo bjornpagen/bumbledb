@@ -80,7 +80,7 @@ use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
 use bumbledb::{
-    AggOp, Answers, Atom, AtomSource, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
+    Answers, Atom, AtomSource, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Scale, mix};
@@ -295,8 +295,8 @@ pub fn probe_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -325,8 +325,8 @@ pub fn probe_query() -> Query {
 pub fn stream_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(1)),
+            op: FoldOp::Sum,
+            over: VarId(1),
         }],
         atoms: vec![Atom {
             source: AtomSource::Edb(ids::SPOKE),
@@ -476,8 +476,11 @@ pub fn load_stores(
     let sizes = DispSizes::of(cfg.scale);
     let db = mode.create(&dir.join("db"), DisplacedWorld)?;
     for rel in [ids::HUB, ids::SPOKE] {
-        db.bulk_load_dyn(rel, relation_rows(sizes, cfg.seed, rel))
-            .map_err(|e| format!("load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(sizes, cfg.seed, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("load: {e:?}"))?;
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;
@@ -529,7 +532,7 @@ pub fn verify_family(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let mut stmt = conn
         .prepare(&translated.sql)
@@ -660,7 +663,7 @@ pub fn bench_families(
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect();
         let mut mirror = sqlite_run::PreparedFamily::new(&conn, &translated, types)?;
         let mut cursor = 0usize;

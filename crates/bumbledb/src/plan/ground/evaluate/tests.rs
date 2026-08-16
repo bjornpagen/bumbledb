@@ -10,6 +10,7 @@ use crate::image::view::{
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value};
+use crate::ir::{CmpOp, OrderCmp, WordCmp};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -170,7 +171,7 @@ fn attached_sets(normalized: &NormalizedQuery, idx: usize) -> Vec<Vec<u64>> {
         .iter()
         .filter_map(|filter| match filter {
             FilterPredicate::Compare {
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::WordSet(words),
                 ..
             } => Some(words.clone()),
@@ -323,12 +324,12 @@ fn assert_parse(filter: FilterPredicate, expected: Option<ResolvableFilter>) {
 fn assert_word_and_field_compares_parse() {
     let f = FieldId(1);
     for op in [
-        CmpOp::Eq,
-        CmpOp::Ne,
-        CmpOp::Lt,
-        CmpOp::Le,
-        CmpOp::Gt,
-        CmpOp::Ge,
+        WordCmp::Eq,
+        WordCmp::Ne,
+        WordCmp::Lt,
+        WordCmp::Le,
+        WordCmp::Gt,
+        WordCmp::Ge,
     ] {
         assert_parse(
             FilterPredicate::Compare {
@@ -359,7 +360,7 @@ fn assert_word_and_field_compares_parse() {
 
 fn assert_wide_compares_parse() {
     let f = FieldId(1);
-    for op in [CmpOp::Eq, CmpOp::Ne] {
+    for op in [WordCmp::Eq, WordCmp::Ne] {
         assert_parse(
             FilterPredicate::Compare {
                 field: f,
@@ -375,11 +376,11 @@ fn assert_wide_compares_parse() {
         let words = Box::new([3u64, 5]);
         let bytes: Box<[u8]> = words.iter().flat_map(|word| word.to_be_bytes()).collect();
         let expected_words = match op {
-            CmpOp::Eq => ResolvableFilter::BytesEq {
+            WordCmp::Eq => ResolvableFilter::BytesEq {
                 field: f,
                 bytes: bytes.clone(),
             },
-            CmpOp::Ne => ResolvableFilter::BytesNe {
+            WordCmp::Ne => ResolvableFilter::BytesNe {
                 field: f,
                 bytes: bytes.clone(),
             },
@@ -398,11 +399,11 @@ fn assert_wide_compares_parse() {
         interval_bytes.extend_from_slice(&9u64.to_be_bytes());
         let interval = interval_bytes.into_boxed_slice();
         let expected_interval = match op {
-            CmpOp::Eq => ResolvableFilter::BytesEq {
+            WordCmp::Eq => ResolvableFilter::BytesEq {
                 field: f,
                 bytes: interval.clone(),
             },
-            CmpOp::Ne => ResolvableFilter::BytesNe {
+            WordCmp::Ne => ResolvableFilter::BytesNe {
                 field: f,
                 bytes: interval.clone(),
             },
@@ -420,7 +421,7 @@ fn assert_wide_compares_parse() {
     assert_parse(
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 2]),
         },
         Some(ResolvableFilter::WordSetEq {
@@ -488,61 +489,43 @@ fn assert_structured_filters_parse() {
 
 fn assert_compare_refusals() {
     let f = FieldId(1);
-    let allen_op = CmpOp::Allen {
-        mask: AllenMask::BEFORE,
-    };
     for filter in [
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Ne,
+            op: WordCmp::Ne,
             value: Const::WordSet(vec![1, 2]),
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Byte(1),
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Words(Box::new([1, 2])),
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Interval { start: 2, end: 9 },
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Param(crate::ir::ParamId(0)),
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::ParamSet(crate::ir::ParamId(0)),
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::PendingIntern {
                 bytes: Box::from(&b"x"[..]),
             },
-        },
-        FilterPredicate::Compare {
-            field: f,
-            op: allen_op,
-            value: Const::Word(1),
-        },
-        FilterPredicate::Compare {
-            field: f,
-            op: CmpOp::PointIn,
-            value: Const::Word(1),
-        },
-        FilterPredicate::FieldsCompare {
-            left: f,
-            right: FieldId(2),
-            op: allen_op,
         },
     ] {
         assert_parse(filter, None);
@@ -555,10 +538,6 @@ fn assert_other_refusals() {
         FilterPredicate::PointIn {
             field: f,
             point: ViewWordSource::Param(crate::ir::ParamId(0)),
-        },
-        FilterPredicate::PointVar {
-            field: f,
-            var: VarId(0),
         },
         FilterPredicate::AnyPointIn {
             field: f,
@@ -575,12 +554,12 @@ fn assert_other_refusals() {
         },
         FilterPredicate::DurationCompare {
             field: f,
-            op: CmpOp::Ge,
+            op: OrderCmp::Ge,
             value: WordOrParam::Word(2),
         },
         FilterPredicate::DurationFieldsCompare {
             interval: f,
-            op: CmpOp::Ge,
+            op: OrderCmp::Ge,
             scalar: FieldId(2),
         },
     ] {
@@ -599,7 +578,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             RelationId(KIND),
             vec![FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::Word(20),
             }],
             vec![1, 2],
@@ -608,7 +587,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             RelationId(KIND),
             vec![FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Ge,
+                op: WordCmp::Ge,
                 value: Const::Word(20),
             }],
             vec![1, 2, 3],
@@ -617,7 +596,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             RelationId(KIND),
             vec![FilterPredicate::Compare {
                 field: FieldId(0),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::WordSet(vec![0, 3]),
             }],
             vec![0, 3],
@@ -875,8 +854,11 @@ fn multi_rule_queries_fold_per_rule_independently() {
     };
     // Q1 spelling: `Query::single` constructs `Cq` (no rec). Two-rule
     // CQ via the public rules list — engine owns `ir.rs` field vis.
-    let mut query = Query::single(fold_rule);
-    query.rules_mut().push(refusing_rule);
+    let query = Query::Cq {
+        interiors: vec![],
+        head: fold_rule.head(),
+        rules: vec![fold_rule, refusing_rule],
+    };
     let witness = validate(&schema, &query).expect("valid fixture query");
     let mut rules = normalize_rules(&schema, &[], witness.rules());
     for (idx, rule) in rules.iter_mut().enumerate() {
@@ -998,7 +980,7 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
     let relation = RelationId(KIND);
     let eq_id = |value: Const| FilterPredicate::Compare {
         field: FieldId(0),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value,
     };
     assert_eq!(
@@ -1020,7 +1002,7 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
             relation,
             &[FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::Word(20),
             }]
         ),

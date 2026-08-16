@@ -75,7 +75,7 @@ typedef enum bdb_error_kind {
   BDB_ERROR_KIND_FACT_SHAPE,
   BDB_ERROR_KIND_CLOSED_RELATION_WRITE,
   BDB_ERROR_KIND_FRESH_EXHAUSTED,
-  BDB_ERROR_KIND_BULK_LOAD,
+  BDB_ERROR_KIND_TRANSACTION_POISONED,
   BDB_ERROR_KIND_PARAM,
   BDB_ERROR_KIND_MEASURE_OF_RAY,
   BDB_ERROR_KIND_CAPACITY_RAY_MEASURE,
@@ -280,6 +280,8 @@ typedef struct bdb_prepared bdb_prepared;
 // The owned row carrier for scans and point reads: engine values copied
 // out whole (one crossing), decoded cell by cell on the host. Views handed
 // out by [`bdb_row_set_get`] borrow this carrier and die with it.
+// Arity is a property of the set (the relation's width), not of a row
+// index — inbound collections are already rectangular.
 typedef struct bdb_row_set bdb_row_set;
 
 // A borrowed snapshot capability, valid ONLY inside the read callback it
@@ -291,7 +293,7 @@ typedef struct bdb_snapshot_ref bdb_snapshot_ref;
 
 // A borrowed write-transaction capability, valid ONLY inside the write
 // callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
-// its engine pointer so `bdb_tx_alloc` can resolve fresh fields without
+// its engine pointer so `bdb_tx_reserve` can resolve fresh fields without
 // a second handle argument. `in_op` makes `transaction()` exclusive
 // across threads for the duration of one `bdb_tx_*` entry.
 typedef struct bdb_tx_ref bdb_tx_ref;
@@ -490,12 +492,20 @@ typedef uint32_t (*bdb_read_callback)(void *context, const struct bdb_snapshot_r
 // saw a fact. Direct invoke as [`bdb_read_callback`].
 typedef uint32_t (*bdb_write_callback)(void *context, struct bdb_tx_ref *transaction);
 
-// One borrowed bulk-import row: `value_count` tagged values in
-// declaration order.
-typedef struct bdb_row_view {
-  const struct bdb_value *values;
-  size_t value_count;
-} bdb_row_view;
+// Facts consumed vs facts that changed the in-memory final-state view.
+typedef struct bdb_mutation_report {
+  uint64_t submitted;
+  uint64_t changed;
+} bdb_mutation_report;
+
+// Wire encoding of a fresh-id range from one `bdb_tx_reserve`.
+// Empty is `{ start: 0, end_exclusive: 0 }` **at this boundary only** —
+// `start` is not a minted id when `start == end_exclusive`. Hosts must
+// not treat 0 as minted on empty (0 is also the first legal minted id).
+typedef struct bdb_fresh_range {
+  uint64_t start;
+  uint64_t end_exclusive;
+} bdb_fresh_range;
 
 // One rendered violation of a rejected commit, viewed: the statement's
 // fingerprint-pinned id, its form tag, its canonical spelling (borrowed
@@ -656,8 +666,8 @@ extern "C" {
 // bridge's `engine_version` as a C string the host can print.
 const char *bdb_version(void);
 
-// C ABI generation. `1` is this extraction (flattened tagged structs,
-// no C++ trampoline). Bump on a layout-visible change.
+// C ABI generation. `2` is collection-valued insert/delete and `reserve`.
+// Bump on a layout-visible change.
 uint32_t bdb_abi_version(void);
 
 // Mints an empty answers carrier (never fails; owns nothing yet).
@@ -770,24 +780,27 @@ enum bdb_status bdb_db_write_from(const struct bdb_db *db,
                                   void *context,
                                   struct bdb_error **out_error);
 
-// Records an insert into the delta; `out_changed` = whether the final
-// state changed. Values are the relation's sealed fields in declaration
-// order; shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` — nothing is
-// judged until commit.
+// Records a collection of inserts into the delta. `values` is
+// `row_count × value_count` cells in row-major order (`value_count` is
+// the relation arity). `row_count == 0` is lawful and does not read
+// `values`. Shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` —
+// the whole collection is checked before any row enters the delta.
 enum bdb_status bdb_tx_insert(const struct bdb_tx_ref *transaction,
                               uint32_t relation,
                               const struct bdb_value *values,
                               size_t value_count,
-                              bool *out_changed,
+                              size_t row_count,
+                              struct bdb_mutation_report *out_report,
                               struct bdb_error **out_error);
 
-// Records a delete into the delta; `out_changed` = whether the final
-// state changed.
+// Records a collection of deletes into the delta. Layout as
+// [`bdb_tx_insert`].
 enum bdb_status bdb_tx_delete(const struct bdb_tx_ref *transaction,
                               uint32_t relation,
                               const struct bdb_value *values,
                               size_t value_count,
-                              bool *out_changed,
+                              size_t row_count,
+                              struct bdb_mutation_report *out_report,
                               struct bdb_error **out_error);
 
 // Final-state membership (base + pending delta — the view the commit
@@ -810,16 +823,18 @@ enum bdb_status bdb_tx_get(const struct bdb_tx_ref *transaction,
                            struct bdb_row_set **out_row,
                            struct bdb_error **out_error);
 
-// Mints the next fresh value for `(relation, field)` — resolve-once,
-// mint-per-row is the engine's own split (`Db::fresh_field` +
-// `WriteTx::alloc_at`); the bridge re-resolves per call because the C
-// surface carries no witness type (ids at this surface are data; a
-// mis-aimed pair is typed `BDB_ERROR_KIND_FACT_SHAPE`).
-enum bdb_status bdb_tx_alloc(const struct bdb_tx_ref *transaction,
-                             uint32_t relation,
-                             uint16_t field,
-                             uint64_t *out_id,
-                             struct bdb_error **out_error);
+// Mints `count` consecutive fresh values for `(relation, field)`.
+// `count == 0` is the empty wire range `{0, 0}` and does not read or
+// advance the sequence — `start` is not a minted id on empty. The bridge
+// re-resolves the field per call because the C surface carries no witness
+// type (ids at this surface are data; a mis-aimed pair is typed
+// `BDB_ERROR_KIND_FACT_SHAPE`).
+enum bdb_status bdb_tx_reserve(const struct bdb_tx_ref *transaction,
+                               uint32_t relation,
+                               uint16_t field,
+                               uint64_t count,
+                               struct bdb_fresh_range *out_range,
+                               struct bdb_error **out_error);
 
 // Committed-state membership of one dynamic fact (sealed field order).
 enum bdb_status bdb_snapshot_contains(const struct bdb_snapshot_ref *snapshot,
@@ -848,25 +863,12 @@ enum bdb_status bdb_snapshot_scan(const struct bdb_snapshot_ref *snapshot,
                                   struct bdb_row_set **out_rows,
                                   struct bdb_error **out_error);
 
-// Bulk import (`Db::bulk_load_dyn`): atomic 4096-row chunks; prior
-// chunks stay committed on failure — `out_committed` always carries the
-// durable count (§24), and a failure is `BDB_ERROR_KIND_BULK_LOAD` (the same
-// count readable via `bdb_error_get_bulk_committed`, the underlying
-// cause in the message). The importer owns dependency ordering: a
-// bidirectional statement cluster must land within one chunk.
-enum bdb_status bdb_db_bulk_load(const struct bdb_db *db,
-                                 uint32_t relation,
-                                 const struct bdb_row_view *rows,
-                                 size_t row_count,
-                                 uint64_t *out_committed,
-                                 struct bdb_error **out_error);
-
 // Number of rows.
 size_t bdb_row_set_len(const struct bdb_row_set *rows);
 
-// The row's cell count (sealed field order — every row of one scan has
-// the relation's arity).
-size_t bdb_row_set_arity(const struct bdb_row_set *rows, size_t row);
+// The set's cell count (sealed field order — one width for the
+// relation, not per row). Empty sets answer 0.
+size_t bdb_row_set_arity(const struct bdb_row_set *rows);
 
 // One cell, viewed — string/bytes payloads BORROW the row set and die
 // with it. Bounds-checked: `BDB_STATUS_MISUSE` out of range.
@@ -894,12 +896,6 @@ enum bdb_status bdb_error_get_message(const struct bdb_error *error,
 enum bdb_status bdb_error_get_generation_moved(const struct bdb_error *error,
                                                uint64_t *out_witnessed,
                                                uint64_t *out_current);
-
-// The `BulkLoad` payload: facts durable in the chunks committed before
-// the failure. `BDB_STATUS_MISUSE` when the error is
-// not `BDB_ERROR_KIND_BULK_LOAD`.
-enum bdb_status bdb_error_get_bulk_committed(const struct bdb_error *error,
-                                             uint64_t *out_committed);
 
 // The rendered violation count of a `BDB_ERROR_KIND_COMMIT_REJECTED` error
 // (0 for every other kind, and for a null handle).

@@ -47,16 +47,20 @@ where
 /// The canonical cold touch: commits one `Org` fact whose name carries
 /// the fresh id under the `__touch_` prefix — distinct forever (fresh ids
 /// never repeat) and disjoint from every corpus name (`org-NN`).
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn org_touch(
     db: &bumbledb::Db<crate::schema::Ledger>,
 ) -> impl FnMut() -> Result<(), String> + '_ {
     move || {
         db.write(|tx| {
-            let id: crate::schema::OrgId = tx.alloc()?;
-            tx.insert(&crate::schema::Org {
+            let id: crate::schema::OrgId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&crate::schema::Org {
                 id: crate::schema::OrgId(id.0),
                 name: &format!("__touch_{}", id.0),
-            })
+            }])
         })
         .map(|_| ())
         .map_err(|e| format!("cold touch: {e:?}"))

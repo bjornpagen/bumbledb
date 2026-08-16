@@ -26,7 +26,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import { duration, ref, weigh, within } from "#capacity.ts"
 import { closed } from "#closed.ts"
 import { Db } from "#db.ts"
@@ -38,6 +37,7 @@ import { native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { type AnySchema, schema } from "#schema.ts"
 import { capacity, contained, key, mirrors, renderStatement, type Statement } from "#statements.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-render-golden-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -331,12 +331,12 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 		assert.ok(certificate, "the manifest names Certificate")
 
 		const passing = native.dbWriteBegin(handle)
-		assert.equal(native.txInsert(passing, certificate.id, [1n, 1n]), true)
+		assert.deepEqual(native.txInsert(passing, certificate.id, [[1n, 1n]]), { submitted: 1n, changed: 1n })
 		const landed = native.txCommit(passing)
 		assert.ok(landed.ok, "a certificate over a ψ-member grade commits")
 
 		const violating = native.dbWriteBegin(handle)
-		assert.equal(native.txInsert(violating, certificate.id, [2n, 0n]), true)
+		assert.deepEqual(native.txInsert(violating, certificate.id, [[2n, 0n]]), { submitted: 1n, changed: 1n })
 		const rejected = native.txCommit(violating)
 		assert.ok(!rejected.ok, "a certificate over a non-member grade is rejected")
 		assert.equal(rejected.violations.length, 1, "exactly the ψ containment is violated")
@@ -354,7 +354,7 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 	test("Db.create accepts the ψ theory and the violation IS the statement value", async function psiDbRuntime() {
 		const masteryDb = await Db.create(psiDbDir, Mastery)
 		const rejected = masteryDb.write(function violate(tx) {
-			tx.insert(Certificate, { grade: "Failed" })
+			put(tx, Certificate, { grade: "Failed" })
 		})
 		assert.ok(!rejected.ok, "the ψ containment rejects the non-member grade")
 		assert.equal(rejected.violations.length, 1)

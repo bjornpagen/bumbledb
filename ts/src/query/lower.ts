@@ -772,7 +772,7 @@ function advanceInterior(
 }
 
 /** Narrows a find entry to an aggregate value. */
-function isAggregateEntry(value: unknown): value is { readonly agg: string; readonly over: unknown } {
+function isAggregateEntry(value: unknown): value is { readonly agg: string; readonly over?: unknown } {
 	return typeof value === "object" && value !== null && "agg" in value
 }
 
@@ -785,11 +785,12 @@ function asVarTerm(context: string, value: unknown): AnyVar {
 }
 
 /** Classifies one aggregate find entry into its runtime data (variables ride by reference). */
-function aggDataOf(name: string, entry: { readonly agg: string; readonly over: unknown }): AggData {
+function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: unknown }): AggData {
+	if (entry.agg === "count") {
+		return Object.freeze({ op: "count" as const })
+	}
 	const over = entry.over
 	switch (entry.agg) {
-		case "count":
-			return Object.freeze({ op: "count" as const })
 		case "sum":
 		case "min":
 		case "max": {
@@ -2051,7 +2052,7 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	const agg = entry.agg
 	switch (agg.op) {
 		case "count":
-			return { kind: "aggregate", op: { kind: "count" } }
+			return { kind: "count" }
 		case "fold": {
 			if ("duration" in agg.over) {
 				return { kind: "aggregateMeasure", op: { kind: agg.fold }, over: ids.of(agg.over.duration) }
@@ -2059,7 +2060,7 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 			return { kind: "aggregate", op: { kind: agg.fold }, over: ids.of(agg.over) }
 		}
 		case "pack":
-			return { kind: "aggregate", op: { kind: "pack" }, over: ids.of(agg.over) }
+			return { kind: "pack", over: ids.of(agg.over) }
 	}
 }
 

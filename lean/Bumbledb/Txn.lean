@@ -59,8 +59,8 @@ critical section (the `api/db/write.rs::GenerationMoved` return) is
 * `Snapshot.read` — `api/db/snapshot.rs`: every read runs against one
   parked read transaction, one generation.
 * `scanLoad` — cookbook recipe 28 (migration is ETL): `Snapshot::scan`
-  exports under one generation, the host transforms, `bulk_load`
-  imports under the new theory's ordinary final-state judgment.
+  exports under one generation, the host transforms, `Db::write` +
+  `insert` imports under the new theory's ordinary final-state judgment.
 
 ## The two-phase judge (the F2 alignment — deliberate behavior, modeled)
 
@@ -107,16 +107,14 @@ when a key fails, and both the engine and the naive model preempt
   `ForeignSnapshot` environment-identity check and the writer mutex
   are mechanism outside the model.
 * **`scanLoad` bulk-judges the transformed instance as ONE final
-  state.** `bulk_load`'s 4096-fact chunking is the engine
-  **operationalization**, not the same atomic judgment: a chunked
-  load is a SEQUENCE of ordinary commits, each judged
-  (`committed_states_model` covers every prefix), which is exactly why
-  recipe 28's first law — load containment targets first — is
-  host-facing: an early chunk is judged before later chunks land.
-  Recipe 28's second law (fresh identity survives, the mint catches
-  up) is id-allocation mechanism, not modeled; the third law is
-  `etl_lands_valid`. Do not treat `scanLoad` as `bulk_load`'s API
-  contract.
+  state.** A host that splits a load across several `Db::write`s is
+  a SEQUENCE of ordinary commits, each judged
+  (`committed_states_model` covers every prefix) — that loop is not
+  an API. Recipe 28's first law — load containment targets first —
+  is host-facing when the host chunks its own writes. Recipe 28's
+  second law (fresh identity survives, the mint catches up) is
+  id-allocation mechanism, not modeled; the third law is
+  `etl_lands_valid`.
 * **Engine-only query resource errors.** `Error::Overflow(OriginCapacity)`
   and `Error::ResultBytesOverflow` abort a well-typed query whose Lean
   denotation is still a finite tuple set. They are representation
@@ -177,22 +175,65 @@ def apply {T : Theory} (s : State T) (d : Delta) : Instance :=
 
 /-- One write operation. A LIST of these carries an order — which is
 exactly the thing `Delta` cannot represent and `judge`'s signature
-cannot read. -/
+cannot read. Insert and delete take a collection of facts; the
+singleton is `fs = [f]`, the empty collection is a no-op. -/
 inductive Op where
-  /-- Establish fact `f` in relation `R`. -/
-  | insert (R : RelId) (f : Fact)
-  /-- Disestablish fact `f` from relation `R`. -/
-  | delete (R : RelId) (f : Fact)
+  /-- Establish the facts `fs` in relation `R`. -/
+  | insert (R : RelId) (fs : List Fact)
+  /-- Disestablish the facts `fs` from relation `R`. -/
+  | delete (R : RelId) (fs : List Fact)
+
+/-- Sequential insert of every fact in `fs` into `R`. Empty is a no-op. -/
+def insertFacts (R : RelId) : List Fact → Instance → Instance
+  | [], I => I
+  | f :: fs, I => insertFacts R fs (fun R' g => g ∈ I R' ∨ (R' = R ∧ g = f))
+
+/-- Sequential delete of every fact in `fs` from `R`. Empty is a no-op. -/
+def deleteFacts (R : RelId) : List Fact → Instance → Instance
+  | [], I => I
+  | f :: fs, I => deleteFacts R fs (fun R' g => g ∈ I R' ∧ ¬(R' = R ∧ g = f))
 
 /-- One operation's effect on an instance. -/
 def Op.apply : Op → Instance → Instance
-  | .insert R f, I => fun R' g => g ∈ I R' ∨ (R' = R ∧ g = f)
-  | .delete R f, I => fun R' g => g ∈ I R' ∧ ¬(R' = R ∧ g = f)
+  | .insert R fs, I => insertFacts R fs I
+  | .delete R fs, I => deleteFacts R fs I
 
 /-- A whole op sequence's effect, applied in order. -/
 def applyOps (I : Instance) : List Op → Instance
   | [] => I
   | op :: rest => applyOps (op.apply I) rest
+
+/-- A collection insert is the fold of singleton inserts. -/
+theorem insert_is_fold (I : Instance) (R : RelId) (fs : List Fact) :
+    applyOps I [.insert R fs] =
+      applyOps I (fs.map fun f => .insert R [f]) := by
+  induction fs generalizing I with
+  | nil => rfl
+  | cons f fs ih =>
+    calc
+      applyOps I [.insert R (f :: fs)]
+          = insertFacts R (f :: fs) I := rfl
+      _ = insertFacts R fs ((Op.insert R [f]).apply I) := rfl
+      _ = applyOps ((Op.insert R [f]).apply I) [.insert R fs] := rfl
+      _ = applyOps ((Op.insert R [f]).apply I)
+            (fs.map fun x => .insert R [x]) := ih _
+      _ = applyOps I (.insert R [f] :: fs.map fun x => .insert R [x]) := rfl
+
+/-- A collection delete is the fold of singleton deletes. -/
+theorem delete_is_fold (I : Instance) (R : RelId) (fs : List Fact) :
+    applyOps I [.delete R fs] =
+      applyOps I (fs.map fun f => .delete R [f]) := by
+  induction fs generalizing I with
+  | nil => rfl
+  | cons f fs ih =>
+    calc
+      applyOps I [.delete R (f :: fs)]
+          = deleteFacts R (f :: fs) I := rfl
+      _ = deleteFacts R fs ((Op.delete R [f]).apply I) := rfl
+      _ = applyOps ((Op.delete R [f]).apply I) [.delete R fs] := rfl
+      _ = applyOps ((Op.delete R [f]).apply I)
+            (fs.map fun x => .delete R [x]) := ih _
+      _ = applyOps I (.delete R [f] :: fs.map fun x => .delete R [x]) := rfl
 
 /-! ## The complete violation set and its two phases -/
 
@@ -692,11 +733,10 @@ theorem transform_id (I : Instance) : transform some I = I := by
 
 /-- The ETL loop, abstractly (`scanLoad`): export every fact of the
 source state, transform, bulk-judge the whole load under the TARGET
-theory — one final-state judgment (the chunking narrowing is in the
-module doc). Bridge: recipe 28 — `Snapshot::scan` under one
-generation, the host transform, `bulk_load` into the new store; the
-fingerprint refusal (`SchemaMismatch`) is what forces this loop to be
-the only migration. -/
+theory — one final-state judgment. Bridge: recipe 28 — `Snapshot::scan`
+under one generation, the host transform, `Db::write` + `insert` into
+the new store; the fingerprint refusal (`SchemaMismatch`) is what
+forces this loop to be the only migration. -/
 noncomputable def scanLoad {T : Theory} (s : State T) (T' : Theory)
     (t : Fact → Option Fact) : Result (State T') (Set Statement) :=
   judge T' (transform t s.inst)

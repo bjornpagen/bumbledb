@@ -30,7 +30,6 @@ import * as os from "node:os"
 import * as path from "node:path"
 import process from "node:process"
 import { after, describe, test } from "node:test"
-
 import type { Infer, Schema, SchemaRelations } from "#index.ts"
 import {
 	ALLEN,
@@ -65,6 +64,7 @@ import {
 	within
 } from "#index.ts"
 import { native } from "#native.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cookbook-"))
 
@@ -823,9 +823,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			}
 			return db.writeFrom(snap, function claim(tx) {
 				for (const row of queued) {
-					tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
-					tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
-					tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
+					tx.delete(Job, [{ id: row.id, state: "Queued", payload: row.payload }])
+					put(tx, Job, { id: row.id, state: "Running", payload: row.payload })
+					put(tx, Lease, { job: row.id, worker: 7n, until: 60n })
 				}
 				return undefined
 			})
@@ -976,12 +976,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const minted: { root?: bigint; mid?: bigint; leaf?: bigint } = {}
 		const seededForest = db.write(function seed(tx) {
-			minted.root = tx.insert(Node, { name: "root" }).id
-			minted.mid = tx.insert(Node, { name: "mid" }).id
-			minted.leaf = tx.insert(Node, { name: "leaf" }).id
-			tx.insert(Node, { name: "lone" })
-			tx.insert(Parent, { child: must(minted.mid), parent: must(minted.root) })
-			tx.insert(Parent, { child: must(minted.leaf), parent: must(minted.mid) })
+			minted.root = put(tx, Node, { name: "root" }).id
+			minted.mid = put(tx, Node, { name: "mid" }).id
+			minted.leaf = put(tx, Node, { name: "leaf" }).id
+			put(tx, Node, { name: "lone" })
+			put(tx, Parent, { child: must(minted.mid), parent: must(minted.root) })
+			put(tx, Parent, { child: must(minted.leaf), parent: must(minted.mid) })
 		})
 		assert.ok(seededForest.ok, "the three-level forest lands")
 		const root = must(minted.root)
@@ -1176,8 +1176,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const minted: { grp?: bigint; course?: bigint } = {}
 		const seeded = db.write(function seed(tx) {
-			const g = tx.insert(Grp, { label: "algebra" })
-			const p = tx.insert(Course, { grp: g.id, title: "linear equations" })
+			const g = put(tx, Grp, { label: "algebra" })
+			const p = put(tx, Course, { grp: g.id, title: "linear equations" })
 			minted.grp = g.id
 			minted.course = p.id
 		})
@@ -1208,8 +1208,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// tx.get — the write transaction answers the FINAL state
 		// (read-your-writes), through the key statement and the primary form:
 		const mutated = db.write(function mutate(tx) {
-			const g = tx.insert(Grp, { label: "geometry" })
-			const p = tx.insert(Course, { grp: g.id, title: "proofs" })
+			const g = put(tx, Grp, { label: "geometry" })
+			const p = put(tx, Course, { grp: g.id, title: "proofs" })
 			const pending = tx.get(Course, courseGrpKey, { grp: g.id })
 			assert.ok(pending, "the pending insert answers through the declared key")
 			assert.equal(pending.id, p.id)

@@ -55,6 +55,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), *v)).collect(),
         filters: vec![],
+        point_vars: vec![],
     }
 }
 

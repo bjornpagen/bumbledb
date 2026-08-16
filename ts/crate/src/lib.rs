@@ -56,11 +56,11 @@ use std::thread::JoinHandle;
 
 use bumbledb::schema::{SpecIssue, StatementDescriptor};
 use bumbledb::{
-    Answers, BindValue, Db, Error, Exhumed, FieldId, ParamArg, PreparedQuery, RelationId,
-    SchemaDescriptor, Snapshot, StatementId, Theory, Value, Violations, Witness, WriteTx, exhume,
-    render_rejection,
+    Answers, BindValue, Db, Error, Exhumed, FieldId, FreshRange, ParamArg, PreparedQuery,
+    RelationId, SchemaDescriptor, Snapshot, StatementId, Theory, Value, Violations, Witness,
+    WriteTx, exhume, render_rejection,
 };
-use napi::bindgen_prelude::{Array, External, Object, ToNapiValue};
+use napi::bindgen_prelude::{Array, BigInt, External, Object, ToNapiValue};
 use napi::sys;
 use napi_derive::napi;
 
@@ -884,13 +884,19 @@ pub fn snapshot_get(
 // ---------------------------------------------------------------------------
 
 enum TxReq {
-    Insert(RelationId, Vec<Value>),
-    Delete(RelationId, Vec<Value>),
+    Insert(RelationId, Vec<Vec<Value>>),
+    Delete(RelationId, Vec<Vec<Value>>),
     Contains(RelationId, Vec<Value>),
     Get(RelationId, StatementId, Vec<Value>),
-    Alloc(RelationId, FieldId),
+    Reserve(RelationId, FieldId, u64),
     Commit,
     Abort,
+}
+
+/// Engine fresh range parsed at the worker: empty cannot yield a start.
+enum RangeWire {
+    Empty,
+    NonEmpty { start: u64, end_exclusive: u64 },
 }
 
 enum TxReply {
@@ -898,8 +904,9 @@ enum TxReply {
     BeginMoved { witnessed: u64, current: u64 },
     BeginFailed(WireError),
     Flag(Result<bool, WireError>),
+    Report(Result<(u64, u64), WireError>),
     Row(Result<Option<Vec<Value>>, WireError>),
-    Minted(Result<u64, WireError>),
+    Range(Result<RangeWire, WireError>),
     Committed(Result<u64, WireError>),
     Rejected(Vec<ViolationWire>),
     Aborted,
@@ -978,24 +985,36 @@ fn run_tx(
                 return Err(abort_sentinel());
             };
             let reply = match req {
-                TxReq::Insert(relation, values) => {
-                    TxReply::Flag(tx.insert_dyn(relation, &values).map_err(|e| wire(&e)))
-                }
-                TxReq::Delete(relation, values) => {
-                    TxReply::Flag(tx.delete_dyn(relation, &values).map_err(|e| wire(&e)))
-                }
+                TxReq::Insert(relation, rows) => TxReply::Report(
+                    tx.insert_dyn(relation, rows)
+                        .map(|r| (r.submitted, r.changed))
+                        .map_err(|e| wire(&e)),
+                ),
+                TxReq::Delete(relation, rows) => TxReply::Report(
+                    tx.delete_dyn(relation, rows)
+                        .map(|r| (r.submitted, r.changed))
+                        .map_err(|e| wire(&e)),
+                ),
                 TxReq::Contains(relation, values) => {
                     TxReply::Flag(tx.contains_dyn(relation, &values).map_err(|e| wire(&e)))
                 }
                 TxReq::Get(relation, key, values) => {
                     TxReply::Row(tx.get_dyn(relation, key, &values).map_err(|e| wire(&e)))
                 }
-                TxReq::Alloc(relation, field) => {
-                    let minted = db
+                TxReq::Reserve(relation, field, count) => {
+                    let range = db
                         .fresh_field(relation, field)
                         .map_err(Error::FactShape)
-                        .and_then(|witness| tx.alloc_at(witness));
-                    TxReply::Minted(minted.map_err(|e| wire(&e)))
+                        .and_then(|witness| {
+                            tx.reserve_at(witness, count).map(|range| match range {
+                                FreshRange::Empty => RangeWire::Empty,
+                                FreshRange::NonEmpty { start, count } => RangeWire::NonEmpty {
+                                    start,
+                                    end_exclusive: start + count.get(),
+                                },
+                            })
+                        });
+                    TxReply::Range(range.map_err(|e| wire(&e)))
                 }
                 TxReq::Commit => {
                     ending = TxEnding::Commit;
@@ -1166,10 +1185,31 @@ fn tx_flag(tx: &External<TxHandle>, req: TxReq) -> napi::Result<bool> {
     reply!(worker.call(req)?, TxReply::Flag, "transaction")
 }
 
-/// The one row-verb body the three flag verbs share: marshal the row
+fn tx_report(
+    tx: &External<TxHandle>,
+    relation: u32,
+    rows: &Array,
+    req: fn(RelationId, Vec<Vec<Value>>) -> TxReq,
+) -> napi::Result<MutationReportWire> {
+    let facts = {
+        let worker = live(&tx.inner, "transaction")?;
+        marshal::fact_rows(&worker.sealed.descriptor, relation, rows)?
+    };
+    let worker = live(&tx.inner, "transaction")?;
+    let (submitted, changed) = reply!(
+        worker.call(req(facts.0, facts.1))?,
+        TxReply::Report,
+        "transaction"
+    )?;
+    Ok(MutationReportWire::Report {
+        submitted,
+        changed,
+    })
+}
+
+/// The one row-verb body the flag verbs share: marshal the row
 /// against the sealed descriptor, send the caller's request constructor,
-/// unwrap the flag reply (the three verbs were identical modulo the
-/// `TxReq` constructor — the constructor is now the parameter).
+/// unwrap the flag reply.
 fn tx_row_flag(
     tx: &External<TxHandle>,
     relation: u32,
@@ -1183,17 +1223,29 @@ fn tx_row_flag(
     tx_flag(tx, req(row.0, row.1))
 }
 
-/// Records an insert into the delta; `true` iff the final state changed.
-/// Shape violations throw typed; nothing is judged until commit.
+/// Records a collection of inserts into the delta; returns the engine
+/// `{ submitted, changed }` report. `rows` is an array of value-arrays
+/// in sealed field order. Empty is lawful and still enters the
+/// transaction (poison is observed). Shape violations throw typed;
+/// nothing is judged until commit.
 #[napi]
-pub fn tx_insert(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
-    tx_row_flag(tx, relation, &values, TxReq::Insert)
+pub fn tx_insert(
+    tx: &External<TxHandle>,
+    relation: u32,
+    rows: Array,
+) -> napi::Result<MutationReportWire> {
+    tx_report(tx, relation, &rows, TxReq::Insert)
 }
 
-/// Records a delete into the delta; `true` iff the final state changed.
+/// Records a collection of deletes into the delta; returns the engine
+/// `{ submitted, changed }` report.
 #[napi]
-pub fn tx_delete(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
-    tx_row_flag(tx, relation, &values, TxReq::Delete)
+pub fn tx_delete(
+    tx: &External<TxHandle>,
+    relation: u32,
+    rows: Array,
+) -> napi::Result<MutationReportWire> {
+    tx_report(tx, relation, &rows, TxReq::Delete)
 }
 
 /// Final-state membership (base + pending delta — the view the commit
@@ -1229,20 +1281,57 @@ pub fn tx_get(
         .transpose()
 }
 
-/// Mints the next fresh value for `(relation, field)` — the engine's
-/// alloc-then-insert dyn-lane mint, returning the minted id (the caller
-/// includes it in the full row it inserts; there is no
-/// insert-with-omitted-fields spelling).
+/// Facts consumed vs facts that changed the in-memory final-state view.
+pub enum MutationReportWire {
+    Report { submitted: u64, changed: u64 },
+}
+
+outcome_to_napi!(MutationReportWire {
+    Report { submitted, changed } => { "submitted": submitted, "changed": changed },
+});
+
+/// Mints `count` consecutive fresh values for `(relation, field)`.
+/// Empty cannot yield a start — that encoding lives at the C `{0, 0}`
+/// wire, not on this object.
+pub enum FreshRangeWire {
+    Empty,
+    NonEmpty { start: u64, end_exclusive: u64 },
+}
+
+outcome_to_napi!(FreshRangeWire {
+    Empty => { "empty": true },
+    NonEmpty { start, end_exclusive } => { "empty": false, "start": start, "endExclusive": end_exclusive },
+});
+
+/// Mints `count` consecutive fresh values for `(relation, field)`.
+/// `count == 0` is empty and does not read or advance the sequence.
 #[napi]
-pub fn tx_alloc(tx: &External<TxHandle>, relation: u32, field: u32) -> napi::Result<u64> {
+#[allow(clippy::needless_pass_by_value)] // napi BigInt is owned at the JS boundary
+pub fn tx_reserve(
+    tx: &External<TxHandle>,
+    relation: u32,
+    field: u32,
+    count: BigInt,
+) -> napi::Result<FreshRangeWire> {
     let worker = live(&tx.inner, "transaction")?;
     let field = u16::try_from(field)
         .map_err(|_| marshal::err(format!("bumbledb marshal: field id {field} exceeds u16")))?;
-    reply!(
-        worker.call(TxReq::Alloc(RelationId(relation), FieldId(field)))?,
-        TxReply::Minted,
+    let count = marshal::u64_in(&count, "reserve count")?;
+    let range = reply!(
+        worker.call(TxReq::Reserve(RelationId(relation), FieldId(field), count))?,
+        TxReply::Range,
         "transaction"
-    )
+    )?;
+    Ok(match range {
+        RangeWire::Empty => FreshRangeWire::Empty,
+        RangeWire::NonEmpty {
+            start,
+            end_exclusive,
+        } => FreshRangeWire::NonEmpty {
+            start,
+            end_exclusive,
+        },
+    })
 }
 
 /// `txCommit`'s domain outcome: the committed generation, or the COMPLETE

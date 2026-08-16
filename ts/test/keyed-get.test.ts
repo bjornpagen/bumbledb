@@ -20,11 +20,18 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import type { Fact } from "#index.ts"
 import { Db, interval, key, relation, schema, str, u64 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
+import { put } from "#test/put.ts"
+
+function mintedStart(range: { empty: true } | { empty: false; start: bigint }): bigint {
+	if (range.empty) {
+		throw new Error("expected nonempty fresh range")
+	}
+	return range.start
+}
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-keyedget-"))
 
@@ -49,9 +56,9 @@ describe("keyed get: typed point reads through a declared key statement", async 
 	let grpId: Fact<typeof Grp>["id"] | undefined
 	let programId: Fact<typeof Program>["id"] | undefined
 	const seeded = db.write(function seed(tx) {
-		const g = tx.insert(Grp, { label: "algebra" })
+		const g = put(tx, Grp, { label: "algebra" })
 		grpId = g.id
-		const p = tx.insert(Program, { grp: g.id, title: "linear equations" })
+		const p = put(tx, Program, { grp: g.id, title: "linear equations" })
 		programId = p.id
 	})
 	assert.ok(seeded.ok, "seed commit lands")
@@ -128,13 +135,13 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		let freshGrp: Fact<typeof Grp>["id"] | undefined
 		let preCommit: Fact<typeof Program> | undefined
 		const outcome = db.write(function mutate(tx) {
-			const g = tx.insert(Grp, { label: "geometry" })
-			const p = tx.insert(Program, { grp: g.id, title: "proofs" })
+			const g = put(tx, Grp, { label: "geometry" })
+			const p = put(tx, Program, { grp: g.id, title: "proofs" })
 			const pending = tx.get(Program, programGrpKey, { grp: g.id })
 			assert.ok(pending, "the pending insert answers the keyed final-state read (read-your-writes)")
 			assert.equal(pending.id, p.id, "the minted id comes back through the declared key")
 			assert.equal(pending.title, "proofs")
-			assert.equal(tx.delete(Program, pending), true, "the delete lands on the final state")
+			assert.equal(tx.delete(Program, [pending]).changed, 1n, "the delete lands on the final state")
 			preCommit = tx.get(Program, programGrpKey, { grp: g.id })
 			assert.equal(preCommit, undefined, "the delta Absent overlay answers the same keyed read")
 			freshGrp = g.id
@@ -154,8 +161,8 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			assert.ok(committed, "the snapshot hand answers the keyed committed-state read")
 			assert.equal(committed.id, program)
 			return db.writeFrom(snap, function delta(tx) {
-				const g = tx.insert(Grp, { label: "calculus" })
-				const p = tx.insert(Program, { grp: g.id, title: "limits" })
+				const g = put(tx, Grp, { label: "calculus" })
+				const p = put(tx, Program, { grp: g.id, title: "limits" })
 				const pending = tx.get(Program, programGrpKey, { grp: g.id })
 				assert.ok(pending, "the transaction hand answers the keyed final-state read")
 				assert.equal(pending.id, p.id)
@@ -209,10 +216,13 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		})
 		assert.ok(grpRel)
 		const tx = native.dbWriteBegin(handle)
-		const g = native.txAlloc(tx, grpRel.id, 0)
-		assert.equal(native.txInsert(tx, grpRel.id, [g, "algebra"]), true)
-		const p = native.txAlloc(tx, programRel.id, 0)
-		assert.equal(native.txInsert(tx, programRel.id, [p, g, "linear equations"]), true)
+		const g = mintedStart(native.txReserve(tx, grpRel.id, 0, 1n))
+		assert.deepEqual(native.txInsert(tx, grpRel.id, [[g, "algebra"]]), { submitted: 1n, changed: 1n })
+		const p = mintedStart(native.txReserve(tx, programRel.id, 0, 1n))
+		assert.deepEqual(native.txInsert(tx, programRel.id, [[p, g, "linear equations"]]), {
+			submitted: 1n,
+			changed: 1n
+		})
 		const outcome = native.txCommit(tx)
 		assert.ok(outcome.ok, "native seed commits")
 
@@ -240,7 +250,7 @@ describe("keyed get: the statement-vs-key dispatch is a brand, never a shape pro
 	const BrandTheory = schema("KeyedGetBrand", { Cfg }, [key(Cfg, ["data"])])
 	const db = await Db.create(path.join(tmpRoot, "brand-store"), BrandTheory)
 	const committed = db.write(function seed(tx) {
-		tx.insert(Cfg, { data: { start: 1n, end: 2n }, value: 7n })
+		put(tx, Cfg, { data: { start: 1n, end: 2n }, value: 7n })
 	})
 	assert.ok(committed.ok, "seed commit lands")
 

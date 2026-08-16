@@ -587,7 +587,7 @@ fn curve_point<S>(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
 
     // The engine's answers for every draw — the gate's left side.
@@ -765,7 +765,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect()
     };
 
@@ -1555,7 +1555,7 @@ mod tests {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect();
         let mut buffer = Answers::new();
         let mut ours = Vec::new();

@@ -244,7 +244,7 @@ pub struct WritesArgs {
     pub samples: Option<u32>,
     /// Per-cell traced twin samples under `<out>/trace/writes/<lane>/`
     /// — the commit/delete ladder's `LMDB_COMMIT`-bearing artifacts
-    /// (needs the obs build; bulk stays untraced by decision).
+    /// (needs the obs build; `insert_stream` stays untraced by decision).
     pub trace: bool,
     pub out: Option<PathBuf>,
 }

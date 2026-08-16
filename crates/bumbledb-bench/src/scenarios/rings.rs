@@ -11,8 +11,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId,
-    Rule, Term, Value, VarId,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId, Rule,
+    Term, Value, VarId,
 };
 
 use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Surface, Twin};
@@ -142,10 +142,7 @@ fn intersects(lhs: Term, rhs: Term) -> ConditionTree {
 
 /// The count head shared by every folded family.
 fn count() -> Vec<FindTerm> {
-    vec![FindTerm::Aggregate {
-        op: AggOp::Count,
-        over: None,
-    }]
+    vec![FindTerm::Count]
 }
 
 /// The wash-ring atoms shared by r1 and r2: a directed 3-cycle over

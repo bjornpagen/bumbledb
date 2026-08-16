@@ -2,7 +2,7 @@ use super::densify::densify;
 use super::estimate::estimate;
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::CmpOp as ViewCmp;
+use crate::ir::WordCmp as ViewCmp;
 use crate::ir::normalize::{NormalizedQuery, OccBind, Occurrence, Role, SlotWidth};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -49,6 +49,7 @@ fn occurrence(occ: u16, relation: u32, vars: Vec<(u16, u16)>) -> Occurrence {
             .map(|(f, v)| (FieldId(f), VarId(v)))
             .collect(),
         filters: vec![],
+        point_vars: vec![],
     }
 }
 

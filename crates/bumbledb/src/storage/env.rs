@@ -265,13 +265,13 @@ pub struct Environment {
     /// Writer lock vs exhume vs ephemeral marker — one sum, not two
     /// independent Options.
     mode: EnvMode,
-    /// Process-lifetime escaped `Q` high-water: once `alloc` has handed
+    /// Process-lifetime escaped `Q` high-water: once `reserve` has handed
     /// an id to the host, this floor never retreats in this process —
     /// even when the counters-only disk flush fails
     /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
     escaped_fresh: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
     /// Dirty `Q` marks whose durable write has not yet succeeded. Retried
-    /// at the next write begin; a still-failing retry poisons alloc until
+    /// at the next write begin; a still-failing retry poisons `reserve` until
     /// the burn is durable.
     pending_fresh_flush: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
     /// Test-only: remaining injected failures of the escaped-id flush.

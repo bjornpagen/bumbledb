@@ -366,11 +366,11 @@ fn typed_round_trip_through_fact_bytes() {
     // Write the holder + account (interning the string through the delta),
     // then decode back through a snapshot.
     db.write(|tx| {
-        tx.insert(&Holder {
+        tx.insert([&Holder {
             id: HolderId(3),
             name: "alice",
-        })?;
-        tx.insert(&original)?;
+        }])?;
+        tx.insert([&original])?;
         Ok(())
     })
     .expect("write");
@@ -606,7 +606,7 @@ mod fixed_bytes_host_type {
             hash: ContentHash(digest),
             head: [7u8; 9],
         };
-        db.write(|tx| tx.insert(&original)).expect("write");
+        db.write(|tx| tx.insert([&original])).expect("write");
         db.read(|snap| {
             let back: Vec<Object> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![original]);
@@ -621,11 +621,11 @@ mod fixed_bytes_host_type {
         // same hash is a functionality violation.
         let err = db
             .write(|tx| {
-                tx.insert(&Object {
+                tx.insert([&Object {
                     id: ObjectId(2),
                     hash: ContentHash(digest),
                     head: [8u8; 9],
-                })?;
+                }])?;
                 Ok(())
             })
             .unwrap_err();
@@ -666,13 +666,13 @@ mod two_schemas_per_module {
         let db_a = Db::create(dir_a.path(), LedgerA).expect("create A");
         let db_b = Db::create(dir_b.path(), LedgerB).expect("create B");
         db_a.write(|tx| {
-            let id = tx.alloc::<AlphaId>()?;
-            tx.insert(&Alpha { id, note: "a" }).map(|_| ())
+            let id = tx.reserve::<AlphaId>(1)?.start().expect("nonempty");
+            tx.insert([&Alpha { id, note: "a" }]).map(|_| ())
         })
         .expect("write A");
         db_b.write(|tx| {
-            let id = tx.alloc::<BetaId>()?;
-            tx.insert(&Beta { id }).map(|_| ())
+            let id = tx.reserve::<BetaId>(1)?.start().expect("nonempty");
+            tx.insert([&Beta { id }]).map(|_| ())
         })
         .expect("write B");
     }
@@ -940,12 +940,12 @@ mod discriminated_union {
 
         // Arm-consistent: the Det parent and its arm row in one commit.
         db.write(|tx| {
-            let id: ParentId = tx.alloc()?;
-            tx.insert(&Parent {
+            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Parent {
                 id,
                 kind: GK::Det.id(),
-            })?;
-            tx.insert(&DetArm { parent: id })?;
+            }])?;
+            tx.insert([&DetArm { parent: id }])?;
             Ok(())
         })
         .expect("a Det parent with its arm commits");
@@ -953,11 +953,11 @@ mod discriminated_union {
         // Arm-violating: a Det parent with no arm row — totality aborts.
         let err = db
             .write(|tx| {
-                let id: ParentId = tx.alloc()?;
-                tx.insert(&Parent {
+                let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Parent {
                     id,
                     kind: GK::Det.id(),
-                })?;
+                }])?;
                 Ok(())
             })
             .unwrap_err();
@@ -968,11 +968,11 @@ mod discriminated_union {
 
         // The other arm's parent is unconstrained by the Det statement.
         db.write(|tx| {
-            let id: ParentId = tx.alloc()?;
-            tx.insert(&Parent {
+            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Parent {
                 id,
                 kind: GK::Custom.id(),
-            })?;
+            }])?;
             Ok(())
         })
         .expect("a Custom parent needs no Det arm");
@@ -1102,12 +1102,12 @@ mod keyed_equality {
         // Forward existence: Source's projected tuple has no Target witness.
         let error = db
             .write(|tx| {
-                tx.insert(&Source {
+                tx.insert([&Source {
                     a: 7,
                     b: -3,
                     c: true,
                     note: "source-only",
-                })
+                }])
             })
             .expect_err("forward equality containment is enforced");
         assert_containment(error, StatementId(2));
@@ -1115,12 +1115,12 @@ mod keyed_equality {
         // Reverse existence: Target's projected tuple has no Source witness.
         let error = db
             .write(|tx| {
-                tx.insert(&Target {
+                tx.insert([&Target {
                     x: 7,
                     y: -3,
                     z: true,
                     weight: 99,
-                })
+                }])
             })
             .expect_err("reverse equality containment is enforced");
         assert_containment(error, StatementId(3));
@@ -1129,18 +1129,18 @@ mod keyed_equality {
         // unprojected payloads even have different structural types, which is
         // legal because `==` is projected-view equality, not row equality.
         db.write(|tx| {
-            tx.insert(&Source {
+            tx.insert([&Source {
                 a: 7,
                 b: -3,
                 c: true,
                 note: "payloads may differ",
-            })?;
-            tx.insert(&Target {
+            }])?;
+            tx.insert([&Target {
                 x: 7,
                 y: -3,
                 z: true,
                 weight: 99,
-            })
+            }])
         })
         .expect("one witness on each keyed projection commits");
 
@@ -1148,12 +1148,12 @@ mod keyed_equality {
         // but a different payload is rejected by Target's reordered key.
         let error = db
             .write(|tx| {
-                tx.insert(&Target {
+                tx.insert([&Target {
                     x: 7,
                     y: -3,
                     z: true,
                     weight: 100,
-                })
+                }])
             })
             .expect_err("the key makes the witness unique");
         assert!(matches!(
@@ -1202,16 +1202,16 @@ mod redundant_superkey_warning {
         let db = Db::create(dir.path(), RedundantKeys).expect("warning is non-fatal");
         let error = db
             .write(|tx| {
-                tx.insert(&Window {
+                tx.insert([&Window {
                     id: 7,
                     span: Interval::<i64>::new(0, 5).expect("interval"),
                     payload: 10,
-                })?;
-                tx.insert(&Window {
+                }])?;
+                tx.insert([&Window {
                     id: 7,
                     span: Interval::<i64>::new(3, 8).expect("interval"),
                     payload: 20,
-                })
+                }])
             })
             .expect_err("both determinant plans reject the overlapping duplicate id");
         let Error::CommitRejected { violations } = error else {
@@ -1589,7 +1589,7 @@ mod fixed_width_intervals {
             slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
             track: 77,
         };
-        db.write(|tx| tx.insert(&slot)).expect("write");
+        db.write(|tx| tx.insert([&slot])).expect("write");
         db.read(|snap| {
             let back: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![slot]);
@@ -1601,11 +1601,11 @@ mod fixed_width_intervals {
         // `value_matches` does — the width is the type.
         let err = db
             .write(|tx| {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: 1,
                     slot: SlotSpan(Interval::<u64>::new(100, 107).expect("nonempty")),
                     track: 78,
-                })?;
+                }])?;
                 Ok(())
             })
             .unwrap_err();
@@ -1627,13 +1627,13 @@ mod fixed_width_intervals {
         let db = Db::create(dir.path(), Jukebox).expect("create");
         let err = db
             .write(|tx| {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: 1,
                     slot: SlotSpan(
                         Interval::<u64>::new(u64::MAX - 5, u64::MAX).expect("a legal general ray"),
                     ),
                     track: 79,
-                })?;
+                }])?;
                 Ok(())
             })
             .unwrap_err();
@@ -1655,15 +1655,15 @@ mod fixed_width_intervals {
         // Adjacent unit tiles land ([10,15) then [15,20)); another
         // playlist's overlapping start is a different scalar group.
         db.write(|tx| {
-            tx.insert(&slot(1, 10, 1))?;
-            tx.insert(&slot(1, 15, 2))?;
-            tx.insert(&slot(2, 12, 3))?;
+            tx.insert([&slot(1, 10, 1)])?;
+            tx.insert([&slot(1, 15, 2)])?;
+            tx.insert([&slot(2, 12, 3)])?;
             Ok(())
         })
         .expect("adjacency and cross-group starts are legal");
         // An overlapping fixed value in the same group aborts: the
         // neighbor probe derives both ends from the type's width.
-        let err = db.write(|tx| tx.insert(&slot(1, 12, 4))).unwrap_err();
+        let err = db.write(|tx| tx.insert([&slot(1, 12, 4)])).unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::CommitRejected { .. }),
             "derived-bounds overlap must convict, got {err:?}"
@@ -1679,11 +1679,11 @@ mod fixed_width_intervals {
         let dir = crate::common::TempDir::new("macro-fixed-key-probe");
         let db = Db::create(dir.path(), Jukebox).expect("create");
         db.write(|tx| {
-            tx.insert(&Slot {
+            tx.insert([&Slot {
                 playlist: 1,
                 slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
                 track: 77,
-            })
+            }])
         })
         .expect("write");
         let lookup = |start: u64| {
@@ -1741,11 +1741,11 @@ mod fixed_width_intervals {
         let db = Db::create(dir.path(), Jukebox).expect("create");
         db.write(|tx| {
             for (start, track) in [(10u64, 1u64), (15, 2), (25, 3)] {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: 1,
                     slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
                     track,
-                })?;
+                }])?;
             }
             Ok(())
         })
@@ -1903,17 +1903,17 @@ mod element_domain_typing {
     /// slots partitioning it, committed together.
     fn tile(db: &Db<Playlists>) -> PlaylistId {
         db.write(|tx| {
-            let id = tx.alloc::<PlaylistId>()?;
-            tx.insert(&Playlist {
+            let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
+            tx.insert([&Playlist {
                 id,
                 span: Interval::<u64>::new(0, 3).expect("nonempty"),
-            })?;
+            }])?;
             for (at, track) in [(0, 100), (1, 200), (2, 300)] {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: id,
                     slot: unit(at),
                     track,
-                })?;
+                }])?;
             }
             Ok(id)
         })
@@ -1945,17 +1945,17 @@ mod element_domain_typing {
         let db = Db::create(dir.path(), Playlists).expect("create");
         let error = db
             .write(|tx| {
-                let id = tx.alloc::<PlaylistId>()?;
-                tx.insert(&Playlist {
+                let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
+                tx.insert([&Playlist {
                     id,
                     span: Interval::<u64>::new(0, 3).expect("nonempty"),
-                })?;
+                }])?;
                 for (at, track) in [(0, 100), (2, 300)] {
-                    tx.insert(&Slot {
+                    tx.insert([&Slot {
                         playlist: id,
                         slot: unit(at),
                         track,
-                    })?;
+                    }])?;
                 }
                 Ok(())
             })
@@ -1986,11 +1986,11 @@ mod element_domain_typing {
         let id = tile(&db);
         let error = db
             .write(|tx| {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: id,
                     slot: unit(1),
                     track: 999,
-                })
+                }])
             })
             .expect_err("an overlapping unit slot must abort");
         assert!(
@@ -2013,11 +2013,11 @@ mod element_domain_typing {
         let id = tile(&db);
         let error = db
             .write(|tx| {
-                tx.insert(&Slot {
+                tx.insert([&Slot {
                     playlist: id,
                     slot: unit(3),
                     track: 999,
-                })
+                }])
             })
             .expect_err("a slot outside the span must abort");
         assert!(

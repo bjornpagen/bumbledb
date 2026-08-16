@@ -2,8 +2,8 @@
 //! coverage generators. Mutual and nonlinear are unwritable this cut.
 
 use bumbledb::{
-    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, Rule,
-    Term, Value, VarId,
+    Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule,
+    Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng};
@@ -67,6 +67,35 @@ fn projection(finds: Vec<FindTerm>, atoms: Vec<Atom>, negated: Vec<Atom>) -> Rul
     }
 }
 
+fn proj(finds: Vec<VarId>, atoms: Vec<Atom>, negated: Vec<Atom>) -> ProjectionRule {
+    ProjectionRule {
+        finds,
+        atoms,
+        negated,
+        conditions: vec![],
+    }
+}
+
+fn rec_rule(finds: Vec<VarId>, atoms: Vec<Atom>) -> RecRule {
+    RecRule {
+        finds,
+        atoms,
+        conditions: vec![],
+    }
+}
+
+fn rec_step(finds: Vec<VarId>, self_bindings: Vec<(u16, Term)>, atoms: Vec<Atom>) -> RecStep {
+    RecStep {
+        finds,
+        self_bindings: self_bindings
+            .into_iter()
+            .map(|(field, term)| (FieldId(field), term))
+            .collect(),
+        atoms,
+        conditions: vec![],
+    }
+}
+
 fn identity_main(arity: u16, rec_id: u32) -> Rule {
     projection(
         (0..arity).map(fv).collect(),
@@ -80,17 +109,12 @@ fn identity_main(arity: u16, rec_id: u32) -> Rule {
 
 fn closure_rec() -> Rec {
     Rec {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        base: vec![projection(
-            vec![fv(0), fv(1)],
+        base: NonEmpty::one(rec_rule(vec![VarId(0), VarId(1)], vec![edge(v(0), v(1))])),
+        rec: NonEmpty::one(rec_step(
+            vec![VarId(0), VarId(2)],
+            vec![(0, v(1)), (1, v(2))],
             vec![edge(v(0), v(1))],
-            vec![],
-        )],
-        rec: vec![projection(
-            vec![fv(0), fv(2)],
-            vec![edge(v(0), v(1)), interior(0, &[(0, v(1)), (1, v(2))])],
-            vec![],
-        )],
+        )),
     }
 }
 
@@ -162,13 +186,7 @@ fn fold(rng: &mut Rng) -> Query {
         rec: closure_rec(),
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
-            finds: vec![
-                fv(0),
-                FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
-            ],
+            finds: vec![fv(0), FindTerm::Count],
             atoms: vec![interior(0, &[(grouped, v(0)), (1 - grouped, v(1))])],
             negated: vec![],
             conditions: vec![],
@@ -183,17 +201,15 @@ fn empty_delta(rng: &mut Rng, domains: &Domains) -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![projection(
-                vec![fv(0)],
+            base: NonEmpty::one(rec_rule(
+                vec![VarId(0)],
                 vec![edge(v(0), Term::Literal(Value::U64(hub)))],
-                vec![],
-            )],
-            rec: vec![projection(
-                vec![fv(0)],
-                vec![edge(v(0), v(1)), interior(0, &[(0, v(1))])],
-                vec![],
-            )],
+            )),
+            rec: NonEmpty::one(rec_step(
+                vec![VarId(0)],
+                vec![(0, v(1))],
+                vec![edge(v(0), v(1))],
+            )),
         },
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1, 0)],
@@ -215,17 +231,15 @@ fn primer_reach_xx() -> Query {
 
 fn interiors_dag() -> Query {
     let copy = Interior {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![projection(
-            vec![fv(0), fv(1)],
+        rules: vec![proj(
+            vec![VarId(0), VarId(1)],
             vec![edge(v(0), v(1))],
             vec![],
         )],
     };
     let hop = Interior {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![projection(
-            vec![fv(0), fv(2)],
+        rules: vec![proj(
+            vec![VarId(0), VarId(2)],
             vec![interior(0, &[(0, v(0)), (1, v(1))]), edge(v(1), v(2))],
             vec![],
         )],
@@ -244,9 +258,8 @@ fn interiors_dag() -> Query {
 fn interiors_anti_join() -> Query {
     Query::Cq {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![projection(
-                vec![fv(0), fv(1)],
+            rules: vec![proj(
+                vec![VarId(0), VarId(1)],
                 vec![edge(v(0), v(1))],
                 vec![],
             )],
@@ -266,9 +279,8 @@ fn interiors_anti_join() -> Query {
 fn many_interiors() -> Query {
     let interiors = (0..17)
         .map(|_| Interior {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![projection(
-                vec![fv(0), fv(1)],
+            rules: vec![proj(
+                vec![VarId(0), VarId(1)],
                 vec![edge(v(0), v(1))],
                 vec![],
             )],

@@ -145,7 +145,7 @@ impl BenchRun<'_> {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect();
 
         let mut rotation = Rotation::new(sets.clone());

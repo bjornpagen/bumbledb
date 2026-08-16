@@ -268,7 +268,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // Write families run AFTER every read family (measured): an
     // fsync drops the core to its DVFS floor with
     // demand-driven recovery, so any read family measured in that
-    // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
+    // shadow reads slow-clock time. `insert_stream` (seconds of fsync) is last
     // of all — asserted inside write_families. Under --trace the
     // windowed/capacity judgment lanes land their traced solo samples
     // beside the read-family pairs and embed into the same flame list.

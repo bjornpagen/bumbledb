@@ -103,7 +103,10 @@ enum OpClass {
     /// `Eq`/`Ne` (`negated` = `Ne`).
     Equality { negated: bool },
     /// `Lt`/`Le`/`Gt`/`Ge`, with the mirrored operator alongside.
-    Order { op: CmpOp, mirror: CmpOp },
+    Order {
+        op: crate::ir::OrderCmp,
+        mirror: crate::ir::OrderCmp,
+    },
     /// `Allen { mask }`.
     Allen { mask: AllenMask },
     /// `PointIn`.
@@ -116,20 +119,20 @@ impl OpClass {
             CmpOp::Eq => Self::Equality { negated: false },
             CmpOp::Ne => Self::Equality { negated: true },
             CmpOp::Lt => Self::Order {
-                op: CmpOp::Lt,
-                mirror: CmpOp::Gt,
+                op: crate::ir::OrderCmp::Lt,
+                mirror: crate::ir::OrderCmp::Gt,
             },
             CmpOp::Le => Self::Order {
-                op: CmpOp::Le,
-                mirror: CmpOp::Ge,
+                op: crate::ir::OrderCmp::Le,
+                mirror: crate::ir::OrderCmp::Ge,
             },
             CmpOp::Gt => Self::Order {
-                op: CmpOp::Gt,
-                mirror: CmpOp::Lt,
+                op: crate::ir::OrderCmp::Gt,
+                mirror: crate::ir::OrderCmp::Lt,
             },
             CmpOp::Ge => Self::Order {
-                op: CmpOp::Ge,
-                mirror: CmpOp::Le,
+                op: crate::ir::OrderCmp::Ge,
+                mirror: crate::ir::OrderCmp::Le,
             },
             CmpOp::Allen { mask } => Self::Allen { mask },
             CmpOp::PointIn => Self::PointIn,
@@ -163,12 +166,16 @@ enum Shaped<'rule> {
     /// `Eq` against the set marker (legal under `Eq` alone).
     EqVarSet { var: VarId, set: ParamId },
     /// An order comparison over two variables.
-    OrdVarVar { op: CmpOp, lhs: VarId, rhs: VarId },
+    OrdVarVar {
+        op: crate::ir::OrderCmp,
+        lhs: VarId,
+        rhs: VarId,
+    },
     /// An order comparison against a constant — the operator already
     /// sealed variable-on-left; the written order kept for the operand
     /// screen's diagnostic order.
     OrdVarConst {
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         var: VarId,
         var_on_left: bool,
         constant: ConstSide<'rule>,
@@ -176,14 +183,14 @@ enum Shaped<'rule> {
     /// The measure against a variable, the operator sealed
     /// measure-on-left.
     OrdMeasureVar {
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         interval: VarId,
         scalar: VarId,
     },
     /// The measure against a constant, the operator sealed
     /// measure-on-left.
     OrdMeasureConst {
-        op: CmpOp,
+        op: crate::ir::OrderCmp,
         interval: VarId,
         constant: ConstSide<'rule>,
     },
@@ -269,8 +276,12 @@ fn equals_mask(negated: bool) -> AllenMask {
 
 /// The scalar operator a sealed `Eq`/`Ne` shape carries (symmetric, so
 /// operand order never mirrors it).
-fn equality_op(negated: bool) -> CmpOp {
-    if negated { CmpOp::Ne } else { CmpOp::Eq }
+fn equality_op(negated: bool) -> crate::ir::WordCmp {
+    if negated {
+        crate::ir::WordCmp::Ne
+    } else {
+        crate::ir::WordCmp::Eq
+    }
 }
 
 /// The sealed mask side of an interval comparison against a constant,
@@ -1126,7 +1137,7 @@ impl Context {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 Ok(ClassifiedComparison::VarVar {
-                    op: *op,
+                    op: (*op).into(),
                     lhs: *lhs,
                     rhs: *rhs,
                 })
@@ -1154,7 +1165,7 @@ impl Context {
                 }
                 let value = self.check_const(index, constant, &var_type)?;
                 Ok(ClassifiedComparison::VarConst {
-                    op: *op,
+                    op: (*op).into(),
                     var: *var,
                     value,
                 })

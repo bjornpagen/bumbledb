@@ -11,7 +11,7 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term,
+    Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term,
     Value, VarId,
 };
 
@@ -286,13 +286,7 @@ fn queries() -> Vec<Op> {
     for field in [1u16, 2, 0, 3] {
         ops.push(Op::Query {
             query: plain(
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ],
+                vec![FindTerm::Var(VarId(0)), FindTerm::Count],
                 vec![blob_atom(vec![(field, var(0)), (7, var(1))])],
                 vec![],
             ),
@@ -301,8 +295,8 @@ fn queries() -> Vec<Op> {
         ops.push(Op::Query {
             query: plain(
                 vec![FindTerm::Aggregate {
-                    op: AggOp::Max,
-                    over: Some(VarId(1)),
+                    op: FoldOp::Max,
+                    over: VarId(1),
                 }],
                 vec![blob_atom(vec![(field, var(0)), (7, var(1))])],
                 vec![],
@@ -317,8 +311,8 @@ fn queries() -> Vec<Op> {
                     vec![
                         FindTerm::Var(VarId(2)),
                         FindTerm::Aggregate {
-                            op: AggOp::Max,
-                            over: Some(VarId(1)),
+                            op: FoldOp::Max,
+                            over: VarId(1),
                         },
                     ],
                     vec![blob_atom(vec![(field, var(0)), (1, var(2)), (7, var(1))])],

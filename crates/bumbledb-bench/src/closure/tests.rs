@@ -46,8 +46,11 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability).expect("create");
     for rel in [ids::NODE, ids::EDGE] {
-        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
-            .expect("load");
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .expect("load");
     }
     let mut naive = NaiveDb::new(&Reachability.descriptor());
     for rel in [ids::NODE, ids::EDGE] {
@@ -64,7 +67,7 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let mut buffer = Answers::new();
     for family in all() {
@@ -160,8 +163,11 @@ fn a_profiled_closure_query_digests_reach_rounds() {
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability).expect("create");
     for rel in [ids::NODE, ids::EDGE] {
-        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
-            .expect("load");
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .expect("load");
     }
     let query = closure_query();
     let mut prepared = db.prepare(&query).expect("prepare");

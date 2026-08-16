@@ -541,7 +541,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         .write(|tx| {
             for rel in [target::ids::ORG, target::ids::ORG_PARENT] {
                 for fact in target::corpus_relation_rows(cfg, rel) {
-                    tx.insert_dyn(rel, &fact)?;
+                    tx.insert_dyn(rel, [&fact])?;
                 }
             }
             Ok(())
@@ -609,10 +609,14 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         }
 
         if variant == RecursiveVariant::EmptyDelta {
-            let mut base_only = query.clone();
-            if let Query::Reach { rec, .. } = &mut base_only {
-                rec.rec.clear();
-            }
+            let Query::Reach { rec, .. } = &query else {
+                panic!("empty-delta variant is Reach");
+            };
+            let base_only = Query::Cq {
+                interiors: vec![],
+                head: rec.head(),
+                rules: rec.base.iter().map(bumbledb::RecRule::to_rule).collect(),
+            };
             let base_answers = naive
                 .query(&base_only, &[])
                 .expect("base rules raise no runtime error");
@@ -694,15 +698,15 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
 #[test]
 fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
     use bumbledb::{
-        Atom, AtomSource, FindTerm, HeadTerm, InteriorId, ParamId, Query, Rec, Rule, Term, VarId,
+        Atom, AtomSource, FieldId, FindTerm, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
+        RecRule, RecStep, Rule, Term, VarId,
     };
 
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(target::ids::ORG_PARENT),
                     bindings: vec![
@@ -710,27 +714,20 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
                         (target::ids::org_parent::PARENT, Term::Var(VarId(0))),
                     ],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(1))],
-                atoms: vec![
-                    Atom {
-                        source: AtomSource::Edb(target::ids::ORG_PARENT),
-                        bindings: vec![
-                            (target::ids::org_parent::CHILD, Term::Var(VarId(0))),
-                            (target::ids::org_parent::PARENT, Term::Var(VarId(1))),
-                        ],
-                    },
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
-                    },
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(target::ids::ORG_PARENT),
+                    bindings: vec![
+                        (target::ids::org_parent::CHILD, Term::Var(VarId(0))),
+                        (target::ids::org_parent::PARENT, Term::Var(VarId(1))),
+                    ],
+                }],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {

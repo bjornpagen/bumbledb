@@ -102,8 +102,11 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         .create(&dir.join("db"), super::DisplacedWorld)
         .expect("create");
     for rel in [super::ids::HUB, super::ids::SPOKE] {
-        db.bulk_load_dyn(rel, super::relation_rows(sizes, cfg.seed, rel))
-            .expect("load");
+        db.write(|tx| {
+            tx.insert_dyn(rel, super::relation_rows(sizes, cfg.seed, rel))
+                .map(|r| r.changed)
+        })
+        .expect("load");
     }
     let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
     let mut buffer = bumbledb::Answers::new();

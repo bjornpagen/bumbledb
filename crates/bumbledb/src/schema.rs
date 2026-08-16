@@ -70,7 +70,7 @@ pub struct CapacityId(pub(crate) u16);
 
 /// A witness that `(relation, field)` names a `Fresh`-generation field of
 /// schema `S` — the handle of the untyped mint path
-/// ([`crate::WriteTx::alloc_at`]). Fields are private and
+/// ([`crate::WriteTx::reserve_at`]). Fields are private and
 /// [`crate::Db::fresh_field`] is the one construction site; the ETL access
 /// pattern is resolve once per relation, mint per row (`70-api.md` § ETL).
 ///

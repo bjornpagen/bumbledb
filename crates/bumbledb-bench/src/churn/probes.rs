@@ -16,7 +16,7 @@
 //! misses.
 
 use bumbledb::{
-    AggOp, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, ParamId,
+    Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, ParamId,
     Query, Rule, Term, Value, VarId,
 };
 
@@ -68,8 +68,8 @@ fn point_query() -> Query {
 fn balance_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(1)),
+            op: FoldOp::Sum,
+            over: VarId(1),
         }],
         atoms: vec![Atom {
             source: AtomSource::Edb(ids::POSTING),
@@ -230,7 +230,7 @@ pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<Prob
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let mut buffer = Answers::new();
     let mut reference = Vec::with_capacity(sets.len());

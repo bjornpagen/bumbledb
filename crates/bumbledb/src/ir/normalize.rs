@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use crate::image::view::FilterPredicate;
-use crate::ir::{CmpOp, VarId};
+use crate::ir::VarId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
 mod dnf;
@@ -187,7 +187,13 @@ pub struct Occurrence {
     /// ([`FilterPredicate::PointIn`] / [`FilterPredicate::FieldsPointIn`]).
     pub vars: Vec<(FieldId, VarId)>,
     /// Per-occurrence filters, evaluated at the source (filtered view).
+    /// Var-sourced membership is [`Self::point_vars`], not a filter —
+    /// the view evaluator never sees a staging token.
     pub filters: Vec<FilterPredicate>,
+    /// Var-sourced point membership (`interval-field ∋ var`) lifted by
+    /// plan validation into [`crate::plan::fj::PointProbe`]. Not a view
+    /// filter.
+    pub point_vars: Vec<(FieldId, VarId)>,
 }
 
 impl Occurrence {
@@ -206,7 +212,7 @@ impl Occurrence {
 /// [`PlacedWordComparison`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedComparison {
-    pub op: CmpOp,
+    pub op: crate::ir::WordCmp,
     pub lhs: VarId,
     pub rhs: VarId,
 }
@@ -228,7 +234,7 @@ pub struct PlacedDuration {
     /// The measured interval variable (two slot words).
     pub interval: VarId,
     /// The order operator, measure-side-left.
-    pub op: CmpOp,
+    pub op: crate::ir::OrderCmp,
     /// The u64 comparison side.
     pub scalar: VarId,
 }
@@ -284,7 +290,7 @@ pub struct VarWord {
 /// decomposed — they are [`PlacedAllen`] residuals carrying their mask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedWordComparison {
-    pub op: CmpOp,
+    pub op: crate::ir::WordCmp,
     pub lhs: VarWord,
     pub rhs: VarWord,
 }

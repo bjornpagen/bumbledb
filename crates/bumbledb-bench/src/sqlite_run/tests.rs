@@ -44,7 +44,7 @@ fn fairness_and_the_prepared_sample_contract() {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect()
     };
     let mut prepared = PreparedFamily::new(&conn, &translated, types).expect("prepare once");
@@ -85,7 +85,7 @@ fn fairness_and_the_prepared_sample_contract() {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty.clone())
+            .map(|column| column.ty().clone())
             .collect()
     };
     let mut point_prepared =
@@ -199,11 +199,12 @@ fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     assert_eq!(outcome, CapOutcome::Done(1));
 }
 
-/// The bulk mirror reports positive throughput over its protocol.
+/// The insert-stream mirror reports positive throughput over its protocol.
 #[test]
-fn bulk_mirror_reports_positive_throughput() {
-    let dir = scratch("bulk");
-    let m = bulk(CFG, &dir, crate::duralane::DurabilityLane::Durable).expect("bulk");
+fn insert_stream_mirror_reports_positive_throughput() {
+    let dir = scratch("insert-stream");
+    let m =
+        insert_stream(CFG, &dir, crate::duralane::DurabilityLane::Durable).expect("insert_stream");
     let sizes = corpus_gen::Sizes::of(CFG.scale);
     assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
     assert!(m.stats.min > 0);

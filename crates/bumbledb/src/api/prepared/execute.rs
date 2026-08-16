@@ -83,7 +83,7 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<()> {
         // Direct lane and empty Cq are parsed at build / are the
         // zero-iteration loop — not re-detected per call.
-        if self.key_probe_direct {
+        if self.pipeline.is_key_probe_direct() {
             return self.execute_key_probe_direct(txn, out);
         }
         if self.pipeline.is_empty_cq() {
@@ -415,14 +415,14 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The point fast lane's body: probe + fetch +
-    /// direct cell decode, no sink machinery. The lane was parsed at
-    /// build (`key_probe_direct`); this does not re-gate.
+    /// direct cell decode, no sink machinery. The lane is the
+    /// no-interior single key-probe Cq already on `self.pipeline`.
     pub(super) fn execute_key_probe_direct(
         &mut self,
         txn: &ReadTxn<'_>,
         out: &mut Answers,
     ) -> Result<()> {
-        debug_assert!(self.key_probe_direct);
+        debug_assert!(self.pipeline.is_key_probe_direct());
         let PreparedRule::KeyProbe(KeyProbeRule {
             plan: key_probe,
             key_probe_finds: Some(key_probe_finds),

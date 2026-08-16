@@ -13,7 +13,8 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_grounding_disabled,
+    Atom, Db, FindTerm, FoldOp, Query, RelationId, Rule, Term, Value, VarId,
+    with_grounding_disabled,
 };
 
 use crate::differential::{Answers, engine_query};
@@ -37,7 +38,7 @@ fn stores(
     naive.apply(&delta).expect("the fixture data commits");
     db.write(|tx| {
         for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, fact)?;
+            tx.insert_dyn(*rel, [fact])?;
         }
         Ok(())
     })
@@ -151,8 +152,8 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         finds: vec![
             FindTerm::Var(VarId(1)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
         ],
         atoms,
@@ -240,8 +241,8 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
     });
     let aggregate = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(1)),
+            op: FoldOp::Sum,
+            over: VarId(1),
         }],
         atoms,
         negated: vec![],
@@ -270,13 +271,7 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
         conditions: vec![],
     });
     let aggregate = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
         atoms,
         negated: vec![],
         conditions: vec![],

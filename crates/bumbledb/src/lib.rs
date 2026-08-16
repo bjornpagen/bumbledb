@@ -13,16 +13,19 @@
 //!   Ledger)` — and share it across threads (`Send + Sync`; the engine
 //!   owns zero threads). `Db<S>` carries the schema as typestate: a
 //!   schema-A fact cannot reach a schema-B database (see below).
-//! - Write through [`Db::write`]: the transaction is an in-memory delta —
-//!   set arithmetic, statements judged at commit against the final
-//!   state, an abort never wrote a fact (escaped fresh high-water still
-//!   persists). `delete(old); insert(new)` in
-//!   either order is the blessed mutation idiom.
+//! - Write through [`Db::write`]: collection [`WriteTx::insert`] /
+//!   [`WriteTx::delete`] (empty, singleton `[&fact]`, many — one algebra,
+//!   [`MutationReport` `{ submitted, changed }`]) and [`WriteTx::reserve`]
+//!   (`FreshRange`; empty is not a minted id). ETL is a host loop of
+//!   `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
+//!   mutation is [`Error::TransactionPoisoned`] carrying the nested
+//!   cause. `delete(old); insert(new)` in either order is the blessed
+//!   mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
 //!   inside [`Db::read`] snapshots into a reusable [`Answers`] —
 //!   results are sets; the host sorts.
-//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load_dyn`] imports
-//!   (schema change = a new database, never in place).
+//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::write`] +
+//!   [`WriteTx::insert_dyn`] imports (schema change = a new database, never in place).
 //!
 //! Newtypes are the nominal safety layer — mixing two of them is a host
 //! compile error:
@@ -55,8 +58,8 @@
 //! # std::fs::create_dir_all(&dir).unwrap();
 //! let db = bumbledb::Db::create(&dir, Ledger).unwrap();
 //! db.write(|tx| {
-//!     let id = tx.alloc::<ItemId>()?;
-//!     tx.insert(&Item { id }) // schema-B fact, schema-A database: rustc refuses
+//!     let id = tx.reserve::<ItemId>(1)?.start().expect("count 1");
+//!     tx.insert([&Item { id }]) // schema-B fact, schema-A database: rustc refuses
 //!         .map(|_| ())
 //! })
 //! .unwrap();
@@ -119,7 +122,8 @@ mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{
-    BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, Witness, WriteTx, exhume,
+    Db, Exhumed, Fact, Fresh, FreshRange, FreshRangeIter, Key, MutationReport, Snapshot, Witness,
+    WriteTx, exhume,
 };
 pub use api::prepared::{Answer, AnswerValue, Answers, BindValue, ParamArg, PreparedQuery};
 /// Plan-introspection types used by the in-workspace bench harness.
@@ -153,9 +157,9 @@ pub use storage::env::StoreKind;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
-    Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, Rule, Term, Value,
-    VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,
+    Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, NonEmpty, OrderCmp, ParamId,
+    ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId, WordCmp,
 };
 // The bindings roster (docs/architecture/70-api.md § the SchemaSpec
 // bindings contract): everything a foreign-host bridge needs, reachable

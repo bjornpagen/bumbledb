@@ -11,8 +11,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId,
-    Rule, Term, Value, VarId,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId, Rule,
+    Term, Value, VarId,
 };
 
 use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Surface, Twin};
@@ -112,10 +112,7 @@ fn allen(lhs: Term, rhs: Term, mask: AllenMask) -> ConditionTree {
 
 /// The count head shared by every folded family.
 fn count() -> Vec<FindTerm> {
-    vec![FindTerm::Aggregate {
-        op: AggOp::Count,
-        over: None,
-    }]
+    vec![FindTerm::Count]
 }
 
 /// t1/t4 — the stabbing probe, one IR shape for both families:
@@ -188,10 +185,7 @@ fn overlap_join() -> Query {
 /// hand-written islands SQL ([`HAND_T5`]) — the `free_busy` precedent.
 fn pack_key() -> Query {
     Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Pack,
-            over: Some(VarId(0)),
-        }],
+        finds: vec![FindTerm::Pack { over: VarId(0) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::SPAN),
             bindings: vec![(ids::span::KEY, param(0)), (ids::span::SPAN, var(0))],

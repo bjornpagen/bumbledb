@@ -28,6 +28,10 @@ mod tests;
 /// One operation of a differential stream — recursion is a first-class
 /// op, not a bespoke side loop (ruled 2026-07-23, R22/159): the runner's
 /// representation can spell every case the lattice compares.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Query is the public IR shape; boxing would split the differential Op"
+)]
 #[derive(Debug, Clone)]
 pub enum Op {
     Write(Delta),
@@ -194,10 +198,10 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
 pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     let outcome = db.write(|tx| {
         for (rel, fact) in &delta.deletes {
-            tx.delete_dyn(*rel, fact)?;
+            tx.delete_dyn(*rel, [fact])?;
         }
         for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, fact)?;
+            tx.insert_dyn(*rel, [fact])?;
         }
         Ok(())
     });
@@ -231,10 +235,10 @@ pub(crate) fn engine_write_from<S>(
 ) -> ConditionalVerdict {
     let outcome = db.write_from(witness, |tx| {
         for (rel, fact) in &delta.deletes {
-            tx.delete_dyn(*rel, fact)?;
+            tx.delete_dyn(*rel, [fact])?;
         }
         for (rel, fact) in &delta.inserts {
-            tx.insert_dyn(*rel, fact)?;
+            tx.insert_dyn(*rel, [fact])?;
         }
         Ok(())
     });

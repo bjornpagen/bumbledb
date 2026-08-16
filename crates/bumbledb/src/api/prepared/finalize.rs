@@ -88,7 +88,7 @@ fn fill_resolved_answers(
     out.cells.resize(base + sink.len() * arity, Cell::U64(0));
     let mut word = 0;
     for (col, column) in columns.iter().enumerate() {
-        word += match &column.ty {
+        word += match column.ty() {
             ValueType::String => {
                 for (row, answer) in sink.answers().enumerate() {
                     let (start, len) = memo.resolve(txn, answer[word], out)?;
@@ -167,7 +167,7 @@ fn push_resolved_answer(
 ) -> Result<()> {
     let mut word = 0;
     for column in columns {
-        let (cell, width) = match &column.ty {
+        let (cell, width) = match column.ty() {
             ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
             ValueType::U64 => (Cell::U64(answer[word]), 1),
             ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),

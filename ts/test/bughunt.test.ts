@@ -13,9 +13,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import * as errors from "@superbuilders/errors"
-
 import {
 	bool,
 	bytes,
@@ -38,6 +36,7 @@ import {
 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
+import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-hunt-"))
 
@@ -76,8 +75,8 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("i64::MIN / i64::MAX / u64::MAX round-trip exactly", function bigintEdges() {
 		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
-			id = tx.insert(Num, { u: U64_MAX, s: I64_MIN }).id
-			tx.insert(Num, { u: 0n, s: I64_MAX })
+			id = put(tx, Num, { u: U64_MAX, s: I64_MIN }).id
+			put(tx, Num, { u: 0n, s: I64_MAX })
 		})
 		assert.ok(written.ok)
 		const back = must(db.get(Num, { id: must(id) }))
@@ -93,22 +92,22 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("out-of-range bigints throw typed errors naming the position", function bigintRange() {
 		assert.throws(function u64Overflow() {
 			db.write(function bad(tx) {
-				tx.insert(Num, { u: U64_MAX + 1n, s: 0n })
+				put(tx, Num, { u: U64_MAX + 1n, s: 0n })
 			})
 		}, /u64/)
 		assert.throws(function u64Negative() {
 			db.write(function bad(tx) {
-				tx.insert(Num, { u: -1n, s: 0n })
+				put(tx, Num, { u: -1n, s: 0n })
 			})
 		}, /u64/)
 		assert.throws(function i64Overflow() {
 			db.write(function bad(tx) {
-				tx.insert(Num, { u: 0n, s: I64_MAX + 1n })
+				put(tx, Num, { u: 0n, s: I64_MAX + 1n })
 			})
 		}, /i64/)
 		assert.throws(function i64Underflow() {
 			db.write(function bad(tx) {
-				tx.insert(Num, { u: 0n, s: I64_MIN - 1n })
+				put(tx, Num, { u: 0n, s: I64_MIN - 1n })
 			})
 		}, /i64/)
 	})
@@ -116,19 +115,19 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("bytes<4> width mismatches throw; an offset view marshals by its view", function bytesWidths() {
 		assert.throws(function tooShort() {
 			db.write(function bad(tx) {
-				tx.insert(Blob, { tag: new Uint8Array([1, 2, 3]) })
+				put(tx, Blob, { tag: new Uint8Array([1, 2, 3]) })
 			})
 		}, /bytes<4>|4/)
 		assert.throws(function tooLong() {
 			db.write(function bad(tx) {
-				tx.insert(Blob, { tag: new Uint8Array([1, 2, 3, 4, 5]) })
+				put(tx, Blob, { tag: new Uint8Array([1, 2, 3, 4, 5]) })
 			})
 		}, /bytes<4>|4/)
 		const backing = new Uint8Array([9, 9, 7, 7, 7, 7, 9, 9])
 		const view = new Uint8Array(backing.buffer, 2, 4)
 		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
-			id = tx.insert(Blob, { tag: view }).id
+			id = put(tx, Blob, { tag: view }).id
 		})
 		assert.ok(written.ok)
 		assert.deepStrictEqual(must(db.get(Blob, { id: must(id) })).tag, new Uint8Array([7, 7, 7, 7]))
@@ -137,7 +136,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("interval rays (end = MAX_END) round-trip in both element domains", function rays() {
 		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
-			id = tx.insert(Ray, { at: span(3n, U64_MAX), sat: span(I64_MIN, I64_MAX) }).id
+			id = put(tx, Ray, { at: span(3n, U64_MAX), sat: span(I64_MIN, I64_MAX) }).id
 		})
 		assert.ok(written.ok)
 		const back = must(db.get(Ray, { id: must(id) }))
@@ -155,7 +154,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 				 * touches span().
 				 */
 				const fake: { start: bigint; end: bigint } = { start: 5n, end: 5n }
-				tx.insert(Ray, {
+				put(tx, Ray, {
 					at: fake,
 					sat: span(0n, 1n)
 				})
@@ -165,7 +164,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 
 	test("a fixed-width interval field refuses a wrong-width value", function fixedWidth() {
 		const right = db.write(function good(tx) {
-			tx.insert(Slot, { when: span(10n, 12n) })
+			put(tx, Slot, { when: span(10n, 12n) })
 		})
 		assert.ok(right.ok, "the exact-width value lands")
 		/**
@@ -176,7 +175,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(
 			function wrongWidth() {
 				db.write(function bad(tx) {
-					tx.insert(Slot, { when: span(10n, 15n) })
+					put(tx, Slot, { when: span(10n, 15n) })
 				})
 			},
 			/wrong value kind|width/,
@@ -188,8 +187,8 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		let emptyId: bigint | undefined
 		let astralId: bigint | undefined
 		const written = db.write(function seed(tx) {
-			emptyId = tx.insert(Txt, { note: "" }).id
-			astralId = tx.insert(Txt, { note: "𝔽😀́" }).id
+			emptyId = put(tx, Txt, { note: "" }).id
+			astralId = put(tx, Txt, { note: "𝔽😀́" }).id
 		})
 		assert.ok(written.ok)
 		assert.equal(must(db.get(Txt, { id: must(emptyId) })).note, "")
@@ -209,7 +208,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(
 			function insertRefused() {
 				db.write(function seed(tx) {
-					tx.insert(Txt, { note: "\uD800" })
+					put(tx, Txt, { note: "\uD800" })
 				})
 			},
 			/well-formed string/,
@@ -217,7 +216,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		)
 		let id: bigint | undefined
 		const seeded = db.write(function seed(tx) {
-			id = tx.insert(Txt, { note: "intact" }).id
+			id = put(tx, Txt, { note: "intact" }).id
 		})
 		assert.ok(seeded.ok)
 		assert.throws(
@@ -307,7 +306,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * the `source <= target` slot as spelled.
 		 */
 		const missingTerms = db.write(function violate(tx) {
-			tx.insert(Item, { kind: "Special", flag: true })
+			put(tx, Item, { kind: "Special", flag: true })
 		})
 		assert.ok(!missingTerms.ok, "the mirror judges the written orientation")
 		const forward = must(missingTerms.violations[0])
@@ -329,8 +328,8 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * is carried by `orientation`, never by flipping `direction`.
 		 */
 		const seeded = db.write(function seed(tx) {
-			const plain = tx.insert(Item, { kind: "Plain", flag: false })
-			tx.insert(Terms, { item: plain.id, rate: 1n })
+			const plain = put(tx, Item, { kind: "Plain", flag: false })
+			put(tx, Terms, { item: plain.id, rate: 1n })
 		})
 		assert.ok(!seeded.ok, "the reverse orientation judges too")
 		const reverse = must(seeded.violations[0])
@@ -372,7 +371,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		])
 		const full = await Db.create(path.join(tmpRoot, "full"), Full)
 		const rejected = full.write(function violate(tx) {
-			tx.insert(Item2, { kind: "Special" })
+			put(tx, Item2, { kind: "Special" })
 		})
 		assert.ok(!rejected.ok)
 		const violation = must(rejected.violations[0])
@@ -388,13 +387,13 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const before = db.scan(Num).length
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
-				tx.insert(Num, { u: 1n, s: 1n })
+				put(tx, Num, { u: 1n, s: 1n })
 				throw errors.new("host boom")
 			})
 		}, /host boom/)
 		assert.equal(db.scan(Num).length, before, "the recorded insert never landed")
 		const next = db.write(function fine(tx) {
-			tx.insert(Num, { u: 2n, s: 2n })
+			put(tx, Num, { u: 2n, s: 2n })
 		})
 		assert.ok(next.ok, "the writer is free after the aborted transaction")
 	})
@@ -404,14 +403,14 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(function boom() {
 			db.read(function boom(snap) {
 				return db.writeFrom(snap, function bad(tx) {
-					tx.insert(Num, { u: 3n, s: 3n })
+					put(tx, Num, { u: 3n, s: 3n })
 					throw errors.new("witnessed boom")
 				})
 			})
 		}, /witnessed boom/)
 		assert.equal(db.scan(Num).length, before)
 		const next = db.write(function fine(tx) {
-			tx.insert(Num, { u: 4n, s: 4n })
+			put(tx, Num, { u: 4n, s: 4n })
 		})
 		assert.ok(next.ok)
 		/**
@@ -423,12 +422,12 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("a violating delta then a throw still rethrows the host error (no half-judged state)", function violateThenThrow() {
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
-				tx.insert(Item, { kind: "Special", flag: true })
+				put(tx, Item, { kind: "Special", flag: true })
 				throw errors.new("after violation")
 			})
 		}, /after violation/)
 		const clean = db.write(function fine(tx) {
-			tx.insert(Num, { u: 5n, s: 5n })
+			put(tx, Num, { u: 5n, s: 5n })
 		})
 		assert.ok(clean.ok)
 	})
@@ -446,7 +445,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			db.write(async function sneaky(tx) {
 				await Promise.resolve()
 				const late = errors.trySync(function lateInsert() {
-					tx.insert(Num, { u: 6n, s: 6n })
+					put(tx, Num, { u: 6n, s: 6n })
 				})
 				if (late.error) {
 					lateError = late.error

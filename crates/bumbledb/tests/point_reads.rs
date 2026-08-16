@@ -30,7 +30,7 @@ fn point_reads_observe_the_final_state_before_commit() {
 
     let id = db
         .write(|tx| {
-            let id = tx.alloc::<AccountId>()?;
+            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
             let acct = Account {
                 id,
                 holder: "ada",
@@ -38,11 +38,11 @@ fn point_reads_observe_the_final_state_before_commit() {
             };
             // Insert, then read back through the pending delta — the
             // holder string exists only as a provisional intern id here.
-            assert!(tx.insert(&acct)?);
+            assert_eq!(tx.insert([&acct])?.changed, 1);
             assert!(tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, Some(acct));
             // Delete: the final state no longer holds the fact.
-            assert!(tx.delete(&acct)?);
+            assert_eq!(tx.delete([&acct])?.changed, 1);
             assert!(!tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, None);
             // Delete + reinsert(modified): the key re-establishes with
@@ -51,7 +51,7 @@ fn point_reads_observe_the_final_state_before_commit() {
                 balance: 42,
                 ..acct
             };
-            assert!(tx.insert(&modified)?);
+            assert_eq!(tx.insert([&modified])?.changed, 1);
             assert!(tx.contains(&modified)?);
             assert!(!tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, Some(modified));
@@ -94,12 +94,12 @@ fn point_reads_fall_through_to_committed_state() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let id = db
         .write(|tx| {
-            let id = tx.alloc::<AccountId>()?;
-            tx.insert(&Account {
+            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder: "seed",
                 balance: 7,
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("seed");
@@ -107,12 +107,12 @@ fn point_reads_fall_through_to_committed_state() {
     db.write(|tx| {
         // Touch an unrelated fact so the delta is nonempty but the probed
         // key has no overlay.
-        let other = tx.alloc::<AccountId>()?;
-        tx.insert(&Account {
+        let other = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+        tx.insert([&Account {
             id: other,
             holder: "other",
             balance: 1,
-        })?;
+        }])?;
         let seeded = Account {
             id,
             holder: "seed",
@@ -146,12 +146,12 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let id = db
         .write(|tx| {
-            let id = tx.alloc::<AccountId>()?;
-            tx.insert(&Account {
+            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder: "ada",
                 balance: 10,
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("seed");
@@ -159,16 +159,24 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
     db.write(|tx| {
         // A pending insert on the committed key, then its compensating
         // delete: the pair cancels, net delta nothing.
-        assert!(tx.insert(&Account {
-            id,
-            holder: "ada",
-            balance: 20,
-        })?);
-        assert!(tx.delete(&Account {
-            id,
-            holder: "ada",
-            balance: 20,
-        })?);
+        assert_eq!(
+            tx.insert([&Account {
+                id,
+                holder: "ada",
+                balance: 20,
+            }])?
+            .changed,
+            1
+        );
+        assert_eq!(
+            tx.delete([&Account {
+                id,
+                holder: "ada",
+                balance: 20,
+            }])?
+            .changed,
+            1
+        );
 
         // Every point read answers exactly what a post-commit read would.
         let committed = Account {
@@ -189,16 +197,16 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         );
 
         // The upsert idiom takes the seen arm: delete + insert bumped.
-        tx.delete(&Account {
+        tx.delete([&Account {
             id,
             holder: "ada",
             balance: 10,
-        })?;
-        tx.insert(&Account {
+        }])?;
+        tx.insert([&Account {
             id,
             holder: "ada",
             balance: 11,
-        })?;
+        }])?;
         Ok(())
     })
     .expect("the composed upsert commits cleanly");
@@ -252,9 +260,9 @@ fn every_fresh_field_is_its_own_typed_key() {
     let db = Db::create(dir.path(), Registry).expect("create");
     let (left, right) = db
         .write(|tx| {
-            let left = tx.alloc::<LeftId>()?;
-            let right = tx.alloc::<RightId>()?;
-            tx.insert(&Pair { left, right })?;
+            let left = tx.reserve::<LeftId>(1)?.start().expect("nonempty");
+            let right = tx.reserve::<RightId>(1)?.start().expect("nonempty");
+            tx.insert([&Pair { left, right }])?;
             assert_eq!(tx.get(left)?, Some(Pair { left, right }));
             assert_eq!(tx.get(right)?, Some(Pair { left, right }));
             Ok((left, right))
@@ -279,12 +287,12 @@ fn snapshot_get_reads_committed_state_through_the_fresh_key() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let id = db
         .write(|tx| {
-            let id = tx.alloc::<AccountId>()?;
-            tx.insert(&Account {
+            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder: "ada",
                 balance: 7,
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("seed");
@@ -313,23 +321,23 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
         let old = tx.get(id)?.map(|old| (old.holder.to_owned(), old.balance));
         match old {
             Some((holder, balance)) => {
-                tx.delete(&Account {
+                tx.delete([&Account {
                     id,
                     holder: &holder,
                     balance,
-                })?;
-                tx.insert(&Account {
+                }])?;
+                tx.insert([&Account {
                     id,
                     holder: &holder,
                     balance: balance + x,
-                })?;
+                }])?;
             }
             None => {
-                tx.insert(&Account {
+                tx.insert([&Account {
                     id,
                     holder: "counter",
                     balance: x,
-                })?;
+                }])?;
             }
         }
         Ok(())
@@ -376,12 +384,12 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let id = db
         .write(|tx| {
-            let id = tx.alloc::<AccountId>()?;
-            tx.insert(&Account {
+            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            tx.insert([&Account {
                 id,
                 holder: "ada",
                 balance: 10,
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("write");
@@ -420,12 +428,12 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let before = db.generation().expect("generation");
     assert_eq!(db.read(|snap| snap.generation()).expect("read"), before);
     db.write(|tx| {
-        let id = tx.alloc::<AccountId>()?;
-        tx.insert(&Account {
+        let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+        tx.insert([&Account {
             id,
             holder: "ada",
             balance: 1,
-        })?;
+        }])?;
         Ok(())
     })
     .expect("write");

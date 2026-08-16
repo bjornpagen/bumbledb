@@ -24,6 +24,7 @@ import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
+import { put } from "#test/put.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -82,14 +83,14 @@ let db: Db<Rels>
 before(async function seed() {
 	db = await Db.create(storeDir, Theory)
 	const result = db.write(function delta(tx) {
-		tx.insert(Holder, { id: 1n, name: "ada", rank: 1n })
-		tx.insert(Holder, { id: 2n, name: "grace", rank: 2n })
-		tx.insert(Holder, { id: 3n, name: "kurt", rank: 3n })
-		tx.insert(Account, { id: 10n, holder: 1n, kind: "Checking", window: { start: 0n, end: 10n } })
-		tx.insert(Account, { id: 11n, holder: 1n, kind: "Savings", window: { start: 20n, end: 30n } })
-		tx.insert(Account, { id: 12n, holder: 2n, kind: "Savings", window: { start: 5n, end: 15n } })
-		tx.insert(Parent, { child: 2n, parent: 1n })
-		tx.insert(Parent, { child: 3n, parent: 2n })
+		put(tx, Holder, { id: 1n, name: "ada", rank: 1n })
+		put(tx, Holder, { id: 2n, name: "grace", rank: 2n })
+		put(tx, Holder, { id: 3n, name: "kurt", rank: 3n })
+		put(tx, Account, { id: 10n, holder: 1n, kind: "Checking", window: { start: 0n, end: 10n } })
+		put(tx, Account, { id: 11n, holder: 1n, kind: "Savings", window: { start: 20n, end: 30n } })
+		put(tx, Account, { id: 12n, holder: 2n, kind: "Savings", window: { start: 5n, end: 15n } })
+		put(tx, Parent, { child: 2n, parent: 1n })
+		put(tx, Parent, { child: 3n, parent: 2n })
 	})
 	assert.ok(result.ok, "the seed commit lands")
 })

@@ -69,7 +69,7 @@ R | statement | key | source_rel | source_row -> () | weight_u64   statement-sco
                                                       weighted statement's edge carries the child's u64
                                                       weight LE in the value slot, the C17 measured law;
                                                       unit and containment edges keep the empty value)
-Q | relation_id | field_id          -> next_u64       fresh sequences  (readers: alloc, and commit's row-id
+Q | relation_id | field_id          -> next_u64       fresh sequences  (readers: reserve, and commit's row-id
                                                       assignment on a fresh-keyed relation — the one id
                                                       allocator, ruled 2026-07-23, R16, § below; the ratchet law:
                                                       an EXPLICIT fresh-field value advances the
@@ -270,8 +270,8 @@ facts, never interned, so the key hash carries no type tag: forward
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
 **Why it lost:** a fixed tiny DBI set is simpler and the access patterns are prefix
 scans and point gets either way. Stated consequence: LMDB append mode is only usable
-for a **fresh-database bulk load written in global key order**; incremental writes never
-append (an `M`/`Q`/`S` key always exceeds every `F` key). **Reverses if:** bulk-load
+for a **fresh-database collection insert written in global key order**; incremental writes never
+append (an `M`/`Q`/`S` key always exceeds every `F` key). **Reverses if:** first-load
 profiling shows append mode mattering for incremental use.
 
 **Decision: `M` indirection (hash → row_id) rather than keying facts by their bytes.**
@@ -285,8 +285,8 @@ likely; revisit only with the layout.
 A write transaction is an **in-memory delta** — a net insert-set and delete-set of
 canonical fact bytes, arena-backed, recording **net dispositions against committed
 state**. During the closure, `insert`/`delete` are pure set arithmetic: encode the
-fact, probe `M` (a read-only get) plus the delta to compute the `changed: bool`
-return value, and record the *net* effect — a redundant op (insert of a committed
+fact, probe `M` (a read-only get) plus the delta to compute each fact's
+contribution to `MutationReport.changed`, and record the *net* effect — a redundant op (insert of a committed
 fact, delete of an absent one) records nothing, and an op whose net effect is
 nothing *cancels* the pending opposite entry (delete + re-insert of a committed
 fact, or insert + delete of an absent one, leaves no entry). The op-time probe is
@@ -297,7 +297,7 @@ commit will add and the delete set exactly the facts it will remove — every en
 applies at commit (base state disagreeing with a proved disposition is the
 `DispositionDesync` corruption, never a skip), the empty delta is the only no-op
 commit shape, and judging a no-op insert is unrepresentable (the judgment-direction
-divergence this closes is pinned in `60-validation.md`). `alloc` reads `Q` once at
+divergence this closes is pinned in `60-validation.md`). `reserve` reads `Q` once at
 first use per (relation, field) and increments
 in memory (a transaction sees its own allocations); explicit-value inserts advance the
 in-memory mark past the supplied value; mixed explicit/generated allocation tracks the
@@ -494,21 +494,15 @@ counters-only LMDB transaction: the tx id identifies query-visible state (`F/M/U
 and `Q` marks are write-path bookkeeping no query reads, so every image and memo key
 stays valid. Pending interns of a no-op commit are dropped — intern ids never escape.
 
-Bulk load (`70-api.md` surface) is the same delta mechanism at scale — chunked into
-multiple transactions (4096 facts each; a failing chunk aborts whole, prior chunks
-stay committed, and the error carries the committed count). This chunking is the
-engine **operationalization** of Lean `scanLoad`, which judges the transformed
-instance as **one** final state (`lean/Bumbledb/Txn.lean: etl_lands_valid`). They
-are not the same atomic judgment: a migration Lean would reject in one `judge`
-can leave a prefix of chunks committed. Recipe 28 (load containment targets
-first) is the host obligation that makes sequenced commits safe. Chunking has a
-stated consequence under bidirectional containments: **a `==` statement's cluster
-must be judged whole**, so a chunk boundary that splits a cluster mid-load fails
-that chunk's commit loudly (never silently); the documented import order —
-dependency-cluster order, owned by `70-api.md`'s ETL section — makes the failure
-unreachable for well-formed exports. The fresh-database append-order fast path
-stays deliberately unbuilt. The chunk size (4096) is engine mechanism, not a
-Lean parameter.
+Storage applies one `WriteDelta` per `db.write` (`70-api.md`). Chunking, if
+any, is host policy: a host that splits a load is a sequence of ordinary
+commits (`lean/Bumbledb/Txn.lean`). Recipe 28 (load containment targets first;
+keep a `==` cluster inside one transaction) is the host obligation that makes
+sequenced commits safe. A `==` statement's cluster must be judged whole, so a
+host boundary that splits a cluster mid-load fails that write loudly (never
+silently); the documented import order — dependency-cluster order, owned by
+`70-api.md`'s ETL section — makes the failure unreachable for well-formed
+exports. The fresh-database append-order fast path stays deliberately unbuilt.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an
@@ -861,7 +855,7 @@ accepted design. That is the entire operational story, deliberately.
 The store is larger than SQLite's for the same logical content, structurally and by
 design — recorded so nobody re-derives it:
 
-- **Freelist churn**: chunked bulk-load commits leave CoW residue as free pages.
+- **Freelist churn**: a host loop of collection-insert `write`s leaves CoW residue as free pages.
   LMDB never shrinks its file; length reflects peak usage.
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
   (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied

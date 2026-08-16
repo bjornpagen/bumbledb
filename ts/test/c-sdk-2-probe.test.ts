@@ -13,13 +13,12 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
-
 import * as errors from "@superbuilders/errors"
-
 import type { Db as DbValue, Fact, KeyFact, MemberRelation, ReadScope } from "#index.ts"
 import { Db } from "#index.ts"
 import type { RunStoreSchema } from "#test/fixtures/run-store-schema.ts"
 import { grp, runStoreSchema, sheet } from "#test/fixtures/run-store-schema.ts"
+import { put } from "#test/put.ts"
 
 /** The same relations record the graph-builder's `PromptRels` names. */
 type Rels = RunStoreSchema["relations"]
@@ -57,13 +56,13 @@ let missingGrpId: Fact<typeof grp>["id"]
 before(async function create() {
 	db = await Db.create(path.join(tmpRoot, "store"), runStoreSchema)
 	const written = db.write(function build(tx) {
-		const sheetRow = tx.insert(sheet, {
+		const sheetRow = put(tx, sheet, {
 			name: "sheet-probe",
 			grade: "G7",
 			contentHash: new Uint8Array(32)
 		})
 		sheetId = sheetRow.id
-		const grpRow = tx.insert(grp, {
+		const grpRow = put(tx, grp, {
 			sheet: sheetRow.id,
 			label: "STAGING",
 			context: "partition pending"
@@ -74,9 +73,9 @@ before(async function create() {
 		 * without any cast (the id is real, the row is gone from the final
 		 * state).
 		 */
-		const doomed = tx.insert(grp, { sheet: sheetRow.id, label: "doomed", context: "c" })
+		const doomed = put(tx, grp, { sheet: sheetRow.id, label: "doomed", context: "c" })
 		missingGrpId = doomed.id
-		tx.delete(grp, { id: doomed.id, sheet: sheetRow.id, label: "doomed", context: "c" })
+		tx.delete(grp, [{ id: doomed.id, sheet: sheetRow.id, label: "doomed", context: "c" }])
 	})
 	assert.ok(written.ok, "the probe fixture commit admits")
 })

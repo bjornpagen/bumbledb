@@ -37,17 +37,7 @@ import type { Exhumed } from "#exhume.ts"
 import { exhumeStore } from "#exhume.ts"
 import { rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
-import {
-	factOf,
-	handleOf,
-	isFreshField,
-	isInserted,
-	type KeyFact,
-	keyRowOf,
-	type Minted,
-	recordOf,
-	rowOf
-} from "#marshal.ts"
+import { factOf, handleOf, isFreshField, type KeyFact, keyRowOf, recordOf, rowOf } from "#marshal.ts"
 
 import type {
 	DbHandle,
@@ -56,6 +46,7 @@ import type {
 	PreparedHandle,
 	SnapshotHandle,
 	TxHandle,
+	WireFreshRange,
 	Violation as WireViolation,
 	ViolationFact as WireViolationFact
 } from "#native.ts"
@@ -65,7 +56,7 @@ import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
-import type { AnyRelation, Fact, InsertFact } from "#relation.ts"
+import type { AnyRelation, Fact, FreshKeys } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
 
@@ -75,6 +66,70 @@ import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
  * relation shape entirely, so passing one is a type error.
  */
 type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
+
+/**
+ * Facts consumed vs facts that changed the in-memory final-state view.
+ * The length-1 report is `{ submitted: 1n, changed: 0n | 1n }`.
+ */
+interface MutationReport {
+	readonly submitted: bigint
+	readonly changed: bigint
+}
+
+/**
+ * Half-open fresh-id range from one `reserve`. Empty cannot yield a
+ * minted id — `start` exists only on the nonempty arm.
+ */
+type FreshRange =
+	| {
+			readonly empty: true
+			readonly count: 0n
+			at(index: bigint): undefined
+			[Symbol.iterator](): IterableIterator<bigint>
+	  }
+	| {
+			readonly empty: false
+			readonly start: bigint
+			readonly endExclusive: bigint
+			readonly count: bigint
+			at(index: bigint): bigint | undefined
+			[Symbol.iterator](): IterableIterator<bigint>
+	  }
+
+function freshRangeOf(wire: WireFreshRange): FreshRange {
+	if (wire.empty) {
+		return Object.freeze({
+			empty: true,
+			count: 0n,
+			at(_index: bigint) {
+				return undefined
+			},
+			*[Symbol.iterator](): IterableIterator<bigint> {}
+		})
+	}
+	const start = wire.start
+	const endExclusive = wire.endExclusive
+	const count = endExclusive - start
+	return Object.freeze({
+		empty: false,
+		start,
+		endExclusive,
+		get count() {
+			return count
+		},
+		at(index: bigint) {
+			if (index < 0n || index >= count) {
+				return undefined
+			}
+			return start + index
+		},
+		*[Symbol.iterator](): IterableIterator<bigint> {
+			for (let id = start; id < endExclusive; id++) {
+				yield id
+			}
+		}
+	})
+}
 
 /**
  * The key object of a key-statement-selected `get`: exactly the selected
@@ -297,21 +352,22 @@ function abandonedOutcome<Rels extends SchemaRelations, R>(
  */
 interface Tx<Rels extends SchemaRelations> {
 	/**
-	 * Records one insert. Omitted fresh fields are MINTED through the
-	 * engine's alloc lane and returned as bare bigints; supplying them instead
-	 * preserves identity (the resupply idiom). Returns `{ changed, ...fresh }`
-	 * (ruled 2026-07-23, R11): the engine's changed-state report — the Rust
-	 * surface's `insert(&fact) -> bool` bijection `delete` always honored —
-	 * beside the relation's fresh cells, minted or resupplied. The
-	 * idempotent-replay lane reads the bit from the insert itself; no extra
-	 * `contains` round trip exists. The flattened shape cannot carry a FRESH
-	 * cell literally named `changed` beside the report, so admission refuses
-	 * that one spelling ({@link refuseShadowedChanged}) — never a silent
-	 * shadow here.
+	 * Records a collection of inserts. Singleton is `[fact]`. Empty is
+	 * lawful. Returns how many facts were consumed and how many changed
+	 * the in-memory final-state view. Every fact is complete — omitted
+	 * fresh cells are a type error; mint first with {@link Tx.reserve}.
 	 */
-	insert<R extends MemberRelation<Rels>>(relation: R, fact: InsertFact<R>): { readonly changed: boolean } & Minted<R>
-	/** Records one delete; `true` iff the final state changed. */
-	delete<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
+	insert<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
+	/**
+	 * Records a collection of deletes. Singleton is `[fact]`. Returns
+	 * how many facts were consumed and how many changed the view.
+	 */
+	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
+	/**
+	 * Mints `count` consecutive fresh values for a `.fresh` field.
+	 * `count === 0n` is empty and does not yield a start.
+	 */
+	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
 	/** Final-state membership of one complete fact. */
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	/**
@@ -792,44 +848,6 @@ const ErrGenerationMoved = errors.new(
 )
 
 /**
- * Fills one insert's omitted fresh cells through the engine's
- * alloc-then-insert dyn lane (there is no insert-with-omitted-fields wire
- * spelling) and collects every fresh cell — minted or resupplied — for the
- * insert's return. Mutates `values` in place with the minted cells.
- */
-function mintFreshCells(
-	txHandle: TxHandle,
-	entry: RelationEntry,
-	relation: AnyRelation,
-	values: Record<string, unknown>
-): Record<string, FactValue> {
-	const fresh: Record<string, FactValue> = {}
-	for (const declared of relation.data.fields) {
-		if (!isFreshField(declared.field)) {
-			continue
-		}
-		let cell = values[declared.name]
-		if (cell === undefined) {
-			const fieldId = entry.fieldIds.get(declared.name)
-			if (fieldId === undefined) {
-				throw errors.new(`bumbledb manifest drift: relation ${relation.name} has no field id for ${declared.name}`)
-			}
-			cell = bridged("bumbledb tx alloc", function mint() {
-				return native.txAlloc(txHandle, entry.id, fieldId)
-			})
-			values[declared.name] = cell
-		}
-		if (typeof cell !== "bigint") {
-			throw errors.new(
-				`relation ${relation.name} field ${declared.name}: a fresh cell is a u64 bigint, got ${typeof cell}`
-			)
-		}
-		fresh[declared.name] = cell
-	}
-	return fresh
-}
-
-/**
  * Constructs one open `Db` over an already-admitted handle: builds the
  * id-resolution tables once and closes over them — the `Db` owns handle
  * and tables and nothing else. Handle lifetime is the process's: the store
@@ -1215,38 +1233,59 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				})
 			}
 		})
-		function insert<R extends MemberRelation<Rels>>(
-			relation: R,
-			fact: InsertFact<R>
-		): { readonly changed: boolean } & Minted<R> {
+		function insert<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
-			const entry = resolveOrdinary(relation)
-			const txHandle = resolveTx()
-			/** The one spread copy of the write path: `mintFreshCells` writes minted cells in place, and they must never land in the caller's own fact object. */
-			const values: Record<string, unknown> = { ...recordOf(fact) }
-			const fresh = mintFreshCells(txHandle, entry, relation, values)
-			const row = rowOf(relation.data, values)
-			const changed = bridged("bumbledb tx insert", function record() {
-				return native.txInsert(txHandle, entry.id, row)
-			})
-			const inserted: Readonly<Record<string, FactValue | boolean>> = Object.freeze({ changed, ...fresh })
-			if (!isInserted(relation, inserted)) {
-				throw errors.new(`relation ${relation.name}: insert return record is incomplete`)
+			const rows: FactValue[][] = []
+			for (const fact of facts) {
+				rows.push(rowOf(relation.data, recordOf(fact)))
 			}
-			return inserted
-		}
-		function remove<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
-			const row = rowOf(relation.data, recordOf(fact))
-			return bridged("bumbledb tx delete", function record() {
-				return native.txDelete(txHandle, entry.id, row)
+			const report = bridged("bumbledb tx insert", function record() {
+				return native.txInsert(txHandle, entry.id, rows)
 			})
+			return Object.freeze({ submitted: report.submitted, changed: report.changed })
+		}
+		function remove<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
+			assertLive()
+			const rows: FactValue[][] = []
+			for (const fact of facts) {
+				rows.push(rowOf(relation.data, recordOf(fact)))
+			}
+			const entry = resolveOrdinary(relation)
+			const txHandle = resolveTx()
+			const report = bridged("bumbledb tx delete", function record() {
+				return native.txDelete(txHandle, entry.id, rows)
+			})
+			return Object.freeze({ submitted: report.submitted, changed: report.changed })
+		}
+		function reserve<R extends MemberRelation<Rels>>(
+			relation: R,
+			field: FreshKeys<R> & string,
+			count: bigint
+		): FreshRange {
+			assertLive()
+			const entry = resolveOrdinary(relation)
+			const declared = relation.data.fields.find(function byName(candidate) {
+				return candidate.name === field
+			})
+			if (declared === undefined || !isFreshField(declared.field)) {
+				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
+			}
+			const fieldId = entry.fieldIds.get(field)
+			if (fieldId === undefined) {
+				throw errors.new(`bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`)
+			}
+			const txHandle = resolveTx()
+			const range = bridged("bumbledb tx reserve", function mint() {
+				return native.txReserve(txHandle, entry.id, fieldId, count)
+			})
+			return freshRangeOf(range)
 		}
 		const tx: Tx<Rels> = Object.freeze({
 			insert,
 			delete: remove,
+			reserve,
 			contains: reads.contains,
 			get: reads.get
 		})
@@ -1419,27 +1458,6 @@ const ErrNewtypeMismatch = errors.new(
 )
 
 /**
- * `Tx.insert` returns the flattened `{ changed, ...fresh }` record (R11),
- * where the spread wins: a FRESH field literally named `changed` would
- * shadow the engine's changed-state report on every insert of its
- * relation. No field name is reserved SILENTLY — the one unspeakable
- * spelling is refused here at admission, before any store is touched.
- * Supplied (non-fresh) fields named `changed` never enter the return
- * record and stay legal.
- */
-function refuseShadowedChanged(theory: AnySchema): void {
-	for (const [name, member] of Object.entries(theory.relations)) {
-		for (const declared of sealedFieldsOf(member)) {
-			if (declared.name === "changed" && isFreshField(declared.field)) {
-				throw errors.new(
-					`relation ${name}: a fresh field named "changed" would shadow tx.insert's changed-state report in its { changed, ...fresh } return (R11) — rename the fresh field; a supplied field named "changed" stays legal (only fresh cells ride the return)`
-				)
-			}
-		}
-	}
-}
-
-/**
  * The one admission path both verbs share: lower the theory, run one
  * bridge call, and wrap the domain refusals — `schemaError` (spec
  * resolution + schema validation, every issue in one message),
@@ -1455,7 +1473,6 @@ function admit<Rels extends SchemaRelations>(
 	storePath: string,
 	theory: Schema<Rels>
 ): Db<Rels> {
-	refuseShadowedChanged(theory)
 	const canonical = path.resolve(storePath)
 	const spec = lower(theory)
 	const opened = bridged(`${verb} bumbledb store at ${canonical}`, function callBridge() {
@@ -1527,9 +1544,11 @@ export type {
 	DeclaredKeyFact,
 	DeclaredKeyViolation,
 	DeltaBuild,
+	FreshRange,
 	ImpliedKeyViolation,
 	MemberRelation,
 	MirrorViolation,
+	MutationReport,
 	OffendingFact,
 	Prepared,
 	ReadScope,

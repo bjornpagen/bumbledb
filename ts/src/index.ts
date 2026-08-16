@@ -56,9 +56,11 @@ export type {
 	DeclaredKeyFact,
 	DeclaredKeyViolation,
 	DeltaBuild,
+	FreshRange,
 	ImpliedKeyViolation,
 	MemberRelation,
 	MirrorViolation,
+	MutationReport,
 	OffendingFact,
 	Prepared,
 	ReadScope,
@@ -114,7 +116,7 @@ export type {
 export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
-export type { KeyFact, Minted } from "#marshal.ts"
+export type { KeyFact } from "#marshal.ts"
 export type { FactValue, ParsedQuery, QueryIr, StatementKindTag } from "#native.ts"
 
 export type {
@@ -169,7 +171,6 @@ export type {
 	Fact,
 	FieldsShape,
 	FreshKeys,
-	InsertFact,
 	Relation,
 	RelationData,
 	RelationField,

@@ -46,7 +46,7 @@ impl<S> Run<'_, S> {
                     .signature()
                     .columns
                     .iter()
-                    .map(|column| column.ty.clone())
+                    .map(|column| column.ty().clone())
                     .collect();
                 let mut buffer = Answers::new();
                 let args = param_args(params);

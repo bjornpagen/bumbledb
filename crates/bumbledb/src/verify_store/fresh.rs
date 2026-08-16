@@ -4,7 +4,7 @@
 //! strictly below the stored next-value (the ratchet law,
 //! `docs/architecture/50-storage.md` § key layout;
 //! `lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`), or
-//! `alloc()` re-issues an id the host already holds. A tallied fresh
+//! `reserve()` re-issues an id the host already holds. A tallied fresh
 //! field with no stored entry reads as zero, exactly as the `S` pass
 //! treats absent counters. The one legal exemption: an explicit
 //! `u64::MAX` fresh value leaves the sequence exhausted with
@@ -25,7 +25,7 @@ use super::{StoreFinding, Sweep, namespace};
 /// `u64::MAX` makes the tally `MAX`, but the mark advance that admitted
 /// it saturated the stored next-value to `MAX` too — so any stored
 /// value below `MAX` under a `MAX` tally is a genuine regression
-/// (`alloc()` would re-issue every id between it and the ceiling), not
+/// (`reserve()` would re-issue every id between it and the ceiling), not
 /// the legal exhausted shape `next == value == u64::MAX`.
 fn ratchet_broken(stored: u64, max_fresh: u64) -> bool {
     stored != u64::MAX && stored <= max_fresh

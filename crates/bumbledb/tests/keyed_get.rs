@@ -52,22 +52,22 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
     let db = Db::create(dir.path(), KeyedGet).expect("create");
     let (grp, task) = db
         .write(|tx| {
-            let grp = tx.alloc::<GrpId>()?;
-            tx.insert(&Grp {
+            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            tx.insert([&Grp {
                 id: grp,
                 label: "home",
-            })?;
-            tx.insert(&Meta {
+            }])?;
+            tx.insert([&Meta {
                 grp,
                 title: "the home group",
-            })?;
-            let task = tx.alloc::<TaskId>()?;
-            tx.insert(&Task {
+            }])?;
+            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
+            tx.insert([&Task {
                 id: task,
                 kind: Kind::Alpha.id(),
                 subject: grp,
                 note: "water",
-            })?;
+            }])?;
             Ok((grp, task))
         })
         .expect("seed");
@@ -143,22 +143,22 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
     let db = Db::create(dir.path(), KeyedGet).expect("schema admission succeeds");
     let grp = db
         .write(|tx| {
-            let grp = tx.alloc::<GrpId>()?;
-            tx.insert(&Grp {
+            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            tx.insert([&Grp {
                 id: grp,
                 label: "inbox",
-            })?;
-            tx.insert(&Meta {
+            }])?;
+            tx.insert([&Meta {
                 grp,
                 title: "the inbox",
-            })?;
-            let task = tx.alloc::<TaskId>()?;
-            tx.insert(&Task {
+            }])?;
+            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
+            tx.insert([&Task {
                 id: task,
                 kind: Kind::Beta.id(),
                 subject: grp,
                 note: "triage",
-            })?;
+            }])?;
             Ok(grp)
         })
         .expect("seed");
@@ -201,11 +201,11 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
     .expect("a never-interned label proves absence");
 
     db.write(|tx| {
-        let grp = tx.alloc::<GrpId>()?;
-        tx.insert(&Grp {
+        let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+        tx.insert([&Grp {
             id: grp,
             label: "novel-label",
-        })?;
+        }])?;
         // The label exists only as a provisional intern id here, and
         // the keyed get resolves it pending-first.
         assert_eq!(
@@ -217,10 +217,10 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
                 label: "novel-label",
             })
         );
-        tx.delete(&Grp {
+        tx.delete([&Grp {
             id: grp,
             label: "novel-label",
-        })?;
+        }])?;
         assert_eq!(
             tx.get(GrpByLabel {
                 label: "novel-label",
@@ -242,27 +242,27 @@ fn keyed_get_observes_the_final_state_overlay() {
     let db = Db::create(dir.path(), KeyedGet).expect("create");
     let (grp, task) = db
         .write(|tx| {
-            let grp = tx.alloc::<GrpId>()?;
-            tx.insert(&Grp {
+            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            tx.insert([&Grp {
                 id: grp,
                 label: "garden",
-            })?;
-            tx.insert(&Meta {
+            }])?;
+            tx.insert([&Meta {
                 grp,
                 title: "the garden",
-            })?;
-            let task = tx.alloc::<TaskId>()?;
+            }])?;
+            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
             let key = TaskByKindSubject {
                 kind: Kind::Alpha.id(),
                 subject: grp,
             };
             // Present arm: the pending insert answers through the delta.
-            tx.insert(&Task {
+            tx.insert([&Task {
                 id: task,
                 kind: Kind::Alpha.id(),
                 subject: grp,
                 note: "sow",
-            })?;
+            }])?;
             assert_eq!(
                 tx.get(key)?,
                 Some(Task {
@@ -273,20 +273,20 @@ fn keyed_get_observes_the_final_state_overlay() {
                 })
             );
             // Absent arm: the pending delete answers None.
-            tx.delete(&Task {
+            tx.delete([&Task {
                 id: task,
                 kind: Kind::Alpha.id(),
                 subject: grp,
                 note: "sow",
-            })?;
+            }])?;
             assert_eq!(tx.get(key)?, None);
             // Reinsert modified: the key re-establishes on the final state.
-            tx.insert(&Task {
+            tx.insert([&Task {
                 id: task,
                 kind: Kind::Alpha.id(),
                 subject: grp,
                 note: "harvest",
-            })?;
+            }])?;
             assert_eq!(
                 tx.get(key)?,
                 Some(Task {

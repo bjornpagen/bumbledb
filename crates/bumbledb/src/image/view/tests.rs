@@ -3,6 +3,7 @@ use crate::encoding::{ValueRef, decode_field, encode_fact, encode_i64, encode_u6
 use crate::error::Result as DbResult;
 use crate::image::build;
 use crate::ir::ParamId;
+use crate::ir::{OrderCmp, WordCmp};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
@@ -138,17 +139,17 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
     let predicates = vec![
         FilterPredicate::Compare {
             field: FieldId(1),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Byte(1),
         },
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Ge,
+            op: WordCmp::Ge,
             value: Const::Word(u64::from_be_bytes(encode_i64(-10))),
         },
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Word(u64::from_be_bytes(encode_i64(15))),
         },
     ];
@@ -170,7 +171,7 @@ fn same_fact_field_equality_pairs_work() {
     let predicates = vec![FilterPredicate::FieldsCompare {
         left: FieldId(2),
         right: FieldId(3),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
     }];
     let view = apply(&image, &predicates, &[], Vec::new());
     let expected = oracle(&env, &schema, |_, _, a, b| a == b);
@@ -187,7 +188,7 @@ fn unsatisfiable_filter_yields_an_empty_survivor_set() {
     let image = build(&txn, &schema, R).expect("build");
     let predicates = vec![FilterPredicate::Compare {
         field: FieldId(0),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::Word(u64::MAX),
     }];
     let view = apply(&image, &predicates, &[], Vec::new());
@@ -218,7 +219,7 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
     let txn = env.read_txn().expect("txn");
     let predicates = vec![FilterPredicate::Compare {
         field: FieldId(0),
-        op: CmpOp::Ge,
+        op: WordCmp::Ge,
         value: Const::Word(u64::from_be_bytes(encode_u64(40))),
     }];
 
@@ -439,7 +440,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsCompare {
             left: P_DURING,
             right: P_REVIEW,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
         }),
         [5]
     );
@@ -447,7 +448,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsCompare {
             left: P_DURING,
             right: P_REVIEW,
-            op: CmpOp::Ne,
+            op: WordCmp::Ne,
         }),
         [1, 2, 3, 4]
     );
@@ -479,7 +480,7 @@ fn interval_constants_compare_pairwise_under_eq() {
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::Compare {
         field: P_DURING,
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::Interval {
             start: w(2),
             end: w(9),
@@ -497,7 +498,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::Compare {
         field: P_ID,
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::ParamSet(ParamId(0)),
     }];
     let params = [Const::WordSet(vec![1u64, 3])];
@@ -519,7 +520,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     // Durations of P_ROWS' `during`: 7, 3, 7, 4, 2 (by id).
     let dur_lt = |bound: u64| FilterPredicate::DurationCompare {
         field: P_DURING,
-        op: CmpOp::Lt,
+        op: OrderCmp::Lt,
         value: WordOrParam::Word(bound),
     };
 
@@ -540,7 +541,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     let mixed = vec![
         FilterPredicate::Compare {
             field: P_ID,
-            op: CmpOp::Ge,
+            op: WordCmp::Ge,
             value: Const::Word(3),
         },
         dur_lt(5),
@@ -553,7 +554,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     // only id 5 (duration 2) sits strictly under its id.
     let fields_lt = FilterPredicate::DurationFieldsCompare {
         interval: P_DURING,
-        op: CmpOp::Lt,
+        op: OrderCmp::Lt,
         scalar: P_ID,
     };
     assert_eq!(
@@ -568,7 +569,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     let mixed = vec![
         FilterPredicate::Compare {
             field: P_ID,
-            op: CmpOp::Ge,
+            op: WordCmp::Ge,
             value: Const::Word(4),
         },
         fields_lt,

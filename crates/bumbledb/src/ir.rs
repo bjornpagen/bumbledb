@@ -190,7 +190,7 @@ pub enum AggOp {
     /// The orderable types, as [`AggOp::Min`] — `Max` over bool is
     /// **Any**, the other extreme of the 0/1 encoding.
     Max,
-    /// Nullary (`over: None`): |the group's binding set|, result type U64.
+    /// Nullary: |the group's binding set|, result type U64.
     Count,
     /// The coalescing fold (Snodgrass coalesce) over an interval-typed
     /// variable: per group, the result is the set of **maximal disjoint
@@ -205,16 +205,34 @@ pub enum AggOp {
     Pack,
 }
 
-/// One find term: a projected variable or an aggregate. `over` is `None`
-/// for the nullary `Count`, and the aggregated variable for
-/// `Sum`/`Min`/`Max`/`Pack`.
+/// A fold over a variable: `Sum`/`Min`/`Max` only. Nullary [`FindTerm::Count`]
+/// and coalescing [`FindTerm::Pack`] are sibling constructors — Count-with-
+/// variable and Sum-without are unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldOp {
+    Sum,
+    Min,
+    Max,
+}
+
+impl FoldOp {
+    /// This fold's var-free head shape.
+    #[must_use]
+    pub fn head_op(self) -> HeadOp {
+        match self {
+            Self::Sum => HeadOp::Sum,
+            Self::Min => HeadOp::Min,
+            Self::Max => HeadOp::Max,
+        }
+    }
+}
+
+/// One find term: a projected variable, the measure, nullary count, a
+/// fold over a variable, pack, or a fold over the measure. Count cannot
+/// carry a variable; folds and pack cannot omit one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
-    Aggregate {
-        op: AggOp,
-        over: Option<VarId>,
-    },
     /// The measure at a find position: projects surface `Duration(over)` —
     /// one u64 value per binding, `end − start` of the interval variable
     /// (see [`Term::Measure`]; the variable must be interval-typed and
@@ -222,13 +240,22 @@ pub enum FindTerm {
     /// aggregation, exactly like a plain variable find. A ray has no finite
     /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
     Measure(VarId),
-    /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)` —
-    /// the only three ops the measure admits (`Count` is nullary). Accumulates
-    /// exactly as `Sum`/`Min`/`Max` over a u64 variable — Sum in the wide
-    /// accumulator with the single finalize range check. A ray has no finite
-    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
+    /// Nullary: |the group's binding set|, result type U64.
+    Count,
+    /// `Sum`/`Min`/`Max` over a bound variable.
+    Aggregate {
+        op: FoldOp,
+        over: VarId,
+    },
+    /// The coalescing fold over an interval-typed variable.
+    Pack {
+        over: VarId,
+    },
+    /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)`.
+    /// Accumulates exactly as the same fold over a u64 variable. A ray
+    /// has no finite measure and raises [`crate::Error::MeasureOfRay`].
     AggregateMeasure {
-        op: AggOp,
+        op: FoldOp,
         over: VarId,
     },
 }
@@ -242,9 +269,11 @@ impl FindTerm {
     pub fn head_term(&self) -> HeadTerm {
         match self {
             Self::Var(_) | Self::Measure(_) => HeadTerm::Var,
+            Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } | Self::AggregateMeasure { op, .. } => {
                 HeadTerm::Aggregate(op.head_op())
             }
+            Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),
         }
     }
 }
@@ -313,9 +342,36 @@ pub enum CmpOp {
     PointIn,
 }
 
-impl CmpOp {
-    /// Evaluates the operator over ordered operands (execution-level
-    /// readers: filtered views and residual evaluation).
+/// Scalar word comparison: `Eq`/`Ne` and the order operators. Allen and
+/// `PointIn` are other kinds — they cannot inhabit this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordCmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl WordCmp {
+    /// The word-comparison fragment of [`CmpOp`], if this is not an
+    /// interval operator.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn from_cmp(op: CmpOp) -> Option<Self> {
+        match op {
+            CmpOp::Eq => Some(Self::Eq),
+            CmpOp::Ne => Some(Self::Ne),
+            CmpOp::Lt => Some(Self::Lt),
+            CmpOp::Le => Some(Self::Le),
+            CmpOp::Gt => Some(Self::Gt),
+            CmpOp::Ge => Some(Self::Ge),
+            CmpOp::Allen { .. } | CmpOp::PointIn => None,
+        }
+    }
+
+    /// Evaluates the operator over ordered operands.
     pub(crate) fn compare<T: Ord>(self, left: &T, right: &T) -> bool {
         match self {
             Self::Eq => left == right,
@@ -324,13 +380,35 @@ impl CmpOp {
             Self::Le => left <= right,
             Self::Gt => left > right,
             Self::Ge => left >= right,
-            // Interval operators never reach single-word evaluation:
-            // normalization lowers `Allen` to mask-carrying shapes and
-            // `PointIn` to endpoint compositions (`ir::normalize`).
-            Self::Allen { .. } | Self::PointIn => {
-                unreachable!("interval operators are lowered before evaluation")
-            }
         }
+    }
+}
+
+impl From<OrderCmp> for WordCmp {
+    fn from(op: OrderCmp) -> Self {
+        match op {
+            OrderCmp::Lt => Self::Lt,
+            OrderCmp::Le => Self::Le,
+            OrderCmp::Gt => Self::Gt,
+            OrderCmp::Ge => Self::Ge,
+        }
+    }
+}
+
+/// An order operator: `Lt`/`Le`/`Gt`/`Ge`. Equality is a different kind
+/// — `DurationCompare { op: Eq }` is unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderCmp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl OrderCmp {
+    /// Evaluates the operator over ordered operands.
+    pub(crate) fn compare<T: Ord>(self, left: &T, right: &T) -> bool {
+        WordCmp::from(self).compare(left, right)
     }
 }
 
@@ -409,32 +487,224 @@ impl Rule {
     }
 }
 
+/// A nonempty list: first plus rest. Empty is unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonEmpty<T> {
+    pub first: T,
+    pub rest: Vec<T>,
+}
+
+impl<T> NonEmpty<T> {
+    /// A singleton.
+    #[must_use]
+    pub fn one(first: T) -> Self {
+        Self {
+            first,
+            rest: Vec::new(),
+        }
+    }
+
+    /// First plus the remaining items.
+    #[must_use]
+    pub fn new(first: T, rest: Vec<T>) -> Self {
+        Self { first, rest }
+    }
+
+    /// `None` when `items` is empty.
+    #[must_use]
+    pub fn from_vec(items: Vec<T>) -> Option<Self> {
+        let mut iter = items.into_iter();
+        let first = iter.next()?;
+        Some(Self {
+            first,
+            rest: iter.collect(),
+        })
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        1 + self.rest.len()
+    }
+
+    /// A [`NonEmpty`] is never empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&T> {
+        match index {
+            0 => Some(&self.first),
+            n => self.rest.get(n - 1),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        std::iter::once(&self.first).chain(self.rest.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        std::iter::once(&mut self.first).chain(self.rest.iter_mut())
+    }
+}
+
+impl<T> IntoIterator for NonEmpty<T> {
+    type Item = T;
+    type IntoIter = std::iter::Chain<std::iter::Once<T>, std::vec::IntoIter<T>>;
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(self.first).chain(self.rest)
+    }
+}
+
+impl<T> std::ops::Index<usize> for NonEmpty<T> {
+    type Output = T;
+    fn index(&self, index: usize) -> &T {
+        self.get(index).expect("index out of bounds")
+    }
+}
+
+/// One interior rule: bound-variable finds only. Aggregates and the
+/// measure are unrepresentable — the creation-quarantine law
+/// (`lean/Bumbledb/Query/Syntax.lean: Interior` / `Rule.finds : List VarId`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionRule {
+    pub finds: Vec<VarId>,
+    pub atoms: Vec<Atom>,
+    pub negated: Vec<Atom>,
+    pub conditions: Vec<ConditionTree>,
+}
+
+impl ProjectionRule {
+    /// Lower to a main [`Rule`]: every find is a projected variable.
+    #[must_use]
+    pub fn to_rule(&self) -> Rule {
+        Rule {
+            finds: self.finds.iter().copied().map(FindTerm::Var).collect(),
+            atoms: self.atoms.clone(),
+            negated: self.negated.clone(),
+            conditions: self.conditions.clone(),
+        }
+    }
+
+    fn projection_head(finds: &[VarId]) -> Vec<HeadTerm> {
+        finds.iter().map(|_| HeadTerm::Var).collect()
+    }
+}
+
 /// A named interior: a finite CQ (union of conjunctive rules), evaluated
 /// **once**, not an lfp (`lean/Bumbledb/Query/Syntax.lean: Interior`).
 /// Declaration order is topological order: interior `i` may read
-/// `Interior(j)` only for `j < i`. Heads are bound variables only.
+/// `Interior(j)` only for `j < i`. Head width is `rules[0].finds.len()`;
+/// there is no separate head — aggregates cannot be written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interior {
-    /// Bound-variable positions only (every [`HeadTerm::Var`]).
-    pub head: Vec<HeadTerm>,
     /// At least one rule, at most [`MAX_RULES`]; union; bodies: EDB ∪
-    /// earlier interiors.
-    pub rules: Vec<Rule>,
+    /// earlier interiors. Empty is [`crate::error::ValidationError::EmptyInterior`].
+    pub rules: Vec<ProjectionRule>,
 }
 
-/// One linear recursive SCC: base arms (no self atom) and rec arms
-/// (exactly one positive self-atom each)
-/// (`lean/Bumbledb/Query/Syntax.lean: Rec`). The rec's `InteriorId` is
-/// `interiors.len()` after the overflow check. `base.len() + rec.len()`
-/// is one pool against [`MAX_RULES`].
+impl Interior {
+    /// Bound-variable head derived from the first rule's finds.
+    #[must_use]
+    pub fn head(&self) -> Vec<HeadTerm> {
+        self.rules
+            .first()
+            .map(|rule| ProjectionRule::projection_head(&rule.finds))
+            .unwrap_or_default()
+    }
+}
+
+/// A base arm of a linear rec: negation is unrepresentable, and there
+/// is no self field (`lean/Bumbledb/Query/Syntax.lean: RecRule`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecRule {
+    pub finds: Vec<VarId>,
+    pub atoms: Vec<Atom>,
+    pub conditions: Vec<ConditionTree>,
+}
+
+impl RecRule {
+    /// Lower to a [`Rule`]. Negation stays unrepresentable.
+    #[must_use]
+    pub fn to_rule(&self) -> Rule {
+        Rule {
+            finds: self.finds.iter().copied().map(FindTerm::Var).collect(),
+            atoms: self.atoms.clone(),
+            negated: vec![],
+            conditions: self.conditions.clone(),
+        }
+    }
+}
+
+/// A step arm of a linear rec: `self_bindings` IS the unique positive
+/// self-atom. Remaining atoms are non-self. Negation is unrepresentable
+/// (`lean/Bumbledb/Query/Syntax.lean: RecStep`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecStep {
+    pub finds: Vec<VarId>,
+    pub self_bindings: Vec<(bumbledb_theory::schema::FieldId, Term)>,
+    pub atoms: Vec<Atom>,
+    pub conditions: Vec<ConditionTree>,
+}
+
+impl RecStep {
+    /// Reconstruct the unique positive self-atom as the first atom so
+    /// missing/nonlinear self cannot be written, and `self_occ` is
+    /// [`crate::ir::normalize::OccId`](0) after lowering.
+    #[must_use]
+    pub fn to_rule(&self, rec_id: InteriorId) -> Rule {
+        let mut atoms = Vec::with_capacity(1 + self.atoms.len());
+        atoms.push(Atom {
+            source: AtomSource::Interior(rec_id),
+            bindings: self.self_bindings.clone(),
+        });
+        atoms.extend(self.atoms.clone());
+        Rule {
+            finds: self.finds.iter().copied().map(FindTerm::Var).collect(),
+            atoms,
+            negated: vec![],
+            conditions: self.conditions.clone(),
+        }
+    }
+
+    /// Written-order reconstruction: remaining atoms, then the self-atom.
+    /// Render and host goldens use this so var numbering on reparse
+    /// matches the body walk; execution lowering stays [`Self::to_rule`].
+    #[must_use]
+    pub fn to_written_rule(&self, rec_id: InteriorId) -> Rule {
+        let mut atoms = Vec::with_capacity(self.atoms.len() + 1);
+        atoms.extend(self.atoms.clone());
+        atoms.push(Atom {
+            source: AtomSource::Interior(rec_id),
+            bindings: self.self_bindings.clone(),
+        });
+        Rule {
+            finds: self.finds.iter().copied().map(FindTerm::Var).collect(),
+            atoms,
+            negated: vec![],
+            conditions: self.conditions.clone(),
+        }
+    }
+}
+
+/// One linear recursive SCC: nonempty base arms (no self atom) and
+/// nonempty rec arms (exactly one positive self-atom each, reified as
+/// [`RecStep::self_bindings`]) (`lean/Bumbledb/Query/Syntax.lean: Rec`).
+/// The rec's `InteriorId` is `interiors.len()` after the overflow check.
+/// `base.len() + rec.len()` is one pool against [`MAX_RULES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rec {
-    /// Bound-variable positions only.
-    pub head: Vec<HeadTerm>,
-    /// At least one; no self atom.
-    pub base: Vec<Rule>,
-    /// At least one; each arm: exactly one positive self-atom.
-    pub rec: Vec<Rule>,
+    pub base: NonEmpty<RecRule>,
+    pub rec: NonEmpty<RecStep>,
+}
+
+impl Rec {
+    /// Bound-variable head derived from the first base arm's finds.
+    #[must_use]
+    pub fn head(&self) -> Vec<HeadTerm> {
+        ProjectionRule::projection_head(&self.base.first.finds)
+    }
 }
 
 /// A query: named interiors (a DAG, eval once), then either a finite
@@ -450,6 +720,10 @@ pub struct Rec {
 ///
 /// The single-rule query is the conjunctive query unchanged
 /// ([`Query::single`]): empty-prefix [`Query::Cq`].
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Reach carries Rec by value; boxing would split the public Query shape"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Query {
     /// Finite CQ: interiors (possibly empty) and main. Rec is
@@ -502,23 +776,9 @@ impl Query {
         }
     }
 
-    /// Named interiors, mutably.
-    pub fn interiors_mut(&mut self) -> &mut Vec<Interior> {
-        match self {
-            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
-        }
-    }
-
     /// The find shape every main rule aligns against.
     #[must_use]
     pub fn head(&self) -> &[HeadTerm] {
-        match self {
-            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
-        }
-    }
-
-    /// The find shape, mutably.
-    pub fn head_mut(&mut self) -> &mut Vec<HeadTerm> {
         match self {
             Self::Cq { head, .. } | Self::Reach { head, .. } => head,
         }
@@ -529,6 +789,20 @@ impl Query {
     pub fn rules(&self) -> &[Rule] {
         match self {
             Self::Cq { rules, .. } | Self::Reach { rules, .. } => rules,
+        }
+    }
+
+    /// Named interiors, mutably.
+    pub fn interiors_mut(&mut self) -> &mut Vec<Interior> {
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    /// The find shape, mutably.
+    pub fn head_mut(&mut self) -> &mut Vec<HeadTerm> {
+        match self {
+            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
         }
     }
 
@@ -543,6 +817,7 @@ impl Query {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::FoldOp;
     use bumbledb_theory::Interval;
 
     // These constructions double as documentation of the doc's example
@@ -602,18 +877,15 @@ mod tests {
     #[test]
     fn aggregate_balance_by_account() {
         // finds: [account, Sum(amount), Count] — group key from output;
-        // Count is nullary (over: None).
+        // Count is a sibling constructor, not `over: None`.
         let query = Query::single(Rule {
             finds: vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
-                    op: AggOp::Sum,
-                    over: Some(VarId(1)),
+                    op: FoldOp::Sum,
+                    over: VarId(1),
                 },
-                FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
+                FindTerm::Count,
             ],
             atoms: vec![Atom {
                 source: crate::ir::AtomSource::Edb(RelationId(4)),
@@ -629,8 +901,8 @@ mod tests {
         assert!(matches!(
             query.rules()[0].finds[1],
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(_)
+                op: FoldOp::Sum,
+                over: _
             }
         ));
     }

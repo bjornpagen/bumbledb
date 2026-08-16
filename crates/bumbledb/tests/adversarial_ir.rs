@@ -21,9 +21,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    HeadTerm, Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec,
-    RelationId, Rule, Term, Value, VarId,
+    AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm, FoldOp,
+    HeadTerm, Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, NonEmpty, ParamId,
+    ProjectionRule, Query, Rec, RecRule, RecStep, RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -232,22 +232,22 @@ fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
 
 fn find_term(rng: &mut Rng) -> FindTerm {
     let var = |rng: &mut Rng| VarId(u16::try_from(rng.below(5)).expect("small"));
-    let agg_op = |rng: &mut Rng| match rng.below(5) {
-        0 => AggOp::Sum,
-        1 => AggOp::Min,
-        2 => AggOp::Max,
-        3 => AggOp::Count,
-        _ => AggOp::Pack,
+    let fold_op = |rng: &mut Rng| match rng.below(3) {
+        0 => FoldOp::Sum,
+        1 => FoldOp::Min,
+        _ => FoldOp::Max,
     };
-    match rng.below(6) {
-        0..=2 => FindTerm::Var(var(rng)),
-        3 => FindTerm::Measure(var(rng)),
+    match rng.below(7) {
+        0..=1 => FindTerm::Var(var(rng)),
+        2 => FindTerm::Measure(var(rng)),
+        3 => FindTerm::Count,
         4 => FindTerm::Aggregate {
-            op: agg_op(rng),
-            over: rng.chance(4).then(|| var(rng)),
+            op: fold_op(rng),
+            over: var(rng),
         },
+        5 => FindTerm::Pack { over: var(rng) },
         _ => FindTerm::AggregateMeasure {
-            op: agg_op(rng),
+            op: fold_op(rng),
             over: var(rng),
         },
     }
@@ -295,20 +295,54 @@ fn random_query(rng: &mut Rng) -> Query {
 
 fn random_interior(rng: &mut Rng) -> Interior {
     Interior {
-        head: (0..rng.below(3))
-            .map(|_| find_term(rng).head_term())
+        rules: (0..rng.below(3))
+            .map(|_| ProjectionRule {
+                finds: (0..rng.below(3))
+                    .map(|_| VarId(u16::try_from(rng.below(5)).expect("small")))
+                    .collect(),
+                atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
+                negated: (0..rng.below(3)).map(|_| atom(rng)).collect(),
+                conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+            })
             .collect(),
-        rules: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
     }
 }
 
 fn random_rec(rng: &mut Rng) -> Rec {
+    let n = |rng: &mut Rng| rng.below(3).max(1);
     Rec {
-        head: (0..rng.below(3))
-            .map(|_| find_term(rng).head_term())
-            .collect(),
-        base: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
-        rec: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
+        base: NonEmpty::from_vec(
+            (0..n(rng))
+                .map(|_| RecRule {
+                    finds: (0..rng.below(3))
+                        .map(|_| VarId(u16::try_from(rng.below(5)).expect("small")))
+                        .collect(),
+                    atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
+                    conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+                })
+                .collect(),
+        )
+        .expect("nonempty base"),
+        rec: NonEmpty::from_vec(
+            (0..n(rng))
+                .map(|_| RecStep {
+                    finds: (0..rng.below(3))
+                        .map(|_| VarId(u16::try_from(rng.below(5)).expect("small")))
+                        .collect(),
+                    self_bindings: (0..rng.below(3))
+                        .map(|_| {
+                            (
+                                FieldId(u16::try_from(rng.below(4)).expect("small")),
+                                Term::Var(VarId(u16::try_from(rng.below(5)).expect("small"))),
+                            )
+                        })
+                        .collect(),
+                    atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
+                    conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+                })
+                .collect(),
+        )
+        .expect("nonempty rec"),
     }
 }
 
@@ -364,8 +398,8 @@ fn plausible_query(rng: &mut Rng) -> Query {
             finds: vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
-                    op: AggOp::Sum,
-                    over: Some(VarId(1)),
+                    op: FoldOp::Sum,
+                    over: VarId(1),
                 },
             ],
             atoms: vec![busy_atom(vec![
@@ -377,13 +411,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
         }),
         // Pack: the coalesced calendar.
         3 => Query::single(Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: AggOp::Pack,
-                    over: Some(VarId(1)),
-                },
-            ],
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
             atoms: vec![busy_atom(vec![
                 (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
                 (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
@@ -786,8 +814,12 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
     };
     let interiors: Vec<Interior> = (0..100_000)
         .map(|_| Interior {
-            head: vec![HeadTerm::Var],
-            rules: vec![rule.clone()],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0)],
+                atoms: rule.atoms.clone(),
+                negated: vec![],
+                conditions: vec![],
+            }],
         })
         .collect();
     let query = Query::Cq {

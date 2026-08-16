@@ -21,14 +21,17 @@
 
 use bumbledb::alloc_counter;
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, Interior, InteriorId, ParamId,
-    Query, Rec, Rule, Term, Value, VarId,
+    Atom, AtomSource, CmpOp, Comparison, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, ParamId,
+    Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
     Side, StatementDescriptor, ValueType, Weight,
 };
-use bumbledb::{Answers, BindValue, ConditionTree, Db, ParamArg, PreparedQuery, Snapshot};
+use bumbledb::{
+    Answers, BindValue, ConditionTree, Db, NonEmpty, ParamArg, PreparedQuery, ProjectionRule,
+    Snapshot,
+};
 
 mod common;
 
@@ -239,17 +242,17 @@ const LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 fn populate(db: &Db<SchemaDescriptor>) {
     db.write(|tx| {
         for account in 0..20u64 {
-            tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(account % 5)])?;
+            tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(account % 5)]])?;
         }
         for id in 0..500u64 {
             tx.insert_dyn(
                 POSTING,
-                &[
+                [&[
                     Value::U64(id),
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
                     Value::String(format!("memo-{}", id % 4).into_bytes().into()),
-                ],
+                ]],
             )?;
         }
         // The Pack fixture: per person, overlapping, adjacent, nested,
@@ -265,27 +268,27 @@ fn populate(db: &Db<SchemaDescriptor>) {
             };
             tx.insert_dyn(
                 BUSY,
-                &[
+                [&[
                     Value::U64(id),
                     Value::U64(person),
                     Value::IntervalU64(
                         bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
                     ),
-                ],
+                ]],
             )?;
         }
         let mut id = 500u64;
         for ((account, holder), count) in (20u64..).zip(5u64..).zip(LADDER) {
-            tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(holder)])?;
+            tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(holder)]])?;
             for _ in 0..count {
                 tx.insert_dyn(
                     POSTING,
-                    &[
+                    [&[
                         Value::U64(id),
                         Value::U64(account),
                         Value::I64((id.cast_signed() % 100) - 50),
                         Value::String(format!("memo-{}", id % 4).into_bytes().into()),
-                    ],
+                    ]],
                 )?;
                 id += 1;
             }
@@ -295,7 +298,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
         for id in 0..32u64 {
             tx.insert_dyn(
                 BLOB,
-                &[Value::U64(id), Value::FixedBytes(Box::from(digest16(id)))],
+                [&[Value::U64(id), Value::FixedBytes(Box::from(digest16(id)))]],
             )?;
         }
         // The marks chains: every account parents an Item chain (the
@@ -323,11 +326,11 @@ fn item_chain(
     for pos in 1..=len {
         tx.insert_dyn(
             ITEM,
-            &[
+            [&[
                 Value::U64(doc),
                 Value::U64(pos),
                 Value::U64(doc * 10_000 + pos),
-            ],
+            ]],
         )?;
     }
     Ok(())
@@ -369,13 +372,10 @@ fn aggregate_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {
@@ -441,12 +441,12 @@ fn minmax_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Min,
-                over: Some(VarId(1)),
+                op: FoldOp::Min,
+                over: VarId(1),
             },
             FindTerm::Aggregate {
-                op: AggOp::Max,
-                over: Some(VarId(1)),
+                op: FoldOp::Max,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -590,28 +590,20 @@ fn recursive_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![account(0, 1)],
-                negated: vec![],
                 conditions: vec![cap.clone()],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    account(0, 1),
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(1))),
-                            (FieldId(1), Term::Var(VarId(2))),
-                        ],
-                    },
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
                 ],
-                negated: vec![],
+                atoms: vec![account(0, 1)],
                 conditions: vec![cap],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -659,8 +651,12 @@ fn interiors_only_query() -> Query {
     };
     Query::Cq {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![join],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: join.atoms,
+                negated: join.negated,
+                conditions: join.conditions,
+            }],
         }],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -725,13 +721,10 @@ fn union_aggregate_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![
             Atom {
@@ -775,13 +768,7 @@ fn union_aggregate_query() -> Query {
 /// scratch.
 fn pack_query() -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(BUSY),
             bindings: vec![
@@ -936,16 +923,16 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
                 // The tail append: positions become 1..=ITEM_CHAIN+1.
                 tx.insert_dyn(
                     ITEM,
-                    &[
+                    [&[
                         Value::U64(doc),
                         Value::U64(ITEM_CHAIN + 1),
                         Value::U64(round),
-                    ],
+                    ]],
                 )?;
                 // The net-nothing head delete-reinsert.
                 let head = [Value::U64(doc), Value::U64(1), Value::U64(doc * 10_000 + 1)];
-                tx.delete_dyn(ITEM, &head)?;
-                tx.insert_dyn(ITEM, &head)?;
+                tx.delete_dyn(ITEM, [&head])?;
+                tx.insert_dyn(ITEM, [&head])?;
             }
             Ok(())
         })
@@ -955,11 +942,11 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
                 // The restoring removal: chains return to 1..=ITEM_CHAIN.
                 tx.delete_dyn(
                     ITEM,
-                    &[
+                    [&[
                         Value::U64(doc),
                         Value::U64(ITEM_CHAIN + 1),
                         Value::U64(round),
-                    ],
+                    ]],
                 )?;
             }
             Ok(())
@@ -1156,26 +1143,26 @@ fn borrowed_struct_gate() {
     let db = Db::create(dir.path(), GateLedger).expect("create");
     let item = db
         .write(|tx| {
-            let id: GateItemId = tx.alloc()?;
-            tx.insert(&GateItem {
+            let id: GateItemId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&GateItem {
                 id,
                 memo: "memo-borrowed",
-            })?;
+            }])?;
             Ok(id)
         })
         .expect("seed");
     db.write(|tx| {
         // Warm the transaction's encode scratch outside the window.
-        tx.insert(&GateItem {
+        tx.insert([&GateItem {
             id: item,
             memo: "memo-borrowed",
-        })?;
+        }])?;
         alloc_counter::reset();
         let fact = GateItem {
             id: item,
             memo: "memo-borrowed",
         };
-        tx.insert(&fact)?;
+        tx.insert([&fact])?;
         let got = tx.get(item)?.expect("present");
         assert_eq!(got.memo, "memo-borrowed");
         let bytes = alloc_counter::snapshot();

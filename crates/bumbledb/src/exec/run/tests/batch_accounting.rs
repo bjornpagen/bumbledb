@@ -1,5 +1,4 @@
 use super::*;
-use crate::image::view::FilterPredicate;
 use crate::ir::normalize::OccBind;
 use bumbledb_theory::schema::ValueType;
 
@@ -133,10 +132,8 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             bind: OccBind::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointVar {
-                field: FieldId(1),
-                var: t,
-            }],
+            filters: vec![],
+            point_vars: vec![(FieldId(1), t)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -144,6 +141,7 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
+            point_vars: vec![],
         },
         Occurrence {
             occ_id: OccId(2),
@@ -151,6 +149,7 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
+            point_vars: vec![],
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [

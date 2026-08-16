@@ -4,12 +4,13 @@ import Bumbledb.Txn
 # Fresh — the mint (Level 2, the allocation model)
 
 The fresh generator as a state machine: one monotone high-water mark
-per (relation, field). `alloc` returns the mark and advances it; an
-explicit-value write advances the mark past the supplied value; EVERY
-transaction persists its final mark — committed, no-op, or aborted
-alike, because `alloc` hands the id to the host before the commit's
-fate is known, so re-issue would break observability whatever became
-of the data. The model is bumbledb-authored: ids are ORDINARY WRITABLE
+per (relation, field). `reserve n` returns `n` consecutive ids and
+advances the mark by `n` (`reserve 0` is a no-op; `reserve 1` is the
+old scalar mint); an explicit-value write advances the mark past the
+supplied value; EVERY transaction persists its final mark — committed,
+no-op, or aborted alike, because `reserve` hands the ids to the host
+before the commit's fate is known, so re-issue would break observability
+whatever became of the data. The model is bumbledb-authored: ids are ORDINARY WRITABLE
 VALUES that happen to have a generator, so everything identity-shaped
 is enforced by the ordinary final-state judgment, and the mint's own
 laws are exactly the observability laws proved here —
@@ -109,14 +110,14 @@ structure Mint where
   next : Nat
 deriving DecidableEq
 
-/-- One in-transaction event against the sequence: `alloc` — the
-generator returns the mark and advances it — or `supply v` — the host
-writes the explicit value `v` (ids are writable-by-default) and the
-mark advances past it. -/
+/-- One in-transaction event against the sequence: `reserve n` — the
+generator returns `n` consecutive ids from the mark and advances it
+by `n` — or `supply v` — the host writes the explicit value `v` (ids
+are writable-by-default) and the mark advances past it. -/
 inductive Event where
-  /-- The generator: return `next`, advance by one.
-  Bridge: `WriteDelta::alloc (storage/delta/alloc.rs)`. -/
-  | alloc
+  /-- The generator: return `[next, next + count)`, advance by `count`.
+  `count = 0` is a no-op. Bridge: `WriteDelta::reserve (storage/delta/alloc.rs)`. -/
+  | reserve (count : Nat)
   /-- An explicit-value write, legal for EVERY `v`. Bridge:
   `storage/delta/insert.rs::advance_fresh_marks` (the running
   maximum). -/
@@ -125,7 +126,7 @@ inductive Event where
 /-- One event's effect on the mark. `supply` takes the running
 maximum — the mark never retreats (`step_monotone`). -/
 def Mint.step (m : Mint) : Event → Mint
-  | .alloc => ⟨m.next + 1⟩
+  | .reserve n => ⟨m.next + n⟩
   | .supply v => ⟨max m.next (v + 1)⟩
 
 /-- A transaction's whole event run, applied in order. -/
@@ -137,7 +138,9 @@ def Mint.run (m : Mint) : List Event → Mint
 allocations. A supplied value is the host's own, never a return. -/
 def Mint.returned (m : Mint) : List Event → List Nat
   | [] => []
-  | .alloc :: es => m.next :: (m.step .alloc).returned es
+  | .reserve n :: es =>
+      (List.range n).map (fun k => m.next + k) ++
+        (m.step (.reserve n)).returned es
   | .supply v :: es => (m.step (.supply v)).returned es
 
 /-- Every id a run makes OBSERVABLE: the generator's returns plus the
@@ -147,8 +150,18 @@ observability surface — the carrier of the strengthened never-reissue
 law (`never_reissue_observable`). -/
 def Mint.observed (m : Mint) : List Event → List Nat
   | [] => []
-  | .alloc :: es => m.next :: (m.step .alloc).observed es
+  | .reserve n :: es =>
+      (List.range n).map (fun k => m.next + k) ++
+        (m.step (.reserve n)).observed es
   | .supply v :: es => v :: (m.step (.supply v)).observed es
+
+/-- Membership in a reserved half-open interval. -/
+theorem mem_reserve_ids {next n i : Nat}
+    (h : i ∈ (List.range n).map (fun k => next + k)) :
+    next ≤ i ∧ i < next + n := by
+  obtain ⟨k, hk, rfl⟩ := List.mem_map.mp h
+  have hk' : k < n := List.mem_range.mp hk
+  exact ⟨Nat.le_add_right next k, Nat.add_lt_add_left hk' next⟩
 
 /-- A generator return is observable — `returned` selects from
 `observed`. -/
@@ -158,10 +171,10 @@ theorem returned_subset_observed {m : Mint} {es : List Event} {i : Nat}
   | nil => exact nomatch h
   | cons e es ih =>
     cases e with
-    | alloc =>
-      rcases List.mem_cons.mp h with h | h
-      · exact h ▸ List.mem_cons_self ..
-      · exact List.mem_cons_of_mem _ (ih h)
+    | reserve n =>
+      rcases List.mem_append.mp h with h | h
+      · exact List.mem_append.mpr (Or.inl h)
+      · exact List.mem_append.mpr (Or.inr (ih h))
     | supply v => exact List.mem_cons_of_mem _ (ih h)
 
 /-! ## The high-water laws -/
@@ -170,8 +183,13 @@ theorem returned_subset_observed {m : Mint} {es : List Event} {i : Nat}
 theorem step_monotone (m : Mint) (e : Event) :
     m.next ≤ (m.step e).next := by
   cases e with
-  | alloc => exact Nat.le_succ m.next
+  | reserve n => exact Nat.le_add_right m.next n
   | supply v => exact Nat.le_max_left m.next (v + 1)
+
+/-- `reserve n` advances the mark by exactly `n`. -/
+theorem reserve_advances_by_count (m : Mint) (n : Nat) :
+    (m.step (.reserve n)).next = m.next + n :=
+  rfl
 
 /-- A run never retreats the mark — the high-water law. -/
 theorem run_monotone (m : Mint) (es : List Event) :
@@ -187,10 +205,10 @@ theorem returned_ge_start {m : Mint} {es : List Event} {i : Nat}
   | nil => exact nomatch h
   | cons e es ih =>
     cases e with
-    | alloc =>
-      rcases List.mem_cons.mp h with h | h
-      · exact Nat.le_of_eq h.symm
-      · exact Nat.le_trans (step_monotone m .alloc) (ih h)
+    | reserve n =>
+      rcases List.mem_append.mp h with h | h
+      · exact (mem_reserve_ids h).1
+      · exact Nat.le_trans (step_monotone m (.reserve n)) (ih h)
     | supply v =>
       exact Nat.le_trans (step_monotone m (.supply v)) (ih h)
 
@@ -202,29 +220,28 @@ theorem returned_lt_final {m : Mint} {es : List Event} {i : Nat}
   | nil => exact nomatch h
   | cons e es ih =>
     cases e with
-    | alloc =>
-      rcases List.mem_cons.mp h with h | h
-      · subst h
-        exact Nat.lt_of_lt_of_le (Nat.lt_succ_self m.next)
-          (run_monotone (m.step .alloc) es)
+    | reserve n =>
+      rcases List.mem_append.mp h with h | h
+      · exact Nat.lt_of_lt_of_le (mem_reserve_ids h).2
+          (run_monotone (m.step (.reserve n)) es)
       · exact ih h
     | supply v => exact ih h
 
 /-- Every OBSERVABLE id — returned or explicitly supplied — sits
 strictly below its run's final mark: `supply v` advances the mark
-past `v` exactly as `alloc` advances it past the return. The persisted
-mark fences everything observable, not just the generator's returns. -/
+past `v` exactly as `reserve` advances it past the returned range. The
+persisted mark fences everything observable, not just the generator's
+returns. -/
 theorem observed_lt_final {m : Mint} {es : List Event} {i : Nat}
     (h : i ∈ m.observed es) : i < (m.run es).next := by
   induction es generalizing m with
   | nil => exact nomatch h
   | cons e es ih =>
     cases e with
-    | alloc =>
-      rcases List.mem_cons.mp h with h | h
-      · subst h
-        exact Nat.lt_of_lt_of_le (Nat.lt_succ_self m.next)
-          (run_monotone (m.step .alloc) es)
+    | reserve n =>
+      rcases List.mem_append.mp h with h | h
+      · exact Nat.lt_of_lt_of_le (mem_reserve_ids h).2
+          (run_monotone (m.step (.reserve n)) es)
       · exact ih h
     | supply v =>
       rcases List.mem_cons.mp h with h | h
@@ -240,7 +257,7 @@ theorem observed_lt_final {m : Mint} {es : List Event} {i : Nat}
 /-- The persisted mint lifecycle. EVERY transaction persists its run's
 final mark — committed, no-op, or aborted alike: the fate that gates
 the DATA never gates the sequence, because a transaction that ran
-`alloc` already handed its ids to the host (a rejection returns the
+`reserve` already handed its ids to the host (a rejection returns the
 offending facts as data), so re-issue would break observability
 whatever became of the commit. There is one transition, not two: the
 commit/abort split simply does not exist for the mint. Bridge:
@@ -278,7 +295,7 @@ the one `txn` transition, abort included. This is the doc sentence "a
 fresh id, once issued, is never issued again" made a theorem
 whole (`docs/architecture/10-data-model.md` § fields);
 `never_reissue_observed` is its generator-returns projection. Bridge:
-`WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs)` +
+`WriteDelta::reserve (crates/bumbledb/src/storage/delta/alloc.rs)` +
 `advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs)`. -/
 theorem never_reissue_observable {m : Mint} {es : List Event} {i : Nat}
     (h : i ∈ m.observed es) {m' : Mint}
@@ -294,8 +311,8 @@ theorem never_reissue_observable {m : Mint} {es : List Event} {i : Nat}
 transaction of ANY fate is never returned again from any later
 reachable mint. Aborts are NOT exempt — the one `txn` transition
 persists an aborted run's mark exactly like a committed one, because
-`alloc` handed the id to the host before the commit's fate was known.
-Bridge: `WriteDelta::alloc
+`reserve` handed the id to the host before the commit's fate was known.
+Bridge: `WriteDelta::reserve
 (crates/bumbledb/src/storage/delta/alloc.rs)` +
 `flush_escaped_fresh_ids (crates/bumbledb/src/storage/commit/write.rs)`
 — the abort paths burn the escaped high-water. -/

@@ -17,8 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::{
-    AggOp, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, Query,
-    Rule, Term, Value, VarId,
+    Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadTerm,
+    InteriorId, Query, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, endpoints, point, point_in};
@@ -136,12 +136,8 @@ fn pack_segments(claims: &[&Value]) -> Vec<Value> {
 /// The head's one `Pack` position, if any (validation: at most one).
 fn pack_position(finds: &[FindTerm]) -> Option<(usize, VarId)> {
     finds.iter().enumerate().find_map(|(index, find)| {
-        if let FindTerm::Aggregate {
-            op: AggOp::Pack,
-            over,
-        } = find
-        {
-            Some((index, over.expect("validated: Pack carries a variable")))
+        if let FindTerm::Pack { over } = find {
+            Some((index, *over))
         } else {
             None
         }
@@ -280,8 +276,14 @@ impl NaiveDb {
                 sets: &sets,
                 interval: &interval,
             };
-            let rows = self.rows_for(&interior.head, &interior.rules, params, &derived)?;
-            interval.push(self.seal_intervals(&interior.head, &interior.rules, &interval));
+            let head = interior.head();
+            let rules: Vec<Rule> = interior
+                .rules
+                .iter()
+                .map(bumbledb::ProjectionRule::to_rule)
+                .collect();
+            let rows = self.rows_for(&head, &rules, params, &derived)?;
+            interval.push(self.seal_intervals(&head, &rules, &interval));
             sets.push(rows);
         }
         if let Some(rec) = rec {
@@ -295,8 +297,8 @@ impl NaiveDb {
     }
 
     /// Naive full-T(I) least fixpoint: re-evaluate base ∪ rec each
-    /// iteration until the rec table stops growing. `rec_id` is the
-    /// set index assigned here before the empty table is pushed.
+    /// iteration until the rec table stops growing. The derived-table
+    /// index is assigned here before the empty table is pushed.
     fn rec_lfp(
         &self,
         rec: &bumbledb::Rec,
@@ -304,18 +306,25 @@ impl NaiveDb {
         sets: &mut Vec<BTreeSet<Tuple>>,
         interval: &mut Vec<Vec<bool>>,
     ) -> Result<(), QueryError> {
-        // Empty base ⇒ empty lfp is this iteration (`T(∅)=∅`).
-        interval.push(self.seal_intervals(&rec.head, &rec.base, interval));
-        let rec_id = sets.len();
+        let table_idx = sets.len();
+        let iid = InteriorId(u32::try_from(table_idx).expect("interior id fits u32"));
+        let head = rec.head();
+        let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
+        let step: Vec<Rule> = rec
+            .rec
+            .iter()
+            .map(|arm| RecStep::to_rule(arm, iid))
+            .collect();
+        interval.push(self.seal_intervals(&head, &base, interval));
         sets.push(BTreeSet::new());
         loop {
             let derived = DerivedWorld { sets, interval };
-            let mut next = self.rows_for(&rec.head, &rec.base, params, &derived)?;
-            next.extend(self.rows_for(&rec.head, &rec.rec, params, &derived)?);
-            if next == sets[rec_id] {
+            let mut next = self.rows_for(&head, &base, params, &derived)?;
+            next.extend(self.rows_for(&head, &step, params, &derived)?);
+            if next == sets[table_idx] {
                 break;
             }
-            sets[rec_id] = next;
+            sets[table_idx] = next;
         }
         Ok(())
     }
@@ -346,10 +355,9 @@ impl NaiveDb {
             .iter()
             .map(|find| match find {
                 FindTerm::Var(var) => var_is_interval(*var),
-                FindTerm::Aggregate {
-                    op: AggOp::Pack, ..
-                } => true,
+                FindTerm::Pack { .. } => true,
                 FindTerm::Measure(_)
+                | FindTerm::Count
                 | FindTerm::Aggregate { .. }
                 | FindTerm::AggregateMeasure { .. } => false,
             })
@@ -467,9 +475,8 @@ impl NaiveDb {
                     .iter()
                     .map(|term| match term {
                         FindTerm::Var(var)
-                        | FindTerm::Aggregate {
-                            over: Some(var), ..
-                        } => Ok(binding.0[usize::from(var.0)].clone()),
+                        | FindTerm::Aggregate { over: var, .. }
+                        | FindTerm::Pack { over: var } => Ok(binding.0[usize::from(var.0)].clone()),
                         // The measure positions project the measure — from
                         // the definition, ray included.
                         FindTerm::Measure(var) | FindTerm::AggregateMeasure { over: var, .. } => {
@@ -477,7 +484,7 @@ impl NaiveDb {
                         }
                         // Nullary Count: no fold input — a constant
                         // filler keeps positions stable.
-                        FindTerm::Aggregate { over: None, .. } => Ok(Value::Bool(false)),
+                        FindTerm::Count => Ok(Value::Bool(false)),
                     })
                     .collect();
                 domain.insert(Tuple(row?));
@@ -514,8 +521,11 @@ impl NaiveDb {
                             FindTerm::Var(_) | FindTerm::Measure(_) => {
                                 Ok(group[0].0[index].clone())
                             }
-                            FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
-                            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
+                            FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
+                            FindTerm::Count
+                            | FindTerm::Aggregate { .. }
+                            | FindTerm::AggregateMeasure { .. }
+                            | FindTerm::Pack { .. } => {
                                 unreachable!("validated: Pack mixes with no other aggregate")
                             }
                         })
@@ -532,8 +542,14 @@ impl NaiveDb {
                     // measure positions, so the union fold reads them
                     // exactly like plain positions.
                     FindTerm::Var(_) | FindTerm::Measure(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Count => Ok(Value::U64(
+                        u64::try_from(group.len()).expect("group sizes fit u64"),
+                    )),
                     FindTerm::Aggregate { op, .. } | FindTerm::AggregateMeasure { op, .. } => {
                         fold_position(*op, index, group)
+                    }
+                    FindTerm::Pack { .. } => {
+                        unreachable!("validated: Pack heads take the segment path")
                     }
                 })
                 .collect();
@@ -625,12 +641,10 @@ fn count_vars(rule: &Rule) -> usize {
     for find in &rule.finds {
         match find {
             FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
-            FindTerm::AggregateMeasure { over, .. } => see(&mut count, *over),
-            FindTerm::Aggregate { over, .. } => {
-                if let Some(var) = over {
-                    see(&mut count, *var);
-                }
-            }
+            FindTerm::AggregateMeasure { over, .. }
+            | FindTerm::Aggregate { over, .. }
+            | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Count => {}
         }
     }
     count
@@ -1045,8 +1059,11 @@ fn pack_group_rows(
                 FindTerm::Measure(var) => {
                     measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
                 }
-                FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
-                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
+                FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
+                FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::AggregateMeasure { .. }
+                | FindTerm::Pack { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
                 }
             })
@@ -1072,7 +1089,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 FindTerm::Measure(var) => {
                     key.push(Value::U64(measure_value(&binding.0[usize::from(var.0)])?));
                 }
-                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {}
+                FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::AggregateMeasure { .. }
+                | FindTerm::Pack { .. } => {}
             }
         }
         groups.entry(Tuple(key)).or_default().push(binding);
@@ -1091,9 +1111,15 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Measure(var) => {
                         measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
                     }
+                    FindTerm::Count => Ok(Value::U64(
+                        u64::try_from(group.len()).expect("group sizes fit u64"),
+                    )),
                     FindTerm::Aggregate { op, over } => fold(*op, *over, group, index),
                     FindTerm::AggregateMeasure { op, over } => {
                         fold_duration(*op, *over, group, index)
+                    }
+                    FindTerm::Pack { .. } => {
+                        unreachable!("validated: Pack heads take the segment path")
                     }
                 })
                 .collect();
@@ -1105,13 +1131,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
 
 /// One fold aggregate over a group of head-projected tuples (the
 /// multi-rule union fold): the position's values are the fold inputs.
-fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
+fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |row| &row.0[index]);
     match op {
-        AggOp::Count => Ok(Value::U64(
-            u64::try_from(group.len()).expect("group sizes fit u64"),
-        )),
-        AggOp::Sum => {
+        FoldOp::Sum => {
             let total: i128 = values()
                 .map(|value| point(value).expect("validated: Sum takes integers"))
                 .sum();
@@ -1125,11 +1148,11 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
                 other => panic!("validated: Sum takes integers, got {other:?}"),
             }
         }
-        AggOp::Min | AggOp::Max => {
+        FoldOp::Min | FoldOp::Max => {
             let picked = values()
                 .max_by(|a, b| {
                     let ordering = cmp_value(a, b);
-                    if matches!(op, AggOp::Max) {
+                    if matches!(op, FoldOp::Max) {
                         ordering
                     } else {
                         ordering.reverse()
@@ -1138,7 +1161,6 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
                 .expect("groups are nonempty");
             Ok(picked.clone())
         }
-        AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }
 }
 
@@ -1146,7 +1168,7 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
 /// the definition (a ray raises), then folded exactly as `Sum`/`Min`/
 /// `Max` over u64 values — Sum in i128 with the one finalize range check.
 fn fold_duration(
-    op: AggOp,
+    op: FoldOp,
     over: VarId,
     group: &[&Tuple],
     find: usize,
@@ -1157,40 +1179,30 @@ fn fold_duration(
         .collect();
     let measures = measures?;
     match op {
-        AggOp::Sum => {
+        FoldOp::Sum => {
             let total: i128 = measures.iter().map(|m| i128::from(*m)).sum();
             u64::try_from(total)
                 .map(Value::U64)
                 .map_err(|_| QueryError::Overflow { find })
         }
-        AggOp::Min => Ok(Value::U64(
+        FoldOp::Min => Ok(Value::U64(
             measures.iter().copied().min().expect("groups are nonempty"),
         )),
-        AggOp::Max => Ok(Value::U64(
+        FoldOp::Max => Ok(Value::U64(
             measures.iter().copied().max().expect("groups are nonempty"),
         )),
-        _ => unreachable!("validated: measure folds are Sum/Min/Max"),
     }
 }
 
 /// One fold aggregate over a group's binding set.
-fn fold(
-    op: AggOp,
-    over: Option<VarId>,
-    group: &[&Tuple],
-    find: usize,
-) -> Result<Value, QueryError> {
-    let values = |var: VarId| group.iter().map(move |b| &b.0[usize::from(var.0)]);
+fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value, QueryError> {
+    let values = || group.iter().map(move |b| &b.0[usize::from(over.0)]);
     match op {
-        AggOp::Count => Ok(Value::U64(
-            u64::try_from(group.len()).expect("group sizes fit u64"),
-        )),
-        AggOp::Sum => {
-            let var = over.expect("validated: Sum carries a variable");
-            let total: i128 = values(var)
+        FoldOp::Sum => {
+            let total: i128 = values()
                 .map(|value| point(value).expect("validated: Sum takes integers"))
                 .sum();
-            match values(var).next().expect("groups are nonempty") {
+            match values().next().expect("groups are nonempty") {
                 Value::U64(_) => u64::try_from(total)
                     .map(Value::U64)
                     .map_err(|_| QueryError::Overflow { find }),
@@ -1200,12 +1212,11 @@ fn fold(
                 other => panic!("validated: Sum takes integers, got {other:?}"),
             }
         }
-        AggOp::Min | AggOp::Max => {
-            let var = over.expect("validated: Min/Max carry a variable");
-            let picked = values(var)
+        FoldOp::Min | FoldOp::Max => {
+            let picked = values()
                 .max_by(|a, b| {
                     let ordering = cmp_value(a, b);
-                    if matches!(op, AggOp::Max) {
+                    if matches!(op, FoldOp::Max) {
                         ordering
                     } else {
                         ordering.reverse()
@@ -1214,6 +1225,5 @@ fn fold(
                 .expect("groups are nonempty");
             Ok(picked.clone())
         }
-        AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }
 }

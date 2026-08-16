@@ -19,11 +19,11 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import { closed } from "#closed.ts"
 import { type BoolField, bool, type Infer, type U64Field, u64 } from "#fields.ts"
 import { contained, Db, on, relation, schema } from "#index.ts"
 import type { SelectionInput } from "#relation.ts"
+import { put } from "#test/put.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -157,7 +157,7 @@ describe("handles named like methods — pure data, no reserved names", function
 		const WeirdTheory = schema("WeirdTheory", { Weird, Uses }, [contained(on(Uses, "kind"), on(Weird, "id"))])
 		const db = await Db.create(path.join(tmpRoot, "weird"), WeirdTheory)
 		const result = db.write(function seed(tx) {
-			const written = tx.insert(Uses, { kind: "match" })
+			const written = put(tx, Uses, { kind: "match" })
 			assert.equal(typeof written.id, "bigint")
 		})
 		assert.ok(result.ok, "the commit lands")

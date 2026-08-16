@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::Error;
+use crate::ir::FoldOp;
 
 /// The constant-group fast path — one group
 /// probe per run (memoized across batches), gather folds for every

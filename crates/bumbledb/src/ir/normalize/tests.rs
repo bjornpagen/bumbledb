@@ -5,7 +5,10 @@ use crate::image::view::{
     Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
 };
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value};
+use crate::ir::{
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, OrderCmp, ParamId, Query, Rule, Term, Value,
+    WordCmp,
+};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
@@ -129,7 +132,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         vec![FilterPredicate::FieldsCompare {
             left: FieldId(1),
             right: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
         }]
     );
     assert!(norm.anti_probes.is_empty());
@@ -190,12 +193,12 @@ fn literal_and_param_bindings_lower_to_eq_filters() {
         vec![
             FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::Word(w(-7)),
             },
             FilterPredicate::Compare {
                 field: FieldId(2),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::Param(ParamId(0)),
             },
         ]
@@ -330,7 +333,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
         norm.occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: FieldId(1),
-            op: CmpOp::Ge, // flipped
+            op: WordCmp::Ge, // flipped
             value: Const::Word(w(100)),
         }]
     );
@@ -338,7 +341,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
     assert_eq!(
         norm.residuals,
         vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: VarId(0),
             rhs: VarId(1),
         }]
@@ -445,7 +448,7 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
         vec![FilterPredicate::FieldsCompare {
             left: FieldId(1),
             right: FieldId(2),
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
         }]
     );
 }
@@ -635,7 +638,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
         negated.filters,
         vec![FilterPredicate::Compare {
             field: FieldId(1),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(w(-7)),
         }]
     );
@@ -753,12 +756,12 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         norm.word_residuals,
         vec![
             PlacedWordComparison {
-                op: CmpOp::Le,
+                op: WordCmp::Le,
                 lhs: start(0),
                 rhs: start(1),
             },
             PlacedWordComparison {
-                op: CmpOp::Lt,
+                op: WordCmp::Lt,
                 lhs: start(1),
                 rhs: end(0),
             },
@@ -788,7 +791,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
         normalized(&scalar).occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: FieldId(1),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::ParamSet(ParamId(0)),
         }]
     );
@@ -861,13 +864,8 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences[0].vars, vec![(P_EMP, VarId(1))]);
-    assert_eq!(
-        norm.occurrences[0].filters,
-        vec![FilterPredicate::PointVar {
-            field: P_DURING,
-            var: VarId(0),
-        }]
-    );
+    assert_eq!(norm.occurrences[0].point_vars, vec![(P_DURING, VarId(0))]);
+    assert!(norm.occurrences[0].filters.is_empty());
     assert_eq!(norm.occurrences[1].vars, vec![(E_AT, VarId(0))]);
 }
 
@@ -889,7 +887,7 @@ fn interval_param_equality_binding_stays_an_eq_compare() {
         normalized(&query).occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: P_DURING,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Param(ParamId(0)),
         }]
     );
@@ -957,7 +955,7 @@ fn sweep_scalar_var_var_placements() {
             vec![FilterPredicate::FieldsCompare {
                 left: FieldId(1),
                 right: FieldId(2),
-                op,
+                op: WordCmp::from_cmp(op).expect("scalar"),
             }],
             "{op:?}"
         );
@@ -986,7 +984,7 @@ fn sweep_scalar_var_var_placements() {
         assert_eq!(
             norm.residuals,
             vec![PlacedComparison {
-                op,
+                op: WordCmp::from_cmp(op).expect("scalar"),
                 lhs: VarId(1),
                 rhs: VarId(2),
             }],
@@ -1028,7 +1026,7 @@ fn sweep_scalar_var_const_placements() {
                 norm.occurrences[0].filters,
                 vec![FilterPredicate::Compare {
                     field: FieldId(1),
-                    op: placed_op,
+                    op: WordCmp::from_cmp(placed_op).expect("scalar"),
                     value,
                 }],
                 "{op:?} const_first={const_first}"
@@ -1065,7 +1063,7 @@ fn sweep_param_set_comparison_placements() {
             normalized(&q).occurrences[0].filters,
             vec![FilterPredicate::Compare {
                 field: FieldId(1),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::ParamSet(ParamId(0)),
             }],
             "const_first={const_first}"
@@ -1147,7 +1145,7 @@ fn sweep_duration_placements() {
         normalized(&literal).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
-            op: CmpOp::Lt,
+            op: OrderCmp::Lt,
             value: WordOrParam::Word(5),
         }]
     );
@@ -1166,7 +1164,7 @@ fn sweep_duration_placements() {
         normalized(&mirrored).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
-            op: CmpOp::Le,
+            op: OrderCmp::Le,
             value: WordOrParam::Word(5),
         }]
     );
@@ -1184,7 +1182,7 @@ fn sweep_duration_placements() {
         normalized(&param).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
-            op: CmpOp::Le,
+            op: OrderCmp::Le,
             value: WordOrParam::Param(ParamId(0)),
         }]
     );
@@ -1203,7 +1201,7 @@ fn sweep_duration_placements() {
         normalized(&same_atom).occurrences[0].filters,
         vec![FilterPredicate::DurationFieldsCompare {
             interval: P_DURING,
-            op: CmpOp::Gt,
+            op: OrderCmp::Gt,
             scalar: P_EMP,
         }]
     );
@@ -1211,8 +1209,8 @@ fn sweep_duration_placements() {
     // Cross-atom u64 variable side: the measure residual — and written
     // measure-second it mirrors, exactly like the constant form.
     for (lhs, rhs, placed_op) in [
-        (duration(), var(2), CmpOp::Lt),
-        (var(2), duration(), CmpOp::Gt),
+        (duration(), var(2), OrderCmp::Lt),
+        (var(2), duration(), OrderCmp::Gt),
     ] {
         let cross = query(
             vec![

@@ -3,16 +3,107 @@ use crate::schema::KeyId;
 use crate::storage::keys;
 use bumbledb_theory::schema::RelationId;
 
-use super::{DeterminantOverlay, Disposition, WriteDelta};
+use super::{DeterminantOverlay, Disposition, TupleOwners, WriteDelta};
+
+impl TupleOwners {
+    fn new(slice: ArenaSlice, disposition: Disposition) -> Self {
+        match disposition {
+            Disposition::Insert => Self::Insert {
+                fact: slice,
+                replaced: Vec::new(),
+                deletes: Vec::new(),
+            },
+            Disposition::Delete => Self::Deletes {
+                head: slice,
+                rest: Vec::new(),
+            },
+        }
+    }
+
+    fn record(&mut self, slice: ArenaSlice, disposition: Disposition) {
+        match disposition {
+            Disposition::Insert => match self {
+                Self::Insert { fact, replaced, .. } => {
+                    replaced.push(*fact);
+                    *fact = slice;
+                }
+                Self::Deletes { head, rest } => {
+                    let mut deletes = std::mem::take(rest);
+                    deletes.insert(0, *head);
+                    *self = Self::Insert {
+                        fact: slice,
+                        replaced: Vec::new(),
+                        deletes,
+                    };
+                }
+            },
+            Disposition::Delete => match self {
+                Self::Insert { deletes, .. } => deletes.push(slice),
+                Self::Deletes { rest, .. } => rest.push(slice),
+            },
+        }
+    }
+
+    /// Remove `slice`. `false` means no owners remain — the overlay entry
+    /// must drop so the committed state answers (never `Absent` on cancel).
+    fn cancel(&mut self, slice: ArenaSlice) -> bool {
+        match self {
+            Self::Insert {
+                fact,
+                replaced,
+                deletes,
+            } if *fact == slice => {
+                if let Some(prev) = replaced.pop() {
+                    *fact = prev;
+                    true
+                } else {
+                    let mut deletes = std::mem::take(deletes);
+                    if deletes.is_empty() {
+                        false
+                    } else {
+                        let head = deletes.remove(0);
+                        *self = Self::Deletes {
+                            head,
+                            rest: deletes,
+                        };
+                        true
+                    }
+                }
+            }
+            Self::Insert {
+                replaced, deletes, ..
+            } => {
+                replaced.retain(|owner| *owner != slice);
+                deletes.retain(|owner| *owner != slice);
+                true
+            }
+            Self::Deletes { head, rest } if *head == slice => {
+                let mut rest_v = std::mem::take(rest);
+                if rest_v.is_empty() {
+                    false
+                } else {
+                    *head = rest_v.remove(0);
+                    *rest = rest_v;
+                    true
+                }
+            }
+            Self::Deletes { rest, .. } => {
+                rest.retain(|owner| *owner != slice);
+                true
+            }
+        }
+    }
+}
 
 impl WriteDelta<'_> {
     /// Records one changed fact into the point-read overlay under every
-    /// key statement of its relation — one `(slice, disposition)` entry
-    /// pushed per tuple (`TupleOwners`; the revert target held as data,
-    /// finding 097). No same-tuple special case exists anymore: a delete
-    /// carries its own slice, so the `delete(old); insert(new)`-in-
-    /// either-order idiom resolves at read time by the insert-wins rule,
-    /// never by erasing another pending fact's record.
+    /// key statement of its relation. At most one live insert per tuple:
+    /// a second insert replaces and stashes the previous so cancel can
+    /// restore it (the earlier fact stays in the fact map until its own
+    /// cancel). Deletes of other facts on the same tuple stay beside that
+    /// insert so `delete(old); insert(new)` in either order still reads
+    /// `new`, and cancelling the live insert reverts to the replaced
+    /// insert, those deletes, or the committed state if none remain.
     ///
     /// Determinant bytes come from the one shared slicer ([`keys::determinant_image`])
     /// — the same derivation commit applies, so a point read and the
@@ -34,33 +125,31 @@ impl WriteDelta<'_> {
                 &mut self.determinant_scratch,
             );
             let per_key = self.determinants.entry(key_id).or_default();
-            // Probe before inserting: the scratch is cloned only the
-            // first time a tuple is recorded — the scratch field's
-            // no-per-key-statement allocation contract.
             if let Some(owners) = per_key.get_mut(self.determinant_scratch.as_bytes()) {
-                owners.push((slice, disposition));
+                owners.record(slice, disposition);
             } else {
                 #[cfg(test)]
                 {
                     self.determinant_scratch_clones += 1;
                 }
-                per_key.insert(self.determinant_scratch.clone(), vec![(slice, disposition)]);
+                per_key.insert(
+                    self.determinant_scratch.clone(),
+                    TupleOwners::new(slice, disposition),
+                );
             }
         }
     }
 
     /// Removes one CANCELLED op's own overlay entries (delete-cancels-
-    /// insert and insert-cancels-delete alike, `delete.rs`/`insert.rs`):
-    /// each of the cancelled fact's tuples drops exactly the cancelled
-    /// slice and reverts to what remains — the owners still pending, or
-    /// no overlay at all (the committed state answers unshadowed),
-    /// exactly as if the cancelled pair never happened. Recording
-    /// `Absent` instead would shadow a committed owner of the same
-    /// tuple, breaking the point-read contract
-    /// (`docs/architecture/70-api.md` § `WriteTx` point reads: before
-    /// commit a point read answers exactly what a post-commit read
-    /// transaction would). O(log |delta|) — the revert target is data,
-    /// never a rescan of the pending set (finding 097).
+    /// insert and insert-cancels-delete alike): each of the cancelled
+    /// fact's tuples drops exactly the cancelled slice and reverts to
+    /// what remains — the owners still pending, or no overlay at all
+    /// (the committed state answers unshadowed), exactly as if the
+    /// cancelled pair never happened. Recording `Absent` instead would
+    /// shadow a committed owner of the same tuple, breaking the
+    /// point-read contract (`docs/architecture/70-api.md` § `WriteTx`
+    /// point reads). O(log |delta|) — the revert target is data, never
+    /// a rescan of the pending set (finding 097).
     pub(super) fn cancel_determinants(
         &mut self,
         rel: RelationId,
@@ -82,8 +171,7 @@ impl WriteDelta<'_> {
             let Some(owners) = per_key.get_mut(self.determinant_scratch.as_bytes()) else {
                 continue;
             };
-            owners.retain(|(owner, _)| *owner != slice);
-            if owners.is_empty() {
+            if !owners.cancel(slice) {
                 per_key.remove(self.determinant_scratch.as_bytes());
             }
         }
@@ -93,11 +181,8 @@ impl WriteDelta<'_> {
     /// — the delta-first leg of a point read (`docs/architecture/50-storage.md`
     /// § `WriteTx` point reads). `None` = the tuple is untouched by this
     /// transaction and the committed state answers. A hit resolves by the
-    /// insert-wins rule: the LAST-recorded pending `Insert` owns the tuple
-    /// in the final state (two pending inserts of one tuple are
-    /// commit-doomed but representable — the later one answers, exactly
-    /// the fact map's last-disposition order); owners that are all
-    /// deletes record its absence.
+    /// insert-wins rule: the live pending `Insert` owns the tuple; owners
+    /// that are all deletes record its absence.
     ///
     /// The probe borrows: determinant bytes look up as `&[u8]` through the
     /// nested map, so a typed point read touches no allocator (the
@@ -108,15 +193,14 @@ impl WriteDelta<'_> {
         key: KeyId,
         determinant: &[u8],
     ) -> Option<DeterminantOverlay<'_>> {
-        self.determinants.get(&key)?.get(determinant).map(|owners| {
-            owners
-                .iter()
-                .rev()
-                .find_map(|(slice, disposition)| {
-                    (*disposition == Disposition::Insert)
-                        .then(|| DeterminantOverlay::Present(self.arena.get(*slice)))
-                })
-                .unwrap_or(DeterminantOverlay::Absent)
-        })
+        self.determinants
+            .get(&key)?
+            .get(determinant)
+            .map(|owners| match owners {
+                TupleOwners::Insert { fact, .. } => {
+                    DeterminantOverlay::Present(self.arena.get(*fact))
+                }
+                TupleOwners::Deletes { .. } => DeterminantOverlay::Absent,
+            })
     }
 }

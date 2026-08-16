@@ -94,7 +94,7 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 				head: [{ kind: "aggregate", op: "count" }],
 				rules: [
 					{
-						finds: [{ kind: "aggregate", op: { kind: "count" }, over: 0 }],
+						finds: [{ kind: "count", over: 0 }],
 						atoms: [],
 						negated: [],
 						conditions: []

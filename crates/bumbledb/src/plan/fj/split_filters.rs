@@ -1,6 +1,6 @@
 use super::Selection;
 use crate::image::view::FilterPredicate;
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 
 /// Splits an occurrence's lowered conditions into probeable selections
 /// (every Eq-against-a-constant, literal or param alike) and the
@@ -34,7 +34,7 @@ pub(crate) fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec
         .filter_map(|f| match f {
             FilterPredicate::Compare {
                 field,
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value,
             } => Some(Selection {
                 field: *field,
@@ -46,7 +46,15 @@ pub(crate) fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec
     selections.sort_by_key(|s| s.field);
     let residuals: Vec<FilterPredicate> = filters
         .iter()
-        .filter(|f| !matches!(f, FilterPredicate::Compare { op: CmpOp::Eq, .. }))
+        .filter(|f| {
+            !matches!(
+                f,
+                FilterPredicate::Compare {
+                    op: WordCmp::Eq,
+                    ..
+                }
+            )
+        })
         .cloned()
         .collect();
     (selections, residuals)

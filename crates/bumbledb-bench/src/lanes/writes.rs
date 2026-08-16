@@ -1,4 +1,4 @@
-//! The writes lane: bulk append, commits/sec at batch 1/10/100/1000, and
+//! The writes lane: insert stream, commits/sec at batch 1/10/100/1000, and
 //! delete throughput, across the two durability lanes — REPORT-class
 //! ([`crate::lanes`] carries the charter: numbers are claimed only from
 //! the owner's measurement sessions; a tool run never times for
@@ -195,12 +195,6 @@ const COMMIT_SEED: u64 = 0x0117_0000;
 /// delete streams never overlap.
 const DELETE_SEED: u64 = 0x0117_0100;
 
-/// The bulk transaction chunk (rows per commit inside one bulk sample):
-/// the engine's `bulk_load` chunk and the [`corpus::insert_rows`] mirror
-/// both commit 4096 rows per transaction — the `bulk_append` row's
-/// `batch` column reports it, and its commits/sec derives from it.
-const BULK_TX_CHUNK: u32 = 4096;
-
 /// The `SQLite` posting delete, mirroring [`POSTING_INSERT`]'s shape.
 const POSTING_DELETE: &str = "DELETE FROM \"Posting\" WHERE \"id\" = ?1";
 
@@ -264,7 +258,7 @@ fn posting_params(posting: &Posting) -> [rusqlite::types::Value; 6] {
 }
 
 /// `commit_b{batch}` on the engine: one sample = one `db.write`
-/// allocating and inserting `batch` seeded postings — the
+/// reserving and inserting `batch` seeded postings — the
 /// `commit_batch_bumbledb` shape generalized over the ladder. The rng
 /// threads in from the cell (one stream per batch point, shared with
 /// the mirror), so the traced twin sample continues it instead of
@@ -280,8 +274,8 @@ fn commit_engine(
     harness::measure(proto, || {
         db.write(|tx| {
             for _ in 0..batch {
-                let id: PostingId = tx.alloc()?;
-                tx.insert(&writebench::prepared_posting(rng, &sizes, id))?;
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&writebench::prepared_posting(rng, &sizes, id)])?;
             }
             Ok(())
         })
@@ -347,9 +341,9 @@ fn seed_delete_rows(
             .write(|tx| {
                 let mut out = Vec::with_capacity(usize::try_from(chunk).expect("small chunk"));
                 for _ in 0..chunk {
-                    let id: PostingId = tx.alloc()?;
+                    let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
                     let posting = writebench::prepared_posting(&mut rng, &sizes, id);
-                    tx.insert(&posting)?;
+                    tx.insert([&posting])?;
                     out.push(posting);
                 }
                 Ok(out)
@@ -402,7 +396,7 @@ fn delete_recorded(
             let victim = recorded
                 .pop_front()
                 .expect("the pre-phase sized the deque to (warmups + samples) × batch exactly");
-            if !tx.delete(&victim)? {
+            if tx.delete([&victim])?.changed == 0 {
                 // The in-closure sentinel abort (the posting_swap
                 // idiom): returning `Err` here drops the delta whole,
                 // so nothing this sample deleted ever reaches the
@@ -454,22 +448,22 @@ fn delete_sqlite(
     })
 }
 
-/// `bulk_append` on `SQLite`, lane-local (`sqlite_run::bulk` hardwires
-/// [`corpus::configure_sqlite`] = FULL, so this variant applies the
-/// lane's pragmas after the standing config on every throwaway file):
-/// pre-seeded throwaway files (the corpus minus postings, built before
-/// any timing), the full posting stream timed in
-/// [`BULK_TX_CHUNK`]-row transactions per sample.
-fn bulk_sqlite(
+/// `insert_stream` on `SQLite`, lane-local (`sqlite_run::insert_stream`
+/// hardwires [`corpus::configure_sqlite`] = FULL, so this variant
+/// applies the lane's pragmas after the standing config on every
+/// throwaway file): pre-seeded throwaway files (the corpus minus
+/// postings, built before any timing), the full posting stream timed as
+/// a host loop of 4096-row transactions per sample.
+fn insert_stream_sqlite(
     cfg: GenConfig,
     scratch: &Path,
     lane: DurabilityLane,
 ) -> Result<Measurement, String> {
     use std::cell::RefCell;
-    let proto = writebench::write_protocol("bulk");
+    let proto = writebench::write_protocol("insert_stream");
     let mut pending = VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
-        let path = scratch.join(format!("bulk-oracle-{sample}.sqlite"));
+        let path = scratch.join(format!("insert-stream-oracle-{sample}.sqlite"));
         let conn = Connection::open(&path).map_err(|e| format!("open: {e}"))?;
         corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
         lane.configure(&conn)?;
@@ -488,44 +482,44 @@ fn bulk_sqlite(
     harness::measure(proto, || {
         let conn = pending.borrow_mut().pop_front().expect("pre-seeded store");
         let mut facts = corpus::load_sqlite_relation(&conn, cfg, ids::POSTING)
-            .map_err(|e| format!("bulk sqlite: {e}"))?;
+            .map_err(|e| format!("insert_stream sqlite: {e}"))?;
         facts += corpus::load_sqlite_relation(&conn, cfg, ids::POSTING_TAG)
-            .map_err(|e| format!("bulk sqlite tags: {e}"))?;
+            .map_err(|e| format!("insert_stream sqlite tags: {e}"))?;
         done.borrow_mut().push(conn);
         Ok(facts)
     })
 }
 
-/// The bulk throwaway symmetry re-check: bulk runs against throwaway
-/// pairs, not the lane db, so [`verify_post_state`] cannot see it — its
-/// generator-stream count is already pinned by writebench's own test,
-/// and this cheap witness re-opens pair 0 (the durable lane through
-/// `Db::open`, the nosync lane through `Db::ephemeral`, its
-/// create-or-open constructor) and confirms both sides hold exactly the
-/// posting mass.
-fn verify_bulk_pair(
+/// The insert-stream throwaway symmetry re-check: the stream load runs
+/// against throwaway pairs, not the lane db, so [`verify_post_state`]
+/// cannot see it — its generator-stream count is already pinned by
+/// writebench's own test, and this cheap witness re-opens pair 0 (the
+/// durable lane through `Db::open`, the nosync lane through
+/// `Db::ephemeral`, its create-or-open constructor) and confirms both
+/// sides hold exactly the posting mass.
+fn verify_insert_stream_pair(
     scratch: &Path,
     lane: DurabilityLane,
     expected_postings: u64,
 ) -> Result<(), String> {
-    let dir = scratch.join("bulk-bumbledb-0");
+    let dir = scratch.join("insert-stream-bumbledb-0");
     let db = match lane.store_mode() {
         crate::storemode::StoreMode::Durable => Db::open(&dir, Ledger),
         crate::storemode::StoreMode::Ephemeral => Db::ephemeral(&dir, Ledger),
     }
-    .map_err(|e| format!("bulk re-open ({}): {e:?}", lane.label()))?;
+    .map_err(|e| format!("insert_stream re-open ({}): {e:?}", lane.label()))?;
     let ours = db
         .read(|snap| Ok(snap.scan(ids::POSTING)?.count()))
-        .map_err(|e| format!("bulk re-scan: {e:?}"))? as u64;
-    let conn = Connection::open(scratch.join("bulk-oracle-0.sqlite"))
-        .map_err(|e| format!("bulk oracle re-open: {e}"))?;
+        .map_err(|e| format!("insert_stream re-scan: {e:?}"))? as u64;
+    let conn = Connection::open(scratch.join("insert-stream-oracle-0.sqlite"))
+        .map_err(|e| format!("insert_stream oracle re-open: {e}"))?;
     let theirs: i64 = conn
         .query_row("SELECT COUNT(*) FROM \"Posting\"", [], |row| row.get(0))
-        .map_err(|e| format!("bulk oracle count: {e}"))?;
-    let theirs = u64::try_from(theirs).map_err(|e| format!("bulk oracle count: {e}"))?;
+        .map_err(|e| format!("insert_stream oracle count: {e}"))?;
+    let theirs = u64::try_from(theirs).map_err(|e| format!("insert_stream oracle count: {e}"))?;
     if ours != expected_postings || theirs != expected_postings {
         return Err(format!(
-            "bulk pair 0 diverges ({}): engine {ours} vs sqlite {theirs} vs expected \
+            "insert_stream pair 0 diverges ({}): engine {ours} vs sqlite {theirs} vs expected \
              {expected_postings} postings",
             lane.label()
         ));
@@ -637,15 +631,16 @@ fn verify_post_state(
 }
 
 /// One durability lane, whole: seed the twin pair, run the commit
-/// ladder, run the delete ladder, verify the post-state, then bulk —
-/// LAST, always (seconds of fsync leave the deepest clock shadow;
-/// nothing measures after it — the `write_families` order pin, carried
-/// here by the same `debug_assert!`). Under `--trace` every ladder
-/// cell's timed pair is followed by its traced twin sample
+/// ladder, run the delete ladder, verify the post-state, then
+/// `insert_stream` — LAST, always (seconds of fsync leave the deepest
+/// clock shadow; nothing measures after it — the `write_families` order
+/// pin, carried here by the same `debug_assert!`). Under `--trace` every
+/// ladder cell's timed pair is followed by its traced twin sample
 /// ([`trace_out::traced_twin`]: rng streams and delete deques carry the
 /// one extra op on BOTH engines, so the post-state arithmetic counts
-/// it); bulk stays untraced by decision — a traced bulk sample would be
-/// seconds of fsync for a profile the commit ladder already carries.
+/// it); `insert_stream` stays untraced by decision — a traced stream
+/// sample would be seconds of fsync for a profile the commit ladder
+/// already carries.
 #[expect(
     clippy::too_many_lines,
     reason = "one durability lane, whole — the measured order is the content"
@@ -762,45 +757,40 @@ fn run_lane(
         ));
     }
 
-    // (e) Post-state verification — BEFORE bulk: bulk runs on throwaway
-    // stores, not the lane db (its pairs verify in the symmetry
-    // re-check below). The gate must pass before the lane's rows are
-    // accepted.
+    // (e) Post-state verification — BEFORE insert_stream: the stream
+    // load runs on throwaway stores, not the lane db (its pairs verify
+    // in the symmetry re-check below). The gate must pass before the
+    // lane's rows are accepted.
     let expected = sizes.postings + inserted - deleted;
     verify_post_state(&db, &conn, sizes.postings, expected)
         .map_err(|e| format!("post-state ({}): {e}", lane.label()))?;
 
-    // (d) BULK — LAST in the lane (the fsync-shadow law).
-    eprintln!("bench: writes {} — bulk_append", lane.label());
-    let bulk_scratch = scratch.join("bulk");
-    std::fs::create_dir_all(&bulk_scratch).map_err(|e| format!("bulk scratch: {e}"))?;
-    let bulk_proto = writebench::write_protocol("bulk");
+    // (d) INSERT STREAM — LAST in the lane (the fsync-shadow law).
+    eprintln!("bench: writes {} — insert_stream", lane.label());
+    let stream_scratch = scratch.join("insert-stream");
+    std::fs::create_dir_all(&stream_scratch).map_err(|e| format!("insert_stream scratch: {e}"))?;
     let ((ours, theirs), ghz) = clockproxy::stamped(|| {
         Ok((
-            writebench::bulk_bumbledb(cfg, &bulk_scratch, lane.store_mode())?,
-            bulk_sqlite(cfg, &bulk_scratch, lane)?,
+            writebench::insert_stream_bumbledb(cfg, &stream_scratch, lane.store_mode())?,
+            insert_stream_sqlite(cfg, &stream_scratch, lane)?,
         ))
     })?;
-    verify_bulk_pair(&bulk_scratch, lane, sizes.postings)?;
-    let ours_rate = harness::facts_per_sec(&ours, bulk_proto.samples);
-    let theirs_rate = harness::facts_per_sec(&theirs, bulk_proto.samples);
-    rows.push(WriteRow {
-        name: "bulk_append".to_owned(),
-        batch: BULK_TX_CHUNK,
-        ours: ours.stats,
-        theirs: theirs.stats,
-        commits_per_sec_ours: ours_rate / f64::from(BULK_TX_CHUNK),
-        commits_per_sec_theirs: theirs_rate / f64::from(BULK_TX_CHUNK),
-        rows_per_sec_ours: ours_rate,
-        rows_per_sec_theirs: theirs_rate,
-        ghz: Some(ghz.into()),
-    });
-    // The write-order pin: bulk is the last row, always.
+    verify_insert_stream_pair(&stream_scratch, lane, sizes.postings)?;
+    let facts = sizes.postings + sizes.posting_tags;
+    let batch = u32::try_from(facts).expect("stream fits u32");
+    rows.push(ladder_row(
+        "insert_stream".to_owned(),
+        batch,
+        ours.stats,
+        theirs.stats,
+        Some(ghz.into()),
+    ));
+    // The write-order pin: insert_stream is the last row, always.
     debug_assert!(
         rows.iter()
-            .position(|row| row.name == "bulk_append")
+            .position(|row| row.name == "insert_stream")
             .is_none_or(|index| index == rows.len() - 1),
-        "bulk_append must be the last write row"
+        "insert_stream must be the last write row"
     );
     Ok((
         LaneReport {
@@ -1109,9 +1099,9 @@ mod tests {
                 "commit_b10",
                 "delete_b1",
                 "delete_b10",
-                "bulk_append"
+                "insert_stream"
             ],
-            "the ladder rows, bulk last"
+            "the ladder rows, insert_stream last"
         );
         for row in rows {
             for side in ["ours", "theirs"] {
@@ -1172,7 +1162,7 @@ mod tests {
             .iter()
             .filter_map(|row| row.get("name").and_then(Value::as_str))
             .collect();
-        assert_eq!(names, vec!["commit_b1", "delete_b1", "bulk_append"]);
+        assert_eq!(names, vec!["commit_b1", "delete_b1", "insert_stream"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1189,16 +1179,19 @@ mod tests {
         };
         let db = Db::create(&dir.join("db"), Ledger).expect("create");
         for rel in writebench::non_posting_relations() {
-            db.bulk_load_dyn(rel, corpus_gen::relation_rows(cfg, rel))
-                .expect("seed");
+            db.write(|tx| {
+                tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
+                    .map(|r| r.changed)
+            })
+            .expect("seed");
         }
         let sizes = Sizes::of(cfg.scale);
         let mut rng = Rng::new(cfg.seed ^ DELETE_SEED ^ 1);
         let posting = db
             .write(|tx| {
-                let id: PostingId = tx.alloc()?;
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
                 let posting = writebench::prepared_posting(&mut rng, &sizes, id);
-                tx.insert(&posting)?;
+                tx.insert([&posting])?;
                 Ok(posting)
             })
             .expect("seed posting");
@@ -1263,8 +1256,8 @@ mod tests {
     /// cell lands its traced twin sample as a parseable Chrome+folded
     /// pair under `<out>/trace/writes/<lane>/`, the `LMDB_COMMIT` span
     /// reaches the commit cell's artifact (the fsync-bound phase,
-    /// readable from disk), the markdown embeds the flame tables, bulk
-    /// stays untraced by decision, and the post-state gate still passes
+    /// readable from disk), the markdown embeds the flame tables,
+    /// `insert_stream` stays untraced by decision, and the post-state gate still passes
     /// — the traced twin sample ran on BOTH engines, rng streams and
     /// deques in lockstep. Tiny, one batch point, two samples: a smoke
     /// test, not a measurement.
@@ -1310,8 +1303,8 @@ mod tests {
             commit.contains(bumbledb::obs::names::LMDB_COMMIT),
             "the LMDB commit span reaches the commit cell's artifact"
         );
-        // Bulk stays untraced by decision.
-        assert!(!lane_dir.join("bulk_append.json").exists());
+        // insert_stream stays untraced by decision.
+        assert!(!lane_dir.join("insert_stream.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

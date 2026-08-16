@@ -64,7 +64,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
                     !matches!(
                         f,
                         FilterPredicate::Compare {
-                            op: crate::ir::CmpOp::Eq,
+                            op: crate::ir::WordCmp::Eq,
                             ..
                         }
                     )

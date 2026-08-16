@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use std::collections::BTreeSet;
 
 /// The string shape (docs/architecture/40-execution.md): one occurrence, `memo = ?0`
@@ -9,7 +9,7 @@ fn lowering_splits_eq_constants_into_selections() {
     let mut occ = occurrence(0, 0, &[(1, X)]);
     occ.filters = vec![FilterPredicate::Compare {
         field: FieldId(2),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::Param(crate::ir::ParamId(0)),
     }];
     let query = normalized(vec![occ], vec![]);
@@ -35,22 +35,22 @@ fn residuals_and_field_compares_stay_filters() {
     occ.filters = vec![
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Ge,
+            op: WordCmp::Ge,
             value: Const::Word(9),
         },
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(5),
         },
         FilterPredicate::FieldsCompare {
             left: FieldId(1),
             right: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
         },
         FilterPredicate::Compare {
             field: FieldId(0),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Byte(1),
         },
     ];
@@ -78,13 +78,13 @@ fn residuals_and_field_compares_stay_filters() {
         vec![
             FilterPredicate::Compare {
                 field: FieldId(2),
-                op: CmpOp::Ge,
+                op: WordCmp::Ge,
                 value: Const::Word(9),
             },
             FilterPredicate::FieldsCompare {
                 left: FieldId(1),
                 right: FieldId(2),
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
             },
         ],
         "residuals keep their order"
@@ -108,7 +108,7 @@ fn a_leaked_eq_filter_fails_selection_validation() {
         selections: vec![],
         filters: vec![FilterPredicate::Compare {
             field: FieldId(0),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(1),
         }],
         point_filters: vec![],

@@ -79,6 +79,8 @@ include = [
     "bdb_condition_kind",
     "bdb_cmp_op_kind",
     "bdb_query_kind",
+    "bdb_mutation_report",
+    "bdb_fresh_range",
 ]
 [enum]
 rename_variants = "ScreamingSnakeCase"

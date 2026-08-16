@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use bumbledb_theory::schema::FieldId;
 
 use super::{
@@ -78,8 +78,8 @@ fn word_at(image: &RelationImage, field: FieldId, position: usize) -> u64 {
 }
 
 /// The resolved point word of a membership filter. Var-sourced points
-/// never reach the view evaluator: they live on [`FilterPredicate::PointVar`]
-/// and plan validation routes them into membership probes.
+/// never reach the view evaluator: they live on the occurrence's
+/// `point_vars` and plan validation routes them into membership probes.
 fn point_word(point: &ViewWordSource, params: &[Const]) -> u64 {
     resolve_word(point, params)
 }
@@ -132,13 +132,13 @@ fn row_matches(
                 // binding's `Eq` on a negated occurrence — every
                 // interval-pair *predicate* is an `Allen` kind).
                 (Operand::Pair(s, e), Const::Interval { start, end }) => match op {
-                    CmpOp::Eq => s == *start && e == *end,
+                    WordCmp::Eq => s == *start && e == *end,
                     _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
                 // bytes<N>: word-wise identity — Eq/Ne only by validation.
                 (Operand::Block { words, count }, Const::Words(c)) => match op {
-                    CmpOp::Eq => words[..usize::from(count)] == **c,
-                    CmpOp::Ne => words[..usize::from(count)] != **c,
+                    WordCmp::Eq => words[..usize::from(count)] == **c,
+                    WordCmp::Ne => words[..usize::from(count)] != **c,
                     _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                 },
                 // A bound set: `Eq` matches any element (validation admits
@@ -186,14 +186,14 @@ fn row_matches(
                 // spans; validation admits `Eq`/`Ne` only (order operators
                 // never apply to intervals).
                 (Operand::Pair(a_s, a_e), Operand::Pair(b_s, b_e)) => match op {
-                    CmpOp::Eq => a_s == b_s && a_e == b_e,
-                    CmpOp::Ne => a_s != b_s || a_e != b_e,
+                    WordCmp::Eq => a_s == b_s && a_e == b_e,
+                    WordCmp::Ne => a_s != b_s || a_e != b_e,
                     _ => unreachable!("validated: no order comparison over intervals"),
                 },
                 // bytes<N> fields compare word-wise, Eq/Ne only.
                 (Operand::Block { words: a, count }, Operand::Block { words: b, .. }) => match op {
-                    CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                    CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                    WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                    WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
                     _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                 },
                 _ => unreachable!("same-fact comparison joins same-typed fields"),
@@ -202,9 +202,6 @@ fn row_matches(
         FilterPredicate::PointIn { field, point } => {
             let (start, end) = interval_at(image, *field, position);
             point_in(start, end, point_word(point, params))
-        }
-        FilterPredicate::PointVar { .. } => {
-            unreachable!("plan routes var points to membership probes")
         }
         FilterPredicate::AnyPointIn { field, set } => {
             let (start, end) = interval_at(image, *field, position);
@@ -372,17 +369,16 @@ fn refine_measure(
             // The order operator as an inclusive duration range — the
             // subtraction feeds the existing range machinery.
             let (lo, hi) = match op {
-                CmpOp::Lt => match bound.checked_sub(1) {
+                crate::ir::OrderCmp::Lt => match bound.checked_sub(1) {
                     Some(hi) => (0, hi),
                     None => (1, 0), // dur < 0: empty (lo > hi keeps nothing)
                 },
-                CmpOp::Le => (0, bound),
-                CmpOp::Gt => match bound.checked_add(1) {
+                crate::ir::OrderCmp::Le => (0, bound),
+                crate::ir::OrderCmp::Gt => match bound.checked_add(1) {
                     Some(lo) => (lo, u64::MAX),
                     None => (1, 0), // dur > MAX: empty
                 },
-                CmpOp::Ge => (bound, u64::MAX),
-                _ => unreachable!("validated: measures compare under order operators"),
+                crate::ir::OrderCmp::Ge => (bound, u64::MAX),
             };
             let (starts, ends) = interval_columns(image, *field);
             match view {
@@ -633,9 +629,7 @@ fn kernel_scan(
         // Same-fact comparisons read two varying columns per position —
         // no constant side, no kernel shape; the scalar loop evaluates
         // them.
-        FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsPointIn { .. }
-        | FilterPredicate::PointVar { .. } => {
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
             return false;
         }
         // The measure kinds never reach the infallible machinery: they
@@ -659,7 +653,7 @@ fn kernel_scan(
         // widened by word count — the first column's kernel pass seeds
         // the survivors, the remaining columns refine them word-wise
         // (no new NEON shapes). `Ne` has no scan shape, like scalar Ne.
-        let (Const::Words(words), CmpOp::Eq) = (value, op) else {
+        let (Const::Words(words), WordCmp::Eq) = (value, op) else {
             return false;
         };
         debug_assert_eq!(words.len(), usize::from(count), "validated width");
@@ -685,35 +679,32 @@ fn kernel_scan(
     match (image.column(usize::from(span.first_column)), value) {
         (ColumnView::Words(words), Const::Word(c)) => {
             let (lo, hi) = match op {
-                CmpOp::Eq => {
+                WordCmp::Eq => {
                     crate::exec::kernel::filter_eq_u64(words, *c, out);
                     return true;
                 }
-                CmpOp::Lt => {
+                WordCmp::Lt => {
                     let Some(hi) = c.checked_sub(1) else {
                         out.clear(); // x < 0 over unsigned words: empty
                         return true;
                     };
                     (0, hi)
                 }
-                CmpOp::Le => (0, *c),
-                CmpOp::Gt => {
+                WordCmp::Le => (0, *c),
+                WordCmp::Gt => {
                     let Some(lo) = c.checked_add(1) else {
                         out.clear(); // x > MAX: empty
                         return true;
                     };
                     (lo, u64::MAX)
                 }
-                CmpOp::Ge => (*c, u64::MAX),
-                // `Ne` has no fixed-width scan shape; the interval
-                // operators never pair with a single-word constant
-                // (normalization emits the interval filter kinds).
-                CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::PointIn => return false,
+                WordCmp::Ge => (*c, u64::MAX),
+                WordCmp::Ne => return false,
             };
             crate::exec::kernel::filter_range_u64(words, lo, hi, out);
             true
         }
-        (ColumnView::Bytes(bytes), Const::Byte(c)) if *op == CmpOp::Eq => {
+        (ColumnView::Bytes(bytes), Const::Byte(c)) if *op == WordCmp::Eq => {
             crate::exec::kernel::filter_eq_u8(bytes, *c, out);
             true
         }

@@ -102,7 +102,7 @@ pub(super) fn gate<'d>(
                 .signature()
                 .columns
                 .iter()
-                .map(|column| column.ty.clone())
+                .map(|column| column.ty().clone())
                 .collect();
             let canonical = || {
                 translate(&query, schema, &[])

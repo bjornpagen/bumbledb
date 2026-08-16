@@ -15,7 +15,7 @@
 //! shapes): random predicates or negated probes landing on the closed
 //! atom would blur the class the coverage contract counts.
 
-use bumbledb::{AggOp, FieldId, FindTerm, RelationId, Term, Value};
+use bumbledb::{FieldId, FindTerm, RelationId, Term, Value};
 
 use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
@@ -131,9 +131,6 @@ pub(super) fn ground_fold(b: &mut Builder, rng: &mut Rng) {
         let _dead = b.bind_var(vocabulary, ids::currency::MINOR_UNITS);
     }
     b.find_var(handle);
-    b.finds.push(FindTerm::Aggregate {
-        op: AggOp::Count,
-        over: None,
-    });
+    b.finds.push(FindTerm::Count);
     b.closed = Some(ClosedVariant::Fold);
 }

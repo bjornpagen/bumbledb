@@ -46,7 +46,7 @@
 //! `std::panic::catch_unwind` maps a caught panic to `BDB_ERROR_KIND_PANIC`
 //! (the caller treats the store as poisoned). Unwinding stays inside Rust,
 //! so the engine's own drop guards (the escaped-fresh-id burn on write
-//! failure) run as designed. Re-entrant `write`/`write_from`/`bulk_load` and
+//! failure) run as designed. Re-entrant `write`/`write_from` and
 //! nested/concurrent reads on the same handle are refused bridge-side with
 //! a typed `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` error BEFORE the engine's
 //! non-reentrancy assertion can fire. Destroy of a db or prepared handle
@@ -98,15 +98,15 @@ pub extern "C" fn bdb_version() -> *const c_char {
         .cast::<c_char>()
 }
 
-/// C ABI generation. `1` is this extraction (flattened tagged structs,
-/// no C++ trampoline). Bump on a layout-visible change.
+/// C ABI generation. `2` is collection-valued insert/delete and `reserve`.
+/// Bump on a layout-visible change.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_abi_version() -> u32 {
-    1
+    2
 }
 
 /// TryFrom/From for a C ABI enum whose struct field is stored as `u32`.

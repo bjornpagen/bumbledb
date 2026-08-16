@@ -9,6 +9,11 @@ use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
 };
+use std::num::NonZeroU64;
+
+fn one() -> NonZeroU64 {
+    NonZeroU64::new(1).unwrap()
+}
 
 /// R(id fresh, amount i64).
 fn schema() -> Schema {
@@ -134,14 +139,14 @@ fn long_alternating_sequences_net_against_committed_state() {
 }
 
 #[test]
-fn alloc_is_strictly_increasing_and_reads_q_once() {
+fn reserve_is_strictly_increasing_and_reads_q_once() {
     let dir = TempDir::new("delta-alloc");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 0);
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 1);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 0);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 1);
     drop(view);
 
     // Bump the committed Q value behind the delta's back: the cached
@@ -156,11 +161,11 @@ fn alloc_is_strictly_increasing_and_reads_q_once() {
         wtxn.commit().expect("commit");
     }
     let view = env.read_txn().expect("txn");
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 2);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 2);
 
     // A fresh delta sees the committed value.
     let mut fresh = WriteDelta::new(&schema);
-    assert_eq!(fresh.alloc(&view, R, ID).expect("alloc"), 100);
+    assert_eq!(fresh.reserve(&view, R, ID, one()).expect("reserve"), 100);
 }
 
 #[test]
@@ -175,26 +180,26 @@ fn explicit_value_above_mark_advances_generated_successors() {
             .insert(&view, R, &fact(&schema, 50, 1))
             .expect("insert")
     );
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 51);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 51);
 }
 
 #[test]
-fn mixed_explicit_and_generated_allocation_tracks_running_maximum() {
+fn mixed_explicit_and_generated_reserve_tracks_running_maximum() {
     let dir = TempDir::new("delta-mixed");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 0);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 0);
     delta
         .insert(&view, R, &fact(&schema, 10, 1))
         .expect("insert");
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 11);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 11);
     // An explicit value *below* the mark must not regress it.
     delta
         .insert(&view, R, &fact(&schema, 3, 2))
         .expect("insert");
-    assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 12);
+    assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 12);
 }
 
 #[test]
@@ -207,7 +212,7 @@ fn explicit_max_exhausts_the_generator() {
     delta
         .insert(&view, R, &fact(&schema, u64::MAX, 1))
         .expect("insert");
-    let err = delta.alloc(&view, R, ID).unwrap_err();
+    let err = delta.reserve(&view, R, ID, one()).unwrap_err();
     assert!(
         matches!(
             err,
@@ -297,7 +302,7 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
 
     // An allocation advances past the base: dirty.
     let mut dirty = WriteDelta::new(&schema);
-    assert_eq!(dirty.alloc(&view, R, ID).expect("alloc"), 6);
+    assert_eq!(dirty.reserve(&view, R, ID, one()).expect("reserve"), 6);
     assert_eq!(
         dirty.dirty_fresh_marks().collect::<Vec<_>>(),
         vec![(R, ID, 7)]
@@ -419,9 +424,11 @@ fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
 
 #[test]
 fn a_cancelled_insert_restores_an_earlier_pending_owner() {
-    // Two pending inserts share the key tuple (commit-doomed, but
-    // representable pre-commit); cancelling the later one re-establishes
-    // the earlier — the surviving pending fact is the final-state owner.
+    // Two pending inserts share the key tuple: the fact map holds both
+    // (commit-doomed as a pair — `duplicate_fresh_id_in_one_delta_aborts_with_the_auto_key`),
+    // the overlay last-wins. Cancel of the later insert restores the
+    // earlier from the replaced stack — point reads during the tx would
+    // otherwise miss a fact still in the map.
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-pending-owner");
     let schema = schema();
@@ -442,6 +449,35 @@ fn a_cancelled_insert_restores_an_earlier_pending_owner() {
         Some(DeterminantOverlay::Present(first.as_slice())),
         "the earlier pending insert owns the tuple again"
     );
+}
+
+#[test]
+fn cancelling_a_replaced_insert_does_not_restore_it() {
+    // insert A, insert B, delete A: A leaves the fact map and the
+    // replaced stack. Overlay stays B; cancelling B must not resurrect A.
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-cancel-replaced-insert");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let first = fact(&schema, 7, 700);
+    let second = fact(&schema, 7, 999);
+    delta.insert(&view, R, &first).expect("insert");
+    delta.insert(&view, R, &second).expect("insert");
+    assert!(delta.delete(&view, R, &first).expect("delete first"));
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Present(second.as_slice())),
+        "the later insert still owns the tuple"
+    );
+    assert!(delta.delete(&view, R, &second).expect("delete second"));
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        None,
+        "both pending inserts cancelled; committed state answers"
+    );
+    assert!(delta.is_empty());
 }
 
 #[test]
@@ -522,6 +558,25 @@ fn determinant_overwrites_never_reclone_the_scratch() {
 }
 
 #[test]
+fn a_second_insert_of_one_tuple_replaces_the_overlay_owner() {
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-overlay-one-insert");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let a = fact(&schema, 7, 1);
+    let b = fact(&schema, 7, 2);
+    delta.insert(&view, R, &a).expect("insert a");
+    delta.insert(&view, R, &b).expect("insert b");
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Present(b.as_slice())),
+        "at most one Insert per tuple — the later fact answers"
+    );
+}
+
+#[test]
 fn drop_leaves_lmdb_untouched() {
     let dir = TempDir::new("delta-drop");
     let schema = schema();
@@ -535,7 +590,7 @@ fn drop_leaves_lmdb_untouched() {
                 .insert(&view, R, &fact(&schema, i.cast_unsigned(), i))
                 .expect("insert");
         }
-        delta.alloc(&view, R, ID).expect("alloc");
+        delta.reserve(&view, R, ID, one()).expect("reserve");
         delta
             .delete(&view, R, &fact(&schema, 5, 5))
             .expect("delete");

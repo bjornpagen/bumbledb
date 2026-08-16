@@ -159,7 +159,7 @@ payload of the same name, once an emitter writes one, wins over the
 derivation: `adversarial` derives from `scenarios.json`'s `exceeded_cap`
 lanes (the DNF data's one real home while the `adversarial` subcommand
 remains unlanded), and `write_throughput` derives from
-`writes-report.json`'s commit/delete batch ladders (`bulk_append` is a
+`writes-report.json`'s commit/delete batch ladders (`insert_stream` is a
 single point, not a ladder — it stays fully drawn in
 `bench-writes-rates.svg`).
 

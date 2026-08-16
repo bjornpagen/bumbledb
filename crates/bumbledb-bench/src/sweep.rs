@@ -243,11 +243,11 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
     }
     let outcome = db.write(|tx| {
         for &(id, parent) in &probe {
-            tx.insert(&world::WChild {
+            tx.insert([&world::WChild {
                 id: world::WChildId(id),
                 parent: world::WParentId(parent),
                 flag: 0,
-            })?;
+            }])?;
         }
         Ok(())
     });
@@ -341,11 +341,11 @@ fn run_cell(
         obs::start_capture();
         let outcome = db.write(|tx| {
             for &(id, parent) in &children {
-                tx.insert(&world::WChild {
+                tx.insert([&world::WChild {
                     id: world::WChildId(id),
                     parent: world::WParentId(parent),
                     flag: 0,
-                })?;
+                }])?;
             }
             Ok(())
         });

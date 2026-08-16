@@ -6,7 +6,7 @@
 
 use bumbledb::ir::Rule;
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
-use bumbledb::{AggOp, Atom, AtomSource, Basic, CmpOp, FindTerm, Query, Term, VarId};
+use bumbledb::{Atom, AtomSource, Basic, CmpOp, FindTerm, FoldOp, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
 use crate::corpus_gen::{GenConfig, Rng};
@@ -476,17 +476,20 @@ impl Coverage {
                 FindTerm::Aggregate { op, over } => {
                     aggregates += 1;
                     match op {
-                        AggOp::Sum => self.agg_sum += 1,
-                        AggOp::Min => self.agg_min += 1,
-                        AggOp::Max => self.agg_max += 1,
-                        AggOp::Count => self.agg_count += 1,
-                        AggOp::Pack => {}
+                        FoldOp::Sum => self.agg_sum += 1,
+                        FoldOp::Min => self.agg_min += 1,
+                        FoldOp::Max => self.agg_max += 1,
                     }
-                    if let Some(var) = over
-                        && matches!(t.var_types.get(var), Some(ValueType::U64))
-                    {
+                    if matches!(t.var_types.get(over), Some(ValueType::U64)) {
                         self.agg_u64 += 1;
                     }
+                }
+                FindTerm::Count => {
+                    aggregates += 1;
+                    self.agg_count += 1;
+                }
+                FindTerm::Pack { .. } => {
+                    aggregates += 1;
                 }
                 // The measure positions: one projected word / one fold
                 // like their plain twins, plus their own construct rows.
@@ -551,7 +554,7 @@ impl Coverage {
                 .iter()
                 .filter(|atom| atom.bindings.is_empty())
                 .count() as u64;
-            let t = typing(rule);
+            let t = typing(&rule);
             // Repeated in-atom variables.
             for atom in &rule.atoms {
                 let vars: Vec<&Term> = atom
@@ -578,13 +581,13 @@ impl Coverage {
                     }
                 }
             }
-            has_membership |= self.record_membership(rule, &t);
-            has_allen |= self.record_comparisons(rule, &t);
-            self.record_negations(rule, &t);
+            has_membership |= self.record_membership(&rule, &t);
+            has_allen |= self.record_comparisons(&rule, &t);
+            self.record_negations(&rule, &t);
             // The head is one row; rule 0 records it (rules align
             // positionally by validation).
             if rule_idx == 0 {
-                has_aggregate = self.record_finds(rule, &t);
+                has_aggregate = self.record_finds(&rule, &t);
             }
             has_negation |= !rule.negated.is_empty();
             uses_set |= rule
@@ -596,7 +599,7 @@ impl Coverage {
                 || rule.conditions.iter().map(super::leaf).any(|c| {
                     matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_))
                 });
-            self.spine_violations += spine_violations(rule, &t);
+            self.spine_violations += spine_violations(&rule, &t);
         }
         // The structural compositions where bugs hide.
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
@@ -634,7 +637,7 @@ mod reach_walk {
         };
         let (query, _) = random_reach_query(&mut rng, cfg);
         for rule in walk::rules(&query) {
-            let _ = typing(rule);
+            let _ = typing(&rule);
         }
         let mut cov = Coverage::default();
         cov.record(&query, Shape::KeyProbe, GenTags::default());

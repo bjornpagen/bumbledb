@@ -7,8 +7,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term, Value,
+    VarId,
 };
 
 use super::{Scenario, ScenarioQuery, Surface, Twin, mix};
@@ -165,10 +165,7 @@ fn two_hop() -> Query {
 /// g3 — three-hop reach, counted (the intermediate explosion, folded).
 fn three_hop_count() -> Query {
     Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![
             Atom {
                 source: bumbledb::AtomSource::Edb(ids::EDGE),
@@ -214,10 +211,7 @@ fn mutual() -> Query {
 /// g5 — triangles through a start node: the 3-cycle, counted.
 fn triangles_from() -> Query {
     Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![
             Atom {
                 source: bumbledb::AtomSource::Edb(ids::EDGE),

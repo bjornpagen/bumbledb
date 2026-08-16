@@ -1,4 +1,4 @@
-use bumbledb::{AggOp, CmpOp, Comparison, FieldId, FindTerm, RelationId, Term, VarId};
+use bumbledb::{CmpOp, Comparison, FieldId, FindTerm, FoldOp, RelationId, Term, VarId};
 
 use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
@@ -209,15 +209,54 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
         // A bool group-key candidate (registered by bind_var).
         let _ = b.var_at(0, ids::posting::RECONCILED);
     }
-    let (op, over) = match rng.range(7) {
-        0 => (AggOp::Sum, Some(amount)),
-        1 => (AggOp::Count, None),
-        2 => (AggOp::Min, Some(at)),
-        3 => (AggOp::Max, Some(amount)),
+    let account = b
+        .var_at(0, ids::posting::ACCOUNT)
+        .expect("shape binds account");
+    let (find, over) = match rng.range(7) {
+        0 => (
+            FindTerm::Aggregate {
+                op: FoldOp::Sum,
+                over: amount,
+            },
+            Some(amount),
+        ),
+        1 => (FindTerm::Count, None),
+        2 => (
+            FindTerm::Aggregate {
+                op: FoldOp::Min,
+                over: at,
+            },
+            Some(at),
+        ),
+        3 => (
+            FindTerm::Aggregate {
+                op: FoldOp::Max,
+                over: amount,
+            },
+            Some(amount),
+        ),
         // The u64 targets (account: dense ids, bounded sums).
-        4 => (AggOp::Sum, b.var_at(0, ids::posting::ACCOUNT)),
-        5 => (AggOp::Min, b.var_at(0, ids::posting::ACCOUNT)),
-        _ => (AggOp::Max, b.var_at(0, ids::posting::ACCOUNT)),
+        4 => (
+            FindTerm::Aggregate {
+                op: FoldOp::Sum,
+                over: account,
+            },
+            Some(account),
+        ),
+        5 => (
+            FindTerm::Aggregate {
+                op: FoldOp::Min,
+                over: account,
+            },
+            Some(account),
+        ),
+        _ => (
+            FindTerm::Aggregate {
+                op: FoldOp::Max,
+                over: account,
+            },
+            Some(account),
+        ),
     };
     let candidates: Vec<VarId> = b
         .bound
@@ -243,24 +282,21 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
     for var in &key {
         b.find_var(*var);
     }
-    b.finds.push(FindTerm::Aggregate { op, over });
+    b.finds.push(find);
     // Multi-aggregate finds, a quarter of the time: Count beside any
     // valued aggregate (always distinct), or Sum(amount) beside Count
     // when amount stays off the group key.
     if rng.chance(1, 4) {
         let amount_term = FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(amount),
+            op: FoldOp::Sum,
+            over: amount,
         };
-        if op == AggOp::Count {
+        if matches!(b.finds.last(), Some(FindTerm::Count)) {
             if !in_key(Some(amount)) {
                 b.finds.push(amount_term);
             }
         } else {
-            b.finds.push(FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            });
+            b.finds.push(FindTerm::Count);
         }
     }
 }

@@ -6,7 +6,8 @@
 //! domain of aggregates, and params binding once for every rule.
 
 use super::*;
-use crate::ir::{AggOp, HeadTerm, ParamId};
+use crate::ir::FoldOp;
+use crate::ir::{HeadTerm, ParamId};
 
 /// Accounts 3 and 7 overlap on ("b", 25): the amounts of account 3 are
 /// {10, 25}, of account 7 {25, 40}; account 9 exists so unfiltered rules
@@ -78,7 +79,7 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
             .signature()
             .columns
             .iter()
-            .map(|column| &column.ty)
+            .map(crate::ir::validate::SignatureColumn::ty)
             .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
         "the head's answer tuple types the query once"
@@ -186,13 +187,10 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
     let agg_rule = |account: u64| Rule {
         finds: vec![
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(0)),
+                op: FoldOp::Sum,
+                over: VarId(0),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),
@@ -241,8 +239,8 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -305,10 +303,7 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
     let txn = env.read_txn().expect("txn");
 
     let rule = |account: u64| Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
@@ -349,13 +344,7 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
     let txn = env.read_txn().expect("txn");
 
     let rule = |account: u64| Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
@@ -406,13 +395,10 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     let rule = Rule {
         finds: vec![
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(0)),
+                op: FoldOp::Sum,
+                over: VarId(0),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),

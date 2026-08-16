@@ -44,13 +44,6 @@ function isFreshField(field: AnyField): boolean {
 }
 
 /**
- * The inferred object type `tx.insert` returns: one property per
- * fresh-marked field of `R`, carrying the minted (or resupplied) id as a
- * bare `bigint`. A relation with no fresh field returns the empty object.
- */
-type Minted<R extends AnyRelation> = { [K in FreshKeys<R>]: Fact<R>[K] }
-
-/**
  * The key object `get` reads through. THE PRIMARY-KEY RULE: `get` always
  * reads through the PRIMARY candidate key — the first-declared one in the
  * engine's materialized statement order (fresh-implied keys first, closed
@@ -74,10 +67,7 @@ type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
  * ALLOCATION-FREE IDENTITY (the admission predicate is the type
  * reprojection; the value passes through untouched): every consumer
  * downstream — `rowOf`, `keyRowOf`, the query param marshal — only READS
- * properties, so no copy is warranted. The one mutating consumer
- * (`mintFreshCells` on the insert path) takes its own spread copy at the
- * call site, so the caller's fact object is never written through this
- * seam.
+ * properties, so no copy is warranted.
  */
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
 	if (!isStringIndexed(fact)) {
@@ -203,9 +193,8 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 
 /**
  * Marshals one complete fact object to its positional row, in field
- * declaration order (= ordinal ids). Every declared field must be present;
- * fresh minting happens BEFORE this point (the transaction fills omitted
- * fresh cells via the engine's alloc lane).
+ * declaration order (= ordinal ids). Every declared field must be present.
+ * Mint with `tx.reserve` first; insert takes complete facts.
  */
 function rowOf(relation: RelationData, fact: Readonly<Record<string, unknown>>): FactValue[] {
 	return relation.fields.map(function marshalCell(declared) {
@@ -261,25 +250,6 @@ function isCompleteFact<R extends AnyRelation>(
 }
 
 /**
- * The insert-return trusted seam (R11): one insert's return carries the
- * engine's changed-state report beside the collected fresh cells (minted by
- * the engine or resupplied by the caller) — the bit is verified boolean and
- * the fresh ids present, same presence-only direction as
- * {@link isCompleteFact}.
- */
-function isInserted<R extends AnyRelation>(
-	relation: R,
-	value: Readonly<Record<string, FactValue | boolean>>
-): value is Readonly<Record<string, FactValue | boolean>> & { readonly changed: boolean } & Minted<R> {
-	return (
-		typeof value.changed === "boolean" &&
-		relation.data.fields.every(function presentWhenFresh(declared) {
-			return !isFreshField(declared.field) || value[declared.name] !== undefined
-		})
-	)
-}
-
-/**
  * Unmarshals one positional row to the relation's named, frozen fact object
  * of bare structural values — the inverse of {@link rowOf},
  * ordinal-directed by the same declaration order. Closed-referencing cells
@@ -310,5 +280,5 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 	return decoded
 }
 
-export type { KeyFact, Minted }
-export { cellOf, factOf, handleOf, isFreshField, isInserted, keyRowOf, recordOf, rowOf }
+export type { KeyFact }
+export { cellOf, factOf, handleOf, isFreshField, keyRowOf, recordOf, rowOf }

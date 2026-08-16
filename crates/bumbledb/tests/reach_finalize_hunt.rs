@@ -13,10 +13,11 @@
 use std::collections::BTreeSet;
 
 use bumbledb::ir::{
-    Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, Rule, Term, VarId,
+    Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, RecRule, RecStep, Rule,
+    Term, VarId,
 };
 use bumbledb::schema::FieldId;
-use bumbledb::{AnswerValue, Answers, Db, Fact, Interval};
+use bumbledb::{AnswerValue, Answers, Db, Fact, Interval, NonEmpty, ProjectionRule};
 
 mod common;
 
@@ -88,12 +89,20 @@ fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
-            rec: vec![pair_rule(
-                (0, 2),
-                vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
-            )],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_pair_main()],
@@ -147,7 +156,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     edges.insert((5, 30)); // a shortcut: multiple derivations of one pair
     db.write(|tx| {
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -177,7 +186,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     more.insert((CHAIN + 16, 0)); // one giant cycle: the closure saturates
     db.write(|tx| {
         for &(src, dst) in more.difference(&edges) {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -212,10 +221,10 @@ fn a_finished_interior_feeds_a_linear_rec() {
     let links: BTreeSet<(u64, u64)> = [(100, 0), (101, 6), (3, 3), (200, 100)].into();
     db.write(|tx| {
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         for &(src, dst) in &links {
-            tx.insert(&Link { src, dst })?;
+            tx.insert([&Link { src, dst }])?;
         }
         Ok(())
     })
@@ -239,16 +248,28 @@ fn a_finished_interior_feeds_a_linear_rec() {
 
     let query = Query::Reach {
         interiors: vec![Interior {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
+            rules: vec![ProjectionRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![edge_atom(0, 1)],
+                negated: vec![],
+                conditions: vec![],
+            }],
         }],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![pair_rule((0, 1), vec![link_atom(0, 1)])],
-            rec: vec![pair_rule(
-                (0, 2),
-                vec![interior_atom(0, 0, 1), interior_atom(1, 1, 2)],
-            )],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![link_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![interior_atom(0, 0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
@@ -278,7 +299,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let edges: BTreeSet<(u64, u64)> = [(1, 0), (2, 1), (3, 1), (4, 2), (4, 3), (0, 5)].into();
     db.write(|tx| {
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -292,22 +313,24 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
-            rec: vec![pair_rule(
-                (0, 2),
-                vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
-            )],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+                atoms: vec![edge_atom(0, 1)],
+                conditions: vec![],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: bumbledb::ir::AggOp::Count,
-                    over: None,
-                },
-            ],
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             atoms: vec![interior_atom(0, 0, 1)],
             negated: vec![],
             conditions: vec![],
@@ -356,10 +379,10 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     let edges: BTreeSet<(u64, u64)> = [(1, 2), (2, 3), (3, 4), (1, 3)].into();
     db.write(|tx| {
         for row in &rows {
-            tx.insert(row)?;
+            tx.insert([row])?;
         }
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -370,14 +393,8 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Var(VarId(1)),
-                    FindTerm::Var(VarId(2)),
-                    FindTerm::Var(VarId(3)),
-                ],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1), VarId(2), VarId(3)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(Item::RELATION),
                     bindings: vec![
@@ -387,31 +404,19 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
                         (FieldId(5), v(3)), // span
                     ],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![
-                    FindTerm::Var(VarId(4)),
-                    FindTerm::Var(VarId(1)),
-                    FindTerm::Var(VarId(2)),
-                    FindTerm::Var(VarId(3)),
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(4), VarId(1), VarId(2), VarId(3)],
+                self_bindings: vec![
+                    (FieldId(0), v(0)),
+                    (FieldId(1), v(1)),
+                    (FieldId(2), v(2)),
+                    (FieldId(3), v(3)),
                 ],
-                atoms: vec![
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![
-                            (FieldId(0), v(0)),
-                            (FieldId(1), v(1)),
-                            (FieldId(2), v(2)),
-                            (FieldId(3), v(3)),
-                        ],
-                    },
-                    edge_atom(0, 4),
-                ],
-                negated: vec![],
+                atoms: vec![edge_atom(0, 4)],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -505,7 +510,7 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     let edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     db.write(|tx| {
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -557,7 +562,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
         .collect();
     db.write(|tx| {
         for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
+            tx.insert([&Edge { src, dst }])?;
         }
         Ok(())
     })
@@ -574,28 +579,20 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: AtomSource::Edb(Edge::RELATION),
                     bindings: vec![(FieldId(0), Term::Param(ParamId(0))), (FieldId(1), v(0))],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(1))],
-                atoms: vec![
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(FieldId(0), v(0))],
-                    },
-                    edge_atom(0, 1),
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), v(0))],
+                atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -699,7 +696,7 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
     let rows = item_rows();
     db.write(|tx| {
         for row in &rows {
-            tx.insert(row)?;
+            tx.insert([row])?;
         }
         Ok(())
     })
@@ -798,7 +795,7 @@ fn word_columnar_finalize_reproduces_every_cell() {
     let rows = item_rows();
     db.write(|tx| {
         for row in &rows {
-            tx.insert(row)?;
+            tx.insert([row])?;
         }
         Ok(())
     })

@@ -68,7 +68,7 @@ impl std::fmt::Debug for OursLane {
 /// Creates the engine store and loads every writable relation EXCEPT
 /// `PostingTag`: its containment targets postings, and a tagged posting
 /// could not be churned out without a target-side abort — the churned
-/// relation stays reference-free by construction. The bulk load's
+/// relation stays reference-free by construction. The collection insert's
 /// explicit ids set the fresh high-water, so `last_minted` starts at
 /// `postings - 1`.
 ///
@@ -85,8 +85,11 @@ pub fn create_ours(
         .map(RelationId)
         .filter(|rel| *rel != ids::POSTING_TAG)
     {
-        db.bulk_load_dyn(rel, corpus_gen::relation_rows(r#gen, rel))
-            .map_err(|e| format!("churn load (relation {}): {e:?}", rel.0))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, corpus_gen::relation_rows(r#gen, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("churn load (relation {}): {e:?}", rel.0))?;
     }
     Ok(OursLane {
         db,
@@ -184,7 +187,7 @@ pub fn apply_ours(
         .db
         .write(|tx| {
             for removal in removals {
-                if !tx.delete(removal)? {
+                if tx.delete([removal])?.changed == 0 {
                     // The in-closure sentinel abort: returning `Err`
                     // here drops the delta whole, so nothing below ever
                     // reaches the store.
@@ -195,7 +198,7 @@ pub fn apply_ours(
             }
             let mut added = Vec::with_capacity(bodies.len());
             for body in bodies {
-                let id: PostingId = tx.alloc()?;
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
                 let posting = Posting {
                     id,
                     entry: JournalEntryId(body.entry),
@@ -204,7 +207,7 @@ pub fn apply_ours(
                     amount: body.amount,
                     at: body.at,
                 };
-                tx.insert(&posting)?;
+                tx.insert([&posting])?;
                 added.push(posting);
             }
             Ok(added)

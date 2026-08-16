@@ -521,22 +521,22 @@ def ledger : List Obligation := [
 
   .row @Txn.etl_lands_valid `Bumbledb.Txn.etl_lands_valid
     "The ETL identity: a migration that lands is already valid — export under one generation, transform, bulk-judge as one final state (the identity round-trip theorem sits beside it)."
-    "Snapshot::scan (crates/bumbledb/src/api/db/snapshot.rs); Db::bulk_load (crates/bumbledb/src/api/db/write.rs)"
+    "Snapshot::scan (crates/bumbledb/src/api/db/snapshot.rs); Db::write (crates/bumbledb/src/api/db/write.rs)"
     "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)",
 
   /- ## The fresh allocation model -/
 
   .row @Txn.Fresh.never_reissue_observable
     `Bumbledb.Txn.Fresh.never_reissue_observable
-    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; EVERY transaction persists its final mark — committed, no-op, or aborted alike — because alloc already handed the id to the host (an aborted run is NOT discarded)."
-    "WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
-    "alloc_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_allocated_in_a_rejected_txn_are_burned (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
+    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; EVERY transaction persists its final mark — committed, no-op, or aborted alike — because reserve already handed the id to the host (an aborted run is NOT discarded)."
+    "WriteDelta::reserve (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
+    "reserve_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_reserved_in_a_rejected_txn_are_burned (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
 
   .row @Txn.Fresh.resupply_legal_monotone
     `Bumbledb.Txn.Fresh.resupply_legal_monotone
     "Explicit fresh values are legal on the normal write path and advance the mark past the supplied value — re-supply of a deleted id preserves monotonicity, and the generator never returns a supplied id afterwards."
     "advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs)"
-    "explicit_value_above_mark_advances_generated_successors (crates/bumbledb/src/storage/delta/tests.rs); mixed_explicit_and_generated_allocation_tracks_running_maximum (crates/bumbledb/src/storage/delta/tests.rs)",
+    "explicit_value_above_mark_advances_generated_successors (crates/bumbledb/src/storage/delta/tests.rs); mixed_explicit_and_generated_reserve_tracks_running_maximum (crates/bumbledb/src/storage/delta/tests.rs)",
 
   .row @Txn.Fresh.materialized_key_ordinary
     `Bumbledb.Txn.Fresh.materialized_key_ordinary
@@ -558,13 +558,13 @@ def ledger : List Obligation := [
 
   .row @Query.reachOp_mono `Bumbledb.Query.reachOp_mono
     "Negation is unrepresentable in LinearRec, so the reach operator is monotone (the wall is the self case)."
-    "NegationInRec (crates/bumbledb/src/error.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
-    "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests/rec.rs)",
+    "RecStep (crates/bumbledb/src/ir.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
+    "rejects_nonlinear_rec_arm (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
   .row @Query.reach_den_finite `Bumbledb.Query.reach_den_finite
     "Rec heads project bound variables, so the lfp is a finite subset of the active domain."
-    "MeasureInInterior (crates/bumbledb/src/error.rs); AggregateInInterior (crates/bumbledb/src/error.rs)"
-    "rejects_measure_in_interior_on_rec_head (crates/bumbledb/src/ir/validate/tests/rec.rs)",
+    "RecRule (crates/bumbledb/src/ir.rs); RecStep (crates/bumbledb/src/ir.rs)"
+    "a_measure_on_main_over_finished_rec_is_legal (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The executable reach lists exactly reachDen."

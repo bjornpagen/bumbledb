@@ -67,10 +67,11 @@ quickstart_fence!(
         let db = bumbledb::Db::create(path, Ledger)?;
 
         db.write(|tx| {
-            let holder: HolderId = tx.alloc()?;
-            tx.insert(&Holder { id: holder, name: "alice", region: Region::Eu.id() })?;
-            let account: AccountId = tx.alloc()?;
-            tx.insert(&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 })?;
+            let ids = tx.reserve::<HolderId>(1)?;
+            let holder = ids.start().expect("nonempty");
+            tx.insert([&Holder { id: holder, name: "alice", region: Region::Eu.id() }])?;
+            let account = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
             Ok(())
         })?;
 

@@ -498,13 +498,13 @@ impl StatementErrorKind {
 }
 
 /// A mis-shaped dynamic fact on the untyped write surface
-/// (`insert_dyn`/`delete_dyn`/`bulk_load_dyn`): ETL input is data, so shape
+/// (`insert_dyn`/`delete_dyn`): ETL input is data, so shape
 /// problems are typed errors, not panics (`docs/architecture/70-api.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactShapeError {
     /// The relation id is outside the schema — ETL input is data, so an
     /// out-of-range id at the dynamic surface (`insert_dyn`/`delete_dyn`/
-    /// `bulk_load_dyn`/`scan`/`fresh_field`) is a typed error, never an index
+    /// `scan`/`fresh_field`) is a typed error, never an index
     /// panic.
     UnknownRelation { relation: RelationId },
     /// The field id is outside its relation — the field sibling of
@@ -1213,11 +1213,11 @@ pub enum OverflowKind {
 /// `docs/architecture/70-api.md`.
 ///
 /// `source()` chains only where the payload *is* an underlying error
-/// (`Io`, `Lmdb`, `CommitSync`, `BulkLoad`); the structured variants (`Corruption`,
-/// `Schema`, `Validation`, `FactShape`, …) carry data payloads, not
-/// nested errors — a decision, not an omission: chain-walkers see
-/// exactly the real causes, and the structured detail renders through
-/// `Display`.
+/// (`Io`, `Lmdb`, `CommitSync`, `TransactionPoisoned`); the structured
+/// variants (`Corruption`, `Schema`, `Validation`, `FactShape`, …) carry
+/// data payloads, not nested errors — a decision, not an omission:
+/// chain-walkers see exactly the real causes, and the structured detail
+/// renders through `Display`.
 #[derive(Debug)]
 pub enum Error {
     // --- Open errors ---
@@ -1348,16 +1348,13 @@ pub enum Error {
         retries: u32,
         error: std::io::Error,
     },
-    /// A bulk load failed mid-stream: the underlying error plus how many
-    /// facts were already durable in the chunks committed before it —
-    /// the resumability payload, carried through the `?` conversion from
-    /// [`crate::BulkLoadError`] rather than dropped (the count is the
-    /// whole reason that type exists).
-    BulkLoad {
-        /// Facts that changed state in the chunks committed before the
-        /// error.
-        committed: u64,
-        error: Box<Error>,
+    /// A write transaction's apply phase recorded a prefix of facts then
+    /// failed. The first failing call returns the original error; later
+    /// mutation in the same transaction, and a closure that returns `Ok`
+    /// after catching, still abort — no prefix reaches LMDB.
+    TransactionPoisoned {
+        /// The original apply error. Nested, never a formatted string.
+        source: Box<Error>,
     },
 
     // --- Runtime errors ---

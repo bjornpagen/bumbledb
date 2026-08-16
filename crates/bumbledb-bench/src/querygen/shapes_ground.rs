@@ -11,7 +11,7 @@
 //! would flip an eliminable shape to a refusal nondeterministically,
 //! and the coverage contract asserts each variant appears per run.
 
-use bumbledb::{AggOp, FieldId, FindTerm, RelationId, Term, Value};
+use bumbledb::{FieldId, FindTerm, RelationId, Term, Value};
 
 use crate::corpus_gen::Rng;
 use crate::querygen::target::{SOURCE_IMPORT, ids};
@@ -107,10 +107,7 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
         // key, the payload bound but unprojected.
         3 | 4 => {
             b.find_var(join);
-            b.finds.push(FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            });
+            b.finds.push(FindTerm::Count);
             b.ground = Some(GroundVariant::Walk);
         }
         _ => {

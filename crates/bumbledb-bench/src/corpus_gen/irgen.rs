@@ -13,8 +13,9 @@
 //! confirm them).
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm,
-    Interior, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term, Value, VarId,
+    AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
+    Interior, InteriorId, NonEmpty, ParamId, ProjectionRule, Query, Rec, RecRule, RecStep,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 use super::Rng;
@@ -151,24 +152,20 @@ fn random_rule(rng: &mut Rng) -> Rule {
 }
 
 fn random_find(rng: &mut Rng) -> FindTerm {
-    match rng.range(4) {
+    match rng.range(6) {
         0 | 1 => FindTerm::Var(var(rng)),
         2 => FindTerm::Aggregate {
-            op: random_agg(rng),
-            // `None` under a valued op and `Some` under `Count` are both
-            // draws — `AggregateWithoutVariable` / `CountWithVariable`.
-            over: if rng.chance(3, 4) {
-                Some(var(rng))
-            } else {
-                None
-            },
+            op: random_fold(rng),
+            over: var(rng),
         },
+        3 => FindTerm::Count,
+        4 => FindTerm::Pack { over: var(rng) },
         _ => {
             if rng.chance(1, 2) {
                 FindTerm::Measure(var(rng))
             } else {
                 FindTerm::AggregateMeasure {
-                    op: random_agg(rng),
+                    op: random_fold(rng),
                     over: var(rng),
                 }
             }
@@ -176,13 +173,11 @@ fn random_find(rng: &mut Rng) -> FindTerm {
     }
 }
 
-fn random_agg(rng: &mut Rng) -> AggOp {
-    match rng.range(5) {
-        0 => AggOp::Sum,
-        1 => AggOp::Min,
-        2 => AggOp::Max,
-        3 => AggOp::Count,
-        _ => AggOp::Pack,
+fn random_fold(rng: &mut Rng) -> FoldOp {
+    match rng.range(3) {
+        0 => FoldOp::Sum,
+        1 => FoldOp::Min,
+        _ => FoldOp::Max,
     }
 }
 
@@ -202,22 +197,52 @@ fn random_atom(rng: &mut Rng) -> Atom {
     }
 }
 
+fn random_projection(rng: &mut Rng) -> ProjectionRule {
+    ProjectionRule {
+        finds: (0..rng.range(4)).map(|_| var(rng)).collect(),
+        atoms: (0..rng.range(3)).map(|_| random_atom(rng)).collect(),
+        negated: (0..rng.range(2)).map(|_| random_atom(rng)).collect(),
+        conditions: (0..rng.range(3)).map(|_| random_tree(rng, 3)).collect(),
+    }
+}
+
 fn random_interior(rng: &mut Rng) -> Interior {
     Interior {
-        head: (0..rng.range(4))
-            .map(|_| random_find(rng).head_term())
+        rules: (0..rng.range(3)).map(|_| random_projection(rng)).collect(),
+    }
+}
+
+fn random_rec_rule(rng: &mut Rng) -> RecRule {
+    RecRule {
+        finds: (0..rng.range(4)).map(|_| var(rng)).collect(),
+        atoms: (0..rng.range(3)).map(|_| random_atom(rng)).collect(),
+        conditions: (0..rng.range(3)).map(|_| random_tree(rng, 3)).collect(),
+    }
+}
+
+fn random_rec_step(rng: &mut Rng) -> RecStep {
+    RecStep {
+        finds: (0..rng.range(4)).map(|_| var(rng)).collect(),
+        self_bindings: (0..rng.range(3))
+            .map(|_| (field(rng), random_term(rng)))
             .collect(),
-        rules: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
+        atoms: (0..rng.range(3)).map(|_| random_atom(rng)).collect(),
+        conditions: (0..rng.range(3)).map(|_| random_tree(rng, 3)).collect(),
+    }
+}
+
+fn nonempty<T>(rng: &mut Rng, mut make: impl FnMut(&mut Rng) -> T) -> NonEmpty<T> {
+    let extra = rng.range(2);
+    NonEmpty {
+        first: make(rng),
+        rest: (0..extra).map(|_| make(rng)).collect(),
     }
 }
 
 fn random_rec(rng: &mut Rng) -> Rec {
     Rec {
-        head: (0..rng.range(4))
-            .map(|_| random_find(rng).head_term())
-            .collect(),
-        base: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
-        rec: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
+        base: nonempty(rng, random_rec_rule),
+        rec: nonempty(rng, random_rec_step),
     }
 }
 

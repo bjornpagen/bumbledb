@@ -5,7 +5,8 @@
 //! proof and show that the spanning set absorbs nothing across proven arms.
 
 use super::*;
-use crate::ir::{AggOp, HeadOp, HeadTerm};
+use crate::ir::FoldOp;
+use crate::ir::{HeadOp, HeadTerm};
 
 /// Item(id fresh u64, kind u64 — 0 note, 1 event, 2 task, payload u64) —
 /// the discriminated-union parent shape; the fresh id materializes the
@@ -211,8 +212,8 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -267,10 +268,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     // diagnostic knowledge, never a semantics.
     let count_rule = |kind: u8| {
         let mut rule = rule(kind);
-        rule.finds[1] = FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        };
+        rule.finds[1] = FindTerm::Count;
         rule
     };
     let refused = Query::Cq {

@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use crate::image::build::image_with_tolerance;
 use crate::image::view::{FilterPredicate, apply};
 use crate::image::{Column, RelationImage, SET_STRIDE};
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use bumbledb_theory::TypeDesc;
 use bumbledb_theory::schema::FieldId;
 use bumbledb_theory::schema::IntervalElement;
@@ -262,7 +262,7 @@ fn stride_band_ab_falsifier() {
         .map(|j| FilterPredicate::FieldsCompare {
             left: FieldId(2 * j),
             right: FieldId(2 * j + 1),
-            op: CmpOp::Le,
+            op: WordCmp::Le,
         })
         .collect();
 

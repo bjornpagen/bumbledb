@@ -50,28 +50,30 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 	}
 }
 
-/** Count forbids `over`; every other aggregate requires it. */
+/** Count is nullary; pack and folds require `over`. */
 function parseFind(context: string, find: FindTermIr): void {
-	if (find.kind !== "aggregate") {
-		return
-	}
-	if (find.op.kind === "count") {
-		if ("over" in find) {
+	const raw = find as Record<string, unknown>
+	if (find.kind === "count") {
+		if ("over" in raw) {
 			throw errors.new(`${context}: Count carries no over`)
 		}
 		return
 	}
-	if (!("over" in find)) {
-		throw errors.new(`${context}: fold aggregate requires over`)
+	if (find.kind === "pack" || find.kind === "aggregate" || find.kind === "aggregateMeasure") {
+		if (!("over" in raw)) {
+			throw errors.new(`${context}: ${find.kind} requires over`)
+		}
 	}
 }
 
-/** Head family of one find term: measure is a var slot; measure-folds are aggregates. */
+/** Head family of one find term: measure is a var slot; count/pack/folds are aggregates. */
 function findFamily(find: FindTermIr): "var" | "aggregate" {
 	switch (find.kind) {
 		case "var":
 		case "measure":
 			return "var"
+		case "count":
+		case "pack":
 		case "aggregate":
 		case "aggregateMeasure":
 			return "aggregate"

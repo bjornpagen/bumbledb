@@ -28,7 +28,7 @@ const CONVERSE_CASES: u32 = 100;
 fn converse_twin(query: &Query) -> Option<Query> {
     let mut twin = query.clone();
     let mut any = false;
-    for rule in twin.rules_mut() {
+    let _ = crate::walk::every_rule_mut(&mut twin, |rule| {
         for tree in &mut rule.conditions {
             let ConditionTree::Leaf(comparison) = tree else {
                 continue; // the generator emits flat conjunctions
@@ -41,7 +41,8 @@ fn converse_twin(query: &Query) -> Option<Query> {
                 any = true;
             }
         }
-    }
+        true
+    });
     any.then_some(twin)
 }
 

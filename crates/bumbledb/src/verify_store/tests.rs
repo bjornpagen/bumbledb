@@ -193,13 +193,13 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         ),
     ];
     for (rel, values) in facts {
-        db.write(|tx| tx.insert_dyn(*rel, values).map(|_| ()))
+        db.write(|tx| tx.insert_dyn(*rel, [values]).map(|_| ()))
             .expect("insert");
     }
     db.write(|tx| {
         tx.delete_dyn(
             HOLDER,
-            &[Value::U64(2), Value::String("bob".as_bytes().into())],
+            [&[Value::U64(2), Value::String("bob".as_bytes().into())]],
         )
         .map(|_| ())
     })
@@ -259,13 +259,13 @@ fn canonical_field_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     db.write(|tx| {
         tx.insert_dyn(
             RelationId(0),
-            &[
+            [&[
                 Value::Bool(true),
                 Value::FixedBytes(vec![1, 2, 3, 4, 5].into_boxed_slice()),
                 Value::IntervalU64(
                     bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
                 ),
-            ],
+            ]],
         )
         .map(|_| ())
     })
@@ -829,7 +829,7 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
 /// Finding 033, the exhausted-sequence corner: the exemption keys on
 /// the STORED next-value being exhausted, never on the tally alone — a
 /// row holding an explicit `u64::MAX` must not mask a regressed `Q`
-/// underneath it (`alloc()` would re-issue every id between the
+/// underneath it (`reserve()` would re-issue every id between the
 /// regression and the ceiling).
 #[test]
 fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
@@ -837,10 +837,10 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
     db.write(|tx| {
         tx.insert_dyn(
             HOLDER,
-            &[
+            [&[
                 Value::U64(u64::MAX),
                 Value::String("mallory".as_bytes().into()),
-            ],
+            ]],
         )
         .map(|_| ())
     })
@@ -1455,7 +1455,7 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
     // existence is the finding, attributed to the closed target.
     let dir = TempDir::new("verify-closed-r");
     let db = Db::create(dir.path(), closed_subset_schema()).expect("create");
-    db.write(|tx| tx.insert_dyn(RelationId(1), &[Value::U64(1)]).map(|_| ()))
+    db.write(|tx| tx.insert_dyn(RelationId(1), [&[Value::U64(1)]]).map(|_| ()))
         .expect("a legal closed reference commits");
     let r = key(|b| keys::reverse_key(b, StatementId(1), &encode_u64(1), RelationId(1), 0));
     raw_write(&db, |txn| {
@@ -1575,7 +1575,7 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
     assert_eq!(db.verify_store().expect("verify").findings, expected);
     for severity in 0..3u64 {
         db.write(|tx| {
-            tx.insert_dyn(RelationId(2), &[Value::U64(severity), Value::U64(10)])
+            tx.insert_dyn(RelationId(2), [&[Value::U64(severity), Value::U64(10)]])
                 .map(|_| ())
         })
         .expect("handlers commit");
@@ -1644,8 +1644,8 @@ fn marks_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), marks_schema()).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(M_HOLDER, &[Value::U64(1), Value::U64(0)])?;
-        tx.insert_dyn(M_ACCOUNT, &[Value::U64(1), Value::U64(1), Value::U64(0)])
+        tx.insert_dyn(M_HOLDER, [&[Value::U64(1), Value::U64(0)]])?;
+        tx.insert_dyn(M_ACCOUNT, [&[Value::U64(1), Value::U64(1), Value::U64(0)]])
             .map(|_| ())
     })
     .expect("green base commit");
@@ -1711,7 +1711,7 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
     let dir = TempDir::new("verify-marks-closed-parent");
     let db = Db::create(dir.path(), decl).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(device, &[Value::U64(0), Value::U64(0)])
+        tx.insert_dyn(device, [&[Value::U64(0), Value::U64(0)]])
             .map(|_| ())
     })
     .expect("one device inside the window");
@@ -1873,8 +1873,8 @@ fn weighted_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(W_POOL, &[Value::U64(1), Value::U64(100)])?;
-        tx.insert_dyn(W_DEVICE, &[Value::U64(1), Value::U64(60), Value::U64(0)])
+        tx.insert_dyn(W_POOL, [&[Value::U64(1), Value::U64(100)]])?;
+        tx.insert_dyn(W_DEVICE, [&[Value::U64(1), Value::U64(60), Value::U64(0)]])
             .map(|_| ())
     })
     .expect("green weighted base commit");
@@ -2032,10 +2032,10 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     db.write(|tx| {
         tx.insert_dyn(
             RelationId(0),
-            &[
+            [&[
                 Value::Bool(true),
                 Value::IntervalU64(bumbledb_theory::Interval::<u64>::new(10, 15).expect("width 5")),
-            ],
+            ]],
         )
         .map(|_| ())
     })

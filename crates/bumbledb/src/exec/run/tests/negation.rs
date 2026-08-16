@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
+use crate::ir::WordCmp;
 
 /// The batch-size equality harness over one fixture: identical results
 /// at the scalar degenerate size, small sizes, the default's neighbors,
@@ -77,7 +78,7 @@ fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
     let mut neg = negated(1, 1, &[(0, 0)]);
     neg.filters = vec![FilterPredicate::Compare {
         field: FieldId(1),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::Word(7),
     }];
     let normalized = normalized(vec![occurrence(0, 0, &[(0, 0), (1, 1)]), neg], vec![]);

@@ -1,4 +1,5 @@
-use crate::encoding::fact_hash;
+#![cfg(test)]
+
 use crate::error::Result;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
@@ -7,45 +8,13 @@ use super::{Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
     /// Records a delete, netted against committed state
-    /// (docs/architecture/50-storage.md): absent + no pending entry is a
-    /// redundant delete and records nothing; a pending `Insert` proves the
-    /// fact committed-absent, so the delete *cancels* it (net no-op — the
-    /// entry is removed, never overwritten); only a genuinely committed
-    /// fact records `Delete`. Returns whether the final state changes.
-    ///
-    /// # Errors
-    ///
-    /// `Lmdb` on a failed membership probe.
+    /// (docs/architecture/50-storage.md). See [`WriteDelta::apply`].
     pub fn delete(
         &mut self,
         view: &ReadTxn<'_>,
         rel: RelationId,
         fact_bytes: &[u8],
     ) -> Result<bool> {
-        let hash = fact_hash(fact_bytes);
-        match self.facts.get(&(rel, hash)).copied() {
-            Some((_, Disposition::Delete)) => Ok(false),
-            Some((slice, Disposition::Insert)) => {
-                // The pending Insert proves the fact committed-absent:
-                // cancel it. The cancelled fact's key tuples revert to
-                // whatever still owns them — its own overlay entries are
-                // removed by slice, held as data, never rediscovered by
-                // scan (`cancel_determinants`, finding 097).
-                self.facts.remove(&(rel, hash));
-                self.cancel_determinants(rel, fact_bytes, slice);
-                *self.row_count_delta.entry(rel).or_insert(0) -= 1;
-                Ok(true)
-            }
-            None => {
-                if crate::storage::read::fact_row_by_hash(view, rel, &hash)?.is_none() {
-                    return Ok(false); // absent: a redundant delete.
-                }
-                let slice = self.arena.alloc(fact_bytes);
-                self.facts.insert((rel, hash), (slice, Disposition::Delete));
-                self.record_determinants(rel, fact_bytes, slice, Disposition::Delete);
-                *self.row_count_delta.entry(rel).or_insert(0) -= 1;
-                Ok(true)
-            }
-        }
+        self.apply(view, rel, fact_bytes, Disposition::Delete)
     }
 }

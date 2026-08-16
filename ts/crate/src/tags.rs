@@ -238,11 +238,10 @@ wire_tags! {
 
 wire_tags! {
     /// `bumbledb::HeadOp` — the var-free aggregate-op vocabulary. ONE
-    /// table serves both op parsers: `agg_op_in` lifts `parse`'s `HeadOp`
-    /// into `AggOp`, `head_term_in` takes `parse` bare — the old
-    /// hand-mirrored string matches are dead. `AggOp::head_op` is the
-    /// engine's own exhaustive `AggOp` ↔ `HeadOp` twin, so this table
-    /// covers both enums.
+    /// table serves both op parsers: `fold_op_in` lifts `parse`'s `HeadOp`
+    /// into `FoldOp`, `head_term_in` takes `parse` bare. `FoldOp::head_op` is
+    /// the engine's exhaustive `FoldOp` ↔ `HeadOp` twin for Sum/Min/Max;
+    /// Count and Pack are find-term kinds, not fold ops.
     mod head_op for unit HeadOp {
         SUM: HeadOp::Sum => "sum",
         MIN: HeadOp::Min => "min",
@@ -273,7 +272,9 @@ wire_tags! {
     /// `bumbledb::FindTerm` (`find_term_in`).
     mod find_term for FindTerm {
         VAR: FindTerm::Var(_) => "var",
+        COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
+        PACK: FindTerm::Pack { .. } => "pack",
         MEASURE: FindTerm::Measure(_) => "measure",
         AGGREGATE_MEASURE: FindTerm::AggregateMeasure { .. } => "aggregateMeasure",
     }

@@ -6,10 +6,11 @@ use crate::exec::dispatch::classify;
 use crate::exec::run::{Bindings, Executor, NoopCounters};
 use crate::exec::sink::ProjectionSink;
 use crate::image::view::{Const, FilterPredicate, apply};
+use crate::ir::VarId;
+use crate::ir::WordCmp;
 use crate::ir::normalize::{
     AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth,
 };
-use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
@@ -134,6 +135,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
+        point_vars: vec![],
     }
 }
 
@@ -297,9 +299,10 @@ fn key_probe_queries_report_their_classification() {
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
             field: FieldId(0),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(5),
         }],
+        point_vars: vec![],
     }]);
     let key_probe = classify(&normalized, &schema).expect("key probe");
     let report = cq_report(

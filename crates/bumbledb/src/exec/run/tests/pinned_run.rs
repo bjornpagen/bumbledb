@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, FoldOp};
+use crate::ir::WordCmp;
 
 /// Hand-built two-node plan `[R(g)][R(x)]` over one occurrence — the
 /// dimension-bound shape whose leaf the probe pass pins per survivor.
@@ -69,7 +70,7 @@ fn pinned_run_matches_the_recursive_path() {
         // g < x at the leaf: kills (2,1) and (3,2) — the batched arm's
         // residual pass must compact exactly as the recursive one.
         vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: VarId(0),
             rhs: VarId(1),
         }],

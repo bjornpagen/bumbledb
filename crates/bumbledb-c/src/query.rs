@@ -9,9 +9,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm,
-    HeadOp, HeadTerm, Interior, InteriorId, ParamId, PreparedQuery, Query, Rec, RelationId, Rule,
-    SchemaDescriptor, Term, VarId,
+    AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
+    HeadOp, HeadTerm, Interior, InteriorId, NonEmpty, ParamId, PreparedQuery, ProjectionRule,
+    Query, Rec, RecRule, RecStep, RelationId, Rule, SchemaDescriptor, Term, VarId,
 };
 
 use crate::db::{Engine, bdb_db};
@@ -349,13 +349,17 @@ fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
 
 /// The tag-to-op lift, exhaustive over [`bdb_head_op`]: a new engine
 /// `HeadOp` variant grows the C enum and breaks THIS match at compile.
-fn agg_op_in(view: bdb_agg_op) -> BridgeResult<AggOp> {
+fn fold_op_in(view: bdb_agg_op) -> BridgeResult<FoldOp> {
     Ok(match tag_in::<bdb_head_op>(view.kind)? {
-        bdb_head_op::Sum => AggOp::Sum,
-        bdb_head_op::Min => AggOp::Min,
-        bdb_head_op::Max => AggOp::Max,
-        bdb_head_op::Count => AggOp::Count,
-        bdb_head_op::Pack => AggOp::Pack,
+        bdb_head_op::Sum => FoldOp::Sum,
+        bdb_head_op::Min => FoldOp::Min,
+        bdb_head_op::Max => FoldOp::Max,
+        bdb_head_op::Count => {
+            return Err(fail_shape("Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE"));
+        }
+        bdb_head_op::Pack => {
+            return Err(fail_shape("Pack is a pack find, not a fold AGGREGATE"));
+        }
     })
 }
 
@@ -373,24 +377,30 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
     Ok(match tag_in::<bdb_find_term_kind>(view.kind)? {
         bdb_find_term_kind::Var => FindTerm::Var(VarId(view.var)),
         bdb_find_term_kind::Measure => FindTerm::Measure(VarId(view.var)),
-        bdb_find_term_kind::Count => FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        },
+        bdb_find_term_kind::Count => FindTerm::Count,
         bdb_find_term_kind::Aggregate => {
-            let op = agg_op_in(view.op)?;
-            if matches!(op, AggOp::Count) {
-                return Err(fail_shape(
-                    "Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE",
-                ));
-            }
+            let op = match tag_in::<bdb_head_op>(view.op.kind)? {
+                bdb_head_op::Sum => FoldOp::Sum,
+                bdb_head_op::Min => FoldOp::Min,
+                bdb_head_op::Max => FoldOp::Max,
+                bdb_head_op::Count => {
+                    return Err(fail_shape(
+                        "Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE",
+                    ));
+                }
+                bdb_head_op::Pack => {
+                    return Ok(FindTerm::Pack {
+                        over: VarId(view.over),
+                    });
+                }
+            };
             FindTerm::Aggregate {
                 op,
-                over: Some(VarId(view.over)),
+                over: VarId(view.over),
             }
         }
         bdb_find_term_kind::AggregateMeasure => FindTerm::AggregateMeasure {
-            op: agg_op_in(view.op)?,
+            op: fold_op_in(view.op)?,
             over: VarId(view.over),
         },
     })
@@ -485,18 +495,90 @@ fn rules_in(rules: *const bdb_rule, count: usize) -> BridgeResult<Vec<Rule>> {
     slice_in(rules, count)?.iter().map(rule_in).collect()
 }
 
-fn interior_in(view: &bdb_interior) -> BridgeResult<Interior> {
-    Ok(Interior {
-        head: head_in(view.head, view.head_count)?,
-        rules: rules_in(view.rules, view.rule_count)?,
+fn vars_only(finds: &[FindTerm]) -> BridgeResult<Vec<VarId>> {
+    finds
+        .iter()
+        .map(|term| match term {
+            FindTerm::Var(var) => Ok(*var),
+            _ => Err(fail_shape("derived-table finds are variables only")),
+        })
+        .collect()
+}
+
+fn projection_rule_in(view: &bdb_rule) -> BridgeResult<ProjectionRule> {
+    let rule = rule_in(view)?;
+    Ok(ProjectionRule {
+        finds: vars_only(&rule.finds)?,
+        atoms: rule.atoms,
+        negated: rule.negated,
+        conditions: rule.conditions,
     })
 }
 
-fn rec_in(view: &bdb_rec) -> BridgeResult<Rec> {
+fn rec_rule_in(view: &bdb_rule) -> BridgeResult<RecRule> {
+    let rule = rule_in(view)?;
+    if !rule.negated.is_empty() {
+        return Err(fail_shape("negation is unrepresentable in rec"));
+    }
+    Ok(RecRule {
+        finds: vars_only(&rule.finds)?,
+        atoms: rule.atoms,
+        conditions: rule.conditions,
+    })
+}
+
+fn rec_step_in(view: &bdb_rule, rec_id: InteriorId) -> BridgeResult<RecStep> {
+    let rule = rule_in(view)?;
+    if !rule.negated.is_empty() {
+        return Err(fail_shape("negation is unrepresentable in rec"));
+    }
+    let mut self_bindings = None;
+    let mut atoms = Vec::new();
+    for atom in rule.atoms {
+        if atom.source.interior() == Some(rec_id) {
+            if self_bindings.is_some() {
+                return Err(fail_shape("rec step has two self-atoms"));
+            }
+            self_bindings = Some(atom.bindings);
+        } else {
+            atoms.push(atom);
+        }
+    }
+    Ok(RecStep {
+        finds: vars_only(&rule.finds)?,
+        self_bindings: self_bindings.ok_or_else(|| fail_shape("rec step missing self-atom"))?,
+        atoms,
+        conditions: rule.conditions,
+    })
+}
+
+fn nonempty<T>(items: Vec<T>, what: &str) -> BridgeResult<NonEmpty<T>> {
+    NonEmpty::from_vec(items).ok_or_else(|| fail_shape(&format!("empty {what}")))
+}
+
+fn interior_in(view: &bdb_interior) -> BridgeResult<Interior> {
+    let _ = head_in(view.head, view.head_count)?;
+    Ok(Interior {
+        rules: slice_in(view.rules, view.rule_count)?
+            .iter()
+            .map(projection_rule_in)
+            .collect::<BridgeResult<Vec<_>>>()?,
+    })
+}
+
+fn rec_in(view: &bdb_rec, rec_id: InteriorId) -> BridgeResult<Rec> {
+    let _ = head_in(view.head, view.head_count)?;
+    let base = slice_in(view.base, view.base_count)?
+        .iter()
+        .map(rec_rule_in)
+        .collect::<BridgeResult<Vec<_>>>()?;
+    let rec = slice_in(view.rec, view.rec_count)?
+        .iter()
+        .map(|rule| rec_step_in(rule, rec_id))
+        .collect::<BridgeResult<Vec<_>>>()?;
     Ok(Rec {
-        head: head_in(view.head, view.head_count)?,
-        base: rules_in(view.base, view.base_count)?,
-        rec: rules_in(view.rec, view.rec_count)?,
+        base: nonempty(base, "rec base")?,
+        rec: nonempty(rec, "rec step")?,
     })
 }
 
@@ -532,7 +614,10 @@ fn query_from_reach(
             .iter()
             .map(interior_in)
             .collect::<BridgeResult<Vec<_>>>()?,
-        rec: rec_in(rec)?,
+        rec: rec_in(
+            rec,
+            InteriorId(u32::try_from(interior_count).map_err(|_| fail_shape("interior count"))?),
+        )?,
         head: head_in(head, head_count)?,
         rules: rules_in(rules, rule_count)?,
     })

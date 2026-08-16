@@ -217,7 +217,7 @@ pub fn load<S>(
     rows: fn(Mass, RelationId) -> Box<dyn Iterator<Item = Vec<Value>>>,
 ) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.bulk_load_dyn(rel, rows(mass, rel))
+        db.write(|tx| tx.insert_dyn(rel, rows(mass, rel)).map(|r| r.changed))
             .map_err(|e| format!("capacity load: {e:?}"))?;
     }
     Ok(())
@@ -233,6 +233,10 @@ pub fn load<S>(
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_capacity_sum(
     db: &Db<power::PowerWorld>,
     proto: Protocol,
@@ -241,8 +245,8 @@ pub fn commit_capacity_sum(
     harness::measure(proto, || {
         let pool = power::PoolId(rng.range(PARENTS));
         db.write(|tx| {
-            let id: power::DeviceId = tx.alloc()?;
-            tx.insert(&power::Device { id, pool, watts: 1 })
+            let id: power::DeviceId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&power::Device { id, pool, watts: 1 }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_capacity_sum: {e:?}"))
@@ -255,6 +259,10 @@ pub fn commit_capacity_sum(
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_capacity_baseline(
     db: &Db<power_baseline::UnbudgetedWorld>,
     proto: Protocol,
@@ -263,8 +271,8 @@ pub fn commit_capacity_baseline(
     harness::measure(proto, || {
         let pool = power_baseline::PoolId(rng.range(PARENTS));
         db.write(|tx| {
-            let id: power_baseline::DeviceId = tx.alloc()?;
-            tx.insert(&power_baseline::Device { id, pool, watts: 1 })
+            let id: power_baseline::DeviceId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&power_baseline::Device { id, pool, watts: 1 }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
@@ -281,6 +289,7 @@ pub fn commit_capacity_baseline(
 ///
 /// # Panics
 ///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 /// Never: every sampled one-unit slice is nonempty.
 pub fn commit_capacity_duration(
     db: &Db<calendar::CalendarCapacityWorld>,
@@ -297,13 +306,13 @@ pub fn commit_capacity_duration(
         let start = SPAN / 2 + sample;
         sample += 1;
         db.write(|tx| {
-            let id: calendar::BookingId = tx.alloc()?;
-            tx.insert(&calendar::Booking {
+            let id: calendar::BookingId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&calendar::Booking {
                 id,
                 room,
                 booked: bumbledb::Interval::<u64>::new(start, start + 1)
                     .expect("nonempty interval"),
-            })
+            }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_capacity_duration: {e:?}"))

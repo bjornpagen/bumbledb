@@ -13,7 +13,7 @@
 use bumbledb::{AnswerValue, BindValue, Interval, Value};
 
 use crate::error::fail_shape;
-use crate::{BridgeResult, bool_in, c_tag, slice_in, tag_in};
+use crate::{BridgeResult, Fail, bool_in, c_tag, slice_in, tag_in};
 
 /// A borrowed UTF-8 text view (NOT NUL-terminated; the length is the
 /// contract). A null `data` with `len == 0` is the empty string; a null
@@ -177,6 +177,34 @@ pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
 /// One inbound `(values, count)` row, copied whole.
 pub(crate) fn row_in(values: *const bdb_value, count: usize) -> BridgeResult<Vec<Value>> {
     slice_in(values, count)?.iter().map(value_in).collect()
+}
+
+/// One inbound collection of rows: `row_count` rows of `value_count`
+/// cells each, row-major. Empty (`row_count == 0`) is lawful and does
+/// not read `values`. Nonzero rows with `value_count == 0` is a shape
+/// error — `chunks_exact(0)` is not a representation of zero-width.
+pub(crate) fn rows_in(
+    values: *const bdb_value,
+    value_count: usize,
+    row_count: usize,
+) -> BridgeResult<Vec<Vec<Value>>> {
+    if row_count == 0 {
+        return Ok(Vec::new());
+    }
+    if value_count == 0 {
+        return Err(fail_shape(
+            "nonzero row_count with value_count 0 (zero-width rows are not a collection)",
+        ));
+    }
+    let total = value_count
+        .checked_mul(row_count)
+        .ok_or(Fail::Misuse)?;
+    let cells = slice_in(values, total)?;
+    let mut rows = Vec::with_capacity(row_count);
+    for chunk in cells.chunks_exact(value_count) {
+        rows.push(chunk.iter().map(value_in).collect::<BridgeResult<_>>()?);
+    }
+    Ok(rows)
 }
 
 /// One outbound engine value, viewed — variable-width payloads borrow

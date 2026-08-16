@@ -5,7 +5,7 @@
 //! TABLE is the pin — it was landed green against the triple derivation
 //! and must stay green, byte-identical, over the reified signature.
 
-use crate::ir::{AggOp, Atom, FindTerm, Query, Rule, Term, VarId};
+use crate::ir::{Atom, FindTerm, FoldOp, Query, Rule, Term, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
@@ -128,19 +128,15 @@ fn case(
     }
 }
 
-fn fold(op: AggOp, over: u16) -> FindTerm {
+fn fold(op: FoldOp, over: u16) -> FindTerm {
     FindTerm::Aggregate {
         op,
-        over: Some(VarId(over)),
+        over: VarId(over),
     }
 }
 
 /// The exhaustive table: one row per `FindTerm`/`AggOp` form × each
 /// legal input type.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the exhaustive pin table is clearer kept together"
-)]
 fn cases() -> Vec<Case> {
     let mut cases = Vec::new();
 
@@ -157,16 +153,13 @@ fn cases() -> Vec<Case> {
     // Nullary Count: U64 whatever the rule binds.
     cases.push(case(
         "count",
-        vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        vec![FindTerm::Count],
         vec![(U, 0)],
         vec![ValueType::U64],
     ));
 
     // The arithmetic folds, both integer types: the input's type.
-    for op in [AggOp::Sum, AggOp::Min, AggOp::Max] {
+    for op in [FoldOp::Sum, FoldOp::Min, FoldOp::Max] {
         for (field, ty) in [(U, ValueType::U64), (I, ValueType::I64)] {
             cases.push(case(
                 format!("{op:?} over {ty:?}"),
@@ -188,7 +181,7 @@ fn cases() -> Vec<Case> {
     }
 
     // The measure, folded (Sum/Min/Max of Duration): U64, both elements.
-    for op in [AggOp::Sum, AggOp::Min, AggOp::Max] {
+    for op in [FoldOp::Sum, FoldOp::Min, FoldOp::Max] {
         for field in [PU, PI] {
             cases.push(case(
                 format!("{op:?} duration over field {field}"),
@@ -202,13 +195,13 @@ fn cases() -> Vec<Case> {
     // Pack: the packed segment shares its input's interval type.
     cases.push(case(
         "pack over interval<u64>",
-        vec![fold(AggOp::Pack, 0)],
+        vec![FindTerm::Pack { over: VarId(0) }],
         vec![(PU, 0)],
         vec![interval_u64()],
     ));
     cases.push(case(
         "pack over interval<i64>",
-        vec![fold(AggOp::Pack, 0)],
+        vec![FindTerm::Pack { over: VarId(0) }],
         vec![(PI, 0)],
         vec![interval_i64()],
     ));
@@ -219,11 +212,8 @@ fn cases() -> Vec<Case> {
         "group key + sum + count",
         vec![
             FindTerm::Var(VarId(0)),
-            fold(AggOp::Sum, 1),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            fold(FoldOp::Sum, 1),
+            FindTerm::Count,
         ],
         vec![(U, 0), (I, 1)],
         vec![ValueType::U64, ValueType::I64, ValueType::U64],
@@ -234,7 +224,7 @@ fn cases() -> Vec<Case> {
             FindTerm::Var(VarId(0)),
             FindTerm::Measure(VarId(1)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Max,
+                op: FoldOp::Max,
                 over: VarId(2),
             },
         ],
@@ -243,19 +233,13 @@ fn cases() -> Vec<Case> {
     ));
     cases.push(case(
         "bool group key + pack",
-        vec![FindTerm::Var(VarId(0)), fold(AggOp::Pack, 1)],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         vec![(B, 0), (PU, 1)],
         vec![ValueType::Bool, interval_u64()],
     ));
     cases.push(case(
         "interval group key + count",
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Count],
         vec![(PI, 0)],
         vec![interval_i64(), ValueType::U64],
     ));
@@ -289,7 +273,7 @@ fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect()
 }
 

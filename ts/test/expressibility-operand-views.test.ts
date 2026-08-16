@@ -47,9 +47,9 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-
 import type { Db as DbValue } from "#index.ts"
 import { closed, contained, Db, key, ne, on, query, relation, renderStatement, schema, str, u64, v } from "#index.ts"
+import { put } from "#test/put.ts"
 
 function byPos<T extends { readonly pos: bigint }>(left: T, right: T): number {
 	if (left.pos < right.pos) {
@@ -221,30 +221,30 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		const landed = db.write(function seedAll(tx) {
 			const caps: bigint[] = []
 			for (let k = 0; k < CAPABILITIES; k++) {
-				caps.push(tx.insert(Capability, { text: `cap-text-${k}` }).id)
+				caps.push(put(tx, Capability, { text: `cap-text-${k}` }).id)
 			}
 			const capsules: bigint[] = []
 			for (let j = 0; j < CAPSULES; j++) {
-				capsules.push(tx.insert(Capsule, { title: `capsule-${j}` }).id)
+				capsules.push(put(tx, Capsule, { title: `capsule-${j}` }).id)
 			}
 			// the first CAPABILITIES capsules carry the full four-sidecar contract:
 			for (let j = 0; j < CAPABILITIES; j++) {
 				const capsule = must(capsules[j])
-				tx.insert(Teaches, { capsule, capability: must(caps[j]) })
-				tx.insert(TransferRange, { capsule, floor: `floor-${j}`, ceiling: `ceiling-${j}` })
-				tx.insert(ExitCondition, { capsule, condition: `exit-${j}` })
-				tx.insert(NonExampleBoundary, { capsule, nearMiss: must(caps[(j + 1) % CAPABILITIES]) })
+				put(tx, Teaches, { capsule, capability: must(caps[j]) })
+				put(tx, TransferRange, { capsule, floor: `floor-${j}`, ceiling: `ceiling-${j}` })
+				put(tx, ExitCondition, { capsule, condition: `exit-${j}` })
+				put(tx, NonExampleBoundary, { capsule, nearMiss: must(caps[(j + 1) % CAPABILITIES]) })
 			}
-			const grp = tx.insert(Grp, { name: "estate" })
-			const a = tx.insert(Prog, { grp: grp.id })
-			const b = tx.insert(Prog, { grp: grp.id })
+			const grp = put(tx, Grp, { name: "estate" })
+			const a = put(tx, Prog, { grp: grp.id })
+			const b = put(tx, Prog, { grp: grp.id })
 			for (const program of [a.id, b.id]) {
 				for (let i = 0; i < MEMBERS_PER_PROGRAM; i++) {
 					const kind = kindOf(i)
 					// Taught members sit on contracted capsules (the law demands it);
 					// the rest roam the full capsule set, bare capsules included.
 					const capsule = kind === "Taught" ? must(capsules[i % CAPABILITIES]) : must(capsules[i % CAPSULES])
-					tx.insert(Member, { program, capsule, pos: BigInt(i), kind })
+					put(tx, Member, { program, capsule, pos: BigInt(i), kind })
 				}
 			}
 			progA = a.id
@@ -338,12 +338,12 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 	test("Q3: a Taught member whose capsule lacks a sidecar REFUSES at commit — the law replaces the host throw", function totalityRefusal() {
 		const rejected = db.write(function missingTransferRange(tx) {
-			const capsule = tx.insert(Capsule, { title: "capsule-partial" })
+			const capsule = put(tx, Capsule, { title: "capsule-partial" })
 			// three of the four sidecars — TransferRange deliberately absent:
-			tx.insert(Teaches, { capsule: capsule.id, capability: must(capabilityIds[0]) })
-			tx.insert(ExitCondition, { capsule: capsule.id, condition: "exit-partial" })
-			tx.insert(NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[1]) })
-			tx.insert(Member, { program: progA, capsule: capsule.id, pos: 1000n, kind: "Taught" })
+			put(tx, Teaches, { capsule: capsule.id, capability: must(capabilityIds[0]) })
+			put(tx, ExitCondition, { capsule: capsule.id, condition: "exit-partial" })
+			put(tx, NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[1]) })
+			put(tx, Member, { program: progA, capsule: capsule.id, pos: 1000n, kind: "Taught" })
 		})
 		assert.ok(!rejected.ok, "the kind-conditional inclusion judges the commit")
 		const violation = must(
@@ -358,8 +358,8 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	test("Q3: deleting a sidecar out from under a surviving Taught member refuses (targetRequired)", function targetSide() {
 		const rejected = db.write(function stripContract(tx) {
 			assert.equal(
-				tx.delete(TransferRange, { capsule: must(capsuleIds[0]), floor: "floor-0", ceiling: "ceiling-0" }),
-				true
+				tx.delete(TransferRange, [{ capsule: must(capsuleIds[0]), floor: "floor-0", ceiling: "ceiling-0" }]).changed,
+				1n
 			)
 		})
 		assert.ok(!rejected.ok, "capsule-0 backs live Taught members — its contract cannot be stripped")
@@ -374,17 +374,17 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 	test("Q3: the compliant same-commit stitch lands, and a non-Taught member on a bare capsule stays legal", function compliant() {
 		const stitched = db.write(function fullContract(tx) {
-			const capsule = tx.insert(Capsule, { title: "capsule-whole" })
-			tx.insert(Teaches, { capsule: capsule.id, capability: must(capabilityIds[2]) })
-			tx.insert(TransferRange, { capsule: capsule.id, floor: "floor-whole", ceiling: "ceiling-whole" })
-			tx.insert(ExitCondition, { capsule: capsule.id, condition: "exit-whole" })
-			tx.insert(NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[3]) })
-			tx.insert(Member, { program: progA, capsule: capsule.id, pos: 1001n, kind: "Taught" })
+			const capsule = put(tx, Capsule, { title: "capsule-whole" })
+			put(tx, Teaches, { capsule: capsule.id, capability: must(capabilityIds[2]) })
+			put(tx, TransferRange, { capsule: capsule.id, floor: "floor-whole", ceiling: "ceiling-whole" })
+			put(tx, ExitCondition, { capsule: capsule.id, condition: "exit-whole" })
+			put(tx, NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[3]) })
+			put(tx, Member, { program: progA, capsule: capsule.id, pos: 1001n, kind: "Taught" })
 		})
 		assert.ok(stitched.ok, "member and contract commit together — totality holds at final state")
 
 		const bare = db.write(function bareCapsuleMember(tx) {
-			tx.insert(Member, { program: progA, capsule: must(capsuleIds[CAPSULES - 1]), pos: 1002n, kind: "Reviewed" })
+			put(tx, Member, { program: progA, capsule: must(capsuleIds[CAPSULES - 1]), pos: 1002n, kind: "Reviewed" })
 		})
 		assert.ok(bare.ok, "the ψ selection scopes the law to Taught rows only")
 	})
@@ -452,10 +452,10 @@ describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function pri
 		const primerDir = path.join(tmpRoot, "primer-store")
 		const db = await Db.create(primerDir, Primer)
 		const seeded = db.write(function seedDag(tx) {
-			const a = tx.insert(Node, {})
-			const b = tx.insert(Node, {})
-			tx.insert(Produces, { grp: a.id, capability: 1n })
-			tx.insert(Requires, { consumer: b.id, capability: 1n, state: "Upheld" })
+			const a = put(tx, Node, {})
+			const b = put(tx, Node, {})
+			put(tx, Produces, { grp: a.id, capability: 1n })
+			put(tx, Requires, { consumer: b.id, capability: 1n, state: "Upheld" })
 		})
 		assert.ok(seeded.ok, "a one-edge DAG lands")
 		const rows = db.execute(db.prepare(requiresCycleQuery), {})

@@ -6,7 +6,7 @@
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
 use bumbledb::error::ValidationError;
-use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
+use bumbledb::ir::{Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
@@ -58,19 +58,19 @@ fn cyclic_containments_insert_in_one_transaction() {
     let dir = common::TempDir::new("edge-cyclic");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        tx.insert(&Alpha {
+        tx.insert([&Alpha {
             id: AlphaId(1),
             beta: BetaId(2),
-        })?;
-        tx.insert(&Beta {
+        }])?;
+        tx.insert([&Beta {
             id: BetaId(2),
             alpha: AlphaId(1),
-        })?;
+        }])?;
         // The self-loop: a row referencing itself.
-        tx.insert(&Node {
+        tx.insert([&Node {
             id: NodeId(9),
             parent: NodeId(9),
-        })?;
+        }])?;
         Ok(())
     })
     .expect("cycle commits: source judgments run against the final state");
@@ -78,10 +78,10 @@ fn cyclic_containments_insert_in_one_transaction() {
     // And the failure half: a cycle missing one side aborts whole.
     let err = db
         .write(|tx| {
-            tx.insert(&Alpha {
+            tx.insert([&Alpha {
                 id: AlphaId(5),
                 beta: BetaId(99), // no such Beta
-            })?;
+            }])?;
             Ok(())
         })
         .unwrap_err();
@@ -100,7 +100,7 @@ fn empty_strings_and_bytes_round_trip() {
         payload: [0u8; 16],
         name: "",
     };
-    db.write(|tx| tx.insert(&original)).expect("write");
+    db.write(|tx| tx.insert([&original])).expect("write");
     // The scanned views borrow the snapshot, so the comparison happens
     // inside the read closure.
     db.read(|snap| {
@@ -118,15 +118,15 @@ fn explicit_max_fresh_exhausts_the_generator() {
     let dir = common::TempDir::new("edge-fresh-max");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        tx.insert(&Node {
+        tx.insert([&Node {
             id: NodeId(u64::MAX),
             parent: NodeId(u64::MAX),
-        })
+        }])
     })
     .expect("explicit MAX is a legal value");
     let err = db
         .write(|tx| {
-            let _: NodeId = tx.alloc()?;
+            let _: NodeId = tx.reserve(1)?.start().expect("nonempty");
             Ok(())
         })
         .unwrap_err();
@@ -181,8 +181,8 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     let dir = common::TempDir::new("edge-wide-vocabulary");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(RelationId(1), &[Value::U64(0)])?;
-        tx.insert_dyn(RelationId(1), &[Value::U64(255)])?;
+        tx.insert_dyn(RelationId(1), [&[Value::U64(0)]])?;
+        tx.insert_dyn(RelationId(1), [&[Value::U64(255)]])?;
         Ok(())
     })
     .expect("write");
@@ -199,7 +199,7 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     // violation as any dangling reference.
     let err = db
         .write(|tx| {
-            tx.insert_dyn(RelationId(1), &[Value::U64(256)])?;
+            tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
             Ok(())
         })
         .unwrap_err();
@@ -277,10 +277,10 @@ fn one_byte_compound_determinants() {
     let dir = common::TempDir::new("edge-byte-determinants");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
+        tx.insert_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
         tx.insert_dyn(
             watcher,
-            &[Value::Bool(true), Value::Bool(true), Value::U64(7)],
+            [&[Value::Bool(true), Value::Bool(true), Value::U64(7)]],
         )?;
         Ok(())
     })
@@ -292,7 +292,7 @@ fn one_byte_compound_determinants() {
         .write(|tx| {
             tx.insert_dyn(
                 watcher,
-                &[Value::Bool(false), Value::Bool(false), Value::U64(1)],
+                [&[Value::Bool(false), Value::Bool(false), Value::U64(1)]],
             )?;
             Ok(())
         })
@@ -302,7 +302,7 @@ fn one_byte_compound_determinants() {
     // The target side holds too: deleting the required pair aborts.
     let err = db
         .write(|tx| {
-            tx.delete_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
+            tx.delete_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
             Ok(())
         })
         .unwrap_err();
@@ -317,24 +317,21 @@ fn zero_binding_gate_with_global_count() {
     let dir = common::TempDir::new("edge-gate-count");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
-        tx.insert(&Node {
+        tx.insert([&Node {
             id: NodeId(1),
             parent: NodeId(1),
-        })?;
-        tx.insert(&Node {
+        }])?;
+        tx.insert([&Node {
             id: NodeId(2),
             parent: NodeId(1),
-        })?;
+        }])?;
         Ok(())
     })
     .expect("seed");
 
     // Count(nodes) gated on Gate being nonempty.
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![
             Atom {
                 source: bumbledb::AtomSource::Edb(Node::RELATION),
@@ -356,7 +353,7 @@ fn zero_binding_gate_with_global_count() {
         .expect("execute");
     assert!(answers.is_empty(), "an empty gate empties the query");
 
-    db.write(|tx| tx.insert(&Gate { tag: "open" }))
+    db.write(|tx| tx.insert([&Gate { tag: "open" }]))
         .expect("open the gate");
     let answers = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]))
@@ -406,13 +403,13 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
                 (10, 6, "rent"),
                 (11, 5, "food"),
             ] {
-                let id: PostingId = tx.alloc()?;
-                tx.insert(&Posting {
+                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Posting {
                     id,
                     account,
                     amount,
                     memo,
-                })?;
+                }])?;
                 ids.push(id);
             }
             Ok(ids)

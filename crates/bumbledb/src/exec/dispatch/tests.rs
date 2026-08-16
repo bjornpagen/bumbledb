@@ -3,10 +3,11 @@ use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::ViewWordSource;
+use crate::ir::WordCmp;
 use crate::ir::normalize::{
     NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
 };
-use crate::ir::{CmpOp, ParamId, VarId};
+use crate::ir::{ParamId, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
@@ -152,13 +153,14 @@ fn occurrence(vars: &[(u16, u16)], filters: Vec<FilterPredicate>) -> Occurrence 
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters,
+        point_vars: vec![],
     }
 }
 
 fn eq_filter(field: u16, value: Const) -> FilterPredicate {
     FilterPredicate::Compare {
         field: FieldId(field),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value,
     }
 }
@@ -275,7 +277,7 @@ fn a_second_atom_or_a_residual_stays_free_join() {
         vec![eq_filter(0, Const::Word(5))],
     ));
     with_residual.residuals.push(PlacedComparison {
-        op: CmpOp::Lt,
+        op: WordCmp::Lt,
         lhs: VarId(0),
         rhs: VarId(1),
     });

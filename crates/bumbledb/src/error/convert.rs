@@ -64,6 +64,113 @@ impl From<CorruptionError> for Error {
     }
 }
 
+fn clone_io(err: &std::io::Error) -> std::io::Error {
+    match err.raw_os_error() {
+        Some(code) => std::io::Error::from_raw_os_error(code),
+        None => std::io::Error::from(err.kind()),
+    }
+}
+
+fn clone_heed(err: &heed::Error) -> heed::Error {
+    match err {
+        heed::Error::Io(io) => heed::Error::Io(clone_io(io)),
+        heed::Error::Mdb(mdb) => heed::Error::Mdb(*mdb),
+        heed::Error::EnvAlreadyOpened => heed::Error::EnvAlreadyOpened,
+        heed::Error::Encoding(_) | heed::Error::Decoding(_) => {
+            heed::Error::Io(std::io::Error::from(std::io::ErrorKind::Other))
+        }
+    }
+}
+
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Self::FormatMismatch { found, expected } => Self::FormatMismatch {
+                found: *found,
+                expected: *expected,
+            },
+            Self::SchemaMismatch { found, expected } => Self::SchemaMismatch {
+                found: *found,
+                expected: *expected,
+            },
+            Self::AlreadyInitialized => Self::AlreadyInitialized,
+            Self::NotInitialized => Self::NotInitialized,
+            Self::EnvironmentLocked => Self::EnvironmentLocked,
+            Self::StoreKindMismatch { found, expected } => Self::StoreKindMismatch {
+                found: *found,
+                expected: *expected,
+            },
+            Self::DescriptorMissing => Self::DescriptorMissing,
+            Self::Io(err) => Self::Io(clone_io(err)),
+            Self::Lmdb(err) => Self::Lmdb(clone_heed(err)),
+            Self::ReadersFull { max_readers } => Self::ReadersFull {
+                max_readers: *max_readers,
+            },
+            Self::Schema(err) => Self::Schema(err.clone()),
+            Self::Validation(err) => Self::Validation(*err),
+            Self::FactShape(err) => Self::FactShape(err.clone()),
+            Self::CommitRejected { violations } => Self::CommitRejected {
+                violations: violations.clone(),
+            },
+            Self::FreshExhausted { relation, field } => Self::FreshExhausted {
+                relation: *relation,
+                field: *field,
+            },
+            Self::ClosedRelationWrite { relation } => Self::ClosedRelationWrite {
+                relation: *relation,
+            },
+            Self::GenerationMoved { witnessed, current } => Self::GenerationMoved {
+                witnessed: *witnessed,
+                current: *current,
+            },
+            Self::CommitSync { retries, error } => Self::CommitSync {
+                retries: *retries,
+                error: clone_io(error),
+            },
+            Self::TransactionPoisoned { source } => Self::TransactionPoisoned {
+                source: source.clone(),
+            },
+            Self::ForeignPreparedQuery => Self::ForeignPreparedQuery,
+            Self::ForeignSnapshot => Self::ForeignSnapshot,
+            Self::ParamCountMismatch { expected, supplied } => Self::ParamCountMismatch {
+                expected: *expected,
+                supplied: *supplied,
+            },
+            Self::ParamTypeMismatch { param, expected } => Self::ParamTypeMismatch {
+                param: *param,
+                expected: expected.clone(),
+            },
+            Self::ParamSetExpected { param } => Self::ParamSetExpected { param: *param },
+            Self::ParamScalarExpected { param } => Self::ParamScalarExpected { param: *param },
+            Self::ParamElementTypeMismatch {
+                param,
+                element,
+                expected,
+            } => Self::ParamElementTypeMismatch {
+                param: *param,
+                element: *element,
+                expected: expected.clone(),
+            },
+            Self::PointParamAtCeiling { param } => Self::PointParamAtCeiling { param: *param },
+            Self::MeasureOfRay { start, end } => Self::MeasureOfRay {
+                start: *start,
+                end: *end,
+            },
+            Self::CapacityRayMeasure { statement, fact } => Self::CapacityRayMeasure {
+                statement: *statement,
+                fact: fact.clone(),
+            },
+            Self::DerivedBudgetExceeded { rounds, tuples } => Self::DerivedBudgetExceeded {
+                rounds: *rounds,
+                tuples: *tuples,
+            },
+            Self::Overflow(kind) => Self::Overflow(*kind),
+            Self::ResultBytesOverflow => Self::ResultBytesOverflow,
+            Self::Corruption(err) => Self::Corruption(*err),
+        }
+    }
+}
+
 impl std::error::Error for Error {
     /// Chains only where the payload *is* an underlying error; the
     /// structured variants carry data payloads deliberately invisible
@@ -73,7 +180,7 @@ impl std::error::Error for Error {
             Self::Io(err) => Some(err),
             Self::Lmdb(err) => Some(err),
             Self::CommitSync { error, .. } => Some(error),
-            Self::BulkLoad { error, .. } => Some(error.as_ref()),
+            Self::TransactionPoisoned { source } => Some(source.as_ref()),
             _ => None,
         }
     }

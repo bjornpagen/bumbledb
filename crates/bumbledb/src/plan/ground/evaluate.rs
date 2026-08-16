@@ -95,7 +95,7 @@ use crate::encoding::field_bytes;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
-use crate::ir::{CmpOp, VarId};
+use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
 use bumbledb_theory::schema::{FieldId, IntervalElement, RelationId, ValueType};
@@ -336,7 +336,7 @@ pub(crate) enum ResolvableFilter {
     /// Eq/Ne/Lt/Le/Gt/Ge against one encoded word (scalar columns).
     WordCompare {
         field: FieldId,
-        op: CmpOp,
+        op: WordCmp,
         word: u64,
     },
     /// Eq against a canonical multi-word value.
@@ -350,7 +350,7 @@ pub(crate) enum ResolvableFilter {
     FieldsCompare {
         left: FieldId,
         right: FieldId,
-        op: CmpOp,
+        op: WordCmp,
     },
     /// A constant point inside the column's interval.
     PointIn { field: FieldId, point: u64 },
@@ -404,31 +404,31 @@ fn interval_bytes(start: u64, end: u64) -> Box<[u8]> {
 }
 
 fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
-    let ordinary = |op: CmpOp| {
+    let ordinary = |op: WordCmp| {
         matches!(
             op,
-            CmpOp::Eq | CmpOp::Ne | CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge
+            WordCmp::Eq | WordCmp::Ne | WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge
         )
     };
     match filter {
         FilterPredicate::Compare { field, op, value } => match (op, value) {
-            (CmpOp::Eq, Const::WordSet(words)) => Some(ResolvableFilter::WordSetEq {
+            (WordCmp::Eq, Const::WordSet(words)) => Some(ResolvableFilter::WordSetEq {
                 field: *field,
                 words: words.clone().into_boxed_slice(),
             }),
-            (CmpOp::Eq, Const::Words(words)) => Some(ResolvableFilter::BytesEq {
+            (WordCmp::Eq, Const::Words(words)) => Some(ResolvableFilter::BytesEq {
                 field: *field,
                 bytes: words.iter().flat_map(|word| word.to_be_bytes()).collect(),
             }),
-            (CmpOp::Ne, Const::Words(words)) => Some(ResolvableFilter::BytesNe {
+            (WordCmp::Ne, Const::Words(words)) => Some(ResolvableFilter::BytesNe {
                 field: *field,
                 bytes: words.iter().flat_map(|word| word.to_be_bytes()).collect(),
             }),
-            (CmpOp::Eq, Const::Interval { start, end }) => Some(ResolvableFilter::BytesEq {
+            (WordCmp::Eq, Const::Interval { start, end }) => Some(ResolvableFilter::BytesEq {
                 field: *field,
                 bytes: interval_bytes(*start, *end),
             }),
-            (CmpOp::Ne, Const::Interval { start, end }) => Some(ResolvableFilter::BytesNe {
+            (WordCmp::Ne, Const::Interval { start, end }) => Some(ResolvableFilter::BytesNe {
                 field: *field,
                 bytes: interval_bytes(*start, *end),
             }),
@@ -437,7 +437,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
                 op: *op,
                 word: *word,
             }),
-            (CmpOp::Eq | CmpOp::Ne, Const::Byte(byte)) => Some(ResolvableFilter::WordCompare {
+            (WordCmp::Eq | WordCmp::Ne, Const::Byte(byte)) => Some(ResolvableFilter::WordCompare {
                 field: *field,
                 op: *op,
                 word: u64::from(*byte),
@@ -495,7 +495,6 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
-        | FilterPredicate::PointVar { .. }
         | FilterPredicate::AnyPointIn { .. }
         | FilterPredicate::FieldAllen { .. }
         | FilterPredicate::FieldWithin { .. }
@@ -580,7 +579,7 @@ fn containment_into_id(
                     occurrence.filters.iter().any(|filter| {
                         matches!(
                             filter,
-                            FilterPredicate::Compare { field: ff, op: CmpOp::Eq, value: v }
+                            FilterPredicate::Compare { field: ff, op: WordCmp::Eq, value: v }
                                 if ff == f && v == value
                         )
                     })
@@ -649,15 +648,11 @@ fn row_satisfies(
         } => bytes(*field) != bound.as_ref(),
         ResolvableFilter::WordSetEq { field, words } => words.binary_search(&word(*field)).is_ok(),
         ResolvableFilter::FieldsCompare { left, right, op } => match op {
-            CmpOp::Eq => bytes(*left) == bytes(*right),
-            CmpOp::Ne => bytes(*left) != bytes(*right),
-            CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
+            WordCmp::Eq => bytes(*left) == bytes(*right),
+            WordCmp::Ne => bytes(*left) != bytes(*right),
+            WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge => {
                 op.compare(&word(*left), &word(*right))
             }
-            // The parser never constructs these; returning false keeps
-            // the consumer total even if this crate-visible enum gains
-            // another constructor in the future.
-            CmpOp::Allen { .. } | CmpOp::PointIn => false,
         },
         ResolvableFilter::PointIn { field, point } => {
             let (start, end) = pair(*field);
@@ -716,7 +711,7 @@ fn attach_membership(normalized: &mut NormalizedQuery, binders: &[(usize, FieldI
             .filters
             .push(FilterPredicate::Compare {
                 field: *field,
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value: Const::WordSet(ids.to_vec()),
             });
     }
@@ -857,7 +852,6 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::AnyPointIn { .. }
-        | FilterPredicate::PointVar { .. }
         | FilterPredicate::DurationCompare { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
             render_unparsed_filter(out, filter);
@@ -904,16 +898,14 @@ fn element_type(value_type: &ValueType) -> ValueType {
     }
 }
 
-fn op_symbol(op: CmpOp) -> &'static str {
+fn op_symbol(op: WordCmp) -> &'static str {
     match op {
-        CmpOp::Eq => " == ",
-        CmpOp::Ne => " != ",
-        CmpOp::Lt => " < ",
-        CmpOp::Le => " <= ",
-        CmpOp::Gt => " > ",
-        CmpOp::Ge => " >= ",
-        CmpOp::Allen { .. } => " Allen ",
-        CmpOp::PointIn => " PointIn ",
+        WordCmp::Eq => " == ",
+        WordCmp::Ne => " != ",
+        WordCmp::Lt => " < ",
+        WordCmp::Le => " <= ",
+        WordCmp::Gt => " > ",
+        WordCmp::Ge => " >= ",
     }
 }
 

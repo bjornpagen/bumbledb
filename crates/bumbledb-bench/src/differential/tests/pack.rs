@@ -11,7 +11,7 @@
 //! is naive-only by decision.
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{AggOp, Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
+use bumbledb::{Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
 
 use crate::differential::{Op, run};
 use crate::fixture::{TempDir, field};
@@ -53,13 +53,7 @@ const SHIFT: RelationId = RelationId(1);
 /// Q(person, Pack(slot)) over one relation.
 fn pack_query(relation: RelationId) -> Query {
     Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(relation),
             bindings: vec![
@@ -277,13 +271,7 @@ fn multi_rule_pack_folds_the_union_differentially() {
     // Two u64-slot rules over the SAME relation, split by id parity with
     // an overlap (id 2 satisfies both): union without double-fold.
     let rule = |op: bumbledb::CmpOp, bound: u64| Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(BUSY),
             bindings: vec![

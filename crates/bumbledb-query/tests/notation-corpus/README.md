@@ -53,11 +53,10 @@ with key order exactly as the TS lowering's object literals insert it
   `{"kind":"aggregate","op":"sum"|"min"|"max"|"count"|"pack"}`
 - rule — `{"finds":[…],"atoms":[…],"negated":[…],"conditions":[…]}`
 - find — `{"kind":"var","var":N}` | `{"kind":"measure","var":N}` |
-  `{"kind":"aggregate","op":AGG}` (nullary `Count`: no `over` key) |
+  `{"kind":"count"}` | `{"kind":"pack","over":N}` |
   `{"kind":"aggregate","op":AGG,"over":N}` |
   `{"kind":"aggregateMeasure","op":AGG,"over":N}`
-- AGG — `{"kind":"sum"}` | `{"kind":"min"}` | `{"kind":"max"}` |
-  `{"kind":"count"}` | `{"kind":"pack"}`
+- AGG — `{"kind":"sum"}` | `{"kind":"min"}` | `{"kind":"max"}`
 - atom — `{"source":{"kind":"edb","relation":N}|{"kind":"interior","interior":N},
   "bindings":[[fieldId, term]…]}` (an interior atom's field ids address head
   POSITIONS; binding order is written order)

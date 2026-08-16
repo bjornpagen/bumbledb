@@ -58,7 +58,7 @@ const ROSTERS = {
 	term: ["var", "param", "paramSet", "literal", "measure"],
 	aggregateOp: ["sum", "min", "max", "count", "pack"],
 	headTerm: ["var", "aggregate"],
-	findTerm: ["var", "aggregate", "measure", "aggregateMeasure"],
+	findTerm: ["var", "count", "aggregate", "pack", "measure", "aggregateMeasure"],
 	atomSource: ["edb", "interior"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	condition: ["leaf", "and", "or"],

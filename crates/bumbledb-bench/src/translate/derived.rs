@@ -4,7 +4,7 @@
 //! same SQL as the old CQ path. No UNION ALL. No CTE after the rec —
 //! `CLOSURE_ROOTS` inlines the anti-join into main.
 
-use bumbledb::ir::{FindTerm, Rec};
+use bumbledb::ir::{FindTerm, ProjectionRule, Rec, RecRule, RecStep};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 
 use super::query::{QueryShape, SharedParams, arm_body, rule_core};
@@ -46,10 +46,9 @@ fn translate_cq(
     params.shape = QueryShape::Cq;
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in interiors.iter().enumerate() {
-        ctes.push(cte_from_rules(
+        ctes.push(cte_from_interior(
             index,
-            &interior.head,
-            &interior.rules,
+            interior,
             schema,
             sets,
             &mut params,
@@ -81,10 +80,9 @@ fn translate_reach(
     };
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in interiors.iter().enumerate() {
-        ctes.push(cte_from_rules(
+        ctes.push(cte_from_interior(
             index,
-            &interior.head,
-            &interior.rules,
+            interior,
             schema,
             sets,
             &mut params,
@@ -98,16 +96,18 @@ fn translate_reach(
     })
 }
 
-fn cte_from_rules(
+fn cte_from_interior(
     index: usize,
-    head: &[bumbledb::HeadTerm],
-    rules: &[Rule],
+    interior: &bumbledb::Interior,
     schema: &Schema,
     sets: &[(ParamId, Vec<Value>)],
     params: &mut SharedParams,
 ) -> Result<String, String> {
-    let arms = rule_arms(rules, schema, sets, params)?;
-    let columns: Vec<String> = (0..head.len()).map(|column| format!("c{column}")).collect();
+    let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
+    let arms = rule_arms(&rules, schema, sets, params)?;
+    let columns: Vec<String> = (0..interior.head().len())
+        .map(|column| format!("c{column}"))
+        .collect();
     Ok(format!(
         "{}({}) AS ({})",
         derived_cte_name(
@@ -120,18 +120,22 @@ fn cte_from_rules(
 }
 
 fn rec_cte(
-    _rec_id: usize,
+    rec_idx: usize,
     rec: &Rec,
     schema: &Schema,
     sets: &[(ParamId, Vec<Value>)],
     params: &mut SharedParams,
 ) -> Result<String, String> {
-    if rec.base.is_empty() && !rec.rec.is_empty() {
-        return Err("recursive CTE rec has no base rule (its fixpoint is empty)".into());
-    }
-    let mut arms = rule_arms(&rec.base, schema, sets, params)?;
-    arms.extend(rule_arms(&rec.rec, schema, sets, params)?);
-    let columns: Vec<String> = (0..rec.head.len())
+    let rec_id = InteriorId(u32::try_from(rec_idx).expect("interior id fits u32"));
+    let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
+    let step: Vec<Rule> = rec
+        .rec
+        .iter()
+        .map(|arm| RecStep::to_written_rule(arm, rec_id))
+        .collect();
+    let mut arms = rule_arms(&base, schema, sets, params)?;
+    arms.extend(rule_arms(&step, schema, sets, params)?);
+    let columns: Vec<String> = (0..rec.head().len())
         .map(|column| format!("c{column}"))
         .collect();
     Ok(format!(
@@ -167,7 +171,10 @@ fn rule_arms(
                     Some(VarCols::Interval { start, end }) => format!("({end} - {start})"),
                     _ => return Err(format!("Duration over non-interval variable {}", var.0)),
                 },
-                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
+                FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. }
+                | FindTerm::AggregateMeasure { .. } => {
                     return Err("folds on interiors/rec arms are refused".into());
                 }
             };
@@ -200,7 +207,8 @@ pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), Str
         }
         Query::Reach { interiors, rec, .. } => {
             let flags = refuse_interior_intervals(interiors, schema)?;
-            let row = head_intervals(&rec.head, &rec.base, schema, &flags);
+            let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
+            let row = head_intervals(&rec.head(), &base, schema, &flags);
             if row.iter().any(|b| *b) {
                 return Err(
                     "interval-typed derived column (the recursive lane is scalar-shaped)".into(),
@@ -217,12 +225,8 @@ fn refuse_interior_intervals(
 ) -> Result<Vec<Vec<bool>>, String> {
     let mut flags: Vec<Vec<bool>> = Vec::new();
     for interior in interiors {
-        flags.push(head_intervals(
-            &interior.head,
-            &interior.rules,
-            schema,
-            &flags,
-        ));
+        let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
+        flags.push(head_intervals(&interior.head(), &rules, schema, &flags));
         if flags.last().is_some_and(|row| row.iter().any(|b| *b)) {
             return Err(
                 "interval-typed derived column (the recursive lane is scalar-shaped)".into(),

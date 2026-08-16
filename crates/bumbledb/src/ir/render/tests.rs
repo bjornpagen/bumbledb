@@ -9,7 +9,7 @@
 use super::render;
 use crate::ir::validate::validate;
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, Rule, Term, Value,
     VarId,
 };
 use crate::schema::Schema;
@@ -224,13 +224,7 @@ fn closed_reference_handles_golden() {
 #[test]
 fn pack_head_golden() {
     let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
@@ -254,7 +248,7 @@ fn duration_head_golden() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(1),
             },
         ],
@@ -313,10 +307,7 @@ fn membership_and_param_forms() {
 #[test]
 fn malformed_queries_render_with_placeholders() {
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(RelationId(9)),
             bindings: vec![(FieldId(7), Term::Var(VarId(3)))],

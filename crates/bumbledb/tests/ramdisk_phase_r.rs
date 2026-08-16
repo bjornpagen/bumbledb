@@ -162,13 +162,13 @@ fn one_engine_commit(db: &Db<Meter>, facts: u32, bucket: &mut u64) -> Duration {
     let start = Instant::now();
     db.write(|tx| {
         for _ in 0..facts {
-            let id: SampleId = tx.alloc()?;
+            let id: SampleId = tx.reserve(1)?.start().expect("nonempty");
             *bucket += 1;
-            tx.insert(&Sample {
+            tx.insert([&Sample {
                 id,
                 bucket: *bucket,
                 amount: 7,
-            })?;
+            }])?;
         }
         Ok(())
     })
@@ -188,12 +188,12 @@ fn timed_commits(db: &Db<Meter>, commits: u32, facts: u32) -> Vec<Duration> {
 }
 
 /// The two write shapes the campaign prices: the small transaction and
-/// the bulk-load chunk (`Db::bulk_load`'s 4096-fact commit, expressed
+/// a large collection insert (4096 facts per `Db::write`, expressed
 /// through the same write path so the shapes differ only in size).
 const SMALL_FACTS: u32 = 16;
 const SMALL_COMMITS: u32 = 64;
-const BULK_FACTS: u32 = 4096;
-const BULK_COMMITS: u32 = 8;
+const LARGE_FACTS: u32 = 4096;
+const LARGE_COMMITS: u32 = 8;
 
 struct EngineCells {
     small: Vec<Duration>,
@@ -204,7 +204,7 @@ fn engine_cells(dir: &Path) -> EngineCells {
     let db = Db::create(dir, Meter).expect("store creates");
     EngineCells {
         small: timed_commits(&db, SMALL_COMMITS, SMALL_FACTS),
-        bulk: timed_commits(&db, BULK_COMMITS, BULK_FACTS),
+        bulk: timed_commits(&db, LARGE_COMMITS, LARGE_FACTS),
     }
 }
 
@@ -396,12 +396,12 @@ fn ramdisk_phase_r() {
         let smoke = Db::create(&disk.store_dir("smoke"), Meter).expect("store creates on HFS+");
         smoke
             .write(|tx| {
-                let id: SampleId = tx.alloc()?;
-                tx.insert(&Sample {
+                let id: SampleId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Sample {
                     id,
                     bucket: 1,
                     amount: 1,
-                })
+                }])
             })
             .expect("R1 FAILED on HFS+: commit (fullfsync) refused on the ram device");
         println!("R1 hfs+ fullfsync smoke: PASS");
@@ -462,9 +462,9 @@ fn ramdisk_phase_r() {
                 c.small.push(sample);
             }
         }
-        for _ in 0..BULK_COMMITS {
+        for _ in 0..LARGE_COMMITS {
             for c in &mut cells {
-                let sample = one_scratch_commit(&c.env, &c.db, BULK_FACTS, &mut c.seq);
+                let sample = one_scratch_commit(&c.env, &c.db, LARGE_FACTS, &mut c.seq);
                 c.bulk.push(sample);
             }
         }
@@ -500,8 +500,8 @@ fn ramdisk_phase_r() {
         let before = vm_sample();
         let r5_dir = disk.store_dir("r5");
         let r5_db = Db::create(&r5_dir, Meter).expect("store creates");
-        // ~190 MiB of facts through the bulk shape (128 commits x 4096).
-        let _ = timed_commits(&r5_db, 128, BULK_FACTS);
+        // ~190 MiB of facts through large collection inserts (128 commits x 4096).
+        let _ = timed_commits(&r5_db, 128, LARGE_FACTS);
         let after = vm_sample();
         let store = du_bytes(&r5_dir);
         let kib = |delta: i64| delta / 1024;
@@ -529,12 +529,12 @@ fn ramdisk_phase_r() {
         let smoke = Db::create(&disk.store_dir("smoke"), Meter).expect("store creates on APFS");
         smoke
             .write(|tx| {
-                let id: SampleId = tx.alloc()?;
-                tx.insert(&Sample {
+                let id: SampleId = tx.reserve(1)?.start().expect("nonempty");
+                tx.insert([&Sample {
                     id,
                     bucket: 1,
                     amount: 1,
-                })
+                }])
             })
             .expect("R1 FAILED on APFS: commit (fullfsync) refused on the ram device");
         println!("R1 apfs fullfsync smoke: PASS");
@@ -637,9 +637,9 @@ fn ramdisk_phase_r_ephemeral() {
             c.small.push(sample);
         }
     }
-    for _ in 0..BULK_COMMITS {
+    for _ in 0..LARGE_COMMITS {
         for c in &mut cells {
-            let sample = one_engine_commit(&c.db, BULK_FACTS, &mut c.bucket);
+            let sample = one_engine_commit(&c.db, LARGE_FACTS, &mut c.bucket);
             c.bulk.push(sample);
         }
     }

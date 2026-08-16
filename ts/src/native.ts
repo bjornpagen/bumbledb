@@ -44,6 +44,24 @@ type TxHandle = { readonly __brand: "bumbledb.tx" }
 /** One prepared query (plan pinned at prepare). */
 type PreparedHandle = { readonly __brand: "bumbledb.prepared" }
 
+/**
+ * Engine mutation report as it crosses napi: both counts are engine
+ * values, never reconstructed from JS length.
+ */
+interface WireMutationReport {
+	readonly submitted: bigint
+	readonly changed: bigint
+}
+
+/**
+ * Engine fresh-id range as it crosses napi. Empty cannot yield a start —
+ * `start` is a minted id only on the nonempty arm. (C wires empty as
+ * `{ start: 0, end_exclusive: 0 }` at that boundary only.)
+ */
+type WireFreshRange =
+	| { readonly empty: true }
+	| { readonly empty: false; readonly start: bigint; readonly endExclusive: bigint }
+
 /** A half-open interval `[start, end)` as it crosses the boundary. */
 interface IntervalValue {
 	readonly start: bigint
@@ -118,15 +136,14 @@ interface RuleIr {
 	readonly conditions: readonly ConditionTreeIr[]
 }
 
-/** One find term (mirrors `ir::FindTerm`). Count carries no `over`; folds require it. */
+/** One find term (mirrors `ir::FindTerm`). Count is nullary; pack and folds carry `over`. */
 type FoldOpIr = { readonly kind: "sum" } | { readonly kind: "min" } | { readonly kind: "max" }
-
-type ArgOpIr = FoldOpIr | { readonly kind: "pack" }
 
 type FindTermIr =
 	| { readonly kind: "var"; readonly var: number }
-	| { readonly kind: "aggregate"; readonly op: { readonly kind: "count" } }
-	| { readonly kind: "aggregate"; readonly op: ArgOpIr; readonly over: number }
+	| { readonly kind: "count" }
+	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
+	| { readonly kind: "pack"; readonly over: number }
 	| { readonly kind: "measure"; readonly var: number }
 	| { readonly kind: "aggregateMeasure"; readonly op: FoldOpIr; readonly over: number }
 
@@ -497,12 +514,14 @@ interface Native {
 	 */
 	dbWriteFrom(db: DbHandle, snap: SnapshotHandle): WriteFromResult
 	/**
-	 * Records an insert into the delta; `true` iff the final state changed.
-	 * Nothing is judged until commit; shape violations throw typed.
+	 * Records a collection of inserts into the delta; returns the engine
+	 * `{ submitted, changed }` report. `rows` is an array of value-arrays
+	 * in sealed field order. Empty is lawful and still a mutation (poison
+	 * is observed). Nothing is judged until commit; shape violations throw typed.
 	 */
-	txInsert(tx: TxHandle, relationId: number, values: readonly FactValue[]): boolean
-	/** Records a delete into the delta; `true` iff the final state changed. */
-	txDelete(tx: TxHandle, relationId: number, values: readonly FactValue[]): boolean
+	txInsert(tx: TxHandle, relationId: number, rows: readonly (readonly FactValue[])[]): WireMutationReport
+	/** Records a collection of deletes; returns the engine `{ submitted, changed }` report. */
+	txDelete(tx: TxHandle, relationId: number, rows: readonly (readonly FactValue[])[]): WireMutationReport
 	/**
 	 * Final-state membership (base + pending delta — the exact view the
 	 * commit judgment judges; check-then-act is race-free by construction).
@@ -511,12 +530,10 @@ interface Native {
 	/** Final-state point lookup through a key statement; `null` on a miss. */
 	txGet(tx: TxHandle, relationId: number, keyStatementId: number, keyValues: readonly FactValue[]): FactValue[] | null
 	/**
-	 * Mints the next fresh value for `(relationId, fieldId)` and returns it
-	 * — the engine's alloc-then-insert dyn-lane mint (there is no
-	 * insert-with-omitted-fields spelling; include the minted id in the
-	 * full row).
+	 * Mints `count` consecutive fresh values for `(relationId, fieldId)`.
+	 * `count === 0n` is empty and does not yield a start.
 	 */
-	txAlloc(tx: TxHandle, relationId: number, fieldId: number): bigint
+	txReserve(tx: TxHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
 	/**
 	 * Commits the delta: every dependency statement judged against the
 	 * final state; a rejection carries the complete violation rendering.
@@ -641,7 +658,6 @@ function bridged<T>(context: string, run: () => T): T {
 
 export type {
 	AggOpIr,
-	ArgOpIr,
 	AtomIr,
 	AtomSourceIr,
 	CmpOpIr,
@@ -683,6 +699,8 @@ export type {
 	TxHandle,
 	Violation,
 	ViolationFact,
+	WireFreshRange,
+	WireMutationReport,
 	WriteFromResult
 }
 export { bridged, loadNativeBinding, native, SHIPPED_PLATFORMS }

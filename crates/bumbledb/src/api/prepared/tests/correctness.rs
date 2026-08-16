@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::FoldOp;
 
 /// u64 ordered comparisons and cross-atom
 /// residuals — the generator's new constructs — each pinned against
@@ -134,8 +135,8 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: crate::ir::AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![

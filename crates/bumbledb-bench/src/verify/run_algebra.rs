@@ -28,7 +28,7 @@
 //!   against the naive model's own from-the-definition computation.
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, Query, Rule,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, FoldOp, Query, Rule,
     Term, Value, VarId,
 };
 
@@ -124,8 +124,8 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
                 vec![
                     FindTerm::Var(VarId(0)),
                     FindTerm::Aggregate {
-                        op: AggOp::Max,
-                        over: Some(VarId(1)),
+                        op: FoldOp::Max,
+                        over: VarId(1),
                     },
                 ],
             ),
@@ -134,8 +134,8 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
                 vec![
                     FindTerm::Var(VarId(0)),
                     FindTerm::Aggregate {
-                        op: AggOp::Max,
-                        over: Some(VarId(1)),
+                        op: FoldOp::Max,
+                        over: VarId(1),
                     },
                 ],
             ),
@@ -342,17 +342,11 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 0 if joined => vec![
                     FindTerm::Var(VarId(0)),
                     FindTerm::Aggregate {
-                        op: AggOp::Max,
-                        over: Some(VarId(2)),
+                        op: FoldOp::Max,
+                        over: VarId(2),
                     },
                 ],
-                0 | 1 => vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ],
+                0 | 1 => vec![FindTerm::Var(VarId(0)), FindTerm::Count],
                 _ => vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             };
             let rule = Rule {
@@ -425,22 +419,13 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         rules,
     };
     let grouped = pack(vec![Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![mandate_atom()],
         negated: vec![],
         conditions: vec![],
     }]);
     let global = pack(vec![Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Pack,
-            over: Some(VarId(1)),
-        }],
+        finds: vec![FindTerm::Pack { over: VarId(1) }],
         atoms: vec![mandate_atom()],
         negated: vec![],
         conditions: vec![],
@@ -448,13 +433,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     // The multi-rule Pack: per-org arms whose claims union before the
     // coalesce — the union fold's relation-shaped form.
     let org_arm = |org: u64| Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
@@ -509,14 +488,14 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     ));
     ops.push(measure(
         vec![FindTerm::AggregateMeasure {
-            op: AggOp::Sum,
+            op: FoldOp::Sum,
             over: VarId(1),
         }],
         vec![],
     ));
     ops.push(measure(
         vec![FindTerm::AggregateMeasure {
-            op: AggOp::Sum,
+            op: FoldOp::Sum,
             over: VarId(1),
         }],
         vec![ray_filter],
@@ -618,15 +597,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
         {
             // The flipped R1 row: the once-accepted multi-rule nullary
             // Count (one Count per disjunct is the modeling answer).
-            let count_head = || {
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ]
-            };
+            let count_head = || vec![FindTerm::Var(VarId(0)), FindTerm::Count];
             let arm = |floor: i64| Rule {
                 finds: count_head(),
                 atoms: vec![posting_atom()],

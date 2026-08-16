@@ -1,5 +1,6 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, Value};
+use crate::ir::FoldOp;
+use crate::ir::{CmpOp, Comparison, Value};
 
 // --- Accepting shapes ---
 
@@ -75,13 +76,10 @@ fn accepts_all_aggregate_finds() {
     let query = simple(
         vec![
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(0)),
+                op: FoldOp::Sum,
+                over: VarId(0),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         vec![atom(POSTING, vec![(2, var(0))])],
     );
@@ -95,14 +93,11 @@ fn accepts_min_max_over_bool_as_all_and_any() {
     // false < true, so `Max(flag)` is Any and `Min(flag)` is All — the
     // documented idiom, true at the validation boundary. Sum over bool
     // stays refused: a quantifier is not an addition.
-    for op in [AggOp::Min, AggOp::Max] {
+    for op in [FoldOp::Min, FoldOp::Max] {
         let query = Query::single(Rule {
             finds: vec![
                 FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op,
-                    over: Some(VarId(1)),
-                },
+                FindTerm::Aggregate { op, over: VarId(1) },
             ],
             atoms: vec![atom(POSTING, vec![(1, var(0)), (5, var(1))])],
             negated: vec![],
@@ -115,8 +110,8 @@ fn accepts_min_max_over_bool_as_all_and_any() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (5, var(1))])],
@@ -337,13 +332,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
     // position is interval-typed (a packed segment shares its input's
     // type), sealed in the signature.
     let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
     let witness = validate(&schema(), &query).expect("valid");
@@ -351,7 +340,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     assert_eq!(
         types,
@@ -370,13 +359,7 @@ fn accepts_pack_across_rules() {
     // rule-scoped): two rules over one Pack head are legal — the fold
     // domain is the union of the rules' claims projected to the head.
     let rule = |atoms: Vec<crate::ir::Atom>| Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms,
         negated: vec![],
         conditions: vec![],

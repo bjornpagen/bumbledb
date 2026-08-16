@@ -2992,7 +2992,7 @@ fn emit_fact_struct(
          }}\n",
     );
 
-    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field,
+    // Fresh-minting newtypes: `tx.reserve::<NewType>(1).start()` knows its field,
     // and each newtype is a typed point-read key (`::bumbledb::Key`) —
     // the value reads through its auto-materialized `R(field) -> R`,
     // whose `StatementId` is this fresh field's ordinal among ALL fresh

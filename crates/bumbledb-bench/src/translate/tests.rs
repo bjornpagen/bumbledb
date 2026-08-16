@@ -3,11 +3,11 @@ use std::sync::OnceLock;
 
 use super::*;
 use crate::fixture::{field, fresh, var};
-use bumbledb::AggOp;
 use bumbledb::AllenMask;
+use bumbledb::FoldOp;
 use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term};
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
-use bumbledb::{FieldId, HeadTerm, InteriorId, Rec};
+use bumbledb::{FieldId, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep, VarId};
 
 /// Relation and field ids for the test ledger below — declaration order
 /// is the id order, no magic numbers in query constructions.
@@ -245,8 +245,8 @@ fn balance_matches_its_hand_written_golden() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![
@@ -777,10 +777,7 @@ fn global_aggregates_carry_the_having_rule() {
     // Q(Count) :- Posting(amount = x): SQL's NULL-row-over-empty must
     // collapse to the engine's empty set.
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::AMOUNT, var(0))],
@@ -797,12 +794,12 @@ fn global_aggregates_carry_the_having_rule() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Min,
-                over: Some(VarId(1)),
+                op: FoldOp::Min,
+                over: VarId(1),
             },
             FindTerm::Aggregate {
-                op: AggOp::Max,
-                over: Some(VarId(1)),
+                op: FoldOp::Max,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -824,10 +821,7 @@ fn global_aggregates_carry_the_having_rule() {
 #[test]
 fn errors_name_the_untranslatable_construct() {
     let gates_only = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![],
@@ -869,13 +863,7 @@ fn a_nul_string_literal_is_a_named_error() {
 #[test]
 fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
     let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: bumbledb::AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
@@ -1014,8 +1002,8 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {
@@ -1111,9 +1099,8 @@ fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0), VarId(1)],
                 atoms: vec![Atom {
                     source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
                     bindings: vec![
@@ -1121,27 +1108,20 @@ fn closure_query() -> Query {
                         (ids::org_parent::PARENT, var(1)),
                     ],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                atoms: vec![
-                    Atom {
-                        source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
-                        bindings: vec![
-                            (ids::org_parent::CHILD, var(0)),
-                            (ids::org_parent::PARENT, var(1)),
-                        ],
-                    },
-                    Atom {
-                        source: bumbledb::AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
-                    },
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0), VarId(2)],
+                self_bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                    bindings: vec![
+                        (ids::org_parent::CHILD, var(0)),
+                        (ids::org_parent::PARENT, var(1)),
+                    ],
+                }],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -1169,19 +1149,23 @@ fn the_linear_closure_matches_its_hand_written_golden() {
 fn negation_of_finished_rec_matches_its_hand_written_golden() {
     // Main: Org(id = x), ¬rec(c0 = x) — anti-join inlined in the SELECT.
     let mut query = closure_query();
-    *query.head_mut() = vec![HeadTerm::Var];
-    *query.rules_mut() = vec![Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::ORG),
-            bindings: vec![(ids::org::ID, var(0))],
-        }],
-        negated: vec![Atom {
-            source: bumbledb::AtomSource::Interior(InteriorId(0)),
-            bindings: vec![(FieldId(0), var(0))],
-        }],
-        conditions: vec![],
-    }];
+    match &mut query {
+        Query::Cq { head, rules, .. } | Query::Reach { head, rules, .. } => {
+            *head = vec![HeadTerm::Var];
+            *rules = vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::ORG),
+                    bindings: vec![(ids::org::ID, var(0))],
+                }],
+                negated: vec![Atom {
+                    source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                    bindings: vec![(FieldId(0), var(0))],
+                }],
+                conditions: vec![],
+            }];
+        }
+    }
     assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_ROOTS);
@@ -1192,9 +1176,8 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
                     bindings: vec![
@@ -1202,27 +1185,20 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
                         (ids::org_parent::PARENT, var(0)),
                     ],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(1))],
-                atoms: vec![
-                    Atom {
-                        source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
-                        bindings: vec![
-                            (ids::org_parent::CHILD, var(0)),
-                            (ids::org_parent::PARENT, var(1)),
-                        ],
-                    },
-                    Atom {
-                        source: bumbledb::AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(FieldId(0), var(0))],
-                    },
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), var(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                    bindings: vec![
+                        (ids::org_parent::CHILD, var(0)),
+                        (ids::org_parent::PARENT, var(1)),
+                    ],
+                }],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -1251,25 +1227,20 @@ fn interval_derived_columns_error_by_name() {
     let query = Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![Atom {
                     source: bumbledb::AtomSource::Edb(ids::MANDATE),
                     bindings: vec![(ids::mandate::ACTIVE, var(0))],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
-                atoms: vec![Atom {
-                    source: bumbledb::AtomSource::Interior(InteriorId(0)),
-                    bindings: vec![(FieldId(0), var(0))],
-                }],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(0)],
+                self_bindings: vec![(FieldId(0), var(0))],
+                atoms: vec![],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {

@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId, Rule,
-    Term, Value, VarId,
+    AllenMask, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, RelationId,
+    Rule, Term, Value, VarId,
 };
 
 use crate::fixture::{atom, field, var};
@@ -129,8 +129,8 @@ fn aggregation_footgun_triples_the_sum() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
         ],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
@@ -145,8 +145,8 @@ fn aggregation_footgun_triples_the_sum() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
         ],
         atoms: vec![
@@ -169,13 +169,10 @@ fn empty_input_global_aggregate_is_the_empty_set() {
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
+                op: FoldOp::Sum,
+                over: VarId(2),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Count,
         ],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
@@ -385,8 +382,8 @@ fn sum_overflow_is_the_one_runtime_error() {
     let db = db(vec![posting(1, 7, i64::MAX), posting(2, 7, 1)]);
     let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(2)),
+            op: FoldOp::Sum,
+            over: VarId(2),
         }],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
@@ -474,8 +471,8 @@ fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
     ]);
     let sum_of = |account: u64| Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(0)),
+            op: FoldOp::Sum,
+            over: VarId(0),
         }],
         atoms: vec![atom(
             POSTING,

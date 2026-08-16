@@ -2,7 +2,8 @@
 //! exercise every plan-class/diagnostic family whose wording is public.
 
 use super::*;
-use crate::ir::{AggOp, HeadOp, HeadTerm};
+use crate::ir::FoldOp;
+use crate::ir::{HeadOp, HeadTerm};
 
 const JOIN_WITH_GROUND_FOLD: &str = r"introspection v6
 query:
@@ -191,8 +192,8 @@ fn aggregate_union_golden_and_stats_parity() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         atoms: vec![Atom {

@@ -7,8 +7,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term, Value,
+    VarId,
 };
 
 use super::{Scenario, ScenarioQuery, Surface, Twin, mix};
@@ -229,10 +229,7 @@ fn bucket_params(_: u64) -> Vec<Vec<Value>> {
 /// p4 — size-band count: secondary-range aggregation, no join.
 fn size_band() -> Query {
     Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
+        finds: vec![FindTerm::Count],
         atoms: vec![Atom {
             source: bumbledb::AtomSource::Edb(ids::DOC),
             bindings: vec![(FieldId(0), var(0)), (FieldId(3), var(1))],
@@ -408,12 +405,18 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let db = bumbledb::Db::create(&dir, bumbledb::Theory::descriptor(Points)).expect("create");
         let seed = 7;
-        db.bulk_load_dyn(ids::BUCKET, (0..BUCKETS_SMOKE).map(bucket_row))
-            .expect("buckets");
-        db.bulk_load_dyn(
-            ids::DOC,
-            (0..DOCS_SMOKE).map(|i| doc_row_sized(seed, i, BUCKETS_SMOKE)),
-        )
+        db.write(|tx| {
+            tx.insert_dyn(ids::BUCKET, (0..BUCKETS_SMOKE).map(bucket_row))
+                .map(|r| r.changed)
+        })
+        .expect("buckets");
+        db.write(|tx| {
+            tx.insert_dyn(
+                ids::DOC,
+                (0..DOCS_SMOKE).map(|i| doc_row_sized(seed, i, BUCKETS_SMOKE)),
+            )
+            .map(|r| r.changed)
+        })
         .expect("docs");
         let statement = doc_key_statement(schema());
         for i in [0u64, 3, DOCS_SMOKE - 1] {

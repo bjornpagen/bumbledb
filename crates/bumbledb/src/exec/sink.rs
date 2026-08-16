@@ -52,16 +52,11 @@ mod tests;
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
 /// over a slot into an [`Acc`]. Nullary [`AggSpec::Count`] is a sibling
 /// arm, not a `FoldOp`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FoldOp {
-    Sum,
-    Min,
-    Max,
-}
+pub use crate::ir::FoldOp;
 
 /// Nullary Count vs a fold over a slot. Trusted layer: Count cannot
-/// carry a slot and folds cannot omit one (C1/C6). Hostile
-/// `FindTerm::Aggregate { over: Option }` stays on `ir.rs`.
+/// carry a slot and folds cannot omit one. Hostile Count-with-variable
+/// is unrepresentable on [`crate::ir::FindTerm`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggSpec {
     Count,

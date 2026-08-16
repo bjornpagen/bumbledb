@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::WordCmp;
 
 /// The clover query over the paper's Fig. 4 instance: only
 /// (x0, a0, b0, c0) joins.
@@ -232,7 +233,7 @@ fn residuals_filter_across_atoms() {
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
         vec![PlacedComparison {
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             lhs: VarId(1),
             rhs: VarId(2),
         }],

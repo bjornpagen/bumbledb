@@ -251,7 +251,7 @@ fn balance_counts_equal_amounts_separately() {
     let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
     db.write(|tx| {
         for (rel, values) in &rows {
-            tx.insert_dyn(*rel, values)?;
+            tx.insert_dyn(*rel, [values])?;
         }
         Ok(())
     })

@@ -3,6 +3,7 @@ use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, VarId};
+use crate::ir::{CmpOp, WordCmp};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::dict::SENTINEL_ID;
@@ -62,7 +63,7 @@ fn w(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
 
-fn summary(bounds: &[(CmpOp, u64)]) -> RangeSummary {
+fn summary(bounds: &[(WordCmp, u64)]) -> RangeSummary {
     let mut summary = RangeSummary::new();
     for (op, word) in bounds {
         summary.narrow(*op, *word);
@@ -74,17 +75,20 @@ fn summary(bounds: &[(CmpOp, u64)]) -> RangeSummary {
 
 #[test]
 fn an_empty_range_summary_is_statically_empty() {
-    assert!(range_is_empty(&summary(&[(CmpOp::Gt, 5), (CmpOp::Lt, 3)])));
+    assert!(range_is_empty(&summary(&[
+        (WordCmp::Gt, 5),
+        (WordCmp::Lt, 3)
+    ])));
     // The domain edges: strictly-above-MAX and strictly-below-0 admit
     // no word at all.
-    assert!(range_is_empty(&summary(&[(CmpOp::Gt, u64::MAX)])));
-    assert!(range_is_empty(&summary(&[(CmpOp::Lt, 0)])));
+    assert!(range_is_empty(&summary(&[(WordCmp::Gt, u64::MAX)])));
+    assert!(range_is_empty(&summary(&[(WordCmp::Lt, 0)])));
 }
 
 #[test]
 fn a_single_point_range_survives() {
     // The near miss: `x > 5 ∧ x <= 6` admits exactly the word 6.
-    let summary = summary(&[(CmpOp::Gt, 5), (CmpOp::Le, 6)]);
+    let summary = summary(&[(WordCmp::Gt, 5), (WordCmp::Le, 6)]);
     assert!(!range_is_empty(&summary));
     assert_eq!((summary.lo, summary.hi), (6, 6));
 }
@@ -123,14 +127,14 @@ fn a_repeated_eq_constant_survives() {
 
 #[test]
 fn an_eq_constant_outside_the_range_is_statically_empty() {
-    let summary = summary(&[(CmpOp::Ge, 8), (CmpOp::Le, 19)]);
+    let summary = summary(&[(WordCmp::Ge, 8), (WordCmp::Le, 19)]);
     assert!(eq_outside_range(3, &summary));
     assert!(eq_outside_range(20, &summary));
 }
 
 #[test]
 fn an_eq_constant_on_the_range_edge_survives() {
-    let summary = summary(&[(CmpOp::Ge, 8), (CmpOp::Le, 19)]);
+    let summary = summary(&[(WordCmp::Ge, 8), (WordCmp::Le, 19)]);
     assert!(!eq_outside_range(8, &summary));
     assert!(!eq_outside_range(19, &summary));
 }
@@ -234,12 +238,12 @@ fn an_order_conjunction_folds_to_one_summary() {
         vec![
             FilterPredicate::Compare {
                 field: R_A,
-                op: CmpOp::Ge,
+                op: WordCmp::Ge,
                 value: Const::Word(w(7)),
             },
             FilterPredicate::Compare {
                 field: R_A,
-                op: CmpOp::Le,
+                op: WordCmp::Le,
                 value: Const::Word(w(19)),
             },
         ],
@@ -264,7 +268,7 @@ fn an_eq_pin_subsumes_its_folded_bounds() {
         normalized.occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: R_A,
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(w(5)),
         }],
     );
@@ -388,12 +392,12 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
     let filters = vec![
         FilterPredicate::Compare {
             field: R_A,
-            op: CmpOp::Gt,
+            op: WordCmp::Gt,
             value: Const::Word(w(5)),
         },
         FilterPredicate::Compare {
             field: R_A,
-            op: CmpOp::Lt,
+            op: WordCmp::Lt,
             value: Const::Word(w(3)),
         },
     ];
@@ -403,6 +407,7 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
         role: Role::Negated,
         vars: vec![],
         filters: filters.clone(),
+        point_vars: vec![],
     }];
     assert_eq!(fold(&schema, &mut occurrences), None);
     assert_eq!(occurrences[0].filters, filters, "untouched");
@@ -436,10 +441,11 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
         role: Role::Positive,
         vars: vec![],
         filters,
+        point_vars: vec![],
     };
     let mut empty_set = vec![occurrence(vec![FilterPredicate::Compare {
         field: FieldId(2),
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         value: Const::WordSet(vec![SENTINEL_ID]),
     }])];
     assert_eq!(fold(&schema, &mut empty_set).as_deref(), Some("R: k ∈ {}"));
@@ -447,12 +453,12 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
     let mut disjoint = vec![occurrence(vec![
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 2]),
         },
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(7),
         },
     ])];
@@ -464,12 +470,12 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
     let mut member = vec![occurrence(vec![
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 7]),
         },
         FilterPredicate::Compare {
             field: FieldId(2),
-            op: CmpOp::Eq,
+            op: WordCmp::Eq,
             value: Const::Word(7),
         },
     ])];

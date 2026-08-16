@@ -156,8 +156,11 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
 /// Engine errors, stringified.
 pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.bulk_load_dyn(rel, relation_rows(mass, rel))
-            .map_err(|e| format!("windowed load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(mass, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("windowed load: {e:?}"))?;
     }
     Ok(())
 }
@@ -179,6 +182,10 @@ fn unselected_parent(rng: &mut Rng) -> u64 {
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_admission(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -187,12 +194,12 @@ pub fn commit_window_admission(
     harness::measure(proto, || {
         let parent = world::WParentId(rng.range(PARENTS));
         db.write(|tx| {
-            let id: world::WChildId = tx.alloc()?;
-            tx.insert(&world::WChild {
+            let id: world::WChildId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&world::WChild {
                 id,
                 parent,
                 flag: 0,
-            })
+            }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_window_admission: {e:?}"))
@@ -205,6 +212,10 @@ pub fn commit_window_admission(
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_baseline(
     db: &Db<baseline::UnwindowedWorld>,
     proto: Protocol,
@@ -213,12 +224,12 @@ pub fn commit_window_baseline(
     harness::measure(proto, || {
         let parent = baseline::WParentId(rng.range(PARENTS));
         db.write(|tx| {
-            let id: baseline::WChildId = tx.alloc()?;
-            tx.insert(&baseline::WChild {
+            let id: baseline::WChildId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&baseline::WChild {
                 id,
                 parent,
                 flag: 0,
-            })
+            }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_window_baseline: {e:?}"))
@@ -232,6 +243,10 @@ pub fn commit_window_baseline(
 /// # Errors
 ///
 /// Engine errors, stringified.
+///
+/// # Panics
+///
+/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_exclusion(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -240,12 +255,12 @@ pub fn commit_window_exclusion(
     harness::measure(proto, || {
         let parent = world::WParentId(unselected_parent(&mut rng));
         db.write(|tx| {
-            let id: world::WChildId = tx.alloc()?;
-            tx.insert(&world::WChild {
+            let id: world::WChildId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&world::WChild {
                 id,
                 parent,
                 flag: 1,
-            })
+            }])
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_window_exclusion: {e:?}"))

@@ -52,13 +52,7 @@ fn the_introspection_header_renders_the_signature() {
 
     // The fold-bearing head: the column renders its producing kind.
     let count_query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: crate::ir::AggOp::Count,
-                over: None,
-            },
-        ],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![(FieldId(1), Term::Var(VarId(0)))],

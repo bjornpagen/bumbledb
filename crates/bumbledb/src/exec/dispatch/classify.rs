@@ -1,6 +1,6 @@
 use super::{KeyProbePlan, KeyProbeVar};
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::CmpOp;
+use crate::ir::WordCmp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
@@ -60,16 +60,17 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     // table is never single-atom), checked for hand-built queries. A
     // var-sourced point falls through with them (its evaluation home is
     // the executor's membership probes).
-    if occurrence.filters.iter().any(|filter| {
-        matches!(
-            filter,
-            FilterPredicate::Compare {
-                value: Const::ParamSet(_) | Const::WordSet(_),
-                ..
-            } | FilterPredicate::AnyPointIn { .. }
-                | FilterPredicate::PointVar { .. }
-        )
-    }) {
+    if !occurrence.point_vars.is_empty()
+        || occurrence.filters.iter().any(|filter| {
+            matches!(
+                filter,
+                FilterPredicate::Compare {
+                    value: Const::ParamSet(_) | Const::WordSet(_),
+                    ..
+                } | FilterPredicate::AnyPointIn { .. }
+            )
+        })
+    {
         return None;
     }
 
@@ -78,7 +79,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         occurrence.filters.iter().find_map(|f| match f {
             FilterPredicate::Compare {
                 field: candidate,
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 value,
             } if *candidate == field => Some(value.clone()),
             _ => None,
@@ -184,7 +185,7 @@ fn unconsumed_filters(
         .filter(|f| match f {
             FilterPredicate::Compare {
                 field,
-                op: CmpOp::Eq,
+                op: WordCmp::Eq,
                 ..
             } => {
                 if let Some(idx) = consumed.iter().position(|c| c == field) {

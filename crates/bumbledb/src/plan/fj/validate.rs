@@ -3,7 +3,6 @@ use super::{
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
     derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
 };
-use crate::image::view::FilterPredicate;
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::Schema;
@@ -17,20 +16,7 @@ use std::collections::BTreeSet;
 /// ([`PointProbe`] for positive occurrences, the anti-probe's point
 /// checks for negated ones).
 fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
-    occurrence
-        .filters
-        .iter()
-        .filter_map(|filter| match filter {
-            FilterPredicate::PointVar { field, var } => Some((*field, *var)),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Whether a filter is a var-sourced membership (the complement of
-/// [`point_filters_of`]'s selection).
-fn is_point_filter(filter: &FilterPredicate) -> bool {
-    matches!(filter, FilterPredicate::PointVar { .. })
+    occurrence.point_vars.clone()
 }
 
 /// The execution-facing occurrence table. Trie schemas: a positive
@@ -106,7 +92,7 @@ fn build_occurrences(
                 crate::ir::AtomSource::Interior(id) => signatures[id.index()]
                     .columns
                     .iter()
-                    .map(|column| column.ty.type_desc())
+                    .map(|column| column.ty().type_desc())
                     .collect(),
             };
             // A positive occurrence's Eq-constants become selection
@@ -128,12 +114,7 @@ fn build_occurrences(
             // (`plan/ground/evaluate.rs::folded_picture`) — never
             // resolved, probed, or scanned (`Role::discharged`, read by
             // every execution-side loop).
-            let view_filters: Vec<FilterPredicate> = occurrence
-                .filters
-                .iter()
-                .filter(|f| !is_point_filter(f))
-                .cloned()
-                .collect();
+            let view_filters = occurrence.filters.clone();
             let (selections, filters) = match &occurrence.role {
                 Role::Positive => split_filters(&view_filters),
                 Role::Negated | Role::Folded(_) => (Vec::new(), view_filters),

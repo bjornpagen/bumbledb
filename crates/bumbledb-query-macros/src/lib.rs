@@ -318,13 +318,14 @@ enum AggOp {
 }
 
 impl AggOp {
-    fn ir_name(self) -> &'static str {
+    fn fold_ir_name(self) -> &'static str {
         match self {
             Self::Sum => "Sum",
             Self::Min => "Min",
             Self::Max => "Max",
-            Self::Count => "Count",
-            Self::Pack => "Pack",
+            Self::Count | Self::Pack => {
+                unreachable!("Count and Pack are sibling FindTerm constructors")
+            }
         }
     }
 }
@@ -1665,6 +1666,15 @@ impl Emitter<'_> {
     /// and an explicitly indexed dense in-order variable list is refused
     /// — canonical utterance, one spelling per meaning.
     fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
+        let bindings = self.interior_bindings(scope, atom)?;
+        Ok(format!(
+            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
+        ))
+    }
+
+    /// Bindings of an interior/rec atom as `(FieldId, Term)` pairs — the
+    /// rec step's `self_bindings` is this list, not a second Atom.
+    fn interior_bindings(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if interior_style(atom)? == BindingStyle::Bare {
             // Ordered dense: positions assigned left to right from 0.
             let mut bindings = String::new();
@@ -1675,9 +1685,7 @@ impl Emitter<'_> {
                 let term = Self::var(scope.intern(name)?);
                 let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
             }
-            return Ok(format!(
-                "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
-            ));
+            return Ok(bindings);
         }
         // Indexed labels. An explicit dense in-order variable list is the
         // ordered form's meaning respelled — refused, one spelling per
@@ -1735,9 +1743,7 @@ impl Emitter<'_> {
                 .expect("the style split sealed numeric labels");
             let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
         }
-        Ok(format!(
-            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
-        ))
+        Ok(bindings)
     }
 
     /// One atom as an `Atom` expression — a derived table of this query by
@@ -1879,7 +1885,8 @@ impl Emitter<'_> {
     }
 
     /// One head position as a `FindTerm` expression; every variable must
-    /// already be body-bound.
+    /// already be body-bound. Count and Pack are sibling constructors;
+    /// folds carry [`FoldOp`], never `AggOp` plus `Option`.
     fn find(scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
             HeadTerm::Var(name) => format!(
@@ -1890,28 +1897,64 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Count => "::bumbledb::FindTerm::Aggregate { op: ::bumbledb::AggOp::Count, \
-                     over: ::std::option::Option::None }"
-                .to_string(),
+            HeadTerm::Count => "::bumbledb::FindTerm::Count".to_string(),
+            HeadTerm::Agg {
+                op: AggOp::Pack,
+                over,
+            } => format!(
+                "::bumbledb::FindTerm::Pack {{ over: ::bumbledb::VarId({}) }}",
+                scope.head_var(over)?
+            ),
             HeadTerm::Agg { op, over } => format!(
-                "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::AggOp::{}, \
-                     over: ::std::option::Option::Some(::bumbledb::VarId({})) }}",
-                op.ir_name(),
+                "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::FoldOp::{}, \
+                     over: ::bumbledb::VarId({}) }}",
+                op.fold_ir_name(),
                 scope.head_var(over)?
             ),
             HeadTerm::AggMeasure { op, over } => format!(
-                "::bumbledb::FindTerm::AggregateMeasure {{ op: ::bumbledb::AggOp::{}, \
+                "::bumbledb::FindTerm::AggregateMeasure {{ op: ::bumbledb::FoldOp::{}, \
                      over: ::bumbledb::VarId({}) }}",
-                op.ir_name(),
+                op.fold_ir_name(),
                 scope.head_var(over)?
             ),
         })
     }
 
-    /// One parsed rule as a `Rule` expression. Items lower in source order;
-    /// the IR buckets them (atoms, negated, conditions) — the renderer's
-    /// normalized order.
-    fn rule(&mut self, rule: &ParsedRule) -> Parse<String> {
+    /// Interior / rec heads project bound variables only.
+    fn projection_vars(scope: &Scope, head: &[HeadTerm]) -> Parse<String> {
+        let mut finds = String::new();
+        for term in head {
+            match term {
+                HeadTerm::Var(name) => {
+                    let _ = write!(finds, "::bumbledb::VarId({}),", scope.head_var(name)?);
+                }
+                HeadTerm::Measure(name) => {
+                    return fail(
+                        name.span,
+                        "query!: an interior/rec head projects bound variables only — \
+                         the measure reads a finished set",
+                    );
+                }
+                HeadTerm::Count => {
+                    return fail(
+                        Span::call_site(),
+                        "query!: an interior/rec head projects bound variables only — \
+                         Count is a fold over a finished set",
+                    );
+                }
+                HeadTerm::Agg { over, .. } | HeadTerm::AggMeasure { over, .. } => {
+                    return fail(
+                        over.span,
+                        "query!: an interior/rec head projects bound variables only — \
+                         aggregates fold a finished set",
+                    );
+                }
+            }
+        }
+        Ok(finds)
+    }
+
+    fn body_parts(&mut self, rule: &ParsedRule) -> Parse<(Scope, String, String, String)> {
         let mut scope = Scope::default();
         let mut atoms = String::new();
         let mut negated = String::new();
@@ -1929,6 +1972,14 @@ impl Emitter<'_> {
                 }
             }
         }
+        Ok((scope, atoms, negated, conditions))
+    }
+
+    /// One parsed rule as a `Rule` expression. Items lower in source order;
+    /// the IR buckets them (atoms, negated, conditions) — the renderer's
+    /// normalized order.
+    fn rule(&mut self, rule: &ParsedRule) -> Parse<String> {
+        let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
         let mut finds = String::new();
         for term in rule.head() {
             let _ = write!(finds, "{},", Self::find(&scope, term)?);
@@ -1938,6 +1989,80 @@ impl Emitter<'_> {
                  finds: ::std::vec![{finds}], \
                  atoms: ::std::vec![{atoms}], \
                  negated: ::std::vec![{negated}], \
+                 conditions: ::std::vec![{conditions}] }}"
+        ))
+    }
+
+    fn projection_rule(&mut self, rule: &ParsedRule) -> Parse<String> {
+        let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
+        let finds = Self::projection_vars(&scope, rule.head())?;
+        Ok(format!(
+            "::bumbledb::ProjectionRule {{ \
+                 finds: ::std::vec![{finds}], \
+                 atoms: ::std::vec![{atoms}], \
+                 negated: ::std::vec![{negated}], \
+                 conditions: ::std::vec![{conditions}] }}"
+        ))
+    }
+
+    fn rec_rule(&mut self, rule: &ParsedRule) -> Parse<String> {
+        let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
+        if !negated.is_empty() {
+            return fail(
+                Span::call_site(),
+                "query!: a rec rule negates no table — negation through \
+                 the cycle is unrepresentable",
+            );
+        }
+        let finds = Self::projection_vars(&scope, rule.head())?;
+        Ok(format!(
+            "::bumbledb::RecRule {{ \
+                 finds: ::std::vec![{finds}], \
+                 atoms: ::std::vec![{atoms}], \
+                 conditions: ::std::vec![{conditions}] }}"
+        ))
+    }
+
+    fn rec_step(&mut self, rule: &ParsedRule, rec_name: &str) -> Parse<String> {
+        let mut scope = Scope::default();
+        let mut self_bindings = None;
+        let mut atoms = String::new();
+        let mut conditions = String::new();
+        for item in rule.items() {
+            match item {
+                Item::Negated(atom) => {
+                    return fail(
+                        atom.relation.span,
+                        "query!: a rec rule negates no table — negation through \
+                         the cycle is unrepresentable",
+                    );
+                }
+                Item::Cond(cond) => {
+                    let _ = write!(conditions, "{},", self.cond(&mut scope, cond)?);
+                }
+                Item::Atom(atom) if atom.relation.text == rec_name => {
+                    if self_bindings.is_some() {
+                        return fail(atom.relation.span, "query!: a rec step has one self-atom");
+                    }
+                    self_bindings = Some(self.interior_bindings(&mut scope, atom)?);
+                }
+                Item::Atom(atom) => {
+                    let _ = write!(atoms, "{},", self.atom(&mut scope, atom)?);
+                }
+            }
+        }
+        let finds = Self::projection_vars(&scope, rule.head())?;
+        let Some(self_bindings) = self_bindings else {
+            return fail(
+                Span::call_site(),
+                "query!: a rec step is missing its self-atom",
+            );
+        };
+        Ok(format!(
+            "::bumbledb::RecStep {{ \
+                 finds: ::std::vec![{finds}], \
+                 self_bindings: ::std::vec![{self_bindings}], \
+                 atoms: ::std::vec![{atoms}], \
                  conditions: ::std::vec![{conditions}] }}"
         ))
     }
@@ -2190,6 +2315,40 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
     })
 }
 
+fn emit_projection_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
+    let mut out = String::new();
+    for rule in rules {
+        let _ = write!(out, "{},", emitter.projection_rule(rule)?);
+    }
+    Ok(out)
+}
+
+fn emit_rec_base(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
+    let mut out = String::new();
+    for rule in rules {
+        let _ = write!(out, "{},", emitter.rec_rule(rule)?);
+    }
+    Ok(out)
+}
+
+fn emit_rec_steps(
+    emitter: &mut Emitter<'_>,
+    rules: &[ParsedRule],
+    rec_name: &str,
+) -> Parse<String> {
+    let mut out = String::new();
+    for rule in rules {
+        let _ = write!(out, "{},", emitter.rec_step(rule, rec_name)?);
+    }
+    Ok(out)
+}
+
+fn nonempty(items: &str, what: &str) -> String {
+    format!(
+        "::bumbledb::NonEmpty::from_vec(::std::vec![{items}]).expect(\"query!: nonempty {what}\")"
+    )
+}
+
 fn emit_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
     let mut out = String::new();
     for rule in rules {
@@ -2241,15 +2400,11 @@ fn emit_interiors(
     let mut lets = String::new();
     let mut defs = String::new();
     for (index, group) in interiors.iter().enumerate() {
-        let rules = emit_rules(emitter, &group.rules)?;
-        let _ = write!(
-            lets,
-            "let interior{index}_rules = ::std::vec![{rules}]; \
-             let interior{index}_head = ::bumbledb::Rule::head(&interior{index}_rules[0]); "
-        );
+        let rules = emit_projection_rules(emitter, &group.rules)?;
+        let _ = write!(lets, "let interior{index}_rules = ::std::vec![{rules}]; ");
         let _ = write!(
             defs,
-            "::bumbledb::Interior {{ head: interior{index}_head, rules: interior{index}_rules }},"
+            "::bumbledb::Interior {{ rules: interior{index}_rules }},"
         );
     }
     Ok((lets, defs))
@@ -2294,13 +2449,14 @@ fn emit_reach(
         derived,
     };
     let (mut lets, interior_defs) = emit_interiors(&mut emitter, interiors)?;
-    let base = emit_rules(&mut emitter, &rec.base)?;
-    let step = emit_rules(&mut emitter, &rec.rec)?;
+    let rec_name = rec_derived_name(rec, interiors.len());
+    let base = emit_rec_base(&mut emitter, &rec.base)?;
+    let step = emit_rec_steps(&mut emitter, &rec.rec, &rec_name)?;
     let _ = write!(
         lets,
-        "let rec_base = ::std::vec![{base}]; \
-         let rec_step = ::std::vec![{step}]; \
-         let rec_head = ::bumbledb::Rule::head(&rec_base[0]); "
+        "let rec_base = {base}; let rec_step = {step}; ",
+        base = nonempty(&base, "rec base"),
+        step = nonempty(&step, "rec step"),
     );
     let main_rules = emit_rules(&mut emitter, main)?;
     Ok(format!(
@@ -2308,7 +2464,7 @@ fn emit_reach(
              let head = ::bumbledb::Rule::head(&rules[0]); \
              ::bumbledb::Query::Reach {{ \
                  interiors: ::std::vec![{interior_defs}], \
-                 rec: ::bumbledb::Rec {{ head: rec_head, base: rec_base, rec: rec_step }}, \
+                 rec: ::bumbledb::Rec {{ base: rec_base, rec: rec_step }}, \
                  head, \
                  rules }} }}"
     ))

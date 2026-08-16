@@ -1,7 +1,7 @@
 use super::*;
 use crate::ir::VarId;
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{CmpOp, Value};
+use crate::ir::{OrderCmp, Value, WordCmp};
 
 fn compile(disjuncts: &[&[ClassifiedComparison]]) -> CompiledVerdict {
     // A flat width-1 layout: VarId(n) at slot n except VarId(0), an
@@ -16,14 +16,14 @@ fn compile(disjuncts: &[&[ClassifiedComparison]]) -> CompiledVerdict {
 fn duration_lt(bound: u64) -> ClassifiedComparison {
     ClassifiedComparison::Duration {
         interval: VarId(0),
-        op: CmpOp::Lt,
+        op: OrderCmp::Lt,
         other: DurationOperand::Const(SealedConst::Literal(Value::U64(bound))),
     }
 }
 
 fn scalar_eq(var: u16, value: u64) -> ClassifiedComparison {
     ClassifiedComparison::VarConst {
-        op: CmpOp::Eq,
+        op: WordCmp::Eq,
         var: VarId(var),
         value: SealedConst::Literal(Value::U64(value)),
     }

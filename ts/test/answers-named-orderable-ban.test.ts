@@ -117,12 +117,12 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		// (Sev: Info 0, Warn 1, Crit 2, Fatal 3; Priority: Crit 0, Low 1) —
 		// the name↔id bijection is the SDK marshal's, above this seam.
 		const tx = native.dbWriteBegin(db)
-		native.txInsert(tx, INCIDENT_ID, [1n, 0n, 1n])
-		native.txInsert(tx, INCIDENT_ID, [2n, 1n, 1n])
-		native.txInsert(tx, INCIDENT_ID, [3n, 2n, 0n])
-		native.txInsert(tx, INCIDENT_ID, [4n, 3n, 0n])
-		native.txInsert(tx, EDGE_ID, [1n, 2n])
-		native.txInsert(tx, EDGE_ID, [2n, 3n])
+		native.txInsert(tx, INCIDENT_ID, [[1n, 0n, 1n]])
+		native.txInsert(tx, INCIDENT_ID, [[2n, 1n, 1n]])
+		native.txInsert(tx, INCIDENT_ID, [[3n, 2n, 0n]])
+		native.txInsert(tx, INCIDENT_ID, [[4n, 3n, 0n]])
+		native.txInsert(tx, EDGE_ID, [[1n, 2n]])
+		native.txInsert(tx, EDGE_ID, [[2n, 3n]])
 		const committed = native.txCommit(tx)
 		assert.ok(committed.ok, "the seed commit lands")
 	})

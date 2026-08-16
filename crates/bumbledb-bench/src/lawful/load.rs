@@ -14,7 +14,7 @@ use super::{LawSizes, LawfulWorld, corpus, enforcement, ids, schema};
 
 /// Loads the lawful corpus into a fresh durability-paired twin under
 /// `dir` (delete-and-recreated — scratch, never user data): the engine
-/// store through the lane's constructor, bulk-loaded in containment
+/// store through the lane's constructor, inserted in containment
 /// order (targets before sources: Task, Steer, Attempt, `SteerScope`;
 /// Verdict seeds none); the `SQLite` mirror through the lane's pragma
 /// set plus `PRAGMA foreign_keys=ON` (asserted read back as 1 — the FK
@@ -50,8 +50,11 @@ pub fn load_stores(
         ids::VERDICT,
     ];
     for rel in order {
-        db.bulk_load_dyn(rel, corpus::relation_rows(sizes, rel))
-            .map_err(|e| format!("load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("load: {e:?}"))?;
     }
     let conn = Connection::open(dir.join("oracle.sqlite")).map_err(|e| format!("oracle: {e}"))?;
     lane.configure(&conn)?;

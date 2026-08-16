@@ -4,12 +4,11 @@
 # at load time, so the cdylib links with no platform link-arg ceremony).
 [package]
 name = "bumbledb-node"
-# The FOURTH spelling of the release version (finding 139): `engine_version()`
-# bakes CARGO_PKG_VERSION into the shipped binary — the one version string
-# readable at runtime — so this value rides the same lockstep as the npm
-# manifests (main == platform == optionalDependencies pin == here) and a
-# release bump edits all four. scripts/build.ts's lockstep gate enforces it.
-version = "0.12.2"
+# One spelling of the release version (finding 139): `engine_version()`
+# bakes CARGO_PKG_VERSION into the shipped binary. Lockstep with the npm
+# manifests, the engine crate, and `bumbledb-c` — `scripts/build.ts`
+# asserts the match.
+version = "0.14.0"
 edition = "2024"
 publish = false
 

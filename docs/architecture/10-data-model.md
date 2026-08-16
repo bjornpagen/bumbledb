@@ -289,20 +289,27 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
   ```rust
   db.write(|tx| {
-      let id: AccountId = tx.alloc()?;             // mints the next AccountId value
-      tx.insert(&Account { id, holder, status })?; // insert always takes complete facts
-      Ok(id)
+      let ids = tx.reserve::<AccountId>(1)?;
+      tx.insert([&Account {
+          id: ids.start().expect("nonempty"),
+          holder,
+          status,
+      }])?;
+      Ok(ids.start().expect("nonempty"))
   })?
   ```
 
   (The typed surface infers the field from the `Fresh` newtype; the untyped form is
-  `tx.alloc_at(witness)` with the schema-bound witness resolved once through
+  `tx.reserve_at(witness, n)` with the schema-bound witness resolved once through
   `db.fresh_field(relation, field)` — the witness carries the handle's schema
   typestate, so a foreign schema's witness is a compile error; `70-api.md` § ETL
   records the ruling and the dyn-boundary refusal.)
 
-  `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
-  one insert semantics, no generative form.
+  `reserve n` is the only generator (`lean/Bumbledb/Txn/Fresh.lean: reserve_advances_by_count`);
+  `insert` is always full-fact and stays idempotent — one insert semantics, no
+  generative form. Empty, singleton, and many are one collection
+  (`lean/Bumbledb/Txn.lean: insert_is_fold`). `reserve(0)` returns
+  `FreshRange::Empty`; `start()` is `None` — empty is not a minted id.
 - Explicit values are legal on the normal write path (not just ETL): inserting with a
   chosen value ≤ or > the high-water mark succeeds and advances the mark past it. This
   is load-bearing: correcting a fresh-keyed fact is `delete(old); insert(new with the
@@ -312,8 +319,8 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   explicit/generated allocation within one transaction tracks the running maximum.
   **Every** transaction persists the fresh values it issued — a committed commit, a
   no-op commit, and an *aborted* transaction (`Err`/panic, or a rejected commit
-  whose violations carry the offending facts back as data) alike: `alloc` hands the
-  id to the host before the commit's fate is known, so re-issue would break
+  whose violations carry the offending facts back as data) alike: `reserve` hands the
+  range to the host before the commit's fate is known, so re-issue would break
   observability whatever became of the data. The escaped high-water flushes through a
   counters-only commit that writes exactly the dirty `Q` marks — no generation bump,
   no cache eviction — so an abort leaves query-visible state (facts and generation)
@@ -350,11 +357,11 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
    i64 has no sighting; the census law forbids the surface area. **Reverses if:** a
    sighted workload needs a signed mint sequence.
 2. **Writable-by-default is load-bearing, not a leak.** Update is delete+insert, so
-   re-inserting a fact writes its existing id back; ETL and `bulk_load` must preserve
-   ids other facts reference. The SQL-standard `GENERATED ALWAYS` shape is
+   re-inserting a fact writes its existing id back; ETL preserves identity by
+   inserting complete facts (explicit fresh values). The SQL-standard `GENERATED ALWAYS` shape is
    incompatible with the engine's own update idiom. Explicit writes advance the
    high-water (`saturating_add`); exhaustion at `u64::MAX` is ~585,000 years at 10⁶
-   allocs/sec — no check beyond `FreshExhausted`. **Reverses if:** never —
+   mints/sec — no check beyond `FreshExhausted`. **Reverses if:** never —
    writability is a theorem of the update idiom, not a preference.
 3. **Generation attribute, not a type.** A type is an encoding and the value's
    encoding *is* u64; a distinct engine type would smuggle nominal typing past the
@@ -421,7 +428,7 @@ fixed extension.
   canonically encoded ONCE, at validate — the sealed ground axioms carry fact bytes and
   are never re-encoded (the staging law applied to the feature itself).
 - **Writes are refused.** Any delta operation naming a closed relation —
-  insert/delete, typed or dynamic, `bulk_load`, `alloc` — is the typed
+  insert/delete/reserve, typed or dynamic — is the typed
   `ClosedRelationWrite`, checked at the write-surface entry before any encoding
   runs. The store holds no facts for a closed relation, and the sweeper
   (`verify_store`) convicts any `F`/`M`/`U`/`R` entry naming one as corruption.
@@ -453,9 +460,10 @@ survives only for physical layout/stride and for SQLite's external row concept.
   are invariants a relation *satisfies*, plural and unprivileged; an inclusion targets
   whichever key it names, and fresh is a value-minting convenience that happens to
   materialize one. Nothing anywhere appoints "the" key.
-- `insert(fact)` is an idempotent no-op if the fact exists; `delete(fact)` is an
-  idempotent no-op if it doesn't (set union and difference —
-  `lean/Bumbledb/Txn.lean: Op.apply`). Both report whether they changed state. **There is
+- `insert(facts)` is an idempotent no-op per already-present fact; `delete(facts)` is an
+  idempotent no-op per already-absent fact (set union and difference —
+  `lean/Bumbledb/Txn.lean: Op.apply`). Both return `MutationReport { submitted, changed }`.
+  Empty, singleton `[&fact]`, and many are one collection. **There is
   no update operation**; mutation is delete + insert (within one write transaction),
   with explicit fresh re-supply preserving identity across the swap.
 - Nullary (zero-field) relations are legal: a set that is empty or contains the single

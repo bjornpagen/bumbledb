@@ -938,7 +938,7 @@ mod tests {
     /// The generated corpus satisfies the tag-budget capacity law end
     /// to end (C13: the randomized lane's world carries the law from
     /// day one, so this is the seam that proves it loads): the full
-    /// Tiny corpus bulk-loads under the live schema — the weighted `R`
+    /// Tiny corpus inserts under the live schema — the weighted `R`
     /// edges written at load — and the offline sweeper, the
     /// weight-desync sweep included, finds nothing.
     #[test]
@@ -965,11 +965,11 @@ mod tests {
                     db.write(|tx| {
                         for i in 0..entries {
                             let row = corpus_row(cfg, &domains, ids::JOURNAL_ENTRY, i);
-                            tx.insert_dyn(ids::JOURNAL_ENTRY, &row)?;
+                            tx.insert_dyn(ids::JOURNAL_ENTRY, [&row])?;
                         }
                         while next_batch < batches {
                             let row = corpus_row(cfg, &domains, ids::IMPORT_BATCH, next_batch);
-                            tx.insert_dyn(ids::IMPORT_BATCH, &row)?;
+                            tx.insert_dyn(ids::IMPORT_BATCH, [&row])?;
                             next_batch += 1;
                         }
                         Ok(())
@@ -978,8 +978,11 @@ mod tests {
                 }
                 ids::IMPORT_BATCH => {} // loaded with its entries
                 _ => {
-                    db.bulk_load_dyn(rel, corpus_relation_rows(cfg, rel))
-                        .expect("target bulk load");
+                    db.write(|tx| {
+                        tx.insert_dyn(rel, corpus_relation_rows(cfg, rel))
+                            .map(|r| r.changed)
+                    })
+                    .expect("target insert");
                 }
             }
         }

@@ -55,17 +55,27 @@ pub enum DeterminantOverlay<'a> {
     Absent,
 }
 
-/// The pending facts touching one key statement's determinant tuple —
-/// each by its arena slice and net disposition: the revert target held
-/// as DATA rather than rediscovered by scanning the pending set (finding
-/// 097). Recording pushes; a cancelled op removes exactly its own entry;
-/// resolution is the insert-wins rule — a pending `Insert` owns the
-/// tuple in the final state (committed state satisfies the key, so any
-/// same-tuple `Delete` names the committed owner leaving), a remaining
-/// `Delete` records absence, and the emptied set is removed whole (the
-/// committed state answers unshadowed). Every operation is
-/// O(log |delta|), like the rest of the delta.
-type TupleOwners = Vec<(ArenaSlice, Disposition)>;
+/// Pending owners of one determinant tuple: at most one *live* insert
+/// (point-read last-wins), plus any deletes of other facts that share
+/// the tuple (`delete(old); insert(new)`). A second insert of the same
+/// tuple replaces the live owner and stashes the previous insert so
+/// cancel can restore it — two live inserts are unrepresentable here,
+/// but the earlier fact remains in the fact map until cancelled. Emptying
+/// this value removes the overlay entry, never records `Absent`.
+enum TupleOwners {
+    Insert {
+        fact: ArenaSlice,
+        /// Inserts this tuple's later insert replaced. Not live for
+        /// point-reads; cancel of the live insert restores the last one.
+        replaced: Vec<ArenaSlice>,
+        deletes: Vec<ArenaSlice>,
+    },
+    /// At least one delete owner. Empty is overlay-removed, not this variant.
+    Deletes {
+        head: ArenaSlice,
+        rest: Vec<ArenaSlice>,
+    },
+}
 
 /// The fact-disposition table's concrete shape ([`WriteDelta::facts`]).
 type FactMap = std::collections::HashMap<

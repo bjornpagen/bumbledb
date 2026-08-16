@@ -1,5 +1,6 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, Value};
+use crate::ir::FoldOp;
+use crate::ir::{CmpOp, Comparison, Value};
 
 // --- Rejecting shapes, one per roster item ---
 
@@ -388,10 +389,7 @@ fn rejects_duplicate_find_terms() {
 
     // Aggregate terms collide under the same structural equality: two
     // nullary Counts are one find written twice.
-    let count = || FindTerm::Aggregate {
-        op: AggOp::Count,
-        over: None,
-    };
+    let count = || FindTerm::Count;
     let query = simple(
         vec![count(), count()],
         vec![atom(HOLDER, vec![(0, var(0))])],
@@ -430,8 +428,8 @@ fn rejects_negated_atoms_without_any_positive_atom() {
 fn rejects_sum_over_non_integer() {
     let query = simple(
         vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: Some(VarId(0)),
+            op: FoldOp::Sum,
+            over: VarId(0),
         }],
         vec![atom(HOLDER, vec![(1, var(0))])], // String
     );
@@ -446,12 +444,9 @@ fn rejects_min_and_max_over_str() {
     // The str-extrema roster refusal (the README's recorded ruling):
     // intern words are not order-preserving, so a str extreme would be
     // a dictionary-id extreme — meaningless. Min/Max fold U64/I64 only.
-    for op in [AggOp::Min, AggOp::Max] {
+    for op in [FoldOp::Min, FoldOp::Max] {
         let query = simple(
-            vec![FindTerm::Aggregate {
-                op,
-                over: Some(VarId(0)),
-            }],
+            vec![FindTerm::Aggregate { op, over: VarId(0) }],
             vec![atom(HOLDER, vec![(1, var(0))])], // String
         );
         assert!(matches!(
@@ -462,43 +457,13 @@ fn rejects_min_and_max_over_str() {
 }
 
 #[test]
-fn rejects_count_with_a_variable() {
-    let query = simple(
-        vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: Some(VarId(0)),
-        }],
-        vec![atom(POSTING, vec![(2, var(0))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::CountWithVariable { find: 0 }
-    ));
-}
-
-#[test]
-fn rejects_sum_without_a_variable() {
-    let query = simple(
-        vec![FindTerm::Aggregate {
-            op: AggOp::Sum,
-            over: None,
-        }],
-        vec![atom(POSTING, vec![(2, var(0))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::AggregateWithoutVariable { find: 0 }
-    ));
-}
-
-#[test]
 fn rejects_aggregate_over_group_key() {
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(0)),
+                op: FoldOp::Sum,
+                over: VarId(0),
             },
         ],
         vec![atom(POSTING, vec![(2, var(0))])],
@@ -660,12 +625,9 @@ fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
 #[test]
 fn rejects_min_and_max_over_fixed_bytes() {
     // Min/Max fold an order that bytes<N> refuses to have.
-    for op in [AggOp::Min, AggOp::Max] {
+    for op in [FoldOp::Min, FoldOp::Max] {
         let query = simple(
-            vec![FindTerm::Aggregate {
-                op,
-                over: Some(VarId(0)),
-            }],
+            vec![FindTerm::Aggregate { op, over: VarId(0) }],
             vec![atom(POSTING, vec![(4, var(0)), (0, var(1))])], // bytes<32>
         );
         assert!(matches!(
@@ -790,8 +752,8 @@ fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(1)),
+                op: FoldOp::Sum,
+                over: VarId(1),
             },
         ],
         // Hostile textual order: the unsafe occurrence is written first.
@@ -1099,7 +1061,7 @@ fn rejects_a_duration_fold_over_a_group_key_variable() {
         vec![
             FindTerm::Measure(VarId(1)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(1),
             },
         ],
@@ -1136,14 +1098,8 @@ fn rejects_a_second_pack_term() {
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(2)),
-            },
+            FindTerm::Pack { over: VarId(1) },
+            FindTerm::Pack { over: VarId(2) },
         ],
         vec![
             atom(POSTING, vec![(1, var(0)), (SPAN, var(1))]),
@@ -1163,14 +1119,8 @@ fn rejects_pack_beside_a_fold_aggregate() {
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
+            FindTerm::Pack { over: VarId(1) },
+            FindTerm::Count,
         ],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
@@ -1188,13 +1138,10 @@ fn rejects_pack_beside_a_measure_fold() {
         vec![
             FindTerm::Var(VarId(0)),
             FindTerm::AggregateMeasure {
-                op: AggOp::Sum,
+                op: FoldOp::Sum,
                 over: VarId(1),
             },
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
+            FindTerm::Pack { over: VarId(1) },
         ],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
@@ -1209,13 +1156,7 @@ fn rejects_pack_over_a_non_interval_variable() {
     // Posting.amount is I64: the coalesce is defined by the interval
     // point-set denotation and by nothing else.
     let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
     );
     assert!(matches!(
@@ -1225,35 +1166,11 @@ fn rejects_pack_over_a_non_interval_variable() {
 }
 
 #[test]
-fn rejects_pack_without_a_variable() {
-    let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: None,
-            },
-        ],
-        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::AggregateWithoutVariable { find: 1 }
-    ));
-}
-
-#[test]
 fn rejects_pack_over_a_group_key_variable() {
     // The packed variable projected plain makes it a group key; packing
     // it too would coalesce a constant per group.
     let query = simple(
-        vec![
-            FindTerm::Var(VarId(1)),
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-        ],
+        vec![FindTerm::Var(VarId(1)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
     assert!(matches!(

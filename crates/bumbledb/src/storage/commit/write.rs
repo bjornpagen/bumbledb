@@ -177,7 +177,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         })
     })();
     // The never-reissue law spans the abort: every aborted attempt still
-    // handed the host its mints — the closure returned them from `alloc`,
+    // handed the host its mints — the closure returned them from `reserve`,
     // and a rejection carries the offending facts back as data — so the
     // escaped `Q` high-water burns regardless of the abort's shape
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`; the
@@ -327,7 +327,7 @@ fn decode_cited_facts(
 /// With no dirty marks no transaction begins — LMDB sees nothing. The
 /// same [`commit_bounded`] durability boundary as the full commit: one
 /// mechanism, two callers. Raises the in-process high-water before the
-/// disk write so a failed flush cannot rewind `alloc` in this process.
+/// disk write so a failed flush cannot rewind `reserve` in this process.
 pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>) -> Result<()> {
     env.note_escaped_fresh(delta.dirty_fresh_marks());
     let mut marks = env.take_pending_fresh_flush();
@@ -341,7 +341,7 @@ pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>)
 }
 
 /// Retries a parked escaped-id burn. Called at write begin: a still-failing
-/// flush returns the error and leaves the store poisoned for `alloc`
+/// flush returns the error and leaves the store poisoned for `reserve`
 /// until `Q` is durable.
 pub(crate) fn flush_pending_escaped_fresh_ids(env: &Environment) -> Result<()> {
     persist_or_park(env, env.take_pending_fresh_flush())

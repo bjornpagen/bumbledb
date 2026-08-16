@@ -23,8 +23,8 @@ use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
 use bumbledb::{
-    Answers, Atom, Db, FindTerm, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term, Value,
-    VarId,
+    Answers, Atom, Db, FieldId, FindTerm, InteriorId, NonEmpty, ParamId, Query, Rec, RecRule,
+    RecStep, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Scale};
@@ -182,25 +182,17 @@ pub fn closure_query() -> Query {
     Query::Reach {
         interiors: vec![],
         rec: Rec {
-            head: vec![HeadTerm::Var],
-            base: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(0))],
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
                 atoms: vec![edge(Term::Param(ParamId(0)), Term::Var(VarId(0)))],
-                negated: vec![],
                 conditions: vec![],
-            }],
-            rec: vec![Rule {
-                finds: vec![FindTerm::Var(VarId(1))],
-                atoms: vec![
-                    Atom {
-                        source: AtomSource::Interior(InteriorId(0)),
-                        bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
-                    },
-                    edge(Term::Var(VarId(0)), Term::Var(VarId(1))),
-                ],
-                negated: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![edge(Term::Var(VarId(0)), Term::Var(VarId(1)))],
                 conditions: vec![],
-            }],
+            }),
         },
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -322,8 +314,11 @@ pub fn load_stores_sized(
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
     let db = mode.create(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
-        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
-            .map_err(|e| format!("load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, relation_rows(sizes, rel))
+                .map(|r| r.changed)
+        })
+        .map_err(|e| format!("load: {e:?}"))?;
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;
@@ -370,7 +365,7 @@ pub fn verify_family(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty.clone())
+        .map(|column| column.ty().clone())
         .collect();
     let mut stmt = conn
         .prepare(family.sql)

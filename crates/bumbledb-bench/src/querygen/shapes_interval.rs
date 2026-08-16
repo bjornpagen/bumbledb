@@ -499,11 +499,11 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
         _ => {
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
             let op = match rng.range(3) {
-                0 => bumbledb::AggOp::Sum,
-                1 => bumbledb::AggOp::Min,
-                _ => bumbledb::AggOp::Max,
+                0 => bumbledb::FoldOp::Sum,
+                1 => bumbledb::FoldOp::Min,
+                _ => bumbledb::FoldOp::Max,
             };
-            if op == bumbledb::AggOp::Sum {
+            if op == bumbledb::FoldOp::Sum {
                 // The Sum bound: durations capped at a group span, so
                 // the sum tops out near transfers × 4096 ≪ 2⁶³.
                 b.conditions.push(Comparison {
@@ -541,10 +541,7 @@ pub(super) fn pack(b: &mut Builder, rng: &mut Rng) {
         // Global: one coalesced answer relation over every claim.
         _ => {}
     }
-    b.finds.push(bumbledb::FindTerm::Aggregate {
-        op: bumbledb::AggOp::Pack,
-        over: Some(active),
-    });
+    b.finds.push(bumbledb::FindTerm::Pack { over: active });
 }
 
 fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value, point: Value) {
