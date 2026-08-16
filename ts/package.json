@@ -12,7 +12,8 @@
 	"imports": {
 		"#test/*.ts": "./test/*.ts",
 		"#*.ts": {
-			"types": "./src/*.ts",
+			"bumbledb-src": "./src/*.ts",
+			"types": "./dist/*.d.ts",
 			"default": "./dist/*.js"
 		}
 	},

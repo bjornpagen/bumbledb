@@ -21,6 +21,16 @@ import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
 type Flatten<T> = { [K in keyof T]: T[K] }
 
 /**
+ * An optional property that may be omitted OR explicitly `undefined`.
+ * `Partial<T>` under `exactOptionalPropertyTypes` is omit-only (`key?: T`),
+ * which rejects `key: T | undefined` — insert must accept both (omit-to-mint,
+ * and a host binding that is already `bigint | undefined`).
+ */
+type ExactOptional<T> = {
+	[K in keyof T]?: T[K] | undefined
+}
+
+/**
  * Resolves one selection entry to its lowered literal set: a plain ARRAY
  * (detected by `Array.isArray` — no field's value type is an array;
  * `Uint8Array` is not one) becomes a disjunctive set, anything else the
@@ -180,9 +190,12 @@ type FreshKeys<R extends AnyRelation> = {
 /**
  * The inferred row object type of a relation as INSERTED: fresh fields
  * optional — omitted, the engine mints; supplied, identity is preserved
- * (the ETL resupply idiom).
+ * (the ETL resupply idiom). Explicit `undefined` is the same as omit
+ * (`exactOptionalPropertyTypes`: `id?: bigint | undefined`, not omit-only).
  */
-type InsertFact<R extends AnyRelation> = Flatten<Omit<Fact<R>, FreshKeys<R>> & Partial<Pick<Fact<R>, FreshKeys<R>>>>
+type InsertFact<R extends AnyRelation> = Flatten<
+	Omit<Fact<R>, FreshKeys<R>> & ExactOptional<Pick<Fact<R>, FreshKeys<R>>>
+>
 
 /**
  * Declares one relation: `relation("Account", { id: u64.fresh,

@@ -100,56 +100,88 @@ interface OffendingFact<Rels extends SchemaRelations> {
 }
 
 /**
- * One violated statement of a rejected commit, as a typed value.
- * `statement` is the IDENTICAL SDK statement value the schema declared —
- * consumers `===`-match it against their own constants; it is `undefined`
- * exactly for the engine-materialized fresh-implied and closed auto-keys,
- * which have no declared spelling (`schema()` rejects an explicit
- * duplicate of them). `canonical` is the ENGINE's rendering of the
- * violated materialized statement — for a `mirrors` statement BOTH
- * materialized slots render as the one `==` utterance in the written
- * orientation (identical strings; the engine's `render.rs` renders each
- * partner of a mirrored pair as the `==` spelling, never a bare `<=`
- * direction). `direction` (`sourceUnsatisfied` | `targetRequired`) and
- * `measure` are the containment/capacity form payloads, passed through
- * from the engine VERBATIM (`measure` the capacity form's witnessed group
- * total — u128-wide, crossing whole as bigint, C3) — `direction` is
- * relative to the violated SLOT's
- * own orientation, so for a `mirrors` statement it alone cannot say which
- * side of the `==` was violated: the slot identity is carried by
- * `orientation`, present exactly for `mirrors` slots — `written` is the
- * `source <= target` slot as the statement was spelled, `mirrored` the
- * engine-materialized `target <= source` partner.
+ * Shared body of every violation arm: the engine's canonical rendering and
+ * the cited facts. `statement` is NOT here — its presence is the
+ * discriminant. Implied auto-keys have no SDK spelling (`statement` is
+ * the value `undefined`); every declared form carries the IDENTICAL
+ * statement value the schema declared (consumers `===`-match it).
+ */
+type ViolationBody<Rels extends SchemaRelations> = {
+	readonly canonical: string
+	readonly facts: readonly OffendingFact<Rels>[]
+}
+
+/**
+ * A functionality violation of an engine-materialized fresh-implied or
+ * closed auto-key. These slots have no declared spelling (`schema()`
+ * rejects an explicit duplicate); `statement` is present and `undefined`.
+ */
+type ImpliedKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
+	readonly kind: "functionality"
+	readonly statement: undefined
+}
+
+/**
+ * A functionality violation of a declared `key()` statement. `statement`
+ * is the IDENTICAL SDK value the schema declared.
+ */
+type DeclaredKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
+	readonly kind: "functionality"
+	readonly statement: Statement
+}
+
+/**
+ * A containment violation of a declared `contained()` statement (no
+ * `orientation` — that property exists exactly on {@link MirrorViolation}).
+ */
+type ContainmentViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
+	readonly kind: "containment"
+	readonly statement: Statement
+	readonly direction: "sourceUnsatisfied" | "targetRequired"
+}
+
+/**
+ * A containment violation of one slot of a declared `mirrors()` statement.
+ * BOTH materialized slots render as the one `==` utterance in the written
+ * orientation (identical `canonical` strings; the engine's `render.rs`
+ * never emits a bare `<=` for a mirrored pair). `direction` is relative
+ * to the violated SLOT's own orientation, so it alone cannot say which
+ * side of the `==` was violated: `written` is the `source <= target` slot
+ * as the statement was spelled, `mirrored` the engine-materialized
+ * `target <= source` partner.
+ */
+type MirrorViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
+	readonly kind: "containment"
+	readonly statement: Statement
+	readonly direction: "sourceUnsatisfied" | "targetRequired"
+	readonly orientation: "written" | "mirrored"
+}
+
+/**
+ * A capacity violation of a declared `capacity()` statement. `measure` is
+ * the engine's witnessed group total — u128-wide, crossing whole as
+ * bigint (C3: truncation is unrepresentable).
+ */
+type CapacityViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
+	readonly kind: "capacity"
+	readonly statement: Statement
+	readonly measure: bigint
+}
+
+/**
+ * One violated statement of a rejected commit, as a typed value. The
+ * arms are a true discriminant: `statement === undefined` is exactly the
+ * implied-auto-key arm; every declared form carries `Statement` (not
+ * `Statement | undefined`, not an omit-optional). `canonical` is the
+ * ENGINE's rendering. `direction` / `measure` pass through from the
+ * engine VERBATIM.
  */
 type Violation<Rels extends SchemaRelations> =
-	| {
-			readonly kind: "functionality"
-			readonly statement?: Statement
-			readonly canonical: string
-			readonly facts: readonly OffendingFact<Rels>[]
-	  }
-	| {
-			readonly kind: "containment"
-			readonly statement?: Statement
-			readonly canonical: string
-			readonly direction: "sourceUnsatisfied" | "targetRequired"
-			readonly facts: readonly OffendingFact<Rels>[]
-	  }
-	| {
-			readonly kind: "containment"
-			readonly statement?: Statement
-			readonly canonical: string
-			readonly direction: "sourceUnsatisfied" | "targetRequired"
-			readonly orientation: "written" | "mirrored"
-			readonly facts: readonly OffendingFact<Rels>[]
-	  }
-	| {
-			readonly kind: "capacity"
-			readonly statement?: Statement
-			readonly canonical: string
-			readonly measure: bigint
-			readonly facts: readonly OffendingFact<Rels>[]
-	  }
+	| ImpliedKeyViolation<Rels>
+	| DeclaredKeyViolation<Rels>
+	| ContainmentViolation<Rels>
+	| MirrorViolation<Rels>
+	| CapacityViolation<Rels>
 
 /**
  * The abandoned arm of a write result (ruled 2026-07-23, R10): present in
@@ -451,18 +483,28 @@ interface PrimaryKey {
 }
 
 /**
- * One materialized-statement slot as the SDK mirrors it: the form tag, the
- * SDK statement value that lowered to it (`undefined` for the
- * engine-materialized implied keys), and — for functionality forms — the
- * key's owner and projection (what keyed point reads resolve through).
+ * One materialized-statement slot as the SDK mirrors it. Implied auto-keys
+ * omit `statement` (the engine owns those slots); every declared form
+ * carries the SDK value that lowered to it. Functionality forms also
+ * carry the key's owner and projection (what keyed point reads resolve
+ * through).
  */
+type ImpliedKeyEntry = {
+	readonly kind: "functionality"
+	readonly owner: string
+	readonly projection: readonly string[]
+}
+
+type DeclaredKeyEntry = {
+	readonly kind: "functionality"
+	readonly statement: Statement
+	readonly owner: string
+	readonly projection: readonly string[]
+}
+
 type StatementEntry =
-	| {
-			readonly kind: "functionality"
-			readonly statement?: Statement
-			readonly owner: string
-			readonly projection: readonly string[]
-	  }
+	| ImpliedKeyEntry
+	| DeclaredKeyEntry
 	| { readonly kind: "containment"; readonly statement: Statement }
 	| { readonly kind: "mirrors"; readonly statement: Statement; readonly orientation: "written" | "mirrored" }
 	| { readonly kind: "capacity"; readonly statement: Statement }
@@ -841,16 +883,24 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
 		}
 		const facts = Object.freeze(wire.facts.map(offendingFactOf))
-		const statement = entry.statement
 		const canonical = wire.canonical
 		if (entry.kind === "functionality") {
-			return Object.freeze({ kind: "functionality", statement, canonical, facts })
+			if (!("statement" in entry)) {
+				return Object.freeze({ kind: "functionality", statement: undefined, canonical, facts })
+			}
+			return Object.freeze({ kind: "functionality", statement: entry.statement, canonical, facts })
 		}
 		if (entry.kind === "capacity") {
 			if (wire.kind !== "capacity") {
 				throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
 			}
-			return Object.freeze({ kind: "capacity", statement, canonical, measure: wire.measure, facts })
+			return Object.freeze({
+				kind: "capacity",
+				statement: entry.statement,
+				canonical,
+				measure: wire.measure,
+				facts
+			})
 		}
 		if (wire.kind !== "containment") {
 			throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
@@ -858,14 +908,20 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		if (entry.kind === "mirrors") {
 			return Object.freeze({
 				kind: "containment",
-				statement,
+				statement: entry.statement,
 				canonical,
 				direction: wire.direction,
 				orientation: entry.orientation,
 				facts
 			})
 		}
-		return Object.freeze({ kind: "containment", statement, canonical, direction: wire.direction, facts })
+		return Object.freeze({
+			kind: "containment",
+			statement: entry.statement,
+			canonical,
+			direction: wire.direction,
+			facts
+		})
 	}
 
 	/**
@@ -877,7 +933,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 */
 	function declaredKeyOf(relation: AnyRelation, statement: Statement): PrimaryKey {
 		const statementId = tables.statements.findIndex(function byIdentity(candidate) {
-			return candidate.statement === statement
+			return "statement" in candidate && candidate.statement === statement
 		})
 		const entry = tables.statements[statementId]
 		if (entry === undefined) {
@@ -1466,9 +1522,14 @@ const Db = Object.freeze({
 export type {
 	Abandon,
 	AbandonedArm,
+	CapacityViolation,
+	ContainmentViolation,
 	DeclaredKeyFact,
+	DeclaredKeyViolation,
 	DeltaBuild,
+	ImpliedKeyViolation,
 	MemberRelation,
+	MirrorViolation,
 	OffendingFact,
 	Prepared,
 	ReadScope,

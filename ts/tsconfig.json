@@ -17,6 +17,8 @@
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
 		"strict": true,
+		"exactOptionalPropertyTypes": true,
+		"customConditions": ["bumbledb-src"],
 		"noEmit": true,
 		"declaration": true,
 		"resolveJsonModule": true,

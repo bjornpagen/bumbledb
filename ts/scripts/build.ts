@@ -5,6 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as errors from "@superbuilders/errors"
+import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM } from "./platform.ts"
 
 /**
@@ -27,7 +28,8 @@ import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH
  * into `node_modules` so it resolves by name exactly as the published
  * optional dep would → smoke-load THROUGH the loader's by-name resolution
  * path (a build whose artifact cannot load or link fails here) → emit JS +
- * declarations with tsc → prove both tarballs carry exactly the intended
+ * declarations with tsc → rewrite `#` specifiers out of `.d.ts` so the
+ * published type graph is a closed relative tree → prove both tarballs carry exactly the intended
  * files and the packed main manifest carries the exact-version platform pin
  * (injected at prepack by `scripts/pin.ts`; the repo manifest stays
  * pin-free). All spawns are raw argv arrays — no shell strings, no
@@ -79,6 +81,9 @@ function build(): void {
 	if (tsc.status !== 0) {
 		throw errors.new(`tsc exited with status ${tsc.status}`)
 	}
+
+	rewriteDeclarationImports(distDir)
+	assertDeclarationsAreIsolated(distDir)
 
 	verifyPack(packageRoot, localPackageDir, version)
 }
@@ -312,6 +317,7 @@ function verifyInjectedPin(packageRoot: string, version: string): void {
 				`the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
 			)
 		}
+		assertPackedImports(packed.data)
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
