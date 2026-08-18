@@ -1,28 +1,23 @@
 # bumbledb
 
-An embedded, typed, **set-semantic** relational database for Rust, built on
-LMDB, executing conjunctive queries with **Free Join** — and tuned, one
-measured PRD at a time, for Apple Silicon.
+Bumbledb is an embedded relational database for Rust and TypeScript. It
+replaces SQL strings with typed schemas and queries, checks cross-row
+constraints before each commit, and executes complex reads with Free Join over
+LMDB-backed data.
 
-There is no SQL and no interpreter in the hot path. You declare a schema with
-a macro, write plain structs, and run queries — joins,
-negation, the full Allen interval algebra (one 13-bit mask, one branchless
-kernel), point membership, `Duration`, and the coalescing `Pack` aggregate —
-planned once and executed over columnar in-memory images with a lazy trie
-join. Answers are sets; a multi-rule query's union *is* the sink's dedup.
-Invariants are dependency statements — functional and inclusion dependencies,
-judged at commit against the final state — and read-compute-write is
-optimistic, witnessed by snapshots, checked in one compare at commit.
-Everything the engine claims about performance is a pinned, reproducible
-measurement with two differential oracles standing behind it.
+The database runs in the application process. Schemas are declared in code,
+records are ordinary Rust structs or TypeScript objects, and prepared queries
+run without parsing or interpreting SQL. Relations use set semantics, so a
+record is either present or absent: duplicate inserts are harmless, deletes
+are idempotent, and query results do not need a separate deduplication step.
+
+Here is a complete Rust example:
 
 ```rust
 bumbledb::schema! {
     pub Ledger;
 
-    // A vocabulary is a closed relation: its ground axioms are frozen
-    // by the fingerprint, virtual in storage — the store holds zero
-    // vocabulary bytes. The macro emits a host enum welded to declaration ids.
+    // Fixed sets such as regions and statuses are compiled into the schema.
     closed relation Region as RegionId = { Na, Eu, Apac, Latam };
     closed relation Status as StatusId = { Open, Frozen, Closed };
 
@@ -38,20 +33,15 @@ bumbledb::schema! {
         opened_at: i64,
     }
 
-    // Everything relational is a statement between the blocks — there are
-    // no field-level modifiers. `fresh` auto-materializes R(id) -> R.
-    Account(holder) <= Holder(id);   // containment: every account's holder exists
-    Holder(region)  <= Region(id);   // a closed reference: an O(1) member-set test
+    // Every referenced holder, region, and status must exist.
+    Account(holder) <= Holder(id);
+    Holder(region)  <= Region(id);
     Account(status) <= Status(id);
 }
 
 let db = bumbledb::Db::create(path, Ledger)?;
 
-// Writes are set arithmetic on an in-memory delta; every statement is
-// judged at commit against the final state — an abort never wrote a fact
-// (escaped fresh high-water still persists on the `Q` marks).
-// insert/delete return MutationReport { submitted, changed }.
-// reserve(0) is empty — not a minted id.
+// The two inserts commit together after the database checks the finished state.
 db.write(|tx| {
     let ids = tx.reserve::<HolderId>(1)?;
     let holder = ids.start().expect("nonempty");
@@ -61,10 +51,7 @@ db.write(|tx| {
     Ok(())
 })?;
 
-// Queries are set-builder notation (the `query!` macro
-// lowers to plain-data IR at compile time; the raw IR remains the contract).
-// Prepared once, executed on snapshots into reusable `Answers` — zero
-// allocations per execution after warmup.
+// Find the holders who have an open account.
 let q = bumbledb_query::query!(Ledger {
     (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
 });
@@ -75,373 +62,76 @@ db.read(|snap| {
 })?;
 ```
 
-Newtypes are the nominal-safety layer: `HolderId` and `AccountId` are
-distinct host types, and mixing them is a **compile error** — the database's
-type discipline is enforced by rustc, not by runtime checks.
+`HolderId` and `AccountId` are different Rust types. Passing an account ID
+where a holder ID is expected is a compile error, and a record from one schema
+cannot be written to a database opened with another schema.
 
-## The numbers
+The equivalent TypeScript API is available as
+[`@bjornpagen/bumbledb`](ts/README.md). Both language surfaces build the same
+schema description and query representation before calling the same engine.
 
-**The protocol note, once, for every number and chart below.** Everything
-derives from the 2026-08-16 shared-machine night (code rev `d2a62728`,
-Apple M2 Max, S-scale corpora, verify stamp
-`eae243b56cd1b80b9477f11be898c0d37e555af688b989f53f4e8333e8ab73f8`).
-Charts live in `assets/`; raw traces live in
-`bench-out/night-2026-08-16/`. Protocol unchanged down the whole chain: a
-**shared-machine run** under the recorded ruling — boosted
-(user-interactive) QoS, every report stamping `shared_machine: true` plus
-the load averages, one `scripts/measure.sh` hold for the night, nothing
-built during timing. All six suite reps landed (three durable, three
-ephemeral), so suite numbers below are min-of-3 merges per store kind —
-the charts' own rule. Every timed block carries the clock-proxy bracket;
-blocks that ran through a DVFS sag are stamped contaminated in the report
-and reported, never hidden — 14–20 of 33 read blocks per durable rep,
-8–9 of 12 durable write blocks (fsync-DVFS physics, the known write-lane
-condition). The writes ladder and churn ran in this same night. Every
-query is oracle-gated before it is ever timed: value-identical multisets
-against SQLite (2,887 differential cases for the suite, the oracle stamp
-re-earned per binary; per-draw gates in the lanes), and every write
-verdict matches an independent naive model.
-SQLite is measured warm, prepared, and well-indexed on identical data,
-under the parity configs in
-[61 — Bench lanes](docs/architecture/61-bench-lanes.md). This is an
-engine-favorable workload class (joins, interval algebra, aggregates) at
-research scale — and the charts below include every regime we lose.
+## Installation
 
-### Reads: every family in the pin
+The Rust crates can be used from the current release tag:
 
-Same corpus, same queries, results verified identical before timing. All
-**33** read families — the 22 gated ledger+calendar families and the 11
-report-class families (slots, closures, the displaced-window set, and
-`deep_chain`, the four-atom walk added by ruling R22) — nothing filtered:
-
-![read families vs SQLite](assets/bench-vs-sqlite.svg)
-
-The same data as multipliers. Geomean over the 22 gated families:
-**25.6×** SQLite p50 (durable store, min-of-3; the ephemeral triple lands
-at 25.4×). Across all 33 families the durable geomean is **28.5×**
-(ephemeral 27.9×). The spread is honest: the floor is
-`entries_for_account_set` at **2.8×**, with `skew` **4.2×** and `point`
-lookups **5.5×** (a B-tree is good at this), while `balance` is **308×**,
-`busy_scan` **406×**, and the displaced-stream trio runs **261–297×**:
-
-![speedup over SQLite](assets/bench-speedup.svg)
-
-Latency is a distribution, not a number — p50 → p95 → p99 per family, both
-engines. The bimodal families (`containment_walk`, `balance`, `skew`,
-`chain`) show their true tails. Every one of the six suite reps carries
-`budget_ok: false`, published as such: `spread` and the report-class
-`disp_probe` trio land p99 outside their per-family budget gates on every
-rep of this shared-machine run — `triangle` rejoined its budget this
-campaign, the p50 wins are real, those tails did not clear the bar, and
-both facts are on the chart:
-
-![tail behavior](assets/bench-tails.svg)
-
-The same tails as a p50 → p90 → p99 fan:
-
-![latency tail fan](assets/tails-fan.svg)
-
-And the composite honesty chart — every read family and every scenario
-(query, lane) as one sorted ratio bar; anything below parity draws red, and
-a DNF lane joins no bar (excluded and counted in the title):
-
-![ratio waterfall](assets/ratio-waterfall.svg)
-
-### The scenario worlds
-
-Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 36
-(query, SQLite-lane) pairs, each oracle-gated before timing. Geomean across
-the **34 timed lanes: 25.0×** (overall geomean ratio 0.04; the 2 lanes
-where SQLite exceeded the per-sample cap are excluded from that geomean
-and counted — they get their own chart below). Per-world geomeans:
-joins 14×, graph 25×, olap 100×, points 10×, rings 6.3× (1 DNF),
-temporal 50× (1 DNF). Adverse lanes are reported exactly as measured,
-including `r6_two_path_count` at **2.4×**:
-
-![scenario worlds](assets/bench-scenarios.svg)
-
-Per world, paired p50 bars (SQLite grey, ours amber):
-
-`joins` — the IMDB-shaped join battery, two- through five-way:
-
-![joins world](assets/world-joins.svg)
-
-`graph` — neighborhoods, two-hop, mutual edges, triangles:
-
-![graph world](assets/world-graph.svg)
-
-`olap` — group-by rollups, windows, drill-downs:
-
-![olap world](assets/world-olap.svg)
-
-`points` — deliberate home turf for SQLite: point reads by id and key,
-bucket fetches, and 0.5.0's keyed GET (`p5_keyed_get` — the typed point
-read through the declared key FD, full fact decoded, no query machinery).
-This is the closest world on the board: `p2_by_key` **1.4×**, and p5 at
-**1.5×** against SQLite's prepared point SELECT through the unique index
-— a B-tree point lookup is the thing SQLite is best at, and we publish
-the world at full prominence:
-
-![points world](assets/world-points.svg)
-
-`rings` — cyclic joins, where the binary-join exponent used to live;
-`r1_wash_ring` runs **11.1×**, `r3_bomb_t1` (the tier-1 bipartite
-bomb) is **10.0×**, and tier 2 is a DNF (below):
-
-![rings world](assets/world-rings.svg)
-
-`temporal` — the Allen kernel: stabbing, overlap twins, rays, `Pack`. The
-hand-tuned SQLite twins are reported beside the canonical translation
-(`·tuned` rows) — we never flatter ourselves in either direction:
-
-![temporal world](assets/world-temporal.svg)
-
-### The adversarial story: DNF > cap
-
-Adversarial SQLite lanes run under a 1000 ms per-sample wall-clock cap. A
-capped lane has no number — it is drawn as the cap (hatched), never as a
-measurement, and never enters a ratio. This night's two DNFs are the same two shapes: `r4_bomb_t2` (the tier-2
-bipartite bomb — ours answers in **1.83 s**, reported as measured;
-SQLite's canonical plan exceeds the cap every run) and `t2_overlap_join`
-(the temporal overlap join — ours **51.7 ms**; canonical SQLite DNF > cap;
-the hand-tuned SQLite twin does finish and loses at **11.1×**, on the
-temporal chart above — the canonical DNF is the binary-join exponent
-showing up as wall-clock, excluded and counted):
-
-![adversarial DNFs](assets/adversarial-dnf.svg)
-
-### The home-turf worlds: crud and lawful — where SQLite wins
-
-Two worlds built deliberately on the opponent's turf, the regimes where
-SQLite is expected to be strong — measured this campaign and published as
-the losses they are. Both are report-class (no gate reads a number), run as
-durability-paired twins (durable and NOSYNC) folding one shared op stream
-per family, with post-state value-verification on every relation.
-
-`crud` — OLTP round-trips: point reads, single/batched inserts, keyed
-updates, upserts, read-modify-write, deletes, a 90/10 mix. SQLite wins
-**20 of 22 rows**; the world's geomean is **0.55×** (durable lane 0.84×,
-NOSYNC 0.36×). The keyed point read is ours (**2.4× durable / 2.6×
-NOSYNC**) — every write family is SQLite's this run: near parity where
-fsync physics dominates (durable single-row families land 0.91–1.00×)
-and decisively where it doesn't — batched inserts fall to **0.21×
-durable / 0.14× NOSYNC** at 1000 rows per commit, and NOSYNC keyed writes
-sit at 0.24–0.43×. A B-tree with a page cache is very good at this
-workload, and the chart says so in red:
-
-![crud world](assets/world-crud.svg)
-
-`lawful` — the integrity turf: a primer-shaped schema (identity keys,
-relation containments, a ψ-selected containment, closed vocabularies, an
-attempt-count capacity law) with the full law roster judged on every commit,
-against SQLite carrying equivalent UNIQUE / FK / CHECK / trigger
-enforcement. Geomean **0.31×**, SQLite winning **10 of 12 rows**. Judged
-admission itself is competitive — we win `law_commit_attempt` durable
-(**1.14×**, the fsync bounds both engines) and `law_commit_cluster`
-NOSYNC (**1.28×**) — but every refusal row is SQLite's: a constraint
-failure refuses in single-digit µs while our rejection prices the full
-dependency judgment plus the decoded violation set (0.21–0.57×). The
-floor row is `law_reject_key` durable at **0.0008×** (4.3 ms vs 3.6 µs):
-each sample's sacrificial id advances the fresh high-water mark, and the
-never-reissue law flushes the burned mark durably even on an abort —
-that refusal pays an fsync by design, and the price is printed rather
-than excused:
-
-![lawful world](assets/world-lawful.svg)
-
-### Writes: fsync physics, published anyway
-
-Durable commits are an fsync-latency product on both engines — the durable
-suite families land at parity-shaped numbers (`commit_single` p50 5.08 ms
-ours vs 4.17 ms SQLite, min-of-3; the hair goes to SQLite this run and the
-ephemeral pairing is like-for-like — NOSYNC twins on both sides, where
-SQLite wins `commit_single` at 1.29× and loses `commit_batch` at 0.93×)
-— and **a large collection insert favors SQLite's write path** (durable
-`insert_stream` family — one `write` of the posting stream: 0.81 s ours
-vs 0.73 s SQLite; we lose ~1.10× and publish it):
-
-![writes and cold](assets/bench-writes.svg)
-
-The writes lane prices the whole ladder — commits and deletes at batch
-1/10/100/1000 plus a large collection insert (`insert_stream` family),
-per durability lane, post-state value-verified. SQLite wins single-fact
-NOSYNC commits (25.3k vs 21.3k rows/s), the durable batched rungs (13.8k
-vs 7.5k rows/s at `commit_b100`, 53.7k vs 24.6k at `commit_b1000`), and
-a large collection insert in both lanes (402k vs 252k rows/s NOSYNC;
-254k vs 250k durable). We win the NOSYNC batched middle (59.6k vs 45.3k
-rows/s at `commit_b100`, 86.5k vs 82.7k at `commit_b1000`) and the NOSYNC
-delete ladder (56.9k vs 35.3k rows/s at `delete_b100`):
-
-![write rates per family and batch](assets/bench-writes-rates.svg)
-
-The same ladders as throughput curves — facts/sec against commit batch
-size, per durability lane:
-
-![write throughput](assets/write-throughput.svg)
-
-### Storage: we spend bytes, and the chart says so
-
-bumbledb stores ~**274 B/fact** on the ledger and ~**349 B/fact** on the
-calendar (compacted, S scale) against SQLite's **73/93 B/fact** indexed and
-**20/24 B/fact** table-only — roughly **3.8× SQLite's indexed footprint**.
-That is the price of the determinant indexes and the columnar layout the
-read numbers ride on; every byte is behind a row-count cross-check:
-
-![storage bytes per fact](assets/bench-storage.svg)
-
-### Scale curves and warmth
-
-The curves lane re-times four families at the pinned scale under per-draw
-oracle gates (one scale point per family, so the chart shows gated points,
-not fitted exponents), and every point carries the clock-proxy bracket the
-night lacked (finding 072: DVFS warm-up, GHz stamped per point, 0
-contaminated blocks): `busy_scan` at S scale is **427×** against
-canonical SQL and still **152×** against the hand-tuned twin; `triangle`
-is **14.9×**; `closure_fanout` is **220×** — the number printed is the
-one measured:
-
-![scale curves](assets/bench-curves.svg)
-
-Warmth is where honesty gets granular: cold (process-fresh reopen, OS-warm
-— the honesty bound stated in the report), warm, then memoized. The memo
-effect is explicit rather than a hidden flatterer — and cold starts are a
-regime we can lose: `closure_fanout` cold is **905 µs ours vs 114 µs
-SQLite** (we win it warm, 0.9 µs vs 37 µs):
-
-![warmth](assets/bench-warmth.svg)
-
-### Churn: what a long-lived life does to both engines
-
-The churn lane runs 10,000 delete+insert cycles against a 100k-fact working
-set, three runs (steady 64/32 churn/update mix, the same mix NOSYNC, and
-delete-heavy 512/0), with every lane drawn — including `sqlite-maint`, the
-operator who runs periodic VACUUM+ANALYZE with the wall time charged into
-its own throughput window (marked ▼ from the recorded data). The
-degradation story over 10k cycles: SQLite's window probe drifts 312 →
-561 µs bare (and 304 → 580 µs on the maint lane) while ours holds 26.8 →
-21.3 µs; our store grows 74.5 → 83.0 MB (cycle 250 to cycle 10000 —
-roughly 4.8× SQLite's on-disk size) while SQLite's grows 14.8 → 17.4 MB
-bare and VACUUM claws it back to 13.2; write throughput: SQLite bare
-slides 53.2 → 48.7 commits/s vs ours 44.9 → 45.8 (SQLite ahead on the
-durable steady run — shown), and NOSYNC ours 284 → 206 vs SQLite 211 →
-174.
-
-Probe latency, every lane, per run:
-
-![churn latency, steady](assets/churn-latency-steady.svg)
-![churn latency, nosync](assets/churn-latency-nosync.svg)
-![churn latency, delete-heavy](assets/churn-latency-delete-heavy.svg)
-
-Store size over cycles (the VACUUM sawtooth is visible on the maint lane):
-
-![churn size, steady](assets/churn-size-steady.svg)
-![churn size, nosync](assets/churn-size-nosync.svg)
-![churn size, delete-heavy](assets/churn-size-delete-heavy.svg)
-
-Write throughput over cycles:
-
-![churn throughput, steady](assets/churn-throughput-steady.svg)
-![churn throughput, nosync](assets/churn-throughput-nosync.svg)
-![churn throughput, delete-heavy](assets/churn-throughput-delete-heavy.svg)
-
-### Regenerate everything yourself
-
-One internal experiment is a recorded refutation: replacing the multi-rule
-spanning seen-set with per-rule drains measured ~32% slower, so that
-optimization was removed and the proof remains diagnostic only. This is a
-research engine validated at this scale, not a production database.
-
-```sh
-scripts/bench-night.sh bench-out/night-$(date +%F)   # the whole night, one command
-# (--shared for a loaded machine — provenance stamps it; --plan to preview)
-
-# or lane by lane:
-cargo build --release -p bumbledb-bench
-target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
-target/release/bumbledb-bench bench --out out/r1                # ×3, + --ephemeral ×3
-target/release/bumbledb-bench scenarios --out out/scenarios
-target/release/bumbledb-bench storage --out out/storage
-target/release/bumbledb-bench writes --out out/writes
-target/release/bumbledb-bench crud --out out/crud
-target/release/bumbledb-bench lawful --out out/lawful
-target/release/bumbledb-bench curves --warmth --out out/curves
-target/release/bumbledb-bench churn --out out/churn
-
-# every chart, from a local night dir (discovery finds every lane
-# report; a run dir carrying CONTAMINATED.md is excluded and counted):
-python3 scripts/bench_viz.py --night bench-out/night-$(date +%F) \
-    --out assets
+```toml
+[dependencies]
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.14.0" }
+bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.14.0" }
 ```
 
-The full Report-class lane registry, parity configs, the DNF-cap law, the
-shared-machine ruling, and the night runbook:
-[docs/architecture/61-bench-lanes.md](docs/architecture/61-bench-lanes.md).
+The TypeScript package ships with a native binary for macOS on Apple Silicon:
 
-## Why it's fast
+```sh
+pnpm add @bjornpagen/bumbledb
+```
 
-Three design decisions do most of the work; deliberate microarchitecture
-does the rest.
+The Rust engine is tested on macOS ARM64 and Linux x86-64. The Apple Silicon
+build uses explicit vectorized kernels; other 64-bit targets use portable
+implementations of the same operations.
 
-1. **Representation over control flow.** Relations live as columnar images
-   (decoded once per generation, cached); queries run over a lazy trie
-   (COLT) that materializes exactly the levels a join actually probes.
-   Nothing is interpreted per row.
-2. **Batched, two-phase execution.** The executor probes in batches of ~128:
-   phase one computes all hashes (pure ALU), phase two issues all bucket
-   loads as independent chains that fill the M-series' ~28 outstanding-miss
-   lanes. Misses become branchless survivor compaction, never per-tuple
-   control flow.
-3. **Set semantics end to end.** No duplicate bookkeeping, no ordering
-   obligations, idempotent writes — the algebra removes work before the
-   machine ever sees it.
+## What the database provides
 
-Beneath all three sits the **staging law**: every computation runs at the
-earliest stage where its inputs are fixed, across the seven-stage ladder —
-expansion, open, prepare, bind, generation, execute, commit. Vocabularies
-seal at schema validation, statements into closed relations compile to
-in-register word-sets, closed-atom joins fold at prepare into plan-constant
-handle sets — and folding produces **data, never code** (no JIT, ever). The
-ladder is written down in [40 — Execution](docs/architecture/40-execution.md)
-§ the staging law.
+Bumbledb is intended for normalized, read-heavy application data: ledgers,
+calendars, graphs, scheduling systems, and other models with many narrow
+relations and frequent joins. It provides:
 
-On top of that sit six microarchitectural mechanisms, each earning its
-complexity with a measured, cited win at its site: bucket-of-8 tag-byte maps
-at occupancy-invariant load factors, SWAR window probes, const-generic key
-monomorphization, one software-prefetch pass, alias-hoisted loops, and a
-single run-coherence memo. Nothing else made the cut — an optimization that
-cannot cite its number does not ship.
+- typed schemas, records, IDs, keys, parameters, and result rows;
+- joins, negation, comparisons, parameter sets, aggregates, and recursive
+  reachability;
+- first-class half-open intervals, including point lookup, overlap tests,
+  duration, all thirteen Allen relationships, and merging adjacent ranges;
+- unique keys, references, conditional references, exact one-to-one
+  relationships, interval exclusions, and count, sum, or duration limits;
+- MVCC snapshots with concurrent readers and one serialized writer;
+- durable and non-durable stores, structured constraint failures, and explicit
+  export/import for schema changes;
+- prepared queries that perform no heap allocation after their buffers have
+  warmed to the current data and parameter sizes.
 
-## The theory grammar
+There is no server process and no network protocol. Bumbledb opens an LMDB
+store directly and runs all query work in the caller's thread.
 
-A `schema!` block is a **presentation of a theory** in dependency theory's
-own notation, ASCII-projected (the lexer bans `⊆`; nothing else changed).
-The *signature* is the relation blocks — names and typed fields; the
-*axioms* are the statements between them. Nothing inside the braces is
-Rust: the macro is a compiler front-end that assigns these tokens the
-calculus's semantics, and its grammar is open-ended and gate-governed — a
-statement form enters when it carries an enforcement plan, never before.
+## Constraints are part of the schema
 
+SQL databases expose related integrity rules through several separate
+features: unique indexes, foreign keys, checks, exclusion constraints, and
+triggers. Bumbledb expresses the supported forms as statements between
+relations and checks them against the transaction's final state.
 
-### The signature — value types and the vocabulary form
+`R(id) -> R` declares a unique key. `A(x) <= B(y)` says that every `x` in
+`A` must match an existing `y` in `B`. Filters on either side make the
+reference conditional. `A(x) == B(y)` requires the relationship in both
+directions, which is useful for representing sum types as a parent record and
+one exact variant record.
 
-| type | syntax | encoding (canonical; identity = bytes) | denotes | query operators |
-|---|---|---|---|---|
-| `u64` | `n: u64` | big-endian word, order-preserving | a natural | `==` `!=` `<` `<=` `>` `>=`, ∈-sets, `Sum/Min/Max/Count` |
-| `i64` | `t: i64` | sign-flipped big-endian (memcmp order = numeric order) | an integer | same as `u64` |
-| `bool` | `b: bool` | one byte, strictly 0/1 (anything else is corruption) | a truth value | `==` `!=`; Any/All are `Max`/`Min` |
-| `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
-| `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
-| `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
-| `interval<E, w>` | `d: interval<u64, 1>` | one order-preserving word (the start); end = start + `w`; `w ≥ 1` is the type | the point set `[s, s+w)` — never a ray | same as `interval<E>` (`Duration` is the constant `w`) |
-| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
+Intervals participate in the same rules. If the last field of a unique key is
+an interval, records with the same preceding fields may not overlap. A
+reference between intervals means that the source interval must be completely
+covered by the target intervals. Capacity constraints can limit a related
+count, sum, or total duration.
 
-`closed relation` is a relation form, not a seventh value type: its ground axioms
-live in the schema (frozen by the fingerprint, never written), the macro
-emits a **host enum** welded to declaration ids — an emission, not a type —
-and a reference to it is an ordinary `u64` field under the handle newtype
-plus a containment statement. Two tiers, one production — handles only,
-or handles with **payload columns** stating what each word means, read by
-ψ-selections in statements and queries alike:
+Fixed sets can carry data as well as names:
 
 ```rust
 closed relation Status as StatusId = { Open, Frozen, Closed };
@@ -455,265 +145,401 @@ closed relation Kind as KindId {
     Failed     { mastered: false, rank: 10 },
 };
 
-Attempt(kind) <= Kind(id);                        // membership: one compiled bit test
-Certificate(kind) <= Kind(id | mastered == true); // sub-vocabulary: the answer set itself
+Attempt(kind) <= Kind(id);
+Certificate(kind) <= Kind(id | mastered == true);
 ```
 
-The two byte-shaped types split by one law — **intern what repeats; inline
-what identifies** — and share no other axis. The interval's preconditions
-(nonempty, half-open) are not conventions: they are exactly what makes
-Allen's thirteen basic relations jointly exhaustive and pairwise disjoint.
-Idioms, not types: time is `i64` epoch-microseconds; money is `i64` minor
-units under a host newtype; floats never persist.
+`Kind` behaves like an enum in application code, while its `mastered` and
+`rank` columns remain available to schemas and queries. The final statement
+allows certificates to refer only to kinds whose `mastered` value is true.
+These fixed records live in the schema and occupy no rows in the store.
 
-**Field modifiers** (both are host/engine boundary markers, not relations):
+Writes are accumulated in memory and checked once before LMDB is modified.
+This means an update can delete an old record and insert its replacement in
+either order. If the finished transaction satisfies the schema, it commits. If
+not, nothing is written and the returned error identifies the constraint and
+records involved.
 
-- `as NewType` — "known to the host as": mints the nominal layer rustc
-  polices (`HolderId` ≠ `AccountId` at compile time). The engine itself
-  stays structural — a type is an encoding, and names live in the host.
-- `fresh` — a *generation* attribute: the engine mints fresh existential
-  witnesses (dependency theory's fresh-existential repair move), and
-  the key theorem `R(f) -> R` materializes automatically — a generator
-  whose outputs could collide would not be a generator, so the statement is
-  a consequence, not a choice. `u64` only.
+The [cookbook](docs/cookbook.md) contains thirty-two worked schemas covering
+sum types, optional attributes, vocabularies, trees, graphs, state machines,
+calendars, effective-dated configuration, tax brackets, ledgers, derived data,
+recursive closure, point reads, and resource limits. Every example is compiled
+as part of the test suite.
 
-### The axioms — the statements
+## Performance
 
-Three operators; each is the literature's own symbol under ASCII.
+The charts below come from the 2026-08-16 benchmark run at revision
+`d2a62728` on an Apple M2 Max. The main datasets contain 253,264 ledger rows
+and 192,369 calendar rows. SQLite used prepared statements, appropriate
+indexes, `ANALYZE`, a 256 MiB cache, and matching durability settings.
 
-**`R(X) -> R` — the functional dependency** (Armstrong's arrow, verbatim).
-πX is injective on R: no two facts agree on X. Read `->` as *determines*.
-Only the key form exists, and the grammar enforces that representationally:
-the right-hand side admits no projection, so the rejected non-key FD is
-*unwritable*, not merely invalid. **Pointwise lifting:** when X ends in an
-interval position, "agree on X" reads through the denotation — no two facts
-share the scalar prefix *and any point* — so per-group interval
-disjointness (SQL's exclusion constraint) is this statement on this type,
-a theorem rather than a feature.
+Every query result was compared with SQLite before timing. The randomized
+verification run covered 2,887 cases, and write outcomes were also compared
+with a separate straightforward implementation. The primary read tests were
+run three times for durable stores and three times with durability disabled;
+the summary charts use the best median from each group. Raw reports, machine
+load, clock readings, and timing details are retained under
+`bench-out/night-2026-08-16/`.
 
-**`A(X | φ) <= B(Y | ψ)` — the (conditional) inclusion dependency**:
-πX(σφ(A)) ⊆ πY(σψ(B)). Read `<=` as *is contained in* — it is `⊆` written
-in the tokens Rust lexes, and the choice is principled: the subset order is
-an order. The acceptance gate requires Y to be a key of B (one key probe
-answers "is this tuple present"). SQL's referential constraint is the unselected
-special case; the selected form is the CIND of the data-quality
-literature. **Pointwise lifting:** an interval position turns containment
-into *coverage* — every point of A's interval lies under B's segments,
-checkable in O(log n + segments) because B's own key keeps its segments
-disjoint and ordered.
+These tests favor the work Bumbledb is designed for: joins, graph traversal,
+time intervals, and aggregates over warm in-memory data. The transaction and
+constraint sections below include the cases where SQLite is faster.
 
-**`A(..) == B(..)` — mutual inclusion**: both containments, each judged
-independently. Read `==` as *exactly*. Because each direction's target must
-be a declared key, accepted `==` is a key-backed one-to-one correspondence
-on the selected projections: every selected A-fact has exactly one selected
-B-witness with the same projected value, and vice versa. It is not literal
-whole-fact equality (unprojected payloads may differ) and says nothing about
-unselected facts — which is the discriminated-union idiom's whole point.
-`Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded parent
-*has* its arm fact, same commit), arm validity (an arm fact's parent exists
-*with that kind*), and exclusivity (an id in two arms would force `kind` to
-equal two variants — a contradiction, not a rule).
+### Read performance
 
-**Selections `| f == v`** are σ with equality only — the same restriction
-the CIND literature imposes — and a selected field may not also be
-projected. `|` reads as *such that*, the set-builder bar. The three equality
-levels are one concept—equality of denotations—at three
-different types: dependency `==` relates key-backed selected views, selection `==`
-tests values inside σ, and query comparison `Eq` tests typed terms. They are never
-interchangeable in diagnostics (`20-query-ir.md` § atom matching).
+The first chart shows all 33 read queries with the same inputs and verified
+results:
 
-**The judgment discipline**, which is what makes the notation load-bearing:
-a statement is accepted only if the checker holds an
-O(log n)-per-touched-fact enforcement plan (the acceptance gate), and every
-statement is judged once per commit against the transaction's *final
-state* — no modes, no deferral, no triggers. A committed database is a
-model of its theory, always. Where SQL's constraint zoo went, word by word,
-is recorded in [00 — Product](docs/architecture/00-product.md)'s deleted
-vocabulary.
+![Bumbledb and SQLite read latency](assets/bench-vs-sqlite.svg)
+
+Across those 33 queries, Bumbledb's median latency has a **28.5× geometric
+mean speedup** over SQLite for the durable store. The individual results range
+from **2.8×** for an account-set lookup to **406×** for a calendar scan:
+
+![Read speedup over SQLite](assets/bench-speedup.svg)
+
+Median latency is only part of the picture. These two views show p50 through
+p99 for each query. The `spread` query and the three largest displaced-data
+probes exceed the project's 10 ms p99 target; the charts include those misses
+rather than reducing the dataset or dropping the queries.
+
+![Read latency through p99](assets/bench-tails.svg)
+
+![Read latency fan](assets/tails-fan.svg)
+
+The complete comparison below combines the primary reads with the additional
+workloads. Red bars are operations where SQLite is faster. Two SQLite queries
+that exceeded the one-second limit are counted but do not receive invented
+ratios.
+
+![Complete performance comparison](assets/ratio-waterfall.svg)
+
+### Additional workloads
+
+The broader suite covers joins, graph queries, analytical rollups, point
+lookups, cyclic joins, and time intervals. Across the 34 comparisons that
+finished in both engines, Bumbledb's median latency has a **25.0× geometric
+mean speedup**. Two direct SQL translations exceeded the one-second limit.
+
+![Speedup across additional workloads](assets/bench-scenarios.svg)
+
+The join tests use IMDB-shaped data and range from two-way to five-way joins:
+
+![Join query latency](assets/world-joins.svg)
+
+The graph tests cover neighborhoods, two-hop paths, mutual edges, and
+triangles:
+
+![Graph query latency](assets/world-graph.svg)
+
+The analytical tests cover grouped totals, windows, and drill-downs:
+
+![Analytical query latency](assets/world-olap.svg)
+
+Point reads are close because they play directly to SQLite's B-tree
+implementation. Bumbledb is **1.4×** faster on the closest prepared lookup and
+**1.5×** faster on its typed keyed read:
+
+![Point-read latency](assets/world-points.svg)
+
+Cyclic joins are a difficult case for a fixed sequence of binary joins.
+Bumbledb is **11.1×** faster on the first ring query and **10.0×** faster on
+the first bipartite stress test:
+
+![Cyclic-join latency](assets/world-rings.svg)
+
+The time tests cover point membership, overlaps, open-ended intervals, and
+merging adjacent ranges. Hand-written SQLite alternatives are shown beside
+the direct translations where they materially improve the comparison:
+
+![Time-query latency](assets/world-temporal.svg)
+
+### Queries that timed out in SQLite
+
+SQLite's stress-test queries were limited to one second per sample. Two direct
+translations exceeded that limit on every attempt. Bumbledb completed the
+larger bipartite join in **1.83 seconds** and the interval-overlap join in
+**51.7 milliseconds**. A hand-written SQLite version of the overlap query did
+finish; Bumbledb was **11.1×** faster than that version.
+
+![Queries that exceeded SQLite's time limit](assets/adversarial-dnf.svg)
+
+### Where SQLite is faster
+
+The transaction benchmark measures keyed reads, inserts, updates, upserts,
+read-modify-write operations, deletes, and a 90/10 read/write mix with matching
+durability settings. SQLite is faster on 20 of the 22 comparisons and has a
+**1.8×** geometric mean advantage overall. Bumbledb wins the keyed reads, but
+SQLite's write path is substantially faster for large batches when durability
+is disabled.
+
+![Ordinary transaction performance](assets/world-crud.svg)
+
+The constraint benchmark compares Bumbledb's keys, references, conditional
+references, fixed sets, and resource limits with SQLite
+`UNIQUE`/`FOREIGN KEY`/`CHECK`/trigger implementations. SQLite is faster on
+10 of 12 comparisons. Successful durable commits are close, while SQLite
+rejects invalid writes much faster. The largest gap is a failed durable key
+check: Bumbledb spends 4.3 ms because its never-reuse ID guarantee is itself
+persisted, while SQLite returns after 3.6 µs.
+
+![Constraint-check performance](assets/world-lawful.svg)
+
+### Writes
+
+Durable single-record commits are dominated by the storage flush in both
+engines: Bumbledb measures 5.08 ms at p50 and SQLite 4.17 ms. SQLite is also
+faster on a large collection insert, completing it in 0.73 seconds compared
+with Bumbledb's 0.81 seconds.
+
+![Write and first-read latency](assets/bench-writes.svg)
+
+The full throughput test covers insert and delete batches of 1, 10, 100, and
+1,000 records with and without durability:
+
+![Write throughput by operation](assets/bench-writes-rates.svg)
+
+The same results plotted against batch size show where flush latency stops
+dominating and record processing becomes visible:
+
+![Write throughput curves](assets/write-throughput.svg)
+
+### Disk usage
+
+After compaction, Bumbledb uses approximately **274 bytes per ledger row** and
+**349 bytes per calendar row**. Indexed SQLite uses 73 and 93 bytes
+respectively. Bumbledb spends the additional space on the indexes used for
+keys and constraints and on the read representation that supports its query
+performance.
+
+![Disk usage per stored row](assets/bench-storage.svg)
+
+### Scale and cold starts
+
+The scale test repeats four representative queries at the published dataset
+sizes. The calendar scan is **427×** faster than the direct SQLite query and
+**152×** faster than a hand-written alternative; the triangle query is
+**14.9×** faster, and the recursive fan-out query is **220×** faster.
+
+![Performance at the published dataset sizes](assets/bench-curves.svg)
+
+The first query after opening a database includes work that later executions
+reuse. SQLite is faster on the cold recursive fan-out query, at 114 µs versus
+Bumbledb's 905 µs. Once warm, Bumbledb completes it in 0.9 µs versus SQLite's
+37 µs.
+
+![Cold and warm query latency](assets/bench-warmth.svg)
+
+### Performance after repeated updates
+
+The long-running update test starts with 100,000 records and performs 10,000
+delete-and-insert cycles. It includes a steady workload, the same workload
+without durability, and a delete-heavy workload. One SQLite configuration
+runs periodic `VACUUM` and `ANALYZE`, with that maintenance time included in
+its throughput.
+
+On the durable steady workload, SQLite's probe latency rises from 312 to
+561 µs while Bumbledb remains between 21 and 27 µs. Bumbledb's store grows
+from 74.5 to 83.0 MB; SQLite's unmaintained store grows from 14.8 to 17.4 MB,
+and periodic `VACUUM` reduces it to 13.2 MB. SQLite remains ahead on durable
+write throughput, while Bumbledb is ahead with durability disabled.
+
+Probe latency:
+
+![Probe latency during steady updates](assets/churn-latency-steady.svg)
+![Probe latency during non-durable updates](assets/churn-latency-nosync.svg)
+![Probe latency during delete-heavy updates](assets/churn-latency-delete-heavy.svg)
+
+Store size:
+
+![Store size during steady updates](assets/churn-size-steady.svg)
+![Store size during non-durable updates](assets/churn-size-nosync.svg)
+![Store size during delete-heavy updates](assets/churn-size-delete-heavy.svg)
+
+Write throughput:
+
+![Write throughput during steady updates](assets/churn-throughput-steady.svg)
+![Write throughput during non-durable updates](assets/churn-throughput-nosync.svg)
+![Write throughput during delete-heavy updates](assets/churn-throughput-delete-heavy.svg)
+
+### Reproducing the benchmarks
+
+The complete benchmark run is one command:
+
+```sh
+scripts/bench-night.sh bench-out/night-$(date +%F)
+```
+
+It generates and verifies the datasets, runs the durable and non-durable
+comparisons, exercises the additional workloads, measures storage and writes,
+performs the long-running update test, and records the machine state around
+each timed section. The full configuration and individual commands are in
+[the benchmark guide](docs/architecture/61-bench-lanes.md).
+
+## Why reads are fast
+
+Most of the read performance comes from a few structural choices.
+
+Relations are decoded into columnar in-memory data once per database version
+and shared by prepared queries. A lazy trie index is built only to the depth a
+query actually needs, so a join does not pay to construct unused levels.
+
+The executor uses Free Join, an algorithm that can choose between traditional
+binary-join behavior and worst-case-optimal join behavior within the same
+plan. This matters for graph and cyclic queries, where committing to one fixed
+binary join order can produce very large intermediate results.
+
+Probes run in batches of roughly 128. The engine first computes their hashes,
+then issues independent memory lookups together so the processor can overlap
+cache misses. Failed probes are removed from the batch without a branch for
+each row.
+
+Finally, set semantics remove work. Relations contain no duplicate records,
+inserts and deletes are idempotent, and query unions are already distinct.
+Prepared queries reuse their plans, temporary storage, indexes, and output
+buffers, which is why an execution within previously seen sizes performs no
+heap allocation.
+
+The detailed execution model, including the planner, trie layout, vectorized
+kernels, interval index, and assembly checks, is documented in
+[Execution](docs/architecture/40-execution.md).
+
+## Schemas and queries
+
+The schema macro supports six stored value representations plus fixed
+relations:
+
+| Type | Use | Comparisons and operations |
+|---|---|---|
+| `u64` | IDs, counts, and unsigned values | equality, ordering, parameter sets, numeric aggregates |
+| `i64` | signed values, timestamps, and money under a host type | equality, ordering, parameter sets, numeric aggregates |
+| `bool` | true or false | equality |
+| `str` | UTF-8 text that may repeat | equality and parameter sets |
+| `bytes<N>` | fixed-size hashes and binary identities | equality and parameter sets |
+| `interval<E>` | nonempty half-open ranges | point membership, overlap and Allen relationships, duration, merging |
+| `interval<E, w>` | fixed-width half-open ranges | the same interval operations |
+| `closed relation` | a fixed enum-like set, optionally with columns | equality, parameter sets, filtered references, joins |
+
+Text is interned because application data often repeats it. Fixed-size byte
+values stay inline because hashes and identifiers generally do not. Intervals
+store ordered endpoints and may use the largest endpoint to represent an
+open-ended range.
+
+The `as NewType` field modifier emits a Rust newtype for nominal safety.
+`fresh` asks the database to generate never-reused `u64` values and
+automatically makes that field a key.
+
+Queries are plain data after macro or builder expansion. They can be stored,
+composed, prepared once, and executed repeatedly with different parameters.
+The engine supports multiple rules whose results are combined as a set,
+negated records, comparisons, set-valued parameters, `Count`, `Sum`, `Min`,
+`Max`, interval duration and merging, named intermediate results, and one
+linear recursive query for reachability.
+
+The raw query representation remains public for language bindings and tools.
+The Rust `query!` macro and TypeScript builder are conveniences over that same
+representation rather than separate query engines.
 
 ## Architecture
 
-The design is documented before it is code, and the docs are normative:
-when code and these docs disagree, one of them is wrong and the repo is
-broken until they agree.
+The architecture documents describe the behavior that the implementation is
+expected to preserve:
 
-| doc | what it owns |
+| Document | Contents |
 |---|---|
-| [00 — Product](docs/architecture/00-product.md) | what bumbledb is and refuses to be; the deleted vocabulary; the unsafe policy |
-| [10 — Data Model](docs/architecture/10-data-model.md) | the six structural types, the interval denotation, set semantics, identity |
-| [20 — Query IR](docs/architecture/20-query-ir.md) | queries as data: atoms, negation, membership, param sets, aggregates |
-| [30 — Dependencies](docs/architecture/30-dependencies.md) | the two judgments, statements, pointwise lifting, the acceptance gate |
-| [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |
-| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, determinants as judgment accelerators, the delta write path |
-| [60 — Validation](docs/architecture/60-validation.md) | the two oracles, the bench ledger, measurement discipline |
-| [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
+| [Product](docs/architecture/00-product.md) | workload, process model, durability, supported platforms, and deliberate boundaries |
+| [Data model](docs/architecture/10-data-model.md) | stored types, intervals, set semantics, and identity |
+| [Queries](docs/architecture/20-query-ir.md) | records, negation, comparisons, parameters, aggregates, and recursion |
+| [Constraints](docs/architecture/30-dependencies.md) | keys, references, conditional rules, interval rules, and commit checking |
+| [Execution](docs/architecture/40-execution.md) | planning, Free Join, indexes, batching, and vectorized operations |
+| [Storage](docs/architecture/50-storage.md) | LMDB layout, dictionaries, indexes, transactions, and cached read data |
+| [Validation](docs/architecture/60-validation.md) | reference comparisons, randomized tests, benchmark design, and reproducibility |
+| [API](docs/architecture/70-api.md) | database lifecycle, reads, writes, point lookups, prepared queries, and export/import |
 
-The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-thirty-two worked schemas (unions, vocabularies, trees, calendars, tax
-brackets, ledgers, maintained derived facts, host-driven closures, keyed
-reads, capacity laws), each rot-proofed by a compile test, each comment
-naming the theorem its statement buys.
+The implementation of Free Join follows Wang, Willsey, and Suciu,
+*Free Join: Unifying Worst-Case Optimal and Traditional Joins* (SIGMOD 2023),
+with the engine's differences documented alongside the code. The paper is
+included under [`docs/free-join-paper/`](docs/free-join-paper/).
 
-The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
-Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
-[`docs/free-join-paper/`](docs/free-join-paper/).
+The Rust engine, TypeScript package, and C ABI all use the shared schema and
+query definitions in this repository. [`lean/`](lean/README.md) contains an
+executable specification of values, queries, plans, and constraints. The
+checked-in examples are evaluated by the engine, a straightforward reference
+implementation, and Lean, and the test fails if the results differ.
 
-The engine has a second host: [`ts/`](ts/README.md) is the TypeScript SDK,
-`@bjornpagen/bumbledb` on npm. It is not a port and not a wire protocol —
-schemas and queries declared in TypeScript lower through the same shared
-schema library (`crates/bumbledb-theory`) into the same engine, in-process
-over a napi bridge (`ts/crate`), so both hosts produce the same lowered
-descriptors and the same query IR. The flavor is the host's; the meaning is
-the theory's.
+## Correctness and performance testing
 
-The semantics themselves have one normative home: [`lean/`](lean/README.md),
-the Lean specification — the architecture docs motivate and cite it, never
-restate it. The tree builds under a zero-sorry law (the proof-escape battery
-in `scripts/lean.sh`), and the checked-in conformance corpus is judged three
-ways — the real engine, the naive brute-force model, and the executable Lean
-denotation — with any disagreement a failed gate.
+The benchmark results are backed by checks that run before timing:
 
-## Measurement discipline
+- The query suite and randomized query generator compare result sets with
+  SQLite.
+- Randomized write sequences compare accepted commits, rejected commits,
+  reported constraints, and resulting records with an independent
+  implementation.
+- A successful verification records the exact binary, schema, dataset, and
+  configuration. The benchmark refuses to reuse that result for a different
+  binary or input.
+- A machine-wide lock prevents two benchmark processes from timing
+  simultaneously. Processor frequency is sampled around timed sections, and
+  affected readings are marked in the raw report.
+- Machine-code checks verify important properties of hot loops, including the
+  absence of calls and fallback byte comparisons.
+- A counting allocator verifies that warm prepared-query execution performs no
+  allocations.
+- CI runs formatting, linting, tests, documentation examples, feature
+  combinations, the portable scalar implementation on Linux x86-64, and the
+  native Apple Silicon implementation on macOS.
+- The Lean build accepts no unfinished proofs, and its executable results are
+  compared with the Rust engine and the independent implementation.
 
-The part of this repo most worth stealing. Performance claims here are gated
-by machinery, not judgment:
-
-- **Two differential oracles before every timing run**: 2,887 cases —
-  family queries and randomized queries against SQLite, plus a randomized
-  write stream whose every commit verdict (accept or abort, and the
-  violated statement) must match an independent brute-force naive model;
-  the bench binary refuses to time against an unverified build (per-binary
-  stamps).
-- **A machine-wide measurement lock** (`scripts/measure.sh`) so two agents'
-  runs never overlap, and **clock-proxy bracketing** around every timed block
-  — blocks that ran during a DVFS sag or co-tenant interference are flagged
-  and excluded, with optional per-sample normalization to adjudicate.
-- **Disassembly gates** (`scripts/check-asm.sh`): properties like "the probe
-  loop contains no calls and no `bcmp`" are asserted against `objdump`
-  output — an `#[inline(always)]` that silently stopped working fails a
-  gate, not a code review.
-- **Checked lint exceptions**: suppressions are `#[expect]` claims with a
-  reason, so an exception that stops being necessary fails the gate itself.
-- **One pinned toolchain**: `rust-toolchain.toml` names one dated nightly
-  (edition 2024, every gate on the same compiler); the pin
-  moves deliberately — a PRD-sized action carrying the microbench re-earn
-  session — never implicitly.
-- **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
-  benchmarks that re-assert their measured margins on demand.
-- **Deletion is gated exactly like addition.** The fuzzing apparatus is the
-  worked example: after thousands of executions its trophy ledger held zero
-  engine bugs (the Lean spec, the conformance corpus, and the two-oracle
-  differentials were already holding the same seams), so it was hard-deleted
-  by owner ruling rather than kept as ceremony —
-  `docs/architecture/60-validation.md` § the deletion record.
-- **Two home-turf worlds bench the regimes where SQLite is expected to
-  win.** `crud` (OLTP round-trips under matched durability pairs) and
-  `lawful` (judged-law admission and refusal pricing against SQLite
-  FK/UNIQUE/CHECK/trigger enforcement) ship as report-class subcommands,
-  oracle-gated and post-state-verified, deliberately built on the
-  opponent's turf — `docs/architecture/60-validation.md` § the home-turf
-  worlds. Their numbers re-earned with the 2026-07-23 campaign and are
-  published above as the losses they are (crud geomean 0.59×, lawful
-  0.31× — the home-turf section).
-- **Refutation is a result.** A mechanism that measures as a loss is
-  reverted, and the record keeps the numbers and the failure mechanism.
+An optimization is kept only when its benchmark demonstrates an improvement.
+Failed experiments are removed rather than left behind as optional modes.
 
 ## Repository layout
 
-```
-crates/bumbledb/         the engine — external deps: heed (LMDB) and blake3 —
-                         plus the in-house bumbledb-macros and bumbledb-theory
-  src/exec/              executor, COLT, sinks, wordmap, NEON kernels
-  src/storage/           LMDB env, deltas, commit, interning
-  src/api/               Db, transactions, prepared queries
-  src/plan/, src/ir/     planner and query IR
-crates/bumbledb-macros/  the schema! proc macro (hand-rolled, no syn/quote)
-crates/bumbledb-theory/  the shared schema library: values, intervals, the
-                         Allen mask algebra, descriptors, the SchemaSpec
-                         lowering — every host lowers through this one crate
-crates/bumbledb-query/   the host-surface sugar crate: the query! re-export
-                         (downstream sugar; lowers to IR)
-crates/bumbledb-query-macros/  the query! proc-macro mechanics behind it
-crates/bumbledb-bench/   the oracle + benchmark suite
-                         (gen/verify/verify-store/bench/trace/scenarios/churn/
-                         storage/writes/curves/crud/lawful)
-ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
-                         napi bridge crate lives at ts/crate
-lean/                    the Lean spec + the conformance corpus — the one
-                         normative home of the semantics
-docs/                    the normative architecture + the cookbook (docs/cookbook.md)
-docs/reference/          background dossiers (apple-silicon-performance.md)
-scripts/
-  bench_viz.py           committed bench artifacts -> the README charts
-                         (--night discovers every lane report; contaminated
-                         runs excluded-and-counted by their marker file)
-  check.sh               the engine gate suite (below)
-  check-asm.sh           disassembly gates: machine-code properties of hot
-                         symbols asserted against objdump output
-  lean.sh                the Lean gate (below)
-  measure.sh             the machine-wide measurement mutex — two agents'
-                         timing runs never overlap
-  miri.sh                the Miri lane: the pure modules' tests, native and
-                         cross-interpreted against x86_64-unknown-linux-gnu
-  miri-cross-cc.sh       stand-in cross C compiler so the Miri cross pass can
-                         satisfy LMDB's build script without a linux toolchain
-  ramdisk.sh             the RAM-backed scratch volume for the adversarial
-                         lanes (verify/differential); every timed lane
-                         refuses it
-  spec-census.sh         the Bridge's grep-checked half: mechanism, instrument,
-                         and doc citations resolve against the tree
+```text
+crates/bumbledb/               database engine
+crates/bumbledb-macros/        schema! macro
+crates/bumbledb-query/         Rust query API
+crates/bumbledb-query-macros/  query! macro
+crates/bumbledb-theory/        shared schema representation
+crates/bumbledb-c/             C ABI
+crates/bumbledb-bench/         verification and benchmark suite
+ts/                            TypeScript package and native bridge
+lean/                          executable specification
+docs/                          architecture, cookbook, and references
+scripts/                       tests, benchmark runner, and chart generation
 ```
 
-The gate suite (`scripts/check.sh`) opens with the classics:
+The main Rust checks are:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test --workspace --doc
-cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 ```
 
-…then runs the lanes a one-liner can't spell: clippy and tests with the
-`ground-off` test-support feature compiled in (the bench crate's dual-run
-differential switch); the
-`--all-features` pairwise co-compile clippy lane (every engine feature
-built together once — the only build that proves the feature pairs
-co-compile); the trace-feature test lane; and the bench
-crate linted and tested under its `obs` feature. The x86-64
-scalar-fallback promise is EXECUTED, not cross-checked: CI's check lane
-runs this whole script natively on an x86_64-linux runner, strictly
-stronger than the cross `cargo check` that used to close the script (it
-needed a cross std and a cross C compiler, so it self-skipped on every
-machine that ever ran it). The alloc gate's `--test-threads=1` is
-load-bearing: the counting allocator is process-global.
+`scripts/check.sh` runs the larger combination of feature, allocation, and
+platform checks. `scripts/lean.sh` builds the specification and compares its
+results with the engine.
 
-Disk requirements for tests: every store opens as a fixed 32 GiB memory map
-(`MAP_SIZE` in `crates/bumbledb/src/storage/env.rs`), but the map is an
-address-space reservation, never an allocation — no open truncates or
-preallocates `data.mdb` (the old warning here described the retired
-`WRITEMAP` ftruncate, cleanup-0.5.0 ruling 1), so a store's data file holds
-exactly the pages ever committed, on every filesystem, containers included.
-The suite needs only its stores' actual data — a few GiB free is plenty.
+## Current release
 
-The Lean gate is `scripts/lean.sh`: `lake build` over the spec tree, the
-proof-escape battery, the spec census, the conformance corpus evaluated under
-the executable Lean denotation, and the three-way comparator replaying that
-corpus through the real engine and the naive model. It lives apart from
-`check.sh` on purpose — the Lean-dependent lane owns the Lean-dependent test,
-so `check.sh` stays toolchain-independent.
+Version **0.14.0** covers the Rust engine, C ABI, and
+`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **2**.
 
-## Status
+Bumbledb uses one writer and concurrent snapshot readers. The engine owns no
+threads, does not open a network port, and keeps query execution in the
+caller's thread. Stores reserve a fixed 32 GiB LMDB address range without
+preallocating a 32 GiB file. When a schema changes, data is exported and
+imported into a new store rather than migrated in place.
 
-**0.14.0** — one product identity (engine crates, `bumbledb-c`,
-`@bjornpagen/bumbledb`). `bdb_abi_version()` is **2** (collection
-insert/delete, `reserve`; layout generation, not the release spelling).
-Research-grade and honest about it: validated at S scale on one platform
-(Apple Silicon; portable scalar fallbacks compile everywhere but carry no
-performance promises). No network layer, no SQL, no in-place migrations —
-by design. See [00 — Product](docs/architecture/00-product.md) for the full
-list of things this database refuses to become.
+The TypeScript binary currently ships for macOS ARM64. The Rust workspace is
+tested on macOS ARM64 and Linux x86-64; other 64-bit targets use the portable
+implementation but are not part of the published performance results.
 
 ## License
 
-[0BSD](LICENSE) — use it for anything; no attribution required.
+[0BSD](LICENSE). Use Bumbledb for any purpose without an attribution
+requirement.

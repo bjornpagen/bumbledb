@@ -1,16 +1,23 @@
 # @bjornpagen/bumbledb
 
-Type-theoretic TypeScript SDK for the [bumbledb](https://github.com/bjornpagen/bumbledb) embedded relational engine.
+This package is the TypeScript interface to the
+[Bumbledb](https://github.com/bjornpagen/bumbledb) embedded relational
+database. Schemas and queries are typed TypeScript values rather than SQL
+strings, while storage, snapshots, transactions, and query execution run in
+the native engine.
 
-bumbledb models data as relations judged by statements (functionality, containment, capacity) and queried as typed IR values — no SQL, no query-string parser. The SDK is a thin, fully typed surface over an in-process native engine (LMDB storage, MVCC snapshots, one-shot `write` / `writeFrom`).
-
-The surface is structural to the bone. Relation declarations are pure structure — kind, width, element, fresh, nothing else — and domains are never declared anywhere: **the laws type the columns**. `schema()` computes every field's equivalence class from the statement list itself, so the containments and mirrors you already write ARE the typing, at compile time and again at construction. Values stay bare (`bigint`, `string`, …); identity lives in the class the laws compute, not in a wrapper.
-
-> **Research-grade, one platform.** This is **0.14.0**, a `0.x` release of an embedded engine under active development. It targets a single platform today (below), the API is not yet frozen across `0.x`, and the FFI ABI is pinned exactly per version (`bdb_abi_version()` is **2** — collection insert/delete, `reserve`). Treat it as an early adopter's tool, not a production datastore.
+Relation declarations describe their fields, and the statements passed to
+`schema()` connect those fields into typed keys and references. Values remain
+ordinary `bigint`, `string`, boolean, byte, and interval values; queries infer
+their parameter and result types from how those values are used.
 
 ## Platform support
 
-This release targets **darwin-arm64 (macOS Apple Silicon) only**. The native binary ships as the optional platform package `@bjornpagen/bumbledb-darwin-arm64`, resolved automatically at install on a matching host. Installs on other platforms succeed (the main package is pure JS) but throw a typed, actionable error at first load naming the running platform and that only `darwin-arm64` ships today. More targets are pure addition — one more `os`/`cpu`-gated package plus a CI matrix — not a redesign.
+The TypeScript package currently ships a native binary for **darwin-arm64**
+(macOS on Apple Silicon). The optional
+`@bjornpagen/bumbledb-darwin-arm64` package is selected automatically during
+installation. On another platform, importing the package returns an error
+that identifies the running platform and the available binary.
 
 ## Install
 
@@ -20,18 +27,16 @@ pnpm add @bjornpagen/bumbledb
 
 ## Quick start
 
-Declare relations as pure structure, let the statement list type every column,
-write facts through a transaction, and query with the typed builder.
-Everything is typed end to end — bare structural values in law-computed
-classes, inferred query rows, and rejections that arrive as data rather than
-exceptions.
+Declare relations, connect their fields with keys and references, write
+records in a transaction, and query them with the typed builder. Parameters
+and result rows are inferred, and a failed constraint check is returned as
+structured data rather than thrown as an exception.
 
 ```ts
 import { bool, closed, contained, Db, gt, type Infer, key, on, query, relation, schema, u64, v } from "@bjornpagen/bumbledb"
 
-// A closed relation: a sealed roster of axioms with typed payload columns.
-// At the host surface a handle is its NAME — the string literal "DirectPass"
-// is the one spelling, and closed columns type as the handle union.
+// A fixed set can carry typed columns as well as names.
+// Its ID type is the union "DirectPass" | "JudgedPass" | "Failed".
 const Kind = closed(
 	"Kind",
 	{ mastered: bool, rank: u64 },
@@ -42,14 +47,13 @@ const Kind = closed(
 	}
 )
 
-// Relations are pure structure — no domain is declared anywhere.
+// Relations describe stored records.
 // `u64.fresh` marks an engine-minted primary key.
 const Attempt = relation("Attempt", { id: u64.fresh, kind: Kind.id })
 const Certificate = relation("Certificate", { attempt: u64, kind: Kind.id })
 
-// THE LAWS TYPE THE COLUMNS: schema() computes every field's class FROM this
-// statement list — the containments are the typing. The last statement uses
-// ψ-selection: a certificate may only ever cite a mastered kind.
+// These statements declare the key and references. The final reference is
+// conditional: a certificate may cite only a mastered kind.
 const Review = schema("Review", { Kind, Attempt, Certificate }, [
 	contained(on(Attempt, "kind"), on(Kind, "id")),
 	key(Certificate, ["attempt"]),
@@ -59,33 +63,31 @@ const Review = schema("Review", { Kind, Attempt, Certificate }, [
 
 const db = await Db.create("./review.db", Review)
 
-// Write. The delta is judged against every statement at commit. A closed
-// column takes the handle name — a wrong string is a compile error AND a
-// marshal refusal.
+// All writes are checked together before the transaction commits. A fixed-set
+// column takes its name, and a wrong string is rejected by TypeScript and
+// again if an untyped value reaches the native boundary.
 const result = db.write((tx) => {
 	const id = tx.reserve(Attempt, "id", 1n).at(0n)!
 	tx.insert(Attempt, [{ id, kind: "DirectPass" }])
 	tx.insert(Certificate, [{ attempt: id, kind: "DirectPass" }])
 })
 
-// Rejection-as-data: no throw — a rejected commit is a typed value carrying
-// every violated statement, cited once, with its canonical spelling and facts.
+// A failed constraint check is returned as typed data rather than thrown.
 if (!result.ok) {
 	for (const v of result.violations) {
 		console.error(v.kind, v.canonical, v.facts)
 	}
 }
 
-// Query: v(R) mints a fresh variable per column, typed by
-// the column's law-class; reusing one by object reference IS the join, and
-// rows are typed from the find keys. Params are typed by use.
-// `gt` is one of the free comparison exports.
+// v(R) creates a typed variable for each column. Reusing one across records
+// creates the join, result rows follow the find keys, and parameters are typed
+// from where they are used.
 const certifiedAbove = query(Review).rule((r) => {
 	const { attempt: a, kind: k } = v(Certificate)
 	const { rank } = v(Kind)
 	return r
 		.match(Certificate, { attempt: a, kind: k })
-		.match(Kind, { id: k, mastered: true, rank }) // k reused at Kind.id — that reuse is the join; ψ on the read side too
+		.match(Kind, { id: k, mastered: true, rank }) // reusing k at Kind.id creates the join
 		.where(gt(rank, r.param("floor")))
 		.find({ a, rank })
 })
@@ -103,9 +105,8 @@ console.log(rows)
 	console.log(snap.generation, snap.execute(prepared, { floor: 15n }))
 }
 
-// Host dispatch over the sealed roster is native `switch` narrowing over
-// the handle union ("DirectPass" | "JudgedPass" | "Failed") — exhaustive
-// via `satisfies never`; the sealed axioms read back typed.
+// Dispatch over the fixed set uses native `switch` narrowing.
+// `satisfies never` checks that every possible name is handled.
 function describe(kind: Infer<typeof Kind.id>): string {
 	switch (kind) {
 		case "DirectPass":
@@ -125,23 +126,46 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 
 ## Surface
 
-The drizzle law governs this surface: the SDK's job at the host boundary is translation, not abstraction — every database idiom arrives as the modern TypeScript idiom for that concept, and the SDK never invents an operator where the language already has one.
+The SDK translates TypeScript values directly into the engine's shared schema
+and query representations.
 
-- The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
-- The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `capacity`; faces via `on` (set membership is a plain array in `.where`); windows via `within` (`within(n)` exact, `within(lo, hi)` range, `within(lo, "*")` floor), measures via `weigh` (`weigh("f")` a u64 field, `weigh(duration("f"))` an interval's measure), dependent bounds via `ref`/`duration` read from the target row; ψ-selection via `.where` on relations and closed rosters.
-- The `Db` runtime — `Db.create`/`Db.open` (exclusive-lock stores; a second open of the same path is `EnvironmentLocked`), transactions, typed violations, scoped snapshot reads (`db.read(fn)`, or `using snap = db.read()` — lifetimes are disposables, never `close()`), the write verbs with `abandon` (returning `abandon(payload)` from `write` or `writeFrom` rolls the transaction back; the outcome arm is in the result type). Collection writes: `tx.insert(Rel, [{...}])` / `tx.delete(Rel, facts)` return `MutationReport { submitted, changed }`; mint is `tx.reserve(Rel, field, 1n)` (empty is not a minted id). ETL is a host loop of `write`.
-- The query surface — `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); named interiors and one linear rec via `q.interior` / `q.reach`; `db.prepare` as a plain value.
-- The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`). A disposable lifetime: `using exhumed = await Db.exhume(path)` releases the store's exclusive lock at scope exit.
+- Fields use `bool`, `bytes`, `i64`, `u64`, `str`, `interval`, and
+  `span`. `relation()` declares stored records, while `closed()` declares a
+  fixed enum-like set whose values may carry typed columns. `Infer` exposes
+  the resulting TypeScript value type.
+- `schema()` accepts `key`, `contained`, `mirrors`, and `capacity`
+  statements. `.where` makes a reference conditional, `within` sets a count
+  or measurement range, and `weigh` chooses a numeric field or interval
+  duration to measure.
+- `Db.create` and `Db.open` manage embedded stores. Reads use scoped MVCC
+  snapshots through `db.read(fn)` or `using snap = db.read()`. Writes use
+  `write` or `writeFrom` and may return `abandon(payload)` to roll back
+  explicitly. `insert` and `delete` report how many submitted records
+  changed the set, and `reserve` returns never-reused IDs.
+- `query(S).rule(...)` builds typed queries. Reusing a variable created by
+  `v(R)` joins records through that value. The builder supports named result
+  rows, typed parameters, negation, comparisons, boolean conditions, set
+  parameters, interval operations, aggregates, named intermediate results,
+  and linear recursive reachability.
+- `Db.exhume` opens a store without its original application schema and
+  exposes its stored relation descriptions and records by name. The returned
+  handle uses `using` so the exclusive store lock is released at scope exit.
 
 ## Cookbook
 
-The engine cookbook's 32 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Two referees hold it: `test/cookbook-doc.test.ts` extracts the document's own `ts` fences and type-checks them against the real surface (the doc itself cannot drift), and `test/cookbook.test.ts` runs compiled copies of the recipes — each schema admitted by the real engine, its fingerprint asserted against the cross-host goldens the Rust cookbook suite also pins, every query snippet lowered through `db.prepare`.
+The engine cookbook's 32 modeling recipes are translated to the TypeScript API
+in [COOKBOOK.md](./COOKBOOK.md). `test/cookbook-doc.test.ts` extracts and
+type-checks the document's TypeScript examples, while
+`test/cookbook.test.ts` opens every schema and prepares every query. The Rust
+and TypeScript versions are also checked to ensure that they describe the same
+schema.
 
 ## Architecture
 
-The SDK is a typed surface over the native engine; the model (relations,
-statement-based judgment, Datalog evaluation, MVCC storage, the witnessed
-write loop) is documented in the [bumbledb engine repository](https://github.com/bjornpagen/bumbledb).
+The SDK is a typed interface to the native engine. Storage, transactions,
+queries, constraints, performance results, and the Rust implementation are
+documented in the
+[Bumbledb repository](https://github.com/bjornpagen/bumbledb).
 
 ## License
 

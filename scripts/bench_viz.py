@@ -494,7 +494,7 @@ def prov_note(payload):
     in docs/architecture/61-bench-lanes.md)."""
     provenance = payload.get("provenance") if isinstance(payload, dict) else None
     if isinstance(provenance, dict) and provenance.get("shared_machine"):
-        return " · shared-machine night, boosted QoS"
+        return " · shared machine, recorded system load"
     return ""
 
 
@@ -506,7 +506,7 @@ def pool_note(inputs):
         n = inputs["contaminated_runs"]
         note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
     if inputs.get("shared_machine"):
-        note += " · shared-machine night, boosted QoS"
+        note += " · shared machine, recorded system load"
     return note
 
 
@@ -645,11 +645,11 @@ def scenario_rows(scenarios):
                              lane["stats"]["p50"], None))
             else:  # exceeded_cap: no stats — the annotation IS the datum
                 rows.append((scenario, label, ours["p50"], None,
-                             f"DNF > {lane['cap_ms']}ms"))
+                             f"timed out > {lane['cap_ms']}ms"))
         return rows
     return [(scenario, query + lane_suffix(lane_name), ours_us * 1000.0,
              None if sqlite_us is None else sqlite_us * 1000.0,
-             None if sqlite_us is not None else "DNF > cap")
+             None if sqlite_us is not None else "timed out")
             for scenario, query, lane_name, ours_us, sqlite_us in load_scenarios(path)]
 
 
@@ -754,11 +754,11 @@ def chart_vs_sqlite(inputs, out):
     values = [slot[side]["p50"] for slot in reads.values()
               for side in ("ours", "theirs") if side in slot]
     ax.set_xlim(min(values) * 0.4, max(values) * 40)
-    ax.set_title(f"read families · p50, min-of-{inputs['rep_count']} · "
-                 "same corpus, oracle-verified identical results",
+    ax.set_title(f"read queries · p50, best of {inputs['rep_count']} runs · "
+                 "identical inputs and verified results",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
-             f"log scale — shorter is faster · {inputs['scale']}-scale corpus · "
+             "log scale — shorter is faster · 253k ledger rows / 192k calendar rows · "
              f"{inputs['host']} · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
@@ -790,8 +790,8 @@ def chart_speedup(inputs, out):
              if xlo < t < xhi]
     ax.set_xticks(ticks, [f"{t}×" for t in ticks])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("speedup over SQLite · read-family p50 multiples · "
-                 f"min-of-{inputs['rep_count']} both sides",
+    ax.set_title("speedup over SQLite · median latency per read query · "
+                 f"best of {inputs['rep_count']} runs for both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005, pool_note(inputs), fontsize=8, color=DIM,
              family="monospace")
@@ -824,7 +824,7 @@ def chart_tails(inputs, out):
         Line2D([], [], color=OURS, marker="o", label="bumbledb  p50 ● p95 ◆ p99 ■"),
         Line2D([], [], color=THEIRS, marker="o", label="SQLite"),
     ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
-    ax.set_title("tail behavior · p50 → p95 → p99 per read family, both engines",
+    ax.set_title("tail latency · p50 → p95 → p99 per read query, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
     # The p50 dots for slot_booking_overlap and postings_without_tag are
     # rotation-boundary tail-maxima: their two fastest param populations
@@ -834,8 +834,8 @@ def chart_tails(inputs, out):
     # mode. Mechanism + falsification evidence: the family doc comments
     # (crates/bumbledb-bench/src/{calendar/families.rs,families/read.rs}).
     fig.text(0.01, 0.005,
-             "bimodal families (containment_walk, balance, skew, chain) show their "
-             f"true tails — gated on p95, published anyway · {pool_note(inputs)}",
+             "containment_walk, balance, skew, and chain have bimodal latency · "
+             f"{pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -874,7 +874,7 @@ def chart_scenarios_lanes(rows, out):
                     color=color, fontweight="bold", family="monospace")
         else:  # exceeded_cap: no stats, no bar — the annotation IS the datum
             dnf += 1
-            ax.text(xhi * 0.85, y, f"DNF > {lane['cap_ms']}ms", va="center",
+            ax.text(xhi * 0.85, y, f"timed out > {lane['cap_ms']}ms", va="center",
                     ha="right", fontsize=9, color=THEIRS, fontweight="bold",
                     family="monospace")
         y += 1
@@ -886,10 +886,10 @@ def chart_scenarios_lanes(rows, out):
     ax.set_xticks([1, 3, 10, 30, 100, 300, 1000],
                   ["1×", "3×", "10×", "30×", "100×", "300×", "1000×"])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    title = ("scenario worlds · speedup over SQLite per (query, lane) · "
-             "oracle-gated, non-ledger corpora")
+    title = ("additional workloads · speedup over SQLite per query and "
+             "configuration · results matched before timing")
     if dnf:
-        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+        title += f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — excluded from ratios"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -915,7 +915,7 @@ def chart_scenarios(inputs, out):
         ylabels.append(query + lane_suffix(lane_name))
         if sqlite_us is None:  # DNF > cap: no number, no bar — skipped, counted
             dnf += 1
-            ax.text(2500 * 0.85, y, "DNF > cap", va="center", ha="right",
+            ax.text(2500 * 0.85, y, "timed out", va="center", ha="right",
                     fontsize=9, color=THEIRS, fontweight="bold",
                     family="monospace")
         else:
@@ -936,10 +936,10 @@ def chart_scenarios(inputs, out):
     ax.set_xticks([1, 3, 10, 30, 100, 300, 1000],
                   ["1×", "3×", "10×", "30×", "100×", "300×", "1000×"])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    title = ("scenario worlds · speedup over SQLite per query · "
-             "oracle-gated, non-ledger corpora")
+    title = ("additional workloads · speedup over SQLite per query · "
+             "results matched before timing")
     if dnf:
-        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+        title += f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — excluded from ratios"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -988,10 +988,10 @@ def chart_worlds(inputs, out):
                 ax.text(xhi * 0.85, y + 0.19, note, va="center", ha="right",
                         fontsize=9, color=THEIRS, fontweight="bold",
                         family="monospace")
-        title = f"{world} · ours vs SQLite p50 per query · oracle-gated, report-class"
+        title = f"{world} · bumbledb vs SQLite median latency per query"
         if dnf:
-            title += (f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — "
-                      "excluded and counted")
+            title += (f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — "
+                      "excluded from ratios")
         ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
         fig.text(0.01, 0.005, "log scale — shorter is faster",
                  fontsize=8, color=DIM, family="monospace")
@@ -1045,14 +1045,13 @@ def chart_ratio_waterfall(inputs, out):
     ticks = [t for t in (1, 3, 10, 30, 100, 300, 1000) if xlo < t < xhi]
     ax.set_xticks(ticks, [f"{t}×" for t in ticks])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    title = ("every family and query · SQLite-p50 ÷ ours-p50, sorted · "
-             "report-class composite")
+    title = "every read query · SQLite median ÷ bumbledb median, sorted"
     if dnf:
-        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+        title += f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — excluded from ratios"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
-    footer = f"ledger+calendar families ({pool_note(inputs)})"
+    footer = f"ledger and calendar queries ({pool_note(inputs)})"
     if srows:
-        footer += " + scenario worlds"
+        footer += " + additional workloads"
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1085,7 +1084,7 @@ def chart_tails_fan(inputs, out):
         Line2D([], [], color=OURS, marker="o", label="bumbledb  p50 ● p90 ◆ p99 ■"),
         Line2D([], [], color=THEIRS, marker="o", label="SQLite"),
     ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
-    ax.set_title("latency tail fan · p50 → p90 → p99 per read family, both engines",
+    ax.set_title("latency distribution · p50 → p90 → p99 per read query, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
              f"log scale · line spans p50 → p99 · {pool_note(inputs)}",
@@ -1105,7 +1104,7 @@ def chart_writes(inputs, out):
     values = [slot[side]["p50"] for slot in writes.values()
               for side in ("ours", "theirs") if side in slot]
     ax.set_xlim(min(values) * 0.4, max(values) * 40)
-    ax.set_title("write + cold families · p50 · where fsync physics rules, honesty does too",
+    ax.set_title("writes and first reads · median latency",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
              "durable commits are an fsync-latency product on both engines; "
@@ -1204,8 +1203,8 @@ def chart_storage(inputs, out):
                   labelcolor=FG, fontsize=8)
 
     fig.text(0.01, 0.005,
-             "storage lane · report-class · every byte behind a count cross-check "
-             f"against the generator stream{prov_note(report)}",
+             "every byte checked against the generated row count"
+             f"{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1246,14 +1245,14 @@ def chart_writes_rates(inputs, out):
         ax.set_xlim(min(ours + theirs) * 0.5, max(ours + theirs) * 12)
         ax.xaxis.set_major_formatter(FuncFormatter(fmt_rate))
         ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-        ax.set_title(f"lane {lane['lane']} · sqlite {lane['sqlite_sync']} · "
+        ax.set_title(f"{lane['lane']} · SQLite {lane['sqlite_sync']} · "
                      "rows/sec — longer is more throughput",
                      fontsize=11, loc="left", pad=10, family="monospace")
         ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
                   labelcolor=FG, fontsize=8)
     fig.text(0.01, 0.005,
-             "writes lane · report-class · post-state value-verified (count arithmetic "
-             f"+ body multisets, ids projected out) · log scale{prov_note(report)}",
+             "final rows verified after every operation · log scale"
+             f"{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1302,13 +1301,13 @@ def chart_curves(inputs, out):
                 capped_total += 1
                 ax.plot(p["facts"], cap_ns, "o", ms=8, mfc="none", mec=THEIRS,
                         mew=1.6, zorder=4)
-                ax.annotate("DNF ≥ cap", (p["facts"], cap_ns),
+                ax.annotate("timed out", (p["facts"], cap_ns),
                             textcoords="offset points", xytext=(-8, -14),
                             fontsize=8, color=THEIRS, family="monospace")
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.yaxis.set_major_formatter(FuncFormatter(fmt_us))
-        ax.set_xlabel("facts", fontsize=9, family="monospace")
+        ax.set_xlabel("rows", fontsize=9, family="monospace")
         ax.grid(color=GRID, linewidth=0.6, zorder=0)
         ax.set_title(f"{family['name']} · {family['world']}", fontsize=11,
                      loc="left", pad=8, family="monospace")
@@ -1316,8 +1315,7 @@ def chart_curves(inputs, out):
                   labelcolor=FG, fontsize=8)
     for ax in flat[len(families):]:
         ax.set_visible(False)
-    footer = ("curves lane · report-class · every point oracle-gated (value-identical "
-              "multisets) before either engine is timed")
+    footer = "results matched before either engine was timed"
     if capped_total:
         footer += (f" · {capped_total} SQLite point"
                    + ("s" if capped_total != 1 else "")
@@ -1398,18 +1396,17 @@ def chart_write_throughput(inputs, out):
     ax.set_yscale("log")
     ax.set_xticks(batches, [str(b) for b in batches])
     ax.yaxis.set_major_formatter(FuncFormatter(fmt_rate))
-    ax.set_xlabel("commit batch size (facts per commit)", fontsize=9,
+    ax.set_xlabel("commit batch size (rows per commit)", fontsize=9,
                   family="monospace")
-    ax.set_ylabel("facts/sec", fontsize=9, family="monospace")
+    ax.set_ylabel("rows/sec", fontsize=9, family="monospace")
     ax.grid(color=GRID, linewidth=0.6, zorder=0)
     ax.legend(loc="upper left", facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=8)
-    ax.set_title("write throughput · facts/sec across commit batch sizes, "
-                 "per durability lane",
+    ax.set_title("write throughput · rows/sec across commit batch sizes, "
+                 "per durability configuration",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
-             "durable lanes are an fsync-latency product on both engines — "
-             "shown as measured · report-class"
+             "durable commits include the storage flush in both engines"
              + prov_note(inputs["write_throughput"]),
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
@@ -1439,7 +1436,7 @@ def chart_adversarial_dnf(inputs, out):
             capped_count += 1
             ax.barh(y + 0.19, cap_ns, height=0.34, facecolor="none",
                     edgecolor=THEIRS, hatch="///", linewidth=1.0, zorder=3)
-            ax.text(cap_ns * 1.15, y + 0.19, f"DNF > {cap_ms} ms cap",
+            ax.text(cap_ns * 1.15, y + 0.19, f"timed out > {cap_ms} ms",
                     va="center", fontsize=9, color="#f85149",
                     fontweight="bold", family="monospace")
             label = fmt_us(o)  # no ratio against a cap — there is no number
@@ -1468,11 +1465,11 @@ def chart_adversarial_dnf(inputs, out):
     ax.legend(handles=[Patch(color=OURS, label="bumbledb"),
                        Patch(color=THEIRS, label="SQLite"),
                        Patch(facecolor="none", edgecolor=THEIRS, hatch="///",
-                             label="SQLite DNF — drawn to the cap")],
+                             label="SQLite timed out — drawn to the limit")],
               loc="lower right", facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=8)
-    ax.set_title("adversarial DNFs · ours vs SQLite p50 · capped twins shown "
-                 "as capped, never as numbers",
+    ax.set_title("queries that timed out in SQLite · median latency · "
+                 "timeouts drawn at the limit",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
              f"{capped_count} of {len(queries)} SQLite twins exceeded the "
@@ -1506,7 +1503,7 @@ def home_turf_render(key, world, regime, oracle_note):
         for lane, family, ours_ns, theirs_ns in rows:
             if lane != seen:
                 seen = lane
-                ax.text(0.28, y - 0.15, f"lane {lane}", fontsize=11, color=FG,
+                ax.text(0.28, y - 0.15, lane, fontsize=11, color=FG,
                         fontweight="bold", family="monospace")
                 y += 1
             yticks.append(y)
@@ -1533,14 +1530,14 @@ def home_turf_render(key, world, regime, oracle_note):
         ax.set_xticks(ticks, [f"{t:g}×" for t in ticks])
         ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
         title = (f"{world} — {regime} · speedup over SQLite "
-                 "per (family, lane) · report-class")
+                 "per operation and durability setting")
         if losses:
             title += (f"\nSQLite wins {losses} of {len(rows)} rows — "
                       "drawn red, below parity, as measured")
         ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
         fig.text(0.01, 0.005,
                  f"seed {report.get('seed', '?')} · {oracle_note} · red = SQLite "
-                 f"faster — benched to lose honestly{prov_note(report)}",
+                 f"faster{prov_note(report)}",
                  fontsize=8, color=DIM, family="monospace")
         fig.tight_layout()
         fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1584,7 +1581,7 @@ def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
                   fontsize=8)
         mix = run.get("mix", {})
         mix_note = " ".join(f"{k}={v}" for k, v in mix.items())
-        ax.set_title(f"churn · run {run['name']} ({mix_note}, working set "
+        ax.set_title(f"repeated updates · {run['name']} ({mix_note}, working set "
                      f"{run.get('working_set', '?')}) · {what}",
                      fontsize=12, loc="left", pad=14, family="monospace")
         fig.text(0.01, 0.005, churn_footer(report, config), fontsize=8,
@@ -1641,11 +1638,11 @@ def churn_series(ax, run, values_of):
 def churn_footer(report, config):
     """The one churn caption: the protocol strides from the report's own
     config, plus the provenance caveat."""
-    return (f"churn lane · {config.get('cycles', '?')} cycles sampled every "
+    return (f"{config.get('cycles', '?')} cycles sampled every "
             f"{config.get('sample_every', '?')} · sqlite-maint VACUUM every "
             f"{config.get('vacuum_every', '?')} / ANALYZE every "
             f"{config.get('analyze_every', '?')}, charged as maintenance · "
-            f"report-class{prov_note(report)}")
+            f"maintenance included{prov_note(report)}")
 
 
 def churn_probe_value(probe_name):
@@ -1692,7 +1689,7 @@ def chart_churn_latency(inputs, out):
                 ax.set_xlabel("cycle", fontsize=9, family="monospace")
         mix = run.get("mix", {})
         mix_note = " ".join(f"{k}={v}" for k, v in mix.items())
-        fig.suptitle(f"churn · run {run['name']} ({mix_note}, working set "
+        fig.suptitle(f"repeated updates · {run['name']} ({mix_note}, working set "
                      f"{run.get('working_set', '?')}) · probe latency",
                      x=0.01, y=0.998, ha="left", fontsize=12, color=FG,
                      family="monospace")
@@ -1745,16 +1742,13 @@ CHARTS = [
     ChartSpec("write-throughput.svg", ("write_throughput",), chart_write_throughput),
     ChartSpec("adversarial-dnf.svg", ("adversarial",), chart_adversarial_dnf),
     ChartSpec("world-crud.svg", ("crud_report",),
-              home_turf_render("crud_report", "crud",
-                               "the OLTP home turf, SQLite's strong regime",
-                               "oracle-gated read query + post-state "
-                               "value-verified, both relations, both lanes")),
+              home_turf_render("crud_report", "transactions",
+                               "ordinary reads and writes",
+                               "read results and final rows verified")),
     ChartSpec("world-lawful.svg", ("lawful_report",),
-              home_turf_render("lawful_report", "lawful",
-                               "the integrity home turf: judged-law admission "
-                               "vs SQL constraints",
-                               "post-state fold over all five relations + "
-                               "naive verdict parity")),
+              home_turf_render("lawful_report", "constraint checks",
+                               "keys, references, conditions, and limits",
+                               "final rows and outcomes verified")),
     ChartSpec("churn-latency-<run>.svg", ("churn_report",), chart_churn_latency),
     ChartSpec("churn-size-<run>.svg", ("churn_report",),
               churn_metric_render("churn-size", lambda s: s["disk_bytes"],

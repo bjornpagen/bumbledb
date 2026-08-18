@@ -1,7 +1,7 @@
 {
 	"name": "@bjornpagen/bumbledb",
 	"version": "0.14.0",
-	"description": "Type-theoretic TypeScript SDK for the bumbledb embedded relational engine",
+	"description": "Embedded relational database for TypeScript with typed schemas, queries, and commit-time constraints",
 	"type": "module",
 	"exports": {
 		".": {
