@@ -1,8 +1,10 @@
 use super::super::{Fact, InstanceBuilder, OwnedInstance};
+use crate::Db;
 use crate::error::{Admission, Direction, Error, Violation};
 use crate::ir::{Atom, FindTerm, Query, Rule, Term, Value, VarId};
 use crate::schema::tests::{closed, containment, fd, field, row, side};
 use crate::schema::{SchemaDescriptor, ValidateDescriptor as _};
+use crate::testutil::TempDir;
 use crate::{AnswerValue, Answers, AtomSource};
 use bumbledb_theory::schema::{FieldId, RelationId};
 
@@ -158,6 +160,30 @@ fn foreign_prepared_query_is_rejected() {
         .execute(&mut prepared, &[], &mut out)
         .expect_err("foreign");
     assert!(matches!(err, Error::ForeignPreparedQuery), "{err:?}");
+}
+
+#[test]
+fn profile_on_owned_and_lease_agrees() {
+    let (owned, _, _) = admit_ada();
+    let mut owned_prepared = owned.prepare(&all_accounts()).expect("prepare");
+    let (owned_answers, owned_stats) = owned
+        .profile(&mut owned_prepared, &[])
+        .expect("owned profile");
+
+    let dir = TempDir::new("profile-both-arms");
+    let db = Db::from_instance(&dir.path().join("store"), &owned).expect("publish");
+    let (lease_answers, lease_stats) = db
+        .read(|instance| {
+            let mut prepared = instance.prepare(&all_accounts())?;
+            instance.profile(&mut prepared, &[])
+        })
+        .expect("lease profile");
+
+    assert_eq!(
+        owned_stats, lease_stats,
+        "identical inputs, identical stats"
+    );
+    assert_eq!(owned_answers.len(), lease_answers.len());
 }
 
 #[test]

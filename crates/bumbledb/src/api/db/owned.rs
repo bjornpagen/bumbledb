@@ -3,6 +3,7 @@
 use crate::Answers;
 use crate::ParamArg;
 use crate::PreparedQuery;
+use crate::api::stats::ExecutionStats;
 use crate::error::Result;
 use crate::image::FrozenSource;
 use crate::ir::{Query, Value};
@@ -114,6 +115,20 @@ impl<S> OwnedInstance<S> {
         out: &mut Answers,
     ) -> Result<()> {
         Instance::execute(self, prepared, params, out)
+    }
+
+    /// Executes with counting instrumentation. Diagnostic: the stats
+    /// shape is unfrozen. Not a staleness clock.
+    ///
+    /// # Errors
+    ///
+    /// As [`Instance::execute`].
+    pub fn profile(
+        &self,
+        prepared: &mut PreparedQuery<S>,
+        params: &[ParamArg<'_>],
+    ) -> Result<(Answers, ExecutionStats)> {
+        Instance::profile(self, prepared, params)
     }
 
     /// Full-relation scan of decoded dynamic facts.

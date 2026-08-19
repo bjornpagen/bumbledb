@@ -87,10 +87,7 @@ impl<S> ReadInstance<'_, S> {
 
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
-    /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
-    /// (R13): whatever [`ReadInstance::execute`] binds, profiling binds.
-    ///
-    /// Harness-only (not embedding API).
+    /// as data. The sealed [`crate::Instance::profile`] impl.
     ///
     /// # Errors
     ///
@@ -101,7 +98,7 @@ impl<S> ReadInstance<'_, S> {
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
-        prepared.profile(self.txn(), self.cache(), params)
+        crate::Instance::profile(self, prepared, params)
     }
 
     /// The export surface (`70-api.md` ETL story): a full-relation scan

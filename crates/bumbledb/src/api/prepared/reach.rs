@@ -508,7 +508,7 @@ fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u3
         }
         let old = rule.memo.colts[occ_idx].reset(crate::image::view::View::Unbound);
         let recycled = old.recycle();
-        let spare = &mut rule.memo.spare_buffers[occ_idx];
+        let spare = rule.memo.spare_mut(occ_idx);
         if spare.capacity() == 0 {
             *spare = recycled;
         } else if recycled.capacity() > 0 {

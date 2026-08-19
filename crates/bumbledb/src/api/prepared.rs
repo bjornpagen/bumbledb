@@ -775,16 +775,37 @@ enum ResolutionState {
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
-/// One parked view binding: a COLT (with its view and forced tries)
-/// keyed by the (epoch, resolved residual filters) it was built
-/// for. Swapped — never cloned — with the active binding on a hit.
-/// Parked bindings always carry a real epoch: only executed
-/// bindings park (prepare leaves every slot empty).
-struct ParkedView {
+/// One executed binding: a real epoch plus the residual filters it was
+/// built for. Active and parked slots move this shape; the COLT lives
+/// on [`ViewMemo::colts`] (active) or [`Parked::colt`] (parked).
+struct Bound {
     epoch: crate::image::ViewEpoch,
     filters: Vec<FilterPredicate>,
-    colt: Colt,
     last_used: u64,
+}
+
+/// The three proofs a parallel `None` used to conflate.
+enum Binding {
+    /// Never executed, or vacated after a park (the rebuild lands here).
+    Unbound,
+    /// Interior occurrence: lives outside the epoch-keyed memo.
+    Derived,
+    Bound(Bound),
+}
+
+/// A parked [`Bound`] plus the COLT it owns. The kernel only sees
+/// [`ViewMemo::colts`]; this COLT is off the slice until unparked.
+struct Parked {
+    bound: Bound,
+    colt: Colt,
+}
+
+/// Per-occurrence memo slot: the active binding, its parked twins, and
+/// the spare survivor buffer. [`Binding::Derived`] has no park arm.
+struct OccMemo {
+    active: Binding,
+    parked: [Option<Parked>; PARKED_SLOTS],
+    spare: Vec<u32>,
 }
 
 /// The per-occurrence view memo (docs/architecture/40-execution.md):
@@ -796,19 +817,11 @@ struct ParkedView {
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding
     /// (over [`View::Unbound`] until the first execution — prepare pins
-    /// no image).
+    /// no image). The kernel takes `&mut [Colt]`; this vector stays.
     colts: Vec<Colt>,
-    /// The active binding's epoch, per occurrence (`None` = unbound).
-    epoch: Vec<Option<crate::image::ViewEpoch>>,
-    /// The active binding's resolved residual filters, per occurrence.
-    filters: Vec<Vec<FilterPredicate>>,
-    /// Parked bindings, [`PARKED_SLOTS`] per occurrence, empty at
-    /// prepare, LRU-evicted, stale-reaped at each bind (a superseded
-    /// store epoch can never hit again — dropping it frees its COLT
-    /// pools and its image Arc at the first post-commit execution).
-    parked: Vec<Vec<Option<ParkedView>>>,
-    /// Spare survivor buffers recycled through rebuilds.
-    spare_buffers: Vec<Vec<u32>>,
+    /// One slot per occurrence: active [`Binding`], parked [`Bound`]s,
+    /// spare survivor buffer.
+    occs: Vec<OccMemo>,
     /// The LRU clock, ticked once per execution.
     tick: u64,
 }

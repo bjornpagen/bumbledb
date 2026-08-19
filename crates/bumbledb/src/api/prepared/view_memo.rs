@@ -1,7 +1,69 @@
-use super::{FilterPredicate, ParkedView, ViewMemo};
+use super::{Binding, Bound, FilterPredicate, OccMemo, Parked, ViewMemo};
+use crate::exec::colt::Colt;
 use crate::image::ViewEpoch;
 
 impl ViewMemo {
+    pub(super) fn new() -> Self {
+        Self {
+            colts: Vec::new(),
+            occs: Vec::new(),
+            tick: 0,
+        }
+    }
+
+    /// Pins one occurrence's COLT and its binding proof. Interior
+    /// occurrences arrive as [`Binding::Derived`] — they never park.
+    pub(super) fn push(&mut self, colt: Colt, active: Binding) {
+        self.colts.push(colt);
+        self.occs.push(OccMemo {
+            active,
+            parked: std::array::from_fn(|_| None),
+            spare: Vec::new(),
+        });
+    }
+
+    pub(super) fn spare_mut(&mut self, occ: usize) -> &mut Vec<u32> {
+        &mut self.occs[occ].spare
+    }
+
+    /// Whether this occurrence is Interior: never epoch-keyed, never parked.
+    pub(super) fn is_derived(&self, occ: usize) -> bool {
+        matches!(self.occs[occ].active, Binding::Derived)
+    }
+
+    /// The active binding matches this exact `(epoch, filters)` pair.
+    pub(super) fn active_matches(
+        &self,
+        occ: usize,
+        epoch: ViewEpoch,
+        filters: &[FilterPredicate],
+    ) -> bool {
+        match &self.occs[occ].active {
+            Binding::Bound(bound) => bound.epoch == epoch && bound.filters == filters,
+            Binding::Unbound | Binding::Derived => false,
+        }
+    }
+
+    /// Records a just-rebuilt active binding, reusing a vacated
+    /// [`Bound`]'s filter allocation when the slot is already bound.
+    pub(super) fn set_bound(&mut self, occ: usize, epoch: ViewEpoch, filters: &[FilterPredicate]) {
+        match &mut self.occs[occ].active {
+            Binding::Bound(bound) => {
+                bound.epoch = epoch;
+                bound.filters.clear();
+                bound.filters.extend_from_slice(filters);
+                bound.last_used = self.tick;
+            }
+            Binding::Unbound | Binding::Derived => {
+                self.occs[occ].active = Binding::Bound(Bound {
+                    epoch,
+                    filters: filters.to_vec(),
+                    last_used: self.tick,
+                });
+            }
+        }
+    }
+
     /// Binds `occ`'s active slot to `(epoch, filters)`: an active
     /// hit is free, a parked hit swaps in, and a miss parks the active
     /// binding (into an empty slot first, else the LRU victim) and
@@ -12,66 +74,91 @@ impl ViewMemo {
         epoch: ViewEpoch,
         filters: &[FilterPredicate],
     ) -> bool {
+        let tick = self.tick;
+        let colt = &mut self.colts[occ];
+        let occ_memo = &mut self.occs[occ];
         // Stale reaping first: store generations only advance, so a
         // parked binding superseded by this one is provably unhittable
         // — drop it, its pools, and its image Arc. Closed and frozen
         // epochs never supersede. Fires only when the store moved
         // (within an epoch every parked entry is current), so the
         // zero-alloc/zero-dealloc discipline of the warm window holds.
-        for slot in &mut self.parked[occ] {
+        for slot in &mut occ_memo.parked {
             if slot
                 .as_ref()
-                .is_some_and(|parked| parked.epoch.superseded_by(epoch))
+                .is_some_and(|parked| parked.bound.epoch.superseded_by(epoch))
             {
                 *slot = None;
             }
         }
-        if self.epoch[occ] == Some(epoch) && self.filters[occ] == filters {
+        if let Binding::Bound(bound) = &occ_memo.active
+            && bound.epoch == epoch
+            && bound.filters == filters
+        {
             return true;
         }
-        if let Some(slot) = self.parked[occ].iter().position(|slot| {
-            slot.as_ref()
-                .is_some_and(|parked| parked.epoch == epoch && parked.filters == filters)
+        if let Some(slot) = occ_memo.parked.iter().position(|slot| {
+            slot.as_ref().is_some_and(|parked| {
+                parked.bound.epoch == epoch && parked.bound.filters == filters
+            })
         }) {
-            let parked = self.parked[occ][slot].as_mut().expect("matched Some above");
-            std::mem::swap(&mut self.colts[occ], &mut parked.colt);
-            std::mem::swap(&mut self.filters[occ], &mut parked.filters);
-            // A parked entry exists only after a same-epoch park, so
-            // the outgoing active binding is bound (post-reap both sides
-            // are at `epoch`; the swap just rotates which is active).
-            let outgoing = self.epoch[occ]
-                .replace(parked.epoch)
-                .expect("a parked hit implies an executed active binding");
-            parked.epoch = outgoing;
-            parked.last_used = self.tick;
+            match &mut occ_memo.active {
+                Binding::Derived => {
+                    // Unparkable by construction: bind is never called
+                    // for an Interior occurrence.
+                    return false;
+                }
+                Binding::Bound(active) => {
+                    let parked = occ_memo.parked[slot].as_mut().expect("matched Some above");
+                    std::mem::swap(colt, &mut parked.colt);
+                    std::mem::swap(active, &mut parked.bound);
+                    parked.bound.last_used = tick;
+                }
+                Binding::Unbound => {
+                    let parked = occ_memo.parked[slot].take().expect("matched Some above");
+                    *colt = parked.colt;
+                    occ_memo.active = Binding::Bound(parked.bound);
+                }
+            }
             return true;
         }
         // A current-epoch active binding is still hittable — park it
-        // into an empty slot (first park constructs the ParkedView inside
-        // the sanctioned view-rebuild window), else over the LRU victim
-        // (post-reap every survivor is current-epoch, so LRU is the
-        // whole policy). A stale or unbound active can never hit again:
-        // rebuild it in place (zero-residual occurrences always land
-        // here, so their parked slots stay empty forever).
-        if self.epoch[occ] == Some(epoch) {
-            if let Some(empty) = self.parked[occ].iter().position(Option::is_none) {
-                let fresh = self.colts[occ].unbound_sibling();
-                self.parked[occ][empty] = Some(ParkedView {
-                    epoch,
-                    filters: std::mem::take(&mut self.filters[occ]),
-                    colt: std::mem::replace(&mut self.colts[occ], fresh),
-                    last_used: self.tick,
+        // into an empty slot (first park constructs the parked Bound
+        // inside the sanctioned view-rebuild window), else over the LRU
+        // victim (post-reap every survivor is current-epoch, so LRU is
+        // the whole policy). A stale or unbound active can never hit
+        // again: rebuild it in place (zero-residual occurrences always
+        // land here, so their parked slots stay empty forever).
+        // Derived is unparkable — no Bound to move.
+        if let Binding::Bound(bound) = &occ_memo.active
+            && bound.epoch == epoch
+        {
+            if let Some(empty) = occ_memo.parked.iter().position(Option::is_none) {
+                let Binding::Bound(bound) =
+                    std::mem::replace(&mut occ_memo.active, Binding::Unbound)
+                else {
+                    unreachable!("just matched Bound");
+                };
+                let fresh = colt.unbound_sibling();
+                occ_memo.parked[empty] = Some(Parked {
+                    bound: Bound {
+                        last_used: tick,
+                        ..bound
+                    },
+                    colt: std::mem::replace(colt, fresh),
                 });
-                self.epoch[occ] = None;
-            } else if let Some(victim) = self.parked[occ]
+            } else if let Some(victim) = occ_memo
+                .parked
                 .iter_mut()
                 .flatten()
-                .min_by_key(|parked| parked.last_used)
+                .min_by_key(|parked| parked.bound.last_used)
             {
-                std::mem::swap(&mut self.colts[occ], &mut victim.colt);
-                std::mem::swap(&mut self.filters[occ], &mut victim.filters);
-                victim.epoch = epoch;
-                victim.last_used = self.tick;
+                let Binding::Bound(active) = &mut occ_memo.active else {
+                    unreachable!("just matched Bound");
+                };
+                std::mem::swap(colt, &mut victim.colt);
+                std::mem::swap(active, &mut victim.bound);
+                victim.bound.last_used = tick;
             }
         }
         false

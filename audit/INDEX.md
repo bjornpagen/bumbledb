@@ -23,9 +23,9 @@ over this table when they disagree.
 | 04 | [TS builder verbs](04-ts-builder-verbs.md) | **fixed this pass** — full builder verbs; column load/insert |
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
 | 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |
-| 07 | [view binding](07-view-binding.md) | **CONTESTED** — owner ruling required (the keep defends the fix, not the code) |
+| 07 | [view binding](07-view-binding.md) | **fixed this pass** — per-occurrence `Binding` / `OccMemo` |
 | 08 | [relation slot](08-relation-slot.md) | **CONTESTED** — owner ruling required (the keep inverts the mechanism); SPINE-16 open either way |
-| 09 | [profile + stats](09-profile-stats.md) | **CONTESTED** on promotion (profile ≠ staleness); `hit` twice OPEN by both sides |
+| 09 | [profile + stats](09-profile-stats.md) | **fixed this pass** — `Instance::profile` + one `hit` |
 | 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | OPEN — 4 × `unreachable!("schema-typed")`; `ValueRef::FixedBytes` |
 | 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
 | 12 | [C owner tokens](12-c-owner-tokens.md) | **fixed this pass** (`OwnerToken`; bridge pre-refusal test pinned) |
@@ -39,19 +39,15 @@ over this table when they disagree.
 
 ## Owner rulings required
 
-1. **07 view binding** — the keep-ruling argues against collapsing three
-   proofs into one `None`; that is the *current* code, and the filed
-   `Binding` sum is the three proofs. At minimum the four-parallel-vector
-   unification proceeds under both readings.
+1. **07 view binding** — owner ruling landed: the filed `Binding` sum
+   proceeds. Status in [07](07-view-binding.md).
 2. **08 relation slot** — the keep-ruling says one slot type would make
    store generations representable on closed images; the filed
    `Closed(OnceLock)` arm carries no generation, so the sum is what makes
    it unrepresentable — today's two maps enforce the partition by
    convention (`expect("Closed body implies a closed cache slot")`).
-3. **09 profile promotion** — the keep-ruling reasons from drift; `profile`
-   is counting instrumentation, not a drift clock. If lease-only stands,
-   the sealed-trait comment and the proposal roster must be edited to
-   match.
+3. **09 profile promotion** — owner ruling landed: `profile` is counting
+   instrumentation, not a drift clock. Status in [09](09-profile-stats.md).
 4. **11 already resolved by fix** — recorded here because it closed a gate
    contradiction: destroy now leaks retired slots (the C parse of "the slot
    outlives the handle"), and the UAF gate is met by test.

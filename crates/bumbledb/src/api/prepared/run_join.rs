@@ -93,7 +93,7 @@ where
         // never pinned by staleness. The bind is the ordinary miss path
         // — `apply` over the driver-supplied image into a per-round
         // `Colt::reset`, survivor buffers recycled through the existing
-        // `spare_buffers` ping-pong — and every generation-keyed
+        // `spare` ping-pong — and every generation-keyed
         // mechanism never learns recursion exists
         // (`docs/architecture/40-execution.md` § the linear reach driver).
         if occurrence.bind.edb().is_none() {
@@ -102,7 +102,7 @@ where
                 obs::names::VIEW_BUILD,
                 obs::TraceArgs::Count(occ_idx as u64),
             );
-            let mut buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
+            let mut buffer = std::mem::take(memo.spare_mut(occ_idx));
             if buffer.capacity() == 0
                 && let Some(pooled) = derived_retired.pop()
             {
@@ -114,10 +114,10 @@ where
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
             build_span.set_pair(occ_idx as u64, view.len() as u64);
             let old = memo.colts[occ_idx].reset(view);
-            memo.spare_buffers[occ_idx] = old.recycle();
+            *memo.spare_mut(occ_idx) = old.recycle();
             debug_assert!(
-                memo.epoch[occ_idx].is_none(),
-                "an Interior occurrence never enters the memo's epoch table"
+                memo.is_derived(occ_idx),
+                "an Interior occurrence is Derived and never enters the memo"
             );
             continue;
         }
@@ -153,7 +153,7 @@ where
         // was about to pay lazily anyway), then the rebuild is a pool
         // copy instead of an image scan plus a per-occurrence re-force.
         if let Some(canon) = dedup_source(plan, memo, occ_idx, epoch, resolved_filters) {
-            let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
+            let buffer = std::mem::take(memo.spare_mut(occ_idx));
             let [canon_colt, colt] = memo
                 .colts
                 .get_disjoint_mut([canon, occ_idx])
@@ -164,9 +164,8 @@ where
                 obs::names::VIEW_DEDUP,
                 obs::TraceArgs::Pair(occ_idx as u64, canon as u64),
             );
-            memo.spare_buffers[occ_idx] = old.recycle();
-            memo.epoch[occ_idx] = Some(epoch);
-            memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
+            *memo.spare_mut(occ_idx) = old.recycle();
+            memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
             continue;
         }
         let mut build_span = obs::span_args(
@@ -174,13 +173,12 @@ where
             obs::TraceArgs::Count(occ_idx as u64),
         );
         let image = images.image(schema, relation)?;
-        let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
+        let buffer = std::mem::take(memo.spare_mut(occ_idx));
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
         build_span.set_pair(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
-        memo.spare_buffers[occ_idx] = old.recycle();
-        memo.epoch[occ_idx] = Some(epoch);
-        memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
+        *memo.spare_mut(occ_idx) = old.recycle();
+        memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
     }
     views_span.end();
     // Selection probes (docs/architecture/40-execution.md): each occurrence's Eq constants
@@ -230,8 +228,8 @@ where
 /// *active* binding is exactly (`epoch`, occ's resolved residual
 /// filters) over the same relation with the same trie orientation
 /// ([`crate::exec::colt::Colt::same_shape`]). Derived and discharged
-/// occurrences never bind an epoch, so the epoch check excludes them
-/// for free. O(occurrences) compares, only inside the sanctioned
+/// occurrences never carry [`super::Binding::Bound`], so the active
+/// match excludes them for free. O(occurrences) compares, only inside the sanctioned
 /// rebuild window — the warm path never gets here.
 fn dedup_source(
     plan: &crate::plan::fj::ValidatedPlan,
@@ -249,8 +247,7 @@ fn dedup_source(
         .position(|(other, occurrence)| {
             other != occ
                 && occurrence.source().edb() == Some(relation)
-                && memo.epoch[other] == Some(epoch)
-                && memo.filters[other] == resolved_filters[occ]
+                && memo.active_matches(other, epoch, &resolved_filters[occ])
                 && memo.colts[other].same_shape(&memo.colts[occ])
         })
 }

@@ -213,12 +213,11 @@ impl<S> PreparedQuery<S> {
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats::KeyProbe {
-                    distinct_bindings: rule.distinct_witness.is_some(),
+                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats::key_probe_rule(
+                    rule.distinct_witness.is_some(),
                     emitted,
                     absorbed,
-                    hit: emitted > 0,
-                },
+                ),
             });
         }
         if ran {
