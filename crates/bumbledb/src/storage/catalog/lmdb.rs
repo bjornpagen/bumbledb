@@ -24,6 +24,33 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
     pub(crate) fn new(txn: &'txn ReadTxn<'env>) -> Self {
         Self { txn }
     }
+
+    /// Dictionary lookup against this catalog's transaction. The handle
+    /// is `Copy`; the answer is owned, so a temporary catalog is fine.
+    pub(crate) fn dict_lookup(&self, raw: &[u8]) -> Result<Option<InternId>> {
+        match self
+            .txn
+            .env()
+            .dict()
+            .get(self.txn.raw(), &crate::storage::dict::forward_key(raw))?
+        {
+            None => Ok(None),
+            Some(bytes) => crate::storage::dict::intern_id_from_stored(bytes).map(Some),
+        }
+    }
+
+    /// Reverse resolve. Lifetime is the catalog's transaction, not the
+    /// borrow of this `Copy` handle — store `CodecRead` can drop the
+    /// temporary and still return the mmap bytes.
+    pub(crate) fn dict_resolve(&self, id: InternId) -> Result<&'txn [u8]> {
+        self.txn
+            .env()
+            .dict()
+            .get(self.txn.raw(), &crate::storage::dict::reverse_key(id))?
+            .ok_or(Error::Corruption(CorruptionError::DanglingInternId(
+                id.raw(),
+            )))
+    }
 }
 
 /// LMDB write catalog: one owner borrow of the write transaction.
@@ -34,6 +61,25 @@ pub(crate) struct LmdbWriteCatalog<'txn, 'env> {
 impl<'txn, 'env> LmdbWriteCatalog<'txn, 'env> {
     pub(crate) fn new(txn: &'txn mut WriteTxn<'env>) -> Self {
         Self { txn }
+    }
+
+    /// Flush one pending intern: forward put, reverse insert that
+    /// refuses overwrite (ids never reuse).
+    pub(crate) fn dict_put_pending(&mut self, raw: &[u8], id: InternId) -> Result<()> {
+        debug_assert!(!id.is_sentinel(), "dictionary id space exhausted");
+        self.put(
+            CatalogMap::Dictionary,
+            &crate::storage::dict::forward_key(raw),
+            &id.raw().to_be_bytes(),
+        )?;
+        match self.put_no_overwrite(
+            CatalogMap::Dictionary,
+            &crate::storage::dict::reverse_key(id),
+            raw,
+        )? {
+            PutOutcome::Inserted => Ok(()),
+            PutOutcome::Occupied => Err(Error::Corruption(CorruptionError::DictReverseIdReuse)),
+        }
     }
 }
 
@@ -312,6 +358,14 @@ impl CatalogRead for LmdbReadCatalog<'_, '_> {
 
     fn dict_next_id(&self) -> Result<InternId> {
         Ok(InternId::from_raw(self.txn.dict_next_id()?))
+    }
+
+    fn dict_lookup(&self, raw: &[u8]) -> Result<Option<InternId>> {
+        LmdbReadCatalog::dict_lookup(self, raw)
+    }
+
+    fn dict_resolve(&self, id: InternId) -> Result<Self::Value<'_>> {
+        LmdbReadCatalog::dict_resolve(self, id)
     }
 }
 

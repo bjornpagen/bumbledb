@@ -22,7 +22,7 @@ over this table when they disagree.
 | 03 | [owned single read](03-ts-owned-single-read.md) | OPEN — per-op lease round trips; two spellings of every owned read |
 | 04 | [TS builder verbs](04-ts-builder-verbs.md) | OPEN — `load`+`admit` only; engine has delete/reserve/contains/get |
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
-| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |
+| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / **fixed this pass** (dict) / BLOCKED (scratch — `instance.rs`) |
 | 07 | [view binding](07-view-binding.md) | **CONTESTED** — owner ruling required (the keep defends the fix, not the code) |
 | 08 | [relation slot](08-relation-slot.md) | **CONTESTED** — owner ruling required (the keep inverts the mechanism); SPINE-16 open either way |
 | 09 | [profile + stats](09-profile-stats.md) | **CONTESTED** on promotion (profile ≠ staleness); `hit` twice OPEN by both sides |
