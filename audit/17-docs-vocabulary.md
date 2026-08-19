@@ -1,7 +1,13 @@
 # 17 — Stale vocabulary and missing tables in docs and Lean prose
 
-- **Status:** OPEN (DOC-01–04 fixed in tree; these rows verified open in
-  the second pass and unchanged; the tree is hot).
+- **Status:** **fixed this pass** — fence table in `60-validation.md`
+  (three citations); API-sense snapshot swept from cookbook 20/28,
+  `00-product.md`, `50-storage.md`, `10-data-model.md`, and rustdoc on
+  `ReadInstance` / `Db::prepare` / point reads / `ParkedReader`;
+  conformance README cites the lane pin (277 / 9 `complete-*`);
+  `Txn.lean` module doc: lease read / `ForeignWitness`;
+  `spec-census.sh` carries the deleted API-sense snapshot token
+  (`bash scripts/spec-census.sh` green).
 - **Severity:** should-fix (documentation only; no code).
 - **Supersedes:** DOC-05, DOC-06, DOC-07, LEAN-01, REP-15, SPINE-09's naming
   half.

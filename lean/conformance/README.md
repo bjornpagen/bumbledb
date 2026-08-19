@@ -383,10 +383,10 @@ prefix `reach-` selects the evaluator. Do not name them `query-*.json`.
 * Regenerate: `cargo test -p bumbledb-bench
   regenerate_the_conformance_corpus -- --ignored --nocapture`
   (deterministic: identical bytes from identical seeds, forever).
-  Corpus bytes move once onto the tagged encoding; the pin is 268
-  answers and 0 Lean disagreements. Until bench regenerates, the
-  checked-in files are still the old product and the Lean decoder
-  (this tree) refuses them.
+  Corpus bytes move once onto the tagged encoding. The case count is
+  pinned by the lane — `lake exe conformance` prints the live
+  directory length (`lean/Main.lean`'s summary line), currently 277
+  cases including 9 `complete-*` — and 0 Lean disagreements.
 * Compare (engine · naive · file bytes): `cargo test -p bumbledb-bench
   the_corpus_replays_byte_identical` — runs in the plain workspace
   suite.

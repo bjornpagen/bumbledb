@@ -923,7 +923,7 @@ let audit = query!(Ledger {
 ## 20. Conditional writes
 
 Guarantee: Lean theorem + generation-witness/runtime premise + host retry
-discipline — snapshot-derived writes detect movement
+discipline — instance-derived writes detect movement
 (`lean/Bumbledb/Txn.lean: writeFrom_moved`, `witness_conflict_distinct`);
 final-state point reads need no earlier witness.
 
@@ -965,9 +965,9 @@ let queued = query!(Jobs {
 ```
 
 **Insert-select**: query source answers, insert the derived facts,
-`write_from` witnessing the snapshot.
+`write_from` witnessing the `ReadInstance`.
 **Read-modify-write, key-shaped**: WriteTx point reads (get/contains) see
-the final state — per-fact premises need no earlier snapshot witness.
+the final state — per-fact premises need no earlier `Witness`.
 
 ## 21. Derived relations
 
@@ -1320,7 +1320,7 @@ bumbledb::schema! {
 }
 ```
 
-Derive the desired rollup on the maintenance snapshot:
+Derive the desired rollup on the maintenance `ReadInstance`:
 
 ```rust
 let deriving = query!(MaintainedRollup {
@@ -1350,7 +1350,7 @@ There is no in-place migration and never will be: a schema is a theory,
 the store records the theory's fingerprint, and `Db::open` under a changed
 theory is a hard `SchemaMismatch` — the engine refuses to reinterpret facts
 it judged under different laws. Migration is extract, transform, load:
-`scan` exports every fact of a relation as typed values under one snapshot
+`scan` exports every fact of a relation as typed values under one `ReadInstance`
 (one generation — the export is a consistent instant), the host transforms,
 and `insert_dyn` inside `write` imports into a store created under the new theory. The
 engine owns both ends; the host owns exactly the middle, because the
@@ -1408,7 +1408,7 @@ let in_force = query!(Payroll {
 ```
 
 The compiled test drives the whole loop: seed a v1 store, export both
-relations under one snapshot, drop the v1 handle and prove the
+relations under one `ReadInstance`, drop the v1 handle and prove the
 fingerprint refusal (`Db::open` of the v1 store under `Payroll` is
 `SchemaMismatch`), append the ray to each salary, then `insert_dyn`
 inside `write` — employees before salaries — then `reserve(1)` to prove

@@ -27,7 +27,7 @@ to state the invariance against it.
 
 `WriteResult` separates `violations` (dependency failure: the COMPLETE
 violated-statement set) from `generationMoved` (witness conflict: the
-world moved after the snapshot) as distinct constructors — the type IS
+world moved after the witness) as distinct constructors — the type IS
 the theorem "generation conflict ≠ dependency failure"
 (`witness_conflict_distinct` states the never-converts contract
 anyway; it is the API's contract sentence). Bridge:
@@ -74,7 +74,7 @@ critical section (the `ConditionalWrite::Moved` return) is
 * `writeFrom` / `writeWitnessed` — `api/db/write.rs`'s `Db::write_from`
   / `Db::write` sharing one body; the witness is the `ReadInstance` the
   host read its premises on, consumed for its generation alone.
-* `Snapshot.read` — `api/db/read_instance.rs`: every read runs against one
+* the lease read — `api/db/read_instance.rs`: every read runs against one
   parked read transaction, one generation.
 * `scanLoad` — cookbook recipe 28 (migration is ETL): `ReadInstance::scan`
   exports under one generation, the host transforms, `Db::write` +
@@ -120,9 +120,9 @@ when a key fails, and both the engine and the naive model preempt
   soundness, and nonemptiness — `rejection_is_complete`, all three.
 * **`Generation` is an opaque tag with decidable equality only** —
   the protocol is one compare ("unmoved or moved"), never arithmetic;
-  mirrors `Snapshot` exposing no `generation()` accessor.
+  mirrors `Witness` exposing no `generation()` accessor.
 * **`writeWitnessed` models the protocol, not the environment**: the
-  `ForeignSnapshot` environment-identity check and the writer mutex
+  `ForeignWitness` environment-identity check and the writer mutex
   are mechanism outside the model.
 * **`scanLoad` bulk-judges the transformed instance as ONE final
   state.** A host that splits a load across several `Db::write`s is

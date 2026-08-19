@@ -3,7 +3,7 @@
 //! with the pending delta** — the same final-state view the judgment phase
 //! judges — so read-modify-write idioms (upsert, check-then-act conditions)
 //! are sound without exposing query machinery to the write path. These are
-//! determinant gets: no images, no plans, no snapshot.
+//! determinant gets: no images, no plans, no `ReadInstance`.
 
 use super::encode_dyn::shape_mismatch;
 use super::{Fact, Key, Probe, WriteTx};
@@ -49,7 +49,7 @@ pub(super) fn key_statement_of(
 /// byte-identical to what `keys::determinant_image` slices out of a
 /// stored fact — under whichever string resolver the transaction kind
 /// supplies (pending-first inside a write transaction, the committed
-/// dictionary on a snapshot). `Ok(false)` = a string value was never
+/// dictionary on a [`super::ReadInstance`]). `Ok(false)` = a string value was never
 /// interned: no fact can carry it.
 pub(super) fn encode_determinant_with(
     schema: &Schema,
@@ -108,7 +108,7 @@ pub(super) fn fresh_row_id(determinant: &[u8]) -> u64 {
 }
 
 /// The sealed point-read path: relation kind, then key form. One match
-/// used by snapshot get, write-tx get, and the capacity parent probe.
+/// used by `ReadInstance` get, write-tx get, and the capacity parent probe.
 pub(crate) enum PointRead {
     Closed,
     FreshRow { row_id: u64 },

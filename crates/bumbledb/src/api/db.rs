@@ -250,7 +250,7 @@ pub trait Fact<'a>: Sized {
 ///     pub SchemaB;
 ///     relation Right { id: u64 as RightId, fresh }
 /// }
-/// // A key of `SchemaA` cannot read through a `Db<SchemaB>` snapshot:
+/// // A key of `SchemaA` cannot read through a `Db<SchemaB>` read lease:
 /// // `LeftId: Key<'_, Schema = SchemaB>` does not hold.
 /// fn cross(db: &bumbledb::Db<SchemaB>, id: LeftId) -> bumbledb::Result<Option<Left>> {
 ///     db.read(|snap| snap.get(id))
@@ -343,7 +343,7 @@ pub struct Db<S> {
     /// transaction, reused while no commit has intervened. Sound because
     /// this handle is the environment's ONLY writer (exclusive lock at
     /// open): if [`Db::generation`] is unchanged since the parked
-    /// snapshot began, the parked snapshot is bit-identical to a fresh
+    /// reader began, the parked lease is bit-identical to a fresh
     /// one — and the per-read `mdb_txn_begin` (the point path's last
     /// fixed cost) is skipped entirely. Readers
     /// `try_lock`: contended readers fall back to a fresh transaction,
@@ -377,7 +377,7 @@ pub struct Db<S> {
 
 impl<S> Db<S> {
     /// The LMDB environment (reader: `crate::verify_store` — the sweeper
-    /// opens its own snapshot, and its fixture tests inject raw desyncs
+    /// opens its own read transaction, and its fixture tests inject raw desyncs
     /// through the environment's write transactions).
     pub(crate) fn env(&self) -> &Environment {
         &self.env
@@ -413,13 +413,13 @@ impl<S> Db<S> {
     }
 }
 
-/// One parked read transaction and the generation it saw.
+/// One parked read lease and the generation it saw.
 struct ParkedReader {
     txn: heed::RoTxn<'static, heed::WithoutTls>,
     generation: crate::GenerationId,
 }
 
-/// One snapshot point read's reusable buffers: the composed `U` key /
+/// One `ReadInstance` point read's reusable buffers: the composed `U` key /
 /// encoded fact bytes, and the dyn membership probe's column refs.
 #[derive(Default)]
 pub(crate) struct ReadScratch {
@@ -429,7 +429,7 @@ pub(crate) struct ReadScratch {
 
 /// The `Db`-owned point-read scratch pool (`docs/architecture/70-api.md`
 /// § the write path — the allocation contract is symmetric across
-/// transaction kinds, ruled 2026-07-23, R15): snapshot point reads take
+/// transaction kinds, ruled 2026-07-23, R15): `ReadInstance` point reads take
 /// a scratch set and restore it — the `&self` twin of
 /// [`WriteTx::with_scratch`]'s take/restore. One entry per concurrent
 /// point reader; contention grows the pool once, then the steady state
@@ -563,7 +563,7 @@ impl<'txn, S> ReadInstance<'txn, S> {
 /// idiom. Handed to [`Db::write`] closures; offers no queries — point
 /// reads only ([`WriteTx::contains`] / [`WriteTx::get`] /
 /// [`WriteTx::get_dyn`]), which observe the final-state view the judgment
-/// phase will judge. No prepared-query or snapshot type is reachable from
+/// phase will judge. No prepared-query or [`ReadInstance`] is reachable from
 /// here (`docs/architecture/70-api.md`: full queries in write transactions
 /// stay unrepresentable). Carries the handle's schema typestate `S`:
 /// typed operations bound `F: Fact<'_, Schema = S>`.
