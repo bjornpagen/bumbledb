@@ -26,7 +26,7 @@ over this table when they disagree.
 | 07 | [view binding](07-view-binding.md) | **fixed this pass** — per-occurrence `Binding` / `OccMemo` |
 | 08 | [relation slot](08-relation-slot.md) | **fixed this pass** — one `RelationSlot` table; SPINE-16 epochs from `ImageBind` |
 | 09 | [profile + stats](09-profile-stats.md) | **fixed this pass** — `Instance::profile` + one `hit` |
-| 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | OPEN — 4 × `unreachable!("schema-typed")`; `ValueRef::FixedBytes` |
+| 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | **fixed this pass** (typed decode; no `ValueRef` `Fixed*` arms) |
 | 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
 | 12 | [C owner tokens](12-c-owner-tokens.md) | **fixed this pass** (`OwnerToken`; bridge pre-refusal test pinned) |
 | 13 | [C exit threading](13-c-exit-threading.md) | keep — one `Result<()>` channel; rider spelling narrowed (unforgeable decline, later) |

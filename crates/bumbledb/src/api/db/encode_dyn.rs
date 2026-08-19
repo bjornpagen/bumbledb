@@ -97,7 +97,7 @@ pub(super) fn intern_parsed_row(
             ParsedCell::I64(v) => ValueRef::I64(v),
             ParsedCell::IntervalU64(interval) => ValueRef::IntervalU64(interval),
             ParsedCell::IntervalI64(interval) => ValueRef::IntervalI64(interval),
-            ParsedCell::FixedBytes(raw) => ValueRef::FixedBytes(raw),
+            ParsedCell::FixedBytes(raw) => ValueRef::bytes(raw.as_bytes()),
         };
         refs.push(value_ref);
     }
