@@ -18,6 +18,7 @@
  */
 
 import assert from "node:assert/strict"
+import * as errors from "@superbuilders/errors"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -31,6 +32,7 @@ import {
 	closed,
 	contained,
 	Db,
+	ErrSchemaError,
 	i64,
 	interval,
 	key,
@@ -122,7 +124,9 @@ describe("the Db runtime against a real store", function suite() {
 		const Broken = schema("Broken", { SavingsTerms, Audit }, [contained(on(SavingsTerms, "rate"), on(Audit, "score"))])
 		await assert.rejects(async function badCreate() {
 			await Db.create(path.join(tmpRoot, "broken"), Broken)
-		}, /schemaError/)
+		}, function isSchemaError(error: unknown) {
+			return errors.is(error, ErrSchemaError)
+		})
 	})
 
 	test("a second open of a live path is EnvironmentLocked", async function secondOpenLocked() {

@@ -91,7 +91,6 @@ impl FrozenSource {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn peek_image(&self, relation: RelationId) -> Option<Arc<RelationImage>> {
         self.images.peek(relation)
     }

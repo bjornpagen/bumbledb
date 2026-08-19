@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::encoding::fact_hash;
 use crate::error::Result;
 use crate::storage::env::ReadTxn;
@@ -11,6 +12,7 @@ use super::row_id_value::row_id_value;
 /// # Errors
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
+#[cfg(test)]
 pub fn fact_row(txn: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result<Option<u64>> {
     fact_row_by_hash(txn, rel, &fact_hash(fact_bytes))
 }
@@ -21,7 +23,7 @@ pub fn fact_row(txn: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result
 ///
 /// # Errors
 ///
-/// As [`fact_row`].
+/// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
 pub fn fact_row_by_hash(
     txn: &ReadTxn<'_>,
     rel: RelationId,

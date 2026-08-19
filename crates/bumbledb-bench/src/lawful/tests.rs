@@ -439,7 +439,9 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     ) -> bumbledb::Result<()>|
      -> Vec<Cited> {
         match db.write(|tx| violate(tx)) {
-            Ok(bumbledb::Admission::Rejected(violations)) => differential::cited(&violations),
+            Ok(bumbledb::Admission::Rejected(violations)) => {
+                differential::cited(&violations, db.schema())
+            }
             Ok(bumbledb::Admission::Accepted(_)) => {
                 panic!("{what}: the violating commit was accepted")
             }

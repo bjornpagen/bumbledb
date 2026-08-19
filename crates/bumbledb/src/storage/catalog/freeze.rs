@@ -83,7 +83,7 @@ pub(crate) fn admit_catalog(
     };
 
     if !key_violations.is_empty() {
-        let sealed = match Violations::seal(key_violations) {
+        let sealed = match Violations::seal(schema, key_violations) {
             Admission::Rejected(violations) => {
                 decorate_violations(violations, schema, candidate.catalog())
             }
@@ -93,7 +93,7 @@ pub(crate) fn admit_catalog(
     }
 
     let statement = judge_complete(candidate.catalog(), schema, &selections)?;
-    match Violations::seal(statement) {
+    match Violations::seal(schema, statement) {
         Admission::Accepted(()) => Ok(Admission::Accepted(candidate.freeze())),
         Admission::Rejected(violations) => Ok(Admission::Rejected(decorate_violations(
             violations,
@@ -412,7 +412,6 @@ fn record_duplicate_key(
         let statement = schema.key(key_id);
         violations.push(Violation::functionality(
             schema.cite(statement.id),
-            statement.id,
             runs.get(second_value).into(),
             Conflict::Scalar,
         ));
@@ -434,7 +433,6 @@ fn record_duplicate_key(
         };
         violations.push(Violation::functionality(
             schema.cite(statement_id),
-            statement_id,
             second.into(),
             conflict,
         ));
@@ -496,7 +494,6 @@ fn probe_pointwise_neighbors(
             let cited = fact_at(assigned, by_row, runs, rel_b, succ_row)?;
             violations.push(Violation::functionality(
                 schema.cite(stmt_a),
-                stmt_a,
                 cited.into(),
                 Conflict::Pointwise {
                     incumbent: incumbent.into(),

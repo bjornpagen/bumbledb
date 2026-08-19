@@ -257,11 +257,14 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
         ));
     };
     let [
-        Violation::Containment {
-            direction: bumbledb::Direction::SourceUnsatisfied,
-            fact,
-            ..
-        },
+        (
+            Violation::Containment {
+                direction: bumbledb::Direction::SourceUnsatisfied,
+                fact,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         return Err(format!(

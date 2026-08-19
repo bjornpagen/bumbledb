@@ -1,6 +1,6 @@
 //! Best-effort citation decoration through a still-live candidate dict.
 
-use crate::error::{CitedFact, Result, Violation, Violations};
+use crate::error::{CitedCitations, CitedFact, Result, Violation, Violations};
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
 
@@ -12,7 +12,7 @@ pub(crate) fn decorate_violations<C: CatalogRead>(
     catalog: &C,
 ) -> Violations {
     match decode_cited(schema, catalog, &violations) {
-        Ok(cited) => violations.attach_cited(cited),
+        Ok(pairs) => Violations::from_pairs(pairs),
         Err(_) => violations,
     }
 }
@@ -21,13 +21,13 @@ fn decode_cited<C: CatalogRead>(
     schema: &Schema,
     catalog: &C,
     violations: &Violations,
-) -> Result<Vec<Box<[CitedFact]>>> {
+) -> Result<CitedCitations> {
     let mut cited = Vec::with_capacity(violations.len());
-    for violation in violations {
+    for (violation, _) in violations.as_slice() {
         let (relation, facts): (_, Vec<&[u8]>) = match violation {
             Violation::Functionality { .. } => {
                 let crate::schema::StatementView::Key(_, key) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Functionality citation names a key statement");
                 };
@@ -40,7 +40,7 @@ fn decode_cited<C: CatalogRead>(
             }
             Violation::Containment { fact, .. } => {
                 let crate::schema::StatementView::Containment(_, containment) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Containment citation names a containment statement");
                 };
@@ -48,7 +48,7 @@ fn decode_cited<C: CatalogRead>(
             }
             Violation::Capacity { fact, .. } => {
                 let crate::schema::StatementView::Capacity(_, capacity) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Capacity citation names a capacity statement");
                 };
@@ -83,7 +83,7 @@ fn decode_cited<C: CatalogRead>(
                 ))
             })
             .collect::<Result<Box<[CitedFact]>>>()?;
-        cited.push(decoded);
+        cited.push((violation.clone(), decoded));
     }
-    Ok(cited)
+    Ok(cited.into_boxed_slice())
 }

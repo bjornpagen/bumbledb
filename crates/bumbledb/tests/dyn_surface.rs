@@ -20,11 +20,19 @@
 
 mod common;
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::render_rejection;
 use bumbledb::{
     DynIdError, Error, FactShapeError, RelationId, StatementId, StatementKind, Theory, Value,
     Violation,
 };
+
+fn graph_schema() -> bumbledb::Schema {
+    Graph
+        .descriptor()
+        .validate()
+        .expect("the test schema is valid")
+}
 
 bumbledb::schema! {
     pub Graph;
@@ -330,17 +338,11 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
         matches!(
             cited,
             [
-                Violation::Containment {
-                    id: EDGE_DST_CONTAINMENT,
-                    ..
-                },
-                Violation::Capacity {
-                    id: OUTDEGREE_CAPACITY,
-                    measure: 3,
-                    ..
-                }
+                (Violation::Containment { .. }, _),
+                (Violation::Capacity { measure: 3, .. }, _),
             ]
-        ),
+        ) && violations.get(0).unwrap().statement_id(&graph_schema()) == EDGE_DST_CONTAINMENT
+            && violations.get(1).unwrap().statement_id(&graph_schema()) == OUTDEGREE_CAPACITY,
         "both statements cited, in citation order: {cited:?}"
     );
     // The decoded cited facts: the dangling edge, and the hub node whose
@@ -399,7 +401,8 @@ fn an_fd_rejection_renders_the_key_form() {
     assert!(
         matches!(
             cited,
-            [Violation::Functionality { id, .. }] if *id == NODE_KEY
+            [(Violation::Functionality { .. }, _)]
+                if violations.get(0).unwrap().statement_id(&graph_schema()) == NODE_KEY
         ),
         "one key citation: {cited:?}"
     );

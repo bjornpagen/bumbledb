@@ -1,7 +1,6 @@
 use super::{MutationReport, WriteTx};
 use crate::error::Result;
 use crate::ir::Value;
-use crate::storage::delta::Disposition;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
@@ -19,11 +18,6 @@ impl<S> WriteTx<'_, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let rows: Vec<_> = facts.into_iter().collect();
-        let parsed = self.parse_dyn_collection(rel, &rows)?;
-        self.apply_collection(rel, Disposition::Delete, parsed, |tx, row, bytes| {
-            let layout = tx.schema.relation(rel).layout();
-            tx.encode_parsed_resolve(&row, layout, bytes)
-        })
+        self.mutation.delete_dyn(rel, facts)
     }
 }

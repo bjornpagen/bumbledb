@@ -160,7 +160,7 @@ impl<S> PreparedQuery<S> {
     /// instrumentation and returns the answers alongside [`ExecutionStats`]
     /// — the data `introspect` renders. Allocation-sanctioned exactly like
     /// `introspect`. Takes the mixed [`ParamArg`] entry — execute-symmetry
-    /// (R13): whatever `execute_args` binds, profiling binds.
+    /// (R13): whatever [`Self::execute`] binds, profiling binds.
     ///
     /// One protocol with [`Self::execute`]: bind, then the same dispatch
     /// (`key_probe_direct` / empty Cq / `run_rules`), parameterized by
@@ -169,7 +169,7 @@ impl<S> PreparedQuery<S> {
     ///
     /// # Errors
     ///
-    /// As [`Self::execute_args`].
+    /// As [`Self::execute`].
     ///
     /// # Panics
     ///
@@ -182,7 +182,7 @@ impl<S> PreparedQuery<S> {
     ) -> Result<(Answers, ExecutionStats)> {
         self.check_identity(txn.identity())?;
         let catalog = txn.catalog();
-        let images = crate::image::LmdbImages::new(txn, cache);
+        let images = crate::image::LmdbSource::bind(txn, cache);
         let mut out = Answers::new();
         out.begin(self.signature.columns.len());
         {

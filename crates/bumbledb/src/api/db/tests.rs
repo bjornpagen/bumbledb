@@ -64,8 +64,16 @@ fn the_reader_cache_is_invisible_except_in_speed() {
 
     // (b) no intervening commit: the generation is snapshot-identical
     // (the parked reader IS the same snapshot).
-    let g1 = db.read(|snap| snap.txn.generation()).expect("read");
-    let g2 = db.read(|snap| snap.txn.generation()).expect("read");
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "ReadInstance::generation is not HRTB enough for Db::read"
+    )]
+    let g1 = db.read(|snap| snap.generation()).expect("read");
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "ReadInstance::generation is not HRTB enough for Db::read"
+    )]
+    let g2 = db.read(|snap| snap.generation()).expect("read");
     assert_eq!(g1, g2, "parked reuse serves the same snapshot");
 
     // (c) an erroring closure leaves the cache serviceable.
@@ -271,7 +279,7 @@ fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
             None
         );
         assert_eq!(
-            tx.delta.dict_next(),
+            tx.delta().dict_next(),
             None,
             "the point read minted a provisional id"
         );

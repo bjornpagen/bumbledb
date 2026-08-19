@@ -1080,7 +1080,8 @@ mod equality_reverse_key {
 mod keyed_equality {
     use bumbledb::error::Direction;
     use bumbledb::schema::StatementId;
-    use bumbledb::{Db, Violation};
+    use bumbledb::schema::ValidateDescriptor as _;
+    use bumbledb::{Db, Theory, Violation};
 
     bumbledb::schema! {
         pub KeyedEquality;
@@ -1099,10 +1100,14 @@ mod keyed_equality {
         expected: StatementId,
     ) {
         let violations = crate::common::expect_rejected(result);
-        let [Violation::Containment { id, direction, .. }] = violations.as_slice() else {
+        let [(Violation::Containment { direction, .. }, _)] = violations.as_slice() else {
             panic!("expected one containment violation, got {violations:?}");
         };
-        assert_eq!(*id, expected);
+        let schema = KeyedEquality
+            .descriptor()
+            .validate()
+            .expect("the test schema is valid");
+        assert_eq!(violations.get(0).unwrap().statement_id(&schema), expected);
         assert_eq!(*direction, Direction::SourceUnsatisfied);
     }
 
@@ -1171,7 +1176,13 @@ mod keyed_equality {
         }));
         assert!(matches!(
             violations.as_slice(),
-            [Violation::Functionality { id, .. }] if *id == StatementId(1)
+            [(Violation::Functionality { .. }, _)]
+                if violations.get(0).unwrap().statement_id(
+                    &KeyedEquality
+                        .descriptor()
+                        .validate()
+                        .expect("the test schema is valid"),
+                ) == StatementId(1)
         ));
     }
 }
@@ -1231,9 +1242,16 @@ mod redundant_superkey_warning {
         assert!(matches!(
             violations.as_slice(),
             [
-                Violation::Functionality { id: a, .. },
-                Violation::Functionality { id: b, .. },
-            ] if *a == StatementId(0) && *b == StatementId(1)
+                (Violation::Functionality { .. }, _),
+                (Violation::Functionality { .. }, _),
+            ] if {
+                let schema = RedundantKeys
+                    .descriptor()
+                    .validate()
+                    .expect("the test schema is valid");
+                violations.get(0).unwrap().statement_id(&schema) == StatementId(0)
+                    && violations.get(1).unwrap().statement_id(&schema) == StatementId(1)
+            }
         ));
     }
 }
@@ -1903,8 +1921,9 @@ mod element_domain_typing {
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,
     };
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, StatementId};
-    use bumbledb::{AllenMask, AnswerValue, Db, Fact as _, Interval, Violation};
+    use bumbledb::{AllenMask, AnswerValue, Db, Fact as _, Interval, Theory, Violation};
 
     bumbledb::schema! {
         pub Playlists;
@@ -1997,10 +2016,13 @@ mod element_domain_typing {
         assert!(
             matches!(
                 violations.as_slice(),
-                [Violation::Containment {
-                    direction: Direction::SourceUnsatisfied,
-                    ..
-                }]
+                [(
+                    Violation::Containment {
+                        direction: Direction::SourceUnsatisfied,
+                        ..
+                    },
+                    _
+                )]
             ),
             "the uncovered span point convicts the coverage direction, got {violations:?}"
         );
@@ -2027,7 +2049,13 @@ mod element_domain_typing {
         assert!(
             matches!(
                 violations.as_slice(),
-                [Violation::Functionality { id, .. }] if *id == StatementId(2)
+                [(Violation::Functionality { .. }, _)]
+                    if violations.get(0).unwrap().statement_id(
+                        &Playlists
+                            .descriptor()
+                            .validate()
+                            .expect("the test schema is valid"),
+                    ) == StatementId(2)
             ),
             "the pointwise key convicts the overlap, got {violations:?}"
         );
@@ -2053,10 +2081,13 @@ mod element_domain_typing {
         assert!(
             matches!(
                 violations.as_slice(),
-                [Violation::Containment {
-                    direction: Direction::SourceUnsatisfied,
-                    ..
-                }]
+                [(
+                    Violation::Containment {
+                        direction: Direction::SourceUnsatisfied,
+                        ..
+                    },
+                    _
+                )]
             ),
             "the uncovered slot convicts the slot-side coverage, got {violations:?}"
         );

@@ -32,7 +32,15 @@
 //!   sort, as a deliberate commit. Any further re-order must again flip
 //!   only that assertion, never the citation-list ones.
 
-use bumbledb::{Db, Direction, Violation, Violations};
+use bumbledb::schema::ValidateDescriptor as _;
+use bumbledb::{Db, Direction, Theory, Violation, Violations};
+
+fn world_schema() -> bumbledb::Schema {
+    WitnessWorld
+        .descriptor()
+        .validate()
+        .expect("the test schema is valid")
+}
 
 mod common;
 
@@ -179,28 +187,38 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     // The complete set: the containment cited once per direction, the
     // capacity law cited once — whatever the count of convicting facts.
     let [
-        Violation::Containment {
-            id: src_stmt,
-            direction: Direction::SourceUnsatisfied,
-            ..
-        },
-        Violation::Containment {
-            id: tgt_stmt,
-            direction: Direction::TargetRequired,
-            ..
-        },
-        Violation::Capacity {
-            id: cap_stmt,
-            measure: 3,
-            ..
-        },
+        (
+            Violation::Containment {
+                statement: src_stmt,
+                direction: Direction::SourceUnsatisfied,
+                ..
+            },
+            _,
+        ),
+        (
+            Violation::Containment {
+                statement: tgt_stmt,
+                direction: Direction::TargetRequired,
+                ..
+            },
+            _,
+        ),
+        (
+            Violation::Capacity {
+                statement: cap_stmt,
+                measure: 3,
+                ..
+            },
+            _,
+        ),
     ] = forward.as_slice()
     else {
         panic!("expected the three-citation seal, got {forward:?}");
     };
     assert_eq!(src_stmt, tgt_stmt, "one containment, both directions");
+    let schema = world_schema();
     assert!(
-        cap_stmt.0 > src_stmt.0,
+        schema.id_of(*cap_stmt).0 > schema.id_of(*src_stmt).0,
         "citation order is materialized statement order"
     );
 }
@@ -278,11 +296,14 @@ fn the_source_witness_is_the_key_least_violator() {
     let violations = run("witness-key-least-fwd", false);
     assert_eq!(violations, run("witness-key-least-rev", true));
     let [
-        Violation::Containment {
-            direction: Direction::SourceUnsatisfied,
-            fact,
-            ..
-        },
+        (
+            Violation::Containment {
+                direction: Direction::SourceUnsatisfied,
+                fact,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one source citation, got {violations:?}");
@@ -325,9 +346,12 @@ fn the_capacity_witness_is_the_key_least_violating_parent() {
         Ok(())
     }));
     let [
-        Violation::Capacity {
-            fact, measure: 3, ..
-        },
+        (
+            Violation::Capacity {
+                fact, measure: 3, ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one capacity citation, got {violations:?}");
@@ -360,11 +384,14 @@ fn the_target_witness_is_the_first_committed_survivor() {
         }])
     }));
     let [
-        Violation::Containment {
-            direction: Direction::TargetRequired,
-            fact,
-            ..
-        },
+        (
+            Violation::Containment {
+                direction: Direction::TargetRequired,
+                fact,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one target citation, got {violations:?}");

@@ -576,7 +576,6 @@ fn insert_op<'d>(
                 } else {
                     Check::Violated(Violation::containment(
                         crate::schema::StatementRef::Containment(containment_id),
-                        statement.id,
                         Direction::SourceUnsatisfied,
                         fact.into(),
                     ))

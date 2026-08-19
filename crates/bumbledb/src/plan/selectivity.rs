@@ -10,7 +10,7 @@
 use crate::image::ColumnWidth;
 use crate::image::ImageBind;
 #[cfg(test)]
-use crate::image::LmdbImages;
+use crate::image::LmdbSource;
 #[cfg(test)]
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
@@ -136,7 +136,7 @@ pub(crate) fn occurrence_stats(
 ) -> crate::error::Result<OccStats> {
     occurrence_stats_on(
         &txn.catalog(),
-        &LmdbImages::new(txn, cache),
+        &LmdbSource::bind(txn, cache),
         schema,
         occurrence,
         rows,

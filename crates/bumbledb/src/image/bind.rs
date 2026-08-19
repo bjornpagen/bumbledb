@@ -7,6 +7,7 @@ use super::epoch::ViewEpoch;
 use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::Schema;
+use crate::storage::catalog::LmdbReadCatalog;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
 
@@ -19,32 +20,75 @@ pub(crate) trait ImageBind {
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>>;
 }
 
-/// Store image binding: generation-aware cache over one read transaction.
-pub(crate) struct LmdbImages<'txn, 'env> {
-    pub txn: &'txn ReadTxn<'env>,
-    pub cache: &'txn ImageCache,
+/// Store coordinate: one read transaction plus the environment image
+/// cache. `T` is the ownership: [`ReadTxn`] inside [`crate::ReadInstance`],
+/// or `&ReadTxn` for prepare/execute helpers that already hold a lease.
+pub(crate) struct LmdbSource<'txn, T = ReadTxn<'txn>> {
+    txn: T,
+    cache: &'txn ImageCache,
 }
 
-impl<'txn, 'env> LmdbImages<'txn, 'env> {
-    pub(crate) fn new(txn: &'txn ReadTxn<'env>, cache: &'txn ImageCache) -> Self {
+/// Either an owned or borrowed LMDB read transaction.
+pub(crate) trait AsReadTxn {
+    fn as_read_txn(&self) -> &ReadTxn<'_>;
+}
+
+impl AsReadTxn for ReadTxn<'_> {
+    fn as_read_txn(&self) -> &ReadTxn<'_> {
+        self
+    }
+}
+
+impl AsReadTxn for &ReadTxn<'_> {
+    fn as_read_txn(&self) -> &ReadTxn<'_> {
+        self
+    }
+}
+
+impl<'txn> LmdbSource<'txn, ReadTxn<'txn>> {
+    pub(crate) fn new(txn: ReadTxn<'txn>, cache: &'txn ImageCache) -> Self {
+        Self { txn, cache }
+    }
+
+    pub(crate) fn into_txn(self) -> ReadTxn<'txn> {
+        self.txn
+    }
+}
+
+impl<'txn> LmdbSource<'txn, &'txn ReadTxn<'txn>> {
+    pub(crate) fn bind(txn: &'txn ReadTxn<'txn>, cache: &'txn ImageCache) -> Self {
         Self { txn, cache }
     }
 }
 
-impl ImageBind for LmdbImages<'_, '_> {
+impl<'txn, T: AsReadTxn> LmdbSource<'txn, T> {
+    pub(crate) fn txn(&self) -> &ReadTxn<'_> {
+        self.txn.as_read_txn()
+    }
+
+    pub(crate) fn cache(&self) -> &'txn ImageCache {
+        self.cache
+    }
+
+    pub(crate) fn catalog(&self) -> LmdbReadCatalog<'_, '_> {
+        LmdbReadCatalog::new(self.txn())
+    }
+}
+
+impl<T: AsReadTxn> ImageBind for LmdbSource<'_, T> {
     fn epoch(&self, schema: &Schema, relation: RelationId) -> Result<ViewEpoch> {
         if schema.relation(relation).body().closed_rows().is_some() {
             Ok(ViewEpoch::Closed)
         } else {
-            Ok(ViewEpoch::Store(self.txn.generation()?))
+            Ok(ViewEpoch::Store(self.txn().generation()?))
         }
     }
 
     fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>> {
-        self.cache.get_or_build(self.txn, schema, relation)
+        self.cache.get_or_build(self.txn(), schema, relation)
     }
 
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>> {
-        self.cache.peek(self.txn, schema, relation)
+        self.cache.peek(self.txn(), schema, relation)
     }
 }

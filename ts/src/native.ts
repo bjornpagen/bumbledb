@@ -65,7 +65,8 @@ interface WireMutationReport {
 /**
  * Engine fresh-id range as it crosses napi. Empty cannot yield a start —
  * `start` is a minted id only on the nonempty arm. (C wires empty as
- * `{ start: 0, end_exclusive: 0 }` at that boundary only.)
+ * `BDB_FRESH_RANGE_TAG_EMPTY`. The JS wire is `{ empty: true }`, not that
+ * C sentinel.)
  */
 type WireFreshRange =
 	| { readonly empty: true }
@@ -671,17 +672,42 @@ function loadNativeBinding(platform: string, arch: string): Native {
 const native: Native = loadNativeBinding(process.platform, process.arch)
 
 /**
+ * Engine throw identity: a real `Error` carrying `kind` from the
+ * `ErrorFamily` table, or a leftover `{ kind, message }` object.
+ */
+function isEngineThrow(value: unknown): value is { kind: ErrorFamilyKind; message: string } {
+	if (typeof value !== "object" || value === null) {
+		return false
+	}
+	const rec = value as { kind?: unknown; message?: unknown }
+	return typeof rec.kind === "string" && typeof rec.message === "string"
+}
+
+function errorFromThrow(caught: unknown): Error {
+	if (caught instanceof Error) {
+		return caught
+	}
+	if (isEngineThrow(caught)) {
+		const error = errors.new(`bumbledb ${caught.kind}: ${caught.message}`)
+		Object.defineProperty(error, "kind", { value: caught.kind, enumerable: true })
+		return error
+	}
+	return errors.new(String(caught))
+}
+
+/**
  * The bridge guard — THE one wrapper every native call crosses (db.ts and
  * exhume.ts both import it): runs one native call and wraps anything it
  * throws, so marshal-shape refusals and handle-lifecycle refusals cross as
- * genuine typed failures, never bare foreign errors.
+ * genuine typed failures, never bare foreign errors. Engine throws keep
+ * their forced kind.
  */
 function bridged<T>(context: string, run: () => T): T {
-	const result = errors.trySync(run)
-	if (result.error) {
-		throw errors.wrap(result.error, context)
+	try {
+		return run()
+	} catch (caught) {
+		throw errors.wrap(errorFromThrow(caught), context)
 	}
-	return result.data
 }
 
 export type {
@@ -740,4 +766,4 @@ export type {
 	WitnessHandle,
 	WriteTag
 }
-export { bridged, loadNativeBinding, native, SHIPPED_PLATFORMS }
+export { bridged, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }

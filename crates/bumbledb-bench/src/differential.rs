@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use bumbledb::ConditionalWrite;
 #[cfg(test)]
 use bumbledb::Witness;
-use bumbledb::schema::SchemaDescriptor;
+use bumbledb::schema::{Schema, SchemaDescriptor, ValidateDescriptor as _};
 use bumbledb::{Admission, AnswerValue, Db, Error, InstanceBuilder, Query, RelationId, Value};
 
 #[cfg(test)]
@@ -168,20 +168,19 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
 /// directly comparable to [`NaiveDb::violations`]' — same sort key,
 /// same total object.
 #[must_use]
-pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
+pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violation> {
     violations
-        .as_slice()
         .iter()
         .map(|violation| match violation {
-            bumbledb::Violation::Functionality { id, .. } => {
-                Violation::Functionality { statement: *id }
-            }
-            bumbledb::Violation::Containment { id, direction, .. } => Violation::Containment {
-                statement: *id,
+            bumbledb::Violation::Functionality { .. } => Violation::Functionality {
+                statement: violation.statement_id(schema),
+            },
+            bumbledb::Violation::Containment { direction, .. } => Violation::Containment {
+                statement: violation.statement_id(schema),
                 direction: *direction,
             },
-            bumbledb::Violation::Capacity { id, measure, .. } => Violation::Capacity {
-                statement: *id,
+            bumbledb::Violation::Capacity { measure, .. } => Violation::Capacity {
+                statement: violation.statement_id(schema),
                 measure: *measure,
             },
         })
@@ -204,7 +203,7 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     });
     match outcome {
         Ok(Admission::Accepted(_)) => Verdict::Committed,
-        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations)),
+        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations, db.schema())),
         Err(Error::ClosedRelationWrite { relation }) => {
             Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
@@ -227,6 +226,10 @@ pub(crate) fn engine_admit(
     schema: SchemaDescriptor,
     facts: &[(RelationId, Vec<Value>)],
 ) -> Verdict {
+    let sealed = schema
+        .clone()
+        .validate()
+        .unwrap_or_else(|err| panic!("complete-admission descriptor re-validates: {err}"));
     let mut builder = InstanceBuilder::new(schema)
         .unwrap_or_else(|err| panic!("engine refused a complete-admission schema: {err}"));
     for (rel, fact) in facts {
@@ -236,7 +239,7 @@ pub(crate) fn engine_admit(
     }
     match builder.admit() {
         Ok(Admission::Accepted(_)) => Verdict::Committed,
-        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations)),
+        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations, &sealed)),
         Err(Error::ClosedRelationWrite { relation }) => {
             Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
@@ -282,7 +285,7 @@ pub(crate) fn engine_write_from<S>(
     match outcome {
         Ok(ConditionalWrite::Accepted(_)) => ConditionalVerdict::Committed,
         Ok(ConditionalWrite::Rejected(violations)) => {
-            ConditionalVerdict::Aborted(cited(&violations))
+            ConditionalVerdict::Aborted(cited(&violations, db.schema()))
         }
         Ok(ConditionalWrite::Moved { witnessed, current }) => ConditionalVerdict::Moved {
             witnessed: witnessed.value(),

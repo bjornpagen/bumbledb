@@ -144,6 +144,7 @@ fn base_then_delta(
 }
 
 fn assert_capacity_violation(
+    schema: &Schema,
     result: Result<Admission<()>>,
     statement: StatementId,
     parent_fact: &[u8],
@@ -151,17 +152,20 @@ fn assert_capacity_violation(
 ) {
     let violations = expect_rejected(result);
     let [
-        Violation::Capacity {
-            id: named,
-            fact,
-            measure: observed,
-            ..
-        },
+        (
+            Violation::Capacity {
+                statement: slot,
+                fact,
+                measure: observed,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one capacity citation, got {violations:?}");
     };
-    assert_eq!(*named, statement);
+    assert_eq!(schema.id_of(*slot), statement);
     assert_eq!(**fact, *parent_fact, "the violation names the parent fact");
     assert_eq!(*observed, measure);
 }
@@ -175,7 +179,7 @@ fn capacity_floor_convicts_a_childless_parent() {
     let schema = capacity_schema();
     let h = holder(&schema, 7);
     let result = base_then_delta("cap-floor", &schema, &[], &[], &[(HOLDER, h.clone())]);
-    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 0);
+    assert_capacity_violation(&schema, result, SAVINGS_CAPACITY, &h, 0);
 }
 
 /// Within bounds: one and two φ-children commit — both window ends are
@@ -216,7 +220,7 @@ fn capacity_ceiling_convicts_the_overflowing_group() {
         &[],
         &[(ACCOUNT, account(&schema, 7, 1, 2))],
     );
-    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 3);
+    assert_capacity_violation(&schema, result, SAVINGS_CAPACITY, &h, 3);
 }
 
 /// The set binding measures the UNION of its alternatives — a member of
@@ -242,7 +246,7 @@ fn capacity_set_selection_measures_the_union() {
         // (kind 1 alone, measure 1) stays green.
         &[(ACCOUNT, account(&schema, 7, 2, 2))],
     );
-    assert_capacity_violation(result, ANY_KIND_CAPACITY, &h, 4);
+    assert_capacity_violation(&schema, result, ANY_KIND_CAPACITY, &h, 4);
 }
 
 /// A set miss: kinds outside the spelled set never count — toward
@@ -296,7 +300,7 @@ fn capacity_removal_remeasures_the_touched_parent() {
     // The last kind-1 child leaves: measure 0 < lo 1.
     let before = committed_data(&env);
     let result = apply_delta(&env, &schema, &[(ACCOUNT, account(&schema, 7, 1, 0))], &[]);
-    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 0);
+    assert_capacity_violation(&schema, result, SAVINGS_CAPACITY, &h, 0);
     assert_eq!(committed_data(&env), before);
 }
 
@@ -339,7 +343,7 @@ fn capacity_judges_each_parent_group_independently() {
         &[],
         &[(HOLDER, h8.clone())],
     );
-    assert_capacity_violation(result, SAVINGS_CAPACITY, &h8, 0);
+    assert_capacity_violation(&schema, result, SAVINGS_CAPACITY, &h8, 0);
 }
 
 // ---------- the exclusion window ----------
@@ -403,7 +407,7 @@ fn exclusion_window_convicts_the_first_member() {
         &[],
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
-    assert_capacity_violation(result, FORBIDDEN_CAPACITY, &h, 1);
+    assert_capacity_violation(&schema, result, FORBIDDEN_CAPACITY, &h, 1);
 }
 
 /// `{0}` admits everything outside σ: non-selected kinds commit freely,
@@ -606,7 +610,7 @@ fn capacity_sum_ceiling_convicts_with_the_full_measure() {
         &[],
         &[(DEVICE, device(&schema, 1, 80, 2))],
     );
-    assert_capacity_violation(result, WATTS_CAPACITY, &p, 180);
+    assert_capacity_violation(&schema, result, WATTS_CAPACITY, &p, 180);
 }
 
 /// Sum floor: a group whose total sits under `lo = 5` convicts with the
@@ -622,7 +626,7 @@ fn capacity_sum_floor_convicts_the_light_group() {
         &[],
         &[(POOL, p.clone()), (DEVICE, device(&schema, 1, 3, 0))],
     );
-    assert_capacity_violation(result, WATTS_CAPACITY, &p, 3);
+    assert_capacity_violation(&schema, result, WATTS_CAPACITY, &p, 3);
 }
 
 /// The § 6 footgun as commit-path data: zero-weight children EXIST but
@@ -644,7 +648,7 @@ fn capacity_zero_weight_children_do_not_lift_the_floor() {
             (DEVICE, device(&schema, 1, 0, 1)),
         ],
     );
-    assert_capacity_violation(result, WATTS_CAPACITY, &p, 0);
+    assert_capacity_violation(&schema, result, WATTS_CAPACITY, &p, 0);
     let result = base_then_delta(
         "cap-zero-weight-pass",
         &schema,
@@ -723,7 +727,7 @@ fn capacity_dependent_bound_resolves_per_parent() {
         &[],
         &[(DEVICE, device(&schema, 2, 90, 1))],
     );
-    assert_capacity_violation(result, SUPPLY_CAPACITY, &small, 90);
+    assert_capacity_violation(&schema, result, SUPPLY_CAPACITY, &small, 90);
 }
 
 /// The bound resolves from the FINAL-state holder: replacing the parent
@@ -755,7 +759,7 @@ fn capacity_dependent_bound_reads_the_final_state_holder() {
         &[(POOL, pool(&schema, 1, 100))],
         &[(POOL, lowered.clone())],
     );
-    assert_capacity_violation(result, SUPPLY_CAPACITY, &lowered, 90);
+    assert_capacity_violation(&schema, result, SUPPLY_CAPACITY, &lowered, 90);
     assert_eq!(committed_data(&env), before, "an abort persists nothing");
     // Raising the supply instead commits: same group, new bound.
     apply_delta(
@@ -855,7 +859,7 @@ fn capacity_duration_weight_sums_the_measures() {
         // 4 + 4 + 4 = 12 > 10: the calendar overbooks.
         &[(BOOKING, booking(&schema, 1, (20, 24), 2))],
     );
-    assert_capacity_violation(result, BOOKED_CAPACITY, &r, 12);
+    assert_capacity_violation(&schema, result, BOOKED_CAPACITY, &r, 12);
 }
 
 /// `Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)` —
@@ -878,7 +882,7 @@ fn capacity_duration_bound_reads_the_target_span() {
         // 4 + 4 + 4 = 12 > Duration([0, 8)) = 8.
         &[(BOOKING, booking(&schema, 1, (8, 12), 2))],
     );
-    assert_capacity_violation(result, BOOKED_CAPACITY, &r, 12);
+    assert_capacity_violation(&schema, result, BOOKED_CAPACITY, &r, 12);
 }
 
 /// A ray booking — `[s, ∞)` in the weighed field. Bypasses the
@@ -1114,7 +1118,7 @@ fn capacity_weight_on_fresh_keyed_relations_is_seen_by_the_same_commits_walk() {
             (FRESH_DEVICE, fresh_device(&schema, 2, 7, 60)),
         ],
     );
-    assert_capacity_violation(result, capacity, &p, 120);
+    assert_capacity_violation(&schema, result, capacity, &p, 120);
     // Exactly at the dependent ceiling: commits whole (fresh ids past
     // the burned ones — escaped mints never reissue).
     apply_delta(
@@ -1158,10 +1162,10 @@ fn key_violation_preempts_the_capacity_judgment() {
         ],
     );
     let violations = expect_rejected(result);
-    let [Violation::Functionality { id, .. }] = violations.as_slice() else {
+    let [(Violation::Functionality { statement, .. }, _)] = violations.as_slice() else {
         panic!("expected the lone key citation, got {violations:?}");
     };
-    assert_eq!(*id, HOLDER_KEY);
+    assert_eq!(schema.id_of(*statement), HOLDER_KEY);
 }
 
 /// A mixed statement-phase rejection carries containment AND capacity
@@ -1187,27 +1191,33 @@ fn statement_phase_cites_containments_and_capacities_together() {
     );
     let violations = expect_rejected(result);
     let [
-        Violation::Containment {
-            id: c_stmt,
-            direction,
-            fact: c_fact,
-            ..
-        },
-        Violation::Capacity {
-            id: w_stmt,
-            fact: w_fact,
-            measure,
-            ..
-        },
+        (
+            Violation::Containment {
+                statement: c_stmt,
+                direction,
+                fact: c_fact,
+                ..
+            },
+            _,
+        ),
+        (
+            Violation::Capacity {
+                statement: w_stmt,
+                fact: w_fact,
+                measure,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected containment then capacity citations, got {violations:?}");
     };
     assert_eq!(
-        (*c_stmt, *direction),
+        (schema.id_of(*c_stmt), *direction),
         (ACCOUNT_HOLDER, Direction::SourceUnsatisfied)
     );
     assert_eq!(**c_fact, *orphan);
-    assert_eq!((*w_stmt, *measure), (SAVINGS_CAPACITY, 0));
+    assert_eq!((schema.id_of(*w_stmt), *measure), (SAVINGS_CAPACITY, 0));
     assert_eq!(**w_fact, *h8);
 }

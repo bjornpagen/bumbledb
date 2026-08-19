@@ -115,7 +115,6 @@ fn probe_source<C: CatalogRead>(
             } else {
                 Ok(Check::Violated(Violation::containment(
                     schema.cite(statement.id),
-                    statement.id,
                     Direction::SourceUnsatisfied,
                     fact.into(),
                 )))

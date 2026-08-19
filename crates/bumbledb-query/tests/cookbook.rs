@@ -1129,13 +1129,14 @@ fn expect_rejected<T: std::fmt::Debug>(
 
 fn assert_containment_statement<T: std::fmt::Debug>(
     result: bumbledb::Result<bumbledb::Admission<T>>,
+    schema: &Schema,
     expected: bumbledb::schema::StatementId,
 ) {
     let violations = expect_rejected(result);
-    let [bumbledb::Violation::Containment { id, direction, .. }] = violations.as_slice() else {
+    let [(bumbledb::Violation::Containment { direction, .. }, _)] = violations.as_slice() else {
         panic!("expected one containment citation, got {violations:?}");
     };
-    assert_eq!(*id, expected);
+    assert_eq!(violations.get(0).unwrap().statement_id(schema), expected);
     assert_eq!(*direction, bumbledb::error::Direction::SourceUnsatisfied);
 }
 
@@ -1229,7 +1230,7 @@ fn r26_gap_rejects_forward() {
             valid: span(5, 10),
         }])
     });
-    assert_containment_statement(error, StatementId(4));
+    assert_containment_statement(error, db.schema(), StatementId(4));
 }
 
 // Overhang only, the audit countermodel: source [0,10), target [0,20).
@@ -1253,7 +1254,7 @@ fn r26_overhang_rejects_reverse() {
             valid: span(0, 20),
         }])
     });
-    assert_containment_statement(error, StatementId(5));
+    assert_containment_statement(error, db.schema(), StatementId(5));
 }
 
 // The corrected one-way recipe pins the opposite result for that same
@@ -1427,7 +1428,7 @@ fn r09_gap_and_overlap_deltas_abort() {
         }])?;
         Ok(())
     });
-    assert_containment_statement(error, StatementId(6));
+    assert_containment_statement(error, db.schema(), StatementId(6));
 
     // The overlap: a second occupant of position 1 — the pointwise key
     // convicts in the key phase, before coverage even runs.
@@ -2361,12 +2362,13 @@ fn assert_capacity_measure<T: std::fmt::Debug>(
 ) -> bumbledb::schema::StatementId {
     use bumbledb::schema::StatementView;
     let violations = expect_rejected(result);
-    let [bumbledb::Violation::Capacity { id, measure, .. }] = violations.as_slice() else {
+    let [(bumbledb::Violation::Capacity { measure, .. }, _)] = violations.as_slice() else {
         panic!("expected one capacity citation, got {violations:?}");
     };
     assert_eq!(*measure, expected, "the witnessed group measure");
-    assert!(matches!(schema.statement(*id), StatementView::Capacity(..)));
-    *id
+    let id = violations.get(0).unwrap().statement_id(schema);
+    assert!(matches!(schema.statement(id), StatementView::Capacity(..)));
+    id
 }
 
 /// Recipe 31's commit matrix (the power budget): a fleet within the pool's
@@ -2442,7 +2444,7 @@ fn r31_power_budget_commit_matrix() {
     assert!(
         matches!(
             violations.as_slice(),
-            [bumbledb::Violation::Containment { .. }]
+            [(bumbledb::Violation::Containment { .. }, _)]
         ),
         "the pinned column convicts as a containment: {violations:?}"
     );

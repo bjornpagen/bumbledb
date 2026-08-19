@@ -160,17 +160,20 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, flagged.clone())]);
     let violations = expect_rejected(result);
     let [
-        Violation::Containment {
-            id: statement,
-            direction,
-            fact: violating,
-            ..
-        },
+        (
+            Violation::Containment {
+                statement,
+                direction,
+                fact: violating,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one containment citation, got {violations:?}");
     };
-    assert_eq!(*statement, TRANSFER_ACCOUNT);
+    assert_eq!(schema.id_of(*statement), TRANSFER_ACCOUNT);
     assert_eq!(*direction, Direction::SourceUnsatisfied);
     assert_eq!(**violating, *flagged);
 
@@ -294,11 +297,11 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
     let violations = expect_rejected(result);
     assert!(matches!(
         violations.as_slice(),
-        [Violation::Containment {
-            id: StatementId(1),
+        [(Violation::Containment {
+            statement,
             direction: Direction::SourceUnsatisfied,
             ..
-        }]
+        }, _)] if *statement == schema.cite(StatementId(1))
     ));
 
     // Outside the set: no edge, no probe — commits against the empty

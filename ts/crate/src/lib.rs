@@ -15,7 +15,7 @@
 //! shape errors THROW. Engine errors carry a forced [`ErrorFamily`] kind
 //! in `tags::error_family`.
 
-use std::cell::{Ref, RefCell, RefMut, UnsafeCell};
+use std::cell::{Cell, Ref, RefCell, RefMut, UnsafeCell};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -56,14 +56,30 @@ struct Sealed {
 
 type Engine = Db<SchemaDescriptor>;
 
-struct WireError(String);
-
-fn wire(error: &Error) -> WireError {
-    WireError(marshal::engine_err(error))
+struct WireError {
+    kind: Option<&'static str>,
+    message: String,
 }
 
-fn thrown(error: WireError) -> napi::Error {
-    marshal::err(error.0)
+fn wire(error: &Error) -> WireError {
+    WireError {
+        kind: Some(tags::error_family::tag(&error.family())),
+        message: marshal::engine_message(error),
+    }
+}
+
+fn bridge_error(message: String) -> WireError {
+    WireError {
+        kind: None,
+        message,
+    }
+}
+
+fn thrown(env: Env, error: WireError) -> napi::Error {
+    match error.kind {
+        Some(kind) => marshal::throw_kind_message(env, kind, error.message),
+        None => marshal::err(error.message),
+    }
 }
 
 fn abort_sentinel() -> Error {
@@ -78,12 +94,8 @@ fn reentrant_use(what: &str) -> napi::Error {
     marshal::err(format!("bumbledb: re-entrant use of a {what} handle"))
 }
 
-fn throw_owned(error: Error) -> napi::Error {
-    throw_engine(&error)
-}
-
-fn throw_engine(error: &Error) -> napi::Error {
-    marshal::err(marshal::engine_err(error))
+fn throw_engine(env: Env, error: &Error) -> napi::Error {
+    marshal::throw_engine(env, error)
 }
 
 fn take_handle<T>(cell: &RefCell<Option<T>>, what: &str) -> napi::Result<T> {
@@ -246,7 +258,7 @@ fn descriptor_of(spec: &Object) -> napi::Result<std::result::Result<SchemaDescri
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn db_create(path: String, spec: Object) -> napi::Result<CreateOutcome> {
+pub fn db_create(env: Env, path: String, spec: Object) -> napi::Result<CreateOutcome> {
     let descriptor = match descriptor_of(&spec)? {
         Ok(descriptor) => descriptor,
         Err(OpenOutcome::SchemaError(message)) => return Ok(CreateOutcome::SchemaError(message)),
@@ -263,13 +275,13 @@ pub fn db_create(path: String, spec: Object) -> napi::Result<CreateOutcome> {
             violations_wire(&descriptor, &violations),
         )),
         Err(Error::Schema(error)) => Ok(CreateOutcome::SchemaError(error.to_string())),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn db_open(path: String, spec: Object) -> napi::Result<OpenOutcome> {
+pub fn db_open(env: Env, path: String, spec: Object) -> napi::Result<OpenOutcome> {
     let descriptor = match descriptor_of(&spec)? {
         Ok(descriptor) => descriptor,
         Err(outcome) => return Ok(outcome),
@@ -278,9 +290,9 @@ pub fn db_open(path: String, spec: Object) -> napi::Result<OpenOutcome> {
         Ok(db) => Ok(OpenOutcome::Ok(External::new(assemble(db, descriptor)))),
         Err(Error::Schema(error)) => Ok(OpenOutcome::SchemaError(error.to_string())),
         Err(error @ Error::SchemaMismatch { .. }) => Ok(OpenOutcome::FingerprintMismatch(
-            marshal::engine_err(&error),
+            marshal::engine_message(&error),
         )),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
@@ -311,17 +323,18 @@ pub fn db_fingerprint(db: &External<DbHandle>) -> napi::Result<String> {
 }
 
 #[napi]
-pub fn db_generation(db: &External<DbHandle>) -> napi::Result<u64> {
+pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
     let inner = live(&db.inner, "db")?;
     match inner.db.generation() {
         Ok(generation) => Ok(generation.value()),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn db_from_instance(
+    env: Env,
     path: String,
     instance: &External<OwnedHandle>,
 ) -> napi::Result<External<DbHandle>> {
@@ -331,7 +344,7 @@ pub fn db_from_instance(
             db,
             owned.sealed.descriptor.clone(),
         ))),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
@@ -345,34 +358,47 @@ pub struct ExhumeHandle {
 
 pub enum ExhumeOutcome {
     Ok(External<ExhumeHandle>),
-    Refused { kind: &'static str, message: String },
+    DescriptorMissing(String),
+    FormatMismatch(String),
+    Corruption(String),
 }
 
 outcome_to_napi!(ExhumeOutcome {
     Ok(handle) => { "ok": true, "exhume": handle },
-    Refused { kind, message } => { "ok": false, "kind": kind, "message": message },
+    DescriptorMissing(message) => {
+        "ok": false,
+        "kind": tags::exhume_kind::DESCRIPTOR_MISSING,
+        "message": message,
+    },
+    FormatMismatch(message) => {
+        "ok": false,
+        "kind": tags::exhume_kind::FORMAT_MISMATCH,
+        "message": message,
+    },
+    Corruption(message) => {
+        "ok": false,
+        "kind": tags::exhume_kind::CORRUPTION,
+        "message": message,
+    },
 });
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn db_exhume(path: String) -> napi::Result<ExhumeOutcome> {
+pub fn db_exhume(env: Env, path: String) -> napi::Result<ExhumeOutcome> {
     match exhume(std::path::Path::new(&path)) {
         Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle {
             inner: RefCell::new(Some(exhumed)),
         }))),
-        Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutcome::Refused {
-            kind: tags::exhume_kind::DESCRIPTOR_MISSING,
-            message: marshal::engine_err(&error),
-        }),
-        Err(error @ Error::FormatMismatch { .. }) => Ok(ExhumeOutcome::Refused {
-            kind: tags::exhume_kind::FORMAT_MISMATCH,
-            message: marshal::engine_err(&error),
-        }),
-        Err(error @ Error::Corruption(_)) => Ok(ExhumeOutcome::Refused {
-            kind: tags::exhume_kind::CORRUPTION,
-            message: marshal::engine_err(&error),
-        }),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutcome::DescriptorMissing(
+            marshal::engine_message(&error),
+        )),
+        Err(error @ Error::FormatMismatch { .. }) => Ok(ExhumeOutcome::FormatMismatch(
+            marshal::engine_message(&error),
+        )),
+        Err(error @ Error::Corruption(_)) => {
+            Ok(ExhumeOutcome::Corruption(marshal::engine_message(&error)))
+        }
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
@@ -391,6 +417,7 @@ pub fn exhume_close(exhume: &External<ExhumeHandle>) -> napi::Result<()> {
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn exhume_scan(
+    env: Env,
     exhume: &External<ExhumeHandle>,
     relation_name: String,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
@@ -410,7 +437,7 @@ pub fn exhume_scan(
     });
     match rows {
         Ok(rows) => marshal::rows_out(rows),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
@@ -420,7 +447,10 @@ pub fn exhume_scan(
 
 enum InstanceKind {
     Store(*const ()),
-    Heap(*const OwnedInstance<SchemaDescriptor>),
+    Heap {
+        instance: *const OwnedInstance<SchemaDescriptor>,
+        accounted: *const Cell<i64>,
+    },
 }
 
 pub struct InstanceHandle {
@@ -438,11 +468,18 @@ impl InstanceHandle {
         }
     }
 
-    fn heap(sealed: Arc<Sealed>, instance: &OwnedInstance<SchemaDescriptor>) -> Self {
+    fn heap(
+        sealed: Arc<Sealed>,
+        instance: &OwnedInstance<SchemaDescriptor>,
+        accounted: &Cell<i64>,
+    ) -> Self {
         Self {
             sealed,
             alive: Arc::new(AtomicBool::new(true)),
-            kind: InstanceKind::Heap(std::ptr::from_ref(instance)),
+            kind: InstanceKind::Heap {
+                instance: std::ptr::from_ref(instance),
+                accounted: std::ptr::from_ref(accounted),
+            },
         }
     }
 
@@ -460,15 +497,48 @@ impl InstanceHandle {
                 let instance = unsafe { &*ptr.cast::<bumbledb::ReadInstance<'_, SchemaDescriptor>>() };
                 body(&StoreOps(instance))
             }
-            InstanceKind::Heap(ptr) => {
+            InstanceKind::Heap { instance, .. } => {
                 #[expect(
                     unsafe_code,
                     reason = "ptr is the owned instance borrow; alive is cleared before owned_read returns"
                 )]
-                let instance = unsafe { &*ptr };
+                let instance = unsafe { &*instance };
                 body(&HeapOps(instance))
             }
         }
+    }
+
+    fn sync_accounted(&self, env: Env) -> napi::Result<()> {
+        let InstanceKind::Heap {
+            instance,
+            accounted,
+        } = self.kind
+        else {
+            return Ok(());
+        };
+        #[expect(
+            unsafe_code,
+            reason = "both pointers are the OwnedSlot borrow held for owned_read"
+        )]
+        let (instance, accounted) = unsafe { (&*instance, &*accounted) };
+        let want = i64::try_from(instance.retained_bytes()).unwrap_or(i64::MAX);
+        let have = accounted.get();
+        let delta = want.saturating_sub(have);
+        if delta != 0 {
+            env.adjust_external_memory(delta)?;
+            accounted.set(want);
+        }
+        Ok(())
+    }
+
+    fn with_instance_accounted<R>(
+        &self,
+        env: Env,
+        body: impl FnOnce(&dyn InstanceOps) -> napi::Result<R>,
+    ) -> napi::Result<R> {
+        let result = self.with_instance(body);
+        self.sync_accounted(env)?;
+        result
     }
 }
 
@@ -596,7 +666,7 @@ impl InstanceOps for HeapOps<'_> {
         _prepared: &mut PreparedQuery<SchemaDescriptor>,
         _params: &[OwnedParam],
     ) -> Result<bumbledb::ExecutionStats, WireError> {
-        Err(WireError(
+        Err(bridge_error(
             "bumbledb: profile is a store-read diagnostic, not an owned-instance method".into(),
         ))
     }
@@ -604,12 +674,12 @@ impl InstanceOps for HeapOps<'_> {
         &self,
         _prepared: &PreparedQuery<SchemaDescriptor>,
     ) -> Result<StalenessWire, WireError> {
-        Err(WireError(
+        Err(bridge_error(
             "bumbledb: staleness is a store-read signal, not an owned-instance method".into(),
         ))
     }
     fn generation(&self) -> Result<u64, WireError> {
-        Err(WireError(
+        Err(bridge_error(
             "bumbledb: generation is a store-read diagnostic, not an owned-instance method".into(),
         ))
     }
@@ -640,6 +710,7 @@ pub struct WitnessHandle {
 
 #[napi]
 pub fn db_read<'a>(
+    env: Env,
     db: &'a External<DbHandle>,
     callback: Function<
         'a,
@@ -685,29 +756,31 @@ pub fn db_read<'a>(
         Ok(()) => Ok(result.ok_or_else(|| {
             marshal::err("bumbledb: read callback produced no value".into())
         })?),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
 #[napi]
-pub fn instance_generation(instance: &External<InstanceHandle>) -> napi::Result<u64> {
-    instance.with_instance(|ops| ops.generation().map_err(thrown))
+pub fn instance_generation(env: Env, instance: &External<InstanceHandle>) -> napi::Result<u64> {
+    instance.with_instance(|ops| ops.generation().map_err(|error| thrown(env, error)))
 }
 
 #[napi]
 pub fn instance_scan(
+    env: Env,
     instance: &External<InstanceHandle>,
     relation: u32,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
-    let rows = instance.with_instance(|ops| {
+    let rows = instance.with_instance_accounted(env, |ops| {
         ops.scan(RelationId(relation))
-            .map_err(|error| throw_engine(&error))
+            .map_err(|error| throw_engine(env, &error))
     })?;
     marshal::rows_out(rows)
 }
 
 #[napi]
 pub fn instance_contains(
+    env: Env,
     instance: &External<InstanceHandle>,
     relation: u32,
     values: Array,
@@ -716,14 +789,15 @@ pub fn instance_contains(
         let sealed = &instance.sealed;
         marshal::fact_row(&sealed.descriptor, relation, &values)?
     };
-    instance.with_instance(|ops| {
+    instance.with_instance_accounted(env, |ops| {
         ops.contains(row.0, &row.1)
-            .map_err(|error| throw_engine(&error))
+            .map_err(|error| throw_engine(env, &error))
     })
 }
 
 #[napi]
 pub fn instance_get(
+    env: Env,
     instance: &External<InstanceHandle>,
     relation: u32,
     key_statement: u32,
@@ -736,8 +810,9 @@ pub fn instance_get(
         key_statement,
         &key_values,
     )?;
-    let found = instance.with_instance(|ops| {
-        ops.get(rel, key, &row).map_err(|error| throw_engine(&error))
+    let found = instance.with_instance_accounted(env, |ops| {
+        ops.get(rel, key, &row)
+            .map_err(|error| throw_engine(env, &error))
     })?;
     found
         .map(|values| values.into_iter().map(ValueOut::from_value).collect())
@@ -818,6 +893,7 @@ enum WriteExit {
 }
 
 fn run_write(
+    env: Env,
     inner: &DbInner,
     witness: Option<&Witness<SchemaDescriptor>>,
     callback: Function<External<TxHandle>, bool>,
@@ -881,7 +957,7 @@ fn run_write(
             witnessed: witnessed.value(),
             current: current.value(),
         }),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
@@ -894,22 +970,24 @@ impl Drop for WriteFlag<'_> {
 
 #[napi]
 pub fn db_write(
+    env: Env,
     db: &External<DbHandle>,
     callback: Function<External<TxHandle>, bool>,
 ) -> napi::Result<WriteOutcome> {
     let inner = live(&db.inner, "db")?;
-    run_write(&inner, None, callback)
+    run_write(env, &inner, None, callback)
 }
 
 #[napi]
 pub fn db_write_from(
+    env: Env,
     db: &External<DbHandle>,
     witness: &External<WitnessHandle>,
     callback: Function<External<TxHandle>, bool>,
 ) -> napi::Result<WriteOutcome> {
     let inner = live(&db.inner, "db")?;
     let witness = live(&witness.inner, "witness")?;
-    run_write(&inner, Some(&witness), callback)
+    run_write(env, &inner, Some(&witness), callback)
 }
 
 pub enum MutationReportWire {
@@ -932,12 +1010,16 @@ outcome_to_napi!(FreshRangeWire {
 
 #[napi]
 pub fn tx_insert(
+    env: Env,
     tx: &External<TxHandle>,
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
     let facts = marshal::fact_rows(&tx.sealed.descriptor, relation, &rows)?;
-    let report = tx.tx()?.insert_dyn(facts.0, facts.1).map_err(|e| throw_engine(&e))?;
+    let report = tx
+        .tx()?
+        .insert_dyn(facts.0, facts.1)
+        .map_err(|e| throw_engine(env, &e))?;
     Ok(MutationReportWire::Report {
         submitted: report.submitted(),
         changed: report.changed(),
@@ -946,12 +1028,16 @@ pub fn tx_insert(
 
 #[napi]
 pub fn tx_delete(
+    env: Env,
     tx: &External<TxHandle>,
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
     let facts = marshal::fact_rows(&tx.sealed.descriptor, relation, &rows)?;
-    let report = tx.tx()?.delete_dyn(facts.0, facts.1).map_err(|e| throw_engine(&e))?;
+    let report = tx
+        .tx()?
+        .delete_dyn(facts.0, facts.1)
+        .map_err(|e| throw_engine(env, &e))?;
     Ok(MutationReportWire::Report {
         submitted: report.submitted(),
         changed: report.changed(),
@@ -959,15 +1045,21 @@ pub fn tx_delete(
 }
 
 #[napi]
-pub fn tx_contains(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
+pub fn tx_contains(
+    env: Env,
+    tx: &External<TxHandle>,
+    relation: u32,
+    values: Array,
+) -> napi::Result<bool> {
     let row = marshal::fact_row(&tx.sealed.descriptor, relation, &values)?;
     tx.tx()?
         .contains_dyn(row.0, &row.1)
-        .map_err(|e| throw_engine(&e))
+        .map_err(|e| throw_engine(env, &e))
 }
 
 #[napi]
 pub fn tx_get(
+    env: Env,
     tx: &External<TxHandle>,
     relation: u32,
     key_statement: u32,
@@ -983,7 +1075,7 @@ pub fn tx_get(
     let found = tx
         .tx()?
         .get_dyn(rel, key, &row)
-        .map_err(|e| throw_engine(&e))?;
+        .map_err(|e| throw_engine(env, &e))?;
     found
         .map(|values| values.into_iter().map(ValueOut::from_value).collect())
         .transpose()
@@ -992,6 +1084,7 @@ pub fn tx_get(
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn tx_reserve(
+    env: Env,
     tx: &External<TxHandle>,
     relation: u32,
     field: u32,
@@ -1003,8 +1096,11 @@ pub fn tx_reserve(
     let fresh = tx
         .engine()?
         .fresh_field(RelationId(relation), FieldId(field))
-        .map_err(|error| throw_engine(&Error::FactShape(error)))?;
-    let range = tx.tx()?.reserve_at(fresh, count).map_err(|e| throw_engine(&e))?;
+        .map_err(|error| throw_engine(env, &Error::FactShape(error)))?;
+    let range = tx
+        .tx()?
+        .reserve_at(fresh, count)
+        .map_err(|e| throw_engine(env, &e))?;
     Ok(match range {
         FreshRange::Empty => FreshRangeWire::Empty,
         FreshRange::NonEmpty { start, count } => FreshRangeWire::NonEmpty {
@@ -1068,66 +1164,78 @@ fn prepared_ref(
     Ok(Ref::map(inner, |inner| unsafe { &*inner.prepared.get() }))
 }
 
-fn prepare_outcome(result: bumbledb::Result<PreparedQuery<SchemaDescriptor>>) -> napi::Result<PrepareOutcome> {
+fn prepare_outcome(
+    env: Env,
+    result: bumbledb::Result<PreparedQuery<SchemaDescriptor>>,
+) -> napi::Result<PrepareOutcome> {
     match result {
         Ok(prepared) => Ok(PrepareOutcome::Ok(wrap_prepared(prepared))),
         Err(Error::Validation(error)) => Ok(PrepareOutcome::IrError(error.to_string())),
-        Err(error) => Err(throw_engine(&error)),
+        Err(error) => Err(throw_engine(env, &error)),
     }
 }
 
 #[napi]
 pub fn instance_prepare(
+    env: Env,
     instance: &External<InstanceHandle>,
     query: Object,
 ) -> napi::Result<PrepareOutcome> {
     let query = marshal::query_in(&query)?;
-    let result = instance.with_instance(|ops| Ok(ops.prepare(&query)))?;
-    prepare_outcome(result)
+    let result = instance.with_instance_accounted(env, |ops| Ok(ops.prepare(&query)))?;
+    prepare_outcome(env, result)
 }
 
 #[napi]
-pub fn db_prepare(db: &External<DbHandle>, query: Object) -> napi::Result<PrepareOutcome> {
+pub fn db_prepare(env: Env, db: &External<DbHandle>, query: Object) -> napi::Result<PrepareOutcome> {
     let inner = live(&db.inner, "db")?;
     let query = marshal::query_in(&query)?;
-    prepare_outcome(inner.db.prepare(&query))
+    prepare_outcome(env, inner.db.prepare(&query))
 }
 
 #[napi]
 pub fn prepared_execute(
+    env: Env,
     prepared: &External<PreparedHandle>,
     instance: &External<InstanceHandle>,
     params: Array,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
     let params = marshal::params_in(&params)?;
     let mut prepared = prepared_mut(prepared)?;
-    let answers = instance.with_instance(|ops| {
-        ops.execute(&mut prepared, &params).map_err(thrown)
+    let answers = instance.with_instance_accounted(env, |ops| {
+        ops.execute(&mut prepared, &params)
+            .map_err(|error| thrown(env, error))
     })?;
     Ok(marshal::answers_out(&answers))
 }
 
 #[napi]
 pub fn prepared_explain(
+    env: Env,
     prepared: &External<PreparedHandle>,
     instance: &External<InstanceHandle>,
     params: Array,
 ) -> napi::Result<ExplainWire> {
     let params = marshal::params_in(&params)?;
     let mut prepared = prepared_mut(prepared)?;
-    let stats = instance.with_instance(|ops| {
-        ops.explain(&mut prepared, &params).map_err(thrown)
+    let stats = instance.with_instance_accounted(env, |ops| {
+        ops.explain(&mut prepared, &params)
+            .map_err(|error| thrown(env, error))
     })?;
     Ok(ExplainWire(stats))
 }
 
 #[napi]
 pub fn prepared_staleness(
+    env: Env,
     prepared: &External<PreparedHandle>,
     instance: &External<InstanceHandle>,
 ) -> napi::Result<StalenessWire> {
     let prepared = prepared_ref(prepared)?;
-    instance.with_instance(|ops| ops.staleness(&prepared).map_err(thrown))
+    instance.with_instance(|ops| {
+        ops.staleness(&prepared)
+            .map_err(|error| thrown(env, error))
+    })
 }
 
 #[napi]
@@ -1152,19 +1260,40 @@ pub struct OwnedHandle {
 struct OwnedSlot {
     instance: OwnedInstance<SchemaDescriptor>,
     sealed: Arc<Sealed>,
+    accounted: Cell<i64>,
+}
+
+fn account_bytes(env: Env, bytes: usize) -> napi::Result<i64> {
+    let delta = i64::try_from(bytes).unwrap_or(i64::MAX);
+    if delta != 0 {
+        env.adjust_external_memory(delta)?;
+    }
+    Ok(delta)
+}
+
+fn release_accounted(env: Env, accounted: i64) -> napi::Result<()> {
+    if accounted != 0 {
+        env.adjust_external_memory(-accounted)?;
+    }
+    Ok(())
 }
 
 #[napi]
-pub fn instance_builder_new(spec: Object) -> napi::Result<External<BuilderHandle>> {
+pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<BuilderHandle>> {
     let descriptor = match descriptor_of(&spec)? {
         Ok(descriptor) => descriptor,
-        Err(OpenOutcome::SchemaError(message)) | Err(OpenOutcome::NewtypeMismatch(message)) => {
-            return Err(marshal::err(format!("bumbledb: {message}")));
+        Err(OpenOutcome::SchemaError(message) | OpenOutcome::NewtypeMismatch(message)) => {
+            return Err(marshal::throw_kind_message(
+                env,
+                tags::error_family::SCHEMA,
+                message,
+            ));
         }
         Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
     };
     let statements = descriptor.materialized_statements();
-    let builder = InstanceBuilder::new(descriptor.clone()).map_err(throw_owned)?;
+    let builder = InstanceBuilder::new(descriptor.clone())
+        .map_err(|error| throw_engine(env, &error))?;
     Ok(External::new(BuilderHandle {
         inner: RefCell::new(Some(builder)),
         sealed: Arc::new(Sealed {
@@ -1176,6 +1305,7 @@ pub fn instance_builder_new(spec: Object) -> napi::Result<External<BuilderHandle
 
 #[napi]
 pub fn instance_builder_load(
+    env: Env,
     builder: &External<BuilderHandle>,
     relation: u32,
     rows: Array,
@@ -1183,7 +1313,7 @@ pub fn instance_builder_load(
     let facts = marshal::fact_rows(&builder.sealed.descriptor, relation, &rows)?;
     let report = live_mut(&builder.inner, "builder")?
         .load_dyn(facts.0, facts.1)
-        .map_err(throw_owned)?;
+        .map_err(|error| throw_engine(env, &error))?;
     Ok(MutationReportWire::Report {
         submitted: report.submitted(),
         changed: report.changed(),
@@ -1204,6 +1334,10 @@ pub struct AdmitTask {
 pub enum AdmitOutput {
     Accepted(OwnedInstance<SchemaDescriptor>),
     Rejected(Vec<ViolationWire>),
+    Failed {
+        kind: &'static str,
+        message: String,
+    },
 }
 
 impl Task for AdmitTask {
@@ -1215,24 +1349,35 @@ impl Task for AdmitTask {
             .builder
             .take()
             .ok_or_else(|| marshal::err("bumbledb: builder already admitted".into()))?;
-        match builder.admit().map_err(throw_owned)? {
-            bumbledb::Admission::Accepted(instance) => Ok(AdmitOutput::Accepted(instance)),
-            bumbledb::Admission::Rejected(violations) => Ok(AdmitOutput::Rejected(
+        match builder.admit() {
+            Ok(bumbledb::Admission::Accepted(instance)) => Ok(AdmitOutput::Accepted(instance)),
+            Ok(bumbledb::Admission::Rejected(violations)) => Ok(AdmitOutput::Rejected(
                 violations_wire(&self.sealed.descriptor, &violations),
             )),
+            Err(error) => Ok(AdmitOutput::Failed {
+                kind: tags::error_family::tag(&error.family()),
+                message: marshal::engine_message(&error),
+            }),
         }
     }
 
-    fn resolve(&mut self, _env: Env, output: AdmitOutput) -> napi::Result<AdmitOutcome> {
-        Ok(match output {
-            AdmitOutput::Accepted(instance) => AdmitOutcome::Accepted(External::new(OwnedHandle {
-                inner: RefCell::new(Some(OwnedSlot {
-                    instance,
-                    sealed: Arc::clone(&self.sealed),
-                })),
-            })),
-            AdmitOutput::Rejected(violations) => AdmitOutcome::Rejected(violations),
-        })
+    fn resolve(&mut self, env: Env, output: AdmitOutput) -> napi::Result<AdmitOutcome> {
+        match output {
+            AdmitOutput::Accepted(instance) => {
+                let accounted = account_bytes(env, instance.retained_bytes())?;
+                Ok(AdmitOutcome::Accepted(External::new(OwnedHandle {
+                    inner: RefCell::new(Some(OwnedSlot {
+                        instance,
+                        sealed: Arc::clone(&self.sealed),
+                        accounted: Cell::new(accounted),
+                    })),
+                })))
+            }
+            AdmitOutput::Rejected(violations) => Ok(AdmitOutcome::Rejected(violations)),
+            AdmitOutput::Failed { kind, message } => {
+                Err(marshal::throw_kind_message(env, kind, message))
+            }
+        }
     }
 }
 
@@ -1268,9 +1413,12 @@ pub fn instance_builder_admit(
 }
 
 #[napi]
-pub fn owned_instance_close(instance: &External<OwnedHandle>) -> napi::Result<()> {
-    take_handle(&instance.inner, "owned instance")?;
-    Ok(())
+pub fn owned_instance_close(
+    env: Env,
+    instance: &External<OwnedHandle>,
+) -> napi::Result<()> {
+    let slot = take_handle(&instance.inner, "owned instance")?;
+    release_accounted(env, slot.accounted.get())
 }
 
 #[napi]
@@ -1279,7 +1427,11 @@ pub fn owned_read<'a>(
     callback: Function<'a, External<InstanceHandle>, Unknown<'a>>,
 ) -> napi::Result<Unknown<'a>> {
     let owned = live(&instance.inner, "owned instance")?;
-    let handle = InstanceHandle::heap(Arc::clone(&owned.sealed), &owned.instance);
+    let handle = InstanceHandle::heap(
+        Arc::clone(&owned.sealed),
+        &owned.instance,
+        &owned.accounted,
+    );
     let alive = Arc::clone(&handle.alive);
     let result = callback.call(External::new(handle));
     alive.store(false, Ordering::Release);

@@ -5,7 +5,6 @@ use crate::error::{Admission, Committed, ConditionalWrite, Error, Result};
 use crate::storage::commit::{
     commit, crashpoint, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids,
 };
-use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 
 impl Drop for WriterThreadReset<'_> {
@@ -59,7 +58,7 @@ impl<S> Drop for EscapedIdBurn<'_, S> {
             // flush from there.
             return;
         };
-        let WriteTx { view, delta, .. } = tx;
+        let (view, delta) = tx.into_store();
         // The read view closes before the burn's own write transaction —
         // the same transaction discipline as every other flush site.
         drop(view);
@@ -257,20 +256,18 @@ impl<S> Db<S> {
         let mut burn = EscapedIdBurn::arm(
             &self.env,
             WriteTx {
-                view,
-                delta: WriteDelta::new(self.schema.as_ref()),
-                schema: self.schema.as_ref(),
-                scratch: Vec::new(),
-                refs: Vec::new(),
-                phase: super::apply::WritePhase::Clean,
-                marker: std::marker::PhantomData,
+                mutation: super::mutation_core::MutationCore::store(
+                    std::sync::Arc::clone(&self.schema),
+                    self.schema.as_ref(),
+                    view,
+                ),
             },
         );
         let end = match f(burn.tx()) {
             Ok(value) => {
-                if let super::apply::WritePhase::Poisoned(source) = &burn.tx().phase {
+                if let Some(source) = burn.tx().poisoned() {
                     WriteEnd::Poisoned(Error::TransactionPoisoned {
-                        source: source.clone(),
+                        source: Box::new(source.clone()),
                     })
                 } else {
                     WriteEnd::Committed(value)
@@ -285,7 +282,7 @@ impl<S> Db<S> {
                 // then surface a flush failure (the identity burn is
                 // not silent). A sealed theory rejection is not possible
                 // here — commit has not run.
-                let WriteTx { view, delta, .. } = burn.disarm();
+                let (view, delta) = burn.disarm().into_store();
                 drop(view);
                 return match flush_escaped_fresh_ids(&self.env, &delta) {
                     Ok(()) => Err(error),
@@ -297,7 +294,7 @@ impl<S> Db<S> {
         // for every path that reaches it — success flushes the marks
         // inside the commit transaction; reject/infra aborts burn on
         // their own exit.
-        let WriteTx { view, delta, .. } = burn.disarm();
+        let (view, delta) = burn.disarm().into_store();
         drop(view);
         // The per-relation delete classification, read off the delta's
         // net dispositions before `commit` consumes it: which relations

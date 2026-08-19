@@ -77,6 +77,11 @@ impl FrozenMap {
         self.offsets.is_empty()
     }
 
+    #[must_use]
+    pub(crate) fn byte_size(&self) -> usize {
+        self.records.len() + self.offsets.len() * std::mem::size_of::<u64>()
+    }
+
     fn record(&self, index: usize) -> Option<(&[u8], &[u8])> {
         let offset = usize::try_from(*self.offsets.get(index)?).ok()?;
         self.parse_at(offset)
@@ -301,6 +306,11 @@ pub(crate) struct FrozenCatalog {
 }
 
 impl FrozenCatalog {
+    #[must_use]
+    pub(crate) fn byte_size(&self) -> usize {
+        self.data.byte_size() + self.dict.byte_size()
+    }
+
     pub(crate) fn from_parts(data: FrozenMap, dict: FrozenMap, dict_next: InternId) -> Self {
         Self {
             data,

@@ -52,7 +52,7 @@ laws).
 | `61-bench-lanes.md` | Report-class bench lanes: the lane registry, SQLite parity configs, the DNF-cap law, the churn protocol, lane artifact contracts, the night runbook |
 | `70-api.md` | Embedding surface: the schema! grammar, collection `insert`/`delete`/`reserve` inside `write`, point reads, ETL as a host loop of `write` |
 | `75-cpp-lowering.md` | Retired: the C++ frontend is deleted; pointer to `76-c-abi.md` |
-| `76-c-abi.md` | The C ABI (`bdb_*`): ABI 2 (collections, `reserve`); leaf crate, dumb marshal, C-only link; hosts lower, the engine judges |
+| `76-c-abi.md` | The C ABI (`bdb_*`): ABI 3 (admitted instances, tagged admissions); leaf crate, dumb marshal, C-only link; hosts lower, the engine judges |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative; `Guarantee:` labels cite `lean/` theorems, census-checked (reader: the owner and any agent writing a theory) |
 | `../../lean/` | The specification itself: the value universe through the lifecycle, `Bridge.lean` (the obligation ledger), `Countermodels.lean` (the design scratchpad), the conformance corpus — `lean/README.md` carries the laws and the provenance history |
 
@@ -197,7 +197,7 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
-- **Plan introspection output** is the versioned `introspection v6` contract
+- **Plan introspection output** is the versioned `introspection v7` contract
   (harness-only, not embedding API): deterministic content and ordering within
   a version, with rendered and structured surfaces incremented together
   (`40-execution.md`, `70-api.md`).

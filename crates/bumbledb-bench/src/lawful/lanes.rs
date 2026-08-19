@@ -37,7 +37,8 @@
 //! cursor inside the closure: mint drift is a loud abort, never a
 //! divergent measurement.
 
-use bumbledb::{Db, StatementId};
+use bumbledb::schema::ValidateDescriptor as _;
+use bumbledb::{Db, Schema, StatementId, Theory};
 use rusqlite::Connection;
 
 use crate::harness::{self, Measurement, Protocol};
@@ -139,6 +140,13 @@ impl LawCursor {
             steer: sizes.steers,
         }
     }
+}
+
+fn lawful_schema() -> Schema {
+    LawfulWorld
+        .descriptor()
+        .validate()
+        .expect("LawfulWorld is a valid theory")
 }
 
 /// The ψ-selected containment's materialized [`StatementId`], derived
@@ -498,8 +506,8 @@ fn cites_capacity(violations: &bumbledb::Violations) -> bool {
 /// Containment citation on exactly [`psi_statement`].
 fn cites_psi(violations: &bumbledb::Violations) -> bool {
     violations.iter().any(|violation| {
-        matches!(violation, bumbledb::Violation::Containment { id, .. }
-            if *id == psi_statement())
+        matches!(violation, bumbledb::Violation::Containment { .. })
+            && violation.statement_id(&lawful_schema()) == psi_statement()
     })
 }
 
@@ -524,7 +532,7 @@ fn refused_commit(
             } else {
                 Err(format!(
                     "{family}: rejected without the expected {expected} citation: {:?}",
-                    crate::differential::cited(&violations)
+                    crate::differential::cited(&violations, db.schema())
                 ))
             }
         }

@@ -4,8 +4,8 @@
 //! `M` owns net dispositions, pending interns, fresh reservations, and
 //! base lookup when a base exists. The core owns the schema, encode
 //! scratch, construction phase, and parse-all-first collection protocol.
-//! [`InstanceBuilder`] uses [`HeapMutation`]. [`StoreMutation`] is the
-//! durable twin; `WriteTx` still owns its delta directly this step.
+//! [`InstanceBuilder`] uses [`HeapMutation`]. [`WriteTx`] wraps
+//! [`StoreMutation`].
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -96,12 +96,9 @@ pub(crate) struct HeapMutation {
 }
 
 /// Durable mutation backend: delta over an admitted store's read view.
-/// `WriteTx` does not wrap this yet; the type is the shared algebra's
-/// store parameter.
-#[allow(dead_code)]
 pub(crate) struct StoreMutation<'db> {
-    view: ReadTxn<'db>,
-    delta: WriteDelta<'db>,
+    pub(super) view: ReadTxn<'db>,
+    pub(super) delta: WriteDelta<'db>,
 }
 
 /// Private collection protocol shared by heap construction and durable
@@ -118,6 +115,31 @@ pub(crate) struct MutationCore<M, S> {
     pub(super) backend: M,
     not_sync: PhantomData<Cell<()>>,
     schema_ty: PhantomData<fn() -> S>,
+}
+
+impl<'db, S> MutationCore<StoreMutation<'db>, S> {
+    pub(super) fn store(schema: Arc<Schema>, schema_ref: &'db Schema, view: ReadTxn<'db>) -> Self {
+        Self {
+            schema,
+            scratch: Vec::new(),
+            refs: Vec::new(),
+            parse_bytes: Vec::new(),
+            parse_ready: Vec::new(),
+            parse_spans: Vec::new(),
+            phase: MutationPhase::Clean,
+            backend: StoreMutation {
+                view,
+                delta: WriteDelta::new(schema_ref),
+            },
+            not_sync: PhantomData,
+            schema_ty: PhantomData,
+        }
+    }
+
+    pub(super) fn into_store(self) -> (ReadTxn<'db>, WriteDelta<'db>) {
+        let StoreMutation { view, delta } = self.backend;
+        (view, delta)
+    }
 }
 
 impl<S> MutationCore<HeapMutation, S> {
@@ -213,7 +235,6 @@ impl MutationBackend for HeapMutation {
     }
 }
 
-#[allow(dead_code)]
 impl MutationBackend for StoreMutation<'_> {
     fn apply(
         &mut self,
@@ -302,6 +323,13 @@ impl<M, S> MutationCore<M, S> {
                 source: source.clone(),
             }),
             MutationPhase::Clean | MutationPhase::Applied => Ok(()),
+        }
+    }
+
+    pub(super) fn poisoned(&self) -> Option<&Error> {
+        match &self.phase {
+            MutationPhase::Poisoned(source) => Some(source),
+            MutationPhase::Clean | MutationPhase::Applied => None,
         }
     }
 

@@ -1,62 +1,105 @@
-# Pre-publish audit index (0.13)
+# Audit index — 0.15 interior, live-tree pass
 
-Lens: [REQUIRED-READING.md](REQUIRED-READING.md). Area reports:
+Lens: [REQUIRED-READING.md](REQUIRED-READING.md). Format **8**, ABI **3**,
+crate **0.15.0** shipped on `main` (`d2ed04ab`); everything here is the
+working-tree interior. One numbered file per open issue (convention in
+[README.md](README.md)); standing do-not-fix rulings in [kept.md](kept.md);
+downstream gaps in [primer-integration.md](primer-integration.md). The
+earlier 0.13 and 0.15 second-pass area files are deleted — every still-open
+row was carried into a numbered file, and the fixed rows' record is git
+history.
 
-| Area | File | Ship-blocker | Should-fix | Later |
-| --- | --- | ---: | ---: | ---: |
-| Engine API | [engine-api.md](engine-api.md) | 3 | 5 | 4 |
-| Storage / delta / commit | [storage.md](storage.md) | 1 | 9 | 6 |
-| Query / IR / exec | [query.md](query.md) | 0 | 7 | 11 |
-| C / napi / TS | [bindings.md](bindings.md) | 1 | 6 | 5 |
-| Lean / docs / benches / versions | [spec-docs.md](spec-docs.md) | 6 | 4 | 4 |
+The tree is hot. Statuses below were verified 2026-08-19 ~17:20 EDT and
+agents land fixes continuously — trust the `Status` line inside each file
+over this table when they disagree.
 
-Raw counts overlap. Unique **do-not-publish** themes:
+## Roster
 
-## Do not publish until these are true
+| # | File | Status |
+| --- | --- | --- |
+| 01 | [napi error carrier](01-napi-error-carrier.md) | **fixed this pass** (`create_error` + `kind`; suite green pending re-run) |
+| 02 | [one temporal shape](02-ts-temporal-shape.md) | OPEN — `fromInstance`/`create`/`open`/`exhume` are async in name only |
+| 03 | [owned single read](03-ts-owned-single-read.md) | OPEN — per-op lease round trips; two spellings of every owned read |
+| 04 | [TS builder verbs](04-ts-builder-verbs.md) | OPEN — `load`+`admit` only; engine has delete/reserve/contains/get |
+| 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
+| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |
+| 07 | [view binding](07-view-binding.md) | **CONTESTED** — owner ruling required (the keep defends the fix, not the code) |
+| 08 | [relation slot](08-relation-slot.md) | **CONTESTED** — owner ruling required (the keep inverts the mechanism); SPINE-16 open either way |
+| 09 | [profile + stats](09-profile-stats.md) | **CONTESTED** on promotion (profile ≠ staleness); `hit` twice OPEN by both sides |
+| 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | OPEN — 4 × `unreachable!("schema-typed")`; `ValueRef::FixedBytes` |
+| 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
+| 12 | [C owner tokens](12-c-owner-tokens.md) | **fixed this pass** (`OwnerToken`; bridge pre-refusal test pinned) |
+| 13 | [C exit threading](13-c-exit-threading.md) | keep — one `Result<()>` channel; rider spelling narrowed (unforgeable decline, later) |
+| 14 | [V8 lazy accounting](14-v8-lazy-accounting.md) | **fixed this pass** (`OwnedSlot.accounted` cell; ops sync `retained_bytes`) |
+| 15 | [exec one evaluator](15-exec-one-evaluator.md) | OPEN — walk shared, entries not; two-module gate unmet |
+| 16 | [verify-store embedding](16-verify-store-embedding.md) | OPEN (later) — structural variants transcribe; `intern_id: u64` |
+| 17 | [docs vocabulary](17-docs-vocabulary.md) | OPEN (docs only) — fence table, snapshot prose, case count, Lean prose |
+| 18 | [ramdisk probe](18-ramdisk-probe.md) | OPEN (environmental) — capability probe, skip-with-reason |
+| 19 | [violations attach seam](19-violations-attach-seam.md) | **fixed this pass** (`from_pairs`; decoration builds the stored pairs) |
 
-1. **One write algebra in the published contract.** Architecture docs, cookbook recipe 28, and `scan_facts` rustdoc still teach `Db::bulk_load`, `alloc`, 4096 prefix-commit, and `Error::BulkLoad`. The engine, C ABI, TS SDK, Lean `Op`/`Event`, and benches already use collection `insert`/`delete` and `reserve` inside `write`. Same finding as API-3, STOR-01, SD-01–SD-04.
+## Owner rulings required
 
-2. **One version identity: 0.13.0.** Engine crates are 0.12.0, TS/napi 0.12.2, `bumbledb-c` 0.1.0, while `bdb_abi_version()` is 2. Publishing this tree as 0.12.x ships a breaking write surface under a patch identity. `76-c-abi.md` still says ABI 1. BND-01, SD-05, SD-06.
+1. **07 view binding** — the keep-ruling argues against collapsing three
+   proofs into one `None`; that is the *current* code, and the filed
+   `Binding` sum is the three proofs. At minimum the four-parallel-vector
+   unification proceeds under both readings.
+2. **08 relation slot** — the keep-ruling says one slot type would make
+   store generations representable on closed images; the filed
+   `Closed(OnceLock)` arm carries no generation, so the sum is what makes
+   it unrepresentable — today's two maps enforce the partition by
+   convention (`expect("Closed body implies a closed cache slot")`).
+3. **09 profile promotion** — the keep-ruling reasons from drift; `profile`
+   is counting instrumentation, not a drift clock. If lease-only stands,
+   the sealed-trait comment and the proposal roster must be edited to
+   match.
+4. **11 already resolved by fix** — recorded here because it closed a gate
+   contradiction: destroy now leaks retired slots (the C parse of "the slot
+   outlives the handle"), and the UAF gate is met by test.
 
-3. **Empty `FreshRange` is not a minted id.** `[0, 0)` plus `start() -> T` fabricates `T::from_fresh(0)`. `Interval<T>` in the same crate already makes empty unrepresentable. API-1. FFI may still wire empty as `{0,0}` at the boundary.
+## Fixed this pass (receipts; record in git history and file Status lines)
 
-4. **Poison is an error, not a string.** `applied: bool` × `poisoned: Option<String>` and `Error::TransactionPoisoned { message: String }` discard the original kind. API-2; STOR-02 is the same state machine.
+1. `ReadInstance { core: InstanceCore<LmdbSource<'txn>, S> }`; `LmdbImages`
+   deleted; store prepare/execute through generic `prepare_on`/`bind`.
+2. `WriteTx { mutation: MutationCore<StoreMutation> }`; one
+   `MutationPhase`; empty apply short-circuits before poison.
+3. `Violations` is `Box<[(Violation, Box<[CitedFact]>)]>` with private
+   fields and a `compile_fail` pin; `Violation` carries `StatementRef`
+   only (`StatementId` derived via `Schema::id_of`). Decoration is
+   `from_pairs` — no parallel `Vec` + length assert.
+4. N-API throws a real `Error` carrying `kind`; forced `ErrorFamily` table;
+   TS open/prepare refusals wrap exported `Err*` values.
+5. V8 external memory on admit/close **and** lazy image birth.
+6. C: one `phase: AtomicU32` handle word; retired-slot leak on destroy
+   (`MISUSE`, never UAF — test); `OwnerToken` on prepared/instance-ref with
+   bridge pre-refusal (test); tagged admissions with the `moved` arm.
+7. `ExhumeOutcome` three variants; fresh-range tag; docs `TypeDesc`→
+   `ValueType`, introspection v7, ABI-3 rows.
 
-## Should-fix on the 0.13 write seam (not query)
+## Already right (do not "fix" back)
 
-Representation work that belongs with this cutover, not a later cleanup:
-
-| ID | Issue |
-| --- | --- |
-| API-4 / STOR empty range | Exclusive end typed as a minted `T`; `start()` vs `start_raw()` dual |
-| STOR-03 | Four copied collection loops instead of one applicator |
-| STOR-04 | Dyn parse then re-parse (`()` validator) |
-| STOR-05 / API intern | `InternMode::Mint` dead arm |
-| BND-02 | Napi returns only `changed`; SDK reconstructs `submitted` |
-| BND-03 | SDK empty insert/delete/reserve skip native and miss poison |
-| BND-04 | C applies the mutation then MISUSE on null `out_report` |
-| BND-05 | `value_count == 0` / `chunks_exact(0)` |
-| BND-06–07 | Leftover omit-to-mint comment; `76-c-abi.md` still says ABI 1 |
-| SD-07–10 | Bench comments still name `bulk_load`; `scripts/lean.sh` untried |
-
-## Later (do not block 0.13)
-
-Query IR still admits illegal queries that `validate` then rejects (Q-01–Q-07). That is real representation debt. It is not the mutation cutover. `write_from` and prepared execute look correct after writes.
-
-## Already right (do not “fix” back)
-
-- No public `insertMany` / `InsertBatch` / `InsertFact` mint path.
-- Insert/delete are collections; empty is lawful; singleton is `[fact]` / `[&fact]`.
-- Lean `Op.insert`/`delete` take `List Fact`; `Event.reserve count`; fold theorems compile; `lake build` succeeded.
-- C `bdb_tx_insert`/`delete`/`reserve`, rectangular rows, ABI 2.
-- Napi `TxReq::{Insert, Delete, Reserve}`.
-- Overlay `Absent` vs cancel is the right delta representation (storage.md finding 097).
+- `Admission<T>`, `Check::{Holds, Violated}`, `Committed<R>`,
+  `ConditionalWrite::Moved`.
+- No public `Snapshot`, `CommitSeq`, `CommitRejected`, `GenerationMoved`,
+  `NotInitialized`, `ForeignSnapshot`, `Admitting`, `Durable`-as-`Db`.
+- Format 8 / ABI 3 / 0.15.0 lockstep; format-7 refused everywhere.
+- `InstanceBuilder = MutationCore<HeapMutation>` with no query methods.
+- `ViewEpoch::{Closed, Frozen, Store(GenerationId)}`; no dummy generation.
+- `CatalogRead`/`CatalogWrite`, `FrozenCatalog` without `_meta`,
+  `CatalogIdentity`, `CodecRead`/`CodecWrite`,
+  `Probe::{Encoded, ProvablyAbsent}`, `InternId`.
+- `Staleness::{NoStatistics, Measured}`, `RuleStats` enum, sealed
+  `MutationReport`.
+- Lean L1–L5 and the three-oracle complete-admission conformance lane.
+- `scripts/spec-census.sh` as the three-way drift gate.
 
 ## Suggested order of work
 
-1. Docs + rustdoc + comments: one write surface (theme 1).
-2. Lockstep 0.13.0 including unpublished `bumbledb-c` (theme 2).
-3. `FreshRange` empty as a sum type, not `[0,0)` in Rust (theme 3).
-4. `WritePhase` + `TransactionPoisoned` holding `Error` (theme 4).
-5. Bindings: napi full report, empty collections still check poison, C out-param before apply.
-6. Query IR (Q-*) after 0.13 ships, unless a should-fix is cheap and local.
+1. **02** — make the async signatures honest (`fromInstance` first: it is
+   O(catalog) on the event loop).
+2. **03 + 04** — one way to read an owned instance; full builder verb set.
+3. **10** — typed decode both sides; delete the last `unreachable!`s.
+4. Owner rules on **07 / 08 / 09**, then whichever open.
+5. **13** (unforgeable decline) + **06** (codec dict path, scratch pools,
+   doc ghosts) + **15** (evaluator entries).
+6. **16**, **17**, **18** in any order; **18** also gates release
+   on bare metal.

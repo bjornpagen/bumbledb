@@ -60,17 +60,20 @@ fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> Result<Admission<()>>
 fn assert_in_delta_violation(result: Result<Admission<()>>, a: &[u8], b: &[u8]) {
     let violations = expect_rejected(result);
     let [
-        Violation::Functionality {
-            id,
-            fact,
-            conflict: Conflict::Pointwise { incumbent },
-            ..
-        },
+        (
+            Violation::Functionality {
+                statement,
+                fact,
+                conflict: Conflict::Pointwise { incumbent },
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
-    assert_eq!(*id, BOOKING_KEY);
+    assert_eq!(schema().id_of(*statement), BOOKING_KEY);
     assert!(
         (**fact == *a && **incumbent == *b) || (**fact == *b && **incumbent == *a),
         "violation names {fact:?} against {incumbent:?}"
@@ -82,17 +85,20 @@ fn assert_in_delta_violation(result: Result<Admission<()>>, a: &[u8], b: &[u8]) 
 fn assert_cross_delta_violation(result: Result<Admission<()>>, first: &[u8], second: &[u8]) {
     let violations = expect_rejected(result);
     let [
-        Violation::Functionality {
-            id,
-            fact,
-            conflict: Conflict::Pointwise { incumbent },
-            ..
-        },
+        (
+            Violation::Functionality {
+                statement,
+                fact,
+                conflict: Conflict::Pointwise { incumbent },
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
-    assert_eq!(*id, BOOKING_KEY);
+    assert_eq!(schema().id_of(*statement), BOOKING_KEY);
     assert_eq!(**fact, *second);
     assert_eq!(&**incumbent, first);
 }
@@ -342,17 +348,20 @@ fn doc_fact(schema: &Schema, id: u64, body: u64) -> Vec<u8> {
 /// pair.
 fn assert_fresh_row_violation(violations: &crate::error::Violations, facts: &[&[u8]]) {
     let [
-        Violation::Functionality {
-            id,
-            fact,
-            conflict: Conflict::Scalar,
-            ..
-        },
+        (
+            Violation::Functionality {
+                statement,
+                fact,
+                conflict: Conflict::Scalar,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one fresh-row key citation, got {violations:?}");
     };
-    assert_eq!(*id, DOC_KEY);
+    assert_eq!(schema().id_of(*statement), DOC_KEY);
     assert!(facts.iter().any(|candidate| **fact == **candidate));
 }
 
@@ -519,7 +528,7 @@ fn fresh_f_conflict_still_cites_the_secondary_unique_key() {
     let violations = expect_rejected(commit(delta, &env));
     let statements: Vec<_> = violations
         .iter()
-        .map(crate::error::Violation::statement_id)
+        .map(|violation| violation.statement_id(&schema))
         .collect();
     assert_eq!(
         statements,
@@ -597,7 +606,7 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
     assert!(
         matches!(
             violations.as_slice(),
-            [Violation::Functionality { id, .. }] if *id == BOOKING_KEY
+            [(Violation::Functionality { statement, .. }, _)] if *statement == schema.cite(BOOKING_KEY)
         ),
         "{violations:?}"
     );

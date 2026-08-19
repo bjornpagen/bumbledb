@@ -37,6 +37,7 @@ use crate::encoding::{InternId, ValueRef};
 use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::Schema;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, ReadTxn};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
@@ -61,8 +62,6 @@ mod read;
 mod read_instance;
 mod reserve;
 mod write;
-
-use apply::WritePhase;
 
 pub use builder::InstanceBuilder;
 pub use exhume::{Exhumed, exhume};
@@ -371,8 +370,6 @@ pub struct Db<S> {
     /// observed. The parked reader keys on it — the same clock the
     /// store advances, not a second process counter.
     generation: std::sync::atomic::AtomicU64,
-    /// The snapshot point-read scratch pool (R15) — see [`ScratchPool`].
-    read_scratch: ScratchPool,
     schema: Arc<Schema>,
     /// The typestate marker (`fn() -> S` keeps `Send + Sync` independent
     /// of `S` — the definition value itself is consumed at open).
@@ -387,8 +384,9 @@ impl<S> Db<S> {
         &self.env
     }
 
-    /// The validated schema (reader: `crate::verify_store`).
-    pub(crate) fn schema(&self) -> &Schema {
+    /// The sealed schema this handle was admitted under.
+    #[must_use]
+    pub fn schema(&self) -> &Schema {
         self.schema.as_ref()
     }
 
@@ -441,7 +439,7 @@ pub(crate) struct ReadScratch {
 pub(crate) struct ScratchPool(Mutex<Vec<ReadScratch>>);
 
 impl ScratchPool {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Mutex::new(Vec::new()))
     }
 
@@ -522,44 +520,41 @@ struct WriterThreadReset<'a>(&'a std::sync::atomic::AtomicU64);
 /// }
 /// ```
 pub struct ReadInstance<'txn, S> {
-    txn: ReadTxn<'txn>,
-    cache: &'txn ImageCache,
-    schema: Arc<Schema>,
-    scratch: &'txn ScratchPool,
+    pub(super) core: instance::InstanceCore<crate::image::LmdbSource<'txn>, S>,
     thread_bound: PhantomData<Rc<()>>,
-    marker: PhantomData<fn() -> S>,
 }
 
 impl<'txn, S> ReadInstance<'txn, S> {
     /// The lease's read transaction (reader: the staleness signal —
     /// [`crate::PreparedQuery::staleness`] takes the instance directly
     /// rather than routing through a wrapper method).
-    pub(crate) fn txn(&self) -> &ReadTxn<'txn> {
-        &self.txn
+    pub(crate) fn txn(&self) -> &ReadTxn<'_> {
+        self.core.source.txn()
     }
 
-    /// The snapshot's witnessed generation: the storage tx id read from
-    /// `_meta` **inside this snapshot** — the race-closing rule of
+    pub(crate) fn cache(&self) -> &'txn ImageCache {
+        self.core.source.cache()
+    }
+
+    /// The lease's witnessed generation: the storage tx id read from
+    /// `_meta` **inside this read transaction** — the race-closing rule of
     /// `docs/architecture/50-storage.md` — memoized on the read
     /// transaction. A scoped read that wants its generation reads it
     /// here, never through a second transaction (the FFI bridge rides it
-    /// on the snapshot-open reply).
+    /// on the open reply).
     ///
     /// # Errors
     ///
     /// `Corruption` on a missing or malformed tx id.
     pub fn generation(&self) -> Result<crate::GenerationId> {
-        self.txn.generation()
+        self.txn().generation()
     }
 
     /// Runs `body` with a pooled point-read scratch set, restoring it
     /// afterward — capacity included — success or error. The one scratch
-    /// discipline of every snapshot point read (R15).
+    /// discipline of every read-instance point read (R15).
     fn with_scratch<R>(&self, body: impl FnOnce(&mut ReadScratch) -> Result<R>) -> Result<R> {
-        let mut scratch = self.scratch.take();
-        let out = body(&mut scratch);
-        self.scratch.restore(scratch);
-        out
+        self.core.with_scratch(body)
     }
 }
 
@@ -574,49 +569,21 @@ impl<'txn, S> ReadInstance<'txn, S> {
 /// stay unrepresentable). Carries the handle's schema typestate `S`:
 /// typed operations bound `F: Fact<'_, Schema = S>`.
 pub struct WriteTx<'a, S> {
-    view: ReadTxn<'a>,
-    delta: WriteDelta<'a>,
-    schema: &'a Schema,
-    scratch: Vec<u8>,
-    /// Reused per dynamic fact: a collection insert must not allocate a
-    /// value buffer per imported row.
-    refs: Vec<ValueRef>,
-    /// Clean → Applied (a fact entered) → Poisoned (apply failed after).
-    /// A no-op does not leave Clean; a shape failure never leaves Clean.
-    phase: WritePhase,
-    marker: PhantomData<fn() -> S>,
+    mutation: mutation_core::MutationCore<mutation_core::StoreMutation<'a>, S>,
 }
 
-impl<S> WriteTx<'_, S> {
-    /// The closed-relation write refusal
-    /// (`docs/architecture/10-data-model.md` § closed relations): rows of
-    /// a closed relation are ground axioms — changing them is a new theory
-    /// (fingerprint), never a delta — so every write-surface entry types
-    /// the attempt away before any encoding runs. Total over
-    /// data-supplied ids: an unknown id passes through to the dynamic
-    /// surface's own shape check.
-    fn refuse_closed(&self, relation: RelationId) -> Result<()> {
-        match self.schema.relation_checked(relation) {
-            Some(rel) if rel.body().closed_rows().is_some() => {
-                Err(crate::error::Error::ClosedRelationWrite { relation })
-            }
-            _ => Ok(()),
-        }
+impl<'a, S> WriteTx<'a, S> {
+    fn into_store(self) -> (ReadTxn<'a>, WriteDelta<'a>) {
+        self.mutation.into_store()
     }
 
-    /// Runs `body` with the encode scratch taken out (a typed encode
-    /// borrows the whole transaction mutably alongside the buffer),
-    /// restoring the buffer — and its capacity — afterward, success or
-    /// error. The one scratch discipline of every typed operation.
-    fn with_scratch<R>(
-        &mut self,
-        body: impl FnOnce(&mut Self, &mut Vec<u8>) -> Result<R>,
-    ) -> Result<R> {
-        let mut bytes = std::mem::take(&mut self.scratch);
-        bytes.clear();
-        let out = body(self, &mut bytes);
-        self.scratch = bytes;
-        out
+    fn poisoned(&self) -> Option<&crate::error::Error> {
+        self.mutation.poisoned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delta(&self) -> &WriteDelta<'a> {
+        &self.mutation.backend.delta
     }
 }
 
@@ -631,11 +598,11 @@ impl<S> codec_seal::Sealed for WriteTx<'_, S> {}
 
 impl<S> CodecRead<S> for ReadInstance<'_, S> {
     fn schema(&self) -> &Schema {
-        self.schema.as_ref()
+        self.core.schema.as_ref()
     }
 
     fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
-        crate::storage::dict::lookup_str(&self.txn, value)
+        self.core.source.catalog().dict_lookup(value.as_bytes())
     }
 
     fn resolve_str(&self, id: InternId) -> Result<&str> {
@@ -645,21 +612,21 @@ impl<S> CodecRead<S> for ReadInstance<'_, S> {
 
 impl<S> CodecRead<S> for WriteTx<'_, S> {
     fn schema(&self) -> &Schema {
-        self.schema
+        self.mutation.schema()
     }
 
     fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
-        self.delta.resolve_str(&self.view, value)
+        CodecRead::lookup_str(&self.mutation, value)
     }
 
     fn resolve_str(&self, id: InternId) -> Result<&str> {
-        plumbing::resolve_string_write(self, id)
+        CodecRead::resolve_str(&self.mutation, id)
     }
 }
 
 impl<S> CodecWrite<S> for WriteTx<'_, S> {
     fn intern_str(&mut self, value: &str) -> Result<InternId> {
-        self.delta.intern_str(&self.view, value)
+        CodecWrite::intern_str(&mut self.mutation, value)
     }
 }
 

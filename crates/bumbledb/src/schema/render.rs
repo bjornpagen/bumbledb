@@ -12,7 +12,8 @@ use std::fmt;
 
 use super::{
     Bound, FieldDescriptor, FieldId, LiteralSet, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, StatementKind, StatementView, Value, ValueType, Weight,
+    StatementDescriptor, StatementId, StatementKind, StatementView, ValidateDescriptor, Value,
+    ValueType, Weight,
 };
 use crate::error::{Direction, Violation, Violations};
 
@@ -132,13 +133,18 @@ pub fn render_rejection(
     let names = DeclaredNames(descriptor);
     // Materialized once, mirrors once — every violation's spelling reads
     // the same list (the per-violation re-materialization died with the
-    // manifest's).
+    // manifest's). The sealed schema is the one path from a typed
+    // spine slot to the materialized ordinal.
+    let schema = descriptor
+        .clone()
+        .validate()
+        .expect("render_rejection is for an admitted theory");
     let materialized = descriptor.materialized_statements();
     let mirrors = super::validate::mirror_links(&materialized);
     violations
         .citations()
         .map(|(violation, cited)| {
-            let statement = violation.statement_id();
+            let statement = violation.statement_id(&schema);
             let spelling = if usize::from(statement.0) < materialized.len() {
                 render_materialized(descriptor, &materialized, &mirrors, statement)
             } else {

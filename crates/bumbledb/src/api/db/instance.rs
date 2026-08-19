@@ -107,18 +107,18 @@ pub(crate) struct InstanceCore<Src, S> {
     marker: PhantomData<fn() -> S>,
 }
 
-impl<S> InstanceCore<FrozenSource, S> {
-    pub(crate) fn new(schema: Arc<Schema>, source: FrozenSource) -> Self {
+impl<Src, S> InstanceCore<Src, S> {
+    pub(crate) fn assemble(schema: Arc<Schema>, identity: CatalogIdentity, source: Src) -> Self {
         Self {
             schema,
-            identity: CatalogIdentity::mint(),
+            identity,
             source,
             scratch: ScratchPool::new(),
             marker: PhantomData,
         }
     }
 
-    fn with_scratch<R>(
+    pub(crate) fn with_scratch<R>(
         &self,
         body: impl FnOnce(&mut super::ReadScratch) -> Result<R>,
     ) -> Result<R> {
@@ -126,6 +126,12 @@ impl<S> InstanceCore<FrozenSource, S> {
         let out = body(&mut scratch);
         self.scratch.restore(scratch);
         out
+    }
+}
+
+impl<S> InstanceCore<FrozenSource, S> {
+    pub(crate) fn new(schema: Arc<Schema>, source: FrozenSource) -> Self {
+        Self::assemble(schema, CatalogIdentity::mint(), source)
     }
 }
 

@@ -283,7 +283,7 @@ the encoding). The shape mirrors the grammar one-for-one:
 **Where the contract lives (the facade ruling).** The theory vocabulary —
 `Value`, `Interval`, the Allen mask algebra, the id types, `ValueType`,
 `SchemaDescriptor` and its descriptor family, `SchemaSpec` + `SpecIssue` +
-the one lowering, and the encoding-level `TypeDesc` — is DEFINED in
+the one lowering, and the encoding-level `ValueType` — is DEFINED in
 `crates/bumbledb-theory` (zero dependencies, zero LMDB/exec reach) and
 re-exported by `bumbledb` as its own surface. The re-exports are the
 **permanent public API**, not a shim: hosts depend on the one `bumbledb`
@@ -968,11 +968,11 @@ introspection — EXPLAIN, colloquially — is an in-workspace bench harness
 surface (`#[doc(hidden)]` on the embedding crate), not a host-facing SDK
 API. `instance.introspect(..)`
 returns an ANALYZE-semantics rendered artifact beginning
-with `introspection v6`, then the query in rule notation (`20-query-ir.md` § the
+with `introspection v7`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string),
 then `signature:` (`PreparedQuery::signature()` — the buffer-typing authority),
 plan sections, and diagnostics. `ReadInstance::profile` returns the same execution as
-structured `ExecutionStats`, carrying `introspection_version: 6`, each rule's
+structured `ExecutionStats`, carrying `introspection_version: 7`, each rule's
 `distinct_bindings` proof status, main-rule / node ordering, and — when
 present — `interiors:` then optional one `reach` then main (`40-execution.md`
 § observability).

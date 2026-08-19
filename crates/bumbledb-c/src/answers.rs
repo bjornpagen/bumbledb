@@ -14,7 +14,7 @@
 use bumbledb::Answers;
 
 use crate::db::bdb_instance_ref;
-use crate::error::bdb_error;
+use crate::error::{bdb_error, fail_engine};
 use crate::query::{bdb_prepared, enter_execute, prepared_execute_flag};
 use crate::value::{answer_out, bdb_param, bdb_value, param_args, params_in};
 use crate::{Fail, bdb_status, box_in, box_out, guard, guard_statusless, guard_value, mut_in, out, ref_in};
@@ -141,6 +141,9 @@ pub extern "C" fn bdb_instance_execute(
         let flag = prepared_execute_flag(prepared)?;
         let _exec = enter_execute(flag)?;
         let prepared = mut_in(prepared)?;
+        if prepared.owner != instance.owner() {
+            return Err(fail_engine(bumbledb::Error::ForeignPreparedQuery));
+        }
         let owned = params_in(params, param_count)?;
         let args = param_args(&owned)?;
         let carrier = mut_in(answers)?;

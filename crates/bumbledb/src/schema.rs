@@ -748,6 +748,16 @@ pub enum StatementRef {
     Capacity(CapacityId),
 }
 
+impl std::fmt::Display for StatementRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Key(id) => write!(f, "key {}", id.0),
+            Self::Containment(id) => write!(f, "containment {}", id.0),
+            Self::Capacity(id) => write!(f, "capacity {}", id.0),
+        }
+    }
+}
+
 /// A borrowed sealed statement for display and other order-preserving walks.
 /// Consumers that already hold a typed id use the total arena accessors.
 #[derive(Debug, Clone, Copy)]
@@ -982,6 +992,12 @@ impl Schema {
     #[must_use]
     pub fn statement(&self, id: StatementId) -> StatementView<'_> {
         self.view(self.order[usize::from(id.0)])
+    }
+
+    /// The materialized-order ordinal of a typed spine slot.
+    #[must_use]
+    pub fn id_of(&self, statement: StatementRef) -> StatementId {
+        self.view(statement).id()
     }
 
     /// The typed spine slot a materialized-order identity selects.

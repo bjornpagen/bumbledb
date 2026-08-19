@@ -157,7 +157,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                 {
                     self.violations.push(Violation::functionality(
                         self.schema.cite(*statement),
-                        *statement,
                         fact.into(),
                         Conflict::Scalar,
                     ));
@@ -181,7 +180,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                     let incumbent = self.stored_fact(rel, incumbent_row)?;
                     self.violations.push(Violation::functionality(
                         self.schema.cite(*statement),
-                        *statement,
                         fact.into(),
                         Conflict::Pointwise { incumbent },
                     ));
@@ -213,7 +211,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                     }
                     self.violations.push(Violation::functionality(
                         self.schema.cite(fresh.statement),
-                        fresh.statement,
                         op.core.fact.into(),
                         Conflict::Scalar,
                     ));
@@ -386,7 +383,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
         let incumbent = self.stored_fact(rel, row)?;
         self.violations.push(Violation::functionality(
             self.schema.cite(statement),
-            statement,
             fact_bytes.into(),
             Conflict::Pointwise { incumbent },
         ));

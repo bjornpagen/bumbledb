@@ -35,12 +35,12 @@ fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
     assert!(
         matches!(
             violations.as_slice(),
-            [Violation::Functionality {
-                id: KEYED_KEY,
+            [(Violation::Functionality {
+                statement,
                 fact,
                 conflict: Conflict::Scalar,
                 ..
-            }] if **fact == a[..] || **fact == b[..]
+            }, _)] if *statement == schema.cite(KEYED_KEY) && (**fact == a[..] || **fact == b[..])
         ),
         "{violations:?}"
     );
@@ -64,12 +64,12 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
     assert!(
         matches!(
             violations.as_slice(),
-            [Violation::Functionality {
-                id: KEYED_KEY,
+            [(Violation::Functionality {
+                statement,
                 fact,
                 conflict: Conflict::Scalar,
                 ..
-            }] if **fact == contender[..]
+            }, _)] if *statement == schema.cite(KEYED_KEY) && **fact == contender[..]
         ),
         "{violations:?}"
     );

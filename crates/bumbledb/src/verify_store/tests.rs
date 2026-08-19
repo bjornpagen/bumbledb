@@ -30,7 +30,6 @@ const CLAIM_BOOKING: StatementId = StatementId(3);
 fn judgment_containment(schema: &Schema, statement: StatementId, fact: Box<[u8]>) -> StoreFinding {
     StoreFinding::Judgment(Violation::containment(
         schema.cite(statement),
-        statement,
         Direction::TargetRequired,
         fact,
     ))
@@ -42,12 +41,7 @@ fn judgment_capacity(
     fact: Box<[u8]>,
     measure: u128,
 ) -> StoreFinding {
-    StoreFinding::Judgment(Violation::capacity(
-        schema.cite(statement),
-        statement,
-        fact,
-        measure,
-    ))
+    StoreFinding::Judgment(Violation::capacity(schema.cite(statement), fact, measure))
 }
 
 /// Holder(id fresh, name str) — scalar key, string field for the

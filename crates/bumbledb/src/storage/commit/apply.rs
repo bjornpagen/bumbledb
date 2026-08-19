@@ -63,7 +63,7 @@ pub fn apply<'env>(
     // Key violations preempt the judgment phase: the containment probes
     // are defined over the keyed final state, which this apply failed to
     // produce — the rejection is every violated key statement, sealed.
-    Ok(match Violations::seal(violations) {
+    Ok(match Violations::seal(schema, violations) {
         Admission::Rejected(violations) => Admission::Rejected(violations),
         Admission::Accepted(()) => Admission::Accepted(Applied { txn, row_id_next }),
     })

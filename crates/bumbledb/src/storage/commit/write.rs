@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::error::{Admission, CorruptionError, Error, Result, Violations};
+use crate::error::{
+    Admission, CitedCitations, CorruptionError, Error, Result, Violation, Violations,
+};
 use crate::obs;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, FreshMarks, WriteTxn};
@@ -216,7 +218,7 @@ fn decorate_rejected(
 ) -> Violations {
     match env.read_txn() {
         Ok(view) => match decode_cited_facts(&violations, schema, &view, delta) {
-            Ok(cited) => violations.attach_cited(cited),
+            Ok(pairs) => Violations::from_pairs(pairs),
             Err(_) => violations,
         },
         Err(_) => violations,
@@ -240,14 +242,14 @@ fn decode_cited_facts(
     schema: &crate::schema::Schema,
     view: &crate::storage::env::ReadTxn<'_>,
     delta: &WriteDelta<'_>,
-) -> Result<Vec<Box<[crate::error::CitedFact]>>> {
-    use crate::error::{CitedFact, Violation};
-    let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.len());
-    for violation in violations {
+) -> Result<CitedCitations> {
+    use crate::error::CitedFact;
+    let mut cited: Vec<(Violation, Box<[CitedFact]>)> = Vec::with_capacity(violations.len());
+    for (violation, _) in violations.as_slice() {
         let (relation, facts): (_, Vec<&[u8]>) = match violation {
             Violation::Functionality { .. } => {
                 let crate::schema::StatementView::Key(_, key) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Functionality citation names a key statement");
                 };
@@ -260,7 +262,7 @@ fn decode_cited_facts(
             }
             Violation::Containment { fact, .. } => {
                 let crate::schema::StatementView::Containment(_, containment) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Containment citation names a containment statement");
                 };
@@ -268,7 +270,7 @@ fn decode_cited_facts(
             }
             Violation::Capacity { fact, .. } => {
                 let crate::schema::StatementView::Capacity(_, capacity) =
-                    schema.statement(violation.statement_id())
+                    schema.statement(violation.statement_id(schema))
                 else {
                     unreachable!("a Capacity citation names a capacity statement");
                 };
@@ -302,9 +304,9 @@ fn decode_cited_facts(
                 ))
             })
             .collect::<Result<Box<[CitedFact]>>>()?;
-        cited.push(decoded);
+        cited.push((violation.clone(), decoded));
     }
-    Ok(cited)
+    Ok(cited.into_boxed_slice())
 }
 
 /// The counters-only commit of a successful no-op write: exactly the

@@ -1,7 +1,5 @@
-use super::apply::ApplyRow;
-use super::{Fact, MutationReport, Probe, WriteTx};
+use super::{Fact, MutationReport, WriteTx};
 use crate::error::Result;
-use crate::storage::delta::Disposition;
 
 impl<S> WriteTx<'_, S> {
     /// Records a collection of typed deletes. Returns how many facts were
@@ -22,17 +20,6 @@ impl<S> WriteTx<'_, S> {
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
     ) -> Result<MutationReport> {
-        self.apply_collection(
-            F::RELATION,
-            Disposition::Delete,
-            facts,
-            |tx, fact, bytes| {
-                if matches!(fact.encode_probe(tx, bytes)?, Probe::Encoded) {
-                    Ok(ApplyRow::Ready)
-                } else {
-                    Ok(ApplyRow::Skip)
-                }
-            },
-        )
+        self.mutation.delete(facts)
     }
 }

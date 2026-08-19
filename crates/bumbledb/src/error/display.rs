@@ -144,7 +144,7 @@ impl fmt::Display for Violation {
         write!(
             f,
             "statement {}: {} violated — ",
-            self.statement_id().0,
+            self.statement(),
             self.law()
         )?;
         self.tail(f)
@@ -1062,7 +1062,7 @@ impl fmt::Display for ViolationsDisplayWith<'_> {
             if index > 0 {
                 write!(f, "; ")?;
             }
-            let rendered = render::render(self.schema, violation.statement_id());
+            let rendered = render::render(self.schema, violation.statement_id(self.schema));
             write!(
                 f,
                 "{} violated{}: `{rendered}` — ",

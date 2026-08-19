@@ -1,7 +1,5 @@
-use super::apply::ApplyRow;
 use super::{Fact, MutationReport, WriteTx};
 use crate::error::Result;
-use crate::storage::delta::Disposition;
 
 impl<S> WriteTx<'_, S> {
     /// Records a collection of typed inserts. Returns how many facts were
@@ -21,14 +19,6 @@ impl<S> WriteTx<'_, S> {
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
     ) -> Result<MutationReport> {
-        self.apply_collection(
-            F::RELATION,
-            Disposition::Insert,
-            facts,
-            |tx, fact, bytes| {
-                fact.encode_insert(tx, bytes)?;
-                Ok(ApplyRow::Ready)
-            },
-        )
+        self.mutation.load(facts)
     }
 }

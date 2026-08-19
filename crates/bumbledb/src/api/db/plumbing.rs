@@ -1,4 +1,4 @@
-use super::{ReadInstance, RelationId, ValueRef, WriteTx};
+use super::{ReadInstance, RelationId, ValueRef};
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, FactShapeError, Result};
 use crate::storage::dict;
@@ -51,25 +51,8 @@ pub fn fixed_interval_i64(
 /// # Errors
 ///
 /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
-pub fn resolve_string<'a, S>(snap: &'a ReadInstance<'_, S>, id: InternId) -> Result<&'a str> {
-    let raw = dict::resolve(&snap.txn, id)?;
-    std::str::from_utf8(raw)
-        .map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id.raw())))
-}
-
-/// Write-context sibling of [`resolve_string`], for the point-read decode:
-/// provisional ids minted this transaction resolve through the delta's
-/// pending map (borrowed from its arena — the read-your-writes source),
-/// committed ids through the dictionary's mmap pages.
-///
-/// # Errors
-///
-/// `Corruption` on a dangling id or non-UTF-8 stored bytes.
-pub fn resolve_string_write<'a, S>(tx: &'a WriteTx<'_, S>, id: InternId) -> Result<&'a str> {
-    let raw = match tx.delta.pending_raw(id) {
-        Some(raw) => raw,
-        None => dict::resolve(&tx.view, id)?,
-    };
+pub fn resolve_string<'a, S>(instance: &'a ReadInstance<'_, S>, id: InternId) -> Result<&'a str> {
+    let raw = dict::resolve(instance.txn(), id)?;
     std::str::from_utf8(raw)
         .map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id.raw())))
 }

@@ -14,7 +14,7 @@ use bumbledb::{
     Query, Rec, RecRule, RecStep, RelationId, Rule, SchemaDescriptor, Term, VarId,
 };
 
-use crate::db::{Engine, bdb_db};
+use crate::db::{Engine, OwnerToken, bdb_db};
 use crate::error::{bdb_error, fail_busy, fail_engine, fail_shape};
 use crate::value::{bdb_value, value_in};
 use crate::{
@@ -678,6 +678,7 @@ pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
 pub struct bdb_prepared {
     pub(crate) prepared: PreparedQuery<SchemaDescriptor>,
     pub(crate) _keep: Option<std::sync::Arc<Engine>>,
+    pub(crate) owner: OwnerToken,
     pub(crate) in_execute: AtomicBool,
 }
 
@@ -747,6 +748,7 @@ pub extern "C" fn bdb_db_prepare(
             out_prepared,
             bdb_prepared {
                 prepared,
+                owner: OwnerToken::Store(std::sync::Arc::as_ptr(&engine)),
                 _keep: Some(engine),
                 in_execute: AtomicBool::new(false),
             },

@@ -34,6 +34,14 @@ const WRITING_BUSY: u32 = 1 << 17;
 const KIND_STORE: u8 = 1;
 const KIND_HEAP: u8 = 2;
 
+/// Bridge owner identity — compared before execute so a foreign prepared
+/// never reaches the engine. Pointers are never dereferenced after mint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerToken {
+    Store(*const Engine),
+    Heap(*const OwnedInstance<SchemaDescriptor>),
+}
+
 /// Opaque database handle.
 pub struct bdb_db {
     pub(crate) db: Arc<Engine>,
@@ -66,6 +74,7 @@ pub struct bdb_instance_ref {
     kind: u8,
     ptr: AtomicPtr<c_void>,
     engine: Option<Arc<Engine>>,
+    owner: OwnerToken,
     alive: AtomicBool,
 }
 
@@ -290,6 +299,20 @@ fn retire(handle: &bdb_db, slot: Retired) {
         .push(slot);
 }
 
+fn leak_retired(slot: Retired) {
+    match slot {
+        Retired::Instance(slot) => {
+            let _ = Box::leak(slot);
+        }
+        Retired::Witness(slot) => {
+            let _ = Box::leak(slot);
+        }
+        Retired::Tx(slot) => {
+            let _ = Box::leak(slot);
+        }
+    }
+}
+
 fn phase_readers(phase: u32) -> u32 {
     phase & READERS_MASK
 }
@@ -384,11 +407,17 @@ impl Drop for InOpReset<'_> {
 }
 
 impl bdb_instance_ref {
+    pub(crate) fn owner(&self) -> OwnerToken {
+        self.owner
+    }
+
     fn store(engine: Arc<Engine>, snap: &ReadInstance<'_, SchemaDescriptor>) -> Self {
+        let owner = OwnerToken::Store(Arc::as_ptr(&engine));
         Self {
             kind: KIND_STORE,
             ptr: AtomicPtr::new((&raw const *snap).cast::<c_void>().cast_mut()),
             engine: Some(engine),
+            owner,
             alive: AtomicBool::new(true),
         }
     }
@@ -398,6 +427,7 @@ impl bdb_instance_ref {
             kind: KIND_HEAP,
             ptr: AtomicPtr::new((&raw const *instance).cast::<c_void>().cast_mut()),
             engine: None,
+            owner: OwnerToken::Heap(std::ptr::from_ref(instance)),
             alive: AtomicBool::new(true),
         }
     }
@@ -856,7 +886,17 @@ pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
         if handle_busy(handle) {
             return Err(Fail::Misuse);
         }
-        drop(box_in(db)?);
+        let handle = box_in(db)?;
+        let retired = std::mem::take(
+            &mut *handle
+                .retired
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        drop(handle);
+        for slot in retired {
+            leak_retired(slot);
+        }
         Ok(bdb_status::Ok)
     })
 }
@@ -1590,6 +1630,7 @@ pub extern "C" fn bdb_instance_prepare(
             out_prepared,
             bdb_prepared {
                 prepared,
+                owner: instance.owner(),
                 _keep: instance.engine.clone(),
                 in_execute: AtomicBool::new(false),
             },

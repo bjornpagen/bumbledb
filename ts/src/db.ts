@@ -54,7 +54,7 @@ import type {
 	ViolationFact as WireViolationFact,
 	WitnessHandle
 } from "#native.ts"
-import { bridged, native } from "#native.ts"
+import { bridged, errorFromThrow, native } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
 import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
@@ -1035,7 +1035,7 @@ function createReadInstance<Rels extends SchemaRelations>(
 			return native.instancePrepare(state.handle, queryIr)
 		})
 		if (!outcome.ok) {
-			throw errors.new(`bumbledb ${outcome.kind} (prepare): ${outcome.message}`)
+			throwPrepareRefusal(outcome.message)
 		}
 		const prepared: Prepared<Rels, Row, Params> = Object.freeze({})
 		preparedPlans.set(
@@ -1533,7 +1533,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			return native.dbPrepare(handle, queryIr)
 		})
 		if (!outcome.ok) {
-			throw errors.new(`bumbledb ${outcome.kind} (prepare): ${outcome.message}`)
+			throwPrepareRefusal(outcome.message)
 		}
 		return pinPrepared(outcome.prepared, q)
 	}
@@ -1564,12 +1564,30 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 const ErrNewtypeMismatch = errors.new(
 	"bumbledb newtypeMismatch: a statement pairs faces whose newtypes disagree — the faces of a dependency agree on their newtype, or neither carries one"
 )
+const ErrSchemaError = errors.new("bumbledb schemaError: the declaration failed validation")
+const ErrFingerprintMismatch = errors.new(
+	"bumbledb fingerprintMismatch: the store's schema does not match this theory"
+)
+const ErrIrError = errors.new("bumbledb irError: the query failed validation")
 
-function throwOpenRefusal(verb: string, canonical: string, kind: string, message: string): never {
+function throwOpenRefusal(
+	verb: string,
+	canonical: string,
+	kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch",
+	message: string
+): never {
+	const detail = `${verb} ${canonical}: ${message}`
 	if (kind === "newtypeMismatch") {
-		throw errors.wrap(ErrNewtypeMismatch, `${verb} ${canonical}: ${message}`)
+		throw errors.wrap(ErrNewtypeMismatch, detail)
 	}
-	throw errors.new(`bumbledb ${kind} (${verb} ${canonical}): ${message}`)
+	if (kind === "schemaError") {
+		throw errors.wrap(ErrSchemaError, detail)
+	}
+	throw errors.wrap(ErrFingerprintMismatch, detail)
+}
+
+function throwPrepareRefusal(message: string): never {
+	throw errors.wrap(ErrIrError, `prepare: ${message}`)
 }
 
 function openFromHandle<Rels extends SchemaRelations>(dbHandle: DbHandle, theory: Schema<Rels>): Db<Rels> {
@@ -1839,7 +1857,7 @@ function wrapBuilder<Rels extends SchemaRelations>(
 			try {
 				outcome = await native.instanceBuilderAdmit(nativeHandle)
 			} catch (caught) {
-				throw errors.wrap(caught instanceof Error ? caught : errors.new(String(caught)), "admit bumbledb instance")
+				throw errors.wrap(errorFromThrow(caught), "admit bumbledb instance")
 			}
 			if (outcome.tag === "rejected") {
 				return Object.freeze({
@@ -1973,7 +1991,10 @@ export {
 	ErrAsyncCallback,
 	ErrForeignPrepared,
 	ErrForeignWitness,
+	ErrFingerprintMismatch,
+	ErrIrError,
 	ErrNewtypeMismatch,
+	ErrSchemaError,
 	ErrSpentHandle,
 	ErrUseAfterScope,
 	InstanceBuilder

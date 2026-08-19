@@ -87,7 +87,7 @@ pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Admission<()>> 
     check_source(view, &obligations, &mut violations)?;
     check_target(view, &obligations, &mut violations)?;
     check_capacities(view, &obligations, &mut violations)?;
-    Ok(Violations::seal(violations))
+    Ok(Violations::seal(view.plan.selections.schema(), violations))
 }
 
 // CONSTRAINT (C17, measured 2026-08-01 — the slot arm IS the law): a
@@ -819,7 +819,6 @@ pub(super) fn check_target(
                     {
                         violations.push(Violation::containment(
                             schema.cite(sid),
-                            sid,
                             Direction::TargetRequired,
                             row,
                         ));
@@ -846,7 +845,6 @@ pub(super) fn check_target(
                         }
                         violations.push(Violation::containment(
                             schema.cite(sid),
-                            sid,
                             Direction::TargetRequired,
                             fact.bytes().into(),
                         ));
@@ -1096,7 +1094,6 @@ impl<'a> Probe<'a> {
     fn unsatisfied(&self, schema: &Schema) -> Check {
         Check::Violated(Violation::containment(
             schema.cite(self.statement),
-            self.statement,
             self.direction,
             self.fact_bytes.into(),
         ))
@@ -1415,7 +1412,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     ) -> Check {
         Check::Violated(Violation::capacity(
             self.schema.cite(statement.id),
-            statement.id,
             fact,
             measure,
         ))

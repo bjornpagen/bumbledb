@@ -134,7 +134,7 @@ fn in_family_equals_the_union_of_per_element_executions() {
     assert!(matches!(err, Error::ParamSetExpected { param } if param.0 == 0));
 }
 
-/// R13 execute-symmetry for the counted entries: whatever `execute_args`
+/// R13 execute-symmetry for the counted entries: whatever `execute`
 /// binds, `profile` and `introspect` bind — a set-bound query profiles
 /// through the same mixed [`ParamArg`] entry, its answers value-identical
 /// to execution (ANALYZE semantics: the profile IS an execution). The

@@ -44,10 +44,37 @@ pub(crate) fn err(message: String) -> napi::Error {
     napi::Error::from_reason(message)
 }
 
-/// The engine error rendered for the wire — one string, `Display`'s own
-/// spelling; the TS layer wraps it into `@superbuilders/errors`.
-pub(crate) fn engine_err(error: &bumbledb::Error) -> String {
-    format!("bumbledb: {error}")
+/// Engine `Display` for data-path messages (open/exhume refusals). Throws
+/// use [`throw_engine`]: kind is a field, not a prefix on this string.
+pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
+    error.to_string()
+}
+
+/// Forced `{ kind, message }` throw. Kind is the exhaustive
+/// `ErrorFamily` table; the host must not re-parse `Display`.
+pub(crate) fn throw_engine(env: Env, error: &bumbledb::Error) -> napi::Error {
+    throw_kind_message(
+        env,
+        crate::tags::error_family::tag(&error.family()),
+        engine_message(error),
+    )
+}
+
+pub(crate) fn throw_kind_message(
+    env: Env,
+    kind: &'static str,
+    message: impl AsRef<str>,
+) -> napi::Error {
+    match throw_object(env, kind, message.as_ref()) {
+        Ok(()) => napi::Error::from_status(napi::Status::PendingException),
+        Err(err) => err,
+    }
+}
+
+fn throw_object(env: Env, kind: &'static str, message: &str) -> napi::Result<()> {
+    let mut error = env.create_error(napi::Error::from_reason(message))?;
+    error.set("kind", kind)?;
+    env.throw(error)
 }
 
 /// A JS value-type name for shape-error messages.

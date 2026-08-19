@@ -80,7 +80,10 @@ export {
 	ErrAsyncCallback,
 	ErrForeignPrepared,
 	ErrForeignWitness,
+	ErrFingerprintMismatch,
+	ErrIrError,
 	ErrNewtypeMismatch,
+	ErrSchemaError,
 	ErrSpentHandle,
 	ErrUseAfterScope,
 	InstanceBuilder

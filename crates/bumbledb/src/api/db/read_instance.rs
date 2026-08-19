@@ -2,7 +2,8 @@ use super::{Fact, Key, Probe, ReadInstance};
 use crate::api::prepared::{Answers, ParamArg, PreparedQuery};
 use crate::error::{DynIdError, Result};
 use crate::ir::{Query, Value};
-use crate::storage::{dict, read};
+use crate::storage::catalog::CatalogRead;
+use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> ReadInstance<'_, S> {
@@ -12,10 +13,12 @@ impl<S> ReadInstance<'_, S> {
     ///
     /// As [`crate::Instance::prepare`].
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
-        crate::api::prepared::prepare(
-            &self.txn,
-            self.cache,
-            std::sync::Arc::clone(&self.schema),
+        let catalog = self.core.source.catalog();
+        crate::api::prepared::prepare_on(
+            &self.core.identity,
+            &catalog,
+            &self.core.source,
+            std::sync::Arc::clone(&self.core.schema),
             query,
         )
     }
@@ -26,10 +29,11 @@ impl<S> ReadInstance<'_, S> {
     ///
     /// `UnknownRelation`; `Corruption` on a malformed counter.
     pub fn row_count(&self, relation: RelationId) -> Result<u64> {
-        let Some(_) = self.schema.relation_checked(relation) else {
+        let Some(_) = self.core.schema.relation_checked(relation) else {
             return Err(DynIdError::UnknownRelation { relation }.into());
         };
-        crate::plan::selectivity::relation_rows(&self.txn, self.schema.as_ref(), relation)
+        let catalog = self.core.source.catalog();
+        crate::plan::selectivity::relation_rows_on(&catalog, self.core.schema.as_ref(), relation)
     }
 
     /// Executes a prepared query with positional parameters into the
@@ -46,7 +50,7 @@ impl<S> ReadInstance<'_, S> {
         params: P,
         out: &mut Answers,
     ) -> Result<()> {
-        prepared.execute(&self.txn, self.cache, params, out)
+        prepared.execute(self.txn(), self.cache(), params, out)
     }
 
     /// Convenience path: a fresh buffer per call.
@@ -59,45 +63,45 @@ impl<S> ReadInstance<'_, S> {
         prepared: &mut PreparedQuery<S>,
         params: P,
     ) -> Result<Answers> {
-        prepared.execute_collect(&self.txn, self.cache, params)
+        prepared.execute_collect(self.txn(), self.cache(), params)
     }
 
     /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
     /// and returns the answers alongside the rendered report. Takes the
     /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
-    /// [`ReadInstance::execute_args`] binds, introspection binds.
+    /// [`ReadInstance::execute`] binds, introspection binds.
     ///
     /// Harness-only (not embedding API).
     ///
     /// # Errors
     ///
-    /// As [`ReadInstance::execute_args`].
+    /// As [`ReadInstance::execute`].
     #[doc(hidden)]
     pub fn introspect(
         &self,
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
-        prepared.introspect(&self.txn, self.cache, params)
+        prepared.introspect(self.txn(), self.cache(), params)
     }
 
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
     /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
-    /// (R13): whatever [`ReadInstance::execute_args`] binds, profiling binds.
+    /// (R13): whatever [`ReadInstance::execute`] binds, profiling binds.
     ///
     /// Harness-only (not embedding API).
     ///
     /// # Errors
     ///
-    /// As [`ReadInstance::execute_args`].
+    /// As [`ReadInstance::execute`].
     #[doc(hidden)]
     pub fn profile(
         &self,
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
-        prepared.profile(&self.txn, self.cache, params)
+        prepared.profile(self.txn(), self.cache(), params)
     }
 
     /// The export surface (`70-api.md` ETL story): a full-relation scan
@@ -110,10 +114,10 @@ impl<S> ReadInstance<'_, S> {
     /// `Lmdb` on cursor open; per-item `Corruption` is a hard error — stop
     /// at the first.
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        let Some(_relation) = self.schema.relation_checked(rel) else {
+        let Some(_relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        let iter = read::scan(&self.txn, self.schema.as_ref(), rel)?;
+        let iter = read::scan(self.txn(), self.core.schema.as_ref(), rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
             crate::encoding::decode_values(bytes, |id| {
@@ -127,9 +131,9 @@ impl<S> ReadInstance<'_, S> {
 }
 
 impl<S> ReadInstance<'_, S> {
-    /// Committed-state membership of a typed fact — the snapshot sibling
+    /// Committed-state membership of a typed fact — the store sibling
     /// of [`super::WriteTx::contains`], completing the point-operation
-    /// matrix (typed/dyn × write/snapshot, `docs/architecture/70-api.md`
+    /// matrix (typed/dyn × write/read, `docs/architecture/70-api.md`
     /// § point reads): the fact encodes through [`Fact::encode_probe`] —
     /// the committed dictionary, never minting — so a string or bytes
     /// value the dictionary does not know proves the fact absent and the
@@ -147,20 +151,25 @@ impl<S> ReadInstance<'_, S> {
             ) {
                 return Ok(false);
             }
-            if let Some(extension) = self.schema.relation(F::RELATION).body().closed_rows() {
+            if let Some(extension) = self.core.schema.relation(F::RELATION).body().closed_rows() {
                 return Ok(extension
                     .iter()
                     .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
             }
-            read::fact_row(&self.txn, F::RELATION, &scratch.bytes).map(|row| row.is_some())
+            let hash = crate::encoding::fact_hash(&scratch.bytes);
+            self.core
+                .source
+                .catalog()
+                .membership_row(F::RELATION, &hash)
+                .map(|row| row.is_some())
         })
     }
 
-    /// Committed-state membership of a dynamic fact — the snapshot
+    /// Committed-state membership of a dynamic fact — the store
     /// sibling of [`super::WriteTx::contains_dyn`], completing the
     /// schema-generic read surface (`docs/architecture/70-api.md` § the
     /// dyn lane): one [`Value`] per field in declaration order, probed
-    /// against this snapshot's one consistent state. Never interns: a
+    /// against this lease's one consistent state. Never interns: a
     /// string value the committed dictionary does not know proves the
     /// fact absent. A **closed** relation answers from its sealed
     /// extension (virtual storage — no `M` rows exist).
@@ -171,13 +180,13 @@ impl<S> ReadInstance<'_, S> {
     /// mismatch (typed, never a panic — ids at this surface are data);
     /// `Lmdb` on the probe or dictionary reads.
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        let Some(relation) = self.schema.relation_checked(rel) else {
+        let Some(relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         self.with_scratch(|scratch| {
             let parsed = super::encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
             if !super::encode_dyn::intern_parsed_row(&parsed, &mut scratch.refs, |text| {
-                dict::lookup_str(&self.txn, text)
+                self.core.source.catalog().dict_lookup(text.as_bytes())
             })? {
                 return Ok(false);
             }
@@ -187,7 +196,12 @@ impl<S> ReadInstance<'_, S> {
                     .iter()
                     .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
             }
-            read::fact_row(&self.txn, rel, &scratch.bytes).map(|row| row.is_some())
+            let hash = crate::encoding::fact_hash(&scratch.bytes);
+            self.core
+                .source
+                .catalog()
+                .membership_row(rel, &hash)
+                .map(|row| row.is_some())
         })
     }
 
@@ -236,34 +250,47 @@ impl<S> ReadInstance<'_, S> {
     ) -> Result<bool> {
         out.clear();
         let mut span = crate::obs::span(crate::obs::names::POINT_READ);
-        let (_, statement) = super::get::key_statement_of(self.schema.as_ref(), relation, key)?;
+        let (_, statement) =
+            super::get::key_statement_of(self.core.schema.as_ref(), relation, key)?;
         let hit = self.with_scratch(|scratch| {
+            let catalog = self.core.source.catalog();
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
             if !super::get::encode_determinant_with(
-                self.schema.as_ref(),
+                self.core.schema.as_ref(),
                 relation,
                 &statement.projection,
                 key_values,
                 key_bytes,
-                |text| dict::lookup_str(&self.txn, text),
+                |text| catalog.dict_lookup(text.as_bytes()),
             )? {
                 return Ok(false);
             }
-            let rel = self.schema.relation(relation);
+            let rel = self.core.schema.relation(relation);
             let determinant = &key_bytes[read::DETERMINANT_KEY_HEADER..];
             let bytes = match super::get::point_read(rel, statement, determinant) {
                 super::get::PointRead::Closed => {
                     super::get::closed_fact_by_determinant(rel, statement, determinant)
                 }
                 super::get::PointRead::FreshRow { row_id } => {
-                    read::fact_at(&self.txn, self.schema.as_ref(), relation, row_id)?
-                        .map(crate::encoding::FactView::bytes)
+                    match catalog.fetch_fact(relation, row_id)? {
+                        Some(fact) => {
+                            read::check_width(&self.core.schema, relation, row_id, fact)?;
+                            Some(fact)
+                        }
+                        None => None,
+                    }
                 }
-                super::get::PointRead::Determinant => {
-                    read::fact_for_key(&self.txn, self.schema.as_ref(), relation, key_bytes)?
-                        .map(crate::encoding::FactView::bytes)
-                }
+                super::get::PointRead::Determinant => match catalog.determinant_row(key_bytes)? {
+                    Some(row_id) => match catalog.fetch_fact(relation, row_id)? {
+                        Some(fact) => {
+                            read::check_width(&self.core.schema, relation, row_id, fact)?;
+                            Some(fact)
+                        }
+                        None => None,
+                    },
+                    None => None,
+                },
             };
             let Some(fact) = bytes else {
                 return Ok(false);
@@ -294,11 +321,11 @@ impl<S> ReadInstance<'_, S> {
     /// expansion), so which key FD a read goes through is never a runtime
     /// question. A **closed** relation resolves against its sealed
     /// extension. No `Db`-level sugar fronts this — the Rust read scope IS
-    /// `db.read(|snap| snap.get(key))` (recorded decision: the freeze
+    /// `db.read(|instance| instance.get(key))` (recorded decision: the freeze
     /// keeps `Db` minimal; the TS surface carries the symmetry sugar).
     ///
     /// Variable-width fields of the returned fact borrow from the
-    /// snapshot's dictionary at the snapshot lifetime — copy
+    /// lease's dictionary at the lease lifetime — copy
     /// (`to_owned()`) what must outlive it.
     ///
     /// # Errors
@@ -307,16 +334,20 @@ impl<S> ReadInstance<'_, S> {
     /// (typed, never a panic); `Lmdb`/`Corruption` from storage.
     #[expect(
         clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `snap.get(id)`: fresh \
+        reason = "a key value is the read's input, spelled `instance.get(id)`: fresh \
                   newtypes are Copy and generated key structs are small — \
                   by-value keeps every call site free of `&` noise"
     )]
-    pub fn get<'snap, K: Key<'snap, Schema = S>>(&'snap self, key: K) -> Result<Option<K::Fact>> {
-        let relation = <K::Fact as Fact<'snap>>::RELATION;
+    pub fn get<'lease, K: Key<'lease, Schema = S>>(
+        &'lease self,
+        key: K,
+    ) -> Result<Option<K::Fact>> {
+        let relation = <K::Fact as Fact<'lease>>::RELATION;
         let mut span = crate::obs::span(crate::obs::names::POINT_READ);
         let (_, statement) =
-            super::get::key_statement_of(self.schema.as_ref(), relation, K::STATEMENT)?;
+            super::get::key_statement_of(self.core.schema.as_ref(), relation, K::STATEMENT)?;
         let result = self.with_scratch(|scratch| {
+            let catalog = self.core.source.catalog();
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
             if matches!(
@@ -325,22 +356,37 @@ impl<S> ReadInstance<'_, S> {
             ) {
                 return Ok(None);
             }
-            let rel = self.schema.relation(relation);
+            let rel = self.core.schema.relation(relation);
             let determinant = &key_bytes[read::DETERMINANT_KEY_HEADER..];
-            let bytes = match super::get::point_read(rel, statement, determinant) {
+            match super::get::point_read(rel, statement, determinant) {
                 super::get::PointRead::Closed => {
-                    super::get::closed_fact_by_determinant(rel, statement, determinant)
+                    match super::get::closed_fact_by_determinant(rel, statement, determinant) {
+                        Some(fact) => K::Fact::decode(self, fact).map(Some),
+                        None => Ok(None),
+                    }
                 }
                 super::get::PointRead::FreshRow { row_id } => {
-                    read::fact_at(&self.txn, self.schema.as_ref(), relation, row_id)?
-                        .map(crate::encoding::FactView::bytes)
+                    match catalog.fetch_fact(relation, row_id)? {
+                        Some(fact) => {
+                            let view =
+                                read::check_width(&self.core.schema, relation, row_id, fact)?;
+                            K::Fact::decode(self, view.bytes()).map(Some)
+                        }
+                        None => Ok(None),
+                    }
                 }
-                super::get::PointRead::Determinant => {
-                    read::fact_for_key(&self.txn, self.schema.as_ref(), relation, key_bytes)?
-                        .map(crate::encoding::FactView::bytes)
-                }
-            };
-            bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
+                super::get::PointRead::Determinant => match catalog.determinant_row(key_bytes)? {
+                    Some(row_id) => match catalog.fetch_fact(relation, row_id)? {
+                        Some(fact) => {
+                            let view =
+                                read::check_width(&self.core.schema, relation, row_id, fact)?;
+                            K::Fact::decode(self, view.bytes()).map(Some)
+                        }
+                        None => Ok(None),
+                    },
+                    None => Ok(None),
+                },
+            }
         });
         if let Ok(found) = &result {
             span.set_flag(found.is_some());
@@ -353,17 +399,17 @@ impl<S> ReadInstance<'_, S> {
     /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
     /// is the ETL pairing for [`crate::WriteTx::insert_dyn`] under
     /// [`crate::Db::write`]; this one is for hosts that want their own
-    /// types back. Variable-width fields borrow from the snapshot's
-    /// dictionary at the snapshot lifetime — copy (`to_owned()`) what
+    /// types back. Variable-width fields borrow from the lease's
+    /// dictionary at the lease lifetime — copy (`to_owned()`) what
     /// must outlive it.
     ///
     /// # Errors
     ///
     /// As [`ReadInstance::scan`].
-    pub fn scan_facts<'snap, F: Fact<'snap, Schema = S>>(
-        &'snap self,
-    ) -> Result<impl Iterator<Item = Result<F>> + 'snap> {
-        let iter = read::scan(&self.txn, self.schema.as_ref(), F::RELATION)?;
+    pub fn scan_facts<'lease, F: Fact<'lease, Schema = S>>(
+        &'lease self,
+    ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
+        let iter = read::scan(self.txn(), self.core.schema.as_ref(), F::RELATION)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
             F::decode(self, bytes.bytes())

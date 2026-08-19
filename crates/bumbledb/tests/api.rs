@@ -457,6 +457,7 @@ fn export_scan_inserts_into_a_fresh_database() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one public-API citation walk")]
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
     let db = Db::create(dir.path(), Ledger)
@@ -488,12 +489,20 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         }])?;
         Ok(())
     }));
-    let [bumbledb::Violation::Functionality { id, fact, .. }] = violations.as_slice() else {
+    let [
+        (
+            bumbledb::Violation::Functionality {
+                statement, fact, ..
+            },
+            _,
+        ),
+    ] = violations.as_slice()
+    else {
         panic!("expected one key citation, got {violations:?}");
     };
     // Materialized order: Holder.id's fresh auto-key, Account.id's
     // fresh auto-key, then the declared containment.
-    assert_eq!(*id, StatementId(1));
+    assert_eq!(ledger_schema().id_of(*statement), StatementId(1));
     assert!(!fact.is_empty());
     // The rendered diagnostic cites the statement in the algebra.
     let rendered = format!("{}", violations.display_with(&ledger_schema()));
@@ -513,14 +522,22 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             balance: 5,
         }])
     }));
-    assert!(matches!(
-        violations.as_slice(),
-        [bumbledb::Violation::Containment {
-            id: StatementId(2),
-            direction: Direction::SourceUnsatisfied,
-            ..
-        }]
-    ));
+    let [
+        (
+            bumbledb::Violation::Containment {
+                direction: Direction::SourceUnsatisfied,
+                ..
+            },
+            _,
+        ),
+    ] = violations.as_slice()
+    else {
+        panic!("expected one source-unsatisfied citation, got {violations:?}");
+    };
+    assert_eq!(
+        violations.get(0).unwrap().statement_id(&ledger_schema()),
+        StatementId(2)
+    );
     let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(
         rendered.contains("Account(holder) <= Holder(id)"),
@@ -546,9 +563,12 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         }])
     }));
     let [
-        bumbledb::Violation::Containment {
-            direction, fact, ..
-        },
+        (
+            bumbledb::Violation::Containment {
+                direction, fact, ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one containment citation, got {violations:?}");

@@ -16,7 +16,7 @@ mod epoch;
 mod frozen;
 mod stride;
 
-pub(crate) use bind::{ImageBind, LmdbImages};
+pub(crate) use bind::{ImageBind, LmdbSource};
 pub(crate) use epoch::ViewEpoch;
 pub(crate) use frozen::FrozenSource;
 

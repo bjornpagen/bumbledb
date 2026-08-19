@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::ImageBind;
-use crate::image::LmdbImages;
+use crate::image::LmdbSource;
 use crate::image::cache::ImageCache;
 use crate::obs;
 use crate::storage::catalog::CatalogRead;
@@ -41,7 +41,7 @@ impl<S> PreparedQuery<S> {
             params.bind(self, txn)?;
         }
         let catalog = txn.catalog();
-        let images = LmdbImages::new(txn, cache);
+        let images = LmdbSource::bind(txn, cache);
         let result = self.run_bound(&catalog, &images, out);
         execute_span.set_count(out.len() as u64);
         result

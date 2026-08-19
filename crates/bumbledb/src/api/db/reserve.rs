@@ -2,7 +2,6 @@ use super::{Db, Fresh, FreshRange, WriteTx};
 use crate::error::{FactShapeError, Result};
 use crate::schema::FreshField;
 use bumbledb_theory::schema::{FieldId, RelationId};
-use std::num::NonZeroU64;
 
 impl<S> Db<S> {
     /// Resolves `(relation, field)` to the schema-bound [`FreshField`]
@@ -45,15 +44,7 @@ impl<S> WriteTx<'_, S> {
     /// `TransactionPoisoned` if a prior apply in this transaction failed
     /// after a prefix entered the delta.
     pub fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {
-        self.refuse_poisoned()?;
-        let Some(count) = NonZeroU64::new(count) else {
-            return Ok(FreshRange::Empty);
-        };
-        self.refuse_closed(T::RELATION)?;
-        match self.delta.reserve(&self.view, T::RELATION, T::FIELD, count) {
-            Ok(start) => Ok(FreshRange::minted(start, count)),
-            Err(error) => Err(self.poison(error)),
-        }
+        self.mutation.reserve(count)
     }
 
     /// Untyped fresh minting for ETL tooling: the witness
@@ -80,16 +71,6 @@ impl<S> WriteTx<'_, S> {
     /// As [`WriteTx::reserve`]; `FactShape` here is the dyn boundary's
     /// foreign-witness refusal.
     pub fn reserve_at(&mut self, field: FreshField<S>, count: u64) -> Result<FreshRange<u64>> {
-        self.refuse_poisoned()?;
-        let Some(count) = NonZeroU64::new(count) else {
-            return Ok(FreshRange::Empty);
-        };
-        match self
-            .delta
-            .reserve(&self.view, field.relation(), field.field(), count)
-        {
-            Ok(start) => Ok(FreshRange::minted(start, count)),
-            Err(error) => Err(self.poison(error)),
-        }
+        self.mutation.reserve_at(field, count)
     }
 }

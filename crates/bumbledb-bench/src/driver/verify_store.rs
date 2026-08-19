@@ -45,7 +45,7 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
 
 /// The finding's statement id, when its variant carries one — the hook
 /// for rendering the violated statement back in the `schema!` notation.
-fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
+fn finding_statement(finding: &StoreFinding, schema: &Schema) -> Option<StatementId> {
     match finding {
         StoreFinding::FactWithoutDeterminant { statement, .. }
         | StoreFinding::DeterminantWithoutFact { statement, .. }
@@ -54,7 +54,7 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
         | StoreFinding::ReverseEdgeWeightDesync { statement, .. }
         | StoreFinding::FreshRowDeterminantEntry { statement, .. } => Some(*statement),
-        StoreFinding::Judgment(violation) => Some(violation.statement_id()),
+        StoreFinding::Judgment(violation) => Some(violation.statement_id(schema)),
         StoreFinding::FactWithoutMembership { .. }
         | StoreFinding::MembershipWithoutFact { .. }
         | StoreFinding::RowCountDesync { .. }
@@ -77,7 +77,7 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let mut out = String::new();
     for finding in report.findings() {
         let _ = write!(out, "finding: {finding:?}");
-        if let Some(id) = finding_statement(finding) {
+        if let Some(id) = finding_statement(finding, schema) {
             let _ = write!(out, " — statement: {}", render::render(schema, id));
         }
         out.push('\n');

@@ -7,7 +7,7 @@ use super::{
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::ImageBind;
-use crate::image::LmdbImages;
+use crate::image::LmdbSource;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
 use crate::ir::normalize::{NormalizedQuery, normalize_rules};
@@ -45,7 +45,7 @@ pub(crate) fn prepare<S>(
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let catalog = txn.catalog();
-    let images = LmdbImages::new(txn, cache);
+    let images = LmdbSource::bind(txn, cache);
     prepare_on(txn.identity(), &catalog, &images, schema, query)
 }
 

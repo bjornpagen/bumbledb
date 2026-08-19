@@ -345,7 +345,6 @@ fn check_outgoing<C: CatalogRead + Copy>(
                 if !AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
                     s.push(StoreFinding::Judgment(Violation::containment(
                         schema.cite(sid),
-                        sid,
                         Direction::TargetRequired,
                         fact.into(),
                     )));
@@ -453,7 +452,6 @@ fn check_extension_sources<C: CatalogRead + Copy>(
                         } else {
                             Ok(Check::Violated(Violation::containment(
                                 schema.cite(sid),
-                                sid,
                                 Direction::TargetRequired,
                                 row.fact.clone(),
                             )))

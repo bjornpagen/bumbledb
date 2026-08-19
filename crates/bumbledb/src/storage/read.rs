@@ -22,7 +22,9 @@ mod tests;
 pub(crate) use check_width::check_width;
 
 pub use determinant_row::{DETERMINANT_KEY_HEADER, begin_determinant_key};
-pub use fact_row::{fact_row, fact_row_by_hash};
+#[cfg(test)]
+pub use fact_row::fact_row;
+pub use fact_row::fact_row_by_hash;
 pub use fetch::{fact_at, fact_for_key};
 #[cfg(test)]
 pub use row_count::row_count;

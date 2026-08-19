@@ -65,6 +65,26 @@ impl<S> OwnedInstance<S> {
         &self.core.source.catalog
     }
 
+    /// Frozen catalog plus any lazy images already built. Host GC
+    /// accounting (N-API `adjust_external_memory`) rides this number.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        let catalog = self.core.source.catalog.byte_size();
+        let images = self
+            .core
+            .schema
+            .relations()
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, _)| {
+                let id = bumbledb_theory::schema::RelationId(u32::try_from(idx).ok()?);
+                self.core.source.peek_image(id)
+            })
+            .map(|image| image.byte_size())
+            .sum::<usize>();
+        catalog + images
+    }
+
     #[cfg(test)]
     pub(crate) fn peek_image(
         &self,

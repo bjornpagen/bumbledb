@@ -141,7 +141,7 @@ any of these diverge:
 4. every engine-workspace member, parsed from the root `Cargo.toml`
    `members` list (engine, bench, macros, query, query-macros, theory)
 5. `crates/bumbledb-c/Cargo.toml` (`bdb_version()` bakes
-   `CARGO_PKG_VERSION`; `bdb_abi_version()` is 2 — layout generation, not
+   `CARGO_PKG_VERSION`; `bdb_abi_version()` is 3 — layout generation, not
    the release spelling)
 
 Engine + C + TS cannot disagree: a new workspace crate, a drifted

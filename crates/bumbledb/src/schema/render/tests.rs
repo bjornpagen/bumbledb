@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::schema::ContainmentId;
-use crate::schema::ValidateDescriptor as _;
 use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 

@@ -6,12 +6,11 @@
 //! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{Fact, Key, Probe, WriteTx, plumbing};
+use super::{Fact, Key, Probe, WriteTx};
 use crate::encoding::encode_u64;
 use crate::error::{DynIdError, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use crate::schema::{KeyForm, KeyId, KeyStatement, Relation, RelationBody, Schema, StatementView};
-use crate::storage::delta::DeterminantOverlay;
 use crate::storage::read;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
@@ -178,12 +177,7 @@ impl<S> WriteTx<'_, S> {
     ///
     /// `Lmdb` on the membership probe or dictionary reads.
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
-        self.with_scratch(|tx, bytes| {
-            if matches!(fact.encode_probe(tx, bytes)?, Probe::ProvablyAbsent) {
-                return Ok(false);
-            }
-            tx.delta.contains(&tx.view, F::RELATION, bytes)
-        })
+        self.mutation.contains(fact)
     }
 
     /// Point lookup of the full fact through a typed key value ([`Key`]) —
@@ -251,23 +245,20 @@ impl<S> WriteTx<'_, S> {
     )]
     pub fn get<'tx, K: Key<'tx, Schema = S>>(&'tx mut self, key: K) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'tx>>::RELATION;
-        let (key_id, _) = key_statement_of(self.schema, relation, K::STATEMENT)?;
-        // The scratch discipline, by hand: the borrowed result rules out
-        // `with_scratch`'s closure shape, and the determinant must not
-        // allocate per call (point reads are allocation-free,
-        // `docs/architecture/70-api.md`) — so compose the `U` key into
-        // the taken buffer, restore it, then downgrade to the shared
-        // borrow the decode lifetime needs.
-        let mut key_bytes = std::mem::take(&mut self.scratch);
+        let (key_id, _) = key_statement_of(self.mutation.schema(), relation, K::STATEMENT)?;
+        let mut key_bytes = std::mem::take(&mut self.mutation.scratch);
         key_bytes.clear();
         read::begin_determinant_key(&mut key_bytes, relation, K::STATEMENT);
         let filled = key.encode_determinant(self, &mut key_bytes);
-        self.scratch = key_bytes;
+        self.mutation.scratch = key_bytes;
         if matches!(filled?, Probe::ProvablyAbsent) {
             return Ok(None);
         }
         let this: &'tx Self = self;
-        match this.fact_by_key(relation, key_id, &this.scratch)? {
+        match this
+            .mutation
+            .fact_by_key(relation, key_id, &this.mutation.scratch)?
+        {
             Some(bytes) => K::Fact::decode(this, bytes).map(Some),
             None => Ok(None),
         }
@@ -321,28 +312,7 @@ impl<S> WriteTx<'_, S> {
         key_values: &[Value],
         out: &mut Vec<Value>,
     ) -> Result<bool> {
-        out.clear();
-        let (key_id, statement) = key_statement_of(self.schema, relation, key)?;
-        let projection = &statement.projection;
-        self.with_scratch(|tx, key_bytes| {
-            let (delta, view, schema) = (&tx.delta, &tx.view, tx.schema);
-            read::begin_determinant_key(key_bytes, relation, statement.id);
-            if !encode_determinant_with(
-                schema,
-                relation,
-                projection,
-                key_values,
-                key_bytes,
-                |text| delta.resolve_str(view, text),
-            )? {
-                return Ok(false);
-            }
-            let Some(bytes) = tx.fact_by_key(relation, key_id, key_bytes)? else {
-                return Ok(false);
-            };
-            tx.decode_values_keyed(relation, projection, key_values, bytes, out)?;
-            Ok(true)
-        })
+        self.mutation.get_dyn_into(relation, key, key_values, out)
     }
 
     /// Final-state membership of a dynamic fact — the dynamic sibling of
@@ -360,78 +330,6 @@ impl<S> WriteTx<'_, S> {
     /// mismatch (typed, never a panic — the id-addressed surface is
     /// data); `Lmdb` on the membership probe or dictionary reads.
     pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        if !self.encode_dyn(rel, values)? {
-            return Ok(false);
-        }
-        if let Some(extension) = self.schema.relation(rel).body().closed_rows() {
-            let fact = self.scratch.as_slice();
-            return Ok(extension.iter().any(|row| row.fact.as_ref() == fact));
-        }
-        self.delta.contains(&self.view, rel, &self.scratch)
-    }
-
-    /// The shared lookup leg over a composed `U` key
-    /// ([`read::begin_determinant_key`] + determinant bytes): delta
-    /// determinant map first (`Present` → the pending fact's bytes,
-    /// `Absent` → known deleted), then the committed view — `U` get →
-    /// `F` fetch (the fresh-row auto-key reads `F` directly: its
-    /// determinant IS the row id, R16), no per-probe key scratch.
-    ///
-    /// A **closed** relation resolves against its sealed extension instead
-    /// ([`closed_fact_by_determinant`] — virtual storage, no `U`
-    /// determinants exist). No delta arm: writes are refused at entry.
-    fn fact_by_key(&self, relation: RelationId, key: KeyId, u_key: &[u8]) -> Result<Option<&[u8]>> {
-        let rel = self.schema.relation(relation);
-        let statement = self.schema.key(key);
-        let determinant = &u_key[read::DETERMINANT_KEY_HEADER..];
-        match point_read(rel, statement, determinant) {
-            PointRead::Closed => Ok(closed_fact_by_determinant(rel, statement, determinant)),
-            path => match self.delta.determinant_overlay(key, determinant) {
-                Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
-                Some(DeterminantOverlay::Absent) => Ok(None),
-                None => match path {
-                    PointRead::FreshRow { row_id } => {
-                        Ok(read::fact_at(&self.view, self.schema, relation, row_id)?
-                            .map(crate::encoding::FactView::bytes))
-                    }
-                    PointRead::Determinant => {
-                        Ok(
-                            read::fact_for_key(&self.view, self.schema, relation, u_key)?
-                                .map(crate::encoding::FactView::bytes),
-                        )
-                    }
-                    PointRead::Closed => unreachable!("closed relations have no delta overlay"),
-                },
-            },
-        }
-    }
-
-    /// Decodes canonical fact bytes into owned values in the caller's
-    /// buffer, resolving intern ids pending-first (a fact inserted this
-    /// transaction carries provisional ids) — the dynamic sibling of
-    /// [`Fact::decode`]. Fields the key statement's projection
-    /// fixed take the caller's supplied values
-    /// ([`crate::encoding::decode_values_keyed_into`] — the probe
-    /// already proved them byte-identical to the stored ones).
-    fn decode_values_keyed(
-        &self,
-        relation: RelationId,
-        projection: &[FieldId],
-        key_values: &[Value],
-        fact: &[u8],
-        out: &mut Vec<Value>,
-    ) -> Result<()> {
-        crate::encoding::decode_values_keyed_into(
-            self.schema.relation(relation).layout().encoded(fact),
-            projection,
-            key_values,
-            |id| {
-                Ok(Box::from(plumbing::resolve_string_write(
-                    self,
-                    crate::encoding::InternId::from_raw(id),
-                )?))
-            },
-            out,
-        )
+        self.mutation.contains_dyn(rel, values)
     }
 }

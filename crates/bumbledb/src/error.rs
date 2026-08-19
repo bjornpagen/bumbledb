@@ -1120,7 +1120,6 @@ pub enum Violation {
         statement: StatementRef,
         fact: Box<[u8]>,
         conflict: Conflict,
-        id: StatementId,
     },
     /// A `Containment` statement violated by the final state
     /// (`docs/architecture/30-dependencies.md` § judged on final states).
@@ -1134,7 +1133,6 @@ pub enum Violation {
         /// (`SourceUnsatisfied`), or the surviving fact still requiring a
         /// deleted target key (`TargetRequired`).
         fact: Box<[u8]>,
-        id: StatementId,
     },
     /// A `Capacity` statement violated by the final state: a selected
     /// parent fact whose child-group MEASURE (Σ weight over the
@@ -1153,14 +1151,12 @@ pub enum Violation {
         /// 2026-07-24, C14: the clip serves the verdict, the full sum
         /// serves the witness).
         measure: u128,
-        id: StatementId,
     },
 }
 
 impl Violation {
     pub(crate) fn functionality(
         statement: StatementRef,
-        id: StatementId,
         fact: Box<[u8]>,
         conflict: Conflict,
     ) -> Self {
@@ -1168,13 +1164,11 @@ impl Violation {
             statement,
             fact,
             conflict,
-            id,
         }
     }
 
     pub(crate) fn containment(
         statement: StatementRef,
-        id: StatementId,
         direction: Direction,
         fact: Box<[u8]>,
     ) -> Self {
@@ -1182,21 +1176,14 @@ impl Violation {
             statement,
             direction,
             fact,
-            id,
         }
     }
 
-    pub(crate) fn capacity(
-        statement: StatementRef,
-        id: StatementId,
-        fact: Box<[u8]>,
-        measure: u128,
-    ) -> Self {
+    pub(crate) fn capacity(statement: StatementRef, fact: Box<[u8]>, measure: u128) -> Self {
         Self::Capacity {
             statement,
             fact,
             measure,
-            id,
         }
     }
 
@@ -1211,14 +1198,11 @@ impl Violation {
     }
 
     /// The materialized-order ordinal — host citation, fingerprints, and
-    /// [`Violations`]' sort key. The stored identity is [`Self::statement`].
+    /// [`Violations`]' sort key. Derived from [`Self::statement`] through
+    /// the schema that minted the ref.
     #[must_use]
-    pub const fn statement_id(&self) -> StatementId {
-        match *self {
-            Self::Functionality { id, .. }
-            | Self::Containment { id, .. }
-            | Self::Capacity { id, .. } => id,
-        }
+    pub fn statement_id(&self, schema: &crate::schema::Schema) -> StatementId {
+        schema.id_of(self.statement())
     }
 
     /// Canonical bytes of the convicting fact.
@@ -1255,10 +1239,11 @@ impl Violation {
     /// facts, measures, and defect kinds are deliberately outside the
     /// identity: a statement is cited once per direction, whatever the
     /// count of facts convicting it.
-    fn citation(&self) -> (StatementId, Option<Direction>) {
+    fn citation(&self, schema: &crate::schema::Schema) -> (StatementId, Option<Direction>) {
+        let id = schema.id_of(self.statement());
         match self {
-            Self::Functionality { id, .. } | Self::Capacity { id, .. } => (*id, None),
-            Self::Containment { id, direction, .. } => (*id, Some(*direction)),
+            Self::Functionality { .. } | Self::Capacity { .. } => (id, None),
+            Self::Containment { direction, .. } => (id, Some(*direction)),
         }
     }
 }
@@ -1339,13 +1324,23 @@ impl CitedFact {
 /// convention: a candidate, like a committed store, has no just-inserted
 /// side). The incremental checker keeps its two-direction citations.
 /// The dedup key remains `(StatementId, Option<Direction>)`.
+///
+/// Host construction is unrepresentable — fields are private and the
+/// only constructors seal:
+///
+/// ```compile_fail
+/// let _ = bumbledb::Violations { citations: Box::new([]) };
+/// ```
+/// Sealed citations paired with their cited facts — the stored
+/// [`Violations`] shape. Undecorated entries carry an empty cited slice.
+pub(crate) type CitedCitations = Box<[(Violation, Box<[CitedFact]>)]>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violations {
-    /// Sealed citations — nonempty, sorted, unique by citation key.
-    citations: Box<[Violation]>,
-    /// Parallel decoration; empty inner slices when undecorated. Length
-    /// equals `citations` by construction (one pair, two private boxes).
-    cited: Box<[Box<[CitedFact]>]>,
+    /// Sealed citations paired with their cited facts — nonempty,
+    /// sorted, unique by citation key. Undecorated entries carry an
+    /// empty cited slice.
+    citations: CitedCitations,
 }
 
 impl Violations {
@@ -1353,38 +1348,30 @@ impl Violations {
     /// first-discovered witness of each citation survives), dedups by
     /// citation, and returns [`Admission::Accepted`] for the empty
     /// collection — the accept path, never an empty rejection.
-    pub(crate) fn seal(mut found: Vec<Violation>) -> Admission<()> {
+    pub(crate) fn seal(schema: &crate::schema::Schema, mut found: Vec<Violation>) -> Admission<()> {
         if found.is_empty() {
             return Admission::Accepted(());
         }
-        found.sort_by_key(Violation::citation);
-        found.dedup_by_key(|violation| violation.citation());
-        let cited = vec![Box::<[CitedFact]>::from([]); found.len()];
+        found.sort_by_key(|violation| violation.citation(schema));
+        found.dedup_by_key(|violation| violation.citation(schema));
         Admission::Rejected(Self {
-            citations: found.into_boxed_slice(),
-            cited: cited.into_boxed_slice(),
+            citations: found
+                .into_iter()
+                .map(|violation| (violation, Box::<[CitedFact]>::from([])))
+                .collect(),
         })
     }
 
-    /// Attaches the decode pass's cited facts, one list per citation —
-    /// the commit boundary's one decoration site
-    /// (`storage/commit/write.rs`).
-    ///
-    /// # Panics
-    ///
-    /// When `cited` is not parallel to the citations — the decode pass
-    /// walks [`Violations::as_slice`], so a mismatch is a programmer
-    /// error, never data.
-    pub(crate) fn attach_cited(self, cited: Vec<Box<[CitedFact]>>) -> Self {
-        assert_eq!(
-            cited.len(),
-            self.citations.len(),
-            "cited-fact lists are parallel to citations"
+    /// Rebuilds a sealed rejection from already-paired citations.
+    /// The decoration loop builds the pairs where it decodes — this is
+    /// the one constructor that takes the stored shape
+    /// (`storage/catalog/decorate.rs`, `storage/commit/write.rs`).
+    pub(crate) fn from_pairs(citations: CitedCitations) -> Self {
+        debug_assert!(
+            !citations.is_empty(),
+            "a sealed rejection is nonempty by construction"
         );
-        Self {
-            citations: self.citations,
-            cited: cited.into_boxed_slice(),
-        }
+        Self { citations }
     }
 
     /// Number of citations in sealed order.
@@ -1402,18 +1389,18 @@ impl Violations {
     /// The citation at `index`.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&Violation> {
-        self.citations.get(index)
+        self.citations.get(index).map(|(violation, _)| violation)
     }
 
-    /// Every violation, in citation order.
+    /// Citations paired with their cited facts — the stored shape.
     #[must_use]
-    pub fn as_slice(&self) -> &[Violation] {
+    pub fn as_slice(&self) -> &[(Violation, Box<[CitedFact]>)] {
         &self.citations
     }
 
     /// Every violation, in citation order.
-    pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
-        self.citations.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &Violation> {
+        self.citations.iter().map(|(violation, _)| violation)
     }
 
     /// The decoded cited facts of the citation at `index` — the
@@ -1422,33 +1409,48 @@ impl Violations {
     /// findings) and for an out-of-range index.
     #[must_use]
     pub fn cited_facts(&self, index: usize) -> &[CitedFact] {
-        self.cited.get(index).map_or(&[], AsRef::as_ref)
+        self.citations
+            .get(index)
+            .map_or(&[], |(_, cited)| cited.as_ref())
     }
 
     /// Iterates citations paired with their decoded cited facts.
     pub fn citations(&self) -> impl Iterator<Item = (&Violation, &[CitedFact])> {
         self.citations
             .iter()
-            .zip(self.cited.iter())
             .map(|(violation, cited)| (violation, cited.as_ref()))
     }
 }
 
+fn take_citation((violation, _): (Violation, Box<[CitedFact]>)) -> Violation {
+    violation
+}
+
+fn citation_ref((violation, _): &(Violation, Box<[CitedFact]>)) -> &Violation {
+    violation
+}
+
 impl IntoIterator for Violations {
     type Item = Violation;
-    type IntoIter = std::vec::IntoIter<Violation>;
+    type IntoIter = std::iter::Map<
+        std::vec::IntoIter<(Violation, Box<[CitedFact]>)>,
+        fn((Violation, Box<[CitedFact]>)) -> Violation,
+    >;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.citations.into_vec().into_iter()
+        self.citations.into_vec().into_iter().map(take_citation)
     }
 }
 
 impl<'a> IntoIterator for &'a Violations {
     type Item = &'a Violation;
-    type IntoIter = std::slice::Iter<'a, Violation>;
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (Violation, Box<[CitedFact]>)>,
+        fn(&'a (Violation, Box<[CitedFact]>)) -> &'a Violation,
+    >;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.citations.iter()
+        self.citations.iter().map(citation_ref)
     }
 }
 

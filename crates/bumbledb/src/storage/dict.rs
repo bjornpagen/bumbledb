@@ -60,6 +60,7 @@ pub(crate) const SENTINEL_ID: u64 = InternId::SENTINEL.raw();
 /// # Errors
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed stored id.
+#[cfg(test)]
 pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
     lookup(txn, value.as_bytes())
 }

@@ -255,17 +255,20 @@ fn assert_source_violation(
 ) {
     let violations = expect_rejected(result);
     let [
-        Violation::Containment {
-            id: named,
-            direction,
-            fact,
-            ..
-        },
+        (
+            Violation::Containment {
+                statement: slot,
+                direction,
+                fact,
+                ..
+            },
+            _,
+        ),
     ] = violations.as_slice()
     else {
         panic!("expected one containment citation, got {violations:?}");
     };
-    assert_eq!(*named, statement);
+    assert_eq!(schema().id_of(*slot), statement);
     assert_eq!(*direction, Direction::SourceUnsatisfied);
     assert_eq!(**fact, *source_fact, "the violation names the source fact");
 }

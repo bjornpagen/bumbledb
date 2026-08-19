@@ -1138,6 +1138,67 @@ fn stale_instance_ref_is_misuse() {
 }
 
 #[test]
+fn stashed_instance_ref_after_db_destroy_is_misuse() {
+    let dir = temp_store("stashed-after-destroy");
+    let db = create_uptime(&dir);
+    let mut stashed: *const bdb_instance_ref = null();
+    let (status, error) = db_read(db, |instance, _witness| {
+        stashed = instance;
+        bdb_callback_control::Ok
+    });
+    assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
+    assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
+    let mut contains: u8 = 1;
+    let mut error: *mut bdb_error = null_mut();
+    let status = bdb_instance_contains(
+        stashed,
+        SERVICE,
+        null(),
+        0,
+        &raw mut contains,
+        &raw mut error,
+    );
+    assert_eq!(status, bdb_status::Misuse);
+    assert!(error.is_null(), "misuse allocates no error");
+}
+
+#[test]
+fn foreign_prepared_is_refused_at_the_bridge() {
+    let dir_a = temp_store("foreign-prepared-a");
+    let dir_b = temp_store("foreign-prepared-b");
+    let db_a = create_uptime(&dir_a);
+    let db_b = create_uptime(&dir_b);
+    let prepared = with_down_at_query(|query| prepare(db_a, query));
+    let answers = bdb_answers_new();
+    let (status, error) = db_read(db_b, |instance, _witness| {
+        let mut error: *mut bdb_error = null_mut();
+        let params = [bdb_param {
+            kind: u32::from(bdb_param_kind::Scalar),
+            scalar: v_i64(15),
+            set: null(),
+            set_len: 0,
+        }];
+        let status = bdb_instance_execute(
+            instance,
+            prepared,
+            params.as_ptr(),
+            params.len(),
+            answers,
+            &raw mut error,
+        );
+        assert_eq!(status, bdb_status::Error, "foreign execute: {}", err_text(error));
+        assert_eq!(error_kind(error), bdb_error_kind::ForeignPrepared);
+        destroy_error(error);
+        bdb_callback_control::Ok
+    });
+    assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
+    assert_eq!(bdb_answers_destroy(answers), bdb_status::Ok);
+    assert_eq!(bdb_prepared_destroy(prepared), bdb_status::Ok);
+    assert_eq!(bdb_db_destroy(db_a), bdb_status::Ok);
+    assert_eq!(bdb_db_destroy(db_b), bdb_status::Ok);
+}
+
+#[test]
 fn collection_insert_and_shape_failure_persists_nothing() {
     let dir = temp_store("insert-collection");
     let db = create_uptime(&dir);
