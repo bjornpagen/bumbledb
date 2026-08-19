@@ -86,7 +86,7 @@ S | relation_id | stat              -> u64            counters: stat 0 = row cou
 
 Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, the
 dictionary next-id counter — the delta's pending-intern design mints provisional ids
-against it from read snapshots — and the **schema descriptor**: the canonical
+against it from read leases — and the **schema descriptor**: the canonical
 schema-encoding bytes the fingerprint hashes, persisted whole so the store is
 **self-describing**; readers: `exhume` — the read-only, theory-less open,
 `70-api.md` § exhume — and `Db::verify_store`, whose descriptor pass convicts a
@@ -125,7 +125,7 @@ facts, never interned, so the key hash carries no type tag: forward
   it would write is a pure transcription (`be(fresh) → le(row_id)`, one
   monotone counter re-keying another). The auto-key's functionality judgment is
   the `F` put-conflict itself — the identical conflict mechanism the `U` phase
-  uses — so a fresh-keyed point read (WriteTx, snapshot, the query key probe)
+  uses — so a fresh-keyed point read (WriteTx, `ReadInstance`, the query key probe)
   pays one B-tree descent, not two, and every insert drops the transcription's
   put and its conflict get. Later fresh fields and every secondary key
   statement keep their `U` entries. `Q` is the one mint for such relations; the
@@ -515,7 +515,7 @@ which is exactly what a ceiling is allowed to do — and a claim above it is the
 cross-check stays the exactness guarantee. The offline integrity checker,
 `Db::verify_store`, then proves canonical F encodings, M↔F↔U↔R coherence,
 pointwise disjointness, global scalar/coverage containments, virtual-relation
-absence, counters, and dictionary bounds over one snapshot. The evidence that an
+absence, counters, and dictionary bounds over one `ReadInstance`. The evidence that an
 empty finding list means something is in-tree: every verifier pass has a
 deterministic corruption fixture that plants the defect raw in `_data` and
 asserts the named conviction (`crates/bumbledb/src/verify_store/tests.rs`) —

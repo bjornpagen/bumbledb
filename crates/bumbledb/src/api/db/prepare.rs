@@ -6,7 +6,7 @@ use crate::ir::Query;
 impl<S> Db<S> {
     /// Prepares a query against current statistics (pin-at-prepare) —
     /// the ONE prepare entry (`docs/architecture/70-api.md`). The
-    /// prepared query outlives the internal snapshot and is reusable
+    /// prepared query outlives the internal read transaction and is reusable
     /// across [`Db::read`] closures.
     ///
     /// Validation is [`crate::ir::validate::validate`] on `&Query`

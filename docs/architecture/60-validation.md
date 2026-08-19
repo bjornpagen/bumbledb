@@ -87,6 +87,20 @@ each checked in only after the engine and the naive model agreed on the
 verdict; `lake exe conformance` dispatches `judgment-*.json` to `Txn.judgeB`
 and compares whole (format in `lean/conformance/README.md` § judgment cases).
 
+**Incremental vs complete admission.** The write-side third oracle has two
+arms. Incremental `judgment-*` fixtures compare a delta-restricted engine
+verdict to `Txn.judgeB`; complete `complete-*` fixtures (L5) compare
+`InstanceBuilder` admission to `judgeB` over the candidate — no green
+pre-state, no incremental shortcut. A fence that exists only because the
+engine verdict is delta-restricted therefore **lifts** on the complete arm
+(`lean/conformance/README.md` § complete-admission cases;
+`crates/bumbledb-bench/src/conformance/judgment.rs`;
+`crates/bumbledb-bench/src/conformance/complete.rs`):
+
+| Class | Incremental (`judgment-*`) | Complete (`complete-*`, L5) |
+|---|---|---|
+| Closed-source containments (domain quantification) | Fenced — a correct engine accept mismatches whole-state `judgeB` (`lean/Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`; pin `domain_quantification_judgments_are_outside_the_lane`) | Lifts — the complete verdict is not delta-restricted; closed-source fixtures run through `judgeB` / `completeAdmissionB` |
+
 **All three oracles run recursion — and so does the engine.** The naive
 model evaluates a Query by materializing interior tables in declaration
 order; on `Reach`, iterating `T(acc) = base ∪ rec(acc)` to least fixpoint

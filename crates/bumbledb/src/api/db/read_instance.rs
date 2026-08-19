@@ -206,7 +206,7 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// Point lookup of the full fact through any key statement of
-    /// `relation`, against committed state — the snapshot sibling of
+    /// `relation`, against committed state — the committed-state sibling of
     /// [`super::WriteTx::get_dyn`]: `key_values` are the key statement's
     /// projected fields in statement projection order, type-checked
     /// against the projection; the decoded fact comes back as owned

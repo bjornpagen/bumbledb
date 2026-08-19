@@ -33,7 +33,7 @@ over this table when they disagree.
 | 14 | [V8 lazy accounting](14-v8-lazy-accounting.md) | **fixed this pass** (`OwnedSlot.accounted` cell; ops sync `retained_bytes`) |
 | 15 | [exec one evaluator](15-exec-one-evaluator.md) | OPEN — walk shared, entries not; two-module gate unmet |
 | 16 | [verify-store embedding](16-verify-store-embedding.md) | OPEN (later) — structural variants transcribe; `intern_id: u64` |
-| 17 | [docs vocabulary](17-docs-vocabulary.md) | OPEN (docs only) — fence table, snapshot prose, case count, Lean prose |
+| 17 | [docs vocabulary](17-docs-vocabulary.md) | **fixed this pass** — fence table, snapshot prose, case count, Lean prose, census token |
 | 18 | [ramdisk probe](18-ramdisk-probe.md) | OPEN (environmental) — capability probe, skip-with-reason |
 | 19 | [violations attach seam](19-violations-attach-seam.md) | **fixed this pass** (`from_pairs`; decoration builds the stored pairs) |
 

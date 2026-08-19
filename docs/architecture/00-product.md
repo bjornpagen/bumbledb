@@ -147,7 +147,7 @@ language. **Reverses if:** never — owner axiom.
   check-then-act inside one write transaction cannot race — the class of TOCTOU bug
   the surveyed workloads police with `FOR UPDATE` and app discipline is
   unrepresentable here. Across transactions, read-compute-write is optimistic:
-  witnessed by snapshots (`write_from`, `70-api.md` § conditional writes), checked
+  witnessed by a `Witness` (`write_from`, `70-api.md` § conditional writes), checked
   in O(1) at commit.
 - **Durability: fsync per commit on durable stores** (LMDB defaults). A committed
   posting survives power loss — it's a ledger. The law's scope is the durable store
@@ -375,9 +375,9 @@ witnessed writes; *null* →
 absent fact in a 0..1 child relation; *uuid* → fresh + explicit time columns;
 *update / upsert* → delete+insert, with WriteTx point reads for the read-modify-write
 idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation witness
-(snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
+(witnessed `write_from`) plus WriteTx point reads under final-state
 judgment — locks protect what you remembered to lock; the witness protects
-everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
+everything the `ReadInstance` saw; *enum* → closed relation (a vocabulary is a relation
 whose elements are ground axioms; the type died when the schema macro began emitting
 closed-relation handles, as recorded by `10-data-model.md`'s obituary, and the
 value-type roster is six); *rule program / stored rules* → the host loop over

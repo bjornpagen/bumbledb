@@ -186,8 +186,73 @@ if [ "$lean_decl_cites" -eq 0 ]; then
   fail=1
 fi
 
+# ---- (f): deleted API-sense snapshot token ---------------------------
+# The retired public type `Snapshot` / error `ForeignSnapshot` cannot
+# return in the surfaces audit/17 named. API words are `ReadInstance`
+# and `Witness`. Not this token:
+#   * Lean `structure Snapshot` (mathematical consistent-state premise)
+#   * README / 00-product "MVCC snapshots" (LMDB semantics)
+#   * "reader snapshot isolation", "restored snapshots" (backups),
+#     concurrent LMDB reader slots, the parked-lease generation rule
+#     ("inside its own snapshot", "open-snapshot/read-counter")
+#   * Fact/Key rustdoc borrowing "the snapshot's dictionary" (LMDB CoW)
+
+deleted_spelling='ForeignSnapshot|`Snapshot`|Snapshot<'\''|&Snapshot([^A-Za-z_]|$)|crate::Snapshot|bumbledb::Snapshot'
+
+api_snapshot_docs=(
+  docs/cookbook.md
+  docs/architecture/00-product.md
+  docs/architecture/50-storage.md
+  docs/architecture/10-data-model.md
+)
+api_snapshot_docs_allow='MVCC snapshot|MVCC read snapshot|reader snapshot isolation|restored snapshot|WAL/snapshot|concurrent snapshot|the snapshot past the table|inside its own snapshot|open-snapshot'
+
+api_snapshot_rustdoc=(
+  crates/bumbledb/src/api/db.rs
+  crates/bumbledb/src/api/db/prepare.rs
+  crates/bumbledb/src/api/db/read_instance.rs
+  crates/bumbledb/src/api/db/get.rs
+)
+api_snapshot_rustdoc_allow='LMDB snapshots|the snapshot'\''s committed|the snapshot'\''s dictionary'
+
+# Deleted type/error spelling on the named surfaces. Txn.lean is
+# scanned for `ForeignSnapshot` only — Lean `structure Snapshot` stays.
+while IFS= read -r hit; do
+  echo "spec-census: FAIL — deleted API-sense snapshot token: $hit" >&2
+  fail=1
+done < <(grep -nE -- "$deleted_spelling" \
+  "${api_snapshot_docs[@]}" \
+  "${api_snapshot_rustdoc[@]}" \
+  lean/conformance/README.md \
+  2>/dev/null || true)
+while IFS= read -r hit; do
+  echo "spec-census: FAIL — deleted API-sense snapshot token: $hit" >&2
+  fail=1
+done < <(grep -nE -- 'ForeignSnapshot' lean/Bumbledb/Txn.lean || true)
+
+# Lowercase/API-handle "snapshot" in the named docs: only the allowlisted
+# LMDB/backup/WAL homonyms may remain.
+while IFS= read -r hit; do
+  text="${hit#*:}"
+  text="${text#*:}"
+  if ! printf '%s' "$text" | grep -qE -- "$api_snapshot_docs_allow"; then
+    echo "spec-census: FAIL — API-sense snapshot token: $hit" >&2
+    fail=1
+  fi
+done < <(grep -nE -- '\bsnapshots?\b' "${api_snapshot_docs[@]}" || true)
+
+# Same gate on the named rustdoc files: only LMDB/CoW dictionary wording.
+while IFS= read -r hit; do
+  text="${hit#*:}"
+  text="${text#*:}"
+  if ! printf '%s' "$text" | grep -qE -- "$api_snapshot_rustdoc_allow"; then
+    echo "spec-census: FAIL — API-sense snapshot token: $hit" >&2
+    fail=1
+  fi
+done < <(grep -nE -- '\bsnapshots?\b' "${api_snapshot_rustdoc[@]}" || true)
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent"

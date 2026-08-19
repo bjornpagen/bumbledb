@@ -724,9 +724,9 @@ the discriminated union's totality theorem replayed for derived data. SQL
 matviews invert every default: stale silently, in both directions, and
 `REFRESH` is a prayer. Here the host maintains and the engine judges;
 maintenance is the generation-witness idiom verbatim (`70-api.md`
-§ conditional writes, the third idiom): query the sources on a snapshot →
-recompute (`Pack` is the coalesce) → diff → `write_from` with that snapshot as
-the witness — the derived relation cannot commit against sources it didn't
+§ conditional writes, the third idiom): query the sources on a `ReadInstance` →
+recompute (`Pack` is the coalesce) → diff → `write_from` with that instance's
+`Witness` — the derived relation cannot commit against sources it didn't
 actually read (`ConditionalWrite::Moved` otherwise).
 
 **The honest limit: statements prove presence and topology, never arithmetic
@@ -743,7 +743,7 @@ enforcement plan). **Refusal, recorded: no
 arithmetic-agreement statements.** The answer is host discipline — one function
 owns each derivation, which the composition idiom above makes natural — plus,
 where wanted, an offline `verify_store`-grade re-derivation: re-run the
-deriving query on a snapshot and compare against the stored relation, the same
+deriving query on a `ReadInstance` and compare against the stored relation, the same
 posture the store's own integrity sweep takes (`60-validation.md`). *Trigger:*
 a sighted agreement invariant that host discipline plus offline re-derivation
 demonstrably fails to hold; the candidate form would be projected copy-equality
