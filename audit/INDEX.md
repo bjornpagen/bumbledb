@@ -24,7 +24,7 @@ over this table when they disagree.
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
 | 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |
 | 07 | [view binding](07-view-binding.md) | **CONTESTED** — owner ruling required (the keep defends the fix, not the code) |
-| 08 | [relation slot](08-relation-slot.md) | **CONTESTED** — owner ruling required (the keep inverts the mechanism); SPINE-16 open either way |
+| 08 | [relation slot](08-relation-slot.md) | **fixed this pass** — one `RelationSlot` table; SPINE-16 epochs from `ImageBind` |
 | 09 | [profile + stats](09-profile-stats.md) | **CONTESTED** on promotion (profile ≠ staleness); `hit` twice OPEN by both sides |
 | 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | OPEN — 4 × `unreachable!("schema-typed")`; `ValueRef::FixedBytes` |
 | 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
@@ -43,11 +43,9 @@ over this table when they disagree.
    proofs into one `None`; that is the *current* code, and the filed
    `Binding` sum is the three proofs. At minimum the four-parallel-vector
    unification proceeds under both readings.
-2. **08 relation slot** — the keep-ruling says one slot type would make
-   store generations representable on closed images; the filed
-   `Closed(OnceLock)` arm carries no generation, so the sum is what makes
-   it unrepresentable — today's two maps enforce the partition by
-   convention (`expect("Closed body implies a closed cache slot")`).
+2. **08 relation slot** — **ruled: filed fix proceeds** (keep overturned).
+   Landed this pass: one `Box<[RelationSlot]>`; `Closed` carries no
+   generation; `ImageBind` mints `ViewEpoch`.
 3. **09 profile promotion** — the keep-ruling reasons from drift; `profile`
    is counting instrumentation, not a drift clock. If lease-only stands,
    the sealed-trait comment and the proposal roster must be edited to
@@ -74,6 +72,8 @@ over this table when they disagree.
    bridge pre-refusal (test); tagged admissions with the `moved` arm.
 7. `ExhumeOutcome` three variants; fresh-range tag; docs `TypeDesc`→
    `ValueType`, introspection v7, ABI-3 rows.
+8. One `Box<[RelationSlot]>` (`Closed` | `Frozen` | `Ordinary`);
+   `ImageBind` mints `ViewEpoch`; no `txn.generation()` under `image/`.
 
 ## Already right (do not "fix" back)
 
@@ -98,7 +98,7 @@ over this table when they disagree.
    O(catalog) on the event loop).
 2. **03 + 04** — one way to read an owned instance; full builder verb set.
 3. **10** — typed decode both sides; delete the last `unreachable!`s.
-4. Owner rules on **07 / 08 / 09**, then whichever open.
+4. Owner rules on **07 / 09**, then whichever open.
 5. **13** (unforgeable decline) + **06** (codec dict path, scratch pools,
    doc ghosts) + **15** (evaluator entries).
 6. **16**, **17**, **18** in any order; **18** also gates release

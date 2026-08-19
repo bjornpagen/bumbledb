@@ -4,7 +4,7 @@ use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
-use crate::storage::env::{Environment, GenerationId};
+use crate::storage::env::{Environment, GenerationId, ReadTxn};
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
@@ -95,7 +95,10 @@ fn eviction_after_commit_leaves_only_the_new_generation() {
     // The pinned old reader still reads its old image (its Arc lives on
     // past eviction), and its snapshot still answers at generation 1.
     assert_eq!(old_image.row_count(), 1);
-    assert_eq!(old_txn.generation().expect("generation").value(), 1);
+    assert_eq!(
+        ReadTxn::generation(&old_txn).expect("generation").value(),
+        1
+    );
 }
 
 #[test]
