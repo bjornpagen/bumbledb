@@ -3,11 +3,11 @@
 //! the reverse direction of the `F` pass's membership check.
 
 use crate::encoding::fact_hash;
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::storage::catalog::CatalogRead;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep, for_namespace};
+use super::{Sweep, for_namespace};
 
 pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     for_namespace(s.catalog, keys::Namespace::Membership, |key, value| {
@@ -22,7 +22,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // Closed relations have no rows in the store: presence is the
         // finding (the F pass's exemption, mirrored).
         if relation.body().closed_rows().is_some() {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
             });
@@ -37,7 +37,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             .fact(rel, row_id)?
             .is_some_and(|fact| fact_hash(fact.as_ref()) == *hash);
         if !resolves {
-            s.push(StoreFinding::MembershipWithoutFact {
+            s.corrupt(CorruptionError::MembershipWithoutFact {
                 relation: rel,
                 row_id,
                 membership_key: key.into(),

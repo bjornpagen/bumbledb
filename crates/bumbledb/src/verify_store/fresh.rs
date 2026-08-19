@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::storage::catalog::CatalogRead;
 use crate::storage::keys;
 use bumbledb_theory::schema::{FieldId, Generation, RelationId};
@@ -46,7 +46,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // Closed relations appear in no namespace — the entry's very
         // existence is the finding (the F pass's exemption, mirrored).
         if relation.body().closed_rows().is_some() {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
             });
@@ -69,7 +69,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         if let Some(&max_fresh) = s.max_fresh.get(&(rel, field))
             && ratchet_broken(stored, max_fresh)
         {
-            s.push(StoreFinding::FreshNextValueLow {
+            s.corrupt(CorruptionError::FreshNextValueLow {
                 relation: rel,
                 field,
                 stored,
@@ -85,14 +85,14 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         .max_fresh
         .iter()
         .filter(|(spot, max_fresh)| !seen.contains(spot) && ratchet_broken(0, **max_fresh))
-        .map(
-            |(&(relation, field), &max_fresh)| StoreFinding::FreshNextValueLow {
+        .map(|(&(relation, field), &max_fresh)| {
+            StoreFinding::Corruption(CorruptionError::FreshNextValueLow {
                 relation,
                 field,
                 stored: 0,
                 max_fresh,
-            },
-        )
+            })
+        })
         .collect();
     s.findings.extend(absent);
     Ok(())

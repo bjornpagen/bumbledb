@@ -116,9 +116,7 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: InternId) -> R
 pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: InternId) -> Result<&'txn [u8]> {
     let dict = txn.env().dict();
     dict.get(txn.raw(), &reverse_key(id))?
-        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(
-            id.raw(),
-        )))
+        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(id)))
 }
 
 #[cfg(test)]
@@ -234,7 +232,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::Corruption(CorruptionError::DanglingInternId(12345))
+                Error::Corruption(CorruptionError::DanglingInternId(id))
+                    if id == InternId::from_raw(12345)
             ),
             "{err:?}"
         );

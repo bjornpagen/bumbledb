@@ -7,6 +7,7 @@
 
 use std::fmt::Write as _;
 
+use bumbledb::error::CorruptionError;
 use bumbledb::schema::render;
 use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
 
@@ -47,27 +48,17 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
 /// for rendering the violated statement back in the `schema!` notation.
 fn finding_statement(finding: &StoreFinding, schema: &Schema) -> Option<StatementId> {
     match finding {
-        StoreFinding::FactWithoutDeterminant { statement, .. }
-        | StoreFinding::DeterminantWithoutFact { statement, .. }
-        | StoreFinding::PointwiseOverlap { statement, .. }
-        | StoreFinding::FactWithoutReverseEdge { statement, .. }
-        | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
-        | StoreFinding::ReverseEdgeWeightDesync { statement, .. }
-        | StoreFinding::FreshRowDeterminantEntry { statement, .. } => Some(*statement),
         StoreFinding::Judgment(violation) => Some(violation.statement_id(schema)),
-        StoreFinding::FactWithoutMembership { .. }
-        | StoreFinding::MembershipWithoutFact { .. }
-        | StoreFinding::RowCountDesync { .. }
-        | StoreFinding::RowIdHighWaterLow { .. }
-        | StoreFinding::FreshRowDesync { .. }
-        | StoreFinding::InternBeyondNextId { .. }
-        | StoreFinding::FreshNextValueLow { .. }
-        | StoreFinding::DanglingInternId { .. }
-        | StoreFinding::DictForwardDesync { .. }
-        | StoreFinding::DictNextIdLow { .. }
-        | StoreFinding::ClosedRelationEntry { .. }
-        | StoreFinding::Malformed { .. }
-        | StoreFinding::DescriptorFingerprintDesync { .. } => None,
+        StoreFinding::Corruption(
+            CorruptionError::FactWithoutDeterminant { statement, .. }
+            | CorruptionError::DeterminantWithoutFact { statement, .. }
+            | CorruptionError::PointwiseOverlap { statement, .. }
+            | CorruptionError::FactWithoutReverseEdge { statement, .. }
+            | CorruptionError::ReverseEdgeWithoutFact { statement, .. }
+            | CorruptionError::ReverseEdgeWeightDesync { statement, .. }
+            | CorruptionError::FreshRowDeterminantEntry { statement, .. },
+        ) => Some(*statement),
+        StoreFinding::Corruption(_) => None,
     }
 }
 
@@ -117,12 +108,14 @@ mod tests {
             .expect("the ledger schema declares containments");
         let report = StoreReport {
             verdict: StoreVerdict::Desynced {
-                findings: vec![StoreFinding::FactWithoutDeterminant {
-                    relation: RelationId(0),
-                    statement: containment,
-                    row_id: 0,
-                    determinant_key: Box::new([]),
-                }]
+                findings: vec![StoreFinding::Corruption(
+                    CorruptionError::FactWithoutDeterminant {
+                        relation: RelationId(0),
+                        statement: containment,
+                        row_id: 0,
+                        determinant_key: Box::new([]),
+                    },
+                )]
                 .into(),
                 dangling_intern_ids: 0,
             },

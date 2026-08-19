@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::storage::catalog::CatalogRead;
 use crate::storage::keys::{self, StatEntry, StatKind};
 use bumbledb_theory::schema::RelationId;
@@ -37,7 +37,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                     StatKind::RowCount => {
                         let counted = s.tallies.get(&rel).map_or(0, |t| t.rows);
                         if stored != counted {
-                            s.push(StoreFinding::RowCountDesync {
+                            s.corrupt(CorruptionError::RowCountDesync {
                                 relation: rel,
                                 stored,
                                 counted,
@@ -54,7 +54,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                         } else if let Some(tally) = s.tallies.get(&rel)
                             && stored <= tally.max_row_id
                         {
-                            s.push(StoreFinding::RowIdHighWaterLow {
+                            s.corrupt(CorruptionError::RowIdHighWaterLow {
                                 relation: rel,
                                 stored,
                                 max_row_id: tally.max_row_id,
@@ -72,22 +72,24 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         .iter()
         .flat_map(|(&rel, tally)| {
             let count = (!seen.contains(&(rel, StatKind::RowCount))).then_some(
-                StoreFinding::RowCountDesync {
+                StoreFinding::Corruption(CorruptionError::RowCountDesync {
                     relation: rel,
                     stored: 0,
                     counted: tally.rows,
-                },
+                }),
             );
             // Fresh-less relations only: a fresh-keyed relation OWES no
             // S high-water (the one id allocator, R16 — its mint is Q,
             // judged by the Q pass's ratchet law).
             let water = (!seen.contains(&(rel, StatKind::RowIdHighWater))
                 && s.schema.fresh_mint_field(rel).is_none())
-            .then_some(StoreFinding::RowIdHighWaterLow {
-                relation: rel,
-                stored: 0,
-                max_row_id: tally.max_row_id,
-            });
+            .then_some(StoreFinding::Corruption(
+                CorruptionError::RowIdHighWaterLow {
+                    relation: rel,
+                    stored: 0,
+                    max_row_id: tally.max_row_id,
+                },
+            ));
             count.into_iter().chain(water)
         })
         .collect();

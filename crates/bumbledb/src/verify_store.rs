@@ -47,19 +47,21 @@
 //! coverage walk ([`judgment`]'s `Checker` — one definition, never a
 //! sweeper copy). The U pass independently re-derives pointwise
 //! disjointness from stored bytes, while the shared coverage call still
-//! consumes the schema's validator-minted `DisjointDeterminantProof`; a miss is
-//! [`StoreFinding::JudgmentViolation`]. **Capacity statements** ride the
+//! consumes the schema's validator-minted `DisjointDeterminantProof`; a   miss is
+//! [`StoreFinding::Judgment`]. **Capacity statements** ride the
 //! F scan on their parent side (every ψ-selected parent measures its
 //! child group through the commit path's own walk —
-//! [`StoreFinding::CapacityViolation`]); closed parents re-check in the
+//! [`StoreFinding::Judgment`]); closed parents re-check in the
 //! marks pass. The weighted value slot adds the weight-desync sweep,
 //! both directions (C17, measured: the slot law makes the `R` slot
 //! a maintained copy of one row-local field, and this sweeper is the
 //! offline authority that convicts a diverged copy): F→R, the existence
 //! get's value must equal the fact's weight-field encoding (unit:
 //! empty); R→F, the entry's value must back to the live fact —
-//! [`StoreFinding::ReverseEdgeWeightDesync`], convict-only, never
-//! repaired silently.
+//! [`CorruptionError::ReverseEdgeWeightDesync`], convict-only, never
+//! repaired silently. Findings are appended in pass order, and within a
+//! pass in the order the cursor raised each fact — that collection
+//! discipline is the sweep; only the element shape embeds.
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is
@@ -70,12 +72,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use crate::Db;
-use crate::error::{Result, Violation};
+use crate::encoding::InternId;
+use crate::error::{CorruptionError, Result, Violation};
 use crate::schema::Schema;
 use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
 use crate::storage::commit::judgment::{self, Selections};
 use crate::storage::keys;
-use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 mod counters;
 mod determinants;
@@ -147,185 +150,24 @@ impl StoreReport {
     }
 }
 
-/// One observed desync. Payloads follow the [`CorruptionError`] discipline:
-/// namespace ids and offending key bytes, never formatted strings.
-///
-/// [`CorruptionError`]: crate::error::CorruptionError
+/// One observed desync. Structural facts are [`CorruptionError`] — the
+/// sweeper found them offline; judgment facts are [`Violation`]. The
+/// report preserves per-fact insertion order (pass order, then the order
+/// the cursor raised each fact). Payload shapes follow the
+/// [`CorruptionError`] discipline: namespace ids, [`InternId`], and
+/// offending key bytes — never formatted strings, never a raw `u64`
+/// intern field, never the miss sentinel as a stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreFinding {
-    /// A live `F` fact whose `M` entry is absent or names another row.
-    FactWithoutMembership {
-        relation: RelationId,
-        row_id: u64,
-        membership_key: Box<[u8]>,
-    },
-    /// An `M` entry whose row id resolves to no `F` fact hashing back to
-    /// its key.
-    MembershipWithoutFact {
-        relation: RelationId,
-        row_id: u64,
-        membership_key: Box<[u8]>,
-    },
-    /// A live `F` fact whose determinant tuple is absent from `U` under a key
-    /// statement (or held there by another row).
-    FactWithoutDeterminant {
-        relation: RelationId,
-        statement: StatementId,
-        row_id: u64,
-        determinant_key: Box<[u8]>,
-    },
-    /// A `U` entry whose row id resolves to no live fact re-deriving the
-    /// same determinant bytes.
-    DeterminantWithoutFact {
-        relation: RelationId,
-        statement: StatementId,
-        determinant_key: Box<[u8]>,
-    },
-    /// Two successive determinant entries of one scalar-prefix group with
-    /// overlapping intervals — the pointwise-key invariant the neighbor
-    /// probe assumes but never re-checks globally.
-    PointwiseOverlap {
-        relation: RelationId,
-        statement: StatementId,
-        first: Box<[u8]>,
-        second: Box<[u8]>,
-    },
-    /// A live source fact inside φ whose `R` edge is absent — the class
-    /// the commit path deletes blind (`docs/architecture/50-storage.md`
-    /// § R-delete verification).
-    FactWithoutReverseEdge {
-        statement: StatementId,
-        relation: RelationId,
-        row_id: u64,
-        reverse_key: Box<[u8]>,
-    },
-    /// An `R` edge that resolves to no live source fact still inside φ
-    /// re-deriving the same key bytes.
-    ReverseEdgeWithoutFact {
-        statement: StatementId,
-        reverse_key: Box<[u8]>,
-    },
     /// A containment or capacity statement globally violated by the
     /// committed state — the same [`Violation`] the commit path cites.
     /// Complete admission and the sweep cite containments
-    /// source-to-target ([`crate::error::Direction::TargetRequired`]): a committed
-    /// store has no just-inserted side.
+    /// source-to-target ([`crate::error::Direction::TargetRequired`]): a
+    /// committed store has no just-inserted side.
     Judgment(Violation),
-    /// A capacity `R` edge whose value slot disagrees with the live
-    /// source fact's weight-field encoding — the weight-desync finding,
-    /// both directions of the sweep push it (C17, measured: the slot
-    /// law makes the value slot a maintained copy of one row-local
-    /// field; convict-only, the sweeper never repairs silently).
-    ReverseEdgeWeightDesync {
-        statement: StatementId,
-        reverse_key: Box<[u8]>,
-        /// The stored value-slot bytes.
-        stored: Box<[u8]>,
-        /// The expected encoding derived from the live fact (empty for
-        /// unit edges).
-        derived: Box<[u8]>,
-    },
-    /// The stored `S` row count disagrees with the `F`-scan count.
-    RowCountDesync {
-        relation: RelationId,
-        stored: u64,
-        counted: u64,
-    },
-    /// The stored `S` row-id high-water (the next id to assign) does not
-    /// exceed an observed row id. Fresh-less relations only — a
-    /// fresh-keyed relation's mint is `Q` (the one id allocator, R16),
-    /// and its stored high-water's very existence is a finding.
-    RowIdHighWaterLow {
-        relation: RelationId,
-        stored: u64,
-        max_row_id: u64,
-    },
-    /// A fresh-keyed relation's `F` row id disagrees with its first
-    /// fresh field's value — the one id allocator (R16) makes them one
-    /// u64, so the disagreement is corruption.
-    FreshRowDesync {
-        relation: RelationId,
-        row_id: u64,
-        fresh: u64,
-    },
-    /// The stored `Q` next-value fails the ratchet law (finding 033): a
-    /// committed fresh value sits at or beyond it, so `alloc` would
-    /// re-issue an id the host already holds — the Lean-pinned
-    /// never-reissue law (`lean/Bumbledb/Txn/Fresh.lean:
-    /// never_reissue_observable`) violated at rest. An absent entry for
-    /// a tallied fresh field reads as zero; the legal exhausted sequence
-    /// (`max_fresh == u64::MAX`) is exempt.
-    FreshNextValueLow {
-        relation: RelationId,
-        field: FieldId,
-        stored: u64,
-        max_fresh: u64,
-    },
-    /// A live fact references an intern id with no `_dict` reverse entry
-    /// — the offline twin of the runtime `Corruption(DanglingInternId)`
-    /// (finding 004).
-    DanglingInternId { intern_id: u64 },
-    /// A `_dict` reverse entry whose forward twin is absent, or maps the
-    /// hashed bytes to a DIFFERENT id — the desync that silently rebinds
-    /// every selection literal on the string (finding 004).
-    DictForwardDesync {
-        intern_id: u64,
-        /// What the forward map holds for the reverse entry's bytes.
-        forward: Option<u64>,
-    },
-    /// A `_dict` reverse id at or beyond the `_meta` next-id counter —
-    /// the regressed counter that arms silent reverse-map reuse:
-    /// `RowIdHighWaterLow`'s dictionary sibling (finding 078).
-    DictNextIdLow {
-        /// The stored `_meta` next-id.
-        stored: u64,
-        /// The offending reverse-map id.
-        reverse_id: u64,
-    },
-    /// A `U` entry under a fresh-row auto-key. The one id allocator
-    /// (R16) erased that key's `U` tree — its entry would transcribe
-    /// `F` — so the entry's very existence is the finding.
-    FreshRowDeterminantEntry {
-        relation: RelationId,
-        statement: StatementId,
-        determinant_key: Box<[u8]>,
-    },
-    /// A fact references an intern id at or beyond the `_meta` dictionary
-    /// next-id counter.
-    InternBeyondNextId {
-        relation: RelationId,
-        row_id: u64,
-        intern_id: u64,
-        next_id: u64,
-    },
-    /// An `F`/`M`/`U`/`R` entry naming a closed relation. Closed relations
-    /// are virtual — the theory is their storage and writes are refused
-    /// (`docs/architecture/10-data-model.md` § closed relations) — so they
-    /// are exempt from every coherence walk, and a stored entry's very
-    /// existence is the finding.
-    ClosedRelationEntry {
-        relation: RelationId,
-        key: Box<[u8]>,
-    },
-    /// An entry that does not parse under the schema, including a fact field
-    /// with a noncanonical Bool, fixed-bytes pad, or interval encoding; the
-    /// static string names the failing shape,
-    /// [`CorruptionError::MalformedValue`]-style.
-    ///
-    /// [`CorruptionError::MalformedValue`]: crate::error::CorruptionError::MalformedValue
-    Malformed { key: Box<[u8]>, what: &'static str },
-    /// The persisted schema-descriptor bytes hash to something other than
-    /// the stored fingerprint. The fingerprint IS blake3 of the
-    /// descriptor bytes (`docs/architecture/50-storage.md` § the `_meta`
-    /// block), so a store carrying a descriptor its fingerprint disowns
-    /// was altered after creation — the conviction ordinary open and
-    /// the exhume entry raise as a hard error, here as a finding.
-    DescriptorFingerprintDesync {
-        /// The stored `_meta` fingerprint.
-        fingerprint: [u8; 32],
-        /// Blake3 of the stored descriptor bytes.
-        descriptor_hash: [u8; 32],
-    },
+    /// A structural desync — the same [`CorruptionError`] the runtime
+    /// raises, or a twinless corruption fact the sweeper found offline.
+    Corruption(CorruptionError),
 }
 
 impl<S> Db<S> {
@@ -354,7 +196,7 @@ impl<S> Db<S> {
             catalog,
             schema: self.schema(),
             selections: Selections::encode_committed(self.schema(), &txn)?,
-            dict_next_id: catalog.dict_next_id()?.raw(),
+            dict_next_id: catalog.dict_next_id()?,
             findings: Vec::new(),
             tallies: BTreeMap::new(),
             max_fresh: BTreeMap::new(),
@@ -384,7 +226,7 @@ impl<S> Db<S> {
             let descriptor_hash =
                 crate::schema::fingerprint::fingerprint_of_descriptor(descriptor).0;
             if descriptor_hash != fingerprint {
-                sweep.push(StoreFinding::DescriptorFingerprintDesync {
+                sweep.corrupt(CorruptionError::DescriptorFingerprintDesync {
                     fingerprint,
                     descriptor_hash,
                 });
@@ -424,17 +266,19 @@ struct Sweep<'a, C> {
     /// the committed dictionary ([`Selections::encode_committed`]).
     selections: Selections<'a>,
     /// The `_meta` dictionary next-id: every referenced intern id must
-    /// sit below it.
-    dict_next_id: u64,
+    /// sit below it. Never the miss sentinel — a stored next-id of
+    /// [`InternId::SENTINEL`] would be a `_meta` decode fact, not this field.
+    dict_next_id: InternId,
     findings: Vec<StoreFinding>,
     /// Per-relation `F`-scan tallies, filled by the `F` pass.
     tallies: BTreeMap<RelationId, Tally>,
     /// Per fresh field, the largest committed value the `F` scan saw —
     /// the `Q` pass's ratchet-law input (finding 033).
     max_fresh: BTreeMap<(RelationId, FieldId), u64>,
-    /// Every intern id referenced by a live fact's String/Bytes fields —
-    /// the dictionary pass's liveness set.
-    referenced_interns: BTreeSet<u64>,
+    /// Every intern id referenced by a live fact's String fields —
+    /// the dictionary pass's liveness set. The miss sentinel is not a
+    /// stored id and never enters this set.
+    referenced_interns: BTreeSet<InternId>,
 }
 
 /// `[tag, tag + 1)` bounds for one `_data` namespace.
@@ -469,6 +313,10 @@ impl<C: CatalogRead + Copy> Sweep<'_, C> {
         self.findings.push(finding);
     }
 
+    fn corrupt(&mut self, err: CorruptionError) {
+        self.push(StoreFinding::Corruption(err));
+    }
+
     /// Runs one namespace sweep inside its own `obs` span, charging the
     /// span `a0` the findings the pass raised (pass granularity — the
     /// per-entry cursor inside `f` is never spanned). Inert when the
@@ -486,7 +334,7 @@ impl<C: CatalogRead + Copy> Sweep<'_, C> {
     }
 
     fn malformed(&mut self, key: &[u8], what: &'static str) {
-        self.push(StoreFinding::Malformed {
+        self.corrupt(CorruptionError::Malformed {
             key: key.into(),
             what,
         });

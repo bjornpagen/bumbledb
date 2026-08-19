@@ -11,6 +11,7 @@ mod display;
 
 use std::path::PathBuf;
 
+use crate::encoding::InternId;
 use crate::ir::{InteriorId, ParamId, VarId};
 use crate::schema::KeyId;
 use crate::schema::StatementRef;
@@ -78,8 +79,9 @@ pub struct TargetKeyCandidate {
 }
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
-/// skip, never a default (`docs/architecture/50-storage.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// skip, never a default (`docs/architecture/50-storage.md`). The offline
+/// sweeper reports the same facts as [`crate::StoreFinding::Corruption`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorruptionError {
     /// A Bool byte other than `0x00`/`0x01` — there is no distinct "true".
     InvalidBool(u8),
@@ -111,8 +113,9 @@ pub enum CorruptionError {
     /// so this is corrupt data, not a missing key.
     StoreKindInvalid,
     /// An intern id with no reverse dictionary entry — a fact referencing it
-    /// is corrupt.
-    DanglingInternId(u64),
+    /// is corrupt. The miss sentinel is not a stored id; the sweeper
+    /// reports a stored [`InternId::SENTINEL`] as [`Self::Malformed`].
+    DanglingInternId(InternId),
     /// A row id obtained from `M`/`U` has no `F` entry in the same snapshot.
     MissingFact { relation: RelationId, row_id: u64 },
     /// A live `M` entry's `F` row or `U` determinant was absent at delete time —
@@ -183,6 +186,135 @@ pub enum CorruptionError {
         /// Blake3 of the stored descriptor bytes.
         descriptor_hash: [u8; 32],
     },
+
+    // --- Offline-sweep structural facts (twinless until this cut) ---
+    // The sweeper found these at rest; they are corruption, not a second
+    // vocabulary. Runtime twins that already existed stay above.
+    /// A live `F` fact whose `M` entry is absent or names another row.
+    FactWithoutMembership {
+        relation: RelationId,
+        row_id: u64,
+        membership_key: Box<[u8]>,
+    },
+    /// An `M` entry whose row id resolves to no `F` fact hashing back to
+    /// its key.
+    MembershipWithoutFact {
+        relation: RelationId,
+        row_id: u64,
+        membership_key: Box<[u8]>,
+    },
+    /// A live `F` fact whose determinant tuple is absent from `U` under a
+    /// key statement (or held there by another row).
+    FactWithoutDeterminant {
+        relation: RelationId,
+        statement: StatementId,
+        row_id: u64,
+        determinant_key: Box<[u8]>,
+    },
+    /// A `U` entry whose row id resolves to no live fact re-deriving the
+    /// same determinant bytes.
+    DeterminantWithoutFact {
+        relation: RelationId,
+        statement: StatementId,
+        determinant_key: Box<[u8]>,
+    },
+    /// Two successive determinant entries of one scalar-prefix group with
+    /// overlapping intervals.
+    PointwiseOverlap {
+        relation: RelationId,
+        statement: StatementId,
+        first: Box<[u8]>,
+        second: Box<[u8]>,
+    },
+    /// A live source fact inside φ whose `R` edge is absent.
+    FactWithoutReverseEdge {
+        statement: StatementId,
+        relation: RelationId,
+        row_id: u64,
+        reverse_key: Box<[u8]>,
+    },
+    /// An `R` edge that resolves to no live source fact still inside φ
+    /// re-deriving the same key bytes.
+    ReverseEdgeWithoutFact {
+        statement: StatementId,
+        reverse_key: Box<[u8]>,
+    },
+    /// A containment or capacity `R` edge whose value slot disagrees with
+    /// the live source fact's weight-field encoding.
+    ReverseEdgeWeightDesync {
+        statement: StatementId,
+        reverse_key: Box<[u8]>,
+        stored: Box<[u8]>,
+        derived: Box<[u8]>,
+    },
+    /// The stored `S` row count disagrees with the `F`-scan count. The
+    /// runtime twin [`Self::RowCountMismatch`] carries no counted witness.
+    RowCountDesync {
+        relation: RelationId,
+        stored: u64,
+        counted: u64,
+    },
+    /// The stored `S` row-id high-water does not exceed an observed row
+    /// id. Fresh-less relations only.
+    RowIdHighWaterLow {
+        relation: RelationId,
+        stored: u64,
+        max_row_id: u64,
+    },
+    /// A fresh-keyed relation's `F` row id disagrees with its first fresh
+    /// field's value.
+    FreshRowDesync {
+        relation: RelationId,
+        row_id: u64,
+        fresh: u64,
+    },
+    /// The stored `Q` next-value fails the ratchet law: a committed fresh
+    /// value sits at or beyond it.
+    FreshNextValueLow {
+        relation: RelationId,
+        field: FieldId,
+        stored: u64,
+        max_fresh: u64,
+    },
+    /// A `_dict` reverse entry whose forward twin is absent, or maps the
+    /// hashed bytes to a different id.
+    DictForwardDesync {
+        intern_id: InternId,
+        /// What the forward map holds for the reverse entry's bytes.
+        forward: Option<InternId>,
+    },
+    /// A `_dict` reverse id at or beyond the `_meta` next-id counter.
+    DictNextIdLow {
+        stored: InternId,
+        reverse_id: InternId,
+    },
+    /// A `U` entry under a fresh-row auto-key — that key maintains no `U`
+    /// tree, so the entry's existence is the fact.
+    FreshRowDeterminantEntry {
+        relation: RelationId,
+        statement: StatementId,
+        determinant_key: Box<[u8]>,
+    },
+    /// A fact references an intern id at or beyond the `_meta` dictionary
+    /// next-id counter.
+    InternBeyondNextId {
+        relation: RelationId,
+        row_id: u64,
+        intern_id: InternId,
+        next_id: InternId,
+    },
+    /// An `F`/`M`/`U`/`R` entry naming a closed relation. Closed relations
+    /// are virtual — a stored entry's existence is the fact.
+    ClosedRelationEntry {
+        relation: RelationId,
+        key: Box<[u8]>,
+    },
+    /// An entry that does not parse under the schema, including a fact
+    /// field with a noncanonical encoding, or a stored intern equal to
+    /// [`InternId::SENTINEL`]. The static string names the failing shape;
+    /// the key is the offending entry. Distinct from
+    /// [`Self::MalformedValue`], which names a width without a key.
+    Malformed { key: Box<[u8]>, what: &'static str },
 }
 
 /// A schema declaration error (the validation boundary,
