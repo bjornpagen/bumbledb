@@ -202,7 +202,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::Corruption(CorruptionError::DanglingInternId(12345))
+                Error::Corruption(CorruptionError::DanglingInternId(id))
+                    if id == InternId::from_raw(12345)
             ),
             "{err:?}"
         );

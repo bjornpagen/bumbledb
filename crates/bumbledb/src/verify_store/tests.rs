@@ -5,9 +5,10 @@
 //! `storage::keys` (never a second slicer).
 
 use super::*;
-use crate::encoding::{ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash};
-use crate::error::{Direction, Violation};
+use crate::encoding::{InternId, ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash};
+use crate::error::{CorruptionError, Direction, Violation};
 use crate::schema::Schema;
+use bumbledb_theory::schema::StatementId;
 use crate::storage::keys::{StatKind, key};
 use crate::testutil::TempDir;
 use bumbledb_theory::Value;
@@ -459,31 +460,31 @@ fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[0].clone().into(),
                 what: "F key length",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[1].clone().into(),
                 what: "M key length",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[2].clone().into(),
                 what: "U key length",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[3].clone().into(),
                 what: "R key shape",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[4].clone().into(),
                 what: "S key length",
-            },
+            }),
             // The Q pass runs after the counters (pass order).
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: keys[5].clone().into(),
                 what: "Q key length",
-            },
+            }),
         ]
     );
 }
@@ -518,34 +519,34 @@ fn namespace_schema_ownership_is_rechecked() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.into(),
                 what: "F key relation",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: m.into(),
                 what: "M key relation",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: u_wrong_statement.into(),
                 what: "U key statement",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: u_unknown_relation.into(),
                 what: "U key relation",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: r_wrong_source.into(),
                 what: "R key source relation",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: r_unknown_statement.into(),
                 what: "R key statement",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: s.into(),
                 what: "S key relation",
-            },
+            }),
         ]
     );
 }
@@ -566,14 +567,14 @@ fn namespace_row_images_are_width_checked() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: m.into(),
                 what: "M row id",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: u.into(),
                 what: "U row id",
-            },
+            }),
         ]
     );
 }
@@ -617,14 +618,14 @@ fn counter_value_and_stat_kind_are_width_and_domain_checked() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: malformed_value.into(),
                 what: "S counter value",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: unknown_kind.into(),
                 what: "S stat kind",
-            },
+            }),
         ]
     );
 }
@@ -638,10 +639,10 @@ fn wrong_fact_width_is_a_contextual_finding() {
     let f = keys::fact_key(RelationId(0), 0).to_vec();
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::Malformed {
+        vec![StoreFinding::Corruption(CorruptionError::Malformed {
             key: f.into(),
             what: "F fact width",
-        }]
+        })]
     );
 }
 
@@ -659,18 +660,18 @@ fn noncanonical_field_encodings_are_each_found() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.clone().into(),
                 what: "F fact bool",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.clone().into(),
                 what: "F fact fixed bytes padding",
-            },
-            StoreFinding::Malformed {
+            }),
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.into(),
                 what: "F fact interval",
-            },
+            }),
         ]
     );
 }
@@ -684,16 +685,43 @@ fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::InternBeyondNextId {
+            StoreFinding::Corruption(CorruptionError::InternBeyondNextId {
                 relation: HOLDER,
                 row_id: 1,
-                intern_id: 99,
-                next_id: 2,
-            },
+                intern_id: InternId::from_raw(99),
+                next_id: InternId::from_raw(2),
+            }),
             // The forged id has no reverse entry either — the dict
             // pass's liveness direction convicts it independently (004).
-            StoreFinding::DanglingInternId { intern_id: 99 },
+            StoreFinding::Corruption(CorruptionError::DanglingInternId(InternId::from_raw(99))),
         ]
+    );
+}
+
+/// The miss sentinel is a query-word token, not a stored id — a fact
+/// that encodes it is malformed, so `DanglingInternId(SENTINEL)` is
+/// unrepresentable as a sweep finding.
+#[test]
+fn a_sentinel_intern_id_is_malformed_not_a_named_id() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-intern-sentinel");
+    replace_fact_bytes(&db, HOLDER, 1, |fact| {
+        fact[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    });
+    let f = keys::fact_key(HOLDER, 1).to_vec();
+    let findings = db.verify_store().expect("verify").findings().to_vec();
+    assert_eq!(
+        findings,
+        vec![StoreFinding::Corruption(CorruptionError::Malformed {
+            key: f.into(),
+            what: "F intern sentinel",
+        })]
+    );
+    assert!(
+        !findings.iter().any(|finding| matches!(
+            finding,
+            StoreFinding::Corruption(CorruptionError::DanglingInternId(id)) if id.is_sentinel()
+        )),
+        "sentinel must not appear as a dangling intern id, got {findings:?}"
     );
 }
 
@@ -709,10 +737,10 @@ fn malformed_dictionary_reverse_key_is_a_finding() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::Malformed {
+        vec![StoreFinding::Corruption(CorruptionError::Malformed {
             key: malformed.into(),
             what: "dict reverse id",
-        }]
+        })]
     );
 }
 
@@ -752,7 +780,7 @@ fn a_referenced_id_without_a_reverse_entry_is_the_finding() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::DanglingInternId { intern_id: 0 }]
+        vec![StoreFinding::Corruption(CorruptionError::DanglingInternId(InternId::from_raw(0)))]
     );
 }
 
@@ -775,10 +803,10 @@ fn a_rebound_forward_entry_is_the_finding() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::DictForwardDesync {
-            intern_id: 0,
-            forward: Some(1),
-        }]
+        vec![StoreFinding::Corruption(CorruptionError::DictForwardDesync {
+            intern_id: InternId::from_raw(0),
+            forward: Some(InternId::from_raw(1)),
+        })]
     );
 }
 
@@ -794,10 +822,10 @@ fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::DictNextIdLow {
-            stored: 1,
-            reverse_id: 1,
-        }]
+        vec![StoreFinding::Corruption(CorruptionError::DictNextIdLow {
+            stored: InternId::from_raw(1),
+            reverse_id: InternId::from_raw(1),
+        })]
     );
 }
 
@@ -816,12 +844,12 @@ fn a_regressed_fresh_next_value_is_the_finding() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::FreshNextValueLow {
+        vec![StoreFinding::Corruption(CorruptionError::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
             stored: 1,
             max_fresh: 1,
-        }]
+        })]
     );
 }
 
@@ -840,12 +868,12 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::FreshNextValueLow {
+        vec![StoreFinding::Corruption(CorruptionError::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
             stored: 0,
             max_fresh: 1,
-        }]
+        })]
     );
 }
 
@@ -880,12 +908,12 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::FreshNextValueLow {
+        vec![StoreFinding::Corruption(CorruptionError::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
             stored: 7,
             max_fresh: u64::MAX,
-        }]
+        })]
     );
 }
 
@@ -901,11 +929,11 @@ fn missing_membership_is_found_from_the_fact_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::FactWithoutMembership {
+        vec![StoreFinding::Corruption(CorruptionError::FactWithoutMembership {
             relation: BOOKING,
             row_id: 0,
             membership_key: m.into(),
-        }]
+        })]
     );
 }
 
@@ -921,11 +949,11 @@ fn orphan_membership_is_found_from_the_entry_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::MembershipWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::MembershipWithoutFact {
             relation: BOOKING,
             row_id: 99,
             membership_key: m.into(),
-        }]
+        })]
     );
 }
 
@@ -941,12 +969,12 @@ fn missing_determinant_is_found_from_the_fact_side() {
     assert_eq!(
         report.findings().to_vec(),
         vec![
-            StoreFinding::FactWithoutDeterminant {
+            StoreFinding::Corruption(CorruptionError::FactWithoutDeterminant {
                 relation: BOOKING,
                 statement: BOOKING_KEY,
                 row_id: 0,
                 determinant_key: u.into(),
-            },
+            }),
             // The deleted determinant entry is also the segment covering claim
             // (7, [2,8)) — the coverage walk judges the `U` state, so the
             // desync convicts twice, once per broken invariant.
@@ -970,11 +998,11 @@ fn orphan_determinant_is_found_from_the_entry_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::DeterminantWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::DeterminantWithoutFact {
             relation: BOOKING,
             statement: BOOKING_KEY,
             determinant_key: u.into(),
-        }]
+        })]
     );
 }
 
@@ -994,11 +1022,11 @@ fn determinant_key_byte_flip_is_found_against_the_live_fact() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::DeterminantWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::DeterminantWithoutFact {
             relation: BOOKING,
             statement: BOOKING_KEY,
             determinant_key: u.into(),
-        }]
+        })]
     );
 }
 
@@ -1017,11 +1045,11 @@ fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::FreshRowDeterminantEntry {
+        vec![StoreFinding::Corruption(CorruptionError::FreshRowDeterminantEntry {
             relation: HOLDER,
             statement: HOLDER_KEY,
             determinant_key: u.into(),
-        }]
+        })]
     );
 }
 
@@ -1035,11 +1063,11 @@ fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::FreshRowDesync {
+        vec![StoreFinding::Corruption(CorruptionError::FreshRowDesync {
             relation: HOLDER,
             row_id: 1,
             fresh: 0,
-        }]
+        })]
     );
 }
 
@@ -1057,10 +1085,10 @@ fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::Malformed {
+        vec![StoreFinding::Corruption(CorruptionError::Malformed {
             key: water.into(),
             what: "S high-water on a fresh-keyed relation",
-        }]
+        })]
     );
 }
 
@@ -1093,7 +1121,7 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::PointwiseOverlap {
+        vec![StoreFinding::Corruption(CorruptionError::PointwiseOverlap {
             relation: BOOKING,
             statement: BOOKING_KEY,
             first: key(|b| keys::determinant_key(
@@ -1104,7 +1132,7 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
             ))
             .into(),
             second: u.into(),
-        }]
+        })]
     );
 }
 
@@ -1163,12 +1191,12 @@ fn missing_reverse_edge_is_found_from_the_fact_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::FactWithoutReverseEdge {
+        vec![StoreFinding::Corruption(CorruptionError::FactWithoutReverseEdge {
             statement: ACCOUNT_HOLDER,
             relation: ACCOUNT,
             row_id: 0,
             reverse_key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1183,10 +1211,10 @@ fn orphan_reverse_edge_is_found_from_the_edge_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::ReverseEdgeWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1204,10 +1232,10 @@ fn edge_whose_source_left_its_selection_is_an_orphan() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::ReverseEdgeWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1225,10 +1253,10 @@ fn reverse_key_byte_flip_is_found_against_the_live_source() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::ReverseEdgeWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1244,11 +1272,11 @@ fn wrong_row_count_is_found_against_the_scan() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::RowCountDesync {
+        vec![StoreFinding::Corruption(CorruptionError::RowCountDesync {
             relation: BOOKING,
             stored: 99,
             counted: 2,
-        }]
+        })]
     );
 }
 
@@ -1264,11 +1292,11 @@ fn low_high_water_is_found_against_the_max_row_id() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::RowIdHighWaterLow {
+        vec![StoreFinding::Corruption(CorruptionError::RowIdHighWaterLow {
             relation: BOOKING,
             stored: 0,
             max_row_id: 1,
-        }]
+        })]
     );
 }
 
@@ -1291,16 +1319,16 @@ fn absent_counters_are_found_against_the_fact_tally() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::RowCountDesync {
+            StoreFinding::Corruption(CorruptionError::RowCountDesync {
                 relation: CLAIM,
                 stored: 0,
                 counted: 1,
-            },
-            StoreFinding::RowIdHighWaterLow {
+            }),
+            StoreFinding::Corruption(CorruptionError::RowIdHighWaterLow {
                 relation: CLAIM,
                 stored: 0,
                 max_row_id: 0,
-            },
+            }),
         ]
     );
 }
@@ -1347,10 +1375,10 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::ClosedRelationEntry {
+        vec![StoreFinding::Corruption(CorruptionError::ClosedRelationEntry {
             relation: currency,
             key: f.into(),
-        }]
+        })]
     );
 }
 
@@ -1408,14 +1436,14 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::ClosedRelationEntry {
+            StoreFinding::Corruption(CorruptionError::ClosedRelationEntry {
                 relation: currency,
                 key: m.into(),
-            },
-            StoreFinding::ClosedRelationEntry {
+            }),
+            StoreFinding::Corruption(CorruptionError::ClosedRelationEntry {
                 relation: currency,
                 key: u.into(),
-            },
+            }),
         ]
     );
 }
@@ -1495,10 +1523,10 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings().to_vec(),
-        vec![StoreFinding::ClosedRelationEntry {
+        vec![StoreFinding::Corruption(CorruptionError::ClosedRelationEntry {
             relation: RelationId(0),
             key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1793,7 +1821,7 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
     assert!(
         findings
             .iter()
-            .any(|f| matches!(f, StoreFinding::FactWithoutReverseEdge { .. })),
+            .any(|f| matches!(f, StoreFinding::Corruption(CorruptionError::FactWithoutReverseEdge { .. }))),
         "the missing edge itself is also found, got {findings:?}"
     );
     assert_eq!(findings.len(), 2, "exactly the two findings: {findings:?}");
@@ -1827,12 +1855,12 @@ fn a_missing_capacity_edge_is_found_and_the_group_remeasured() {
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
             judgment_capacity(db.schema(), M_CAPACITY, holder_fact.into(), 0),
-            StoreFinding::FactWithoutReverseEdge {
+            StoreFinding::Corruption(CorruptionError::FactWithoutReverseEdge {
                 statement: M_CAPACITY,
                 relation: M_ACCOUNT,
                 row_id: 0,
                 reverse_key: r.into(),
-            },
+            }),
         ]
     );
 }
@@ -1850,10 +1878,10 @@ fn a_stray_capacity_edge_is_convicted() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::ReverseEdgeWithoutFact {
+        vec![StoreFinding::Corruption(CorruptionError::ReverseEdgeWithoutFact {
             statement: M_CAPACITY,
             reverse_key: r.into(),
-        }]
+        })]
     );
 }
 
@@ -1964,12 +1992,12 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
         assert!(
             matches!(
                 finding,
-                StoreFinding::ReverseEdgeWeightDesync {
+                StoreFinding::Corruption(CorruptionError::ReverseEdgeWeightDesync {
                     statement: W_CAPACITY,
                     reverse_key,
                     stored,
                     derived,
-                } if **reverse_key == *r && **stored == planted[..] && **derived != planted[..]
+                }) if **reverse_key == *r && **stored == planted[..] && **derived != planted[..]
             ),
             "every finding names the diverged edge with stored vs derived, got {finding:?}"
         );
@@ -1995,10 +2023,10 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
-        vec![StoreFinding::Malformed {
+        vec![StoreFinding::Corruption(CorruptionError::Malformed {
             key: r.into(),
             what: "R key source relation",
-        }]
+        })]
     );
 }
 
@@ -2028,20 +2056,20 @@ fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::Malformed {
+            StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.into(),
                 what: "F fact width",
-            },
-            StoreFinding::RowCountDesync {
+            }),
+            StoreFinding::Corruption(CorruptionError::RowCountDesync {
                 relation: W_DEVICE,
                 stored: 1,
                 counted: 2,
-            },
-            StoreFinding::RowIdHighWaterLow {
+            }),
+            StoreFinding::Corruption(CorruptionError::RowIdHighWaterLow {
                 relation: W_DEVICE,
                 stored: 1,
                 max_row_id: 77,
-            },
+            }),
         ]
     );
 }
@@ -2121,10 +2149,10 @@ fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
         let f = keys::fact_key(RelationId(0), 0).to_vec();
         assert_eq!(
             db.verify_store().expect("verify").findings().to_vec(),
-            vec![StoreFinding::Malformed {
+            vec![StoreFinding::Corruption(CorruptionError::Malformed {
                 key: f.into(),
                 what: "F fact fixed interval start",
-            }],
+            })],
             "corrupt start {corrupt_start} must convict"
         );
     }

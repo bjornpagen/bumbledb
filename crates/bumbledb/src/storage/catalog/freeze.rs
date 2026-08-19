@@ -296,7 +296,7 @@ fn emit_live_dict(
     for id in ids {
         let Some(raw) = stage.pending_raw(id) else {
             return Err(Error::Corruption(
-                crate::error::CorruptionError::DanglingInternId(id.raw()),
+                crate::error::CorruptionError::DanglingInternId(id),
             ));
         };
         let fwd = dict::forward_key(raw);

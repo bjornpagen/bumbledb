@@ -47,9 +47,7 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
             .env()
             .dict()
             .get(self.txn.raw(), &crate::storage::dict::reverse_key(id))?
-            .ok_or(Error::Corruption(CorruptionError::DanglingInternId(
-                id.raw(),
-            )))
+            .ok_or(Error::Corruption(CorruptionError::DanglingInternId(id)))
     }
 }
 

@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use crate::encoding::InternId;
 use crate::schema::{Schema, render};
 use bumbledb_theory::schema::{SchemaDescriptor, StatementId};
 
@@ -226,7 +227,9 @@ impl fmt::Display for CorruptionError {
                 f,
                 "the _meta store-kind marker is present but not a valid kind encoding"
             ),
-            Self::DanglingInternId(id) => write!(f, "intern id {id} has no dictionary entry"),
+            Self::DanglingInternId(id) => {
+                write!(f, "intern id {} has no dictionary entry", id.raw())
+            }
             Self::MissingFact { relation, row_id } => {
                 write!(f, "relation {}: row {row_id} has no fact", relation.0)
             }
@@ -280,6 +283,148 @@ impl fmt::Display for CorruptionError {
                 crate::schema::fingerprint::SchemaFingerprint(*descriptor_hash),
                 crate::schema::fingerprint::SchemaFingerprint(*fingerprint)
             ),
+            Self::FactWithoutMembership {
+                relation, row_id, ..
+            } => write!(
+                f,
+                "relation {}: row {row_id} has no membership entry",
+                relation.0
+            ),
+            Self::MembershipWithoutFact {
+                relation, row_id, ..
+            } => write!(
+                f,
+                "relation {}: membership row {row_id} has no fact",
+                relation.0
+            ),
+            Self::FactWithoutDeterminant {
+                relation,
+                statement,
+                row_id,
+                ..
+            } => write!(
+                f,
+                "relation {}: row {row_id} has no determinant for statement {}",
+                relation.0, statement.0
+            ),
+            Self::DeterminantWithoutFact {
+                relation,
+                statement,
+                ..
+            } => write!(
+                f,
+                "relation {}: determinant of statement {} has no fact",
+                relation.0, statement.0
+            ),
+            Self::PointwiseOverlap {
+                relation,
+                statement,
+                ..
+            } => write!(
+                f,
+                "relation {}: pointwise overlap under statement {}",
+                relation.0, statement.0
+            ),
+            Self::FactWithoutReverseEdge {
+                statement,
+                relation,
+                row_id,
+                ..
+            } => write!(
+                f,
+                "relation {}: row {row_id} has no reverse edge for statement {}",
+                relation.0, statement.0
+            ),
+            Self::ReverseEdgeWithoutFact { statement, .. } => {
+                write!(
+                    f,
+                    "statement {}: reverse edge has no source fact",
+                    statement.0
+                )
+            }
+            Self::ReverseEdgeWeightDesync { statement, .. } => write!(
+                f,
+                "statement {}: reverse-edge weight slot disagrees with the live fact",
+                statement.0
+            ),
+            Self::RowCountDesync {
+                relation,
+                stored,
+                counted,
+            } => write!(
+                f,
+                "relation {}: stored row count {stored} desynced from counted {counted}",
+                relation.0
+            ),
+            Self::RowIdHighWaterLow {
+                relation,
+                stored,
+                max_row_id,
+            } => write!(
+                f,
+                "relation {}: stored high-water {stored} does not exceed row {max_row_id}",
+                relation.0
+            ),
+            Self::FreshRowDesync {
+                relation,
+                row_id,
+                fresh,
+            } => write!(
+                f,
+                "relation {}: row {row_id} disagrees with fresh field {fresh}",
+                relation.0
+            ),
+            Self::FreshNextValueLow {
+                relation,
+                field,
+                stored,
+                max_fresh,
+            } => write!(
+                f,
+                "relation {}, field {}: stored next-value {stored} at or below committed {max_fresh}",
+                relation.0, field.0
+            ),
+            Self::DictForwardDesync { intern_id, forward } => write!(
+                f,
+                "intern id {}: forward map holds {:?}",
+                intern_id.raw(),
+                forward.map(InternId::raw)
+            ),
+            Self::DictNextIdLow { stored, reverse_id } => write!(
+                f,
+                "dict next-id {} is at or below reverse id {}",
+                stored.raw(),
+                reverse_id.raw()
+            ),
+            Self::FreshRowDeterminantEntry {
+                relation,
+                statement,
+                ..
+            } => write!(
+                f,
+                "relation {}: fresh-row key {} has a U entry",
+                relation.0, statement.0
+            ),
+            Self::InternBeyondNextId {
+                relation,
+                row_id,
+                intern_id,
+                next_id,
+            } => write!(
+                f,
+                "relation {}: row {row_id} references intern {} at or beyond next-id {}",
+                relation.0,
+                intern_id.raw(),
+                next_id.raw()
+            ),
+            Self::ClosedRelationEntry { relation, .. } => {
+                write!(
+                    f,
+                    "relation {}: stored entry names a closed relation",
+                    relation.0
+                )
+            }
+            Self::Malformed { what, .. } => write!(f, "malformed stored entry: {what}"),
         }
     }
 }

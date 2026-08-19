@@ -189,7 +189,7 @@ impl MutationBackend for HeapMutation {
 
     fn resolve_raw(&self, id: InternId) -> Result<&[u8]> {
         self.stage.pending_raw(id).ok_or(Error::Corruption(
-            crate::error::CorruptionError::DanglingInternId(id.raw()),
+            crate::error::CorruptionError::DanglingInternId(id),
         ))
     }
 

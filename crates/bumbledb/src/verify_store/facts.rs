@@ -10,8 +10,9 @@
 
 use std::ops::Bound;
 
+use crate::encoding::InternId;
 use crate::encoding::{FieldDecodeError, ValueType, decode_field, fact_hash, field_word_bytes};
-use crate::error::{Check, Direction, Error, Result, Violation};
+use crate::error::{Check, CorruptionError, Direction, Error, Result, Violation};
 use crate::schema::{AxiomIndex, CapacityEnforcement, Enforcement};
 use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
 use crate::storage::commit::judgment;
@@ -56,7 +57,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
         // finding (never tallied: the counter pass reconciles facts that
         // may legally exist).
         if relation.body().closed_rows().is_some() {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
             });
@@ -107,10 +108,19 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
         // (String only — bytes<N> values are inline, never interned).
         for idx in 0..layout.field_count() {
             if matches!(layout.field_type(idx), ValueType::String) {
-                let id = u64::from_be_bytes(field_word_bytes(layout.encoded(fact), idx));
+                let id = InternId::from_raw(u64::from_be_bytes(field_word_bytes(
+                    layout.encoded(fact),
+                    idx,
+                )));
+                // The miss sentinel is a query-word token, not a stored
+                // id — parse it here so no finding can name it.
+                if id.is_sentinel() {
+                    s.malformed(key, "F intern sentinel");
+                    continue;
+                }
                 s.referenced_interns.insert(id);
                 if id >= s.dict_next_id {
-                    s.push(StoreFinding::InternBeyondNextId {
+                    s.corrupt(CorruptionError::InternBeyondNextId {
                         relation: rel,
                         row_id,
                         intern_id: id,
@@ -127,7 +137,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
             .get(CatalogMap::Data, &m_key)?
             .is_some_and(|v| v.as_ref() == row_id.to_le_bytes().as_slice());
         if !points_back {
-            s.push(StoreFinding::FactWithoutMembership {
+            s.corrupt(CorruptionError::FactWithoutMembership {
                 relation: rel,
                 row_id,
                 membership_key: Box::from(m_key),
@@ -141,7 +151,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
             let fresh =
                 u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)));
             if fresh != row_id {
-                s.push(StoreFinding::FreshRowDesync {
+                s.corrupt(CorruptionError::FreshRowDesync {
                     relation: rel,
                     row_id,
                     fresh,
@@ -170,7 +180,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
                 .get(CatalogMap::Data, u_key)?
                 .is_some_and(|v| v.as_ref() == row_id.to_le_bytes().as_slice());
             if !held {
-                s.push(StoreFinding::FactWithoutDeterminant {
+                s.corrupt(CorruptionError::FactWithoutDeterminant {
                     relation: rel,
                     statement: statement.id,
                     row_id,
@@ -209,7 +219,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
 /// Per capacity statement whose TARGET is this relation and whose ψ the
 /// fact satisfies, the child group is measured through the commit path's
 /// own walk ([`judgment::Checker::check_capacity`]) — a measure outside
-/// the resolved window is [`StoreFinding::CapacityViolation`].
+/// the resolved window is [`StoreFinding::Judgment`].
 fn check_marks<C: CatalogRead + Copy>(
     s: &mut Sweep<'_, C>,
     checker: &mut judgment::Checker<'_, C>,
@@ -232,7 +242,7 @@ fn check_marks<C: CatalogRead + Copy>(
         let catalog = s.catalog;
         match catalog.get(CatalogMap::Data, r_key)? {
             None => {
-                s.push(StoreFinding::FactWithoutReverseEdge {
+                s.corrupt(CorruptionError::FactWithoutReverseEdge {
                     statement: statement.id,
                     relation: rel,
                     row_id,
@@ -257,7 +267,7 @@ fn check_marks<C: CatalogRead + Copy>(
                     }
                 };
                 if stored.as_ref() != derived {
-                    s.push(StoreFinding::ReverseEdgeWeightDesync {
+                    s.corrupt(CorruptionError::ReverseEdgeWeightDesync {
                         statement: statement.id,
                         reverse_key: r_key.into(),
                         stored: stored.as_ref().into(),
@@ -303,7 +313,7 @@ fn check_marks<C: CatalogRead + Copy>(
 /// target tuple must be present (scalar probe) or covered (coverage walk)
 /// in the committed state — the same [`judgment::Checker`] the commit
 /// path consumes, over this sweep's read snapshot. A judgment miss is
-/// [`StoreFinding::JudgmentViolation`], directed `TargetRequired`: every
+/// [`StoreFinding::Judgment`], directed `TargetRequired`: every
 /// committed source is a standing one.
 fn check_outgoing<C: CatalogRead + Copy>(
     s: &mut Sweep<'_, C>,
@@ -375,7 +385,7 @@ fn check_outgoing<C: CatalogRead + Copy>(
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         if missing_edge {
-            s.push(StoreFinding::FactWithoutReverseEdge {
+            s.corrupt(CorruptionError::FactWithoutReverseEdge {
                 statement: sid,
                 relation: rel,
                 row_id,

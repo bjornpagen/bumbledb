@@ -6,13 +6,13 @@
 //! fact that re-derives the same key bytes and still sits inside its φ
 //! (the commit path's own satisfaction helper).
 
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::schema::{Enforcement, StatementView};
 use crate::storage::catalog::CatalogRead;
 use crate::storage::commit::judgment;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep, for_namespace};
+use super::{Sweep, for_namespace};
 
 #[expect(
     clippy::too_many_lines,
@@ -52,7 +52,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // (A closed-target CAPACITY statement does store edges: they are
         // its child-group measure's index.)
         if let Some(target) = closed_target {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: target,
                 key: key.into(),
             });
@@ -61,7 +61,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // Closed sources never commit (writes refused), so an R edge
         // naming one is corruption — the F pass's exemption, mirrored.
         if schema.relation(source_rel).body().closed_rows().is_some() {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: source_rel,
                 key: key.into(),
             });
@@ -128,7 +128,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                                     None => &[],
                                 };
                                 if value != expected_bytes {
-                                    s.push(StoreFinding::ReverseEdgeWeightDesync {
+                                    s.corrupt(CorruptionError::ReverseEdgeWeightDesync {
                                         statement: sid,
                                         reverse_key: key.into(),
                                         stored: value.into(),
@@ -145,7 +145,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             },
         };
         if !backs {
-            s.push(StoreFinding::ReverseEdgeWithoutFact {
+            s.corrupt(CorruptionError::ReverseEdgeWithoutFact {
                 statement: sid,
                 reverse_key: key.into(),
             });

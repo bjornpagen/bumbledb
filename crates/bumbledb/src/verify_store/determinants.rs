@@ -5,12 +5,12 @@
 //! interval start, so one lookback checks `prev.end <= next.start` — the
 //! invariant the neighbor probe assumes but never re-checks globally.
 
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::schema::StatementView;
 use crate::storage::catalog::CatalogRead;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep, for_namespace};
+use super::{Sweep, for_namespace};
 
 pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     let schema = s.schema;
@@ -36,7 +36,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // Closed relations have no rows in the store: presence is the
         // finding (the F pass's exemption, mirrored).
         if relation.body().closed_rows().is_some() {
-            s.push(StoreFinding::ClosedRelationEntry {
+            s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
             });
@@ -57,7 +57,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         // `U` tree — its entry would transcribe `F` — so the entry's
         // very existence is the finding.
         if statement.form().as_fresh_row().is_some() {
-            s.push(StoreFinding::FreshRowDeterminantEntry {
+            s.corrupt(CorruptionError::FreshRowDeterminantEntry {
                 relation: rel,
                 statement: sid,
                 determinant_key: key.into(),
@@ -89,7 +89,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             }
         };
         if !backs {
-            s.push(StoreFinding::DeterminantWithoutFact {
+            s.corrupt(CorruptionError::DeterminantWithoutFact {
                 relation: rel,
                 statement: sid,
                 determinant_key: key.into(),
@@ -127,7 +127,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                 && same_group
                 && prev_end > next_start
             {
-                s.push(StoreFinding::PointwiseOverlap {
+                s.corrupt(CorruptionError::PointwiseOverlap {
                     relation: rel,
                     statement: sid,
                     first: prev.clone().into(),

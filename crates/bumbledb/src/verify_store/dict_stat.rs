@@ -10,11 +10,11 @@
 use std::ops::Bound;
 
 use crate::encoding::InternId;
-use crate::error::Result;
+use crate::error::{CorruptionError, Result};
 use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
 use crate::storage::dict;
 
-use super::{StoreFinding, Sweep};
+use super::Sweep;
 
 pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u64> {
     let mut dangling = 0u64;
@@ -33,13 +33,17 @@ pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u6
         let raw = entry.value;
         match key.get(1..).and_then(|rest| <[u8; 8]>::try_from(rest).ok()) {
             Some(id) if key.len() == 9 && key[0] == dict::REVERSE => {
-                let id = u64::from_be_bytes(id);
+                let id = InternId::from_raw(u64::from_be_bytes(id));
+                if id.is_sentinel() {
+                    s.malformed(key, "dict reverse sentinel");
+                    continue;
+                }
                 // The counter bound (078): a reverse id at or beyond the
                 // `_meta` next-id is the regressed-counter state that
                 // arms silent reuse — `RowIdHighWaterLow`'s dictionary
                 // sibling.
                 if id >= s.dict_next_id {
-                    s.push(StoreFinding::DictNextIdLow {
+                    s.corrupt(CorruptionError::DictNextIdLow {
                         stored: s.dict_next_id,
                         reverse_id: id,
                     });
@@ -49,9 +53,9 @@ pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u6
                 // one blake3 per entry, the price the M pass already
                 // pays per entry. A rebound forward entry silently
                 // redirects every selection literal on the string.
-                let forward = s.catalog.dict_lookup(raw)?.map(InternId::raw);
+                let forward = s.catalog.dict_lookup(raw)?;
                 if forward != Some(id) {
-                    s.push(StoreFinding::DictForwardDesync {
+                    s.corrupt(CorruptionError::DictForwardDesync {
                         intern_id: id,
                         forward,
                     });
@@ -67,16 +71,13 @@ pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u6
     // resolve — the exact corruption the runtime types as
     // `DanglingInternId`, convicted offline instead of at the next
     // export. The F pass built the set; this is its second consumer.
-    for &id in &s.referenced_interns {
+    let referenced: Vec<InternId> = s.referenced_interns.iter().copied().collect();
+    for id in referenced {
         if s.catalog
-            .get(
-                CatalogMap::Dictionary,
-                &dict::reverse_key(InternId::from_raw(id)),
-            )?
+            .get(CatalogMap::Dictionary, &dict::reverse_key(id))?
             .is_none()
         {
-            s.findings
-                .push(StoreFinding::DanglingInternId { intern_id: id });
+            s.corrupt(CorruptionError::DanglingInternId(id));
         }
     }
     Ok(dangling)

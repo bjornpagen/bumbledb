@@ -231,7 +231,7 @@ pub(crate) trait CatalogRead: OrderedRead {
             &crate::storage::dict::reverse_key(id),
         )?
         .ok_or(crate::error::Error::Corruption(
-            crate::error::CorruptionError::DanglingInternId(id.raw()),
+            crate::error::CorruptionError::DanglingInternId(id),
         ))
     }
 
