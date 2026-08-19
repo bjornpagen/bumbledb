@@ -1,0 +1,12 @@
+{
+"case":"complete-empty-green",
+"kind":"complete",
+"provenance":{"hand":"complete-empty-green"},
+"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","u64"]}],
+"ground_axioms":[],
+"statements":[{"functionality":{"relation":0,"projection":[0]}}]},
+"instance":[{"relation":0,"facts":[]}],
+"delta":{"deletes":[],
+"inserts":[]},
+"verdict":"accept"
+}

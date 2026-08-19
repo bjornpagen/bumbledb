@@ -203,7 +203,9 @@ use tax::{Status, Tax};
 /// theory (prepare runs the validation roster).
 fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), theory).expect("create the theory's store");
+    let db = Db::create(dir.path(), theory)
+        .expect("create the theory's store")
+        .expect("accepted");
     db.prepare(query).expect("the golden query validates");
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     render(&schema, query)
@@ -535,9 +537,9 @@ fn recursive_lowers_to_the_exact_ir() {
         negated: vec![],
         conditions: vec![],
     };
-    let expected = bumbledb::Query::Reach {
+    let expected = bumbledb::Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![parent_atom(0, 1)],
@@ -552,7 +554,7 @@ fn recursive_lowers_to_the_exact_ir() {
                 atoms: vec![parent_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
     };
@@ -602,9 +604,9 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
         negated: vec![],
         conditions,
     };
-    let expected = bumbledb::Query::Reach {
+    let expected = bumbledb::Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![parent_atom(0, 1)],
@@ -620,7 +622,7 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
                 // rec arms walk before main: `?skip` is ParamId(0).
                 conditions: vec![cond(CmpOp::Ne, 2, 0)],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule(
             [0, 1],

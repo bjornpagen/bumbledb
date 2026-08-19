@@ -1,7 +1,7 @@
 use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
 use bumbledb_theory::Interval;
 use bumbledb_theory::schema::IntervalElement;
 
@@ -18,6 +18,13 @@ impl Answers {
         self.blob.clear();
     }
 
+    /// Stamps the find-term arity and clears — the one writer of both
+    /// `arity` and the cell heap. Call at every execution entry.
+    pub(crate) fn begin(&mut self, arity: usize) {
+        self.clear();
+        self.arity = arity;
+    }
+
     /// Number of answers.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -26,7 +33,7 @@ impl Answers {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        self.len() == 0
     }
 
     /// Number of columns (find terms).
@@ -146,9 +153,9 @@ impl Answers {
         }
     }
 
-    pub(super) fn push_word(
+    pub(super) fn push_word<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         ty: &ValueType,
         word: u64,
         memo: &mut ResolveMemo,
@@ -158,7 +165,7 @@ impl Answers {
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
-                let (start, len) = memo.resolve(txn, word, self)?;
+                let (start, len) = memo.resolve(catalog, word, self)?;
                 Cell::String { start, len }
             }
             ValueType::FixedBytes { .. } => {

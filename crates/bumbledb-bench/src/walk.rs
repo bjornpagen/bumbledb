@@ -9,17 +9,20 @@ use bumbledb::{InteriorId, ProjectionRule, Query, RecRule, RecStep, Rule};
 pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
     let mut out: Vec<Rule> = Vec::new();
     match query {
-        Query::Cq {
-            interiors, rules, ..
+        Query {
+            interiors,
+            rules,
+            rec: None,
+            ..
         } => {
             for interior in interiors {
                 out.extend(interior.rules.iter().map(ProjectionRule::to_rule));
             }
             out.extend(rules.iter().cloned());
         }
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rec: Some(rec),
             rules,
             ..
         } => {
@@ -41,8 +44,11 @@ pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
 /// (the contradiction plant and converse twin only touch conditions).
 pub fn every_rule_mut(query: &mut Query, mut f: impl FnMut(&mut Rule) -> bool) -> bool {
     match query {
-        Query::Cq {
-            interiors, rules, ..
+        Query {
+            interiors,
+            rules,
+            rec: None,
+            ..
         } => {
             for interior in interiors {
                 for proj in &mut interior.rules {
@@ -57,9 +63,9 @@ pub fn every_rule_mut(query: &mut Query, mut f: impl FnMut(&mut Rule) -> bool) -
             }
             rules.iter_mut().all(f)
         }
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rec: Some(rec),
             rules,
             ..
         } => {

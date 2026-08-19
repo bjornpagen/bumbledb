@@ -7,31 +7,31 @@
 
 use crate::error::Result;
 use crate::schema::StatementView;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep, namespace};
+use super::{StoreFinding, Sweep, for_namespace};
 
-pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
-    let txn = s.txn;
+pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     let schema = s.schema;
     let mut derived = keys::DeterminantImage::scratch();
     // The previous pointwise determinant key: consecutive keys of one
     // scalar-prefix group sit adjacent under the cursor, so a single
-    // lookback walks every successive pair.
-    let mut prev_pointwise: Option<&[u8]> = None;
-    for entry in namespace(s.data, txn, keys::NS_DETERMINANT)? {
-        let (key, value) = entry?;
+    // lookback walks every successive pair. Owned because the catalog
+    // range cursor is lending — a prior `&[u8]` would dangle.
+    let mut prev_pointwise: Option<Vec<u8>> = None;
+    for_namespace(s.catalog, keys::Namespace::Determinant, |key, value| {
         // U | relation(4) | statement(2) | determinant — the determinant is nonempty
         // (projections are non-empty by validation).
         let Some((rel, sid, determinant)) = keys::parse_determinant_key(key) else {
             s.malformed(key, "U key length");
             prev_pointwise = None;
-            continue;
+            return Ok(());
         };
         let Some(relation) = schema.relation_checked(rel) else {
             s.malformed(key, "U key relation");
             prev_pointwise = None;
-            continue;
+            return Ok(());
         };
         // Closed relations have no rows in the store: presence is the
         // finding (the F pass's exemption, mirrored).
@@ -41,17 +41,17 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 key: key.into(),
             });
             prev_pointwise = None;
-            continue;
+            return Ok(());
         }
         let Some(StatementView::Key(key_id, statement)) = schema.statement_checked(sid) else {
             s.malformed(key, "U key statement");
             prev_pointwise = None;
-            continue;
+            return Ok(());
         };
         if statement.relation != rel || !relation.keys().contains(&key_id) {
             s.malformed(key, "U key statement");
             prev_pointwise = None;
-            continue;
+            return Ok(());
         }
         // The one id allocator (R16): a fresh-row auto-key maintains no
         // `U` tree — its entry would transcribe `F` — so the entry's
@@ -63,12 +63,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 determinant_key: key.into(),
             });
             prev_pointwise = None;
-            continue;
+            return Ok(());
         }
         let Ok(row_bytes) = <[u8; 8]>::try_from(value) else {
             s.malformed(key, "U row id");
             prev_pointwise = None;
-            continue;
+            return Ok(());
         };
         let row_id = u64::from_le_bytes(row_bytes);
 
@@ -78,12 +78,11 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // reporting.
         let backs = match s.fact(rel, row_id)? {
             None => false,
-            Some(fact) if fact.len() != relation.layout().fact_width() => true,
+            Some(fact) if fact.as_ref().len() != relation.layout().fact_width() => true,
             Some(fact) => {
                 keys::determinant_image(
-                    relation.layout(),
+                    relation.layout().encoded(fact.as_ref()),
                     &statement.projection,
-                    fact,
                     &mut derived,
                 );
                 derived.as_bytes() == determinant
@@ -106,15 +105,15 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // construction.
         let Some(tail) = schema.key_tail(statement) else {
             prev_pointwise = None;
-            continue;
+            return Ok(());
         };
         if determinant.len() < tail.bytes() {
             // A pointwise determinant shorter than its interval is a width
             // desync the re-derivation above already convicted.
             prev_pointwise = None;
-            continue;
+            return Ok(());
         }
-        if let Some(prev) = prev_pointwise {
+        if let Some(prev) = &prev_pointwise {
             let same_group = prev.len() == key.len()
                 && prev[..prev.len() - tail.bytes()] == key[..key.len() - tail.bytes()];
             let words = (
@@ -131,12 +130,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 s.push(StoreFinding::PointwiseOverlap {
                     relation: rel,
                     statement: sid,
-                    first: prev.into(),
+                    first: prev.clone().into(),
                     second: key.into(),
                 });
             }
         }
-        prev_pointwise = Some(key);
-    }
-    Ok(())
+        prev_pointwise = Some(key.to_vec());
+        Ok(())
+    })
 }

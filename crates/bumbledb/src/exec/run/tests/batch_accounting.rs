@@ -119,10 +119,10 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     let views: Vec<Arc<crate::image::RelationImage>> = (0..3)
-        .map(|rel| crate::image::build(&txn, &schema, RelationId(rel)).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
         .collect();
 
     let (x, d, t) = (VarId(0), VarId(1), VarId(2));
@@ -253,12 +253,15 @@ fn pump_gather_windows_are_attributed() {
     assert!(!sink.rows.is_empty());
     // Both pumped nodes attribute gather windows: the virtual root's
     // pass (node 0) and the middle node's (node 1).
-    for name in ["jp_gather_n0", "jp_gather_n1"] {
+    for point in [
+        crate::obs::names::JOIN_PHASE[6][0],
+        crate::obs::names::JOIN_PHASE[6][1],
+    ] {
         let event = events
             .iter()
-            .find(|e| e.name() == name)
-            .unwrap_or_else(|| panic!("{name} attributed"));
-        assert!(event.a1() > 0, "{name} counts its windows");
+            .find(|e| e.point() == point)
+            .unwrap_or_else(|| panic!("{point} attributed"));
+        assert!(event.a1() > 0, "{point} counts its windows");
     }
 }
 

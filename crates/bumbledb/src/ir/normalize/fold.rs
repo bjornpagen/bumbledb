@@ -252,19 +252,19 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
                 return Some(format!(
                     "{}: {} ∈ {{}}",
                     relation.name(),
-                    relation.field(*field).name
+                    relation.field(field.field()).name
                 ));
             }
         }
-        match eqs.get(field) {
+        match eqs.get(&field.field()) {
             None => {
-                eqs.insert(*field, value.clone());
+                eqs.insert(field.field(), value.clone());
             }
             Some(prior) => {
                 // Rules (b) and (d): the pinned constant against the
                 // later one.
                 if eq_conflicts(prior, value) {
-                    return Some(eq_pair_picture(relation, *field, prior, value));
+                    return Some(eq_pair_picture(relation, field.field(), prior, value));
                 }
             }
         }
@@ -331,7 +331,7 @@ fn interval_contradictions(
         } = filter
             && *mask == AllenMask::EQUALS
         {
-            interval_pins.entry(*field).or_insert((*start, *end));
+            interval_pins.entry(field.field()).or_insert((*start, *end));
         }
     }
     for filter in filters {
@@ -346,12 +346,12 @@ fn interval_contradictions(
                 other: IntervalConst::Interval { start, end },
                 mask,
             } => {
-                if let Some(pin) = interval_pins.get(field)
+                if let Some(pin) = interval_pins.get(&field.field())
                     && allen_refuted(*pin, *mask, (*start, *end))
                 {
                     return Some(field_allen_picture(
                         relation,
-                        *field,
+                        field.field(),
                         *pin,
                         *mask,
                         (*start, *end),
@@ -360,11 +360,18 @@ fn interval_contradictions(
             }
             // Rule (e), field-vs-field: both sides pinned.
             FilterPredicate::FieldsAllen { left, right, mask } => {
-                if let (Some(lhs), Some(rhs)) = (interval_pins.get(left), interval_pins.get(right))
-                    && allen_refuted(*lhs, *mask, *rhs)
+                if let (Some(lhs), Some(rhs)) = (
+                    interval_pins.get(&left.field()),
+                    interval_pins.get(&right.field()),
+                ) && allen_refuted(*lhs, *mask, *rhs)
                 {
                     return Some(fields_allen_picture(
-                        relation, *left, *lhs, *mask, *right, *rhs,
+                        relation,
+                        left.field(),
+                        *lhs,
+                        *mask,
+                        right.field(),
+                        *rhs,
                     ));
                 }
             }
@@ -373,10 +380,10 @@ fn interval_contradictions(
                 field,
                 point: ViewWordSource::Word(point),
             } => {
-                if let Some(pin) = interval_pins.get(field)
+                if let Some(pin) = interval_pins.get(&field.field())
                     && point_outside(*pin, *point)
                 {
-                    return Some(point_in_picture(relation, *field, *pin, *point));
+                    return Some(point_in_picture(relation, field.field(), *pin, *point));
                 }
             }
             // Rule (f), reversed: the pinned scalar against the constant
@@ -385,12 +392,12 @@ fn interval_contradictions(
                 field,
                 outer: IntervalConst::Interval { start, end },
             } => {
-                if let Some(Const::Word(point)) = eqs.get(field)
+                if let Some(Const::Word(point)) = eqs.get(&field.field())
                     && point_outside((*start, *end), *point)
                 {
                     return Some(field_within_picture(
                         relation,
-                        *field,
+                        field.field(),
                         *point,
                         (*start, *end),
                     ));
@@ -416,7 +423,7 @@ fn constant_order_bound(filter: &FilterPredicate) -> Option<(FieldId, WordCmp, u
     else {
         return None;
     };
-    Some((*field, *op, *word))
+    Some((field.field(), *op, *word))
 }
 
 /// Emission: each folded summary replaces its constituent order filters
@@ -441,14 +448,14 @@ fn emit(
             let mut emitted = Vec::with_capacity(2);
             if summary.lo > 0 {
                 emitted.push(FilterPredicate::Compare {
-                    field: *field,
+                    field: (*field).into(),
                     op: WordCmp::Ge,
                     value: Const::Word(summary.lo),
                 });
             }
             if summary.hi < u64::MAX {
                 emitted.push(FilterPredicate::Compare {
-                    field: *field,
+                    field: (*field).into(),
                     op: WordCmp::Le,
                     value: Const::Word(summary.hi),
                 });
@@ -533,7 +540,14 @@ pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Con
             };
             literal(out, &Value::FixedBytes(bytes[..len].into()));
         }
-        Const::PendingIntern { bytes } => literal(out, &Value::String(bytes.clone())),
+        Const::PendingIntern { bytes } => literal(
+            out,
+            &Value::String(
+                std::str::from_utf8(bytes)
+                    .expect("pending intern is UTF-8")
+                    .into(),
+            ),
+        ),
         Const::WordSet(words) => {
             out.push('{');
             for (index, word) in words.iter().enumerate() {

@@ -12,7 +12,6 @@ use super::{
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-displaced-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -104,15 +103,16 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
     for rel in [super::ids::HUB, super::ids::SPOKE] {
         db.write(|tx| {
             tx.insert_dyn(rel, super::relation_rows(sizes, cfg.seed, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("load");
+        .expect("load")
+        .expect("accepted");
     }
     let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
     let mut buffer = bumbledb::Answers::new();
     let mut traced_execute = || {
         obs::start_capture();
-        db.read(|snap| snap.execute_args(&mut prepared, &[], &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
             .expect("execute");
         obs::finish_capture()
     };
@@ -120,7 +120,7 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
     let first = traced_execute();
     let forces: Vec<(u64, u64)> = first
         .iter()
-        .filter(|e| e.name() == obs::names::COLT_FORCE)
+        .filter(|e| e.point() == obs::names::COLT_FORCE)
         .map(|e| (e.a0(), e.a1()))
         .collect();
     assert_eq!(
@@ -132,12 +132,12 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         "two forces: the hub tag prefix, then all spoke positions at the pinned distinct hub keys"
     );
     assert!(
-        first.iter().any(|e| e.name() == obs::names::IMAGE_BUILD),
+        first.iter().any(|e| e.point() == obs::names::IMAGE_BUILD),
         "the first execute decodes the images"
     );
 
     let second = traced_execute();
-    let count = |name: &str| second.iter().filter(|e| e.name() == name).count();
+    let count = |point: obs::TracePoint| second.iter().filter(|e| e.point() == point).count();
     assert!(
         count(obs::names::VIEW_MEMO_HIT) > 0,
         "the second execute rides the view memo"
@@ -185,11 +185,11 @@ fn the_folds_produce_their_group_masses() {
     let (db, _conn) = super::load_stores(&dir, cfg, StoreMode::Durable).expect("load");
     let mut buffer = bumbledb::Answers::new();
     let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
-    db.read(|snap| snap.execute_args(&mut prepared, &[], &mut buffer))
+    db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
         .expect("execute");
     assert_eq!(buffer.len() as u64, sizes.tags, "one group per tag");
     let mut prepared = db.prepare(&super::stream_query()).expect("prepare");
-    db.read(|snap| snap.execute_args(&mut prepared, &[], &mut buffer))
+    db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
         .expect("execute");
     assert_eq!(buffer.len(), 1, "the ungrouped fold");
     drop(db);

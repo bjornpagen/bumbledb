@@ -951,9 +951,10 @@ bumbledb::schema! {
 }
 ```
 
-Three write idioms. The first two are snapshot-derived and therefore use
-snapshot-query → compute → `write_from(&snap)` → host retry on
-`GenerationMoved`. **Update-where**: query the premise on a snapshot, then
+Three write idioms. The first two are instance-derived and therefore use
+instance-query → compute → `write_from(&witness)` → host retry on
+`ConditionalWrite::Moved`. **Update-where**: query the premise on a read
+instance, then
 `delete(old)` + `insert(new)` per matched fact — "still Queued" is the
 witness:
 
@@ -1004,7 +1005,7 @@ bumbledb::schema! {
 ```
 
 Maintenance is the third witness idiom (recipe 20): re-run the deriving
-query on a snapshot, diff, `write_from(&snap)` — the rollup cannot commit
+query on a read instance, diff, `write_from(&witness)` — the rollup cannot commit
 against sources it didn't actually read. The deriving query (`Pack` IS the
 coalesce):
 
@@ -1327,9 +1328,9 @@ let deriving = query!(MaintainedRollup {
 });
 ```
 
-The host loop is snapshot → derive → diff → `write_from(snapshot)`. On
-`GenerationMoved`, it throws away the derived set and diff and starts from a new
-snapshot; it never retries a stale diff. Dependencies prove every surviving
+The host loop is instance → derive → diff → `write_from(&witness)`. On
+`ConditionalWrite::Moved`, it throws away the derived set and diff and starts from a new
+instance; it never retries a stale diff. Dependencies prove every surviving
 stored span sound, while the witness proves which source state the derivation
 saw; neither mechanism proves completeness. The compiled copy is
 `maintain_busy_spans` in `cookbook.rs`; its lock moves the source generation
@@ -1505,17 +1506,17 @@ Every declared `R(x, ..) -> R` on an ordinary relation emits a generated
 **key struct** named by the derived-name rule (`{R}By{Fields}`, each snake
 segment Pascal-cased) — here `CourseByGrp { grp }` — implementing `Key`
 with its statement id computed at expansion. The point read is that struct
-handed to `get` on either scope: `snap.get(CourseByGrp { grp })` inside
+handed to `get` on either scope: `instance.get(CourseByGrp { grp })` inside
 `db.read`, and `tx.get(CourseByGrp { grp })` inside `db.write`, where the
 transaction side answers the FINAL state (base plus pending delta:
 read-your-writes, a pending delete answers `None`). The fresh newtype is
-the primary key made callable the same way: `snap.get(id)` / `tx.get(id)`
+the primary key made callable the same way: `instance.get(id)` / `tx.get(id)`
 through a `CourseId` value reads the one `Course` fact that minted it.
 A wrong column, wrong newtype, or wrong relation is a compile error, never
 a runtime shape check.
 
 The anti-pattern this recipe retires: a scan-and-find where a key law
-exists — `snap.scan_facts::<Course>()` folded host-side, hunting for a
+exists — `instance.scan_facts::<Course>()` folded host-side, hunting for a
 `grp` — re-derives in the host what the store already enforces. The
 uniqueness the fold quietly assumes IS the declared FD; spell the law and
 the point read comes with it.

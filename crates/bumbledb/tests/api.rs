@@ -137,7 +137,9 @@ fn name_amount_answers(out: &Answers) -> Vec<(String, i64)> {
 #[test]
 fn usage_shapes_end_to_end() {
     let dir = common::TempDir::new("api-usage");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     // Write: fresh minting + typed inserts.
     let accounts = db
@@ -168,7 +170,9 @@ fn usage_shapes_end_to_end() {
             }
             Ok(accounts)
         })
-        .expect("write");
+        .expect("write")
+        .unwrap()
+        .value;
 
     // Read: point lookup (key probe), join, aggregate.
     let mut point = db.prepare(&point_query()).expect("prepare point");
@@ -179,7 +183,7 @@ fn usage_shapes_end_to_end() {
         assert_eq!(answers.len(), 1);
         assert_eq!(answers.get(0, 0), AnswerValue::I64(40));
 
-        let answers = snap.execute_collect(&mut join, &[])?;
+        let answers = snap.execute_collect(&mut join, &[] as &[bumbledb::BindValue])?;
         assert_eq!(
             name_amount_answers(&answers),
             vec![
@@ -189,7 +193,7 @@ fn usage_shapes_end_to_end() {
             ]
         );
 
-        let answers = snap.execute_collect(&mut aggregate, &[])?;
+        let answers = snap.execute_collect(&mut aggregate, &[] as &[bumbledb::BindValue])?;
         assert_eq!(
             name_amount_answers(&answers),
             vec![("alice".to_owned(), 75), ("bob".to_owned(), 40)]
@@ -206,10 +210,11 @@ fn usage_shapes_end_to_end() {
         tx.delete([&old])?;
         Ok(())
     })
-    .expect("mutate");
+    .expect("mutate")
+    .unwrap();
 
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut join, &[])?;
+        let answers = snap.execute_collect(&mut join, &[] as &[bumbledb::BindValue])?;
         assert_eq!(
             name_amount_answers(&answers),
             vec![
@@ -229,16 +234,19 @@ fn usage_shapes_end_to_end() {
 #[test]
 fn aborted_writes_leave_prior_state_intact() {
     let dir = common::TempDir::new("api-abort");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder { id, name: "keep" }])
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
 
     // A panicking closure: the delta dies in the unwind, LMDB untouched.
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: bumbledb::Result<()> = db.write(|tx| {
+        let _ = db.write(|tx| -> bumbledb::Result<()> {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Holder {
                 id,
@@ -250,14 +258,16 @@ fn aborted_writes_leave_prior_state_intact() {
     assert!(panicked.is_err());
 
     // An `Err` closure aborts the same way.
-    let failed: bumbledb::Result<()> = db.write(|tx| {
+    let failed = db.write(|tx| -> bumbledb::Result<()> {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
             id,
             name: "doomed-by-error",
         }])?;
         Err(bumbledb::Error::Overflow(
-            bumbledb::OverflowKind::Aggregate { find: 0 },
+            bumbledb::OverflowKind::Aggregate {
+                find: bumbledb::FindIndex(0),
+            },
         ))
     });
     assert!(failed.is_err());
@@ -267,7 +277,8 @@ fn aborted_writes_leave_prior_state_intact() {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder { id, name: "after" }])
     })
-    .expect("mutex usable after a panic");
+    .expect("mutex usable after a panic")
+    .unwrap();
 
     let names = db
         .read(|snap| {
@@ -277,7 +288,7 @@ fn aborted_writes_leave_prior_state_intact() {
                 let Value::String(raw) = &fact[1] else {
                     panic!("field 1 is the name");
                 };
-                names.push(String::from_utf8(raw.to_vec()).expect("utf-8"));
+                names.push(raw.to_string());
             }
             names.sort();
             Ok(names)
@@ -292,7 +303,9 @@ fn concurrent_readers_while_writing() {
     assert_send_sync::<Db<Ledger>>();
 
     let dir = common::TempDir::new("api-threads");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     // Seed one pair so readers always see data.
     db.write(|tx| {
         let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -307,7 +320,8 @@ fn concurrent_readers_while_writing() {
             balance: 1,
         }])
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
 
     // The writer commits (Holder, Account) pairs; every reader snapshot
     // must observe them atomically: equal counts, always.
@@ -327,7 +341,8 @@ fn concurrent_readers_while_writing() {
                         balance: round,
                     }])
                 })
-                .expect("paired write");
+                .expect("paired write")
+                .unwrap();
             }
         });
         for _ in 0..2 {
@@ -354,7 +369,9 @@ fn concurrent_readers_while_writing() {
 fn export_scan_inserts_into_a_fresh_database() {
     let dir_old = common::TempDir::new("api-etl-old");
     let dir_new = common::TempDir::new("api-etl-new");
-    let old = Db::create(dir_old.path(), Ledger).expect("create old");
+    let old = Db::create(dir_old.path(), Ledger)
+        .expect("create old")
+        .expect("accepted");
 
     let max_holder = old
         .write(|tx| {
@@ -372,7 +389,9 @@ fn export_scan_inserts_into_a_fresh_database() {
             }
             Ok(max)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     // Export: full-relation scans in row_id order, decoded dynamic facts.
     let (holders, accounts) = old
@@ -387,27 +406,36 @@ fn export_scan_inserts_into_a_fresh_database() {
 
     // Import: containment targets first; explicit fresh values preserve
     // identity.
-    let new = Db::create(dir_new.path(), Ledger).expect("create new");
+    let new = Db::create(dir_new.path(), Ledger)
+        .expect("create new")
+        .expect("accepted");
     let loaded = new
-        .write(|tx| tx.insert_dyn(Holder::RELATION, holders).map(|r| r.changed))
-        .expect("load holders");
+        .write(|tx| {
+            tx.insert_dyn(Holder::RELATION, holders)
+                .map(bumbledb::MutationReport::changed)
+        })
+        .expect("load holders")
+        .unwrap()
+        .value;
     assert_eq!(loaded, 3);
     let loaded = new
         .write(|tx| {
             tx.insert_dyn(Account::RELATION, accounts)
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("load accounts");
+        .expect("load accounts")
+        .unwrap()
+        .value;
     assert_eq!(loaded, 3);
 
     // Identity: both databases answer the join identically.
     let mut join_old = old.prepare(&join_query()).expect("prepare");
     let answers_old = old
-        .read(|snap| snap.execute_collect(&mut join_old, &[]))
+        .read(|snap| snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue]))
         .expect("query old");
     let mut join_new = new.prepare(&join_query()).expect("prepare");
     let answers_new = new
-        .read(|snap| snap.execute_collect(&mut join_new, &[]))
+        .read(|snap| snap.execute_collect(&mut join_new, &[] as &[bumbledb::BindValue]))
         .expect("query new");
     assert_eq!(
         name_amount_answers(&answers_old),
@@ -424,55 +452,51 @@ fn export_scan_inserts_into_a_fresh_database() {
         );
         Ok(())
     })
-    .expect("mint after import");
+    .expect("mint after import")
+    .unwrap();
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one protocol: the three rejection shapes through one store
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Holder { id, name: "alice" }])?;
             Ok(id)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     // Functionality violation: two live accounts claiming one fresh id.
     // The error carries the statement id and the offending fact bytes,
     // and the WHOLE transaction aborts (the good insert too).
-    let err = db
-        .write(|tx| {
-            tx.insert([&Account {
-                id: AccountId(7),
-                holder,
-                balance: 1,
-            }])?;
-            tx.insert([&Account {
-                id: AccountId(7),
-                holder,
-                balance: 2,
-            }])?;
-            Ok(())
-        })
-        .unwrap_err();
-    let bumbledb::Error::CommitRejected { ref violations } = err else {
-        panic!("expected CommitRejected, got {err}");
-    };
-    let [bumbledb::Violation::Functionality(fv)] = violations.as_slice() else {
+    let violations = common::expect_rejected(db.write(|tx| {
+        tx.insert([&Account {
+            id: AccountId(7),
+            holder,
+            balance: 1,
+        }])?;
+        tx.insert([&Account {
+            id: AccountId(7),
+            holder,
+            balance: 2,
+        }])?;
+        Ok(())
+    }));
+    let [bumbledb::Violation::Functionality { id, fact, .. }] = violations.as_slice() else {
         panic!("expected one key citation, got {violations:?}");
     };
     // Materialized order: Holder.id's fresh auto-key, Account.id's
     // fresh auto-key, then the declared containment.
-    assert_eq!(fv.statement(), StatementId(1));
-    assert!(!fv.fact().is_empty());
+    assert_eq!(*id, StatementId(1));
+    assert!(!fact.is_empty());
     // The rendered diagnostic cites the statement in the algebra.
-    let rendered = format!("{}", err.display_with(&ledger_schema()));
+    let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(rendered.contains("Account(id) -> Account"), "{rendered}");
     let count = db
         .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
@@ -482,27 +506,22 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     // Containment, source side: an inserted account whose holder does
     // not exist. `Display` through the schema cites the statement
     // rendered back in the algebra, and the judgment direction.
-    let err = db
-        .write(|tx| {
-            tx.insert([&Account {
-                id: AccountId(1),
-                holder: HolderId(404),
-                balance: 5,
-            }])
-        })
-        .unwrap_err();
+    let violations = common::expect_rejected(db.write(|tx| {
+        tx.insert([&Account {
+            id: AccountId(1),
+            holder: HolderId(404),
+            balance: 5,
+        }])
+    }));
     assert!(matches!(
-        &err,
-        bumbledb::Error::CommitRejected { violations } if matches!(
-            violations.as_slice(),
-            [bumbledb::Violation::Containment {
-                statement: StatementId(2),
-                direction: Direction::SourceUnsatisfied,
-                ..
-            }]
-        )
+        violations.as_slice(),
+        [bumbledb::Violation::Containment {
+            id: StatementId(2),
+            direction: Direction::SourceUnsatisfied,
+            ..
+        }]
     ));
-    let rendered = format!("{}", err.display_with(&ledger_schema()));
+    let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(
         rendered.contains("Account(holder) <= Holder(id)"),
         "{rendered}"
@@ -518,18 +537,14 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             balance: 5,
         }])
     })
-    .expect("reference the holder");
-    let err = db
-        .write(|tx| {
-            tx.delete([&Holder {
-                id: holder,
-                name: "alice",
-            }])
-        })
-        .unwrap_err();
-    let bumbledb::Error::CommitRejected { ref violations } = err else {
-        panic!("expected CommitRejected, got {err}");
-    };
+    .expect("reference the holder")
+    .unwrap();
+    let violations = common::expect_rejected(db.write(|tx| {
+        tx.delete([&Holder {
+            id: holder,
+            name: "alice",
+        }])
+    }));
     let [
         bumbledb::Violation::Containment {
             direction, fact, ..
@@ -543,7 +558,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         !fact.is_empty(),
         "the requiring source is named by its fact"
     );
-    let rendered = format!("{}", err.display_with(&ledger_schema()));
+    let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(
         rendered.contains("Account(holder) <= Holder(id)"),
         "{rendered}"
@@ -554,7 +569,11 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
 #[test]
 fn open_mismatches_and_snapshot_usability() {
     let dir = common::TempDir::new("api-open-mismatch");
-    drop(Db::create(dir.path(), Ledger).expect("create"));
+    drop(
+        Db::create(dir.path(), Ledger)
+            .expect("create")
+            .expect("accepted"),
+    );
 
     // Db-level mismatch: a different schema refuses to open.
     let other = bumbledb::schema::SchemaDescriptor {
@@ -578,7 +597,7 @@ fn open_mismatches_and_snapshot_usability() {
     let Err(err) = Db::create(dir.path(), Ledger).map(|_| ()) else {
         panic!("create over an existing environment must refuse");
     };
-    assert!(matches!(err, bumbledb::Error::AlreadyInitialized));
+    assert!(matches!(err, bumbledb::Error::DestinationExists { .. }));
 
     // A failed execute leaves the snapshot usable, and the caller-buffer
     // path works through the public surface.
@@ -587,7 +606,8 @@ fn open_mismatches_and_snapshot_usability() {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder { id, name: "bo" }])
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
     let mut join = db.prepare(&join_query()).expect("prepare");
     db.read(|snap| {
         let mut out = Answers::new();
@@ -597,7 +617,7 @@ fn open_mismatches_and_snapshot_usability() {
             .unwrap_err();
         assert!(matches!(err, bumbledb::Error::ParamCountMismatch { .. }));
         // ...and the same snapshot executes fine afterwards.
-        snap.execute(&mut join, &[], &mut out)?;
+        snap.execute(&mut join, &[] as &[bumbledb::BindValue], &mut out)?;
         assert_eq!(out.len(), 0, "no accounts yet");
         Ok(())
     })
@@ -607,12 +627,15 @@ fn open_mismatches_and_snapshot_usability() {
 #[test]
 fn pinned_snapshot_reads_its_generation_across_later_commits() {
     let dir = common::TempDir::new("api-pinned");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder { id, name: "first" }])
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
 
     let mut join = db.prepare(&join_query()).expect("prepare");
     db.read(|snap| {
@@ -627,11 +650,12 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
                     id,
                     name: &format!("later-{round}"),
                 }])
-            })?;
+            })?
+            .unwrap();
         }
         // The pinned snapshot still answers at its own generation.
         assert_eq!(snap.scan_facts::<Holder>()?.count(), 1);
-        let answers = snap.execute_collect(&mut join, &[])?;
+        let answers = snap.execute_collect(&mut join, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 0);
         Ok(())
     })
@@ -648,28 +672,30 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
 fn collection_insert_equals_sequential_inserts() {
     let dir_all = common::TempDir::new("api-insert-all");
     let dir_seq = common::TempDir::new("api-insert-seq");
-    let all = Db::create(dir_all.path(), Ledger).expect("create");
-    let seq = Db::create(dir_seq.path(), Ledger).expect("create");
+    let all = Db::create(dir_all.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
+    let seq = Db::create(dir_seq.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     let n = 4_100u64;
     let facts: Vec<Vec<Value>> = (0..n)
-        .map(|i| {
-            vec![
-                Value::U64(i),
-                Value::String(format!("h{}", i % 97).into_bytes().into()),
-            ]
-        })
+        .map(|i| vec![Value::U64(i), Value::String(format!("h{}", i % 97).into())])
         .collect();
     let loaded = all
         .write(|tx| {
             tx.insert_dyn(Holder::RELATION, facts.clone())
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("collection insert");
+        .expect("collection insert")
+        .unwrap()
+        .value;
     assert_eq!(loaded, n);
     for chunk in facts.chunks(512) {
         seq.write(|tx| tx.insert_dyn(Holder::RELATION, chunk).map(|_| ()))
-            .expect("sequential insert");
+            .expect("sequential insert")
+            .unwrap();
     }
 
     // Set equality of the full export: an ETL bug is a data-loss bug.
@@ -694,11 +720,16 @@ fn collection_insert_equals_sequential_inserts() {
     // Shape failure of a collection that never entered: the write
     // persists nothing.
     let dir_fail = common::TempDir::new("api-insert-fail");
-    let fail = Db::create(dir_fail.path(), Ledger).expect("create");
+    let fail = Db::create(dir_fail.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let mut bad = facts;
     bad[4_099] = vec![Value::U64(0)];
     let err = fail
-        .write(|tx| tx.insert_dyn(Holder::RELATION, bad).map(|r| r.changed))
+        .write(|tx| {
+            tx.insert_dyn(Holder::RELATION, bad)
+                .map(bumbledb::MutationReport::changed)
+        })
         .unwrap_err();
     assert!(matches!(err, bumbledb::Error::FactShape(_)), "{err:?}");
     let persisted = fail
@@ -713,7 +744,9 @@ fn collection_insert_equals_sequential_inserts() {
 fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     use bumbledb::Fresh as _;
     let dir = common::TempDir::new("api-insert-typed");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     let n = 4_100u64;
     let names = ["ada", "bob", "eve"];
@@ -723,12 +756,16 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     };
     let holders: Vec<_> = (0..n).map(holder).collect();
     let loaded = db
-        .write(|tx| Ok(tx.insert(&holders)?.changed))
-        .expect("typed insert");
+        .write(|tx| Ok(tx.insert(&holders)?.changed()))
+        .expect("typed insert")
+        .unwrap()
+        .value;
     assert_eq!(loaded, n);
     let again = db
-        .write(|tx| Ok(tx.insert(&holders)?.changed))
-        .expect("typed re-import");
+        .write(|tx| Ok(tx.insert(&holders)?.changed()))
+        .expect("typed re-import")
+        .unwrap()
+        .value;
     assert_eq!(again, 0);
     let persisted = db
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
@@ -743,13 +780,7 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
         balance: 1,
     };
     let accounts: Vec<_> = (0..n).map(account).collect();
-    let err = db
-        .write(|tx| Ok(tx.insert(&accounts)?.changed))
-        .unwrap_err();
-    assert!(
-        matches!(err, bumbledb::Error::CommitRejected { .. }),
-        "{err:?}"
-    );
+    let _ = common::expect_rejected(db.write(|tx| Ok(tx.insert(&accounts)?.changed())));
     let account_count = db
         .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
         .expect("scan accounts");
@@ -759,7 +790,9 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
 #[test]
 fn disk_size_and_generation_report_store_state() {
     let dir = common::TempDir::new("api-disk-size");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
     assert_eq!(db.generation().expect("gen").value(), 0);
@@ -774,7 +807,8 @@ fn disk_size_and_generation_report_store_state() {
         }
         Ok(())
     })
-    .expect("collection write");
+    .expect("collection write")
+    .unwrap();
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
     assert_eq!(db.generation().expect("gen").value(), 1);
@@ -789,7 +823,9 @@ fn cover_choice_iterates_the_selected_side() {
     use bumbledb::ir::{Atom, FindTerm, FoldOp, ParamId, Query, Term, VarId};
 
     let dir = common::TempDir::new("api-cover-choice");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     // 500 holders (ids 0..7 share the name "target"), 20 accounts each.
     db.write(|tx| {
         let mut holders = Vec::new();
@@ -813,7 +849,8 @@ fn cover_choice_iterates_the_selected_side() {
         }
         Ok(())
     })
-    .expect("populate");
+    .expect("populate")
+    .unwrap();
 
     // Q(h, Sum(balance)) :- Account(holder = h, balance),
     //                       Holder(id = h, name = ?0).
@@ -854,7 +891,7 @@ fn cover_choice_iterates_the_selected_side() {
 
     // The join-variable node iterates the 7-key selected side...
     let batch_entries: Vec<u64> = stats.rules()[0]
-        .nodes
+        .nodes()
         .iter()
         .map(|n| n.batch_entries)
         .collect();
@@ -876,7 +913,9 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 
     let dir = common::TempDir::new("api-compact");
     let source_dir = dir.path().join("source");
-    let db = Db::create(&source_dir, Ledger).expect("create");
+    let db = Db::create(&source_dir, Ledger)
+        .expect("create")
+        .expect("accepted");
     // Many small commits grow a real freelist through CoW churn.
     for round in 0..40u64 {
         db.write(|tx| {
@@ -889,7 +928,8 @@ fn compaction_drops_the_freelist_and_preserves_content() {
             }
             Ok(())
         })
-        .expect("commit");
+        .expect("commit")
+        .unwrap();
     }
     let source_size = db.disk_size().expect("size");
     let generation = db.generation().expect("generation");
@@ -906,7 +946,10 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     db.compact(&compact_dir).expect("compact");
     // Never clobbers.
     let err = db.compact(&compact_dir).expect_err("must refuse");
-    assert!(matches!(err, bumbledb::Error::Io(_)), "{err:?}");
+    assert!(
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        "{err:?}"
+    );
     drop(db);
 
     let compacted = Db::open(&compact_dir, Ledger).expect("open compacted");
@@ -927,7 +970,8 @@ fn compaction_drops_the_freelist_and_preserves_content() {
                 name: "post-compaction",
             }])
         })
-        .expect("write");
+        .expect("write")
+        .unwrap();
     assert_eq!(
         scan_digest(&compacted).len(),
         source_rows.len() + 1,
@@ -943,8 +987,12 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 fn a_prepared_query_refuses_a_foreign_snapshot() {
     let dir_a = common::TempDir::new("api-foreign-prepared-a");
     let dir_b = common::TempDir::new("api-foreign-prepared-b");
-    let db_a = Db::create(dir_a.path(), Ledger).expect("create a");
-    let db_b = Db::create(dir_b.path(), Ledger).expect("create b");
+    let db_a = Db::create(dir_a.path(), Ledger)
+        .expect("create a")
+        .expect("accepted");
+    let db_b = Db::create(dir_b.path(), Ledger)
+        .expect("create b")
+        .expect("accepted");
     for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
         db.write(|tx| {
             let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -956,7 +1004,8 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
                 balance,
             }])
         })
-        .expect("seed one distinct fact pair");
+        .expect("seed one distinct fact pair")
+        .unwrap();
     }
     assert_eq!(db_a.generation().expect("gen a").value(), 1);
     assert_eq!(
@@ -967,7 +1016,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
 
     let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
     db_a.read(|snap| {
-        let out = snap.execute_collect(&mut prepared, &[])?;
+        let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
     })
@@ -976,13 +1025,17 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     // Step 4 of the audit repro: execute against B. Every execution entry
     // refuses — never B-as-A's-data.
     db_b.read(|snap| {
-        let err = snap.execute_collect(&mut prepared, &[]).unwrap_err();
+        let err = snap
+            .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+            .unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
         let mut out = Answers::new();
-        let err = snap.execute(&mut prepared, &[], &mut out).unwrap_err();
+        let err = snap
+            .execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut out)
+            .unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
@@ -1010,7 +1063,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
 
     // The preparing db still executes fine afterward.
     db_a.read(|snap| {
-        let out = snap.execute_collect(&mut prepared, &[])?;
+        let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
     })
@@ -1022,22 +1075,24 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
 #[test]
 fn a_second_handle_on_a_live_path_is_locked_out() {
     let dir = common::TempDir::new("api-env-lock");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let err = Db::open(dir.path(), Ledger).map(|_| ()).unwrap_err();
     assert!(matches!(err, bumbledb::Error::EnvironmentLocked), "{err:?}");
     let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::EnvironmentLocked),
-        "create is locked out before it can even refuse: {err:?}"
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        "create refuses an existing destination before the lock: {err:?}"
     );
     drop(db);
     let reopened = Db::open(dir.path(), Ledger).expect("the lock died with the handle");
     drop(reopened);
 }
 
-/// `create` refuses a directory holding someone else's LMDB
-/// environment (named databases, no `_meta`), while the half-created
-/// bumbledb recovery case — an empty root — still proceeds.
+/// `create` refuses any existing destination, including a directory
+/// holding someone else's LMDB environment or a half-created empty
+/// root. Healing a half-created store is deleted with `NotInitialized`.
 #[test]
 #[expect(
     unsafe_code,
@@ -1045,6 +1100,7 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
 )]
 fn create_refuses_a_foreign_lmdb_environment() {
     let dir = common::TempDir::new("api-env-foreign-lmdb");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
         // SAFETY: this test environment is opened once, in this scope.
         let env = unsafe {
@@ -1062,13 +1118,13 @@ fn create_refuses_a_foreign_lmdb_environment() {
     }
     let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::AlreadyInitialized),
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
         "{err:?}"
     );
 
-    // The recovery case: an LMDB file with an empty root (exactly what a
-    // crash between directory creation and the meta commit leaves).
+    // A leftover empty root is an existing path — not a healable store.
     let dir = common::TempDir::new("api-env-half-created");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
         // SAFETY: as above.
         let env = unsafe {
@@ -1080,12 +1136,16 @@ fn create_refuses_a_foreign_lmdb_environment() {
         let wtxn = env.write_txn().expect("txn");
         wtxn.commit().expect("commit nothing");
     }
-    // A supervisor's "directory exists → open" reflex gets the typed
-    // not-initialized refusal naming create as the remedy — never a
-    // corruption conviction for a store that was never born.
     let err = Db::open(dir.path(), Ledger).map(|_| ()).unwrap_err();
-    assert!(matches!(err, bumbledb::Error::NotInitialized), "{err:?}");
-    drop(Db::create(dir.path(), Ledger).expect("an empty root is recoverable"));
+    assert!(
+        matches!(err, bumbledb::Error::AlreadyInitialized),
+        "{err:?}"
+    );
+    let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        "{err:?}"
+    );
 }
 
 /// `Db::write` is non-reentrant — a nested call on the same
@@ -1094,7 +1154,9 @@ fn create_refuses_a_foreign_lmdb_environment() {
 #[test]
 fn nested_write_panics_instead_of_deadlocking() {
     let dir = common::TempDir::new("api-nested-write");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = db.write(|_| db.write(|_| Ok(())));
     }));
@@ -1114,7 +1176,8 @@ fn nested_write_panics_instead_of_deadlocking() {
             name: "after the panic",
         }])
     })
-    .expect("the writer survives");
+    .expect("the writer survives")
+    .unwrap();
 }
 
 /// The concurrency family: prepared queries on
@@ -1124,7 +1187,9 @@ fn nested_write_panics_instead_of_deadlocking() {
 #[test]
 fn prepared_executions_observe_exactly_one_generation() {
     let dir = common::TempDir::new("api-gen-atomic");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let (hx, hy, ax, ay) = db
         .write(|tx| {
             let hx: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -1145,7 +1210,9 @@ fn prepared_executions_observe_exactly_one_generation() {
             }])?;
             Ok((hx, hy, ax, ay))
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     let db = &db;
     std::thread::scope(|scope| {
@@ -1173,7 +1240,8 @@ fn prepared_executions_observe_exactly_one_generation() {
                         balance: round,
                     }])
                 })
-                .expect("paired rewrite");
+                .expect("paired rewrite")
+                .unwrap();
             }
         });
         for _ in 0..3 {
@@ -1182,7 +1250,7 @@ fn prepared_executions_observe_exactly_one_generation() {
                 let mut out = Answers::new();
                 for _ in 0..80 {
                     db.read(|snap| {
-                        snap.execute(&mut prepared, &[], &mut out)?;
+                        snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut out)?;
                         let answers = name_amount_answers(&out);
                         assert_eq!(answers.len(), 2, "both facts, always: {answers:?}");
                         assert_eq!(
@@ -1208,12 +1276,16 @@ fn prepared_executions_observe_exactly_one_generation() {
 #[test]
 fn escaped_fresh_ids_survive_noop_commits() {
     let dir = common::TempDir::new("api-fresh-escape");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     // The empty-delta path.
     let a: HolderId = db
         .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
-        .expect("bare reserve");
+        .expect("bare reserve")
+        .unwrap()
+        .value;
     let generation_after_a = db.generation().expect("generation");
     let b: HolderId = db
         .write(|tx| {
@@ -1224,7 +1296,9 @@ fn escaped_fresh_ids_survive_noop_commits() {
             }])?;
             Ok(id)
         })
-        .expect("real write");
+        .expect("real write")
+        .unwrap()
+        .value;
     assert!(b.0 > a.0, "escaped id {a:?} re-issued as {b:?}");
 
     // The nets-to-nothing path (`changed: false`, non-empty delta).
@@ -1236,7 +1310,9 @@ fn escaped_fresh_ids_survive_noop_commits() {
             tx.delete([&ghost])?;
             Ok(id)
         })
-        .expect("nets to nothing");
+        .expect("nets to nothing")
+        .unwrap()
+        .value;
     let generation_after_c = db.generation().expect("generation");
     let d: HolderId = db
         .write(|tx| {
@@ -1247,7 +1323,9 @@ fn escaped_fresh_ids_survive_noop_commits() {
             }])?;
             Ok(id)
         })
-        .expect("real write");
+        .expect("real write")
+        .unwrap()
+        .value;
     assert!(d.0 > c.0, "escaped id {c:?} re-issued as {d:?}");
 
     // Neither no-op moved the generation: Q marks are write-path
@@ -1271,14 +1349,18 @@ fn escaped_fresh_ids_survive_noop_commits() {
 #[test]
 fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     let dir = common::TempDir::new("api-mint-free-delete");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Holder { id, name: "real" }])?;
             Ok(id)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     // Typed delete of a never-interned name: changed = false, and the
     // whole write is a no-op commit (generation unmoved).
@@ -1288,23 +1370,29 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
             id: holder,
             name: "never interned",
         }])?;
-        assert_eq!(changed.changed, 0, "a never-interned value matches no fact");
+        assert_eq!(
+            changed.changed(),
+            0,
+            "a never-interned value matches no fact"
+        );
         Ok(())
     })
-    .expect("typed delete");
+    .expect("typed delete")
+    .unwrap();
     // Dynamic delete, same contract.
     db.write(|tx| {
         let changed = tx.delete_dyn(
             Holder::RELATION,
             [&[
                 Value::U64(holder.0),
-                Value::String("also never interned".as_bytes().into()),
+                Value::String("also never interned".into()),
             ]],
         )?;
-        assert_eq!(changed.changed, 0);
+        assert_eq!(changed.changed(), 0);
         Ok(())
     })
-    .expect("dynamic delete");
+    .expect("dynamic delete")
+    .unwrap();
     assert_eq!(db.generation().expect("generation"), generation);
 
     // The real fact is untouched, and insert-then-delete in one
@@ -1316,11 +1404,12 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
             id,
             name: "transient",
         };
-        assert_eq!(tx.insert([&transient])?.changed, 1);
-        assert_eq!(tx.delete([&transient])?.changed, 1);
+        assert_eq!(tx.insert([&transient])?.changed(), 1);
+        assert_eq!(tx.delete([&transient])?.changed(), 1);
         Ok(())
     })
-    .expect("cancel");
+    .expect("cancel")
+    .unwrap();
     let names: Vec<String> = db
         .read(|snap| {
             snap.scan_facts::<Holder>()?
@@ -1339,14 +1428,16 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let bogus = bumbledb::RelationId(999);
     let is_unknown = |err: &bumbledb::Error| {
         matches!(
             err,
-            bumbledb::Error::FactShape(bumbledb::error::FactShapeError::UnknownRelation {
-                relation
-            }) if relation.0 == 999
+            bumbledb::Error::FactShape(bumbledb::error::FactShapeError::Id(
+                bumbledb::DynIdError::UnknownRelation { relation }
+            )) if relation.0 == 999
         )
     };
 
@@ -1357,12 +1448,13 @@ fn out_of_range_relation_ids_are_typed_errors() {
         assert!(is_unknown(&err), "{err:?}");
         Ok(())
     })
-    .expect("write closes cleanly");
+    .expect("write closes cleanly")
+    .unwrap();
 
     let err = db
         .write(|tx| {
             tx.insert_dyn(bogus, vec![vec![Value::U64(1)]])
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
         .map(|_| ())
         .unwrap_err();
@@ -1382,9 +1474,15 @@ fn out_of_range_relation_ids_are_typed_errors() {
 /// occurrence (and as the max); re-preparing resets the pin; a shrunk
 /// relation also reads as drift > 1 — the ratio is symmetric.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)]
 fn staleness_reports_drift_and_reprepare_resets_it() {
     let dir = common::TempDir::new("api-staleness");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let holder = db
         .write(|tx| {
             let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -1402,17 +1500,19 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
             }
             Ok(holder)
         })
-        .expect("seed 1 holder + 8 accounts");
+        .expect("seed 1 holder + 8 accounts")
+        .unwrap()
+        .value;
     let prepared = db.prepare(&join_query()).expect("prepare at N");
 
     // Fresh plan: both occurrences pinned, nothing drifted.
     db.read(|snap| {
         let staleness = prepared.staleness(snap)?;
-        assert_eq!(staleness.per_occurrence.len(), 2);
-        assert!(
-            (staleness.max_ratio - 1.0).abs() < f64::EPSILON,
-            "{staleness:?}"
-        );
+        let (per_occurrence, max_ratio) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("fresh plan pins: {staleness:?}"));
+        assert_eq!(per_occurrence.len(), 2);
+        assert!((max_ratio - 1.0).abs() < f64::EPSILON, "{staleness:?}");
         Ok(())
     })
     .expect("fresh read");
@@ -1429,26 +1529,28 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
         }
         Ok(())
     })
-    .expect("grow accounts to 4N");
+    .expect("grow accounts to 4N")
+    .unwrap();
 
     db.read(|snap| {
         let staleness = prepared.staleness(snap)?;
-        let account = staleness
-            .per_occurrence
+        let (per_occurrence, max_ratio) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("expected measured: {staleness:?}"));
+        let account = per_occurrence
             .iter()
             .find(|d| d.relation == Account::RELATION)
             .expect("the Account occurrence is pinned");
         assert_eq!(account.pinned, 8);
         assert_eq!(account.live, 32);
         assert!((account.ratio - 4.0).abs() < f64::EPSILON, "{account:?}");
-        let holder = staleness
-            .per_occurrence
+        let holder = per_occurrence
             .iter()
             .find(|d| d.relation == Holder::RELATION)
             .expect("the Holder occurrence is pinned");
         assert!((holder.ratio - 1.0).abs() < f64::EPSILON, "{holder:?}");
         assert!(
-            (staleness.max_ratio - 4.0).abs() < f64::EPSILON,
+            (max_ratio - 4.0).abs() < f64::EPSILON,
             "the max is the worst occurrence: {staleness:?}"
         );
         Ok(())
@@ -1459,10 +1561,10 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
     let reprepared = db.prepare(&join_query()).expect("re-prepare at 4N");
     db.read(|snap| {
         let staleness = reprepared.staleness(snap)?;
-        assert!(
-            (staleness.max_ratio - 1.0).abs() < f64::EPSILON,
-            "{staleness:?}"
-        );
+        let (_, max_ratio) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("reprepare pins: {staleness:?}"));
+        assert!((max_ratio - 1.0).abs() < f64::EPSILON, "{staleness:?}");
         Ok(())
     })
     .expect("reset read");
@@ -1477,18 +1579,21 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
         }
         Ok(())
     })
-    .expect("shrink accounts");
+    .expect("shrink accounts")
+    .unwrap();
     db.read(|snap| {
         let staleness = reprepared.staleness(snap)?;
-        let account = staleness
-            .per_occurrence
+        let (per_occurrence, max_ratio) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("shrink still pins: {staleness:?}"));
+        let account = per_occurrence
             .iter()
             .find(|d| d.relation == Account::RELATION)
             .expect("the Account occurrence is pinned");
         assert_eq!(account.pinned, 32);
         assert_eq!(account.live, 8);
         assert!(account.ratio > 1.0, "shrink reads as drift: {account:?}");
-        assert!((staleness.max_ratio - 4.0).abs() < f64::EPSILON);
+        assert!((max_ratio - 4.0).abs() < f64::EPSILON);
         Ok(())
     })
     .expect("shrunk read");
@@ -1499,7 +1604,9 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
 #[test]
 fn a_plain_query_executes_as_today() {
     let dir = common::TempDir::new("api-degenerate-query");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
             let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -1515,14 +1622,15 @@ fn a_plain_query_executes_as_today() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     let query = join_query();
     let mut prepared = db.prepare(&query).expect("prepare query");
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 3);
-        let again = snap.execute_collect(&mut prepared, &[])?;
+        let again = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(
             name_amount_answers(&answers),
             name_amount_answers(&again),
@@ -1556,7 +1664,9 @@ fn identity_main(arity: u16) -> Rule {
 #[test]
 fn prepare_executes_recursion_under_the_driver() {
     let dir = common::TempDir::new("api-reach-driver");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
@@ -1573,7 +1683,8 @@ fn prepare_executes_recursion_under_the_driver() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     let base = Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -1584,9 +1695,9 @@ fn prepare_executes_recursion_under_the_driver() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: base.atoms.clone(),
@@ -1598,15 +1709,16 @@ fn prepare_executes_recursion_under_the_driver() {
                 atoms: vec![],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
     };
     let mut recursive_prepared = db.prepare(&query).expect("recursion executes");
     let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
     db.read(|snap| {
-        let closure = snap.execute_collect(&mut recursive_prepared, &[])?;
-        let base_only = snap.execute_collect(&mut base_prepared, &[])?;
+        let closure =
+            snap.execute_collect(&mut recursive_prepared, &[] as &[bumbledb::BindValue])?;
+        let base_only = snap.execute_collect(&mut base_prepared, &[] as &[bumbledb::BindValue])?;
         let ids = |answers: &bumbledb::Answers| -> std::collections::BTreeSet<u64> {
             answers
                 .answers()
@@ -1647,9 +1759,9 @@ fn closure_query() -> Query {
             (FieldId(1), Term::Var(VarId(b))),
         ],
     };
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge(0, 1)],
@@ -1664,7 +1776,7 @@ fn closure_query() -> Query {
                 atoms: vec![edge(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_main(2)],
     }
@@ -1680,9 +1792,9 @@ fn primer_reach_xx() -> Query {
             (FieldId(1), Term::Var(VarId(b))),
         ],
     };
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge(0, 1)],
@@ -1697,7 +1809,7 @@ fn primer_reach_xx() -> Query {
                 atoms: vec![edge(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -1722,14 +1834,17 @@ fn primer_reach_xx() -> Query {
 #[test]
 fn recursive_answers_agree_scalar_and_vectorized() {
     let dir = common::TempDir::new("api-recursive-batch");
-    let db = Db::create(dir.path(), Graph).expect("create");
+    let db = Db::create(dir.path(), Graph)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     let pairs = |answers: &bumbledb::Answers| -> std::collections::BTreeSet<(u64, u64)> {
         answers
@@ -1747,8 +1862,9 @@ fn recursive_answers_agree_scalar_and_vectorized() {
     let mut scalar = db.prepare(&closure_query()).expect("prepare");
     scalar.set_batch_size(1);
     db.read(|snap| {
-        let vectorized = pairs(&snap.execute_collect(&mut vectorized, &[])?);
-        let scalar = pairs(&snap.execute_collect(&mut scalar, &[])?);
+        let vectorized =
+            pairs(&snap.execute_collect(&mut vectorized, &[] as &[bumbledb::BindValue])?);
+        let scalar = pairs(&snap.execute_collect(&mut scalar, &[] as &[bumbledb::BindValue])?);
         assert_eq!(scalar, vectorized, "one denotation, two batch regimes");
         // The hand answer: reachability over the fixed graph.
         let expected: std::collections::BTreeSet<(u64, u64)> = [
@@ -1782,17 +1898,20 @@ fn recursive_answers_agree_scalar_and_vectorized() {
 #[test]
 fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     let dir = common::TempDir::new("api-primer-reach-xx");
-    let db = Db::create(dir.path(), Graph).expect("create");
+    let db = Db::create(dir.path(), Graph)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let mut prepared = db.prepare(&primer_reach_xx()).expect("prepare");
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert!(answers.is_empty(), "a DAG has no reach(x, x)");
         Ok(())
     })
@@ -1802,9 +1921,10 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
         tx.insert([&GraphEdge { src: 3, dst: 0 }])?;
         Ok(())
     })
-    .expect("close the cycle");
+    .expect("close the cycle")
+    .unwrap();
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert!(!answers.is_empty(), "a cycle produces reach(x, x)");
         Ok(())
     })
@@ -1819,14 +1939,17 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
 #[test]
 fn reach_profile_reports_rounds_and_deltas() {
     let dir = common::TempDir::new("api-reach-profile");
-    let db = Db::create(dir.path(), Graph).expect("create");
+    let db = Db::create(dir.path(), Graph)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
     db.read(|snap| {
         let (answers, stats) = snap.profile(&mut prepared, &[])?;
@@ -1859,7 +1982,7 @@ fn reach_profile_reports_rounds_and_deltas() {
         );
         assert_eq!(stats.emits, 16, "emits is the main sink");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
-        assert!(report.starts_with("introspection v6\n"), "{report}");
+        assert!(report.starts_with("introspection v7\n"), "{report}");
         assert!(report.contains("reach base 0:"), "{report}");
         assert!(report.contains("reach rec 0 (delta occ"), "{report}");
         assert!(report.contains("reach:"), "{report}");
@@ -1876,18 +1999,24 @@ fn reach_profile_reports_rounds_and_deltas() {
 #[test]
 fn a_tight_derived_budget_trips_under_reach() {
     let dir = common::TempDir::new("api-reach-budget");
-    let db = Db::create(dir.path(), Graph).expect("create");
+    let db = Db::create(dir.path(), Graph)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let mut prepared = db.prepare(&closure_query()).expect("recursion executes");
     prepared.set_derived_budget(1, u64::MAX);
     let error = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .read(|snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                .map(|_| ())
+        })
         .expect_err("a one-round budget cannot close a diameter-4 closure");
     assert!(
         matches!(
@@ -1897,8 +2026,11 @@ fn a_tight_derived_budget_trips_under_reach() {
         "expected DerivedBudgetExceeded with rounds > 0, got: {error}"
     );
     prepared.set_derived_budget(16, u64::MAX);
-    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-        .expect("the widened budget closes the fixpoint");
+    db.read(|snap| {
+        snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+            .map(|_| ())
+    })
+    .expect("the widened budget closes the fixpoint");
 }
 
 /// Named interiors (no rec) still execute: a copy-through interior is
@@ -1906,7 +2038,9 @@ fn a_tight_derived_budget_trips_under_reach() {
 #[test]
 fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
     let dir = common::TempDir::new("api-interiors-budget");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
@@ -1923,12 +2057,16 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let query = interiors_only_accounts();
     let mut prepared = db.prepare(&query).expect("prepare");
     prepared.set_derived_budget(0, 0);
     let error = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .read(|snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                .map(|_| ())
+        })
         .expect_err("a zero-tuple budget trips on a nonempty interior");
     assert!(
         matches!(
@@ -1940,7 +2078,7 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
     // Tight rounds alone must not trip an interiors-only query.
     prepared.set_derived_budget(0, u64::MAX);
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 3, "three accounts copy through");
         Ok(())
     })
@@ -1948,7 +2086,7 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
 }
 
 fn interiors_only_accounts() -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![Interior {
             rules: vec![ProjectionRule {
                 finds: vec![VarId(0)],
@@ -1962,5 +2100,6 @@ fn interiors_only_accounts() -> Query {
         }],
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
+        rec: None,
     }
 }

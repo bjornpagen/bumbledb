@@ -70,8 +70,10 @@ fn bind_time_checks_reject_bad_params() {
         matches!(
             err,
             Error::ParamCountMismatch {
-                expected: 2,
-                supplied: 1
+                mismatch: crate::error::Mismatch {
+                    witnessed: 1,
+                    required: 2,
+                },
             }
         ),
         "{err:?}"
@@ -150,20 +152,19 @@ fn param_word_memo_hits_are_final_and_misses_never_memoize() {
     insert_postings(&env, &schema, &[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
     let cache = ImageCache::new(&schema);
 
-    let run = |prepared: &mut PreparedQuery<'_, ()>,
-               txn: &crate::storage::env::ReadTxn<'_>,
-               text: &str| {
-        obs::start_capture();
-        let out = prepared
-            .execute_collect(txn, &cache, &memo_param(text))
-            .expect("execute");
-        let events = obs::finish_capture();
-        let hits = events
-            .iter()
-            .filter(|e| e.name() == obs::names::PARAM_WORD_MEMO)
-            .count();
-        (amounts_of(&out), hits)
-    };
+    let run =
+        |prepared: &mut PreparedQuery<()>, txn: &crate::storage::env::ReadTxn<'_>, text: &str| {
+            obs::start_capture();
+            let out = prepared
+                .execute_collect(txn, &cache, &memo_param(text))
+                .expect("execute");
+            let events = obs::finish_capture();
+            let hits = events
+                .iter()
+                .filter(|e| e.point() == obs::names::PARAM_WORD_MEMO)
+                .count();
+            (amounts_of(&out), hits)
+        };
 
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");

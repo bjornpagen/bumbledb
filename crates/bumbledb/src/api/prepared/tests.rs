@@ -41,13 +41,13 @@ mod view_memo;
 /// The unit-typestate prepare: these tests drive the environment
 /// directly, below the `Db<S>` surface where the schema typestate
 /// lives, so `S` is uninferable — pin it to `()`.
-fn prepare<'s>(
+fn prepare(
     txn: &crate::storage::env::ReadTxn<'_>,
     cache: &ImageCache,
-    schema: &'s Schema,
+    schema: &Schema,
     query: &Query,
-) -> crate::error::Result<PreparedQuery<'s, ()>> {
-    super::build::prepare(txn, cache, schema, query)
+) -> crate::error::Result<PreparedQuery<()>> {
+    super::build::prepare(txn, cache, std::sync::Arc::new(schema.clone()), query)
 }
 
 /// Posting(id fresh u64, account u64, memo string, amount i64).
@@ -106,7 +106,7 @@ fn insert_postings(env: &Environment, schema: &Schema, rows: &[(u64, u64, &str, 
         delta.insert(&view, POSTING, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// Q(memo, amount) :- Posting(account = ?0, memo, amount), amount >= ?1.

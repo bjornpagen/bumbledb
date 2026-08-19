@@ -67,9 +67,9 @@ fn v(id: u16) -> Term {
 
 /// The transitive closure: rec identity-main, linear, one self-atom.
 fn closure_query() -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![Atom {
@@ -87,7 +87,7 @@ fn closure_query() -> Query {
                 }],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -106,7 +106,13 @@ fn closure_query() -> Query {
 fn unreached_query() -> Query {
     let mut query = closure_query();
     match &mut query {
-        Query::Cq { head, rules, .. } | Query::Reach { head, rules, .. } => {
+        Query {
+            head,
+            rules,
+            rec: None,
+            ..
+        }
+        | Query { head, rules, .. } => {
             *head = vec![HeadTerm::Var];
             *rules = vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -224,7 +230,9 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let dir = crate::fixture::TempDir::new(&tag);
-    let db = bumbledb::Db::create(dir.path(), descriptor).expect("create engine store");
+    let db = bumbledb::Db::create(dir.path(), descriptor)
+        .expect("create engine store")
+        .expect("accepted");
     db.write(|tx| {
         for node in 0..nodes {
             tx.insert_dyn(NODE, [&[Value::U64(node)]])?;
@@ -234,7 +242,8 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
         }
         Ok(())
     })
-    .expect("no statements: every write lands");
+    .expect("no statements: every write lands")
+    .unwrap();
     match crate::differential::engine_query(&db, query, &[]) {
         crate::differential::Answers::Ok(rows) => rows,
         other => panic!("closure goldens execute clean: {other:?}"),
@@ -407,7 +416,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             conditions: vec![],
         }],
     };
-    let membership = Query::Cq {
+    let membership = Query {
         interiors: vec![carrier.clone()],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -425,8 +434,9 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     };
-    let equality = Query::Cq {
+    let equality = Query {
         interiors: vec![carrier],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -444,6 +454,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     };
 
     let mut naive = NaiveDb::new(&descriptor);
@@ -470,7 +481,9 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         .expect("no statements: the fixture commits");
 
     let dir = crate::fixture::TempDir::new("recursive-interval-interior");
-    let db = bumbledb::Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = bumbledb::Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     db.write(|tx| {
         for (account, (start, end)) in &claims {
             tx.insert_dyn(
@@ -489,7 +502,8 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         }
         Ok(())
     })
-    .expect("no statements: every write lands");
+    .expect("no statements: every write lands")
+    .unwrap();
 
     let schema = descriptor.validate().expect("validates");
     for (name, query, expected) in [

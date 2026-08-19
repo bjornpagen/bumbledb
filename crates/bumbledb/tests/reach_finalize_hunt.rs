@@ -86,9 +86,9 @@ fn pair_rule(finds: (u16, u16), atoms: Vec<Atom>) -> Rule {
 /// the driver runs ~`d` rounds, so the accumulator appends and the delta
 /// ping-pong flip many times within one execution.
 fn closure_query() -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge_atom(0, 1)],
@@ -103,7 +103,7 @@ fn closure_query() -> Query {
                 atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_pair_main()],
     }
@@ -149,7 +149,9 @@ fn answer_pairs(answers: &Answers) -> BTreeSet<(u64, u64)> {
 fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     const CHAIN: u64 = 48;
     let dir = common::TempDir::new("hunt-deep-chain");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let mut edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     edges.insert((10, 3)); // a back edge: a cycle inside the chain
     edges.insert((7, 7)); // a self-loop
@@ -160,13 +162,15 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     let expected = naive_closure(&edges);
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
-            let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
+            let got =
+                answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
             assert_eq!(
                 got, expected,
                 "closure differs from the naive fixpoint on warm run {run}"
@@ -190,11 +194,13 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let expected = naive_closure(&more);
     db.read(|snap| {
         for run in 0..2 {
-            let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
+            let got =
+                answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
             assert_eq!(
                 got, expected,
                 "post-commit closure differs from the naive fixpoint on run {run}"
@@ -213,7 +219,9 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
 #[test]
 fn a_finished_interior_feeds_a_linear_rec() {
     let dir = common::TempDir::new("hunt-interior-then-rec");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let edges: BTreeSet<(u64, u64)> = (0..12)
         .map(|n| (n, n + 1))
         .chain([(12, 4), (2, 9)])
@@ -228,7 +236,8 @@ fn a_finished_interior_feeds_a_linear_rec() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     // out = lfp( Link ∪ Edge ∘ out )
     let mut expected: BTreeSet<(u64, u64)> = links.clone();
@@ -246,7 +255,7 @@ fn a_finished_interior_feeds_a_linear_rec() {
         expected = next;
     }
 
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![ProjectionRule {
                 finds: vec![VarId(0), VarId(1)],
@@ -255,7 +264,7 @@ fn a_finished_interior_feeds_a_linear_rec() {
                 conditions: vec![],
             }],
         }],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![link_atom(0, 1)],
@@ -270,14 +279,15 @@ fn a_finished_interior_feeds_a_linear_rec() {
                 atoms: vec![interior_atom(0, 0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
     };
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
-            let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
+            let got =
+                answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
             assert_eq!(
                 got, expected,
                 "interior-then-rec differs from the naive fixpoint on run {run}"
@@ -295,7 +305,9 @@ fn a_finished_interior_feeds_a_linear_rec() {
 #[test]
 fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let dir = common::TempDir::new("hunt-fold");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let edges: BTreeSet<(u64, u64)> = [(1, 0), (2, 1), (3, 1), (4, 2), (4, 3), (0, 5)].into();
     db.write(|tx| {
         for &(src, dst) in &edges {
@@ -303,16 +315,17 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let closed = naive_closure(&edges);
     let mut expected: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
     for &(x, _) in &closed {
         *expected.entry(x).or_insert(0) += 1;
     }
 
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge_atom(0, 1)],
@@ -327,7 +340,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
                 atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
@@ -339,7 +352,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..2 {
-            let answers = snap.execute_collect(&mut prepared, &[])?;
+            let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: std::collections::BTreeMap<u64, u64> = answers
                 .answers()
                 .map(|answer| {
@@ -373,7 +386,9 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
 )]
 fn typed_payload_propagates_through_the_recursive_accumulator() {
     let dir = common::TempDir::new("hunt-typed-payload");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let rows = item_rows();
     // A path 1 → 2 → 3 → 4 plus a shortcut: rows blend at shared nodes.
     let edges: BTreeSet<(u64, u64)> = [(1, 2), (2, 3), (3, 4), (1, 3)].into();
@@ -386,13 +401,14 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     // out(x, n, f, s) | Item(id: x, name: n, flag: f, span: s)
     // out(y, n, f, s) | out(x, n, f, s), Edge(x, y)
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1), VarId(2), VarId(3)],
                 atoms: vec![Atom {
@@ -417,7 +433,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
                 atoms: vec![edge_atom(0, 4)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![
@@ -467,7 +483,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
-            let answers = snap.execute_collect(&mut prepared, &[])?;
+            let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: BTreeSet<(u64, String, bool, (u64, u64))> = answers
                 .answers()
                 .map(|answer| {
@@ -506,7 +522,9 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
 fn a_budget_abort_leaves_the_prepared_handle_correct() {
     const CHAIN: u64 = 24;
     let dir = common::TempDir::new("hunt-budget-abort");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     db.write(|tx| {
         for &(src, dst) in &edges {
@@ -514,13 +532,14 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let expected = naive_closure(&edges);
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
     prepared.set_derived_budget(2, u64::MAX);
     db.read(|snap| {
         let err = snap
-            .execute_collect(&mut prepared, &[])
+            .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
             .expect_err("a 24-round closure trips a 2-round budget");
         assert!(
             matches!(err, bumbledb::Error::DerivedBudgetExceeded { .. }),
@@ -532,7 +551,8 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     prepared.set_derived_budget(1 << 16, 10_000_000);
     db.read(|snap| {
         for run in 0..2 {
-            let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
+            let got =
+                answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
             assert_eq!(
                 got, expected,
                 "post-abort closure differs from naive on run {run}"
@@ -553,7 +573,9 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
 fn alternating_param_envelopes_reuse_the_pools_correctly() {
     use bumbledb::ir::ParamId;
     let dir = common::TempDir::new("hunt-param-envelopes");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     // Node 0 heads a 30-chain; node 50 heads a 2-chain; node 90 has no
     // outgoing edge (an empty result between two big ones).
     let edges: BTreeSet<(u64, u64)> = (0..30)
@@ -566,7 +588,8 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let closed = naive_closure(&edges);
     let reach = |src: u64| -> BTreeSet<u64> {
         closed
@@ -576,9 +599,9 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
             .collect()
     };
 
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![Atom {
@@ -593,7 +616,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
                 atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -692,7 +715,9 @@ type ResolvedRow = (String, (u64, u64), i64, String, bool, Vec<u8>, u64);
 #[test]
 fn resolving_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-resolved");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let rows = item_rows();
     db.write(|tx| {
         for row in &rows {
@@ -700,7 +725,8 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     // find(name, span, score, tag, flag, payload, id) — deliberately
     // scrambled against field order, interval mid-tuple.
@@ -738,7 +764,7 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..2 {
-            let answers = snap.execute_collect(&mut prepared, &[])?;
+            let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: BTreeSet<ResolvedRow> = answers
                 .answers()
                 .map(|answer| {
@@ -791,7 +817,9 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
 #[test]
 fn word_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-words");
-    let db = Db::create(dir.path(), Hunt).expect("create");
+    let db = Db::create(dir.path(), Hunt)
+        .expect("create")
+        .expect("accepted");
     let rows = item_rows();
     db.write(|tx| {
         for row in &rows {
@@ -799,7 +827,8 @@ fn word_columnar_finalize_reproduces_every_cell() {
         }
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     // find(id, span, flag, score): interval second, word columns after.
     let query = Query::single(Rule {
@@ -829,7 +858,7 @@ fn word_columnar_finalize_reproduces_every_cell() {
         .collect();
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         let got: BTreeSet<(u64, (u64, u64), bool, i64)> = answers
             .answers()
             .map(|answer| {

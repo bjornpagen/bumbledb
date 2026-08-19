@@ -230,20 +230,20 @@ pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<Prob
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     let mut buffer = Answers::new();
     let mut reference = Vec::with_capacity(sets.len());
     for draw in sets {
         let args = param_args(draw);
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{}: execute: {e:?}", probe.name))?;
         reference.push(compare::from_answers(&buffer, &types));
     }
     let mut rotation = Rotation::new(sets.to_vec());
     let mut run = || {
         let args = param_args(rotation.next_set());
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     };
@@ -347,7 +347,6 @@ mod tests {
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-churn-probes-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 

@@ -1,6 +1,7 @@
 use super::decode::{decode_fixed_bytes, decode_i64, decode_interval_i64, decode_interval_u64};
 use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
+use crate::encoding::FieldDecodeError;
 use crate::error::CorruptionError;
 use bumbledb_theory::schema::IntervalElement;
 
@@ -107,16 +108,16 @@ fn i64_order_preservation_across_sign_boundary() {
 /// I64, String, Bytes, and both Interval elements.
 fn mixed_layout() -> FactLayout {
     FactLayout::new(&[
-        TypeDesc::Bool,
-        TypeDesc::Bool,
-        TypeDesc::U64,
-        TypeDesc::I64,
-        TypeDesc::String,
-        TypeDesc::FixedBytes { len: 12 },
-        TypeDesc::Interval {
+        ValueType::Bool,
+        ValueType::Bool,
+        ValueType::U64,
+        ValueType::I64,
+        ValueType::String,
+        ValueType::FixedBytes { len: 12 },
+        ValueType::Interval {
             element: IntervalElement::U64,
         },
-        TypeDesc::Interval {
+        ValueType::Interval {
             element: IntervalElement::I64,
         },
     ])
@@ -145,7 +146,7 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::Bool(false),
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
-        ValueRef::String(7),
+        ValueRef::String(InternId::from_raw(7)),
         ValueRef::fixed_bytes(&[0xAA; 12]),
         ValueRef::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
@@ -185,22 +186,22 @@ fn field_bytes_slices_equal_independent_encodings() {
     let mut fact = Vec::new();
     encode_fact(&mixed_values(), &layout, &mut fact);
 
-    assert_eq!(field_bytes(&fact, &layout, 0), &[0x01]);
-    assert_eq!(field_bytes(&fact, &layout, 1), &[0x00]);
-    assert_eq!(field_bytes(&fact, &layout, 2), encode_u64(u64::MAX));
-    assert_eq!(field_bytes(&fact, &layout, 3), encode_i64(i64::MIN));
-    assert_eq!(field_bytes(&fact, &layout, 4), encode_u64(7));
+    assert_eq!(field_bytes(layout.encoded(&fact), 0), &[0x01]);
+    assert_eq!(field_bytes(layout.encoded(&fact), 1), &[0x00]);
+    assert_eq!(field_bytes(layout.encoded(&fact), 2), encode_u64(u64::MAX));
+    assert_eq!(field_bytes(layout.encoded(&fact), 3), encode_i64(i64::MIN));
+    assert_eq!(field_bytes(layout.encoded(&fact), 4), encode_u64(7));
     let mut padded = Vec::new();
     encode_fixed_bytes(&[0xAA; 12], &mut padded);
-    assert_eq!(field_bytes(&fact, &layout, 5), padded);
+    assert_eq!(field_bytes(layout.encoded(&fact), 5), padded);
     assert_eq!(
-        field_bytes(&fact, &layout, 6),
+        field_bytes(layout.encoded(&fact), 6),
         encode_interval_u64(
             bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval")
         )
     );
     assert_eq!(
-        field_bytes(&fact, &layout, 7),
+        field_bytes(layout.encoded(&fact), 7),
         encode_interval_i64(
             bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval")
         )
@@ -208,33 +209,33 @@ fn field_bytes_slices_equal_independent_encodings() {
 }
 
 /// The parity law behind the typed-key determinant path (`Key`'s
-/// `determinant_read`/`determinant_write`): for EVERY field type — Bool,
-/// U64, I64, String, bytes<N>, both general intervals, both fixed-width
-/// intervals — the bytes [`append_key_field`] produces for one value
-/// equal the span `storage/keys::determinant_image` slices out of the
-/// encoded fact at that field. One encoder, one slicer, byte-identical:
-/// encoder drift between a key probe and stored determinants is
-/// impossible.
+/// `encode_determinant`): for EVERY field type — Bool, U64, I64, String,
+/// bytes<N>, both general intervals, both fixed-width intervals — the
+/// bytes [`append_field`] produces at the layout's type equal the span
+/// `storage/keys::determinant_image` slices out of the encoded fact at
+/// that field. Field writers take the layout's type, so a general
+/// interval value at a fixed-width slot cannot silently write 16 bytes
+/// into 8.
 #[test]
-fn append_key_field_matches_determinant_image_slices() {
+fn append_field_matches_determinant_image_slices() {
     use bumbledb_theory::schema::FieldId;
     let layout = FactLayout::new(&[
-        TypeDesc::Bool,
-        TypeDesc::U64,
-        TypeDesc::I64,
-        TypeDesc::String,
-        TypeDesc::FixedBytes { len: 12 },
-        TypeDesc::Interval {
+        ValueType::Bool,
+        ValueType::U64,
+        ValueType::I64,
+        ValueType::String,
+        ValueType::FixedBytes { len: 12 },
+        ValueType::Interval {
             element: IntervalElement::U64,
         },
-        TypeDesc::Interval {
+        ValueType::Interval {
             element: IntervalElement::I64,
         },
-        TypeDesc::FixedInterval {
+        ValueType::FixedInterval {
             element: IntervalElement::U64,
             width: 5,
         },
-        TypeDesc::FixedInterval {
+        ValueType::FixedInterval {
             element: IntervalElement::I64,
             width: 3,
         },
@@ -243,7 +244,7 @@ fn append_key_field_matches_determinant_image_slices() {
         ValueRef::Bool(true),
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
-        ValueRef::String(7),
+        ValueRef::String(InternId::from_raw(7)),
         ValueRef::fixed_bytes(&[0xAA; 12]),
         ValueRef::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
@@ -251,10 +252,10 @@ fn append_key_field_matches_determinant_image_slices() {
         ValueRef::IntervalI64(
             bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
         ),
-        ValueRef::FixedIntervalU64(
+        ValueRef::IntervalU64(
             bumbledb_theory::Interval::<u64>::fixed(9, 5).expect("inside the Q2 bound"),
         ),
-        ValueRef::FixedIntervalI64(
+        ValueRef::IntervalI64(
             bumbledb_theory::Interval::<i64>::fixed(-2, 3).expect("inside the Q2 bound"),
         ),
     ];
@@ -263,18 +264,17 @@ fn append_key_field_matches_determinant_image_slices() {
     assert_eq!(fact.len(), layout.fact_width());
     for (idx, &value) in values.iter().enumerate() {
         let mut appended = Vec::new();
-        append_key_field(value, &mut appended);
+        append_field(value, layout.field_type(idx), &mut appended);
         let mut sliced = crate::storage::keys::DeterminantImage::scratch();
         crate::storage::keys::determinant_image(
-            &layout,
+            layout.encoded(&fact),
             &[FieldId(u16::try_from(idx).expect("nine fields fit u16"))],
-            &fact,
             &mut sliced,
         );
         assert_eq!(
             appended.as_slice(),
             sliced.as_bytes(),
-            "field {idx}: append_key_field diverges from the stored-fact slice"
+            "field {idx}: append_field diverges from the stored-fact slice"
         );
     }
 }
@@ -286,7 +286,7 @@ fn decode_field_round_trips_every_type() {
     let mut fact = Vec::new();
     encode_fact(&values, &layout, &mut fact);
     for (idx, expected) in values.iter().enumerate() {
-        assert_eq!(decode_field(&fact, &layout, idx), Ok(*expected));
+        assert_eq!(decode_field(layout.encoded(&fact), idx), Ok(*expected));
     }
 }
 
@@ -297,14 +297,14 @@ fn decode_field_surfaces_corruption() {
     encode_fact(&mixed_values(), &layout, &mut fact);
     fact[0] = 0x02; // corrupt the Bool
     assert_eq!(
-        decode_field(&fact, &layout, 0),
-        Err(CorruptionError::InvalidBool(0x02))
+        decode_field(layout.encoded(&fact), 0),
+        Err(FieldDecodeError::InvalidBool(0x02))
     );
     fact[0] = 0x01;
     fact[1] = 0x03; // corrupt the second Bool
     assert_eq!(
-        decode_field(&fact, &layout, 1),
-        Err(CorruptionError::InvalidBool(0x03))
+        decode_field(layout.encoded(&fact), 1),
+        Err(FieldDecodeError::InvalidBool(0x03))
     );
     fact[1] = 0x00;
     // Invert the IntervalU64 field (offset 42): end half below its start.
@@ -316,8 +316,8 @@ fn decode_field_surfaces_corruption() {
     corrupt_start.copy_from_slice(&encode_u64(3));
     corrupt_end.copy_from_slice(&encode_u64(0));
     assert_eq!(
-        decode_field(&fact, &layout, 6),
-        Err(CorruptionError::InvalidInterval(corrupt))
+        decode_field(layout.encoded(&fact), 6),
+        Err(FieldDecodeError::InvalidInterval(corrupt))
     );
     fact[50..58].copy_from_slice(&encode_u64(u64::MAX));
     // The pad-corruption fixture: a nonzero byte in the bytes<12> field's
@@ -326,16 +326,16 @@ fn decode_field_surfaces_corruption() {
     fact[39] = 0x5A;
     // The bytes<12> field's trailing word, sliced layout-first — the
     // error payload is the field's last whole word.
-    let &tail = field_bytes(&fact, &layout, 5)
+    let &tail = field_bytes(layout.encoded(&fact), 5)
         .last_chunk()
         .expect("bytes<12> spans two whole words");
     assert_eq!(
-        decode_field(&fact, &layout, 5),
-        Err(CorruptionError::NonzeroFixedBytesPad(tail))
+        decode_field(layout.encoded(&fact), 5),
+        Err(FieldDecodeError::NonzeroFixedBytesPad(tail))
     );
     fact[39] = 0x00;
     assert_eq!(
-        decode_field(&fact, &layout, 5),
+        decode_field(layout.encoded(&fact), 5),
         Ok(ValueRef::fixed_bytes(&[0xAA; 12]))
     );
 }
@@ -506,7 +506,7 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
         bytes[8..].copy_from_slice(&encode_u64(end));
         assert_eq!(
             decode_interval_u64(bytes),
-            Err(CorruptionError::InvalidInterval(bytes))
+            Err(FieldDecodeError::InvalidInterval(bytes))
         );
     }
     for (start, end) in [(-2i64, -2i64), (4, -4), (i64::MAX, i64::MIN)] {
@@ -515,7 +515,7 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
         bytes[8..].copy_from_slice(&encode_i64(end));
         assert_eq!(
             decode_interval_i64(bytes),
-            Err(CorruptionError::InvalidInterval(bytes))
+            Err(FieldDecodeError::InvalidInterval(bytes))
         );
     }
 }
@@ -650,7 +650,7 @@ fn exhaustive_string_id_word_preserves_id_order_only() {
 /// equals raw lexicographic order INCLUDING the prefix law (a proper
 /// prefix sorts strictly first) — and the encoding is injective over
 /// the domain. The engine only ever compares equal declared widths
-/// (`TypeDesc::FixedBytes { len }` is per-field), where the law holds
+/// (`ValueType::FixedBytes { len }` is per-field), where the law holds
 /// for arbitrary bytes; the cross-length half is the mathematical
 /// boundary of the claim, and the final assert documents why it needs
 /// the NUL-free alphabet.
@@ -786,7 +786,7 @@ fn fact_hash_is_full_32_byte_blake3() {
 
 /// A one-fixed-field layout per element domain, width `w`.
 fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
-    FactLayout::new(&[TypeDesc::U64, TypeDesc::FixedInterval { element, width }])
+    FactLayout::new(&[ValueType::U64, ValueType::FixedInterval { element, width }])
 }
 
 #[test]
@@ -800,14 +800,14 @@ fn fixed_interval_round_trips_one_word() {
             bumbledb_theory::Interval::<u64>::fixed(start, width).expect("in-domain fixed value");
         let mut fact = Vec::new();
         encode_fact(
-            &[ValueRef::U64(9), ValueRef::FixedIntervalU64(interval)],
+            &[ValueRef::U64(9), ValueRef::IntervalU64(interval)],
             &layout,
             &mut fact,
         );
-        assert_eq!(field_bytes(&fact, &layout, 1), encode_u64(start));
+        assert_eq!(field_bytes(layout.encoded(&fact), 1), encode_u64(start));
         assert_eq!(
-            decode_field(&fact, &layout, 1),
-            Ok(ValueRef::FixedIntervalU64(interval))
+            decode_field(layout.encoded(&fact), 1),
+            Ok(ValueRef::IntervalU64(interval))
         );
     }
     for (start, width) in [(i64::MIN, 7u64), (-1, 2), (0, 1), (i64::MAX - 3, 1)] {
@@ -816,14 +816,14 @@ fn fixed_interval_round_trips_one_word() {
             bumbledb_theory::Interval::<i64>::fixed(start, width).expect("in-domain fixed value");
         let mut fact = Vec::new();
         encode_fact(
-            &[ValueRef::U64(9), ValueRef::FixedIntervalI64(interval)],
+            &[ValueRef::U64(9), ValueRef::IntervalI64(interval)],
             &layout,
             &mut fact,
         );
-        assert_eq!(field_bytes(&fact, &layout, 1), encode_i64(start));
+        assert_eq!(field_bytes(layout.encoded(&fact), 1), encode_i64(start));
         assert_eq!(
-            decode_field(&fact, &layout, 1),
-            Ok(ValueRef::FixedIntervalI64(interval))
+            decode_field(layout.encoded(&fact), 1),
+            Ok(ValueRef::IntervalI64(interval))
         );
     }
 }
@@ -845,8 +845,8 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
                 &mut fact,
             );
             assert_eq!(
-                decode_field(&fact, &layout, 1),
-                Err(CorruptionError::InvalidFixedIntervalStart(encode_u64(
+                decode_field(layout.encoded(&fact), 1),
+                Err(FieldDecodeError::InvalidFixedIntervalStart(encode_u64(
                     start
                 ))),
                 "start {start} under width {width} sits at/past the Q2 bound"
@@ -860,8 +860,8 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
             &mut fact,
         );
         assert_eq!(
-            decode_field(&fact, &layout, 1),
-            Ok(ValueRef::FixedIntervalU64(
+            decode_field(layout.encoded(&fact), 1),
+            Ok(ValueRef::IntervalU64(
                 bumbledb_theory::Interval::<u64>::fixed(inside, width).expect("inside the bound")
             ))
         );
@@ -876,8 +876,8 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
         &mut fact,
     );
     assert_eq!(
-        decode_field(&fact, &layout, 1),
-        Err(CorruptionError::InvalidFixedIntervalStart(encode_i64(
+        decode_field(layout.encoded(&fact), 1),
+        Err(FieldDecodeError::InvalidFixedIntervalStart(encode_i64(
             i64::MAX - 4
         )))
     );
@@ -906,11 +906,11 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
             assert_eq!(interval.end(), start + width, "the derived end is exact");
             let mut fact = Vec::new();
             encode_fact(
-                &[ValueRef::U64(0), ValueRef::FixedIntervalU64(interval)],
+                &[ValueRef::U64(0), ValueRef::IntervalU64(interval)],
                 &layout,
                 &mut fact,
             );
-            encoded.push(field_bytes(&fact, &layout, 1).to_vec());
+            encoded.push(field_bytes(layout.encoded(&fact), 1).to_vec());
         }
         for (i, x) in starts.iter().enumerate() {
             for (j, y) in starts.iter().enumerate() {
@@ -933,11 +933,11 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
             assert_eq!(interval.end(), start + 3, "the derived end is exact");
             let mut fact = Vec::new();
             encode_fact(
-                &[ValueRef::U64(0), ValueRef::FixedIntervalI64(interval)],
+                &[ValueRef::U64(0), ValueRef::IntervalI64(interval)],
                 &layout,
                 &mut fact,
             );
-            field_bytes(&fact, &layout, 1).to_vec()
+            field_bytes(layout.encoded(&fact), 1).to_vec()
         })
         .collect();
     for (i, x) in starts.iter().enumerate() {
@@ -961,10 +961,9 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     encode_fact(&mixed_values(), &layout, &mut fact);
     // Projection (u64 field 2, str field 4): the resolver must never see
     // the projected string's id — a call is the failure.
-    let supplied = [Value::U64(u64::MAX), Value::String(Box::from(*b"supplied"))];
+    let supplied = [Value::U64(u64::MAX), Value::String(Box::from("supplied"))];
     let decoded = super::decode::decode_values_keyed(
-        &fact,
-        &layout,
+        layout.encoded(&fact),
         &[FieldId(2), FieldId(4)],
         &supplied,
         |id| panic!("projected field resolved through the dictionary (id {id})"),
@@ -973,9 +972,9 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     assert_eq!(decoded[2], supplied[0]);
     assert_eq!(decoded[4], supplied[1]);
     // The unkeyed decode of the same fact agrees everywhere else.
-    let plain = super::decode_values(&fact, &layout, |id| {
+    let plain = super::decode_values(layout.encoded(&fact), |id| {
         assert_eq!(id, 7);
-        Ok(Box::from(*b"resolved"))
+        Ok(Box::from("resolved"))
     })
     .expect("decode");
     for idx in [0, 1, 3, 5, 6, 7] {

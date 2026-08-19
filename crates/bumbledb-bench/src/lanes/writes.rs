@@ -279,7 +279,10 @@ fn commit_engine(
             }
             Ok(())
         })
-        .map(|()| u64::from(batch))
+        .map(|admission| {
+            admission.unwrap();
+            u64::from(batch)
+        })
         .map_err(|e| format!("commit_b{batch}: {e:?}"))
     })
 }
@@ -348,7 +351,9 @@ fn seed_delete_rows(
                 }
                 Ok(out)
             })
-            .map_err(|e| format!("delete_b{batch} pre-phase: {e:?}"))?;
+            .map_err(|e| format!("delete_b{batch} pre-phase: {e:?}"))?
+            .unwrap()
+            .value;
         recorded.extend(committed);
         remaining -= chunk;
     }
@@ -396,19 +401,22 @@ fn delete_recorded(
             let victim = recorded
                 .pop_front()
                 .expect("the pre-phase sized the deque to (warmups + samples) × batch exactly");
-            if tx.delete([&victim])?.changed == 0 {
+            if tx.delete([&victim])?.changed() == 0 {
                 // The in-closure sentinel abort (the posting_swap
                 // idiom): returning `Err` here drops the delta whole,
                 // so nothing this sample deleted ever reaches the
                 // store.
-                return Err(bumbledb::Error::Io(std::io::Error::other(
+                return Err(bumbledb::Error::from(std::io::Error::other(
                     "the delete lane must be delete-bearing: a recorded posting was absent",
                 )));
             }
         }
         Ok(())
     })
-    .map(|()| u64::from(batch))
+    .map(|admission| {
+        admission.unwrap();
+        u64::from(batch)
+    })
     .map_err(|e| format!("delete_b{batch}: {e:?}"))
 }
 
@@ -504,10 +512,21 @@ fn verify_insert_stream_pair(
 ) -> Result<(), String> {
     let dir = scratch.join("insert-stream-bumbledb-0");
     let db = match lane.store_mode() {
-        crate::storemode::StoreMode::Durable => Db::open(&dir, Ledger),
-        crate::storemode::StoreMode::Ephemeral => Db::ephemeral(&dir, Ledger),
-    }
-    .map_err(|e| format!("insert_stream re-open ({}): {e:?}", lane.label()))?;
+        crate::storemode::StoreMode::Durable => Db::open(&dir, Ledger)
+            .map_err(|e| format!("insert_stream re-open ({}): {e:?}", lane.label()))?,
+        crate::storemode::StoreMode::Ephemeral => match Db::ephemeral(&dir, Ledger) {
+            Err(e) => {
+                return Err(format!("insert_stream re-open ({}): {e:?}", lane.label()));
+            }
+            Ok(bumbledb::Admission::Accepted(db)) => db,
+            Ok(bumbledb::Admission::Rejected(violations)) => {
+                return Err(format!(
+                    "insert_stream re-open ({}): empty rejected: {violations}",
+                    lane.label()
+                ));
+            }
+        },
+    };
     let ours = db
         .read(|snap| Ok(snap.scan(ids::POSTING)?.count()))
         .map_err(|e| format!("insert_stream re-scan: {e:?}"))? as u64;
@@ -923,7 +942,6 @@ mod tests {
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-writes-lane-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
@@ -1177,13 +1195,16 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger).expect("create");
+        let db = Db::create(&dir.join("db"), Ledger)
+            .expect("create")
+            .expect("accepted");
         for rel in writebench::non_posting_relations() {
             db.write(|tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
-                    .map(|r| r.changed)
+                    .map(bumbledb::MutationReport::changed)
             })
-            .expect("seed");
+            .expect("seed")
+            .unwrap();
         }
         let sizes = Sizes::of(cfg.scale);
         let mut rng = Rng::new(cfg.seed ^ DELETE_SEED ^ 1);
@@ -1194,7 +1215,9 @@ mod tests {
                 tx.insert([&posting])?;
                 Ok(posting)
             })
-            .expect("seed posting");
+            .expect("seed posting")
+            .unwrap()
+            .value;
         let mut recorded = VecDeque::from([posting, posting]);
         assert_eq!(
             delete_recorded(&db, &mut recorded, 1).expect("live delete"),
@@ -1203,7 +1226,10 @@ mod tests {
         let generation = db.generation().expect("generation");
         let refusal = delete_recorded(&db, &mut recorded, 1);
         let err = refusal.expect_err("a no-op delete must abort the transaction");
-        assert!(err.contains("delete-bearing"), "{err}");
+        assert!(
+            err.contains("Io("),
+            "a refused delete is the Io sentinel (the message is not on the wire): {err}"
+        );
         assert_eq!(
             db.generation().expect("generation"),
             generation,
@@ -1222,7 +1248,9 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger).expect("create");
+        let db = Db::create(&dir.join("db"), Ledger)
+            .expect("create")
+            .expect("accepted");
         corpus::load_bumbledb(&db, cfg).expect("load");
         let (conn, _) = corpus::load_sqlite(&dir.join("oracle.sqlite"), cfg).expect("oracle");
         let sizes = Sizes::of(cfg.scale);
@@ -1300,7 +1328,7 @@ mod tests {
         }
         let commit = std::fs::read_to_string(lane_dir.join("commit_b1.json")).expect("commit");
         assert!(
-            commit.contains(bumbledb::obs::names::LMDB_COMMIT),
+            commit.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
             "the LMDB commit span reaches the commit cell's artifact"
         );
         // insert_stream stays untraced by decision.

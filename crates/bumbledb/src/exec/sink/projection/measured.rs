@@ -18,7 +18,7 @@ impl ProjectionSink {
         if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
             return Flow::Continue;
         }
-        let ProjectionSources::Measured(sources) = &self.sources else {
+        let ProjectionSources::Measured { sources, .. } = &self.sources else {
             return Flow::Continue;
         };
         for (i, source) in sources.iter().enumerate() {
@@ -48,12 +48,15 @@ impl ProjectionSink {
         key_of: impl Fn(usize) -> Option<usize>,
         outer: impl Fn(usize) -> u64,
     ) -> Result<(), ()> {
-        self.measured_sources.clear();
-        let ProjectionSources::Measured(sources) = &self.sources else {
+        let ProjectionSources::Measured {
+            sources, resolved, ..
+        } = &mut self.sources
+        else {
             return Ok(());
         };
+        resolved.clear();
         for (i, source) in sources.iter().enumerate() {
-            let resolved = match *source {
+            let next = match *source {
                 ProjSource::Slot(slot) => {
                     if let Some(word) = key_of(slot) {
                         MeasuredSource::Key(word)
@@ -80,7 +83,7 @@ impl ProjectionSink {
                     _ => unreachable!("an interval variable binds both words together"),
                 },
             };
-            self.measured_sources.push(resolved);
+            resolved.push(next);
         }
         Ok(())
     }
@@ -130,7 +133,10 @@ impl ProjectionSink {
     }
 
     fn project_measured_entry(&mut self, batch: &LeafBatch<'_>, entry: u32) -> bool {
-        for (i, source) in self.measured_sources.iter().enumerate() {
+        let ProjectionSources::Measured { resolved, .. } = &self.sources else {
+            return true;
+        };
+        for (i, source) in resolved.iter().enumerate() {
             self.scratch[i] = match *source {
                 MeasuredSource::Const => continue,
                 MeasuredSource::Key(word) => batch.key(entry, word),
@@ -176,7 +182,10 @@ impl ProjectionSink {
             ColumnView::Bytes(b) => u64::from(b[position as usize]),
         };
         let mut each = |position: u32| {
-            for (i, source) in self.measured_sources.iter().enumerate() {
+            let ProjectionSources::Measured { resolved, .. } = &self.sources else {
+                return true;
+            };
+            for (i, source) in resolved.iter().enumerate() {
                 self.scratch[i] = match *source {
                     MeasuredSource::Const => continue,
                     MeasuredSource::Key(word) => word_at(word, position),

@@ -719,98 +719,99 @@ impl Rec {
 /// node.
 ///
 /// The single-rule query is the conjunctive query unchanged
-/// ([`Query::single`]): empty-prefix [`Query::Cq`].
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Reach carries Rec by value; boxing would split the public Query shape"
-)]
+/// ([`Query::single`]): empty-prefix CQ (`rec` is `None`).
+/// Shared fields live on the struct; `rec` is the only varying tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Query {
-    /// Finite CQ: interiors (possibly empty) and main. Rec is
-    /// unrepresentable on this arm.
-    Cq {
-        /// DAG, declaration order; no count cap. Empty is legal.
-        interiors: Vec<Interior>,
-        /// The find shape (arity + aggregate ops) every **main** rule
-        /// aligns against, position by position; at least one term,
-        /// duplicates within a rule rejected at validation. The
-        /// positional type row is computed at validation and pinned in
-        /// the witness.
-        head: Vec<HeadTerm>,
-        /// Main rules: at least one, at most [`MAX_RULES`]. Empty main
-        /// is [`crate::error::ValidationError::EmptyRuleSet`].
-        rules: Vec<Rule>,
-    },
-    /// Reach: interiors, one rec SCC by value, then main.
-    Reach {
-        /// DAG, declaration order; no count cap. Empty is legal.
-        interiors: Vec<Interior>,
-        /// The one linear rec SCC. Stacked rec is unrepresentable
-        /// (`Rec` does not contain a [`Query`]).
-        rec: Rec,
-        /// The find shape every **main** rule aligns against.
-        head: Vec<HeadTerm>,
-        /// Main rules: at least one, at most [`MAX_RULES`]. Empty main
-        /// is [`crate::error::ValidationError::EmptyRuleSet`].
-        rules: Vec<Rule>,
-    },
+pub struct Query {
+    /// DAG, declaration order; no count cap. Empty is legal.
+    pub interiors: Vec<Interior>,
+    /// The find shape (arity + aggregate ops) every **main** rule
+    /// aligns against, position by position; at least one term,
+    /// duplicates within a rule rejected at validation. The
+    /// positional type row is computed at validation and pinned in
+    /// the witness.
+    pub head: Vec<HeadTerm>,
+    /// Main rules: at least one, at most [`MAX_RULES`]. Empty main
+    /// is [`crate::error::ValidationError::EmptyRuleSet`].
+    pub rules: Vec<Rule>,
+    /// `None` is a finite CQ. `Some` is Reach with one linear rec SCC.
+    /// Stacked rec is unrepresentable (`Rec` does not contain a [`Query`]).
+    pub rec: Option<Rec>,
 }
 
 impl Query {
+    /// Finite CQ: interiors (possibly empty) and main. Rec is
+    /// unrepresentable (`rec` is `None`).
+    #[must_use]
+    pub fn cq(interiors: Vec<Interior>, head: Vec<HeadTerm>, rules: Vec<Rule>) -> Self {
+        Self {
+            interiors,
+            head,
+            rules,
+            rec: None,
+        }
+    }
+
+    /// Reach: interiors, one rec SCC by value, then main.
+    #[must_use]
+    pub fn reach(
+        interiors: Vec<Interior>,
+        rec: Rec,
+        head: Vec<HeadTerm>,
+        rules: Vec<Rule>,
+    ) -> Self {
+        Self {
+            interiors,
+            head,
+            rules,
+            rec: Some(rec),
+        }
+    }
+
     /// The conjunctive query — empty interiors, head derived from the
-    /// rule's own find shape. Constructs [`Query::Cq`].
+    /// rule's own find shape.
     #[must_use]
     pub fn single(rule: Rule) -> Self {
-        Self::Cq {
-            interiors: vec![],
-            head: rule.head(),
-            rules: vec![rule],
-        }
+        Self::cq(vec![], rule.head(), vec![rule])
+    }
+
+    /// The rec SCC, present exactly on Reach.
+    #[must_use]
+    pub fn rec(&self) -> Option<&Rec> {
+        self.rec.as_ref()
     }
 
     /// Named interiors in declaration order.
     #[must_use]
     pub fn interiors(&self) -> &[Interior] {
-        match self {
-            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
-        }
+        &self.interiors
     }
 
     /// The find shape every main rule aligns against.
     #[must_use]
     pub fn head(&self) -> &[HeadTerm] {
-        match self {
-            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
-        }
+        &self.head
     }
 
     /// Main rules.
     #[must_use]
     pub fn rules(&self) -> &[Rule] {
-        match self {
-            Self::Cq { rules, .. } | Self::Reach { rules, .. } => rules,
-        }
+        &self.rules
     }
 
     /// Named interiors, mutably.
     pub fn interiors_mut(&mut self) -> &mut Vec<Interior> {
-        match self {
-            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
-        }
+        &mut self.interiors
     }
 
     /// The find shape, mutably.
     pub fn head_mut(&mut self) -> &mut Vec<HeadTerm> {
-        match self {
-            Self::Cq { head, .. } | Self::Reach { head, .. } => head,
-        }
+        &mut self.head
     }
 
     /// Main rules, mutably.
     pub fn rules_mut(&mut self) -> &mut Vec<Rule> {
-        match self {
-            Self::Cq { rules, .. } | Self::Reach { rules, .. } => rules,
-        }
+        &mut self.rules
     }
 }
 
@@ -959,7 +960,7 @@ mod tests {
             Value::Bool(true),
             Value::U64(u64::MAX),
             Value::I64(i64::MIN),
-            Value::String(Box::from(&b"text"[..])),
+            Value::String(Box::from("text")),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(
                 bumbledb_theory::Interval::<u64>::new(0, u64::MAX).expect("nonempty interval"),

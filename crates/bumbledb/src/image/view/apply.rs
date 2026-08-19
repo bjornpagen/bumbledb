@@ -6,30 +6,9 @@ use std::sync::Arc;
 
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::WordCmp;
-use bumbledb_theory::schema::FieldId;
 
-use super::{
-    BoundView, Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource,
-};
-
-/// Resolves a filter constant through the bind-time param slice: `Param`
-/// and `ParamSet` markers index it; everything else is already column form.
-fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
-    match value {
-        Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],
-        other => other,
-    }
-}
-
-fn resolve_interval(value: &IntervalConst, params: &[Const]) -> (u64, u64) {
-    match value {
-        IntervalConst::Interval { start, end } => (*start, *end),
-        IntervalConst::Param(param) => match &params[usize::from(param.0)] {
-            Const::Interval { start, end } => (*start, *end),
-            _ => unreachable!("param slice: interval param resolves to an interval"),
-        },
-    }
-}
+use super::eval::{const_interval, mask_of, resolve, row_holds};
+use super::{BoundView, Const, FilterPredicate, OperandAddr, SetConst, View, ViewWordSource};
 
 fn resolve_word(value: &ViewWordSource, params: &[Const]) -> u64 {
     match value {
@@ -43,38 +22,8 @@ fn resolve_word(value: &ViewWordSource, params: &[Const]) -> u64 {
 
 /// The single column of a scalar field, through its span (the width
 /// dispatch every field→column translation runs).
-fn scalar_column(image: &RelationImage, field: FieldId) -> ColumnView<'_> {
-    image.column(usize::from(image.span(field).first_column))
-}
-
-/// An interval field's two column words at one position: `(start, end)`.
-///
-/// # Panics
-///
-/// On a programmer-invariant violation: the field's span is not a word
-/// pair (validation types every interval predicate over interval fields).
-fn interval_at(image: &RelationImage, field: FieldId, position: usize) -> (u64, u64) {
-    let span = image.span(field);
-    assert_eq!(
-        span.width,
-        ColumnWidth::WordPair,
-        "validated: interval predicates read interval fields"
-    );
-    let first = usize::from(span.first_column);
-    match (image.column(first), image.column(first + 1)) {
-        (ColumnView::Words(starts), ColumnView::Words(ends)) => (starts[position], ends[position]),
-        _ => unreachable!("an interval span covers two word columns"),
-    }
-}
-
-/// A scalar word field's column word at one position (interval point
-/// operands: always word-typed by validation — interval elements are the
-/// orderable scalars).
-fn word_at(image: &RelationImage, field: FieldId, position: usize) -> u64 {
-    match scalar_column(image, field) {
-        ColumnView::Words(words) => words[position],
-        ColumnView::Bytes(_) => unreachable!("validated: interval points are word-typed"),
-    }
+fn scalar_column(image: &RelationImage, field: OperandAddr) -> ColumnView<'_> {
+    image.column(usize::from(image.span(field.field()).first_column))
 }
 
 /// The resolved point word of a membership filter. Var-sourced points
@@ -91,203 +40,6 @@ fn word_set<'a>(set: &'a SetConst, params: &'a [Const]) -> &'a [u64] {
         SetConst::ParamSet(param) => match &params[usize::from(param.0)] {
             Const::WordSet(words) => words,
             _ => unreachable!("param slice: set param resolves to a word set"),
-        },
-    }
-}
-
-/// Point membership under the half-open interval: `start ≤ p AND p < end`
-/// — `p == start` survives, `p == end` does not.
-const fn point_in(start: u64, end: u64, point: u64) -> bool {
-    start <= point && point < end
-}
-
-/// The resolved mask of an `Allen` shape.
-pub(crate) fn mask_of(mask: MaskConst, _params: &[Const]) -> bumbledb_theory::allen::AllenMask {
-    mask
-}
-
-/// Evaluates the conjunction against one image position. `params` is the
-/// bind-time resolution slice, indexed by `ParamId`: `Word`/`Byte` for
-/// scalar params, `Interval` for interval params, `WordSet` for set
-/// params.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one arm per filter kind, in kind order
-fn row_matches(
-    image: &RelationImage,
-    predicates: &[FilterPredicate],
-    params: &[Const],
-    position: usize,
-) -> bool {
-    predicates.iter().all(|predicate| match predicate {
-        FilterPredicate::Compare { field, op, value } => {
-            match (
-                scalar_or_pair(image, *field, position),
-                resolve(value, params),
-            ) {
-                (Operand::Word(word), Const::Word(c)) => op.compare(&word, c),
-                (Operand::Byte(byte), Const::Byte(c)) => op.compare(&byte, c),
-                // Interval-vs-interval-constant: value equality only (a
-                // binding's `Eq` on a negated occurrence — every
-                // interval-pair *predicate* is an `Allen` kind).
-                (Operand::Pair(s, e), Const::Interval { start, end }) => match op {
-                    WordCmp::Eq => s == *start && e == *end,
-                    _ => unreachable!("validated: interval constants compare under Eq only"),
-                },
-                // bytes<N>: word-wise identity — Eq/Ne only by validation.
-                (Operand::Block { words, count }, Const::Words(c)) => match op {
-                    WordCmp::Eq => words[..usize::from(count)] == **c,
-                    WordCmp::Ne => words[..usize::from(count)] != **c,
-                    _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-                },
-                // A bound set: `Eq` matches any element (validation admits
-                // sets under `Eq` only).
-                (Operand::Word(word), Const::WordSet(set)) => set.binary_search(&word).is_ok(),
-                (Operand::Byte(byte), Const::WordSet(set)) => {
-                    set.binary_search(&u64::from(byte)).is_ok()
-                }
-                // A multi-word element set: span-wise binary search over
-                // the flat sorted rows.
-                (Operand::Block { words, count }, Const::WordSet(set)) => {
-                    let width = usize::from(count);
-                    debug_assert_eq!(set.len() % width, 0, "flat element-major rows");
-                    let value = &words[..width];
-                    let mut lo = 0usize;
-                    let mut hi = set.len() / width;
-                    let mut hit = false;
-                    while lo < hi {
-                        let mid = usize::midpoint(lo, hi);
-                        match set[mid * width..(mid + 1) * width].cmp(value) {
-                            std::cmp::Ordering::Less => lo = mid + 1,
-                            std::cmp::Ordering::Greater => hi = mid,
-                            std::cmp::Ordering::Equal => {
-                                hit = true;
-                                break;
-                            }
-                        }
-                    }
-                    hit
-                }
-                // Width mismatches are unrepresentable through validation,
-                // and PendingIntern constants are resolved before execution
-                // (docs/architecture/40-execution.md) — a miss empties the query without reaching here.
-                _ => unreachable!("validated, resolved filter constant"),
-            }
-        }
-        FilterPredicate::FieldsCompare { left, right, op } => {
-            match (
-                scalar_or_pair(image, *left, position),
-                scalar_or_pair(image, *right, position),
-            ) {
-                (Operand::Word(a), Operand::Word(b)) => op.compare(&a, &b),
-                (Operand::Byte(a), Operand::Byte(b)) => op.compare(&a, &b),
-                // Interval fields compare pairwise over their two-word
-                // spans; validation admits `Eq`/`Ne` only (order operators
-                // never apply to intervals).
-                (Operand::Pair(a_s, a_e), Operand::Pair(b_s, b_e)) => match op {
-                    WordCmp::Eq => a_s == b_s && a_e == b_e,
-                    WordCmp::Ne => a_s != b_s || a_e != b_e,
-                    _ => unreachable!("validated: no order comparison over intervals"),
-                },
-                // bytes<N> fields compare word-wise, Eq/Ne only.
-                (Operand::Block { words: a, count }, Operand::Block { words: b, .. }) => match op {
-                    WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                    WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
-                    _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-                },
-                _ => unreachable!("same-fact comparison joins same-typed fields"),
-            }
-        }
-        FilterPredicate::PointIn { field, point } => {
-            let (start, end) = interval_at(image, *field, position);
-            point_in(start, end, point_word(point, params))
-        }
-        FilterPredicate::AnyPointIn { field, set } => {
-            let (start, end) = interval_at(image, *field, position);
-            // Sorted set: the smallest element ≥ start decides membership.
-            let points = word_set(set, params);
-            let idx = points.partition_point(|&p| p < start);
-            idx < points.len() && points[idx] < end
-        }
-        // The Allen kinds: classify-then-test — the scalar fallback and
-        // reference beside the configuration kernel (`kernel_scan` takes
-        // the dense pivot; this loop refines non-pivot conjuncts).
-        // Encoded words preserve value order, so classification over
-        // column words equals classification over values.
-        FilterPredicate::FieldsAllen { left, right, mask } => {
-            let (l_start, l_end) = interval_at(image, *left, position);
-            let (r_start, r_end) = interval_at(image, *right, position);
-            mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &l_start, &l_end, &r_start, &r_end,
-            ))
-        }
-        FilterPredicate::FieldAllen { field, other, mask } => {
-            let (f_start, f_end) = interval_at(image, *field, position);
-            let (start, end) = resolve_interval(other, params);
-            mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &f_start, &f_end, &start, &end,
-            ))
-        }
-        FilterPredicate::FieldsPointIn { interval, point } => {
-            let (start, end) = interval_at(image, *interval, position);
-            point_in(start, end, word_at(image, *point, position))
-        }
-        FilterPredicate::FieldWithin { field, outer } => {
-            let (start, end) = resolve_interval(outer, params);
-            match scalar_or_pair(image, *field, position) {
-                // A scalar field: point membership in the outer interval
-                // (the field is scalar by construction — an interval
-                // field under a constant is `FieldAllen`).
-                Operand::Word(word) => point_in(start, end, word),
-                Operand::Pair(..) | Operand::Byte(_) | Operand::Block { .. } => {
-                    unreachable!("validated: within-comparands are scalar words")
-                }
-            }
-        }
-        // The measure kinds never enter the infallible conjunction: they
-        // evaluate last, over the other filters' survivors, on the
-        // fallible refinement pass (`apply` — the filter-order law).
-        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
-            unreachable!("measure filters take the fallible refinement pass")
-        }
-    })
-}
-
-/// One field's value at a position, through its span: the scalar word or
-/// byte, an interval field's `(start, end)` word pair, or a
-/// `bytes<N > 8>` field's padded word block.
-enum Operand {
-    Word(u64),
-    Byte(u8),
-    Pair(u64, u64),
-    Block { words: [u64; 8], count: u8 },
-}
-
-fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Operand {
-    let span = image.span(field);
-    match span.width {
-        ColumnWidth::WordPair => {
-            let (start, end) = interval_at(image, field, position);
-            Operand::Pair(start, end)
-        }
-        ColumnWidth::Words { count } => {
-            let first = usize::from(span.first_column);
-            let mut words = [0u64; 8];
-            for (i, slot) in words[..usize::from(count)].iter_mut().enumerate() {
-                let ColumnView::Words(column) = image.column(first + i) else {
-                    unreachable!("a Words span covers word columns")
-                };
-                *slot = column[position];
-            }
-            Operand::Block {
-                words,
-                count: u8::try_from(count).expect("at most 8 words"),
-            }
-        }
-        ColumnWidth::Word | ColumnWidth::Byte => match scalar_column(image, field) {
-            ColumnView::Words(words) => Operand::Word(words[position]),
-            ColumnView::Bytes(bytes) => Operand::Byte(bytes[position]),
         },
     }
 }
@@ -502,7 +254,7 @@ fn apply_infallible(
                 if idx == pivot || is_measure(predicate) {
                     continue;
                 }
-                keep &= row_matches(image, std::slice::from_ref(predicate), params, position);
+                keep &= row_holds(image, std::slice::from_ref(predicate), params, position);
             }
             buf[cursor] = buf[read];
             cursor += usize::from(keep);
@@ -520,10 +272,7 @@ fn apply_infallible(
     // unconditional store, conditional cursor advance — no `if` in this
     // loop body.
     for position in 0..row_count {
-        let keep = predicates
-            .iter()
-            .filter(|p| !is_measure(p))
-            .all(|p| row_matches(image, std::slice::from_ref(p), params, position));
+        let keep = row_holds(image, predicates, params, position);
         buf[cursor] = u32::try_from(position).expect("checked above");
         cursor += usize::from(keep);
     }
@@ -536,8 +285,8 @@ fn apply_infallible(
 
 /// An interval field's two word-column slices — the operand shape of
 /// every fused two-column composition.
-fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
-    let span = image.span(field);
+fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64]) {
+    let span = image.span(field.field());
     debug_assert_eq!(span.width, ColumnWidth::WordPair);
     let first = usize::from(span.first_column);
     match (image.column(first), image.column(first + 1)) {
@@ -558,7 +307,7 @@ fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
 /// this same path: its Allen filters classify identically and the probe
 /// inverts at the hit, exactly like every other predicate class.
 /// Returns whether the scan ran; `false` falls back to the scalar
-/// `row_matches` loop.
+/// [`row_holds`] loop.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -582,8 +331,8 @@ fn kernel_scan(
             return true;
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let (start, end) = resolve_interval(outer, params);
-            let span = image.span(*field);
+            let (start, end) = const_interval(outer, params);
+            let span = image.span(field.field());
             // A scalar field within the constant interval: point
             // membership is the range scan `[start, end - 1]` (the
             // half-open bound; `end >= 1` because `start < end` and
@@ -615,7 +364,7 @@ fn kernel_scan(
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (starts, ends) = interval_columns(image, *field);
-            let (start, end) = resolve_interval(other, params);
+            let (start, end) = const_interval(other, params);
             crate::exec::kernel::allen_filter_columns_const(
                 starts,
                 ends,
@@ -641,7 +390,7 @@ fn kernel_scan(
     let FilterPredicate::Compare { field, op, value } = predicate else {
         unreachable!("every other kind returned above")
     };
-    let span = image.span(*field);
+    let span = image.span(field.field());
     let value = resolve(value, params);
     if span.width == ColumnWidth::WordPair {
         // Interval value equality (`Eq` on a negated occurrence's view)

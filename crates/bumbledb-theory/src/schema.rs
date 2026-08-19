@@ -79,7 +79,7 @@ pub enum IntervalElement {
 /// A structural value type: the description *is* the identity — structural
 /// equality of the description is type equality, and there is no name field
 /// anywhere (`docs/architecture/10-data-model.md`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueType {
     Bool,
     U64,
@@ -121,17 +121,32 @@ pub enum ValueType {
 }
 
 impl ValueType {
+    /// Encoded width in bytes: 1 for `Bool`, 16 for a general
+    /// [`ValueType::Interval`] and 8 for [`ValueType::FixedInterval`] (the
+    /// width halving — the end is the type's to derive, so storing it
+    /// would be transcription), the word-padded `⌈len/8⌉ × 8` for
+    /// `FixedBytes`, 8 for everything else.
+    #[must_use]
+    pub const fn width(self) -> usize {
+        match self {
+            Self::Bool => 1,
+            Self::U64 | Self::I64 | Self::String | Self::FixedInterval { .. } => 8,
+            Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
+            Self::Interval { .. } => 16,
+        }
+    }
+
     /// Either arm of the interval family.
     #[must_use]
-    pub const fn is_interval(&self) -> bool {
+    pub const fn is_interval(self) -> bool {
         matches!(self, Self::Interval { .. } | Self::FixedInterval { .. })
     }
 
     /// Element domain of an interval-family type.
     #[must_use]
-    pub const fn interval_element(&self) -> Option<IntervalElement> {
+    pub const fn interval_element(self) -> Option<IntervalElement> {
         match self {
-            Self::Interval { element } | Self::FixedInterval { element, .. } => Some(*element),
+            Self::Interval { element } | Self::FixedInterval { element, .. } => Some(element),
             _ => None,
         }
     }
@@ -158,33 +173,32 @@ pub struct FieldDescriptor {
 
 /// How a [`Value`] failed to match an expected [`ValueType`] — the shared
 /// vocabulary of the checking boundaries (query literals, bound params,
-/// dynamic facts, statement selections).
+/// dynamic facts, statement selections). UTF-8 is [`Value::String`]'s
+/// type, not a match failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueMismatch {
     /// Wrong structural kind.
     Type,
-    /// `Value::String` bytes are not UTF-8 (the type's contract).
-    Utf8,
 }
 
-/// The one `Value` ↔ `ValueType` compatibility check (kind and String UTF-8)
-/// — IR validation, bind-time, the dynamic write
-/// path, and selection validation all call this so the rules cannot drift
-/// apart. Note the membership rule is *not* here: an element-typed value
+/// The one `Value` ↔ `ValueType` compatibility check (kind, including
+/// width) — IR validation, bind-time, the dynamic write path, and
+/// selection validation all call this so the rules cannot drift apart.
+/// Note the membership rule is *not* here: an element-typed value
 /// against an `Interval` field is a kind mismatch to this check, and the
 /// IR validation boundary owns that bivalence (the engine's
 /// `ir::validate`, the bivalent-anchor resolution).
 ///
 /// # Errors
 ///
-/// The [`ValueMismatch`] arm that names the failure: `Type` on a wrong
-/// structural kind (including the width rules), `Utf8` on non-UTF-8
-/// `String` bytes.
+/// [`ValueMismatch::Type`] on a wrong structural kind (including the
+/// width rules).
 pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMismatch> {
     match (value, expected) {
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
         | (Value::I64(_), ValueType::I64)
+        | (Value::String(_), ValueType::String)
         | (
             Value::IntervalU64(_),
             ValueType::Interval {
@@ -226,37 +240,8 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
                 Err(ValueMismatch::Type)
             }
         }
-        (Value::String(raw), ValueType::String) => {
-            if std::str::from_utf8(raw).is_ok() {
-                Ok(())
-            } else {
-                Err(ValueMismatch::Utf8)
-            }
-        }
         _ => Err(ValueMismatch::Type),
     }
-}
-
-/// [`value_matches`] keeping what its `String` arm proves — the parsed
-/// `&str` rides the `Ok` (parse, don't validate): the dynamic
-/// write/read surfaces probe the dictionary with the text right after
-/// this check, and re-deriving the parse there was a second full scan
-/// per value. `None` for every non-String acceptance.
-///
-/// # Errors
-///
-/// As [`value_matches`].
-pub fn value_matches_parsing<'v>(
-    value: &'v Value,
-    expected: &ValueType,
-) -> Result<Option<&'v str>, ValueMismatch> {
-    if let (Value::String(raw), ValueType::String) = (value, expected) {
-        return match std::str::from_utf8(raw) {
-            Ok(text) => Ok(Some(text)),
-            Err(_) => Err(ValueMismatch::Utf8),
-        };
-    }
-    value_matches(value, expected).map(|()| None)
 }
 
 /// One σ binding's literal set — the disjunctive selection fragment

@@ -87,9 +87,10 @@ pub fn create_ours(
     {
         db.write(|tx| {
             tx.insert_dyn(rel, corpus_gen::relation_rows(r#gen, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("churn load (relation {}): {e:?}", rel.0))?;
+        .map_err(|e| format!("churn load (relation {}): {e:?}", rel.0))?
+        .unwrap();
     }
     Ok(OursLane {
         db,
@@ -187,11 +188,11 @@ pub fn apply_ours(
         .db
         .write(|tx| {
             for removal in removals {
-                if tx.delete([removal])?.changed == 0 {
+                if tx.delete([removal])?.changed() == 0 {
                     // The in-closure sentinel abort: returning `Err`
                     // here drops the delta whole, so nothing below ever
                     // reaches the store.
-                    return Err(bumbledb::Error::Io(std::io::Error::other(
+                    return Err(bumbledb::Error::from(std::io::Error::other(
                         "the churn cycle must be delete-bearing: a removal target was absent",
                     )));
                 }
@@ -212,7 +213,9 @@ pub fn apply_ours(
             }
             Ok(added)
         })
-        .map_err(|e| format!("churn cycle: {e:?}"))?;
+        .map_err(|e| format!("churn cycle: {e:?}"))?
+        .unwrap()
+        .value;
     // The monotone-burn invariant, loud: strictly ascending mints, the
     // first above the recorded high-water; unchanged when nothing
     // minted.

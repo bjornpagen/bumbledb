@@ -291,9 +291,9 @@ fn hand_queries() -> Vec<HandReach> {
     vec![
         HandReach {
             name: "reach-hand-closure",
-            query: Query::Reach {
+            query: Query {
                 interiors: vec![],
-                rec: rec.clone(),
+                rec: Some(rec.clone()),
                 head: vec![HeadTerm::Var, HeadTerm::Var],
                 rules: vec![rule(
                     vec![fv(0), fv(1)],
@@ -304,9 +304,9 @@ fn hand_queries() -> Vec<HandReach> {
         },
         HandReach {
             name: "reach-hand-unreached",
-            query: Query::Reach {
+            query: Query {
                 interiors: vec![],
-                rec,
+                rec: Some(rec),
                 head: vec![HeadTerm::Var],
                 rules: vec![rule(
                     vec![fv(0)],

@@ -29,7 +29,9 @@ fn stores(
     descriptor: &SchemaDescriptor,
     inserts: Vec<(RelationId, Vec<Value>)>,
 ) -> (Db<SchemaDescriptor>, NaiveDb) {
-    let db = Db::create(dir, descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir, descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(descriptor);
     let delta = Delta {
         deletes: vec![],
@@ -42,7 +44,8 @@ fn stores(
         }
         Ok(())
     })
-    .expect("the fixture data commits");
+    .expect("the fixture data commits")
+    .unwrap();
     (db, naive)
 }
 
@@ -54,7 +57,7 @@ fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::Elimina
     let (_, stats) = db
         .read(|snap| snap.profile(&mut prepared, &[]))
         .expect("profile executes");
-    stats.into_cq_rules().swap_remove(0).eliminated
+    stats.into_cq_rules().swap_remove(0).eliminated().to_vec()
 }
 
 /// The dual run: grounding-on, ground-off, and the model must produce one

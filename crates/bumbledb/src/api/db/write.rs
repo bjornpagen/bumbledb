@@ -1,28 +1,16 @@
 use std::sync::PoisonError;
 
-use super::{CommitSeq, Db, Snapshot, WriteTx, WriterThreadReset};
-use crate::error::{Error, Result};
+use super::{Db, ReadInstance, ThreadKey, WriteTx, WriterThreadReset};
+use crate::error::{Admission, Committed, ConditionalWrite, Error, Result};
 use crate::storage::commit::{
     commit, crashpoint, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 
-/// A per-thread key, distinct process-wide (never 0). `ThreadId`
-/// itself has no stable integer form, so each thread mints one from a
-/// shared counter on first use.
-fn thread_key() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    thread_local! {
-        static KEY: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
-    }
-    KEY.with(|key| *key)
-}
-
 impl Drop for WriterThreadReset<'_> {
     fn drop(&mut self) {
-        self.0.store(0, std::sync::atomic::Ordering::Release);
+        ThreadKey::store(self.0, None, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -83,31 +71,47 @@ impl<S> Drop for EscapedIdBurn<'_, S> {
     }
 }
 
+/// Callback exit of one write region: committed value, apply poison, or
+/// callback abort. One burn-and-flush step consumes every non-committed
+/// arm so the escaped-floor laws have one home.
+enum WriteEnd<R> {
+    Committed(R),
+    Poisoned(Error),
+    Aborted(Error),
+}
+
 /// The generation witness, reified (`docs/architecture/70-api.md`
-/// § conditional writes): the environment identity and generation one
-/// [`Snapshot`] observed, as a plain value. Fields are private and the one
-/// construction site is [`Snapshot::witness`], so a witness stays evidence
-/// — never an integer a caller could fabricate (the recorded refusal); a
-/// stale-cached witness is exactly what the commit-time compare convicts
-/// as `GenerationMoved`. The value carries the snapshot's schema typestate
-/// (the binding-proof discipline every witness follows) and crosses
-/// threads by MOVE, so no `&Snapshot` ever outlives its snapshot to reach
-/// the writer — the dangling witness of a closed snapshot is
-/// unrepresentable, not defended (findings 018/021).
-#[derive(Clone, Copy)]
+/// § conditional writes): the catalog identity and generation one
+/// [`ReadInstance`] observed. Fields are private and the one
+/// construction site is [`ReadInstance::witness`], so a witness stays
+/// evidence — never an integer a caller could fabricate. A stale
+/// witness is exactly what the commit-time compare convicts as
+/// [`ConditionalWrite::Moved`].
+///
+/// A witness is evidence, and evidence does not wear out. The spent-move
+/// ruling is overturned: this value is [`Clone`] and not [`Copy`] (the
+/// identity is an `Arc`). [`Db::write_from`] borrows it; one read may
+/// justify many conditional writes.
+///
+/// ```compile_fail
+/// fn require_copy<T: Copy>() {}
+/// require_copy::<bumbledb::Witness<()>>();
+/// ```
+#[derive(Clone)]
 #[must_use]
 pub struct Witness<S> {
-    instance: u64,
+    identity: crate::storage::env::CatalogIdentity,
     generation: crate::GenerationId,
     marker: std::marker::PhantomData<fn() -> S>,
 }
 
-impl<S> Snapshot<'_, S> {
-    /// Mints this snapshot's [`Witness`]: the generation is read inside
-    /// the snapshot's own transaction (snapshot-constant; the existing
+impl<S> ReadInstance<'_, S> {
+    /// Mints this lease's [`Witness`]: the generation is read inside
+    /// the instance's own transaction (snapshot-constant; the existing
     /// race-closer of `50-storage.md`), never through a separate read.
-    /// The generation itself stays unreadable — the witness consumes it
-    /// internally; the diagnostics surface remains [`Db::generation`].
+    /// The witness may outlive the read callback. The generation itself
+    /// stays unreadable on the witness — the diagnostics surface remains
+    /// [`Db::generation`] / [`ReadInstance::generation`].
     ///
     /// # Errors
     ///
@@ -115,7 +119,7 @@ impl<S> Snapshot<'_, S> {
     /// malformed.
     pub fn witness(&self) -> Result<Witness<S>> {
         Ok(Witness {
-            instance: self.txn().env_instance(),
+            identity: self.txn().identity().clone(),
             generation: self.txn().generation()?,
             marker: std::marker::PhantomData,
         })
@@ -143,7 +147,7 @@ impl<S> Db<S> {
     ///
     /// # Errors
     ///
-    /// `f`'s error, or commit-time `CommitRejected` (the complete
+    /// `f`'s error, or commit-time [`Admission::Rejected`] (the complete
     /// violation set, in materialized statement order) /
     /// `FreshExhausted` / `Lmdb` / `Io`.
     ///
@@ -152,88 +156,65 @@ impl<S> Db<S> {
     /// On a nested call from within a write closure on the same thread —
     /// `write` is non-reentrant, and a loud panic beats the silent
     /// forever-deadlock the writer mutex would otherwise become.
-    pub fn write<R>(&self, f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>) -> Result<R> {
-        self.write_witnessed(None, f)
+    pub fn write<R>(
+        &self,
+        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
+    ) -> Result<Admission<Committed<R>>> {
+        match self.write_witnessed(None, f)? {
+            ConditionalWrite::Accepted(committed) => Ok(Admission::Accepted(committed)),
+            ConditionalWrite::Rejected(violations) => Ok(Admission::Rejected(violations)),
+            ConditionalWrite::Moved { .. } => {
+                unreachable!("Db::write has no witness, so Moved is unrepresentable")
+            }
+        }
     }
 
-    /// [`Db::write`], conditional on a witness: the read-compute-write
-    /// sequence as a value (`docs/architecture/70-api.md` § conditional
-    /// writes). The witness is the [`Snapshot`] the host read its
-    /// premises on — evidence, never a raw integer a caller could
-    /// fabricate or stale-cache (the recorded refusal). Inside the
-    /// writer's critical section, before any page is touched, the
-    /// current state-changing generation is compared against the
-    /// witness's: on mismatch the whole transaction aborts with
-    /// [`Error::GenerationMoved`] and the delta drops exactly as any
-    /// abort does — `f` never runs. The compare targets the same
-    /// generation the image cache keys on, so a counters-only/no-op
-    /// commit does not trip it.
+    /// [`Db::write`], conditional on a borrowed [`Witness`]: the
+    /// read-compute-write sequence as a value. Catalog identity is
+    /// compared first — a foreign witness is [`Error::ForeignWitness`].
+    /// Generation is compared inside the writer critical section, before
+    /// any page is touched: mismatch is [`ConditionalWrite::Moved`] and
+    /// `f` never runs. The compare targets the same generation the image
+    /// cache keys on, so a counters-only/no-op commit does not trip it.
     ///
-    /// The engine ships the error, never a loop — retry is host policy:
-    /// re-run the query, re-compute, `write_from` again. [`Snapshot::generation`]
-    /// is the diagnostics read of the same clock the witness consumes
-    /// internally (its fields stay private); [`Db::generation`] is the
-    /// handle-level sibling.
+    /// The engine ships the outcome, never a loop — retry is host policy.
+    /// One witness may justify many writes; clone it when the host needs
+    /// a retained copy.
     ///
     /// # Errors
     ///
-    /// [`Error::ForeignSnapshot`] on a witness from another database
-    /// (the environment-identity check prepared queries run);
-    /// [`Error::GenerationMoved`] when a state-changing commit landed
-    /// after the witness; otherwise as [`Db::write`].
+    /// [`Error::ForeignWitness`] on a witness from another database;
+    /// otherwise as [`Db::write`]. A moved generation is
+    /// [`ConditionalWrite::Moved`], not an error.
     ///
     /// # Panics
     ///
     /// As [`Db::write`] (non-reentrant).
     pub fn write_from<R>(
         &self,
-        witness: &Snapshot<'_, S>,
+        witness: &Witness<S>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<R> {
-        self.write_from_witness(witness.witness()?, f)
-    }
-
-    /// [`Db::write_from`] over the reified [`Witness`] — the lane for a
-    /// caller that cannot hold `&Snapshot` across its own boundary (the
-    /// FFI bridge parks each snapshot on a worker thread): the snapshot
-    /// mints the value where it lives and the value moves here. Same
-    /// checks in the same order, same errors, same one-compare cost.
-    ///
-    /// # Errors
-    ///
-    /// As [`Db::write_from`].
-    ///
-    /// # Panics
-    ///
-    /// As [`Db::write`] (non-reentrant).
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a witness is spent by the write it justifies — the move is the API"
-    )]
-    pub fn write_from_witness<R>(
-        &self,
-        witness: Witness<S>,
-        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<R> {
-        if witness.instance != self.env.instance() {
-            return Err(Error::ForeignSnapshot);
+    ) -> Result<ConditionalWrite<R>> {
+        if !witness.identity.same(self.env.identity()) {
+            return Err(Error::ForeignWitness);
         }
         self.write_witnessed(Some(witness.generation), f)
     }
 
     /// The one write body. `witnessed` is the only difference between
     /// [`Db::write`] and [`Db::write_from`]: one integer compare inside
-    /// the critical section, cold on the success path.
+    /// the critical section, cold on the success path. `write` maps
+    /// away the `Moved` arm, which is unrepresentable without a witness.
     fn write_witnessed<R>(
         &self,
         witnessed: Option<crate::GenerationId>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<R> {
+    ) -> Result<ConditionalWrite<R>> {
         use std::sync::atomic::Ordering;
-        let caller = thread_key();
+        let caller = ThreadKey::mint();
         assert_ne!(
-            self.writer_thread.load(Ordering::Acquire),
-            caller,
+            ThreadKey::load(&self.writer_thread, Ordering::Acquire),
+            Some(caller),
             "nested Db::write — re-entrant write transactions are forbidden"
         );
         // A panicking closure poisons nothing real: the unwind burned the
@@ -241,7 +222,7 @@ impl<S> Db<S> {
         // same lock) and dropped everything else — no fact ever touched
         // LMDB — so the flag is cleared rather than propagated.
         let _writer_lock = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        self.writer_thread.store(caller, Ordering::Release);
+        ThreadKey::store(&self.writer_thread, Some(caller), Ordering::Release);
         let _owner = WriterThreadReset(&self.writer_thread);
         // Drop the parked reader before writing: a
         // pinned old snapshot blocks LMDB page reuse for the writer.
@@ -259,11 +240,10 @@ impl<S> Db<S> {
         if let Some(witnessed) = witnessed {
             let current = view.generation()?;
             if current != witnessed {
-                return Err(Error::GenerationMoved { witnessed, current });
+                return Ok(ConditionalWrite::Moved { witnessed, current });
             }
         }
-        let mut txn_span =
-            crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
+        let mut txn_span = crate::obs::span(crate::obs::names::WRITE_TXN);
         // The burn region: from here until `disarm` hands the delta to
         // `commit()`, EVERY termination — an `Err`-returning closure AND
         // a PANICKING one — burns the escaped fresh high-water through
@@ -278,33 +258,32 @@ impl<S> Db<S> {
             &self.env,
             WriteTx {
                 view,
-                delta: WriteDelta::new(&self.schema),
-                schema: &self.schema,
+                delta: WriteDelta::new(self.schema.as_ref()),
+                schema: self.schema.as_ref(),
                 scratch: Vec::new(),
                 refs: Vec::new(),
                 phase: super::apply::WritePhase::Clean,
                 marker: std::marker::PhantomData,
             },
         );
-        let out = match f(burn.tx()) {
+        let end = match f(burn.tx()) {
             Ok(value) => {
                 if let super::apply::WritePhase::Poisoned(source) = &burn.tx().phase {
-                    let error = Error::TransactionPoisoned {
+                    WriteEnd::Poisoned(Error::TransactionPoisoned {
                         source: source.clone(),
-                    };
-                    let WriteTx { view, delta, .. } = burn.disarm();
-                    drop(view);
-                    return match flush_escaped_fresh_ids(&self.env, &delta) {
-                        Ok(()) => Err(error),
-                        Err(flush_err) => Err(flush_err),
-                    };
+                    })
+                } else {
+                    WriteEnd::Committed(value)
                 }
-                value
             }
-            Err(error) => {
+            Err(error) => WriteEnd::Aborted(error),
+        };
+        let out = match end {
+            WriteEnd::Committed(value) => value,
+            WriteEnd::Poisoned(error) | WriteEnd::Aborted(error) => {
                 // Non-unwind abort: disarm so Drop does not flush twice,
                 // then surface a flush failure (the identity burn is
-                // not silent). A sealed CommitRejected is not possible
+                // not silent). A sealed theory rejection is not possible
                 // here — commit has not run.
                 let WriteTx { view, delta, .. } = burn.disarm();
                 drop(view);
@@ -328,8 +307,13 @@ impl<S> Db<S> {
         // a delete-free relation's image survives as an append base.
         let dirty = delta.dirty_relations();
         let floors = delta.inserted_floors();
-        let report = commit(delta, &self.env)?;
-        txn_span.set_args(1, 0);
+        let report = match commit(delta, &self.env)? {
+            Admission::Rejected(violations) => {
+                return Ok(ConditionalWrite::Rejected(violations));
+            }
+            Admission::Accepted(report) => report,
+        };
+        txn_span.set_flag(true);
         txn_span.end();
         if let crate::storage::commit::CommitReport::Changed { new_generation } = report {
             // The one commit → cache wiring point (`50-storage.md`):
@@ -340,10 +324,15 @@ impl<S> Db<S> {
             // as an append base (`ImageCache::advance`).
             self.cache.advance(new_generation, &dirty, &floors);
             // Invalidate any snapshot parked mid-write by a concurrent
-            // reader: the next read must begin fresh.
-            CommitSeq::advance(&self.commit_seq, Ordering::Release);
+            // reader: the next read must begin fresh. Same clock the
+            // store just advanced.
+            self.generation
+                .store(new_generation.storage_word(), Ordering::Release);
             crashpoint!("after-memo-update");
         }
-        Ok(out)
+        Ok(ConditionalWrite::Accepted(Committed {
+            value: out,
+            generation: report.generation(),
+        }))
     }
 }

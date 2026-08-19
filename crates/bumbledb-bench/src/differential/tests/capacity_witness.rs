@@ -83,7 +83,9 @@ fn the_witness_walks_the_permuted_key_order() {
         ],
     };
     let dir = TempDir::new("capacity-witness-permuted");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let device =
@@ -150,13 +152,8 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
             },
         ],
     };
-    let pool = |name: &str| (POOL, vec![Value::String(name.as_bytes().into())]);
-    let device = |name: &str, id: u64| {
-        (
-            DEVICE,
-            vec![Value::String(name.as_bytes().into()), Value::U64(id)],
-        )
-    };
+    let pool = |name: &str| (POOL, vec![Value::String(name.into())]);
+    let device = |name: &str, id: u64| (DEVICE, vec![Value::String(name.into()), Value::U64(id)]);
     let expected = Verdict::Aborted(vec![Violation::Capacity {
         statement: StatementId(1),
         // zebra's group (2 devices), NOT apple's (3) — intern order.
@@ -167,7 +164,9 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     // apple), the violating device delta judges against the committed
     // dictionary.
     let dir = TempDir::new("capacity-witness-interned");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
     let seed = Delta {
         deletes: vec![],
@@ -190,7 +189,9 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     // (insert order: zebra first) — the judgment's ordering must see
     // those ranks even though the ids die with the abort.
     let dir = TempDir::new("capacity-witness-pending");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
     let one_shot = Delta {
         deletes: vec![],

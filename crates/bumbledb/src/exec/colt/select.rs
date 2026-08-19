@@ -17,7 +17,7 @@ impl Colt {
     pub fn select(&mut self, keys: &[Vec<u64>]) -> Option<Cursor> {
         debug_assert_eq!(
             keys.len(),
-            self.selection_levels,
+            self.selection_depth(),
             "one resolved key per selection level"
         );
         // Last execution's union subtrie — the position copies and every
@@ -36,8 +36,7 @@ impl Colt {
                 self.probe_child_at(cursor, level, words, hash_words(words))?
             };
         }
-        self.start = cursor;
-        self.select_state = super::SelectState::Done;
+        self.start = super::Start::Selected(cursor);
         Some(cursor)
     }
 
@@ -203,11 +202,10 @@ impl Colt {
     /// Once per occurrence per execution; noise against the join.
     #[must_use]
     pub fn start(&self) -> Cursor {
-        assert!(
-            !matches!(self.select_state, super::SelectState::Pending),
-            "select() runs before the join"
-        );
-        self.start
+        match self.start {
+            super::Start::Vacuous(cursor) | super::Start::Selected(cursor) => cursor,
+            super::Start::Pending => panic!("select() runs before the join"),
+        }
     }
 
     /// The root cursor (level 0).

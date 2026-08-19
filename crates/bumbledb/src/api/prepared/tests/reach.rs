@@ -5,7 +5,7 @@ use crate::api::stats::StatsBody;
 use crate::ir::{CmpOp, NonEmpty, ProjectionRule, Rec, RecRule, RecStep};
 
 fn interiors_only() -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![Interior {
             rules: vec![ProjectionRule {
                 finds: vec![VarId(0)],
@@ -27,6 +27,7 @@ fn interiors_only() -> Query {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     }
 }
 
@@ -64,7 +65,7 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
     let mut prepared = prepare(&txn, &cache, &schema, &interiors_only()).expect("prepare");
     prepared.set_derived_budget(0, 0);
     let err = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect_err("zero tuples trips a nonempty interior");
     assert!(
         matches!(
@@ -78,7 +79,7 @@ fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
     );
     prepared.set_derived_budget(0, u64::MAX);
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("tight rounds alone must not trip interiors-only");
     assert_eq!(out.len(), 3);
 }
@@ -94,7 +95,7 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
     // Main is an EDB rule whose constant conditions refute themselves —
     // the known fold kernel (`score > 5 ∧ score < 3` on i64). Interiors
     // stay live; the pipeline is Cq with empty main rules.
-    let query = Query::Cq {
+    let query = Query {
         interiors: interiors_only().interiors().to_vec(),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -117,6 +118,7 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
                 }),
             ],
         }],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     match &prepared.pipeline {
@@ -134,6 +136,7 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
             );
         }
         PreparedPipeline::Reach { .. } => panic!("expected Cq, got Reach"),
+        PreparedPipeline::PointProbe { .. } => panic!("expected Cq, got PointProbe"),
     }
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     match &stats.body {
@@ -150,9 +153,9 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
 }
 
 fn rec_query() -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![Atom {
@@ -167,7 +170,7 @@ fn rec_query() -> Query {
                 atoms: vec![],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

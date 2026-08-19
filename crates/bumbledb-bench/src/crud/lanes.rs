@@ -106,7 +106,7 @@ fn invocations(proto: Protocol) -> usize {
 /// returning this from a write closure drops the delta whole, so a
 /// refused sample commits nothing.
 fn refuse(what: &str) -> bumbledb::Error {
-    bumbledb::Error::Io(std::io::Error::other(what.to_owned()))
+    bumbledb::Error::from(std::io::Error::other(what.to_owned()))
 }
 
 /// A stream whose length disagrees with the protocol is refused at
@@ -186,7 +186,10 @@ pub fn insert_bumbledb(
             }
             Ok(())
         })
-        .map(|()| per_commit)
+        .map(|admission| {
+            admission.unwrap();
+            per_commit
+        })
         .map_err(|e| format!("crud_insert x{per_commit}: {e:?}"))
     })
 }
@@ -254,7 +257,7 @@ pub fn update_bumbledb(
                     key: op.key,
                     val: op.prev,
                 }])?
-                .changed
+                .changed()
                 == 0
             {
                 return Err(refuse(
@@ -267,7 +270,10 @@ pub fn update_bumbledb(
             }])?;
             Ok(())
         })
-        .map(|()| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("crud_update: {e:?}"))
     })
 }
@@ -366,7 +372,10 @@ pub fn upsert_bumbledb(
             }
             Ok(())
         })
-        .map(|()| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("crud_upsert: {e:?}"))
     })
 }
@@ -431,7 +440,10 @@ pub fn rmw_bumbledb(
             tx.insert([&Counter { key, val: next }])?;
             Ok(())
         })
-        .map(|()| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("crud_rmw: {e:?}"))
     })
 }
@@ -510,14 +522,17 @@ pub fn delete_bumbledb(
             .next()
             .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| {
-            if tx.delete_dyn(ids::DOC, [row])?.changed == 0 {
+            if tx.delete_dyn(ids::DOC, [row])?.changed() == 0 {
                 return Err(refuse(
                     "the delete must be delete-bearing: the pool row was absent",
                 ));
             }
             Ok(())
         })
-        .map(|()| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("crud_delete: {e:?}"))
     })
 }
@@ -599,7 +614,8 @@ pub fn mixed_bumbledb(
             drained += buffer.len() as u64;
         }
         db.write(|tx| mint_doc(tx, seed, cursor))
-            .map_err(|e| format!("crud_mixed_90_10 insert: {e:?}"))?;
+            .map_err(|e| format!("crud_mixed_90_10 insert: {e:?}"))?
+            .unwrap();
         Ok(drained + 1)
     })
 }

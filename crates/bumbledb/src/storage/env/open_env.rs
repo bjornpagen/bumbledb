@@ -105,8 +105,8 @@ pub(super) fn open_env(path: &Path, lane: OpenLane) -> Result<heed::Env<WithoutT
     // its failures the same way), so a nonexistent path surfaces as
     // `Io` from every constructor (R17 — exhume's contract).
     let env = unsafe { options.open(path) }.map_err(|err| match err {
-        heed::Error::Io(io) => crate::error::Error::Io(io),
-        other => other.into(),
+        heed::Error::Io(io) => crate::error::Error::from(io),
+        other => crate::error::Error::from(other),
     })?;
     Ok(env)
 }

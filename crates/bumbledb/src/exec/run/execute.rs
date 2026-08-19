@@ -2,9 +2,11 @@
 
 use super::{
     AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor, LeafPrecompute,
-    NodeScratch, PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
-    PointProbeSpec, Sink, ValidatedPlan,
+    NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, Sink, ValidatedPlan,
 };
+use crate::image::view::FilterPredicate;
+use crate::plan::fj::PlanNode;
+use std::num::NonZeroUsize;
 
 /// The membership-filter column/slot table shared by both probe kinds:
 /// per filter, the interval field's (start column, end column) through
@@ -25,65 +27,129 @@ fn point_parts(
         .collect()
 }
 
-/// Anti-probe specs (docs/architecture/40-execution.md, § anti-probe
-/// filters), aligned with each node's `anti_probes` list: the negated
-/// occurrence's single trie level in binding order, each variable with
-/// its first slot and slot width — precomputed like `residual_slots` —
-/// plus its var-sourced membership filters, evaluated inside the probe.
-fn anti_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<AntiProbeSpec>> {
-    plan.nodes()
+fn anti_probes_of(plan: &ValidatedPlan, node: &PlanNode) -> Vec<AntiProbeSpec> {
+    node.anti_probes
         .iter()
-        .map(|node| {
-            node.anti_probes
+        .map(|anti_probe| {
+            let occ = usize::from(anti_probe.occurrence.0);
+            let occurrence = &plan.occurrences()[occ];
+            debug_assert_eq!(
+                occurrence.trie_schema.len(),
+                1,
+                "a negated occurrence's trie schema is one probe level"
+            );
+            let parts: Vec<(crate::ir::VarId, usize, usize)> = occurrence.trie_schema[0]
                 .iter()
-                .map(|anti_probe| {
-                    let occ = usize::from(anti_probe.occurrence.0);
-                    let occurrence = &plan.occurrences()[occ];
-                    debug_assert_eq!(
-                        occurrence.trie_schema.len(),
-                        1,
-                        "a negated occurrence's trie schema is one probe level"
-                    );
-                    let parts: Vec<(crate::ir::VarId, usize, usize)> = occurrence.trie_schema[0]
+                .map(|var| {
+                    let (_, width) = plan
+                        .slots()
                         .iter()
-                        .map(|var| {
-                            let (_, width) = plan
-                                .slots()
-                                .iter()
-                                .find(|(slot_var, _)| slot_var == var)
-                                .expect("anti-probe variables are slot-bound");
-                            (*var, plan.slot_of(*var), width.slots())
-                        })
-                        .collect();
-                    AntiProbeSpec {
-                        occ,
-                        parts,
-                        key_words: usize::from(occurrence.key_widths[0]),
-                        point_parts: point_parts(plan, occ, &occurrence.point_filters),
-                    }
+                        .find(|(slot_var, _)| slot_var == var)
+                        .expect("anti-probe variables are slot-bound");
+                    (*var, plan.slot_of(*var), width.slots())
                 })
-                .collect()
+                .collect();
+            let key_words = usize::from(occurrence.key_widths[0]);
+            let form = match NonZeroUsize::new(key_words) {
+                None => super::AntiProbeForm::Gate,
+                Some(key_words) => super::AntiProbeForm::Keyed { parts, key_words },
+            };
+            AntiProbeSpec {
+                occ,
+                form,
+                point_parts: point_parts(plan, occ, &occurrence.point_filters),
+            }
         })
         .collect()
 }
 
-/// Membership-probe specs, aligned with each node's `point_probes`.
-fn point_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<PointProbeSpec>> {
-    plan.nodes()
+fn point_probes_of(plan: &ValidatedPlan, node: &PlanNode) -> Vec<PointProbeSpec> {
+    node.point_probes
         .iter()
-        .map(|node| {
-            node.point_probes
-                .iter()
-                .map(|probe| {
-                    let occ = usize::from(probe.occ.0);
-                    PointProbeSpec {
-                        occ,
-                        parts: point_parts(plan, occ, &probe.filters),
-                    }
-                })
-                .collect()
+        .map(|probe| {
+            let occ = usize::from(probe.occ.0);
+            PointProbeSpec {
+                occ,
+                parts: point_parts(plan, occ, &probe.filters),
+            }
         })
         .collect()
+}
+
+impl NodePrecompute {
+    fn of(
+        plan: &ValidatedPlan,
+        node: &PlanNode,
+        width_of: impl Fn(crate::ir::VarId) -> usize,
+    ) -> Self {
+        let residual_slots = node
+            .residuals
+            .iter()
+            .map(|r| {
+                let (left, right, _) = r.compare_sides();
+                debug_assert_eq!(
+                    width_of(left.var()),
+                    width_of(right.var()),
+                    "validated: residual sides share a structural type"
+                );
+                (
+                    r.clone(),
+                    plan.slot_of(left.var()),
+                    plan.slot_of(right.var()),
+                    width_of(left.var()),
+                )
+            })
+            .collect();
+        let word_residual_slots = node
+            .word_residuals
+            .iter()
+            .map(|r| {
+                let (left, right, _) = r.compare_sides();
+                (
+                    r.clone(),
+                    plan.slot_of(left.var()) + left.offset(),
+                    plan.slot_of(right.var()) + right.offset(),
+                )
+            })
+            .collect();
+        let allen_residual_slots: Vec<(FilterPredicate, usize, usize)> = node
+            .allen_residuals
+            .iter()
+            .map(|r| {
+                let (left, right, _) = r.allen_sides();
+                (
+                    r.clone(),
+                    plan.slot_of(left.var()),
+                    plan.slot_of(right.var()),
+                )
+            })
+            .collect();
+        let allen_masks = allen_residual_slots
+            .iter()
+            .map(|(residual, _, _)| residual.allen_sides().2)
+            .collect();
+        let duration_residual_slots = node
+            .duration_residuals
+            .iter()
+            .map(|r| {
+                let (interval, scalar, _) = r.duration_sides();
+                (
+                    r.clone(),
+                    plan.slot_of(interval.var()),
+                    plan.slot_of(scalar.var()),
+                )
+            })
+            .collect();
+        Self {
+            residual_slots,
+            word_residual_slots,
+            allen_residual_slots,
+            allen_masks,
+            duration_residual_slots,
+            point_probes: point_probes_of(plan, node),
+            anti_probes: anti_probes_of(plan, node),
+        }
+    }
 }
 
 impl Executor {
@@ -144,79 +210,11 @@ impl Executor {
                     .collect()
             })
             .collect();
-        let residual_slots: Vec<Vec<(PlacedComparison, usize, usize, usize)>> = plan
+        let precompute: Vec<NodePrecompute> = plan
             .nodes()
             .iter()
-            .map(|node| {
-                node.residuals
-                    .iter()
-                    .map(|r| {
-                        debug_assert_eq!(
-                            width_of(r.lhs),
-                            width_of(r.rhs),
-                            "validated: residual sides share a structural type"
-                        );
-                        (
-                            *r,
-                            plan.slot_of(r.lhs),
-                            plan.slot_of(r.rhs),
-                            width_of(r.lhs),
-                        )
-                    })
-                    .collect()
-            })
+            .map(|node| NodePrecompute::of(plan, node, width_of))
             .collect();
-        // Decomposed interval word residuals: slots pre-offset to the
-        // compared word (docs/architecture/20-query-ir.md — the three
-        // fixed compositions over slot pairs).
-        let word_residual_slots: Vec<Vec<(PlacedWordComparison, usize, usize)>> = plan
-            .nodes()
-            .iter()
-            .map(|node| {
-                node.word_residuals
-                    .iter()
-                    .map(|r| {
-                        (
-                            *r,
-                            plan.slot_of(r.lhs.var) + r.lhs.word.offset(),
-                            plan.slot_of(r.rhs.var) + r.rhs.word.offset(),
-                        )
-                    })
-                    .collect()
-            })
-            .collect();
-        // Allen residuals: base slots per side (evaluation reads the
-        // pair at offsets 0/1), plus the resolved-mask table — literal
-        // masks final here, param masks rewritten per execution
-        // (`bind_allen_masks`).
-        let allen_residual_slots: Vec<Vec<(PlacedAllen, usize, usize)>> = plan
-            .nodes()
-            .iter()
-            .map(|node| {
-                node.allen_residuals
-                    .iter()
-                    .map(|r| (*r, plan.slot_of(r.lhs), plan.slot_of(r.rhs)))
-                    .collect()
-            })
-            .collect();
-        let allen_masks: Vec<Vec<bumbledb_theory::allen::AllenMask>> = allen_residual_slots
-            .iter()
-            .map(|slots| slots.iter().map(|(residual, _, _)| residual.mask).collect())
-            .collect();
-        // Measure residuals: the interval side's base slot (pair read at
-        // offsets 0/1) and the scalar side's single slot.
-        let duration_residual_slots: Vec<Vec<(PlacedDuration, usize, usize)>> = plan
-            .nodes()
-            .iter()
-            .map(|node| {
-                node.duration_residuals
-                    .iter()
-                    .map(|r| (*r, plan.slot_of(r.interval), plan.slot_of(r.scalar)))
-                    .collect()
-            })
-            .collect();
-        let anti_probe_slots = anti_probe_slots(plan);
-        let point_probe_slots = point_probe_slots(plan);
         // Occurrences whose positions a membership probe reads: the
         // zero-arity cover collapse must keep enumerating those (each
         // position carries its own interval columns).
@@ -230,8 +228,8 @@ impl Executor {
             .nodes()
             .iter()
             .enumerate()
-            .zip(&anti_probe_slots)
-            .map(|((node_idx, node), anti_specs)| {
+            .zip(&precompute)
+            .map(|((node_idx, node), pre)| {
                 // Word-level arity: an interval variable is two key words.
                 let max_arity = slot_map[node_idx]
                     .iter()
@@ -242,9 +240,10 @@ impl Executor {
                 // Probe keys also hold anti-probe keys, whose width can
                 // exceed every subatom arity (an interval variable is two
                 // words; the negated occurrence joins no subatom).
-                let max_key = anti_specs
+                let max_key = pre
+                    .anti_probes
                     .iter()
-                    .map(|spec| spec.key_words)
+                    .map(super::AntiProbeSpec::key_words)
                     .max()
                     .unwrap_or(0)
                     .max(max_arity);
@@ -266,7 +265,7 @@ impl Executor {
                     duration_sources: Vec::new(),
                     allen_gather: Vec::new(),
                     allen_codes: Vec::new(),
-                    anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
+                    anti_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
                     point_sources: Vec::new(),
                     point_rows: Vec::new(),
@@ -282,20 +281,14 @@ impl Executor {
                 }
             })
             .collect();
-        let leaf = LeafPrecompute::of(plan, &residual_slots, &var_widths);
+        let leaf = LeafPrecompute::of(plan, &precompute, &var_widths);
         Self {
             batch,
             cursors: Vec::new(),
             slot_map,
-            residual_slots,
-            word_residual_slots,
-            allen_residual_slots,
-            allen_masks,
-            duration_residual_slots,
-            point_probe_slots,
+            precompute,
             point_probed,
             var_widths,
-            anti_probe_slots,
             scratch,
             leaf,
             scan_filter: Vec::new(),
@@ -318,10 +311,13 @@ impl Executor {
     /// masks are re-copied (idempotent). Called by the prepared query before
     /// every join execution; the executor itself never touches params.
     pub fn bind_allen_masks(&mut self, _params: &[crate::image::view::Const]) {
-        for (node_slots, node_masks) in self.allen_residual_slots.iter().zip(&mut self.allen_masks)
-        {
-            for ((residual, _, _), mask) in node_slots.iter().zip(node_masks.iter_mut()) {
-                *mask = residual.mask;
+        for node in &mut self.precompute {
+            for ((residual, _, _), mask) in node
+                .allen_residual_slots
+                .iter()
+                .zip(node.allen_masks.iter_mut())
+            {
+                *mask = residual.allen_sides().2;
             }
         }
     }

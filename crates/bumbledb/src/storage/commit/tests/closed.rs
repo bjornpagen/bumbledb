@@ -6,12 +6,13 @@
 //! engine side.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result, Violation};
+use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::ValidateDescriptor as _;
 use crate::schema::{ContainmentId, Enforcement, KeyId, Schema};
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
     FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, StatementDescriptor,
@@ -124,36 +125,36 @@ fn base_then(
     base: &[(RelationId, Vec<u8>)],
     deletes: &[(RelationId, Vec<u8>)],
     inserts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
+) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     if !base.is_empty() {
-        apply_delta(&env, &schema, &[], base).expect("base commit");
+        apply_delta(&env, &schema, &[], base)
+            .expect("base commit")
+            .expect("admitted");
     }
     let before = committed_data(&env);
     let result = apply_delta(&env, &schema, deletes, inserts);
-    if result.is_err() {
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         assert_eq!(committed_data(&env), before);
     }
     result
 }
 
 fn assert_violation(
-    result: Result<()>,
+    result: Result<Admission<()>>,
     statement: StatementId,
     direction: Direction,
     named_fact: &[u8],
 ) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+    let violations = expect_rejected(result);
     let [
         Violation::Containment {
-            statement: named,
+            id: named,
             direction: dir,
             fact,
+            ..
         },
     ] = violations.as_slice()
     else {
@@ -169,7 +170,8 @@ fn assert_violation(
 #[test]
 fn closed_reference_inside_the_extension_commits() {
     base_then("closed-ref-ok", &[], &[], &[(ALERT, alert(&schema(), 2))])
-        .expect("row id 2 is a ground axiom");
+        .expect("row id 2 is a ground axiom")
+        .unwrap();
 }
 
 #[test]
@@ -209,7 +211,8 @@ fn subset_member_commits() {
         &[],
         &[(ESCALATION, escalation(&schema(), 1))],
     )
-    .expect("Med pages — inside ψ");
+    .expect("Med pages — inside ψ")
+    .unwrap();
 }
 
 #[test]
@@ -255,7 +258,8 @@ fn closed_target_statements_write_no_reverse_edges() {
             (ESCALATION, escalation(&schema, 2)),
         ],
     )
-    .expect("commit");
+    .expect("commit")
+    .expect("admitted");
     for statement in [ALERT_SEVERITY, ESCALATION_SEVERITY] {
         let prefix = key(|b| keys::reverse_prefix(b, statement, &[]));
         let entries: Vec<_> = committed_data(&env)
@@ -313,7 +317,8 @@ fn replacing_a_handler_in_one_commit_commits() {
         &[(HANDLER, handler(&schema, 2, 10))],
         &[(HANDLER, handler(&schema, 2, 99))],
     )
-    .expect("the severity-2 key tuple re-lands in phase 2");
+    .expect("the severity-2 key tuple re-lands in phase 2")
+    .unwrap();
 }
 
 /// The functionality key on Handler stays enforced alongside the domain

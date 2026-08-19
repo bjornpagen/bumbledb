@@ -478,9 +478,10 @@ pub fn load_stores(
     for rel in [ids::HUB, ids::SPOKE] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(sizes, cfg.seed, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("load: {e:?}"))?;
+        .map_err(|e| format!("load: {e:?}"))?
+        .unwrap();
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;
@@ -532,7 +533,7 @@ pub fn verify_family(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     let mut stmt = conn
         .prepare(&translated.sql)
@@ -540,7 +541,7 @@ pub fn verify_family(
     let mut buffer = Answers::new();
     for draw in draws() {
         let args = param_args(&draw);
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{}: execute: {e:?}", family.name))?;
         let ours = compare::from_answers(&buffer, &types);
         let theirs = compare::from_sqlite(&mut stmt, &translated.params, &draw, &types)
@@ -612,9 +613,9 @@ pub fn bench_families(
         let sets = draws();
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = Answers::new();
-        let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<'_, DisplacedWorld>| {
+        let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<DisplacedWorld>| {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
@@ -663,7 +664,7 @@ pub fn bench_families(
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty().clone())
+            .map(|column| *column.ty())
             .collect();
         let mut mirror = sqlite_run::PreparedFamily::new(&conn, &translated, types)?;
         let mut cursor = 0usize;

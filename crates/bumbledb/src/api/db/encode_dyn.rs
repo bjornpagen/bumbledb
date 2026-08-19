@@ -1,7 +1,7 @@
 use super::WriteTx;
 use super::apply::ApplyRow;
 use crate::encoding::{FactLayout, FixedBytesValue, ValueRef, encode_fact};
-use crate::error::{FactShapeError, Result};
+use crate::error::{DynIdError, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 
@@ -18,10 +18,6 @@ pub(super) fn shape_mismatch(
             relation: rel,
             field,
         },
-        bumbledb_theory::schema::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
-            relation: rel,
-            field,
-        },
     }
 }
 
@@ -33,9 +29,7 @@ pub(super) enum ParsedCell<'a> {
     U64(u64),
     I64(i64),
     IntervalU64(bumbledb_theory::Interval<u64>),
-    FixedIntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
-    FixedIntervalI64(bumbledb_theory::Interval<i64>),
     FixedBytes(FixedBytesValue),
     String(&'a str),
 }
@@ -55,38 +49,26 @@ pub(super) fn parse_dyn_row<'a>(
     if values.len() != fields.len() {
         return Err(FactShapeError::ArityMismatch {
             relation: rel,
-            expected: fields.len(),
-            supplied: values.len(),
+            mismatch: Mismatch {
+                witnessed: values.len(),
+                required: fields.len(),
+            },
         }
         .into());
     }
     let mut cells = Vec::with_capacity(fields.len());
     for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-        let parsed = match bumbledb_theory::schema::value_matches_parsing(value, &field.value_type)
-        {
-            Ok(parsed) => parsed,
-            Err(mismatch) => return Err(shape_mismatch(rel, field_id, mismatch).into()),
-        };
+        if let Err(mismatch) = bumbledb_theory::schema::value_matches(value, &field.value_type) {
+            return Err(shape_mismatch(rel, field_id, mismatch).into());
+        }
         let cell = match value {
-            Value::String(_) => ParsedCell::String(
-                parsed.expect("value_matches_parsing parses every accepted String"),
-            ),
+            Value::String(text) => ParsedCell::String(text),
             Value::Bool(v) => ParsedCell::Bool(*v),
             Value::U64(v) => ParsedCell::U64(*v),
             Value::I64(v) => ParsedCell::I64(*v),
-            Value::IntervalU64(interval) => match field.value_type {
-                bumbledb_theory::schema::ValueType::FixedInterval { .. } => {
-                    ParsedCell::FixedIntervalU64(*interval)
-                }
-                _ => ParsedCell::IntervalU64(*interval),
-            },
-            Value::IntervalI64(interval) => match field.value_type {
-                bumbledb_theory::schema::ValueType::FixedInterval { .. } => {
-                    ParsedCell::FixedIntervalI64(*interval)
-                }
-                _ => ParsedCell::IntervalI64(*interval),
-            },
+            Value::IntervalU64(interval) => ParsedCell::IntervalU64(*interval),
+            Value::IntervalI64(interval) => ParsedCell::IntervalI64(*interval),
             Value::FixedBytes(raw) => ParsedCell::FixedBytes(FixedBytesValue::new(raw)),
         };
         cells.push(cell);
@@ -101,7 +83,7 @@ pub(super) fn parse_dyn_row<'a>(
 pub(super) fn intern_parsed_row(
     row: &ParsedRow<'_>,
     refs: &mut Vec<ValueRef>,
-    mut resolve_str: impl FnMut(&str) -> Result<Option<u64>>,
+    mut resolve_str: impl FnMut(&str) -> Result<Option<crate::encoding::InternId>>,
 ) -> Result<bool> {
     refs.clear();
     for cell in &row.cells {
@@ -116,9 +98,7 @@ pub(super) fn intern_parsed_row(
             ParsedCell::U64(v) => ValueRef::U64(v),
             ParsedCell::I64(v) => ValueRef::I64(v),
             ParsedCell::IntervalU64(interval) => ValueRef::IntervalU64(interval),
-            ParsedCell::FixedIntervalU64(interval) => ValueRef::FixedIntervalU64(interval),
             ParsedCell::IntervalI64(interval) => ValueRef::IntervalI64(interval),
-            ParsedCell::FixedIntervalI64(interval) => ValueRef::FixedIntervalI64(interval),
             ParsedCell::FixedBytes(raw) => ValueRef::FixedBytes(raw),
         };
         refs.push(value_ref);
@@ -154,21 +134,22 @@ fn finish_encode<S>(
 
 impl<S> WriteTx<'_, S> {
     /// Parse a dyn collection to [`ParsedRow`]s. Empty is lawful and
-    /// does not look up the relation. Shape failure never enters the
-    /// delta. Poison is refused first so a later mutation cannot surface
-    /// as `FactShape`.
+    /// does not look up the relation — it is no engine request, so a
+    /// poisoned transaction still returns empty. Nonempty collections
+    /// refuse poison first so a later mutation cannot surface as
+    /// `FactShape`.
     pub(super) fn parse_dyn_collection<'a>(
         &self,
         rel: RelationId,
         rows: &'a [impl AsRef<[Value]>],
     ) -> Result<Vec<ParsedRow<'a>>> {
-        self.refuse_poisoned()?;
         if rows.is_empty() {
             return Ok(Vec::new());
         }
+        self.refuse_poisoned()?;
         self.refuse_closed(rel)?;
         let Some(relation) = self.schema.relation_checked(rel) else {
-            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+            return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
         rows.iter()
@@ -208,7 +189,7 @@ impl<S> WriteTx<'_, S> {
     /// is data (`docs/architecture/70-api.md`).
     pub(super) fn encode_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         let Some(relation) = self.schema.relation_checked(rel) else {
-            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+            return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let parsed = parse_dyn_row(rel, values, relation.fields())?;
         let layout = relation.layout();

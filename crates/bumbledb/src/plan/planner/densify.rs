@@ -32,9 +32,10 @@ pub(super) fn densify(
         .allen_residuals
         .iter()
         .filter_map(|residual| {
-            let vars = (1u128 << *var_index.get(&residual.lhs)?)
-                | (1u128 << *var_index.get(&residual.rhs)?);
-            let (keep_num, keep_den) = (u64::from(residual.mask.popcount()), 13);
+            let (left, right, mask) = residual.allen_sides();
+            let vars = (1u128 << *var_index.get(&left.var())?)
+                | (1u128 << *var_index.get(&right.var())?);
+            let (keep_num, keep_den) = (u64::from(mask.popcount()), 13);
             Some(AllenKeep {
                 vars,
                 keep_num,

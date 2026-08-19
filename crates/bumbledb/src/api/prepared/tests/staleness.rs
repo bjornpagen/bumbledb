@@ -111,35 +111,37 @@ fn kept_query() -> Query {
 #[test]
 fn a_kept_closed_occurrence_never_reads_as_drift() {
     let dir = TempDir::new("staleness-closed");
-    let db = Db::create(dir.path(), closed_descriptor()).expect("create");
+    let db = Db::create(dir.path(), closed_descriptor())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (kind, value) in [(0u64, 100i64), (1, 210), (2, 220)] {
             tx.insert_dyn(READING, [&[Value::U64(kind), Value::I64(value)]])?;
         }
         Ok(())
     })
-    .expect("seed readings");
+    .expect("seed readings")
+    .unwrap();
 
     let prepared = db.prepare(&kept_query()).expect("prepare");
     db.read(|snap| {
         let staleness = prepared.staleness(snap)?;
+        let (per_occurrence, max_ratio) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("kept closed occurrences pin: {staleness:?}"));
         assert_eq!(
-            staleness.per_occurrence.len(),
+            per_occurrence.len(),
             2,
             "both occurrences participate and pin: {staleness:?}"
         );
-        let kind = staleness
-            .per_occurrence
+        let kind = per_occurrence
             .iter()
             .find(|d| d.relation == KIND)
             .expect("the kept closed occurrence is pinned");
         assert_eq!(kind.pinned, 4, "pinned at |extension|");
         assert_eq!(kind.live, 4, "live reads the sealed extension");
         assert!((kind.ratio - 1.0).abs() < f64::EPSILON, "{kind:?}");
-        assert!(
-            (staleness.max_ratio - 1.0).abs() < f64::EPSILON,
-            "{staleness:?}"
-        );
+        assert!((max_ratio - 1.0).abs() < f64::EPSILON, "{staleness:?}");
         Ok(())
     })
     .expect("fresh read");
@@ -154,11 +156,14 @@ fn a_kept_closed_occurrence_never_reads_as_drift() {
         }
         Ok(())
     })
-    .expect("grow readings");
+    .expect("grow readings")
+    .unwrap();
     db.read(|snap| {
         let staleness = prepared.staleness(snap)?;
-        let reading = staleness
-            .per_occurrence
+        let (per_occurrence, _) = staleness
+            .measured()
+            .unwrap_or_else(|| panic!("ordinary growth still pins: {staleness:?}"));
+        let reading = per_occurrence
             .iter()
             .find(|d| d.relation == READING)
             .expect("the ordinary occurrence is pinned");
@@ -166,8 +171,7 @@ fn a_kept_closed_occurrence_never_reads_as_drift() {
             (reading.ratio - 4.0).abs() < f64::EPSILON,
             "the ordinary occurrence drifts: {reading:?}"
         );
-        let kind = staleness
-            .per_occurrence
+        let kind = per_occurrence
             .iter()
             .find(|d| d.relation == KIND)
             .expect("the kept closed occurrence is pinned");

@@ -186,10 +186,11 @@ fn rsvp_union_query() -> Query {
         negated: vec![],
         conditions: vec![],
     };
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
         rules: vec![arm(RSVP_ACCEPTED), arm(RSVP_TENTATIVE), arm(RSVP_DECLINED)],
+        rec: None,
     }
 }
 

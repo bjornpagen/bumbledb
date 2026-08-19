@@ -10,7 +10,6 @@ use super::{Mass, PARENTS, calendar, calendar_rows, ids, power, power_baseline, 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-capacity-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -168,7 +167,9 @@ fn power_stream(mass: Mass) -> Vec<Op> {
 fn the_power_budget_verdicts_agree_with_the_naive_model() {
     let dir = scratch("power-naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, power::PowerWorld).expect("create");
+    let db = Db::create(&dir, power::PowerWorld)
+        .expect("create")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&power::PowerWorld.descriptor());
     let ops = power_stream(mass);
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
@@ -186,7 +187,9 @@ fn the_power_budget_verdicts_agree_with_the_naive_model() {
 fn the_calendar_verdicts_agree_with_the_naive_model() {
     let dir = scratch("calendar-naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, calendar::CalendarCapacityWorld).expect("create");
+    let db = Db::create(&dir, calendar::CalendarCapacityWorld)
+        .expect("create")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&calendar::CalendarCapacityWorld.descriptor());
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, calendar_rows);
@@ -277,7 +280,9 @@ fn sqlite_verdict(conn: &rusqlite::Connection, delta: &Delta) -> bool {
 fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     let dir = scratch("power-sqlite");
     let mass = Mass::unit();
-    let db = Db::create(&dir, power::PowerWorld).expect("create");
+    let db = Db::create(&dir, power::PowerWorld)
+        .expect("create")
+        .expect("accepted");
     let conn = rusqlite::Connection::open_in_memory().expect("twin");
     conn.execute_batch("PRAGMA foreign_keys=ON").expect("fk");
     for statement in super::sqlite::DDL {
@@ -314,13 +319,17 @@ fn the_sqlite_sum_trigger_agrees_with_the_engine() {
 #[test]
 fn the_capacity_rows_run_their_protocols() {
     let dir = scratch("rows");
-    let budgeted = Db::create(&dir.join("power"), power::PowerWorld).expect("create");
+    let budgeted = Db::create(&dir.join("power"), power::PowerWorld)
+        .expect("create")
+        .expect("accepted");
     super::load(&budgeted, Mass::BENCH, power_rows).expect("load power");
-    let control =
-        Db::create(&dir.join("baseline"), power_baseline::UnbudgetedWorld).expect("create control");
+    let control = Db::create(&dir.join("baseline"), power_baseline::UnbudgetedWorld)
+        .expect("create control")
+        .expect("accepted");
     super::load(&control, Mass::BENCH, power_rows).expect("load control");
     let rooms = Db::create(&dir.join("calendar"), calendar::CalendarCapacityWorld)
-        .expect("create calendar");
+        .expect("create calendar")
+        .expect("accepted");
     super::load(&rooms, Mass::BENCH, calendar_rows).expect("load calendar");
 
     let sum =
@@ -382,7 +391,7 @@ fn traced_capacity_lands_the_judgment_spans() {
         "the capacity judgment spans reach the artifact"
     );
     assert!(
-        text.contains(bumbledb::obs::names::LMDB_COMMIT),
+        text.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
         "the LMDB commit span reaches the artifact"
     );
     let folded = std::fs::read_to_string(trace_dir.join("commit_capacity_sum.folded"))

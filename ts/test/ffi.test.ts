@@ -15,7 +15,16 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { DbHandle, FactValue, Manifest, ParsedQuery, PreparedHandle, QueryIr, SnapshotHandle } from "#native.ts"
+import type {
+	DbHandle,
+	FactValue,
+	Manifest,
+	ParsedQuery,
+	PreparedHandle,
+	QueryIr,
+	TxHandle,
+	WitnessHandle
+} from "#native.ts"
 import { native } from "#native.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import type { SchemaSpec } from "#spec.ts"
@@ -182,24 +191,10 @@ describe("ffi round trip against a real store", function suite() {
 	let personKeyId: number
 	let edgeKeyId: number
 	let prepared: PreparedHandle
-	let openSnapshots: SnapshotHandle[] = []
 	let p1 = 0n
 	let p2 = 0n
 	let p3 = 0n
 	let p4 = 0n
-
-	function snapshot(): SnapshotHandle {
-		const snap = native.dbSnapshot(db).snapshot
-		openSnapshots.push(snap)
-		return snap
-	}
-
-	function closeSnapshots(): void {
-		for (const snap of openSnapshots) {
-			native.snapshotClose(snap)
-		}
-		openSnapshots = []
-	}
 
 	test("engineVersion is a non-empty proof string", function version() {
 		assert.equal(typeof native.engineVersion(), "string")
@@ -208,7 +203,7 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("dbCreate + manifest carries every name→id table", function create() {
 		const created = native.dbCreate(storeDir, spec)
-		assert.ok(created.ok, "create succeeds on a fresh directory")
+		assert.equal(created.tag, "accepted", "create succeeds on a fresh directory")
 		db = created.db
 		manifest = native.dbManifest(db)
 
@@ -350,87 +345,91 @@ describe("ffi round trip against a real store", function suite() {
 	})
 
 	test("delta writes: fresh mint, final-state point reads, commit", function writes() {
-		const tx = native.dbWriteBegin(db)
-		p1 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
-		p2 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
-		p3 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
-		p4 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
-		assert.equal(typeof p1, "bigint")
-		assert.equal(new Set([p1, p2, p3, p4]).size, 4, "fresh mints are distinct")
+		const committed = native.dbWrite(db, function write(tx) {
+			p1 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+			p2 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+			p3 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+			p4 = mintedStart(native.txReserve(tx, PERSON, 0, 1n))
+			assert.equal(typeof p1, "bigint")
+			assert.equal(new Set([p1, p2, p3, p4]).size, 4, "fresh mints are distinct")
 
-		const active = { start: -5n, end: 10n }
-		const adaRow = personRow(p1, "ada", 0n, -3n, new Uint8Array([1, 2, 3, 4]), active, true)
-		const rows = [
-			adaRow,
-			personRow(p2, "grace", 0n, 7n, new Uint8Array([5, 6, 7, 8]), active, false),
-			personRow(p3, "alan", 0n, 0n, new Uint8Array([9, 10, 11, 12]), active, true),
-			personRow(p4, "kurt", 1n, 42n, new Uint8Array([13, 14, 15, 16]), active, false)
-		]
-		assert.deepEqual(native.txInsert(tx, PERSON, rows), { submitted: 4n, changed: 4n })
+			const active = { start: -5n, end: 10n }
+			const adaRow = personRow(p1, "ada", 0n, -3n, new Uint8Array([1, 2, 3, 4]), active, true)
+			const rows = [
+				adaRow,
+				personRow(p2, "grace", 0n, 7n, new Uint8Array([5, 6, 7, 8]), active, false),
+				personRow(p3, "alan", 0n, 0n, new Uint8Array([9, 10, 11, 12]), active, true),
+				personRow(p4, "kurt", 1n, 42n, new Uint8Array([13, 14, 15, 16]), active, false)
+			]
+			assert.deepEqual(native.txInsert(tx, PERSON, rows), { submitted: 4n, changed: 4n })
 
-		assert.equal(native.txContains(tx, PERSON, adaRow), true, "final-state view sees the pending insert")
-		const got = native.txGet(tx, PERSON, personKeyId, [p1])
-		assert.ok(got, "point read through the fresh key")
-		assert.equal(got[1], "ada")
-		assert.deepEqual(got[4], new Uint8Array([1, 2, 3, 4]))
-		assert.deepEqual(got[5], active)
+			assert.equal(native.txContains(tx, PERSON, adaRow), true, "final-state view sees the pending insert")
+			const got = native.txGet(tx, PERSON, personKeyId, [p1])
+			assert.ok(got, "point read through the fresh key")
+			assert.equal(got[1], "ada")
+			assert.deepEqual(got[4], new Uint8Array([1, 2, 3, 4]))
+			assert.deepEqual(got[5], active)
 
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 1n]]), { submitted: 1n, changed: 1n })
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p2, p3, 1n]]), { submitted: 1n, changed: 1n })
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p3, p1, 1n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 1n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p2, p3, 1n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p3, p1, 1n]]), { submitted: 1n, changed: 1n })
 
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p3, 7n]]), { submitted: 1n, changed: 1n })
-		assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), true)
-		assert.deepEqual(
-			native.txDelete(tx, EDGE, [[p1, p3, 7n]]),
-			{ submitted: 1n, changed: 1n },
-			"delta delete cancels the pending insert"
-		)
-		assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), false)
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p3, 7n]]), { submitted: 1n, changed: 1n })
+			assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), true)
+			assert.deepEqual(
+				native.txDelete(tx, EDGE, [[p1, p3, 7n]]),
+				{ submitted: 1n, changed: 1n },
+				"delta delete cancels the pending insert"
+			)
+			assert.equal(native.txContains(tx, EDGE, [p1, p3, 7n]), false)
 
-		const committed = native.txCommit(tx)
-		assert.ok(committed.ok, "the clean commit lands")
+			return true
+		})
+		assert.equal(committed.tag, "accepted", "the clean commit lands")
 		assert.equal(typeof committed.generation, "bigint")
 		assert.equal(native.dbGeneration(db), committed.generation)
 	})
 
 	test("empty insert/delete/reserve still enter the transaction", function emptyIsAMutation() {
-		const tx = native.dbWriteBegin(db)
-		assert.deepEqual(native.txInsert(tx, PERSON, []), { submitted: 0n, changed: 0n })
-		assert.deepEqual(native.txDelete(tx, PERSON, []), { submitted: 0n, changed: 0n })
-		const empty = native.txReserve(tx, PERSON, 0, 0n)
-		assert.equal(empty.empty, true)
-		const next = native.txReserve(tx, PERSON, 0, 1n)
-		if (next.empty) {
-			throw new Error("reserve(1) must be nonempty")
-		}
-		assert.equal(typeof next.start, "bigint")
-		native.txAbort(tx)
+		native.dbWrite(db, function write(tx) {
+			assert.deepEqual(native.txInsert(tx, PERSON, []), { submitted: 0n, changed: 0n })
+			assert.deepEqual(native.txDelete(tx, PERSON, []), { submitted: 0n, changed: 0n })
+			const empty = native.txReserve(tx, PERSON, 0, 0n)
+			assert.equal(empty.empty, true)
+			const next = native.txReserve(tx, PERSON, 0, 1n)
+			if (next.empty) {
+				throw new Error("reserve(1) must be nonempty")
+			}
+			assert.equal(typeof next.start, "bigint")
+			return false
+		})
 	})
 
-	test("snapshot reads: scan, contains, keyed get", function reads() {
-		const snap = snapshot()
-		const edges = native.snapshotScan(snap, EDGE)
-		assert.equal(edges.length, 3)
-		assert.equal(
-			native.snapshotContains(
-				snap,
-				PERSON,
-				personRow(p1, "ada", 0n, -3n, new Uint8Array([1, 2, 3, 4]), { start: -5n, end: 10n }, true)
-			),
-			true
-		)
-		const edge = native.snapshotGet(snap, EDGE, edgeKeyId, [p1, p2])
-		assert.ok(edge, "keyed get finds the edge")
-		assert.equal(edge[2], 1n)
-		assert.equal(native.snapshotGet(snap, EDGE, edgeKeyId, [p2, p1]), null)
+	test("instance reads: scan, contains, keyed get", function reads() {
+		native.dbRead(db, function read(instance, _witness) {
+			const edges = native.instanceScan(instance, EDGE)
+			assert.equal(edges.length, 3)
+			assert.equal(
+				native.instanceContains(
+					instance,
+					PERSON,
+					personRow(p1, "ada", 0n, -3n, new Uint8Array([1, 2, 3, 4]), { start: -5n, end: 10n }, true)
+				),
+				true
+			)
+			const edge = native.instanceGet(instance, EDGE, edgeKeyId, [p1, p2])
+			assert.ok(edge, "keyed get finds the edge")
+			assert.equal(edge[2], 1n)
+			assert.equal(native.instanceGet(instance, EDGE, edgeKeyId, [p2, p1]), null)
+		})
 	})
 
 	test("a functionality violation arrives canonical and decoded", function fdViolation() {
-		const tx = native.dbWriteBegin(db)
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 9n]]), { submitted: 1n, changed: 1n })
-		const outcome = native.txCommit(tx)
-		assert.ok(!outcome.ok, "the key judgment rejects")
+		const outcome = native.dbWrite(db, function write(tx) {
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p1, p2, 9n]]), { submitted: 1n, changed: 1n })
+			return true
+		})
+		assert.equal(outcome.tag, "rejected", "the key judgment rejects")
 		assert.equal(outcome.violations.length, 1, "key violations preempt the statement phase")
 		const violation = outcome.violations[0]
 		assert.ok(violation)
@@ -446,11 +445,12 @@ describe("ffi round trip against a real store", function suite() {
 
 	test("containment + window violations arrive together, complete", function statementViolations() {
 		const ghost = 999_999n
-		const tx = native.dbWriteBegin(db)
-		assert.deepEqual(native.txInsert(tx, EDGE, [[ghost, p1, 1n]]), { submitted: 1n, changed: 1n })
-		assert.deepEqual(native.txInsert(tx, EDGE, [[p4, p1, 1n]]), { submitted: 1n, changed: 1n })
-		const outcome = native.txCommit(tx)
-		assert.ok(!outcome.ok, "the statement judgment rejects")
+		const outcome = native.dbWrite(db, function write(tx) {
+			assert.deepEqual(native.txInsert(tx, EDGE, [[ghost, p1, 1n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(tx, EDGE, [[p4, p1, 1n]]), { submitted: 1n, changed: 1n })
+			return true
+		})
+		assert.equal(outcome.tag, "rejected", "the statement judgment rejects")
 		assert.equal(outcome.violations.length, 2, "the statement phase is scan-complete")
 
 		const containment = outcome.violations.find(function byKind(violation) {
@@ -532,26 +532,27 @@ describe("ffi round trip against a real store", function suite() {
 		assert.ok(preparedResult.ok, "the recursive query prepares")
 		prepared = preparedResult.prepared
 
-		const snap = snapshot()
-		const rows = native.preparedExecute(prepared, snap, [{ kind: "u64", value: p1 }])
-		const reachable: bigint[] = []
-		for (const row of rows) {
-			assert.equal(row.length, 1)
-			const cell = row[0]
-			assert.equal(typeof cell, "bigint")
-			if (typeof cell === "bigint") {
-				reachable.push(cell)
+		native.dbRead(db, function read(instance, _witness) {
+			const rows = native.preparedExecute(prepared, instance, [{ kind: "u64", value: p1 }])
+			const reachable: bigint[] = []
+			for (const row of rows) {
+				assert.equal(row.length, 1)
+				const cell = row[0]
+				assert.equal(typeof cell, "bigint")
+				if (typeof cell === "bigint") {
+					reachable.push(cell)
+				}
 			}
-		}
-		assert.deepEqual(sortedBigints(reachable), sortedBigints([p1, p2, p3]), "p1 → p2 → p3 → p1 closes; p4 stays out")
+			assert.deepEqual(sortedBigints(reachable), sortedBigints([p1, p2, p3]), "p1 → p2 → p3 → p1 closes; p4 stays out")
 
-		const staleness = native.preparedStaleness(prepared, snap)
-		assert.equal(typeof staleness.maxRatio, "number")
-		assert.ok(staleness.maxRatio >= 1)
-		for (const drift of staleness.perOccurrence) {
-			assert.equal(typeof drift.pinned, "bigint")
-			assert.equal(typeof drift.live, "bigint")
-		}
+			const staleness = native.preparedStaleness(prepared, instance)
+			assert.equal(typeof staleness.maxRatio, "number")
+			assert.ok(staleness.maxRatio >= 1)
+			for (const drift of staleness.perOccurrence) {
+				assert.equal(typeof drift.pinned, "bigint")
+				assert.equal(typeof drift.live, "bigint")
+			}
+		})
 	})
 
 	test("dbPrepare returns roster errors as data", function irError() {
@@ -569,7 +570,7 @@ describe("ffi round trip against a real store", function suite() {
 			]
 		}
 		const outcome = native.dbPrepare(db, parseQueryIr(bogus))
-		assert.ok(!outcome.ok)
+		assert.equal(outcome.ok, false)
 		assert.equal(outcome.kind, "irError")
 		assert.notEqual(outcome.message, "")
 	})
@@ -593,33 +594,39 @@ describe("ffi round trip against a real store", function suite() {
 	})
 
 	test("the generation witness: moved as data, fresh witness commits", function witness() {
-		const stale = snapshot()
+		let stale: WitnessHandle | undefined
+		native.dbRead(db, function capture(_instance, witness) {
+			stale = witness
+		})
+		const staleWitness = stale
+		assert.ok(staleWitness)
 
-		const mover = native.dbWriteBegin(db)
-		const p5 = mintedStart(native.txReserve(mover, PERSON, 0, 1n))
-		assert.deepEqual(
-			native.txInsert(mover, PERSON, [
-				personRow(p5, "kay", 0n, 1n, new Uint8Array([21, 22, 23, 24]), { start: 0n, end: 1n }, true)
-			]),
-			{ submitted: 1n, changed: 1n }
-		)
-		const moved = native.txCommit(mover)
-		assert.ok(moved.ok)
+		const moved = native.dbWrite(db, function write(mover) {
+			const p5 = mintedStart(native.txReserve(mover, PERSON, 0, 1n))
+			assert.deepEqual(
+				native.txInsert(mover, PERSON, [
+					personRow(p5, "kay", 0n, 1n, new Uint8Array([21, 22, 23, 24]), { start: 0n, end: 1n }, true)
+				]),
+				{ submitted: 1n, changed: 1n }
+			)
+			return true
+		})
+		assert.equal(moved.tag, "accepted")
 
-		const refused = native.dbWriteFrom(db, stale)
-		assert.ok(!refused.ok, "a state-changing commit after the witness refuses the write")
-		assert.equal(refused.kind, "generationMoved")
+		const refused = native.dbWriteFrom(db, staleWitness, function refusedWrite() {
+			return true
+		})
+		assert.equal(refused.tag, "moved", "a state-changing commit after the witness refuses the write")
 		assert.ok(refused.current > refused.witnessed)
 
-		// The convicted 018 sequence: the witness is data, so the snapshot may
-		// close mid-transaction — dbWriteFrom → snapshotClose → txInsert/txCommit.
-		const fresh = native.dbSnapshot(db).snapshot
-		const witnessed = native.dbWriteFrom(db, fresh)
-		assert.ok(witnessed.ok, "a fresh witness admits the write")
-		native.snapshotClose(fresh)
-		assert.deepEqual(native.txInsert(witnessed.tx, EDGE, [[p2, p1, 3n]]), { submitted: 1n, changed: 1n })
-		const landed = native.txCommit(witnessed.tx)
-		assert.ok(landed.ok, "the witnessed commit survives its snapshot's mid-transaction close")
+		native.dbRead(db, function commitFromFresh(_instance, fresh) {
+			const landed = native.dbWriteFrom(db, fresh, function insert(tx) {
+				assert.deepEqual(native.txInsert(tx, EDGE, [[p2, p1, 3n]]), { submitted: 1n, changed: 1n })
+				return true
+			})
+			assert.equal(landed.tag, "accepted", "a fresh witness admits the write")
+		})
+		native.witnessClose(staleWitness)
 	})
 
 	test("open outcomes: schemaError and fingerprintMismatch as data", function openOutcomes() {
@@ -628,12 +635,10 @@ describe("ffi round trip against a real store", function suite() {
 			statements: [{ kind: "fd", relation: "Edge", projection: ["nope"] }]
 		}
 		const badCreate = native.dbCreate(path.join(tmpRoot, "bad"), badSpec)
-		assert.ok(!badCreate.ok)
-		assert.equal(badCreate.kind, "schemaError")
+		assert.equal(badCreate.tag, "schemaError")
 		assert.match(badCreate.message, /nope/)
 
 		native.preparedClose(prepared)
-		closeSnapshots()
 		native.dbClose(db)
 
 		const otherSpec: SchemaSpec = {
@@ -647,14 +652,17 @@ describe("ffi round trip against a real store", function suite() {
 		const reopened = native.dbOpen(storeDir, spec)
 		assert.ok(reopened.ok, "the same theory reopens the store")
 		db = reopened.db
-		const snap = snapshot()
-		assert.equal(native.snapshotScan(snap, EDGE).length, 4, "resume = reopen: the data survived")
-		closeSnapshots()
+		native.dbRead(db, function read(instance, _witness) {
+			assert.equal(native.instanceScan(instance, EDGE).length, 4, "resume = reopen: the data survived")
+		})
 
-		const spent = native.dbWriteBegin(db)
-		native.txAbort(spent)
+		let spent: TxHandle | undefined
+		native.dbWrite(db, function write(tx) {
+			spent = tx
+			return false
+		})
 		function insertOnSpent(): void {
-			native.txInsert(spent, EDGE, [[1n, 2n, 3n]])
+			native.txInsert(spent as TxHandle, EDGE, [[1n, 2n, 3n]])
 		}
 		assert.throws(insertOnSpent, /closed/, "a spent transaction handle throws typed")
 

@@ -31,8 +31,9 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import type { Db as DbValue, Fact, Violation, WriteResult } from "#index.ts"
+import type { Db as DbValue, Fact, Violation, WriteOutcome } from "#index.ts"
 import { Db } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import type { RunStoreSchema } from "#test/fixtures/run-store-schema.ts"
 import {
 	attempt,
@@ -72,8 +73,8 @@ function must<T>(value: T | undefined): T {
 type RunRels = RunStoreSchema["relations"]
 
 /** Narrows a write result to its rejection's violations, failing the test on an accept. */
-function rejected(result: WriteResult<RunRels>): readonly Violation<RunRels>[] {
-	if (result.ok) {
+function rejected(result: WriteOutcome<RunRels, unknown>): readonly Violation<RunRels>[] {
+	if (result.tag !== "rejected") {
 		assert.fail("expected the commit to be rejected")
 	}
 	return result.violations
@@ -165,7 +166,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-resume", context: "c" })
 			state.minted = row.id
 		})
-		assert.ok(written.ok, "the post-resume grp insert commits")
+		assert.equal(written.tag, "accepted", "the post-resume grp insert commits")
 		assert.ok(
 			must(state.minted) > BigInt(report.deletedGrp),
 			`post-resume mint ${state.minted} must exceed the committed-then-deleted grp id ${report.deletedGrp}`
@@ -194,7 +195,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-kill", context: "c" })
 			state.minted = row.id
 		})
-		assert.ok(written.ok, "the post-kill grp insert commits")
+		assert.equal(written.tag, "accepted", "the post-kill grp insert commits")
 		assert.ok(
 			must(state.minted) > BigInt(report.deletedGrp),
 			`post-kill mint ${state.minted} must exceed the committed-then-deleted grp id ${report.deletedGrp}`
@@ -218,7 +219,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 	} = { objectives: [], planGrps: [] }
 
 	before(async function create() {
-		db = await Db.create(path.join(tmpRoot, "main"), runStoreSchema)
+		db = accepted(await Db.create(path.join(tmpRoot, "main"), runStoreSchema))
 	})
 
 	test("the enrich-commit shape lands atomically (sheet + units + objectives + staging partition + task)", function enrichShape() {
@@ -260,7 +261,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			})
 			ids.task = taskRow.id
 		})
-		assert.ok(written.ok, "the enrich shape satisfies the theory")
+		assert.equal(written.tag, "accepted", "the enrich shape satisfies the theory")
 	})
 
 	test("a cartograph swap that uncovers an objective is rejected citing partitionTotality by identity, and the store is untouched", function rejectedSwap() {
@@ -312,7 +313,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				put(tx, grpMember, { grp: minted.id, objective: objectiveId })
 			}
 		})
-		assert.ok(written.ok, "the corrected swap satisfies partition totality")
+		assert.equal(written.tag, "accepted", "the corrected swap satisfies partition totality")
 		assert.equal(db.scan(grp).length, 2)
 		assert.equal(db.scan(grpMember).length, 2)
 	})
@@ -402,7 +403,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				toi: "RegularNoun"
 			})
 		})
-		assert.ok(written.ok, "the corrected hierarchy program satisfies the family laws")
+		assert.equal(written.tag, "accepted", "the corrected hierarchy program satisfies the family laws")
 	})
 
 	test("a delete that would dangle references is rejected citing the containments by identity, store untouched", function danglingDelete() {
@@ -443,7 +444,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				contentHash: sheetRow.contentHash
 			})
 		})
-		assert.ok(written.ok, "identity-preserving revision commits — referencing rows never dangle")
+		assert.equal(written.tag, "accepted", "identity-preserving revision commits — referencing rows never dangle")
 		const rows = db.scan(sheet)
 		assert.equal(rows.length, 1)
 		const revised = must(rows[0])
@@ -462,7 +463,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			ids.attempt = attemptRow.id
 			put(tx, verdict, { attempt: attemptRow.id, outcome: "Accepted" })
 		})
-		assert.ok(seeded.ok)
+		assert.equal(seeded.tag, "accepted")
 		const attemptId = must(ids.attempt)
 		const current = must(db.get(verdict, { attempt: attemptId }))
 		assert.equal(current.outcome, "Accepted")
@@ -470,7 +471,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			tx.delete(verdict, [current])
 			put(tx, verdict, { attempt: attemptId, outcome: "Rejected" })
 		})
-		assert.ok(revised.ok, "the settleReviewEdge refutation write commits")
+		assert.equal(revised.tag, "accepted", "the settleReviewEdge refutation write commits")
 		assert.equal(must(db.get(verdict, { attempt: attemptId })).outcome, "Rejected")
 	})
 
@@ -483,7 +484,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			})
 			assert.equal(captured.length, 0, "the nested read sees the pre-delta committed state")
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		assert.equal(db.scan(steer).length, 1)
 	})
 
@@ -493,7 +494,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			const written = db.write(function interleaved(tx) {
 				put(tx, steer, { kind: "Observe", task: must(ids.task), note: "second" })
 			})
-			assert.ok(written.ok)
+			assert.equal(written.tag, "accepted")
 			assert.equal(snap.scan(steer).length, before, "the open scope never sees the new commit")
 		})
 		assert.equal(db.scan(steer).length, 2, "a fresh read sees it")
@@ -557,7 +558,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			const minted = put(tx, grp, { sheet: must(ids.sheet), label: "next-mint", context: "c" })
 			state.next = minted.id
 		})
-		assert.ok(again.ok)
+		assert.equal(again.tag, "accepted")
 		assert.ok(
 			must(state.next) > must(state.doomed),
 			`a fresh id handed to the host by a rejected commit (${state.doomed}) must not be re-issued (${state.next}) — the repair loop persists diagnostics citing rejected-payload ids`

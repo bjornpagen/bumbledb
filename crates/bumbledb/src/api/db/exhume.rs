@@ -9,20 +9,18 @@
 use std::path::Path;
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::fingerprint::{
-    SchemaFingerprint, canonical_descriptor, fingerprint_of_descriptor,
-};
+use crate::schema::fingerprint::{SchemaFingerprint, canonical_descriptor};
 use crate::schema::{SchemaDescriptor, ValidateDescriptor as _, descriptor_codec};
 use crate::storage::env::{Environment, StoreKind};
 
-use super::{Db, Snapshot};
+use super::{Db, ReadInstance};
 
 /// A store opened from its own persisted description: the declared
 /// schema decoded back out of the store, and the read surface over its
 /// facts — nothing else. No write surface exists on this type, no
 /// prepared-query entry, and no statement is ever judged: an exhumed
 /// handle reads the record verbatim (scans and point reads through
-/// [`Exhumed::read`]'s [`Snapshot`]), and never takes the writer path.
+/// [`Exhumed::read`]'s [`ReadInstance`]), and never takes the writer path.
 pub struct Exhumed {
     /// The full engine handle, PRIVATE by design: holding it here (rather
     /// than its parts) reuses the snapshot/scan/decode machinery
@@ -52,38 +50,30 @@ pub struct Exhumed {
 /// `Io` on a nonexistent path; `FormatMismatch` and the `_meta`
 /// `Corruption` refusals exactly as `Db::open` raises them — but never
 /// `EnvironmentLocked`: the lock law is a writer law (R17), and this
-/// read-only lane takes none; [`Error::DescriptorMissing`] on a store not yet adopted (the
-/// remedy: one `Db::open` under the creating schema);
+/// read-only lane takes none. Format 8 only; a missing descriptor is
+/// `Corruption(MetaMissing)`, not an adoption state.
 /// `Corruption(DescriptorFingerprintDesync)` when the stored descriptor
 /// hashes to something other than the stored fingerprint;
 /// `Corruption(MalformedValue)` on undecodable descriptor bytes; the
 /// typed `SchemaError` if the decoded declaration fails validation.
 pub fn exhume(path: &Path) -> Result<Exhumed> {
     let parts = Environment::exhume(path)?;
-    let descriptor_hash = fingerprint_of_descriptor(&parts.descriptor);
-    if descriptor_hash.0 != parts.fingerprint {
-        return Err(Error::Corruption(
-            CorruptionError::DescriptorFingerprintDesync {
-                fingerprint: parts.fingerprint,
-                descriptor_hash: descriptor_hash.0,
-            },
-        ));
-    }
-    let declared = descriptor_codec::decode_descriptor(&parts.descriptor)
+    let descriptor = parts.description.descriptor.as_slice();
+    let declared = descriptor_codec::decode_descriptor(descriptor)
         .map_err(|what| Error::Corruption(CorruptionError::MalformedValue(what)))?;
     let schema = declared.clone().validate()?;
     // The round-trip pin: the validated schema must re-encode to the
-    // exact persisted bytes. Hash equality already proved the BYTES
+    // exact persisted bytes. [`parse_meta`] already proved the BYTES
     // authentic; this proves the DECODE faithful — together they make
     // "the exhumed schema is the creating schema" a checked fact, never
     // an assumption.
-    if canonical_descriptor(&schema) != parts.descriptor {
+    if canonical_descriptor(&schema) != descriptor {
         return Err(Error::Corruption(CorruptionError::DescriptorRoundTrip));
     }
     Ok(Exhumed {
-        db: Db::assemble(parts.env, schema),
+        db: Db::assemble(parts.env, schema)?,
         descriptor: declared,
-        fingerprint: descriptor_hash,
+        fingerprint: parts.description.fingerprint,
         kind: parts.kind,
     })
 }
@@ -144,7 +134,7 @@ impl Exhumed {
     /// `Lmdb` on snapshot open; otherwise whatever `f` returns.
     pub fn read<R>(
         &self,
-        f: impl FnOnce(&Snapshot<'_, SchemaDescriptor>) -> Result<R>,
+        f: impl FnOnce(&ReadInstance<'_, SchemaDescriptor>) -> Result<R>,
     ) -> Result<R> {
         self.db.read(f)
     }

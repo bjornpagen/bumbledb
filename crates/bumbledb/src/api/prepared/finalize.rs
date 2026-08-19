@@ -3,7 +3,7 @@ use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 use crate::error::Result;
 use crate::exec::sink::ProjectionSink;
 use crate::ir::validate::SignatureColumn;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
 
 /// Drains the sink into the result buffer, decoding words by result type
 /// (each distinct intern resolved once, docs/architecture/40-execution.md).
@@ -38,11 +38,11 @@ use crate::storage::env::ReadTxn;
 /// if: a profiled finalize shows the String/FixedBytes match arms'
 /// mere presence taxing an all-words fill ≥ the house bar — re-twin
 /// before believing it.
-pub(super) fn finalize(
+pub(super) fn finalize<C: CatalogRead>(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
-    txn: &ReadTxn<'_>,
+    catalog: &C,
     columns: &[SignatureColumn],
     out: &mut Answers,
 ) -> Result<()> {
@@ -50,7 +50,7 @@ pub(super) fn finalize(
     match sink {
         EitherSink::Projection(sink) => {
             let base = out.cells.len();
-            let result = fill_resolved_answers(out, txn, memo, columns, sink);
+            let result = fill_resolved_answers(out, catalog, memo, columns, sink);
             if result.is_err() {
                 // The columnar fill pre-sizes its rows: drop the
                 // placeholder cells so no half-written row survives an
@@ -63,7 +63,7 @@ pub(super) fn finalize(
         EitherSink::Aggregate(sink) => {
             out.cells.reserve(sink.group_count() * columns.len());
             sink.finalize_into(answer_scratch, |answer| {
-                push_resolved_answer(out, txn, memo, columns, answer)
+                push_resolved_answer(out, catalog, memo, columns, answer)
             })
         }
     }
@@ -76,9 +76,9 @@ pub(super) fn finalize(
 /// dictionary); everything else fills fixed-width. Byte-heap columns
 /// index their strided slot instead of holding the cells borrow — the
 /// heap append and the memo both need `out` whole.
-fn fill_resolved_answers(
+fn fill_resolved_answers<C: CatalogRead>(
     out: &mut Answers,
-    txn: &ReadTxn<'_>,
+    catalog: &C,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &ProjectionSink,
@@ -91,7 +91,7 @@ fn fill_resolved_answers(
         word += match column.ty() {
             ValueType::String => {
                 for (row, answer) in sink.answers().enumerate() {
-                    let (start, len) = memo.resolve(txn, answer[word], out)?;
+                    let (start, len) = memo.resolve(catalog, answer[word], out)?;
                     out.cells[base + row * arity + col] = Cell::String { start, len };
                 }
                 1
@@ -158,9 +158,9 @@ fn fill_fixed_column(
 /// intern memo, a `bytes<N>` find re-assembles its padded slot words
 /// (inline — no dictionary); everything else decodes inline. ONE
 /// dispatch per cell.
-fn push_resolved_answer(
+fn push_resolved_answer<C: CatalogRead>(
     out: &mut Answers,
-    txn: &ReadTxn<'_>,
+    catalog: &C,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     answer: &[u64],
@@ -176,7 +176,7 @@ fn push_resolved_answer(
                 2,
             ),
             ValueType::String => {
-                let (start, len) = memo.resolve(txn, answer[word], out)?;
+                let (start, len) = memo.resolve(catalog, answer[word], out)?;
                 (Cell::String { start, len }, 1)
             }
             ValueType::FixedBytes { len } => {

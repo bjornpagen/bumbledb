@@ -1,9 +1,42 @@
 //! The decode side: canonical per-type decoders, field slicing, and the
 //! corruption-checked field decoder.
 
-use super::{FactLayout, FixedBytesValue, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef};
-use crate::error::CorruptionError;
+use super::{
+    FactView, FixedBytesValue, I64_SIGN_BIT, InternId, IntervalElement, ValueRef, ValueType,
+};
+use crate::error::{CorruptionError, Error};
 use bumbledb_theory::Interval;
+
+/// The four corruption classes [`decode_field`] can produce. Broader
+/// [`CorruptionError`] variants are not field-decode failures; the sweeper
+/// matches this type exhaustively instead of proving a subset with
+/// `unreachable!`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldDecodeError {
+    InvalidBool(u8),
+    NonzeroFixedBytesPad([u8; 8]),
+    InvalidInterval([u8; 16]),
+    InvalidFixedIntervalStart([u8; 8]),
+}
+
+impl From<FieldDecodeError> for CorruptionError {
+    fn from(err: FieldDecodeError) -> Self {
+        match err {
+            FieldDecodeError::InvalidBool(byte) => Self::InvalidBool(byte),
+            FieldDecodeError::NonzeroFixedBytesPad(word) => Self::NonzeroFixedBytesPad(word),
+            FieldDecodeError::InvalidInterval(bytes) => Self::InvalidInterval(bytes),
+            FieldDecodeError::InvalidFixedIntervalStart(bytes) => {
+                Self::InvalidFixedIntervalStart(bytes)
+            }
+        }
+    }
+}
+
+impl From<FieldDecodeError> for Error {
+    fn from(err: FieldDecodeError) -> Self {
+        Self::Corruption(err.into())
+    }
+}
 
 /// Decodes a canonical Bool byte.
 ///
@@ -37,13 +70,13 @@ pub const fn decode_i64(bytes: [u8; 8]) -> i64 {
 ///
 /// # Errors
 ///
-/// [`CorruptionError::InvalidInterval`] when `start >= end` — a stored
+/// [`FieldDecodeError::InvalidInterval`] when `start >= end` — a stored
 /// empty or inverted interval denotes nothing, exactly as corrupt as a
 /// non-0/1 Bool byte.
-pub fn decode_interval_u64(bytes: [u8; 16]) -> Result<Interval<u64>, CorruptionError> {
+pub fn decode_interval_u64(bytes: [u8; 16]) -> Result<Interval<u64>, FieldDecodeError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
     Interval::new(decode_u64(start_bytes), decode_u64(end_bytes))
-        .ok_or(CorruptionError::InvalidInterval(bytes))
+        .ok_or(FieldDecodeError::InvalidInterval(bytes))
 }
 
 /// Decodes an Interval-over-I64's `start ‖ end` bytes into the checked
@@ -51,11 +84,11 @@ pub fn decode_interval_u64(bytes: [u8; 16]) -> Result<Interval<u64>, CorruptionE
 ///
 /// # Errors
 ///
-/// [`CorruptionError::InvalidInterval`], as [`decode_interval_u64`].
-pub fn decode_interval_i64(bytes: [u8; 16]) -> Result<Interval<i64>, CorruptionError> {
+/// [`FieldDecodeError::InvalidInterval`], as [`decode_interval_u64`].
+pub fn decode_interval_i64(bytes: [u8; 16]) -> Result<Interval<i64>, FieldDecodeError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
     Interval::new(decode_i64(start_bytes), decode_i64(end_bytes))
-        .ok_or(CorruptionError::InvalidInterval(bytes))
+        .ok_or(FieldDecodeError::InvalidInterval(bytes))
 }
 
 /// Decodes a fixed-width interval's stored START word (either element
@@ -66,17 +99,17 @@ pub fn decode_interval_i64(bytes: [u8; 16]) -> Result<Interval<i64>, CorruptionE
 ///
 /// # Errors
 ///
-/// [`CorruptionError::InvalidFixedIntervalStart`] when the stored start
+/// [`FieldDecodeError::InvalidFixedIntervalStart`] when the stored start
 /// sits at or past the bound — the derived end would reach the ceiling
 /// (ray territory, unconstructible in the fixed family) or overflow.
 pub const fn decode_fixed_interval_start(
     bytes: [u8; 8],
     width: u64,
-) -> Result<(u64, u64), CorruptionError> {
+) -> Result<(u64, u64), FieldDecodeError> {
     let start_word = u64::from_be_bytes(bytes);
     match start_word.checked_add(width) {
         Some(end_word) if end_word < u64::MAX => Ok((start_word, end_word)),
-        _ => Err(CorruptionError::InvalidFixedIntervalStart(bytes)),
+        _ => Err(FieldDecodeError::InvalidFixedIntervalStart(bytes)),
     }
 }
 
@@ -87,9 +120,9 @@ pub const fn decode_fixed_interval_start(
 ///
 /// # Errors
 ///
-/// [`CorruptionError::NonzeroFixedBytesPad`] on any nonzero trailing pad
+/// [`FieldDecodeError::NonzeroFixedBytesPad`] on any nonzero trailing pad
 /// byte (carrying the offending trailing word).
-pub fn decode_fixed_bytes(padded: &[u8], len: u16) -> Result<FixedBytesValue, CorruptionError> {
+pub fn decode_fixed_bytes(padded: &[u8], len: u16) -> Result<FixedBytesValue, FieldDecodeError> {
     debug_assert_eq!(padded.len(), super::fixed_bytes_words(len) * 8);
     let len = usize::from(len);
     // A nonzero pad byte implies at least one stored word, so the
@@ -98,7 +131,7 @@ pub fn decode_fixed_bytes(padded: &[u8], len: u16) -> Result<FixedBytesValue, Co
     if padded[len..].iter().any(|&byte| byte != 0)
         && let Some(&tail) = padded.last_chunk()
     {
-        return Err(CorruptionError::NonzeroFixedBytesPad(tail));
+        return Err(FieldDecodeError::NonzeroFixedBytesPad(tail));
     }
     Ok(FixedBytesValue::new(&padded[..len]))
 }
@@ -117,12 +150,11 @@ pub(crate) const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
     (start, end)
 }
 
-/// Slices one field's bytes out of an encoded fact in O(1).
+/// Slices one field's bytes out of a width-proved fact in O(1).
 #[must_use]
-pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usize) -> &'a [u8] {
-    debug_assert_eq!(fact_bytes.len(), layout.fact_width());
-    let (offset, desc) = layout.fields[field_idx];
-    &fact_bytes[offset..offset + desc.width()]
+pub fn field_bytes<'bytes>(fact: FactView<'bytes, '_>, field_idx: usize) -> &'bytes [u8] {
+    let (offset, desc) = fact.layout.fields[field_idx];
+    &fact.bytes[offset..offset + desc.width()]
 }
 
 /// [`field_bytes`] with the width in the type: one word-width field's
@@ -137,65 +169,51 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
 /// word-width (callers' fields are schema-validated U64/I64/String or a
 /// one-word `bytes<N ≤ 8>`).
 #[must_use]
-pub fn field_word_bytes(fact_bytes: &[u8], layout: &FactLayout, field_idx: usize) -> [u8; 8] {
-    <[u8; 8]>::try_from(field_bytes(fact_bytes, layout, field_idx))
+pub fn field_word_bytes(fact: FactView<'_, '_>, field_idx: usize) -> [u8; 8] {
+    <[u8; 8]>::try_from(field_bytes(fact, field_idx))
         .expect("word-width field: the layout derives the width")
 }
 
-/// Decodes one field of an encoded fact.
+/// Decodes one field of a width-proved fact.
 ///
 /// # Errors
 ///
-/// [`CorruptionError`] on a Bool byte that is not `0x00`/`0x01`, a
+/// [`FieldDecodeError`] on a Bool byte that is not `0x00`/`0x01`, a
 /// `bytes<N>` field with a nonzero pad byte, or an Interval whose
 /// `start >= end` — never a skip, never a default.
-///
-/// # Panics
-///
-/// Only on a programmer-invariant violation: `fact_bytes` not matching the
-/// layout's width (callers slice facts produced under the same layout).
 pub fn decode_field(
-    fact_bytes: &[u8],
-    layout: &FactLayout,
+    fact: FactView<'_, '_>,
     field_idx: usize,
-) -> Result<ValueRef, CorruptionError> {
-    let bytes = field_bytes(fact_bytes, layout, field_idx);
-    let word = || field_word_bytes(fact_bytes, layout, field_idx);
-    match layout.field_type(field_idx) {
-        TypeDesc::Bool => decode_bool(bytes[0]).map(ValueRef::Bool),
-        TypeDesc::U64 => Ok(ValueRef::U64(decode_u64(word()))),
-        TypeDesc::I64 => Ok(ValueRef::I64(decode_i64(word()))),
-        TypeDesc::String => Ok(ValueRef::String(decode_u64(word()))),
-        TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
-        TypeDesc::Interval { element } => {
-            // The 16-byte width is layout-derived — the same
-            // single-determinant ruling as [`field_word_bytes`], inline for
-            // the one wide shape.
+) -> Result<ValueRef, FieldDecodeError> {
+    let bytes = field_bytes(fact, field_idx);
+    let word = || field_word_bytes(fact, field_idx);
+    match fact.layout.field_type(field_idx) {
+        ValueType::Bool => match bytes[0] {
+            0x00 => Ok(ValueRef::Bool(false)),
+            0x01 => Ok(ValueRef::Bool(true)),
+            other => Err(FieldDecodeError::InvalidBool(other)),
+        },
+        ValueType::U64 => Ok(ValueRef::U64(decode_u64(word()))),
+        ValueType::I64 => Ok(ValueRef::I64(decode_i64(word()))),
+        ValueType::String => Ok(ValueRef::String(InternId::from_raw(decode_u64(word())))),
+        ValueType::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
+        ValueType::Interval { element } => {
             let bytes: [u8; 16] = bytes
                 .try_into()
                 .expect("interval field: the layout derives the width");
-            // The decoders parse into the checked type; the proof
-            // arrives with the value, nothing re-derives it.
             match element {
                 IntervalElement::U64 => decode_interval_u64(bytes).map(ValueRef::IntervalU64),
                 IntervalElement::I64 => decode_interval_i64(bytes).map(ValueRef::IntervalI64),
             }
         }
-        TypeDesc::FixedInterval { element, width: w } => {
-            // One stored word: the start; the end re-derives from the
-            // TYPE's width. The Q2 bound is the corruption check —
-            // `decode_fixed_interval_start` validates it in the
-            // order-preserving word domain, where the bias is additive.
+        ValueType::FixedInterval { element, width: w } => {
             let (start_word, end_word) = decode_fixed_interval_start(word(), w)?;
             Ok(match element {
-                IntervalElement::U64 => ValueRef::FixedIntervalU64(
+                IntervalElement::U64 => ValueRef::IntervalU64(
                     Interval::<u64>::new(start_word, end_word)
                         .expect("the Q2 bound implies start < end"),
                 ),
-                IntervalElement::I64 => ValueRef::FixedIntervalI64(
-                    // The sign-flip law's one decode-side owner, per
-                    // bound (the words are the biased order-preserving
-                    // form).
+                IntervalElement::I64 => ValueRef::IntervalI64(
                     Interval::<i64>::new(
                         decode_i64(start_word.to_be_bytes()),
                         decode_i64(end_word.to_be_bytes()),
@@ -210,20 +228,19 @@ pub fn decode_field(
 /// Decodes canonical fact bytes into owned dynamic [`Value`]s — the one
 /// body behind the write transaction's point-read decode
 /// (`WriteTx::get_dyn`), the snapshot's point-read and export decodes
-/// (`Snapshot::get_dyn` / `Snapshot::scan`), and the commit boundary's
+/// (`ReadInstance::get_dyn` / `ReadInstance::scan`), and the commit boundary's
 /// rejection decode (`storage/commit/write.rs`); only intern resolution
 /// differs by context (pending-first inside a write transaction, the
 /// committed dictionary on a snapshot, pending-then-committed at
 /// rejection), so the resolver is the parameter.
 pub(crate) fn decode_values(
-    fact: &[u8],
-    layout: &FactLayout,
-    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+    fact: FactView<'_, '_>,
+    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
 ) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
-    decode_values_keyed(fact, layout, &[], &[], resolve_str)
+    decode_values_keyed(fact, &[], &[], resolve_str)
 }
 
-/// [`decode_values`] for the keyed point-read hit (`Snapshot::get_dyn` /
+/// [`decode_values`] for the keyed point-read hit (`ReadInstance::get_dyn` /
 /// `WriteTx::get_dyn`): fields the key statement's projection fixed take
 /// the caller's supplied values — the `U` probe matched the determinant
 /// byte-for-byte and hash equality is fact equality
@@ -232,54 +249,46 @@ pub(crate) fn decode_values(
 /// re-derive the input with an extra storage descent. Non-projected
 /// fields decode as [`decode_values`] does.
 pub(crate) fn decode_values_keyed(
-    fact: &[u8],
-    layout: &FactLayout,
+    fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],
     key_values: &[bumbledb_theory::Value],
-    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
 ) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
     let mut out = Vec::new();
-    decode_values_keyed_into(fact, layout, projection, key_values, resolve_str, &mut out)?;
+    decode_values_keyed_into(fact, projection, key_values, resolve_str, &mut out)?;
     Ok(out)
 }
 
 /// [`decode_values_keyed`] into a caller-provided buffer — the pooled
-/// point-read decode (`Snapshot::get_dyn_into` / `WriteTx::get_dyn_into`):
+/// point-read decode (`ReadInstance::get_dyn_into` / `WriteTx::get_dyn_into`):
 /// the values `Vec` is the caller's, its capacity retained across gets,
 /// so a warm keyed get's allocator traffic shrinks to the variable-width
 /// payload boxes alone. Clears `out` first; a decode error leaves the
 /// written prefix (the caller treats `Err` as no result).
 pub(crate) fn decode_values_keyed_into(
-    fact: &[u8],
-    layout: &FactLayout,
+    fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],
     key_values: &[bumbledb_theory::Value],
-    mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+    mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
     out: &mut Vec<bumbledb_theory::Value>,
 ) -> crate::error::Result<()> {
     use bumbledb_theory::Value;
     debug_assert_eq!(projection.len(), key_values.len());
     out.clear();
-    out.reserve(layout.field_count());
-    for idx in 0..layout.field_count() {
+    out.reserve(fact.layout.field_count());
+    for idx in 0..fact.layout.field_count() {
         if let Some(pos) = projection.iter().position(|f| usize::from(f.0) == idx) {
             out.push(key_values[pos].clone());
             continue;
         }
-        out.push(match decode_field(fact, layout, idx)? {
+        out.push(match decode_field(fact, idx)? {
             ValueRef::Bool(v) => Value::Bool(v),
             ValueRef::U64(v) => Value::U64(v),
             ValueRef::I64(v) => Value::I64(v),
-            ValueRef::String(id) => Value::String(resolve_str(id)?),
+            ValueRef::String(id) => Value::String(resolve_str(id.raw())?),
             ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-            // A fixed-width field decodes to the same checked host
-            // interval — the end was derived from the type's width.
-            ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
-                Value::IntervalU64(interval)
-            }
-            ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
-                Value::IntervalI64(interval)
-            }
+            ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
+            ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
         });
     }
     Ok(())

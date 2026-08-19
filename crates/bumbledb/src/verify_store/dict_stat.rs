@@ -7,16 +7,33 @@
 //! (`docs/architecture/50-storage.md`: dictionary entries are never
 //! removed) — an informational statistic, never a finding.
 
+use std::ops::Bound;
+
+use crate::encoding::InternId;
 use crate::error::Result;
-use crate::storage::dict::{self, ReverseEntry};
+use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
+use crate::storage::dict;
 
 use super::{StoreFinding, Sweep};
 
-pub(super) fn dangling(s: &mut Sweep<'_, '_>) -> Result<u64> {
+pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u64> {
     let mut dangling = 0u64;
-    for entry in dict::reverse_entries(s.txn)? {
-        match entry? {
-            ReverseEntry::Id(id, raw) => {
+    let catalog = s.catalog;
+    let lo = [dict::REVERSE];
+    let hi = [dict::REVERSE + 1];
+    let mut range = catalog.range(
+        CatalogMap::Dictionary,
+        Bounds {
+            start: Bound::Included(&lo),
+            end: Bound::Excluded(&hi),
+        },
+    )?;
+    while let Some(entry) = ReadCursor::next(&mut range)? {
+        let key = entry.key;
+        let raw = entry.value;
+        match key.get(1..).and_then(|rest| <[u8; 8]>::try_from(rest).ok()) {
+            Some(id) if key.len() == 9 && key[0] == dict::REVERSE => {
+                let id = u64::from_be_bytes(id);
                 // The counter bound (078): a reverse id at or beyond the
                 // `_meta` next-id is the regressed-counter state that
                 // arms silent reuse — `RowIdHighWaterLow`'s dictionary
@@ -32,7 +49,7 @@ pub(super) fn dangling(s: &mut Sweep<'_, '_>) -> Result<u64> {
                 // one blake3 per entry, the price the M pass already
                 // pays per entry. A rebound forward entry silently
                 // redirects every selection literal on the string.
-                let forward = dict::lookup(s.txn, raw)?;
+                let forward = s.catalog.dict_lookup(raw)?.map(InternId::raw);
                 if forward != Some(id) {
                     s.push(StoreFinding::DictForwardDesync {
                         intern_id: id,
@@ -43,7 +60,7 @@ pub(super) fn dangling(s: &mut Sweep<'_, '_>) -> Result<u64> {
                     dangling += 1;
                 }
             }
-            ReverseEntry::Malformed(key) => s.malformed(key, "dict reverse id"),
+            _ => s.malformed(key, "dict reverse id"),
         }
     }
     // The liveness direction (004): every id a live fact references must
@@ -51,7 +68,13 @@ pub(super) fn dangling(s: &mut Sweep<'_, '_>) -> Result<u64> {
     // `DanglingInternId`, convicted offline instead of at the next
     // export. The F pass built the set; this is its second consumer.
     for &id in &s.referenced_interns {
-        if !dict::has_reverse(s.txn, id)? {
+        if s.catalog
+            .get(
+                CatalogMap::Dictionary,
+                &dict::reverse_key(InternId::from_raw(id)),
+            )?
+            .is_none()
+        {
             s.findings
                 .push(StoreFinding::DanglingInternId { intern_id: id });
         }

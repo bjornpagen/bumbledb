@@ -17,7 +17,7 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
         // An accumulator name missing from the registry table is that
         // event's own defect (an engine ahead of the bench's registry
         // view) — skip the row, never suppress the whole table.
-        let Some((phase, node)) = parse_phase_name(event.name()) else {
+        let Some((phase, node)) = parse_phase(event.point()) else {
             continue;
         };
         cells.push((node, phase, event.a0(), event.a1()));
@@ -70,12 +70,12 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
     Some(out)
 }
 
-/// Recovers `(phase index, node index)` from a registry phase name.
-fn parse_phase_name(name: &str) -> Option<(usize, usize)> {
-    for (phase, nodes) in bumbledb::obs::names::JOIN_PHASE.iter().enumerate() {
-        if let Some(node) = nodes.iter().position(|n| *n == name) {
-            return Some((phase, node));
+/// Recovers `(phase index, node index)` from a phase point.
+fn parse_phase(point: bumbledb::obs::TracePoint) -> Option<(usize, usize)> {
+    match point {
+        bumbledb::obs::TracePoint::JoinPhase { phase, node } => {
+            Some((usize::from(phase), usize::from(node)))
         }
+        _ => None,
     }
-    None
 }

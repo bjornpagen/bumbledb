@@ -3,6 +3,7 @@
 //! emptiness, self-in-base, nonlinearity, head alignment, and the pool cap.
 
 use super::*;
+use crate::error::{FindIndex, RuleIndex};
 use crate::ir::{
     AtomSource, ConditionTree, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule, Rec,
     RecRule, RecStep,
@@ -62,12 +63,12 @@ fn nonempty<T>(items: Vec<T>) -> NonEmpty<T> {
 }
 
 fn reach_query(base: Vec<RecRule>, rec: Vec<RecStep>, main: Rule) -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: nonempty(base),
             rec: nonempty(rec),
-        },
+        }),
         head: main.head(),
         rules: vec![main],
     }
@@ -151,15 +152,15 @@ fn rejects_nonlinear_rec_arm() {
 
 #[test]
 fn a_measure_on_main_over_finished_rec_is_legal() {
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(rec_rule(
                 vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(VALIDITY, var(0))])],
             )),
             rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Measure(VarId(0))],
@@ -171,15 +172,15 @@ fn a_measure_on_main_over_finished_rec_is_legal() {
 
 #[test]
 fn negation_of_finished_rec_in_main_is_legal() {
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(rec_rule(
                 vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
             )),
             rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -211,8 +212,8 @@ fn recursive_arms_align_against_the_base_row() {
     assert_eq!(
         expect_err(&query),
         ValidationError::HeadTypeMismatch {
-            rule: 0,
-            position: 0
+            rule: RuleIndex(0),
+            position: FindIndex(0)
         }
     );
 }
@@ -241,20 +242,20 @@ fn rec_pool_caps_base_plus_rec() {
 
 #[test]
 fn an_interior_reading_the_rec_is_not_prior() {
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(
                 vec![VarId(0)],
                 vec![interior_atom(1, vec![(0, var(0))])],
             )],
         }],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(rec_rule(
                 vec![VarId(0)],
                 vec![atom(ACCOUNT, vec![(0, var(0))])],
             )),
             rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],

@@ -109,7 +109,9 @@ fn stores(
     descriptor: &SchemaDescriptor,
     inserts: Vec<(RelationId, Vec<Value>)>,
 ) -> (Db<SchemaDescriptor>, NaiveDb) {
-    let db = Db::create(dir, descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir, descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(descriptor);
     let delta = Delta {
         deletes: vec![],
@@ -122,7 +124,8 @@ fn stores(
         }
         Ok(())
     })
-    .expect("the corpus commits");
+    .expect("the corpus commits")
+    .unwrap();
     (db, naive)
 }
 
@@ -137,7 +140,7 @@ fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccur
         .into_cq_rules()
         .into_iter()
         .next()
-        .map(|rule| rule.folded)
+        .map(|rule| rule.folded().to_vec())
         .unwrap_or_default()
 }
 
@@ -329,7 +332,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
         scale: Scale::S,
     };
     let dir = TempDir::new("fold-generator");
-    let db = Db::create(dir.path(), target::Target).expect("create target store");
+    let db = target::publish_admitted(dir.path());
     let mut naive = NaiveDb::new(&target::descriptor());
     let delta = super::closed::base_delta();
     naive.apply(&delta).expect("the seed commits");
@@ -339,7 +342,8 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
         }
         Ok(())
     })
-    .expect("the seed commits");
+    .expect("the seed commits")
+    .unwrap();
 
     let mut rng = Rng::new(CFG.seed);
     let mut compared = 0u64;

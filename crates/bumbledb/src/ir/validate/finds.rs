@@ -4,7 +4,7 @@
 //! come from.
 
 use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
-use crate::error::ValidationError;
+use crate::error::{FindIndex, ValidationError};
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{FindTerm, FoldOp, VarId};
 use bumbledb_theory::schema::ValueType;
@@ -16,7 +16,7 @@ impl Signature {
     /// per-rule alignment already proved every rule derives the same
     /// signature). No other derivation of the answer tuple exists.
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
-        let var_type = |var: &VarId| typing.var_types[var].clone();
+        let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
         let columns = rule
             .finds
             .iter()
@@ -67,6 +67,7 @@ impl Context {
         let mut fold_seen = false;
         let mut pack_seen = false;
         for (find_idx, term) in rule.finds.iter().enumerate() {
+            let find = FindIndex(find_idx);
             match term {
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {
@@ -84,7 +85,7 @@ impl Context {
                 FindTerm::Count => {
                     fold_seen = true;
                     if pack_seen {
-                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                        return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }
                 FindTerm::Aggregate { op, over } => {
@@ -93,7 +94,7 @@ impl Context {
                         return Err(ValidationError::UnboundFindVariable { var: *over });
                     }
                     if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find: find_idx });
+                        return Err(ValidationError::AggregateOverGroupKey { find });
                     }
                     let admitted = match op {
                         FoldOp::Sum => matches!(
@@ -106,33 +107,31 @@ impl Context {
                         ),
                     };
                     if !admitted {
-                        return Err(ValidationError::AggregateInputType { find: find_idx });
+                        return Err(ValidationError::AggregateInputType { find });
                     }
                     if self.closed_vars.contains_key(over) {
-                        return Err(ValidationError::AggregateOverClosedReference {
-                            find: find_idx,
-                        });
+                        return Err(ValidationError::AggregateOverClosedReference { find });
                     }
                     if pack_seen {
-                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                        return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }
                 FindTerm::Pack { over } => {
                     if pack_seen {
-                        return Err(ValidationError::MultiplePackTerms { find: find_idx });
+                        return Err(ValidationError::MultiplePackTerms { find });
                     }
                     pack_seen = true;
                     if !self.atom_vars.contains(over) {
                         return Err(ValidationError::UnboundFindVariable { var: *over });
                     }
                     if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find: find_idx });
+                        return Err(ValidationError::AggregateOverGroupKey { find });
                     }
                     if !self.resolved_var_type(*over).is_interval() {
-                        return Err(ValidationError::PackInputType { find: find_idx });
+                        return Err(ValidationError::PackInputType { find });
                     }
                     if fold_seen {
-                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                        return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }
                 FindTerm::AggregateMeasure { over, .. } => {
@@ -144,10 +143,10 @@ impl Context {
                         return Err(ValidationError::DurationOverNonInterval { var: *over });
                     }
                     if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find: find_idx });
+                        return Err(ValidationError::AggregateOverGroupKey { find });
                     }
                     if pack_seen {
-                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                        return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }
             }

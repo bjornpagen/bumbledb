@@ -15,7 +15,6 @@ const CFG: GenConfig = GenConfig {
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-closure-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -44,13 +43,16 @@ fn the_corpus_shape_is_closed_form() {
 fn the_engine_agrees_with_the_naive_fixpoint() {
     let dir = scratch("naive");
     let sizes = ClosSizes::of(CFG.scale);
-    let db = Db::create(&dir, Reachability).expect("create");
+    let db = Db::create(&dir, Reachability)
+        .expect("create")
+        .expect("accepted");
     for rel in [ids::NODE, ids::EDGE] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("load");
+        .expect("load")
+        .unwrap();
     }
     let mut naive = NaiveDb::new(&Reachability.descriptor());
     for rel in [ids::NODE, ids::EDGE] {
@@ -67,13 +69,13 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     let mut buffer = Answers::new();
     for family in all() {
         for draw in (family.params)(&CFG) {
             let args = param_args(&draw);
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .expect("execute");
             let mut ours = compare::from_answers(&buffer, &types);
             ours.sort();
@@ -127,12 +129,12 @@ fn closure_counts_match_the_shapes() {
     let mut prepared = db.prepare(&query).expect("prepare");
     let mut buffer = Answers::new();
     let count = |db: &Db<Reachability>,
-                 prepared: &mut bumbledb::PreparedQuery<'_, Reachability>,
+                 prepared: &mut bumbledb::PreparedQuery<Reachability>,
                  buffer: &mut Answers,
                  anchor: u64| {
         let draw = vec![ParamValue::Scalar(Value::U64(anchor))];
         let args = param_args(&draw);
-        db.read(|snap| snap.execute_args(prepared, &args, buffer))
+        db.read(|snap| snap.execute(prepared, &args, buffer))
             .expect("execute");
         buffer.len() as u64
     };
@@ -161,13 +163,16 @@ fn closure_counts_match_the_shapes() {
 fn a_profiled_closure_query_digests_reach_rounds() {
     let dir = scratch("digest");
     let sizes = ClosSizes::of(CFG.scale);
-    let db = Db::create(&dir, Reachability).expect("create");
+    let db = Db::create(&dir, Reachability)
+        .expect("create")
+        .expect("accepted");
     for rel in [ids::NODE, ids::EDGE] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("load");
+        .expect("load")
+        .unwrap();
     }
     let query = closure_query();
     let mut prepared = db.prepare(&query).expect("prepare");

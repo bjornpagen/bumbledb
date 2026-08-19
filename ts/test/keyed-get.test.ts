@@ -8,7 +8,7 @@
  * object is typed by the statement's own projection and whose statement id
  * resolves from the SDK's positional mirror. Keyed get is the obvious
  * spelling on the read scope AND the write transaction — `db.get`,
- * `snap.get`, and `tx.get` all carry the 3-arg form (the symmetry rule; the
+ * `instance.get`, and `tx.get` all carry the 3-arg form (the symmetry rule; the
  * transaction side answers FINAL state, base + pending delta). Tests pin
  * all sides: the primary form, the 2-arg refusal of a secondary-key object,
  * the typed keyed read on every scope, the projection typing, the statement
@@ -24,6 +24,7 @@ import type { Fact } from "#index.ts"
 import { Db, interval, key, relation, schema, str, u64 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 function mintedStart(range: { empty: true } | { empty: false; start: bigint }): bigint {
@@ -51,7 +52,7 @@ const programGrpKey = key(Program, ["grp"])
 const Theory = schema("KeyedGet", { Grp, Program }, [programGrpKey])
 
 describe("keyed get: typed point reads through a declared key statement", async function suite() {
-	const db = await Db.create(path.join(tmpRoot, "store"), Theory)
+	const db = accepted(await Db.create(path.join(tmpRoot, "store"), Theory))
 
 	let grpId: Fact<typeof Grp>["id"] | undefined
 	let programId: Fact<typeof Program>["id"] | undefined
@@ -61,7 +62,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		const p = put(tx, Program, { grp: g.id, title: "linear equations" })
 		programId = p.id
 	})
-	assert.ok(seeded.ok, "seed commit lands")
+	assert.equal(seeded.tag, "accepted", "seed commit lands")
 	assert.ok(grpId !== undefined && programId !== undefined)
 	const grp = grpId
 	const program = programId
@@ -98,8 +99,8 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		assert.equal(row.id, program)
 		assert.equal(row.title, "linear equations")
 		assert.equal(
-			db.read(function inScope(snap) {
-				return snap.get(Program, programGrpKey, { grp })?.id
+			db.read(function inScope(instance, _witness) {
+				return instance.get(Program, programGrpKey, { grp })?.id
 			}),
 			program,
 			"the scoped spelling agrees (the symmetry rule)"
@@ -146,7 +147,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			assert.equal(preCommit, undefined, "the delta Absent overlay answers the same keyed read")
 			freshGrp = g.id
 		})
-		assert.ok(outcome.ok, "the commit lands")
+		assert.equal(outcome.tag, "accepted", "the commit lands")
 		assert.ok(freshGrp !== undefined)
 		assert.equal(
 			db.get(Program, programGrpKey, { grp: freshGrp }),
@@ -156,29 +157,29 @@ describe("keyed get: typed point reads through a declared key statement", async 
 	})
 
 	test("writeFrom sees one spelling on both hands", function witnessed() {
-		const outcome = db.read(function bothHands(snap) {
-			const committed = snap.get(Program, programGrpKey, { grp })
+		const outcome = db.read(function bothHands(instance, witness) {
+			const committed = instance.get(Program, programGrpKey, { grp })
 			assert.ok(committed, "the snapshot hand answers the keyed committed-state read")
 			assert.equal(committed.id, program)
-			return db.writeFrom(snap, function delta(tx) {
+			return db.writeFrom(witness, function delta(tx) {
 				const g = put(tx, Grp, { label: "calculus" })
 				const p = put(tx, Program, { grp: g.id, title: "limits" })
 				const pending = tx.get(Program, programGrpKey, { grp: g.id })
 				assert.ok(pending, "the transaction hand answers the keyed final-state read")
 				assert.equal(pending.id, p.id)
 				assert.equal(
-					snap.get(Program, programGrpKey, { grp: g.id }),
+					instance.get(Program, programGrpKey, { grp: g.id }),
 					undefined,
 					"the snapshot hand still witnesses only committed state"
 				)
 			})
 		})
-		assert.ok(outcome.ok, "the witnessed write commits")
+		assert.equal(outcome.tag, "accepted", "the witnessed write commits")
 	})
 
 	test("full-scan find remains available (hosts may still fold)", function fullScan() {
-		const row = db.read(function findByGrp(snap) {
-			return snap.scan(Program).find(function forGroup(candidate) {
+		const row = db.read(function findByGrp(instance, _witness) {
+			return instance.scan(Program).find(function forGroup(candidate) {
 				return candidate.grp === grp
 			})
 		})
@@ -194,7 +195,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		 */
 		const spec = lower(Theory)
 		const created = native.dbCreate(path.join(tmpRoot, "native"), spec)
-		assert.ok(created.ok, "native create succeeds")
+		assert.equal(created.tag, "accepted", "native create succeeds")
 		const handle = created.db
 		const manifest = native.dbManifest(handle)
 		const programRel = manifest.relations.find(function byName(entry) {
@@ -215,20 +216,23 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			return entry.name === "Grp"
 		})
 		assert.ok(grpRel)
-		const tx = native.dbWriteBegin(handle)
-		const g = mintedStart(native.txReserve(tx, grpRel.id, 0, 1n))
-		assert.deepEqual(native.txInsert(tx, grpRel.id, [[g, "algebra"]]), { submitted: 1n, changed: 1n })
-		const p = mintedStart(native.txReserve(tx, programRel.id, 0, 1n))
-		assert.deepEqual(native.txInsert(tx, programRel.id, [[p, g, "linear equations"]]), {
-			submitted: 1n,
-			changed: 1n
+		let g = 0n
+		let p = 0n
+		const outcome = native.dbWrite(handle, function write(tx) {
+			g = mintedStart(native.txReserve(tx, grpRel.id, 0, 1n))
+			assert.deepEqual(native.txInsert(tx, grpRel.id, [[g, "algebra"]]), { submitted: 1n, changed: 1n })
+			p = mintedStart(native.txReserve(tx, programRel.id, 0, 1n))
+			assert.deepEqual(native.txInsert(tx, programRel.id, [[p, g, "linear equations"]]), {
+				submitted: 1n,
+				changed: 1n
+			})
+			return true
 		})
-		const outcome = native.txCommit(tx)
-		assert.ok(outcome.ok, "native seed commits")
+		assert.equal(outcome.tag, "accepted", "native seed commits")
 
-		const snap = native.dbSnapshot(handle).snapshot
-		const byGrp = native.snapshotGet(snap, programRel.id, declaredKey.id, [g])
-		native.snapshotClose(snap)
+		const byGrp = native.dbRead(handle, function read(instance, _witness) {
+			return native.instanceGet(instance, programRel.id, declaredKey.id, [g])
+		})
 		native.dbClose(handle)
 		assert.deepEqual(
 			byGrp,
@@ -248,11 +252,11 @@ describe("keyed get: the statement-vs-key dispatch is a brand, never a shape pro
 	 */
 	const Cfg = relation("Cfg", { data: interval(u64), value: u64 })
 	const BrandTheory = schema("KeyedGetBrand", { Cfg }, [key(Cfg, ["data"])])
-	const db = await Db.create(path.join(tmpRoot, "brand-store"), BrandTheory)
+	const db = accepted(await Db.create(path.join(tmpRoot, "brand-store"), BrandTheory))
 	const committed = db.write(function seed(tx) {
 		put(tx, Cfg, { data: { start: 1n, end: 2n }, value: 7n })
 	})
-	assert.ok(committed.ok, "seed commit lands")
+	assert.equal(committed.tag, "accepted", "seed commit lands")
 
 	test("an interval key cell with an excess kind property dispatches as a key object", function excessKind() {
 		const withKind: { start: bigint; end: bigint; kind: string } = { start: 1n, end: 2n, kind: "window" }

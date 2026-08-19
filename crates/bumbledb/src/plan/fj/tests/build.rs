@@ -9,12 +9,15 @@ fn binary2fj_and_factor_match_the_papers_clover_example() {
         plan.nodes,
         vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, A]), subatom(1, &[X])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[B]), subatom(2, &[X])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[C])]
             },
         ]
@@ -25,12 +28,15 @@ fn binary2fj_and_factor_match_the_papers_clover_example() {
         plan.nodes,
         vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, A]), subatom(1, &[X]), subatom(2, &[X])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[B])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[C])]
             },
         ]
@@ -59,12 +65,15 @@ fn gj_split_lowers_the_triangle_to_the_gj_plan() {
         plan.nodes,
         vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, Y]), subatom(1, &[Y])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[Z]), subatom(2, &[Z, X])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[])]
             },
         ]
@@ -74,12 +83,15 @@ fn gj_split_lowers_the_triangle_to_the_gj_plan() {
         plan.nodes,
         vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, Y]), subatom(1, &[Y]), subatom(2, &[X])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[Z]), subatom(2, &[Z])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[])]
             },
         ]
@@ -88,7 +100,6 @@ fn gj_split_lowers_the_triangle_to_the_gj_plan() {
         &plan,
         &query,
         &schema(3, 3),
-        vec![0; 3],
         &std::collections::BTreeSet::new(),
     )
     .expect("the split plan validates");
@@ -153,29 +164,30 @@ fn fold_split_prefixes_group_variables() {
     assert_eq!(
         plan.nodes,
         vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[A, X, B])]
         }]
     );
     let group: std::collections::BTreeSet<VarId> = [A].into_iter().collect();
-    let mut estimates = vec![500_000];
-    fold_split(&mut plan, &group, &mut estimates);
+    plan.nodes[0].estimate = 500_000;
+    fold_split(&mut plan, &group);
     assert_eq!(
         plan.nodes,
         vec![
             Node {
+                estimate: 500_000,
                 subatoms: vec![subatom(0, &[A])]
             },
             Node {
+                estimate: 500_000,
                 subatoms: vec![subatom(0, &[X, B])]
             },
         ]
     );
-    assert_eq!(estimates, vec![500_000, 500_000]);
     let validated = validate(
         &plan,
         &query,
         &schema(1, 3),
-        estimates,
         &std::collections::BTreeSet::new(),
     )
     .expect("the split plan validates");
@@ -206,30 +218,31 @@ fn fold_split_moves_group_only_lookups_to_the_prefix() {
     );
     let mut plan = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[A, X]), subatom(1, &[A]), subatom(2, &[A, X])],
         }],
     };
     let group: std::collections::BTreeSet<VarId> = [A].into_iter().collect();
-    let mut estimates = vec![9_000];
-    fold_split(&mut plan, &group, &mut estimates);
+    plan.nodes[0].estimate = 9_000;
+    fold_split(&mut plan, &group);
     assert_eq!(
         plan.nodes,
         vec![
             Node {
+                estimate: 9_000,
                 subatoms: vec![subatom(0, &[A]), subatom(1, &[A])]
             },
             Node {
+                estimate: 9_000,
                 subatoms: vec![subatom(0, &[X]), subatom(2, &[A, X])]
             },
         ],
         "S rides the prefix; T stays with the fold domain"
     );
-    assert_eq!(estimates, vec![9_000, 9_000]);
     let validated = validate(
         &plan,
         &query,
         &schema(3, 3),
-        estimates,
         &std::collections::BTreeSet::new(),
     )
     .expect("the split plan validates");
@@ -247,16 +260,14 @@ fn fold_split_leaves_unmixed_levels_alone() {
     let query = normalized(vec![occurrence(0, 0, &[(0, A), (1, X)])], vec![]);
     let mut plan = binary2fj(&query, &order(&[0]));
     let shape = plan.clone();
-    let mut estimates = vec![10];
 
     let none: std::collections::BTreeSet<VarId> = [C].into_iter().collect();
-    fold_split(&mut plan, &none, &mut estimates);
+    fold_split(&mut plan, &none);
     assert_eq!(plan, shape);
 
     let all: std::collections::BTreeSet<VarId> = [A, X].into_iter().collect();
-    fold_split(&mut plan, &all, &mut estimates);
+    fold_split(&mut plan, &all);
     assert_eq!(plan, shape);
-    assert_eq!(estimates, vec![10]);
 }
 
 #[test]
@@ -276,15 +287,19 @@ fn binary2fj_matches_the_papers_chain_example() {
         plan.nodes,
         vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, Y]), subatom(1, &[Y])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[Z]), subatom(2, &[Z])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[U]), subatom(3, &[U])]
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(3, &[V])]
             },
         ]

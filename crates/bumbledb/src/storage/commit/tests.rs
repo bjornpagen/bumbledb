@@ -1,7 +1,7 @@
 use super::plan::CommitPlan;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
-use crate::error::Result;
+use crate::error::{Admission, Result};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::delta::WriteDelta;
@@ -87,7 +87,7 @@ fn apply_delta(
     schema: &Schema,
     deletes: &[(RelationId, Vec<u8>)],
     inserts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
+) -> Result<Admission<()>> {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
     for (rel, fact) in deletes {
@@ -97,7 +97,7 @@ fn apply_delta(
         delta.insert(&view, *rel, fact).expect("record insert");
     }
     drop(view);
-    super::commit(delta, env).map(|_| ())
+    super::commit(delta, env).map(|admission| admission.map(|_| ()))
 }
 
 /// Derives a delta's commit plan exactly as `commit` does: selection
@@ -106,7 +106,7 @@ fn apply_delta(
 fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> {
     let view = env.read_txn().expect("txn");
     let selections = super::judgment::Selections::encode(delta, &view).expect("encode selections");
-    super::plan::plan_commit(delta, delta.schema(), selections).expect("derive plan")
+    super::plan::plan_commit(delta, selections).expect("derive plan")
 }
 
 /// Target(id fresh) + Keyed(x u64, y i64; key x) +

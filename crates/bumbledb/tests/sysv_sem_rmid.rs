@@ -48,8 +48,12 @@ bumbledb::schema! {
 #[test]
 fn write_begin_survives_a_colliding_sysv_semaphore_removal() {
     let dir = common::TempDir::new("sysv-sem-rmid");
-    let db = Db::create(dir.path(), Tiny).expect("create");
-    db.write(|_| Ok(())).expect("the pre-removal write");
+    let db = Db::create(dir.path(), Tiny)
+        .expect("create")
+        .expect("accepted");
+    db.write(|_| Ok(()))
+        .expect("the pre-removal write")
+        .unwrap();
 
     // Darwin ftok(path, 'M'): ('M' << 24) | ((dev & 0xff) << 16) | (ino & 0xffff).
     let meta = std::fs::metadata(dir.path().join("lock.mdb")).expect("LMDB's lockfile exists");
@@ -65,11 +69,13 @@ fn write_begin_survives_a_colliding_sysv_semaphore_removal() {
         .output()
         .expect("ipcrm runs");
 
-    db.write(|_| Ok(())).unwrap_or_else(|err| {
-        panic!(
-            "write begin after external semaphore removal \
+    db.write(|_| Ok(()))
+        .unwrap_or_else(|err| {
+            panic!(
+                "write begin after external semaphore removal \
              (a SysV set existed and was removed: {}): {err}",
-            removed.status.success()
-        )
-    });
+                removed.status.success()
+            )
+        })
+        .unwrap();
 }

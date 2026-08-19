@@ -48,9 +48,9 @@ fn wide_views_of(
         delta.insert(&view, RelationId(0), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    vec![crate::image::build(&txn, schema, RelationId(0)).expect("build")]
+    vec![crate::image::build(&txn.catalog(), schema, RelationId(0)).expect("build")]
 }
 
 /// The single-atom all-columns plan over the wide relation, plus the
@@ -189,11 +189,11 @@ fn leaf_scan_residuals_past_eight() {
     // Nine residuals (the old cap was eight), jointly `b > a`: duplicate
     // specs are semantically idempotent, so the count is the only thing
     // under test.
-    let residuals: Vec<PlacedComparison> = (0..9)
-        .map(|k| PlacedComparison {
+    let residuals: Vec<FilterPredicate> = (0..9)
+        .map(|k| FilterPredicate::FieldsCompare {
             op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },
-            lhs: VarId(2),
-            rhs: VarId(0),
+            left: OperandAddr::from(VarId(2)),
+            right: OperandAddr::from(VarId(0)),
         })
         .collect();
     let normalized = normalized(
@@ -235,11 +235,11 @@ fn scan_and_batch_paths_agree_across_fixtures() {
         let r0: Vec<(u64, u64)> = (0..6).map(|i| (i % 2, i % 3)).collect();
         let r1: Vec<(u64, u64)> = (0..3 * fanout).map(|i| (i % 3, i / 3)).collect();
         let views = views_of(&dir, &schema, &[r0, r1]);
-        let residuals: Vec<PlacedComparison> = (0..residuals)
-            .map(|k| PlacedComparison {
+        let residuals: Vec<FilterPredicate> = (0..residuals)
+            .map(|k| FilterPredicate::FieldsCompare {
                 op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },
-                lhs: VarId(2),
-                rhs: VarId(0),
+                left: OperandAddr::from(VarId(2)),
+                right: OperandAddr::from(VarId(0)),
             })
             .collect();
         let normalized = normalized(

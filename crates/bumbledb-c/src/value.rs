@@ -153,7 +153,7 @@ pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
         bdb_value_kind::I64 => Ok(Value::I64(view.i64_value)),
         bdb_value_kind::String => {
             let text = view.string_value.as_str("string value")?;
-            Ok(Value::String(text.as_bytes().to_vec().into_boxed_slice()))
+            Ok(Value::String(text.into()))
         }
         bdb_value_kind::FixedBytes => {
             let bytes = view.bytes_value.as_bytes()?;
@@ -196,9 +196,7 @@ pub(crate) fn rows_in(
             "nonzero row_count with value_count 0 (zero-width rows are not a collection)",
         ));
     }
-    let total = value_count
-        .checked_mul(row_count)
-        .ok_or(Fail::Misuse)?;
+    let total = value_count.checked_mul(row_count).ok_or(Fail::Misuse)?;
     let cells = slice_in(values, total)?;
     let mut rows = Vec::with_capacity(row_count);
     for chunk in cells.chunks_exact(value_count) {
@@ -226,12 +224,9 @@ pub(crate) fn value_out(value: &Value) -> bdb_value {
             view.i64_value = *v;
             view
         }
-        Value::String(bytes) => {
+        Value::String(text) => {
             let mut view = bdb_value::blank(bdb_value_kind::String);
-            view.string_value = bdb_string_view {
-                data: bytes.as_ptr(),
-                len: bytes.len(),
-            };
+            view.string_value = bdb_string_view::from_str(text);
             view
         }
         Value::FixedBytes(bytes) => {
@@ -342,20 +337,17 @@ pub(crate) fn params_in(params: *const bdb_param, count: usize) -> BridgeResult<
 
 /// One owned scalar to the engine's bind value (the ts bridge's
 /// `bind_value`, verbatim): string payloads re-borrow as `&str` —
-/// marshaling admitted only UTF-8, so the re-check cannot fire, but a
-/// corrupt payload is refused typed rather than unwrapped.
-pub(crate) fn bind_value(value: &Value) -> BridgeResult<BindValue<'_>> {
-    Ok(match value {
+/// marshaling admitted only UTF-8, so the payload is `&str` by type.
+pub(crate) fn bind_value(value: &Value) -> BindValue<'_> {
+    match value {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
-        Value::String(bytes) => BindValue::Str(
-            std::str::from_utf8(bytes).map_err(|_| fail_shape("non-UTF-8 string param"))?,
-        ),
+        Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
-    })
+    }
 }
 
 /// Owned params to the engine's positional bind arguments.
@@ -364,7 +356,7 @@ pub(crate) fn param_args(params: &[OwnedParam]) -> BridgeResult<Vec<bumbledb::Pa
         .iter()
         .map(|param| match param {
             OwnedParam::Set(values) => Ok(bumbledb::ParamArg::Set(values)),
-            OwnedParam::Scalar(value) => Ok(bumbledb::ParamArg::Scalar(bind_value(value)?)),
+            OwnedParam::Scalar(value) => Ok(bumbledb::ParamArg::Scalar(bind_value(value))),
         })
         .collect()
 }

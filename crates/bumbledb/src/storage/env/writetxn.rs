@@ -46,4 +46,11 @@ impl WriteTxn<'_> {
     pub fn generation(&self) -> Result<GenerationId> {
         read_u64(&self.env.meta, &self.txn, META_TX_ID, "tx id").map(GenerationId::from_storage)
     }
+
+    /// The committed dictionary next-id as of this write transaction,
+    /// sentinel-checked.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn dict_next_id(&self) -> Result<u64> {
+        super::read_meta::read_dict_next_id(&self.env.meta, &self.txn)
+    }
 }

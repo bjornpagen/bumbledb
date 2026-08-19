@@ -1,0 +1,15 @@
+{
+"case":"complete-key-collision",
+"kind":"complete",
+"provenance":{"hand":"complete-key-collision"},
+"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","u64"]}],
+"ground_axioms":[],
+"statements":[{"functionality":{"relation":0,"projection":[0]}}]},
+"instance":[{"relation":0,"facts":[
+[{"u64":9},{"u64":0}],
+[{"u64":9},{"u64":1}]
+]}],
+"delta":{"deletes":[],
+"inserts":[]},
+"verdict":{"reject":{"phase":"key","violations":[0]}}
+}

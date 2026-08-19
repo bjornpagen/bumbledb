@@ -24,6 +24,7 @@ import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
@@ -81,7 +82,7 @@ function sorted(values: readonly bigint[]): bigint[] {
 let db: Db<Rels>
 
 before(async function seed() {
-	db = await Db.create(storeDir, Theory)
+	db = accepted(await Db.create(storeDir, Theory))
 	const result = db.write(function delta(tx) {
 		put(tx, Holder, { id: 1n, name: "ada", rank: 1n })
 		put(tx, Holder, { id: 2n, name: "grace", rank: 2n })
@@ -92,7 +93,7 @@ before(async function seed() {
 		put(tx, Parent, { child: 2n, parent: 1n })
 		put(tx, Parent, { child: 3n, parent: 2n })
 	})
-	assert.ok(result.ok, "the seed commit lands")
+	assert.equal(result.tag, "accepted", "the seed commit lands")
 })
 
 test("v() mints a fresh batch per call — two batches are two variables in one rule (two VarIds in the IR)", function twoBatches() {

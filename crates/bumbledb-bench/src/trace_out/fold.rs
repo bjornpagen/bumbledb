@@ -43,15 +43,12 @@ pub fn fold_stacks(events: &[TraceEvent]) -> String {
     // per host span so the hosts' self time gives them room.
     let mut folded: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     let mut phase_ns = vec![0u64; sweep.spans.len()];
-    for event in events
-        .iter()
-        .filter(|e| matches!(e, TraceEvent::Point { cat, .. } if *cat == Category::Phase))
-    {
+    for event in events.iter().filter(|e| e.cat() == Category::Phase) {
         let stamp = event.start_ns();
         let host = sweep
             .spans
             .iter()
-            .rposition(|s| s.name() == names::JOIN && s.start_ns() + s.dur_ns() <= stamp)
+            .rposition(|s| s.point() == names::JOIN && s.start_ns() + s.dur_ns() <= stamp)
             .or_else(|| {
                 sweep
                     .spans

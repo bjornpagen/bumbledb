@@ -185,11 +185,11 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
     let schema = declaration.clone().validate().expect("valid");
     // The links seal symmetric across the gap.
     assert_eq!(
-        schema.containment(ContainmentId(0)).mirror,
+        schema.containment(ContainmentId(0)).mirror_id(&schema),
         Some(StatementId(4))
     );
     assert_eq!(
-        schema.containment(ContainmentId(1)).mirror,
+        schema.containment(ContainmentId(1)).mirror_id(&schema),
         Some(StatementId(2))
     );
     // Both halves render the pair once, in the lower id's orientation.
@@ -256,11 +256,11 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
     };
     let schema = declaration.clone().validate().expect("valid");
     assert_eq!(
-        schema.containment(ContainmentId(0)).mirror,
+        schema.containment(ContainmentId(0)).mirror_id(&schema),
         Some(StatementId(3))
     );
     assert_eq!(
-        schema.containment(ContainmentId(1)).mirror,
+        schema.containment(ContainmentId(1)).mirror_id(&schema),
         Some(StatementId(2))
     );
     // Both halves render the pair once, in the lower id's orientation —
@@ -581,7 +581,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 fields: vec![
                     field("id", ValueType::U64),
                     field("supply", ValueType::U64),
-                    field("span", interval.clone()),
+                    field("span", interval),
                 ],
             },
             RelationDescriptor {

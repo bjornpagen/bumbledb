@@ -1,8 +1,8 @@
 //! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
 
-use crate::encoding::{TypeDesc, decode_bool};
-use crate::error::{CorruptionError, Error, Result};
+use crate::encoding::{ValueType, decode_bool};
+use crate::error::{CorruptionError, Error, Mismatch, Result};
 use bumbledb_theory::schema::RelationId;
 
 use super::{Column, ColumnSpan, ColumnWidth};
@@ -77,7 +77,7 @@ fn bytes_start(column: Column) -> usize {
 
 /// Builds the per-field decode plan from the field→column map.
 pub(super) fn decode_plan(
-    field_types: &[TypeDesc],
+    field_types: &[ValueType],
     spans: &[ColumnSpan],
     columns: &[Column],
     layout: &crate::encoding::FactLayout,
@@ -93,7 +93,7 @@ pub(super) fn decode_plan(
                 // A bytes<N> field of any span shape: word loads plus the
                 // pad check (a bytes<8> field has no pad and decodes as a
                 // plain word).
-                (ColumnWidth::Word | ColumnWidth::Words { .. }, TypeDesc::FixedBytes { len }) => {
+                (ColumnWidth::Word | ColumnWidth::Words { .. }, ValueType::FixedBytes { len }) => {
                     let words = crate::encoding::fixed_bytes_words(*len);
                     let pad_bytes = words * 8 - usize::from(*len);
                     if pad_bytes == 0 && words == 1 {
@@ -121,7 +121,7 @@ pub(super) fn decode_plan(
                     offset,
                     start: words_start(columns[first]),
                 },
-                (ColumnWidth::WordPair, TypeDesc::FixedInterval { width: w, .. }) => {
+                (ColumnWidth::WordPair, ValueType::FixedInterval { width: w, .. }) => {
                     Decode::FixedInterval {
                         offset,
                         width: *w,
@@ -137,7 +137,7 @@ pub(super) fn decode_plan(
                 (ColumnWidth::Words { .. }, _) => {
                     unreachable!("Words spans cover bytes<N> fields")
                 }
-                (ColumnWidth::Byte, TypeDesc::Bool) => Decode::Bool {
+                (ColumnWidth::Byte, ValueType::Bool) => Decode::Bool {
                     offset,
                     start: bytes_start(columns[first]),
                 },
@@ -147,47 +147,36 @@ pub(super) fn decode_plan(
         .collect()
 }
 
-/// The scan loop: one width check per fact, then unchecked loads and
-/// slab stores through the plan, filling positions `from..` in scan
-/// order. Returns one past the last position filled. Both fill paths
-/// share it: a full build passes [`crate::storage::read::scan`] and
-/// `from = 0`; the append path passes [`crate::storage::read::scan_from`]
-/// and the base image's row count, so only the tail rows decode
-/// (`docs/architecture/50-storage.md`
-/// § the image cache). The row id is discarded at this boundary — row
-/// ids never enter images; positions are dense scan ordinals.
+/// One scan-entry fill: the row-count ceiling, then the per-fact kernel.
+/// Returns the next position. The row id is discarded at this boundary —
+/// row ids never enter images; positions are dense scan ordinals.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
 )]
-pub(super) fn fill_columns<'txn>(
+pub(super) fn fill_one(
     rel: RelationId,
-    scan: impl Iterator<Item = Result<(u64, &'txn [u8])>>,
     plan: &[Decode],
     fact_width: usize,
-    from: usize,
+    fact_bytes: &[u8],
+    position: usize,
     row_count: usize,
     words: &mut [u64],
     bytes: &mut [u8],
 ) -> Result<usize> {
-    let mut position = from;
-    for entry in scan {
-        let (_row_id, fact_bytes) = entry?;
-        if position >= row_count {
-            return Err(Error::Corruption(CorruptionError::RowCountMismatch {
-                relation: rel,
-                stored: row_count as u64,
-            }));
-        }
-        decode_fact(rel, plan, fact_width, fact_bytes, position, words, bytes)?;
-        position += 1;
+    if position >= row_count {
+        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
+            relation: rel,
+            stored: row_count as u64,
+        }));
     }
-    Ok(position)
+    decode_fact(rel, plan, fact_width, fact_bytes, position, words, bytes)?;
+    Ok(position + 1)
 }
 
 /// Decodes one canonical fact through the plan into the slabs at
 /// `position` — one width check up front makes every plan offset
-/// in-bounds. Both fill paths run this: the LMDB scan ([`fill_columns`])
+/// in-bounds. Both fill paths run this: the catalog scan ([`super::build`])
 /// and closed-relation synthesis ([`super::build::synthesize_closed`]),
 /// so a sealed extension decodes through exactly the machinery a stored
 /// fact does.
@@ -209,8 +198,10 @@ pub(super) fn decode_fact(
         return Err(Error::Corruption(CorruptionError::WrongFactWidth {
             relation: rel,
             row_id: position as u64,
-            expected: fact_width,
-            actual: fact_bytes.len(),
+            mismatch: Mismatch {
+                witnessed: fact_bytes.len(),
+                required: fact_width,
+            },
         }));
     }
     for step in plan {
@@ -298,7 +289,7 @@ pub(super) fn decode_fact(
                 // shared decoder — hard error, never a skip.
                 let (start_word, end_word) =
                     crate::encoding::decode_fixed_interval_start(start_bytes, *width)
-                        .map_err(Error::Corruption)?;
+                        .map_err(|e| Error::Corruption(e.into()))?;
                 unsafe {
                     *words.get_unchecked_mut(start_column + position) = start_word;
                     *words.get_unchecked_mut(end_column + position) = end_word;

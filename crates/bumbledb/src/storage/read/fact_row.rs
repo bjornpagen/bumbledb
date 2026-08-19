@@ -27,11 +27,6 @@ pub fn fact_row_by_hash(
     rel: RelationId,
     hash: &[u8; 32],
 ) -> Result<Option<u64>> {
-    // Right-sized stack buffer: this probe runs once per user write
-    // operation — zeroing 511 bytes for a 37-byte key was measurable
-    // waste (the codec header promises no oversized zeroing).
-    let mut key = [0u8; keys::MEMBERSHIP_KEY_LEN];
-    let len = keys::membership_key(&mut key, rel, hash);
-    debug_assert_eq!(len, key.len());
+    let key = keys::membership_key(rel, hash);
     row_id_value(txn.env().data().get(txn.raw(), &key)?)
 }

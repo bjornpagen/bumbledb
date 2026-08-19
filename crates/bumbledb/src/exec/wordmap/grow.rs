@@ -10,9 +10,7 @@ impl<V: Copy> WordMap<V> {
         // opportunity the trace should surface.
         crate::obs::event(
             crate::obs::names::WORDMAP_GROW,
-            crate::obs::Category::Execute,
-            new_capacity as u64,
-            self.arity as u64,
+            crate::obs::TraceArgs::Pair(new_capacity as u64, self.arity as u64),
         );
         let old_keys = std::mem::replace(&mut self.keys, vec![0; new_capacity * self.arity]);
         let old_values = std::mem::replace(

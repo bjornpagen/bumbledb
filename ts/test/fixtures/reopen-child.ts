@@ -19,6 +19,7 @@
 import * as errors from "@superbuilders/errors"
 import type { Fact } from "#index.ts"
 import { Db } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import {
 	attempt,
 	attemptText,
@@ -40,7 +41,7 @@ if ((mode !== "create" && mode !== "hold") || dir === undefined) {
 	process.exit(2)
 }
 
-const db = await Db.create(dir, runStoreSchema)
+const db = accepted(await Db.create(dir, runStoreSchema))
 
 const seeded: {
 	sheet?: Fact<typeof sheet>["id"]
@@ -97,7 +98,7 @@ const written = db.write(function seed(tx) {
 	put(tx, attemptText, { attempt: attemptRow.id, prompt: "p", output: "o" })
 	put(tx, verdict, { attempt: attemptRow.id, outcome: "Rejected" })
 })
-if (!written.ok) {
+if (written.tag !== "accepted") {
 	process.stderr.write(`child seed rejected: ${JSON.stringify(written.violations.length)}\n`)
 	process.exit(3)
 }
@@ -117,7 +118,7 @@ const doomed = db.write(function mintDoomed(tx) {
 	})
 	seeded.deletedGrp = minted.id
 })
-if (!doomed.ok) {
+if (doomed.tag !== "accepted") {
 	process.stderr.write("child doomed-grp insert rejected\n")
 	process.exit(3)
 }
@@ -132,7 +133,7 @@ const reverted = db.write(function revertDoomed(tx) {
 	}
 	tx.delete(grp, [row])
 })
-if (!reverted.ok) {
+if (reverted.tag !== "accepted") {
 	process.stderr.write("child revert rejected\n")
 	process.exit(3)
 }

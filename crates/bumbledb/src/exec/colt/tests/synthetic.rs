@@ -9,14 +9,14 @@
 
 use super::*;
 use crate::image::TransientImage;
-use bumbledb_theory::TypeDesc;
+use bumbledb_theory::schema::ValueType;
 
 /// A store-free view over `(k, v)` u64 rows.
 fn synthetic_view(rows: &[(u64, u64)]) -> View {
     let words: Vec<[u64; 2]> = rows.iter().map(|&(k, v)| [k, v]).collect();
     let mut slot = TransientImage::default();
     let image = slot.refill(
-        &[TypeDesc::U64, TypeDesc::U64],
+        &[ValueType::U64, ValueType::U64],
         words.len(),
         words.iter().map(|row| &row[..]),
     );

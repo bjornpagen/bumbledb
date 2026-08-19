@@ -344,28 +344,28 @@ fn var_is_dead(
     if normalized
         .residuals
         .iter()
-        .any(|r| r.lhs == var || r.rhs == var)
+        .any(|r| residual_mentions(r, var))
     {
         return false;
     }
     if normalized
         .word_residuals
         .iter()
-        .any(|r| r.lhs.var == var || r.rhs.var == var)
+        .any(|r| residual_mentions(r, var))
     {
         return false;
     }
     if normalized
         .allen_residuals
         .iter()
-        .any(|r| r.lhs == var || r.rhs == var)
+        .any(|r| residual_mentions(r, var))
     {
         return false;
     }
     if normalized
         .duration_residuals
         .iter()
-        .any(|r| r.interval == var || r.scalar == var)
+        .any(|r| residual_mentions(r, var))
     {
         return false;
     }
@@ -382,6 +382,18 @@ fn var_is_dead(
             || (!occ.vars.iter().any(|(_, v)| *v == var)
                 && !occ.point_vars.iter().any(|(_, v)| *v == var))
     })
+}
+
+fn residual_mentions(residual: &FilterPredicate, var: VarId) -> bool {
+    let (left, right) = match residual {
+        FilterPredicate::FieldsCompare { left, right, .. }
+        | FilterPredicate::FieldsAllen { left, right, .. } => (*left, *right),
+        FilterPredicate::DurationFieldsCompare {
+            interval, scalar, ..
+        } => (*interval, *scalar),
+        _ => unreachable!("kind-grouped residual list"),
+    };
+    left.var() == var || right.var() == var
 }
 
 /// One prepare-time rule deletion: `rule` (a lowered-rule index) was
@@ -501,7 +513,7 @@ fn atoms_match(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool {
                 && atom.vars == other.vars
                 && subset(&atom.filters, &other.filters)
         },
-        true,
+        Matching::Multiset,
     )
 }
 
@@ -517,20 +529,26 @@ fn negated_within(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool
                 && atom.vars == other.vars
                 && atom.filters == other.filters
         },
-        false,
+        Matching::Containment,
     )
 }
 
-/// First-fit one-to-one matching of `from` into `into` under `matches`;
-/// `exact` additionally requires equal counts (multiset identity rather
-/// than containment).
+/// First-fit matching of `from` into `into` under `matches`.
+#[derive(Clone, Copy)]
+enum Matching {
+    /// Equal counts — multiset identity.
+    Multiset,
+    /// `from` injects into `into`; extras on the right are allowed.
+    Containment,
+}
+
 fn pairs_off(
     from: &[&Occurrence],
     into: &[&Occurrence],
     matches: impl Fn(&Occurrence, &Occurrence) -> bool,
-    exact: bool,
+    matching: Matching,
 ) -> bool {
-    if exact && from.len() != into.len() {
+    if matches!(matching, Matching::Multiset) && from.len() != into.len() {
         return false;
     }
     let mut paired = vec![false; into.len()];

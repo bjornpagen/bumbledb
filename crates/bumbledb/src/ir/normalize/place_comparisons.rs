@@ -1,14 +1,10 @@
-use super::{
-    IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
-    VarWord, lower_literal::lower_literal, lower_literal::point_word,
-};
+use super::{IntervalWord, Occurrence, lower_literal::lower_literal, lower_literal::point_word};
 use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, MaskConst, ViewWordSource, WordOrParam,
+    Const, FilterPredicate, IntervalConst, MaskConst, OperandAddr, ViewWordSource, WordOrParam,
 };
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
 use crate::ir::{OrderCmp, VarId};
 use bumbledb_theory::allen::AllenMask;
-use bumbledb_theory::schema::FieldId;
 
 /// The lowered constant of a sealed comparison side. String stays a
 /// pending intern, `bytes<N>` self-encodes, intervals lower to their two
@@ -44,7 +40,7 @@ fn same_atom_mask(mask: AllenMask) -> MaskConst {
 }
 
 /// The variable's first positive occurrence and the field it reads there.
-fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, FieldId) {
+fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, OperandAddr) {
     occurrences
         .iter()
         .enumerate()
@@ -53,7 +49,7 @@ fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, FieldId) {
             occ.vars
                 .iter()
                 .find(|(_, v)| *v == var)
-                .map(|(field, _)| (occ_idx, *field))
+                .map(|(field, _)| (occ_idx, OperandAddr::from(*field)))
         })
         .expect("validated: comparison variables are atom-bound")
 }
@@ -64,7 +60,7 @@ fn same_atom(
     occurrences: &[Occurrence],
     lhs: VarId,
     rhs: VarId,
-) -> Option<(usize, FieldId, FieldId)> {
+) -> Option<(usize, OperandAddr, OperandAddr)> {
     occurrences
         .iter()
         .enumerate()
@@ -73,14 +69,12 @@ fn same_atom(
             let left = occ.vars.iter().find(|(_, v)| *v == lhs);
             let right = occ.vars.iter().find(|(_, v)| *v == rhs);
             match (left, right) {
-                (Some((lf, _)), Some((rf, _))) => Some((idx, *lf, *rf)),
+                (Some((lf, _)), Some((rf, _))) => {
+                    Some((idx, OperandAddr::from(*lf), OperandAddr::from(*rf)))
+                }
                 _ => None,
             }
         })
-}
-
-fn word(var: VarId, word: IntervalWord) -> VarWord {
-    VarWord { var, word }
 }
 
 /// Places each classified comparison — a **total** consumer of
@@ -94,8 +88,8 @@ fn word(var: VarId, word: IntervalWord) -> VarWord {
 /// or an interval shape); only cross-atom var-vs-var pairs become
 /// residuals — whole-value comparisons, except the interval-pair form
 /// `Allen`, which stays whole (four endpoint slots + mask,
-/// [`PlacedAllen`]), and point membership, which decomposes into word
-/// comparisons (docs/architecture/20-query-ir.md).
+/// [`FilterPredicate::FieldsAllen`]), and point membership, which
+/// decomposes into word comparisons (docs/architecture/20-query-ir.md).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -104,10 +98,10 @@ pub(super) fn place_comparisons(
     comparisons: &[ClassifiedComparison],
     occurrences: &mut [Occurrence],
 ) -> (
-    Vec<PlacedComparison>,
-    Vec<PlacedWordComparison>,
-    Vec<PlacedAllen>,
-    Vec<PlacedDuration>,
+    Vec<FilterPredicate>,
+    Vec<FilterPredicate>,
+    Vec<FilterPredicate>,
+    Vec<FilterPredicate>,
 ) {
     let mut residuals = Vec::new();
     let mut word_residuals = Vec::new();
@@ -128,10 +122,10 @@ pub(super) fn place_comparisons(
                                 op: *op,
                             });
                     }
-                    None => residuals.push(PlacedComparison {
+                    None => residuals.push(FilterPredicate::FieldsCompare {
+                        left: OperandAddr::from(*lhs),
+                        right: OperandAddr::from(*rhs),
                         op: *op,
-                        lhs: *lhs,
-                        rhs: *rhs,
                     }),
                 }
             }
@@ -175,9 +169,9 @@ pub(super) fn place_comparisons(
                                 mask: same_atom_mask(*mask),
                             });
                     }
-                    None => allen_residuals.push(PlacedAllen {
-                        lhs: *lhs,
-                        rhs: *rhs,
+                    None => allen_residuals.push(FilterPredicate::FieldsAllen {
+                        left: OperandAddr::from(*lhs),
+                        right: OperandAddr::from(*rhs),
                         mask: *mask,
                     }),
                 }
@@ -206,15 +200,15 @@ pub(super) fn place_comparisons(
                             point: point_field,
                         }),
                     None => word_residuals.extend([
-                        PlacedWordComparison {
+                        FilterPredicate::FieldsCompare {
                             op: crate::ir::WordCmp::Le,
-                            lhs: word(*interval, IntervalWord::Start),
-                            rhs: word(*point, IntervalWord::Start),
+                            left: OperandAddr::var_word(*interval, IntervalWord::Start.offset()),
+                            right: OperandAddr::var_word(*point, IntervalWord::Start.offset()),
                         },
-                        PlacedWordComparison {
+                        FilterPredicate::FieldsCompare {
                             op: crate::ir::WordCmp::Lt,
-                            lhs: word(*point, IntervalWord::Start),
-                            rhs: word(*interval, IntervalWord::End),
+                            left: OperandAddr::var_word(*point, IntervalWord::Start.offset()),
+                            right: OperandAddr::var_word(*interval, IntervalWord::End.offset()),
                         },
                     ]),
                 }
@@ -268,10 +262,10 @@ pub(super) fn place_comparisons(
 /// operator already sealed measure-on-left). Constant sides and same-atom
 /// variable sides push down as filters on the measured variable's first
 /// positive occurrence; only the cross-atom variable side becomes a
-/// residual ([`PlacedDuration`]).
+/// residual ([`FilterPredicate::DurationFieldsCompare`]).
 fn place_duration(
     occurrences: &mut [Occurrence],
-    duration_residuals: &mut Vec<PlacedDuration>,
+    duration_residuals: &mut Vec<FilterPredicate>,
     interval: VarId,
     op: OrderCmp,
     other: &DurationOperand,
@@ -285,7 +279,7 @@ fn place_duration(
                 .vars
                 .iter()
                 .find(|(_, v)| v == scalar)
-                .map(|(field, _)| *field);
+                .map(|(field, _)| OperandAddr::from(*field));
             match same {
                 Some(scalar_field) => {
                     occurrences[occ_idx]
@@ -296,10 +290,10 @@ fn place_duration(
                             scalar: scalar_field,
                         });
                 }
-                None => duration_residuals.push(PlacedDuration {
-                    interval,
+                None => duration_residuals.push(FilterPredicate::DurationFieldsCompare {
+                    interval: OperandAddr::from(interval),
                     op,
-                    scalar: *scalar,
+                    scalar: OperandAddr::from(*scalar),
                 }),
             }
         }

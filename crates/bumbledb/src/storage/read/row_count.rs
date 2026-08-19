@@ -11,9 +11,7 @@ use bumbledb_theory::schema::RelationId;
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed counter value.
 pub fn row_count(txn: &ReadTxn<'_>, rel: RelationId) -> Result<u64> {
-    let mut key = [0u8; keys::STAT_KEY_LEN];
-    let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
-    debug_assert_eq!(len, key.len());
+    let key = keys::stat_key(rel, StatKind::RowCount);
     match txn.env().data().get(txn.raw(), &key)? {
         Some(bytes) => stored_u64(bytes, "S row count"),
         None => Ok(0),

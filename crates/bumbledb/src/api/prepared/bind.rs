@@ -3,15 +3,16 @@ use super::{
     ValueType,
 };
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Mismatch, Result};
 use crate::image::view::{IntervalConst, SetConst, ViewWordSource, WordOrParam};
 use crate::ir::{ParamId, Value, WordCmp};
 use crate::obs;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::IntervalElement;
 
-impl<S> PreparedQuery<'_, S> {
+impl<S> PreparedQuery<S> {
     /// Rebuilds the executor scratch at a different batch size — the
     /// tuning/test surface for D4's measurement-owned constant. Allocation
     /// happens here, outside any measured window. A no-op for key_probe
@@ -36,26 +37,33 @@ impl<S> PreparedQuery<'_, S> {
     /// typed error before anything else runs. One u64 compare — with the
     /// entry protected, the view memo needs no environment epoch in its
     /// generation keys.
-    pub(super) fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
-        if txn.env_instance() == self.env_instance {
+    pub(super) fn check_identity(
+        &self,
+        identity: &crate::storage::env::CatalogIdentity,
+    ) -> Result<()> {
+        if self.identity.same(identity) {
             Ok(())
         } else {
             Err(Error::ForeignPreparedQuery)
         }
     }
 
+    pub(super) fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
+        self.check_identity(txn.identity())
+    }
+
     /// Binds and converts all-scalar parameters (the `&[BindValue]`
     /// entry; a set-typed param rejects the scalar shape with
     /// [`Error::ParamSetExpected`] — the mixed entry is
     /// [`PreparedQuery::bind_param_args`]).
-    pub(super) fn bind_params(
+    pub(super) fn bind_params<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         params: &[BindValue<'_>],
     ) -> Result<()> {
         self.begin_bind(params.len())?;
         for (idx, value) in params.iter().enumerate() {
-            self.bind_scalar_slot(txn, idx, *value)?;
+            self.bind_scalar_slot(catalog, idx, *value)?;
         }
         Ok(())
     }
@@ -63,16 +71,16 @@ impl<S> PreparedQuery<'_, S> {
     /// Binds mixed scalar/set parameter arguments (the public
     /// [`ParamArg`] entry — `docs/architecture/70-api.md` § facts and
     /// results).
-    pub(crate) fn bind_param_args(
+    pub(crate) fn bind_param_args<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         args: &[ParamArg<'_>],
     ) -> Result<()> {
         self.begin_bind(args.len())?;
         for (idx, arg) in args.iter().enumerate() {
             match arg {
-                ParamArg::Scalar(value) => self.bind_scalar_slot(txn, idx, *value)?,
-                ParamArg::Set(values) => self.bind_set_slot(txn, idx, values)?,
+                ParamArg::Scalar(value) => self.bind_scalar_slot(catalog, idx, *value)?,
+                ParamArg::Set(values) => self.bind_set_slot(catalog, idx, values)?,
             }
         }
         Ok(())
@@ -84,8 +92,10 @@ impl<S> PreparedQuery<'_, S> {
     fn begin_bind(&mut self, supplied: usize) -> Result<()> {
         if supplied != self.params.len() {
             return Err(Error::ParamCountMismatch {
-                expected: self.params.len(),
-                supplied,
+                mismatch: Mismatch {
+                    witnessed: supplied,
+                    required: self.params.len(),
+                },
             });
         }
         if self.resolved_params.len() != supplied {
@@ -99,9 +109,9 @@ impl<S> PreparedQuery<'_, S> {
 
     /// Binds one scalar slot in place. Precise bind errors per position:
     /// a set-typed slot rejects the scalar shape before any conversion.
-    fn bind_scalar_slot(
+    fn bind_scalar_slot<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         idx: usize,
         value: BindValue<'_>,
     ) -> Result<()> {
@@ -119,7 +129,7 @@ impl<S> PreparedQuery<'_, S> {
                 if let ValueType::FixedBytes { len } = ty {
                     let mismatch = Error::ParamTypeMismatch {
                         param,
-                        expected: ty.clone(),
+                        expected: *ty,
                     };
                     let BindValue::FixedBytes(bytes) = value else {
                         return Err(mismatch);
@@ -158,19 +168,17 @@ impl<S> PreparedQuery<'_, S> {
                     {
                         obs::event(
                             obs::names::PARAM_WORD_MEMO,
-                            obs::Category::Execute,
-                            idx as u64,
-                            word,
+                            obs::TraceArgs::Pair(idx as u64, word),
                         );
                         self.resolved_params[idx] = Const::Word(word);
                         self.missed_params[idx] = false;
                         return Ok(());
                     }
                 }
-                let Some((resolved, missed)) = convert_scalar(txn, value, ty)? else {
+                let Some((resolved, missed)) = convert_scalar(catalog, value, ty)? else {
                     return Err(Error::ParamTypeMismatch {
                         param,
-                        expected: ty.clone(),
+                        expected: *ty,
                     });
                 };
                 if let (BindValue::Str(text), ValueType::String) = (value, ty) {
@@ -201,7 +209,12 @@ impl<S> PreparedQuery<'_, S> {
     /// scalar element, `⌈N/8⌉` per `bytes<N>` element — sorted and
     /// deduplicated span-wise (docs/architecture/20-query-ir.md, § param
     /// sets).
-    fn bind_set_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, values: &[Value]) -> Result<()> {
+    fn bind_set_slot<C: CatalogRead>(
+        &mut self,
+        catalog: &C,
+        idx: usize,
+        values: &[Value],
+    ) -> Result<()> {
         let param = param_id(idx);
         let (expected, point) = match &self.params[idx] {
             ParamSpec::Set { elem, point } => (elem, *point),
@@ -226,11 +239,11 @@ impl<S> PreparedQuery<'_, S> {
             _ => Vec::new(),
         };
         for (element, value) in values.iter().enumerate() {
-            let Some(word_count) = element_words(txn, value, expected, &mut words)? else {
+            let Some(word_count) = element_words(catalog, value, expected, &mut words)? else {
                 // Park the pooled Vec back before erroring: the slot
                 // keeps its capacity and the query stays bindable.
                 words.clear();
-                let expected = expected.clone();
+                let expected = *expected;
                 self.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::ParamElementTypeMismatch {
                     param,
@@ -322,8 +335,8 @@ fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
 /// semantics, `docs/architecture/20-query-ir.md`); a `bytes<N>` element
 /// contributes its `⌈N/8⌉` padded words with no dictionary traffic.
 /// Returns the span's word count.
-fn element_words(
-    txn: &ReadTxn<'_>,
+fn element_words<C: CatalogRead>(
+    catalog: &C,
     value: &Value,
     expected: &ValueType,
     out: &mut Vec<u64>,
@@ -342,10 +355,7 @@ fn element_words(
         out.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
-    let Some(view) = element_view(value) else {
-        return Ok(None);
-    };
-    let Some((resolved, _)) = convert_scalar(txn, view, expected)? else {
+    let Some((resolved, _)) = convert_scalar(catalog, element_view(value), expected)? else {
         return Ok(None);
     };
     Ok(Some(match resolved {
@@ -380,8 +390,8 @@ fn element_words(
 /// only — on a negated occurrence the same miss just matches nothing,
 /// so its anti-probe never rejects; a missed value under `Ne` resolves
 /// to the sentinel id and matches everything).
-pub(super) fn resolve_filters(
-    txn: &ReadTxn<'_>,
+pub(super) fn resolve_filters<C: CatalogRead>(
+    catalog: &C,
     plan: &mut crate::plan::fj::ValidatedPlan,
     params: &[Const],
     missed: &[bool],
@@ -415,7 +425,7 @@ pub(super) fn resolve_filters(
             filters.extend(occurrence.filters.iter().cloned());
         }
         for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
-            if !resolve_filter_into(txn, template, params, missed, negated, slot, latched)? {
+            if !resolve_filter_into(catalog, template, params, missed, negated, slot, latched)? {
                 return Ok(false);
             }
         }
@@ -429,7 +439,7 @@ pub(super) fn resolve_filters(
             "negated occurrences keep Eq-constants in their filters"
         );
         for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
-            if !resolve_selection_into(txn, selection, params, missed, words, latched)? {
+            if !resolve_selection_into(catalog, selection, params, missed, words, latched)? {
                 return Ok(false);
             }
         }
@@ -443,8 +453,8 @@ pub(super) fn resolve_filters(
 /// element — docs/architecture/40-execution.md, § selection levels).
 /// `Ok(false)` = a dictionary miss or empty set — the `Eq`
 /// short-circuit (selections exist on positive occurrences only).
-fn resolve_selection_into(
-    txn: &ReadTxn<'_>,
+fn resolve_selection_into<C: CatalogRead>(
+    catalog: &C,
     selection: &mut crate::plan::fj::Selection,
     params: &[Const],
     missed: &[bool],
@@ -455,12 +465,12 @@ fn resolve_selection_into(
     // The literal latch: a dictionary hit rewrites the template once —
     // this selection never touches the dictionary again.
     if let Const::PendingIntern { bytes } = &selection.value {
-        let Some(word) = dict::lookup(txn, bytes)? else {
+        let Some(id) = catalog.dict_lookup(bytes)? else {
             return Ok(false);
         };
-        selection.value = Const::Word(word);
+        selection.value = Const::Word(id.raw());
         *latched += 1;
-        obs::event(obs::names::LITERAL_LATCH, obs::Category::Execute, word, 0);
+        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(id.raw()));
     }
     let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
         Const::Word(word) => out.push(*word),
@@ -515,8 +525,8 @@ fn resolve_selection_into(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // one arm per filter kind, in kind order
-fn resolve_filter_into(
-    txn: &ReadTxn<'_>,
+fn resolve_filter_into<C: CatalogRead>(
+    catalog: &C,
     template: &mut FilterPredicate,
     params: &[Const],
     missed: &[bool],
@@ -531,12 +541,12 @@ fn resolve_filter_into(
             // may intern it later) and resolves this execution's slot to
             // the miss semantics verbatim.
             if let Const::PendingIntern { bytes } = value {
-                match dict::lookup(txn, bytes)? {
+                match catalog.dict_lookup(bytes)? {
                     Some(id) => {
-                        let word = Const::Word(id);
+                        let word = Const::Word(id.raw());
                         *value = word;
                         *latched += 1;
-                        obs::event(obs::names::LITERAL_LATCH, obs::Category::Execute, id, 0);
+                        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(id.raw()));
                     }
                     None if *op == WordCmp::Eq && !negated => return Ok(false),
                     None => {
@@ -722,7 +732,7 @@ fn resolve_filter_into(
 /// it separately).
 fn write_compare(
     dst: &mut FilterPredicate,
-    field: bumbledb_theory::schema::FieldId,
+    field: crate::image::view::OperandAddr,
     op: WordCmp,
     value: Option<Const>,
 ) {
@@ -779,18 +789,17 @@ fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
 
 /// A set element viewed through the bind vocabulary — the borrow
 /// adapter between owned set storage ([`Value`]) and the one conversion
-/// rule ([`convert_scalar`]). `None` = non-UTF-8 `String` bytes: a
-/// mismatch by construction, since [`BindValue::Str`] cannot carry them.
-fn element_view(value: &Value) -> Option<BindValue<'_>> {
-    Some(match value {
+/// rule ([`convert_scalar`]).
+fn element_view(value: &Value) -> BindValue<'_> {
+    match value {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
-        Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
+        Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
-    })
+    }
 }
 
 /// Converts a bound scalar param value to column form, checking kind,
@@ -801,8 +810,8 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
 /// the sentinel intern id, flagged `missed` so `Eq` uses can
 /// short-circuit to the empty result. The payload is only hashed and
 /// probed here — the reason the bind surface borrows.
-fn convert_scalar(
-    txn: &ReadTxn<'_>,
+fn convert_scalar<C: CatalogRead>(
+    catalog: &C,
     value: BindValue<'_>,
     expected: &ValueType,
 ) -> Result<Option<(Const, bool)>> {
@@ -856,8 +865,8 @@ fn convert_scalar(
                 end: i64_word(end),
             }
         }
-        (BindValue::Str(text), ValueType::String) => match dict::lookup_str(txn, text)? {
-            Some(id) => Const::Word(id),
+        (BindValue::Str(text), ValueType::String) => match catalog.dict_lookup(text.as_bytes())? {
+            Some(id) => Const::Word(id.raw()),
             None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
         },
         // `bytes<N>` never reaches here: both callers resolve it in

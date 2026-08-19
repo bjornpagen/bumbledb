@@ -14,24 +14,17 @@ use rusqlite::Connection;
 use crate::compare::{self, Answer, Owned};
 use crate::sqlmap;
 
-/// One stored [`Value`] into the canonical cell — total over all eight
-/// arms; a mask is a typed error, never a row.
-///
-/// # Errors
-///
-/// `AllenMask` (mask values are comparison arguments, never stored
-/// fields) and non-UTF-8 string payloads, named.
-fn owned(value: &Value) -> Result<Owned, String> {
+/// One stored [`Value`] into the canonical cell. UTF-8 is proved at
+/// [`Value::String`] construction; a mask is not a stored field.
+fn owned(value: &Value) -> Owned {
     match value {
-        Value::Bool(v) => Ok(Owned::Bool(*v)),
-        Value::U64(v) => Ok(Owned::U64(*v)),
-        Value::I64(v) => Ok(Owned::I64(*v)),
-        Value::String(raw) => String::from_utf8(raw.to_vec())
-            .map(Owned::Str)
-            .map_err(|_| "non-UTF-8 text".to_owned()),
-        Value::FixedBytes(raw) => Ok(Owned::Bytes(raw.to_vec())),
-        Value::IntervalU64(interval) => Ok(Owned::IntervalU64(interval.start(), interval.end())),
-        Value::IntervalI64(interval) => Ok(Owned::IntervalI64(interval.start(), interval.end())),
+        Value::Bool(v) => Owned::Bool(*v),
+        Value::U64(v) => Owned::U64(*v),
+        Value::I64(v) => Owned::I64(*v),
+        Value::String(text) => Owned::Str(text.to_string()),
+        Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
+        Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
     }
 }
 
@@ -41,15 +34,15 @@ fn owned(value: &Value) -> Result<Owned, String> {
 ///
 /// # Errors
 ///
-/// Engine scan errors, stringified; a mask cell (impossible in a stored
-/// relation), named.
+/// Engine scan errors, stringified.
 pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String> {
     let rows: Vec<Vec<Value>> = db
         .read(|snap| snap.scan(rel)?.collect())
         .map_err(|e| format!("engine scan: {e:?}"))?;
-    rows.iter()
+    Ok(rows
+        .iter()
         .map(|row| row.iter().map(owned).collect())
-        .collect()
+        .collect())
 }
 
 /// One relation's full committed state on the `SQLite` mirror, as
@@ -93,7 +86,7 @@ pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>
                 sqlmap::from_sql_value(&raw, &field.value_type)
                     .map_err(|e| format!("{}: {e}", field.name))?
             };
-            answer.push(owned(&value).map_err(|e| format!("{}: {e}", field.name))?);
+            answer.push(owned(&value));
         }
         out.push(answer);
     }

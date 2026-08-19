@@ -129,7 +129,9 @@ fn exact_schema() -> SchemaDescriptor {
 fn capacity_verdicts_agree_with_the_model() {
     let dir = TempDir::new("differential-marks");
     let decl = schema();
-    let db = Db::create(dir.path(), decl.clone()).expect("create marks store");
+    let db = Db::create(dir.path(), decl.clone())
+        .expect("create marks store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
         // Green base: one holder with one selected child.
@@ -171,7 +173,9 @@ fn capacity_verdicts_agree_with_the_model() {
 fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
     let dir = TempDir::new("differential-marks-empty");
     let decl = schema();
-    let db = Db::create(dir.path(), decl.clone()).expect("create empty marks store");
+    let db = Db::create(dir.path(), decl.clone())
+        .expect("create empty marks store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
         // Window floor: a childless parent into the void.
@@ -202,7 +206,9 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
 fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
     let dir = TempDir::new("differential-marks-exact");
     let decl = exact_schema();
-    let db = Db::create(dir.path(), decl.clone()).expect("create exactness store");
+    let db = Db::create(dir.path(), decl.clone())
+        .expect("create exactness store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
         // Exactly n commits at n..n.

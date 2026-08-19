@@ -122,15 +122,9 @@ fn normalize_rule_with(
         .collect();
 
     let (residuals, word_residuals, allen_residuals, duration_residuals) = {
-        let mut span = crate::obs::span(
-            crate::obs::names::PLACE_COMPARISONS,
-            crate::obs::Category::Prepare,
-        );
+        let mut span = crate::obs::span(crate::obs::names::PLACE_COMPARISONS);
         let placed = place_comparisons(comparisons, &mut occurrences);
-        span.set_args(
-            (placed.0.len() + placed.1.len() + placed.2.len() + placed.3.len()) as u64,
-            0,
-        );
+        span.set_count((placed.0.len() + placed.1.len() + placed.2.len() + placed.3.len()) as u64);
         placed
     };
 
@@ -148,10 +142,22 @@ fn normalize_rule_with(
     debug_assert!(
         residuals
             .iter()
-            .map(|r| (r.lhs, r.rhs))
-            .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
-            .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
-            .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
+            .map(|r| {
+                let (left, right, _) = r.compare_sides();
+                (left.var(), right.var())
+            })
+            .chain(word_residuals.iter().map(|r| {
+                let (left, right, _) = r.compare_sides();
+                (left.var(), right.var())
+            }))
+            .chain(allen_residuals.iter().map(|r| {
+                let (left, right, _) = r.allen_sides();
+                (left.var(), right.var())
+            }))
+            .chain(duration_residuals.iter().map(|r| {
+                let (interval, scalar, _) = r.duration_sides();
+                (interval.var(), scalar.var())
+            }))
             .all(|(lhs, rhs)| {
                 !occurrences
                     .iter()
@@ -169,12 +175,9 @@ fn normalize_rule_with(
     // stage-2-known emptiness becomes the rule's verdict
     // (docs/architecture/20-query-ir.md, § normalization).
     let dead = {
-        let mut span = crate::obs::span(
-            crate::obs::names::NORMALIZE_FOLD,
-            crate::obs::Category::Prepare,
-        );
+        let mut span = crate::obs::span(crate::obs::names::NORMALIZE_FOLD);
         let dead = super::fold::fold(schema, &mut occurrences);
-        span.set_args(u64::from(dead.is_some()), 0);
+        span.set_flag(dead.is_some());
         dead
     };
 
@@ -264,8 +267,8 @@ fn lower_atom(
                     // scan, docs/architecture/40-execution.md).
                     match vars.iter().find(|(_, v)| v == var) {
                         Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
-                            interval: *field,
-                            point: *point_field,
+                            interval: (*field).into(),
+                            point: (*point_field).into(),
                         }),
                         None => point_vars.push((*field, *var)),
                     }
@@ -279,8 +282,8 @@ fn lower_atom(
                         .expect("pass 1 recorded every domain-bound variable");
                     if first_field != field {
                         filters.push(FilterPredicate::FieldsCompare {
-                            left: *first_field,
-                            right: *field,
+                            left: (*first_field).into(),
+                            right: (*field).into(),
                             op: WordCmp::Eq,
                         });
                     }
@@ -289,12 +292,12 @@ fn lower_atom(
             Term::Param(param) => {
                 if is_membership(field_type, witness.param_type(*param)) {
                     filters.push(FilterPredicate::PointIn {
-                        field: *field,
+                        field: (*field).into(),
                         point: ViewWordSource::Param(*param),
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {
-                        field: *field,
+                        field: (*field).into(),
                         op: WordCmp::Eq,
                         value: Const::Param(*param),
                     });
@@ -305,7 +308,7 @@ fn lower_atom(
                     // A set holds points (validation anchored the element
                     // type): any element in the field's interval.
                     filters.push(FilterPredicate::AnyPointIn {
-                        field: *field,
+                        field: (*field).into(),
                         set: SetConst::ParamSet(*param),
                     });
                 } else {
@@ -314,7 +317,7 @@ fn lower_atom(
                     // at bind (docs/architecture/20-query-ir.md, § param
                     // sets; executor side is PRD 17).
                     filters.push(FilterPredicate::Compare {
-                        field: *field,
+                        field: (*field).into(),
                         op: WordCmp::Eq,
                         value: Const::ParamSet(*param),
                     });
@@ -326,12 +329,12 @@ fn lower_atom(
                     && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));
                 if membership {
                     filters.push(FilterPredicate::PointIn {
-                        field: *field,
+                        field: (*field).into(),
                         point: ViewWordSource::Word(point_word(value)),
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {
-                        field: *field,
+                        field: (*field).into(),
                         op: WordCmp::Eq,
                         value: lower_literal(value),
                     });

@@ -14,10 +14,7 @@ fn literal_query(memo: &str) -> Query {
         atoms: vec![Atom {
             source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
-                (
-                    FieldId(2),
-                    Term::Literal(Value::String(memo.as_bytes().into())),
-                ),
+                (FieldId(2), Term::Literal(Value::String(memo.into()))),
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
@@ -47,14 +44,14 @@ fn a_str_literal_latches_on_first_execution() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
-    assert_eq!(prepared.unresolved_literals, 1, "counted at prepare");
+    assert_eq!(prepared.latch.remaining(), 1, "counted at prepare");
 
     let mut out = Answers::new();
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert_eq!(amounts(&out), vec![10]);
-    assert_eq!(prepared.unresolved_literals, 0, "the hit latched");
+    assert_eq!(prepared.latch.remaining(), 0, "the hit latched");
     let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("free join fixture");
     };
@@ -82,7 +79,7 @@ fn a_str_literal_latches_on_first_execution() {
 
     // Subsequent executions ride the fast path with identical results.
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("re-execute");
     assert_eq!(amounts(&out), vec![10]);
 }
@@ -99,10 +96,10 @@ fn a_miss_stays_live_and_latches_after_interning() {
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("carol")).expect("prepare");
     let mut out = Answers::new();
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
-    assert_eq!(prepared.unresolved_literals, 1, "a miss never latches");
+    assert_eq!(prepared.latch.remaining(), 1, "a miss never latches");
     let (_, report) = prepared
         .introspect(&txn, &cache, &[])
         .expect("the missed query explains");
@@ -133,12 +130,12 @@ fn a_miss_stays_live_and_latches_after_interning() {
         .introspect(&txn, &cache, &[])
         .expect("the newly interned literal explains and latches");
     assert_eq!(amounts(&latched), vec![30]);
-    assert_eq!(prepared.unresolved_literals, 0);
+    assert_eq!(prepared.latch.remaining(), 0);
     assert!(!report.contains("pending literals:"), "{report}");
 
     // Third execution: the fast path, same answer.
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert_eq!(amounts(&out), vec![30]);
 }
@@ -163,14 +160,14 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
 
     obs::start_capture();
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     let events = obs::finish_capture();
     let slow = amounts(&out);
     assert_eq!(
         events
             .iter()
-            .filter(|e| e.name() == obs::names::LITERAL_LATCH)
+            .filter(|e| e.point() == obs::names::LITERAL_LATCH)
             .count(),
         1,
         "one latch per distinct literal"
@@ -178,24 +175,26 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     assert!(
         events
             .iter()
-            .any(|e| e.name() == obs::names::RESOLVE_FILTERS),
+            .any(|e| e.point() == obs::names::RESOLVE_FILTERS),
         "the first execution resolves"
     );
 
     obs::start_capture();
     prepared
-        .execute(&txn, &cache, &[], &mut out)
+        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     let events = obs::finish_capture();
     assert_eq!(amounts(&out), slow, "fast path, identical results");
     assert!(
-        !events.iter().any(|e| e.name() == obs::names::LITERAL_LATCH),
+        !events
+            .iter()
+            .any(|e| e.point() == obs::names::LITERAL_LATCH),
         "a latch fires once, ever"
     );
     assert!(
         !events
             .iter()
-            .any(|e| e.name() == obs::names::RESOLVE_FILTERS),
+            .any(|e| e.point() == obs::names::RESOLVE_FILTERS),
         "resolve_filters provably skipped"
     );
 }

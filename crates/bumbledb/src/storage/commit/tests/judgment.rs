@@ -8,12 +8,13 @@
 //! coverage statements, and a selected source.
 
 use crate::encoding::{ValueRef, encode_u64};
-use crate::error::{Direction, Error, Result, Violation};
+use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
     FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
@@ -216,7 +217,11 @@ fn report(schema: &Schema, subject: u64, urgent: bool) -> Vec<u8> {
 }
 
 /// Inserts all facts in one delta and commits.
-fn insert_all(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) -> Result<()> {
+fn insert_all(
+    env: &Environment,
+    schema: &Schema,
+    facts: &[(RelationId, Vec<u8>)],
+) -> Result<Admission<()>> {
     apply_delta(env, schema, &[], facts)
 }
 
@@ -226,31 +231,35 @@ fn base_then_insert(
     name: &str,
     base: &[(RelationId, Vec<u8>)],
     facts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
+) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     if !base.is_empty() {
-        insert_all(&env, &schema, base).expect("base commit");
+        insert_all(&env, &schema, base)
+            .expect("base commit")
+            .expect("admitted");
     }
     let before = committed_data(&env);
     let result = insert_all(&env, &schema, facts);
-    if result.is_err() {
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         assert_eq!(committed_data(&env), before);
     }
     result
 }
 
-fn assert_source_violation(result: Result<()>, statement: StatementId, source_fact: &[u8]) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+fn assert_source_violation(
+    result: Result<Admission<()>>,
+    statement: StatementId,
+    source_fact: &[u8],
+) {
+    let violations = expect_rejected(result);
     let [
         Violation::Containment {
-            statement: named,
+            id: named,
             direction,
             fact,
+            ..
         },
     ] = violations.as_slice()
     else {
@@ -315,7 +324,8 @@ fn a_sorted_probe_group_judges_through_the_shared_cursor() {
         .map(|id| (TRANSFER, transfer(&schema, id)))
         .collect();
     base_then_insert("judg-sorted-walker-green", &base, &all_present)
-        .expect("every probe hits through the walker");
+        .expect("every probe hits through the walker")
+        .unwrap();
     // Past the end: the probe lands beyond the group's last stored key.
     assert_source_violation(
         base_then_insert(
@@ -338,7 +348,8 @@ fn scalar_target_and_source_in_one_delta_commit() {
             (TRANSFER, transfer(&schema(), 9)),
         ],
     )
-    .expect("target and source land together");
+    .expect("target and source land together")
+    .unwrap();
 }
 
 #[test]
@@ -349,7 +360,8 @@ fn scalar_source_with_pre_committed_target_commits() {
         &[(ACCOUNT, account(&schema, 9, true))],
         &[(TRANSFER, transfer(&schema, 9))],
     )
-    .expect("the base target satisfies the probe");
+    .expect("the base target satisfies the probe")
+    .unwrap();
 }
 
 #[test]
@@ -380,7 +392,8 @@ fn out_of_sigma_source_commits_without_a_target_and_writes_no_reverse_edge() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_all(&env, &schema, &[(REPORT, report(&schema, 5, false))])
-        .expect("a fact outside σ needs no target");
+        .expect("a fact outside σ needs no target")
+        .unwrap();
     assert!(reverse_entries(&env, REPORT_ACCOUNT).is_empty());
 }
 
@@ -408,7 +421,8 @@ fn in_sigma_source_writes_its_reverse_edge() {
             (REPORT, report(&schema, 5, true)),
         ],
     )
-    .expect("commit");
+    .expect("commit")
+    .expect("admitted");
     // Exactly one edge: R | statement | key_bytes | source_rel | source_row.
     let expected = key(|b| keys::reverse_key(b, REPORT_ACCOUNT, &encode_u64(5), REPORT, 0));
     assert_eq!(reverse_entries(&env, REPORT_ACCOUNT), vec![expected]);
@@ -425,10 +439,13 @@ fn deleting_a_source_removes_its_reverse_edge() {
         &schema,
         &[(ACCOUNT, account(&schema, 5, true)), (REPORT, r.clone())],
     )
-    .expect("commit");
+    .expect("commit")
+    .expect("admitted");
     assert_eq!(reverse_entries(&env, REPORT_ACCOUNT).len(), 1);
 
-    apply_delta(&env, &schema, &[(REPORT, r)], &[]).expect("commit");
+    apply_delta(&env, &schema, &[(REPORT, r)], &[])
+        .expect("commit")
+        .expect("admitted");
     assert!(reverse_entries(&env, REPORT_ACCOUNT).is_empty());
 }
 
@@ -445,7 +462,8 @@ fn exact_single_segment_covers() {
             (SESSION, session(&schema, 1, 10, 20)),
         ],
     )
-    .expect("an exact segment covers");
+    .expect("an exact segment covers")
+    .unwrap();
 }
 
 #[test]
@@ -459,7 +477,8 @@ fn abutting_chain_covers() {
         ],
         &[(SESSION, session(&schema, 1, 10, 20))],
     )
-    .expect("abutting segments cover jointly");
+    .expect("abutting segments cover jointly")
+    .unwrap();
 }
 
 #[test]
@@ -472,7 +491,8 @@ fn entry_segment_overhang_covers() {
         &[(SHIFT, shift(&schema, 1, 5, 25, false))],
         &[(SESSION, session(&schema, 1, 10, 20))],
     )
-    .expect("a wider running segment covers");
+    .expect("a wider running segment covers")
+    .unwrap();
 }
 
 #[test]
@@ -536,7 +556,8 @@ fn ray_target_covers_a_bounded_source() {
         &[(SHIFT, shift(&schema, 1, 10, u64::MAX, false))],
         &[(SESSION, session(&schema, 1, 15, 1000))],
     )
-    .expect("a ray covers any bounded source above its start");
+    .expect("a ray covers any bounded source above its start")
+    .unwrap();
 }
 
 #[test]
@@ -568,7 +589,8 @@ fn ray_source_covered_by_ray_target() {
         &[(SHIFT, shift(&schema, 1, 10, u64::MAX, false))],
         &[(SESSION, session(&schema, 1, 15, u64::MAX))],
     )
-    .expect("a target ray covers a source ray");
+    .expect("a target ray covers a source ray")
+    .unwrap();
 }
 
 #[test]
@@ -601,7 +623,8 @@ fn selected_chain_inside_sigma_commits() {
         ],
         &[(REST, rest(&schema, 1, 10, 20))],
     )
-    .expect("every consumed segment satisfies σ");
+    .expect("every consumed segment satisfies σ")
+    .unwrap();
 }
 
 #[test]
@@ -671,5 +694,6 @@ fn parent_and_child_in_one_delta_commit() {
         &[],
         &[(PARENT, parent(&schema, 1)), (CHILD, child(&schema, 1))],
     )
-    .expect("the cluster lands whole");
+    .expect("the cluster lands whole")
+    .unwrap();
 }

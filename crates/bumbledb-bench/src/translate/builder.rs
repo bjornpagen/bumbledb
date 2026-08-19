@@ -5,8 +5,7 @@ use bumbledb::{ParamId, Value};
 
 use super::{Builder, ParamSlot, VarCols};
 
-fn sql_string_literal(raw: &[u8]) -> Result<String, String> {
-    let text = std::str::from_utf8(raw).map_err(|_| "non-UTF-8 string literal".to_owned())?;
+fn sql_string_literal(text: &str) -> Result<String, String> {
     // A NUL truncates SQLite's tokenizer mid-statement — the rest of the
     // SQL silently vanishes. The generator's grammar never emits NUL
     // (asserted in querygen's coverage test), so this boundary stays loud
@@ -34,7 +33,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
         Value::Bool(v) => u8::from(*v).to_string(),
         Value::U64(v) => sql_u64(*v)?,
         Value::I64(v) => v.to_string(),
-        Value::String(raw) => sql_string_literal(raw)?,
+        Value::String(text) => sql_string_literal(text)?,
         Value::FixedBytes(raw) => {
             let mut hex = String::with_capacity(raw.len() * 2 + 3);
             hex.push_str("X'");

@@ -150,9 +150,9 @@ pub fn random_reach_query(rng: &mut Rng, cfg: GenConfig) -> (Query, RecursiveVar
 
 fn linear(rng: &mut Rng, domains: &Domains) -> Query {
     let ancestor = org_literal(rng, domains);
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: closure_rec(),
+        rec: Some(closure_rec()),
         head: vec![HeadTerm::Var],
         rules: vec![projection(
             vec![fv(0)],
@@ -164,9 +164,9 @@ fn linear(rng: &mut Rng, domains: &Domains) -> Query {
 
 fn negation(rng: &mut Rng) -> Query {
     let column = u16::from(rng.chance(1, 2));
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: closure_rec(),
+        rec: Some(closure_rec()),
         head: vec![HeadTerm::Var],
         rules: vec![projection(
             vec![fv(0)],
@@ -181,9 +181,9 @@ fn negation(rng: &mut Rng) -> Query {
 
 fn fold(rng: &mut Rng) -> Query {
     let grouped = u16::from(rng.chance(1, 2));
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: closure_rec(),
+        rec: Some(closure_rec()),
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
             finds: vec![fv(0), FindTerm::Count],
@@ -198,9 +198,9 @@ fn empty_delta(rng: &mut Rng, domains: &Domains) -> Query {
     let lo = domains.orgs.div_ceil(4).max(1);
     let hi = domains.orgs / 2;
     let hub = lo + rng.range(hi.saturating_sub(lo).max(1));
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(rec_rule(
                 vec![VarId(0)],
                 vec![edge(v(0), Term::Literal(Value::U64(hub)))],
@@ -210,16 +210,16 @@ fn empty_delta(rng: &mut Rng, domains: &Domains) -> Query {
                 vec![(0, v(1))],
                 vec![edge(v(0), v(1))],
             )),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1, 0)],
     }
 }
 
 fn primer_reach_xx() -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: closure_rec(),
+        rec: Some(closure_rec()),
         head: vec![HeadTerm::Var],
         rules: vec![projection(
             vec![fv(0)],
@@ -244,7 +244,7 @@ fn interiors_dag() -> Query {
             vec![],
         )],
     };
-    Query::Cq {
+    Query {
         interiors: vec![copy, hop],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![projection(
@@ -252,11 +252,12 @@ fn interiors_dag() -> Query {
             vec![interior(1, &[(0, v(0)), (1, v(1))])],
             vec![],
         )],
+        rec: None,
     }
 }
 
 fn interiors_anti_join() -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![Interior {
             rules: vec![proj(
                 vec![VarId(0), VarId(1)],
@@ -273,6 +274,7 @@ fn interiors_anti_join() -> Query {
             }],
             vec![interior(0, &[(0, v(0))])],
         )],
+        rec: None,
     }
 }
 
@@ -286,7 +288,7 @@ fn many_interiors() -> Query {
             )],
         })
         .collect();
-    Query::Cq {
+    Query {
         interiors,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![projection(
@@ -294,6 +296,7 @@ fn many_interiors() -> Query {
             vec![interior(16, &[(0, v(0)), (1, v(1))])],
             vec![],
         )],
+        rec: None,
     }
 }
 

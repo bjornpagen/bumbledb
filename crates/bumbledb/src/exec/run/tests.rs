@@ -1,9 +1,9 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
-use crate::image::view::apply;
+use crate::image::view::{FilterPredicate, OperandAddr, apply};
 use crate::ir::VarId;
 use crate::ir::normalize::{
-    AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
+    AntiProbe, NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth,
 };
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
@@ -121,12 +121,12 @@ fn views_of(
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     (0..data.len())
         .map(|rel| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn, schema, rel_id).expect("build")
+            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
         })
         .collect()
 }
@@ -212,7 +212,7 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 /// Assembles a `NormalizedQuery` the way `normalize` would: anti-probe
 /// descriptors derived from the negated occurrences, every variable one
 /// slot wide (these fixtures are scalar-only).
-fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) -> NormalizedQuery {
+fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<FilterPredicate>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
         .filter(|o| o.role == Role::Negated)
@@ -255,7 +255,7 @@ fn planned_with_sinks(
     };
     let mut plan = binary2fj(normalized, &join_order);
     factor(&mut plan);
-    validate(&plan, normalized, schema, vec![0; order.len()], sinks).expect("valid plan")
+    validate(&plan, normalized, schema, sinks).expect("valid plan")
 }
 
 /// All the query's vars — the skip-free sink set.

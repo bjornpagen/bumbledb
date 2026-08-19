@@ -59,9 +59,9 @@ fn view_of(
         delta.insert(&view, R, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    crate::image::build(&txn, schema, R).expect("build")
+    crate::image::build(&txn.catalog(), schema, R).expect("build")
 }
 
 fn all(image: &Arc<crate::image::RelationImage>) -> View {

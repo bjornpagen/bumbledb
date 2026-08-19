@@ -8,7 +8,7 @@
 //! never calls it and holds no thresholds.
 
 use super::PreparedQuery;
-use crate::api::db::Snapshot;
+use crate::api::db::ReadInstance;
 use crate::error::Result;
 use crate::ir::normalize::OccId;
 use crate::plan::selectivity::relation_rows;
@@ -39,6 +39,8 @@ pub(super) struct OccurrencePin {
 /// against the snapshot's live `S` counter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OccurrenceDrift {
+    /// The occurrence index (`OccId`) — the ordering claim is data.
+    pub occ_id: OccId,
     /// The occurrence's relation.
     pub relation: RelationId,
     /// The row count pinned at prepare.
@@ -50,19 +52,37 @@ pub struct OccurrenceDrift {
     pub ratio: f64,
 }
 
-/// The plan-drift report [`PreparedQuery::staleness`] returns: one
-/// [`OccurrenceDrift`] per participating occurrence — across every rule,
-/// in rule order — plus the worst ratio for hosts that want one number.
+/// The plan-drift report [`PreparedQuery::staleness`] returns.
+/// [`Self::NoStatistics`] is a key probe (nothing pinned);
+/// [`Self::Measured`] carries per-occurrence drift and the worst ratio.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Staleness {
-    /// Per participating occurrence, in occurrence-id order.
-    pub per_occurrence: Box<[OccurrenceDrift]>,
-    /// The worst per-occurrence ratio — 1.0 when nothing drifted, or
-    /// when nothing was pinned (a key probe reads no statistics).
-    pub max_ratio: f64,
+pub enum Staleness {
+    /// No participating occurrence was pinned — a key probe reads no
+    /// statistics. Not an in-band `max_ratio == 1.0`.
+    NoStatistics,
+    /// Per participating occurrence, in occurrence-id order, plus the
+    /// worst ratio.
+    Measured {
+        per_occurrence: Box<[OccurrenceDrift]>,
+        max_ratio: f64,
+    },
 }
 
-impl<S> PreparedQuery<'_, S> {
+impl Staleness {
+    /// The measured report, or `None` for a plan that pinned no statistics.
+    #[must_use]
+    pub fn measured(&self) -> Option<(&[OccurrenceDrift], f64)> {
+        match self {
+            Self::NoStatistics => None,
+            Self::Measured {
+                per_occurrence,
+                max_ratio,
+            } => Some((per_occurrence, *max_ratio)),
+        }
+    }
+}
+
+impl<S> PreparedQuery<S> {
     /// How far the snapshot's live row counts have drifted from the
     /// statistics this plan was costed with — the pull-based staleness
     /// signal, the pin-at-prepare decision's compensating control
@@ -93,15 +113,16 @@ impl<S> PreparedQuery<'_, S> {
     /// same error as every execution entry; `Lmdb`/`Corruption` from
     /// the counter gets.
     #[doc(hidden)]
-    pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {
+    pub fn staleness(&self, snap: &ReadInstance<'_, S>) -> Result<Staleness> {
         self.check_snapshot(snap.txn())?;
         let mut pins = Vec::new();
         self.visit_rules(|rule| pins.extend(rule.pinned().iter().copied()));
         let per_occurrence = pins
             .iter()
             .map(|pin| {
-                let live = relation_rows(snap.txn(), self.schema, pin.relation)?;
+                let live = relation_rows(snap.txn(), self.schema.as_ref(), pin.relation)?;
                 Ok(OccurrenceDrift {
+                    occ_id: pin.occ_id,
                     relation: pin.relation,
                     pinned: pin.rows,
                     live,
@@ -109,8 +130,11 @@ impl<S> PreparedQuery<'_, S> {
                 })
             })
             .collect::<Result<Box<[OccurrenceDrift]>>>()?;
+        if per_occurrence.is_empty() {
+            return Ok(Staleness::NoStatistics);
+        }
         let max_ratio = per_occurrence.iter().map(|d| d.ratio).fold(1.0, f64::max);
-        Ok(Staleness {
+        Ok(Staleness::Measured {
             per_occurrence,
             max_ratio,
         })

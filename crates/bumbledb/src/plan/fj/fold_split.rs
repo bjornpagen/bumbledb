@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 /// the single-atom GROUP BY otherwise puts every group variable in the
 /// one flat leaf level). The split mints no machinery — the two-node
 /// shape is exactly the dimension-bound form the pushdown already
-/// serves. `estimates` stays node-aligned: the two nodes cover one DP
-/// step, so its estimate duplicates.
+/// serves. The two nodes cover one DP step, so the prefix copies the
+/// suffix's estimate.
 ///
 /// The node's lookups partition by fold-domain contact: a lookup
 /// touching no fold variable moves to the group-prefix node — probed
@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 /// cannot rescue it later: a lookup whose variables all bind at one
 /// node is exactly the shape its split skips, so left behind it stays
 /// behind). Lookups touching the fold domain stay with the suffix.
-pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>, estimates: &mut Vec<u64>) {
+pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
     let mut i = 0;
     while i < plan.nodes.len() {
         let opening = &plan.nodes[i].subatoms[0];
@@ -56,12 +56,21 @@ pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>, estimates: &mut Ve
                 prefix.push(lookup);
             }
         }
-        plan.nodes.insert(i, Node { subatoms: suffix });
-        plan.nodes.insert(i, Node { subatoms: prefix });
-        if i < estimates.len() {
-            let estimate = estimates[i];
-            estimates.insert(i, estimate);
-        }
+        let estimate = node.estimate;
+        plan.nodes.insert(
+            i,
+            Node {
+                subatoms: suffix,
+                estimate,
+            },
+        );
+        plan.nodes.insert(
+            i,
+            Node {
+                subatoms: prefix,
+                estimate,
+            },
+        );
         i += 2;
     }
 }

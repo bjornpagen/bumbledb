@@ -17,20 +17,22 @@ use bumbledb::schema::StatementDescriptor;
 
 use crate::answers::{
     bdb_answers_arity, bdb_answers_clear, bdb_answers_destroy, bdb_answers_get, bdb_answers_len,
-    bdb_answers_new, bdb_snapshot_execute,
+    bdb_answers_new, bdb_instance_execute,
 };
 use crate::db::{
-    bdb_db, bdb_db_create, bdb_db_destroy, bdb_db_ephemeral, bdb_db_fingerprint, bdb_db_open,
-    bdb_db_read, bdb_db_write, bdb_db_write_from, bdb_fingerprint, bdb_fresh_range,
-    bdb_mutation_report, bdb_row_set, bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get,
-    bdb_row_set_len, bdb_snapshot_contains, bdb_snapshot_get, bdb_snapshot_ref, bdb_snapshot_scan,
+    bdb_admission_tag, bdb_db, bdb_db_admission, bdb_db_create, bdb_db_destroy, bdb_db_ephemeral,
+    bdb_db_fingerprint, bdb_db_open, bdb_db_read, bdb_db_write, bdb_db_write_from, bdb_fingerprint,
+    bdb_fresh_range, bdb_fresh_range_tag, bdb_instance_admission, bdb_instance_builder,
+    bdb_instance_builder_admit, bdb_instance_builder_new, bdb_instance_contains, bdb_instance_get,
+    bdb_instance_ref, bdb_instance_scan, bdb_mutation_report, bdb_owned_instance_destroy,
+    bdb_row_set, bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get, bdb_row_set_len,
     bdb_tx_contains, bdb_tx_delete, bdb_tx_get, bdb_tx_insert, bdb_tx_ref, bdb_tx_reserve,
-    test_only_trigger_panic,
+    bdb_witness, bdb_write_admission, test_only_trigger_panic,
 };
 use crate::error::{
-    bdb_error, bdb_error_destroy, bdb_error_get_generation_moved, bdb_error_get_kind,
-    bdb_error_get_message, bdb_error_get_violation, bdb_error_kind, bdb_error_violation_count,
-    bdb_statement_kind, bdb_violation,
+    bdb_error, bdb_error_destroy, bdb_error_get_kind, bdb_error_get_message, bdb_error_kind,
+    bdb_statement_kind, bdb_violation, bdb_violations_destroy,
+    bdb_violations_get, bdb_violations_len,
 };
 use crate::query::{
     bdb_agg_op, bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind,
@@ -97,11 +99,12 @@ fn v_interval_i64(start: i64, end: i64) -> bdb_value {
     value
 }
 
-/// A fresh store directory under the system temp root.
+/// A fresh store path under the system temp root. The path must not
+/// exist: `create` refuses any existing destination, including an empty
+/// directory.
 fn temp_store(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-c-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp store dir");
     dir
 }
 
@@ -124,12 +127,13 @@ fn error_message(error: *const bdb_error) -> String {
 
 // Closure-to-C-callback trampolines: the generic F is smuggled through the
 // context pointer, exactly as a C caller smuggles its state.
-extern "C" fn read_trampoline<F: FnMut(*const bdb_snapshot_ref) -> bdb_callback_control>(
+extern "C" fn read_trampoline<F: FnMut(*const bdb_instance_ref, *const bdb_witness) -> bdb_callback_control>(
     context: *mut c_void,
-    snapshot: *const bdb_snapshot_ref,
+    instance: *const bdb_instance_ref,
+    witness: *const bdb_witness,
 ) -> u32 {
     let f = unsafe { &mut *context.cast::<F>() };
-    u32::from(f(snapshot))
+    u32::from(f(instance, witness))
 }
 
 extern "C" fn write_trampoline<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
@@ -140,7 +144,34 @@ extern "C" fn write_trampoline<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control
     u32::from(f(transaction))
 }
 
-fn db_read<F: FnMut(*const bdb_snapshot_ref) -> bdb_callback_control>(
+fn empty_db_admission() -> bdb_db_admission {
+    bdb_db_admission {
+        tag: bdb_admission_tag::Empty,
+        value: crate::db::bdb_db_admission_value {
+            accepted: null_mut(),
+        },
+    }
+}
+
+fn empty_write_admission() -> bdb_write_admission {
+    bdb_write_admission {
+        tag: bdb_admission_tag::Empty,
+        value: crate::db::bdb_write_admission_value {
+            accepted_generation: 0,
+        },
+    }
+}
+
+fn empty_instance_admission() -> bdb_instance_admission {
+    bdb_instance_admission {
+        tag: bdb_admission_tag::Empty,
+        value: crate::db::bdb_instance_admission_value {
+            accepted: null_mut(),
+        },
+    }
+}
+
+fn db_read<F: FnMut(*const bdb_instance_ref, *const bdb_witness) -> bdb_callback_control>(
     db: *const bdb_db,
     mut f: F,
 ) -> (bdb_status, *mut bdb_error) {
@@ -154,33 +185,54 @@ fn db_read<F: FnMut(*const bdb_snapshot_ref) -> bdb_callback_control>(
     (status, error)
 }
 
-fn db_write<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
+fn db_write_admit<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
     db: *const bdb_db,
     mut f: F,
-) -> (bdb_status, *mut bdb_error) {
+) -> (bdb_status, bdb_write_admission, *mut bdb_error) {
     let mut error: *mut bdb_error = null_mut();
+    let mut admission = empty_write_admission();
     let status = bdb_db_write(
         db,
         Some(write_trampoline::<F>),
         (&raw mut f).cast::<c_void>(),
+        &raw mut admission,
         &raw mut error,
     );
+    (status, admission, error)
+}
+
+fn db_write<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
+    db: *const bdb_db,
+    f: F,
+) -> (bdb_status, *mut bdb_error) {
+    let (status, _admission, error) = db_write_admit(db, f);
     (status, error)
+}
+
+fn db_write_from_admit<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
+    db: *const bdb_db,
+    witness: *const bdb_witness,
+    mut f: F,
+) -> (bdb_status, bdb_write_admission, *mut bdb_error) {
+    let mut error: *mut bdb_error = null_mut();
+    let mut admission = empty_write_admission();
+    let status = bdb_db_write_from(
+        db,
+        witness,
+        Some(write_trampoline::<F>),
+        (&raw mut f).cast::<c_void>(),
+        &raw mut admission,
+        &raw mut error,
+    );
+    (status, admission, error)
 }
 
 fn db_write_from<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
     db: *const bdb_db,
-    snapshot: *const bdb_snapshot_ref,
-    mut f: F,
+    witness: *const bdb_witness,
+    f: F,
 ) -> (bdb_status, *mut bdb_error) {
-    let mut error: *mut bdb_error = null_mut();
-    let status = bdb_db_write_from(
-        db,
-        snapshot,
-        Some(write_trampoline::<F>),
-        (&raw mut f).cast::<c_void>(),
-        &raw mut error,
-    );
+    let (status, _admission, error) = db_write_from_admit(db, witness, f);
     (status, error)
 }
 
@@ -312,18 +364,23 @@ fn with_uptime_spec<R>(f: impl FnOnce(&bdb_schema_spec) -> R) -> R {
     f(&spec)
 }
 
+fn take_accepted_db(admission: bdb_db_admission) -> *mut bdb_db {
+    assert_eq!(admission.tag, bdb_admission_tag::Accepted);
+    unsafe { admission.value.accepted }
+}
+
 fn create_uptime(path: &std::path::Path) -> *mut bdb_db {
     with_uptime_spec(|spec| {
-        let mut db: *mut bdb_db = null_mut();
+        let mut admission = empty_db_admission();
         let mut error: *mut bdb_error = null_mut();
         let status = bdb_db_create(
             sv(path.to_str().expect("utf-8 temp path")),
             spec,
-            &raw mut db,
+            &raw mut admission,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Ok, "create: {}", err_text(error));
-        db
+        take_accepted_db(admission)
     })
 }
 
@@ -367,7 +424,11 @@ fn key_statement_ids() -> (u16, u16) {
 fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
     let mut minted = 0u64;
     let (status, error) = db_write(db, |tx| {
-        let mut range = bdb_fresh_range { start: 0, end_exclusive: 0 };
+        let mut range = bdb_fresh_range {
+            tag: bdb_fresh_range_tag::Empty,
+            start: 0,
+            end_exclusive: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
             bdb_tx_reserve(tx, SERVICE, 0, 1, &raw mut range, &raw mut error),
@@ -376,7 +437,10 @@ fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
             err_text(error)
         );
         let id = range.start;
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let service_row = [v_u64(id), v_str(name)];
         assert_eq!(
             bdb_tx_insert(
@@ -574,6 +638,26 @@ fn prepare(db: *mut bdb_db, query: &bdb_query) -> *mut bdb_prepared {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn create_refuses_existing_destination() {
+    let dir = temp_store("exists");
+    std::fs::create_dir_all(&dir).expect("pre-create empty destination");
+    with_uptime_spec(|spec| {
+        let mut admission = empty_db_admission();
+        let mut error: *mut bdb_error = null_mut();
+        let status = bdb_db_create(
+            sv(dir.to_str().expect("utf-8 temp path")),
+            spec,
+            &raw mut admission,
+            &raw mut error,
+        );
+        assert_eq!(status, bdb_status::Error);
+        assert_eq!(error_kind(error), bdb_error_kind::DestinationExists);
+        destroy_error(error);
+        assert_eq!(admission.tag, bdb_admission_tag::Empty);
+    });
+}
+
+#[test]
 fn create_open_ephemeral_close() {
     let dir = temp_store("lifecycle");
     let db = create_uptime(&dir);
@@ -597,16 +681,16 @@ fn create_open_ephemeral_close() {
     // The ephemeral kind is its own constructor and store.
     let ephemeral_dir = temp_store("lifecycle-ephemeral");
     let db = with_uptime_spec(|spec| {
-        let mut db: *mut bdb_db = null_mut();
+        let mut admission = empty_db_admission();
         let mut error: *mut bdb_error = null_mut();
         let status = bdb_db_ephemeral(
             sv(ephemeral_dir.to_str().expect("utf-8 path")),
             spec,
-            &raw mut db,
+            &raw mut admission,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Ok, "ephemeral: {}", err_text(error));
-        db
+        take_accepted_db(admission)
     });
     seed_service_outage(db, "scratch", (0, 5));
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
@@ -642,13 +726,13 @@ fn read_callback_sees_committed_state() {
     let dir = temp_store("read");
     let db = create_uptime(&dir);
     let id = seed_service_outage(db, "search", (10, 20));
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let row = [v_u64(id), v_str("search")];
-        let mut contains = false;
+        let mut contains: u8 = 0;
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_snapshot_contains(
-                snap,
+            bdb_instance_contains(
+                instance,
                 SERVICE,
                 row.as_ptr(),
                 row.len(),
@@ -657,7 +741,7 @@ fn read_callback_sees_committed_state() {
             ),
             bdb_status::Ok
         );
-        assert!(contains);
+        assert_eq!(contains, 1);
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
@@ -670,7 +754,10 @@ fn write_abort_commits_nothing() {
     let db = create_uptime(&dir);
     let (status, error) = db_write(db, |tx| {
         let row = [v_u64(7), v_str("ghost")];
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
             bdb_tx_insert(
@@ -689,13 +776,13 @@ fn write_abort_commits_nothing() {
     });
     assert_eq!(status, bdb_status::Aborted);
     assert!(error.is_null(), "abort is not an error");
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let row = [v_u64(7), v_str("ghost")];
-        let mut contains = true;
+        let mut contains: u8 = 1;
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_snapshot_contains(
-                snap,
+            bdb_instance_contains(
+                instance,
                 SERVICE,
                 row.as_ptr(),
                 row.len(),
@@ -704,7 +791,7 @@ fn write_abort_commits_nothing() {
             ),
             bdb_status::Ok
         );
-        assert!(!contains, "the aborted delta never touched LMDB");
+        assert_eq!(contains, 0, "the aborted delta never touched LMDB");
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
@@ -725,13 +812,13 @@ fn insert_delete_contains_get_dyn() {
 
     // Keyed reads on both the declared pointwise key and the
     // fresh-implied key, snapshot side.
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let mut error: *mut bdb_error = null_mut();
         let keys = [v_u64(id), v_interval_i64(100, 200)];
         let mut row: *mut bdb_row_set = null_mut();
         assert_eq!(
-            bdb_snapshot_get(
-                snap,
+            bdb_instance_get(
+                instance,
                 OUTAGE,
                 outage_key,
                 keys.as_ptr(),
@@ -758,8 +845,8 @@ fn insert_delete_contains_get_dyn() {
         let service_keys = [v_u64(id)];
         let mut row: *mut bdb_row_set = null_mut();
         assert_eq!(
-            bdb_snapshot_get(
-                snap,
+            bdb_instance_get(
+                instance,
                 SERVICE,
                 service_key,
                 service_keys.as_ptr(),
@@ -782,8 +869,8 @@ fn insert_delete_contains_get_dyn() {
         let misses = [v_u64(id + 999)];
         let mut row: *mut bdb_row_set = null_mut();
         assert_eq!(
-            bdb_snapshot_get(
-                snap,
+            bdb_instance_get(
+                instance,
                 SERVICE,
                 service_key,
                 misses.as_ptr(),
@@ -802,7 +889,10 @@ fn insert_delete_contains_get_dyn() {
     let (status, error) = db_write(db, |tx| {
         let mut error: *mut bdb_error = null_mut();
         let outage_row = [v_u64(id), v_interval_i64(100, 200)];
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         assert_eq!(
             bdb_tx_delete(
                 tx,
@@ -829,7 +919,7 @@ fn insert_delete_contains_get_dyn() {
             bdb_status::Ok
         );
         assert_eq!(report.changed, 0, "double delete is a no-op");
-        let mut contains = true;
+        let mut contains: u8 = 1;
         assert_eq!(
             bdb_tx_contains(
                 tx,
@@ -841,7 +931,7 @@ fn insert_delete_contains_get_dyn() {
             ),
             bdb_status::Ok
         );
-        assert!(!contains, "the final-state view sees the pending delete");
+        assert_eq!(contains, 0, "the final-state view sees the pending delete");
         let keys = [v_u64(id), v_interval_i64(100, 200)];
         let (outage_key, _) = key_statement_ids();
         let mut row: *mut bdb_row_set = null_mut();
@@ -870,11 +960,11 @@ fn scan_exports_rows() {
     let db = create_uptime(&dir);
     seed_service_outage(db, "alpha", (0, 10));
     seed_service_outage(db, "beta", (10, 20));
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let mut rows: *mut bdb_row_set = null_mut();
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_snapshot_scan(snap, SERVICE, &raw mut rows, &raw mut error),
+            bdb_instance_scan(instance, SERVICE, &raw mut rows, &raw mut error),
             bdb_status::Ok
         );
         assert_eq!(bdb_row_set_len(rows), 2);
@@ -898,17 +988,20 @@ fn scan_exports_rows() {
 }
 
 #[test]
-fn write_from_ok_and_generation_moved() {
+fn write_from_ok_and_moved() {
     let dir = temp_store("write-from");
     let db = create_uptime(&dir);
     let id = seed_service_outage(db, "gamma", (0, 10));
 
     // The sanctioned nesting: write_from with the read callback's own
-    // still-live snapshot ref.
-    let (status, error) = db_read(db, |snap| {
-        let (status, error) = db_write_from(db, snap, |tx| {
+    // still-live witness.
+    let (status, error) = db_read(db, |_instance, witness| {
+        let (status, error) = db_write_from(db, witness, |tx| {
             let row = [v_u64(id), v_interval_i64(50, 60)];
-            let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+            let mut report = bdb_mutation_report {
+                submitted: 0,
+                changed: 0,
+            };
             let mut error: *mut bdb_error = null_mut();
             assert_eq!(
                 bdb_tx_insert(
@@ -917,7 +1010,7 @@ fn write_from_ok_and_generation_moved() {
                     row.as_ptr(),
                     row.len(),
                     1,
-                &raw mut report,
+                    &raw mut report,
                     &raw mut error,
                 ),
                 bdb_status::Ok
@@ -929,12 +1022,15 @@ fn write_from_ok_and_generation_moved() {
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
 
-    // A state-changing commit after the witness: GenerationMoved, typed,
-    // with both generations readable.
-    let (status, error) = db_read(db, |snap| {
+    // A state-changing commit after the witness: ConditionalWrite::Moved,
+    // reported as a write-admission arm under OK, not an error kind.
+    let (status, error) = db_read(db, |_instance, witness| {
         let (status, error) = db_write(db, |tx| {
             let row = [v_u64(id), v_interval_i64(70, 80)];
-            let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+            let mut report = bdb_mutation_report {
+                submitted: 0,
+                changed: 0,
+            };
             let mut error: *mut bdb_error = null_mut();
             assert_eq!(
                 bdb_tx_insert(
@@ -943,7 +1039,7 @@ fn write_from_ok_and_generation_moved() {
                     row.as_ptr(),
                     row.len(),
                     1,
-                &raw mut report,
+                    &raw mut report,
                     &raw mut error,
                 ),
                 bdb_status::Ok
@@ -958,20 +1054,19 @@ fn write_from_ok_and_generation_moved() {
         );
 
         let mut entered = false;
-        let (status, error) = db_write_from(db, snap, |_tx| {
+        let (status, admission, error) = db_write_from_admit(db, witness, |_tx| {
             entered = true;
             bdb_callback_control::Ok
         });
-        assert_eq!(status, bdb_status::Error);
+        assert_eq!(status, bdb_status::Ok, "moved is not an error: {}", err_text(error));
+        assert!(error.is_null());
         assert!(!entered, "the closure never runs on a moved generation");
-        assert_eq!(error_kind(error), bdb_error_kind::GenerationMoved);
-        let (mut witnessed, mut current) = (0u64, 0u64);
-        assert_eq!(
-            bdb_error_get_generation_moved(error, &raw mut witnessed, &raw mut current),
-            bdb_status::Ok
+        assert_eq!(admission.tag, bdb_admission_tag::Moved);
+        let moved = unsafe { admission.value.moved };
+        assert!(
+            moved.current > moved.witnessed,
+            "the clock moved past the witness"
         );
-        assert!(current > witnessed, "the clock moved past the witness");
-        destroy_error(error);
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
@@ -987,7 +1082,7 @@ fn nested_write_is_refused_typed() {
         assert_eq!(status, bdb_status::Error);
         assert_eq!(
             error_kind(error),
-            bdb_error_kind::EnvironmentLocked,
+            bdb_error_kind::BusyHandle,
             "the bridge refuses BEFORE the engine assertion"
         );
         assert!(error_message(error).contains("re-entrant"));
@@ -1000,18 +1095,43 @@ fn nested_write_is_refused_typed() {
 }
 
 #[test]
-fn stale_snapshot_ref_is_misuse() {
+fn stale_witness_is_misuse() {
     let dir = temp_store("stale");
     let db = create_uptime(&dir);
-    let mut stashed: *const bdb_snapshot_ref = null();
-    let (status, error) = db_read(db, |snap| {
-        stashed = snap;
+    let mut stashed: *const bdb_witness = null();
+    let (status, error) = db_read(db, |_instance, witness| {
+        stashed = witness;
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
-    // The snapshot_ref lives in the db heap slot, so this replay is a
+    // The witness lives in a retired heap slot, so this replay is a
     // real MISUSE (alive=false), not a use-after-free of a stack frame.
     let (status, error) = db_write_from(db, stashed, |_tx| bdb_callback_control::Ok);
+    assert_eq!(status, bdb_status::Misuse);
+    assert!(error.is_null(), "misuse allocates no error");
+    assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
+}
+
+#[test]
+fn stale_instance_ref_is_misuse() {
+    let dir = temp_store("stale-instance");
+    let db = create_uptime(&dir);
+    let mut stashed: *const bdb_instance_ref = null();
+    let (status, error) = db_read(db, |instance, _witness| {
+        stashed = instance;
+        bdb_callback_control::Ok
+    });
+    assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
+    let mut contains: u8 = 1;
+    let mut error: *mut bdb_error = null_mut();
+    let status = bdb_instance_contains(
+        stashed,
+        SERVICE,
+        null(),
+        0,
+        &raw mut contains,
+        &raw mut error,
+    );
     assert_eq!(status, bdb_status::Misuse);
     assert!(error.is_null(), "misuse allocates no error");
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
@@ -1090,7 +1210,7 @@ fn prepare_execute_scalar_param_and_decode() {
     let prepared = with_down_at_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
 
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let mut error: *mut bdb_error = null_mut();
         let params = [bdb_param {
             kind: u32::from(bdb_param_kind::Scalar),
@@ -1099,8 +1219,8 @@ fn prepare_execute_scalar_param_and_decode() {
             set_len: 0,
         }];
         assert_eq!(
-            bdb_snapshot_execute(
-                snap,
+            bdb_instance_execute(
+                instance,
                 prepared,
                 params.as_ptr(),
                 params.len(),
@@ -1135,8 +1255,8 @@ fn prepare_execute_scalar_param_and_decode() {
             set_len: 0,
         }];
         assert_eq!(
-            bdb_snapshot_execute(
-                snap,
+            bdb_instance_execute(
+                instance,
                 prepared,
                 params.as_ptr(),
                 params.len(),
@@ -1156,8 +1276,8 @@ fn prepare_execute_scalar_param_and_decode() {
             set: null(),
             set_len: 0,
         }];
-        let status = bdb_snapshot_execute(
-            snap,
+        let status = bdb_instance_execute(
+            instance,
             prepared,
             params.as_ptr(),
             params.len(),
@@ -1188,7 +1308,7 @@ fn execute_set_param_decodes_strings() {
     let prepared = with_names_of_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
 
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let mut error: *mut bdb_error = null_mut();
         let set = [v_u64(alpha), v_u64(gamma)];
         let params = [bdb_param {
@@ -1198,8 +1318,8 @@ fn execute_set_param_decodes_strings() {
             set_len: set.len(),
         }];
         assert_eq!(
-            bdb_snapshot_execute(
-                snap,
+            bdb_instance_execute(
+                instance,
                 prepared,
                 params.as_ptr(),
                 params.len(),
@@ -1236,15 +1356,18 @@ fn execute_set_param_decodes_strings() {
 }
 
 #[test]
-fn pointwise_key_violation_is_commit_rejected_and_renderable() {
+fn pointwise_key_violation_is_rejected_and_renderable() {
     let dir = temp_store("rejection");
     let db = create_uptime(&dir);
     let id = seed_service_outage(db, "flaky", (10, 20));
-    let (status, error) = db_write(db, |tx| {
+    let (status, admission, error) = db_write_admit(db, |tx| {
         // Overlaps [10, 20) for the same service: the pointwise key
         // (service, window) convicts at commit.
         let row = [v_u64(id), v_interval_i64(15, 25)];
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
             bdb_tx_insert(
@@ -1261,21 +1384,19 @@ fn pointwise_key_violation_is_commit_rejected_and_renderable() {
         );
         bdb_callback_control::Ok
     });
-    assert_eq!(status, bdb_status::Error);
-    assert_eq!(error_kind(error), bdb_error_kind::CommitRejected);
-    assert!(!error_message(error).is_empty(), "renderable message");
-    assert!(bdb_error_violation_count(error) >= 1);
+    assert_eq!(status, bdb_status::Ok, "rejection is not an error: {}", err_text(error));
+    assert!(error.is_null());
+    assert_eq!(admission.tag, bdb_admission_tag::Rejected);
+    let violations = unsafe { admission.value.rejected };
+    assert!(bdb_violations_len(violations) >= 1);
     let mut violation = bdb_violation {
         statement: 0,
         kind: bdb_statement_kind::Containment,
         spelling: no_sv(),
-        direction: crate::error::bdb_violation_direction::None,
-        has_measure: false,
-        measure_lo: 0,
-        measure_hi: 0,
+        payload: crate::error::bdb_violation_payload { functionality: 0 },
     };
     assert_eq!(
-        bdb_error_get_violation(error, 0, &raw mut violation),
+        bdb_violations_get(violations, 0, &raw mut violation),
         bdb_status::Ok
     );
     assert_eq!(violation.kind, bdb_statement_kind::Functionality);
@@ -1287,20 +1408,20 @@ fn pointwise_key_violation_is_commit_rejected_and_renderable() {
         "the canonical spelling cites the relation: {spelling}"
     );
     assert_eq!(
-        bdb_error_get_violation(error, usize::MAX, &raw mut violation),
+        bdb_violations_get(violations, usize::MAX, &raw mut violation),
         bdb_status::Misuse,
         "violation access is bounds-checked"
     );
-    destroy_error(error);
+    assert_eq!(bdb_violations_destroy(violations), bdb_status::Ok);
 
     // The rejected delta committed nothing.
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let row = [v_u64(id), v_interval_i64(15, 25)];
-        let mut contains = true;
+        let mut contains: u8 = 1;
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_snapshot_contains(
-                snap,
+            bdb_instance_contains(
+                instance,
                 OUTAGE,
                 row.as_ptr(),
                 row.len(),
@@ -1309,7 +1430,7 @@ fn pointwise_key_violation_is_commit_rejected_and_renderable() {
             ),
             bdb_status::Ok
         );
-        assert!(!contains);
+        assert_eq!(contains, 0);
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
@@ -1346,7 +1467,10 @@ fn marshal_refusals_are_typed_fact_shape() {
         // An empty interval is unrepresentable in the engine: the bridge
         // refuses it at marshal, typed.
         let row = [v_u64(1), v_interval_i64(20, 10)];
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         let status = bdb_tx_insert(
             tx,
@@ -1354,12 +1478,11 @@ fn marshal_refusals_are_typed_fact_shape() {
             row.as_ptr(),
             row.len(),
             1,
-                &raw mut report,
+            &raw mut report,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Error);
-        assert_eq!(error_kind(error), bdb_error_kind::FactShape);
-        assert!(error_message(error).contains("empty interval"));
+        assert_eq!(error_kind(error), bdb_error_kind::Marshal);
         destroy_error(error);
         bdb_callback_control::Abort
     });
@@ -1380,7 +1503,8 @@ fn panic_maps_to_bdb_error_panic() {
 
 extern "C" fn invalid_callback_control(
     _context: *mut c_void,
-    _snapshot: *const bdb_snapshot_ref,
+    _instance: *const bdb_instance_ref,
+    _witness: *const bdb_witness,
 ) -> u32 {
     99
 }
@@ -1389,7 +1513,7 @@ extern "C" fn invalid_callback_control(
 fn destroy_during_read_callback_is_misuse() {
     let dir = temp_store("destroy-reentrant");
     let db = create_uptime(&dir);
-    let (status, error) = db_read(db, |_| {
+    let (status, error) = db_read(db, |_, _| {
         assert_eq!(bdb_db_destroy(db), bdb_status::Misuse);
         bdb_callback_control::Ok
     });
@@ -1398,14 +1522,17 @@ fn destroy_during_read_callback_is_misuse() {
 }
 
 #[test]
-fn nested_read_is_refused_typed() {
+fn nested_reads_are_concurrent() {
     let dir = temp_store("nested-read");
     let db = create_uptime(&dir);
-    let (status, error) = db_read(db, |_| {
-        let (inner_status, inner_error) = db_read(db, |_| bdb_callback_control::Ok);
-        assert_eq!(inner_status, bdb_status::Error);
-        assert_eq!(error_kind(inner_error), bdb_error_kind::EnvironmentLocked);
-        destroy_error(inner_error);
+    let (status, error) = db_read(db, |_, _| {
+        let (inner_status, inner_error) = db_read(db, |_, _| bdb_callback_control::Ok);
+        assert_eq!(
+            inner_status,
+            bdb_status::Ok,
+            "concurrent MVCC reads: {}",
+            err_text(inner_error)
+        );
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
@@ -1421,15 +1548,15 @@ fn null_out_db_is_misuse_and_does_not_lock_the_path() {
         let status = bdb_db_create(path, spec, null_mut(), &raw mut error);
         assert_eq!(status, bdb_status::Misuse);
         assert!(error.is_null());
-        let mut db: *mut bdb_db = null_mut();
-        let status = bdb_db_create(path, spec, &raw mut db, &raw mut error);
+        let mut admission = empty_db_admission();
+        let status = bdb_db_create(path, spec, &raw mut admission, &raw mut error);
         assert_eq!(
             status,
             bdb_status::Ok,
             "create after null out: {}",
             err_text(error)
         );
-        assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
+        assert_eq!(bdb_db_destroy(take_accepted_db(admission)), bdb_status::Ok);
     });
 }
 
@@ -1456,11 +1583,11 @@ fn insert_null_out_report_does_not_commit() {
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "write: {}", err_text(error));
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         let mut rows: *mut bdb_row_set = null_mut();
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_snapshot_scan(snap, SERVICE, &raw mut rows, &raw mut error),
+            bdb_instance_scan(instance, SERVICE, &raw mut rows, &raw mut error),
             bdb_status::Ok,
             "scan: {}",
             err_text(error)
@@ -1487,6 +1614,7 @@ fn reserve_null_out_range_does_not_mint() {
     assert_eq!(status, bdb_status::Ok, "write: {}", err_text(error));
     let (status, error) = db_write(db, |tx| {
         let mut range = bdb_fresh_range {
+            tag: bdb_fresh_range_tag::Empty,
             start: 0,
             end_exclusive: 0,
         };
@@ -1519,15 +1647,7 @@ fn empty_insert_and_reserve_are_mutations() {
         };
         let mut error: *mut bdb_error = null_mut();
         assert_eq!(
-            bdb_tx_insert(
-                tx,
-                SERVICE,
-                null(),
-                2,
-                0,
-                &raw mut report,
-                &raw mut error,
-            ),
+            bdb_tx_insert(tx, SERVICE, null(), 2, 0, &raw mut report, &raw mut error,),
             bdb_status::Ok,
             "empty insert: {}",
             err_text(error)
@@ -1536,15 +1656,7 @@ fn empty_insert_and_reserve_are_mutations() {
         assert_eq!(report.changed, 0);
 
         assert_eq!(
-            bdb_tx_delete(
-                tx,
-                SERVICE,
-                null(),
-                2,
-                0,
-                &raw mut report,
-                &raw mut error,
-            ),
+            bdb_tx_delete(tx, SERVICE, null(), 2, 0, &raw mut report, &raw mut error,),
             bdb_status::Ok,
             "empty delete: {}",
             err_text(error)
@@ -1553,6 +1665,7 @@ fn empty_insert_and_reserve_are_mutations() {
         assert_eq!(report.changed, 0);
 
         let mut range = bdb_fresh_range {
+            tag: bdb_fresh_range_tag::Empty,
             start: 7,
             end_exclusive: 7,
         };
@@ -1562,21 +1675,18 @@ fn empty_insert_and_reserve_are_mutations() {
             "empty reserve: {}",
             err_text(error)
         );
-        assert_eq!(
-            (range.start, range.end_exclusive),
-            (0, 0),
-            "empty reserve wires {{0, 0}}"
-        );
+        assert_eq!(range.tag, bdb_fresh_range_tag::Empty, "empty is the tag");
         assert_eq!(
             bdb_tx_reserve(tx, SERVICE, 0, 1, &raw mut range, &raw mut error),
             bdb_status::Ok,
             "reserve(1) after empty: {}",
             err_text(error)
         );
+        assert_eq!(range.tag, bdb_fresh_range_tag::NonEmpty);
         assert_eq!(
             (range.start, range.end_exclusive),
             (0, 1),
-            "empty {{0, 0}} did not mint; the first minted id is still 0"
+            "empty did not mint; the first minted id is still 0"
         );
         bdb_callback_control::Abort
     });
@@ -1594,17 +1704,9 @@ fn zero_width_nonzero_rows_is_shape_not_panic() {
             changed: 0,
         };
         let mut error: *mut bdb_error = null_mut();
-        let status = bdb_tx_insert(
-            tx,
-            SERVICE,
-            null(),
-            0,
-            1,
-            &raw mut report,
-            &raw mut error,
-        );
+        let status = bdb_tx_insert(tx, SERVICE, null(), 0, 1, &raw mut report, &raw mut error);
         assert_eq!(status, bdb_status::Error);
-        assert_eq!(error_kind(error), bdb_error_kind::FactShape);
+        assert_eq!(error_kind(error), bdb_error_kind::Marshal);
         destroy_error(error);
         bdb_callback_control::Abort
     });
@@ -1618,7 +1720,10 @@ fn invalid_enum_tag_and_bool_are_misuse() {
     let dir = temp_store("bad-tag");
     let db = create_uptime(&dir);
     let (status, _error) = db_write(db, |tx| {
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         let mut row = [v_u64(1), v_str("x")];
         row[0].kind = 99;
@@ -1628,7 +1733,7 @@ fn invalid_enum_tag_and_bool_are_misuse() {
             row.as_ptr(),
             row.len(),
             1,
-                &raw mut report,
+            &raw mut report,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Misuse);
@@ -1643,7 +1748,7 @@ fn invalid_enum_tag_and_bool_are_misuse() {
             row.as_ptr(),
             row.len(),
             1,
-                &raw mut report,
+            &raw mut report,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Misuse);
@@ -1676,7 +1781,10 @@ fn slice_overflow_and_unaligned_are_misuse() {
     let db = create_uptime(&dir);
     let (status, _error) = db_write(db, |tx| {
         let dummy = v_u64(1);
-        let mut report = bdb_mutation_report { submitted: 0, changed: 0 };
+        let mut report = bdb_mutation_report {
+            submitted: 0,
+            changed: 0,
+        };
         let mut error: *mut bdb_error = null_mut();
         let status = bdb_tx_insert(
             tx,
@@ -1684,7 +1792,7 @@ fn slice_overflow_and_unaligned_are_misuse() {
             &raw const dummy,
             usize::MAX,
             1,
-                &raw mut report,
+            &raw mut report,
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Misuse);
@@ -1696,8 +1804,15 @@ fn slice_overflow_and_unaligned_are_misuse() {
             reason = "the test constructs an unaligned pointer so slice_in can refuse it"
         )]
         let unaligned = bytes.as_ptr().wrapping_add(1).cast::<bdb_value>();
-        let status = bdb_tx_insert(tx, SERVICE, unaligned, 1, 1,
-                &raw mut report, &raw mut error);
+        let status = bdb_tx_insert(
+            tx,
+            SERVICE,
+            unaligned,
+            1,
+            1,
+            &raw mut report,
+            &raw mut error,
+        );
         assert_eq!(status, bdb_status::Misuse);
         assert!(error.is_null());
         bdb_callback_control::Abort
@@ -1714,7 +1829,7 @@ fn prepared_exclusive_execute_and_destroy() {
     let db = create_uptime(&dir);
     let prepared = with_down_at_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
-    let (status, error) = db_read(db, |snap| {
+    let (status, error) = db_read(db, |instance, _witness| {
         unsafe {
             (*prepared).in_execute.store(true, Ordering::SeqCst);
         }
@@ -1725,8 +1840,8 @@ fn prepared_exclusive_execute_and_destroy() {
             set: null(),
             set_len: 0,
         }];
-        let status = bdb_snapshot_execute(
-            snap,
+        let status = bdb_instance_execute(
+            instance,
             prepared,
             params.as_ptr(),
             params.len(),
@@ -1734,7 +1849,7 @@ fn prepared_exclusive_execute_and_destroy() {
             &raw mut error,
         );
         assert_eq!(status, bdb_status::Error);
-        assert_eq!(error_kind(error), bdb_error_kind::EnvironmentLocked);
+        assert_eq!(error_kind(error), bdb_error_kind::BusyHandle);
         destroy_error(error);
         assert_eq!(bdb_prepared_destroy(prepared), bdb_status::Misuse);
         unsafe {
@@ -1789,7 +1904,61 @@ fn version_symbols() {
         version.contains(env!("CARGO_PKG_VERSION")),
         "version string: {version}"
     );
-    assert_eq!(bdb_abi_version(), 2);
+    assert_eq!(bdb_abi_version(), 3);
+}
+
+#[test]
+fn consumed_builder_cannot_admit_twice() {
+    with_uptime_spec(|spec| {
+        let mut builder: *mut bdb_instance_builder = null_mut();
+        let mut error: *mut bdb_error = null_mut();
+        assert_eq!(
+            bdb_instance_builder_new(spec, &raw mut builder, &raw mut error),
+            bdb_status::Ok,
+            "builder new: {}",
+            err_text(error)
+        );
+        let mut admission = empty_instance_admission();
+        let status = bdb_instance_builder_admit(&raw mut builder, &raw mut admission, &raw mut error);
+        assert_eq!(status, bdb_status::Ok, "admit: {}", err_text(error));
+        assert!(builder.is_null(), "admit nulls the caller's pointer");
+        assert_ne!(admission.tag, bdb_admission_tag::Empty);
+        match admission.tag {
+            bdb_admission_tag::Accepted => {
+                let instance = unsafe { admission.value.accepted };
+                assert_eq!(bdb_owned_instance_destroy(instance), bdb_status::Ok);
+            }
+            bdb_admission_tag::Rejected => {
+                let violations = unsafe { admission.value.rejected };
+                assert_eq!(bdb_violations_destroy(violations), bdb_status::Ok);
+            }
+            other => panic!("unexpected admission tag {other:?}"),
+        }
+
+        let mut second = empty_instance_admission();
+        let status = bdb_instance_builder_admit(&raw mut builder, &raw mut second, &raw mut error);
+        assert_eq!(status, bdb_status::Misuse);
+        assert!(error.is_null());
+        assert_eq!(second.tag, bdb_admission_tag::Empty);
+    });
+}
+
+#[test]
+fn create_ok_never_returns_empty_admission() {
+    let dir = temp_store("empty-tag");
+    with_uptime_spec(|spec| {
+        let mut admission = empty_db_admission();
+        let mut error: *mut bdb_error = null_mut();
+        let status = bdb_db_create(
+            sv(dir.to_str().expect("utf-8 temp path")),
+            spec,
+            &raw mut admission,
+            &raw mut error,
+        );
+        assert_eq!(status, bdb_status::Ok, "create: {}", err_text(error));
+        assert_ne!(admission.tag, bdb_admission_tag::Empty);
+        assert_eq!(bdb_db_destroy(take_accepted_db(admission)), bdb_status::Ok);
+    });
 }
 
 #[test]

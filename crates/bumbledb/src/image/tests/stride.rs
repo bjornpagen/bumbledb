@@ -55,10 +55,10 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
         delta.insert(&view, R, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
 
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
     let mut word_addrs = Vec::new();
     let mut byte_addrs = Vec::new();
     for i in 0..12 {
@@ -133,9 +133,9 @@ fn big_column_strides_avoid_the_tracker_band() {
         delta.insert(&view, R, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
     let addrs: Vec<usize> = (0..4)
         .map(|i| match image.column(i) {
             ColumnView::Words(w) => w.as_ptr().addr(),

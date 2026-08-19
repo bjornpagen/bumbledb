@@ -14,8 +14,11 @@
 use std::collections::BTreeSet;
 
 #[cfg(test)]
-use bumbledb::Snapshot;
-use bumbledb::{AnswerValue, Db, Error, Query, Value};
+use bumbledb::ConditionalWrite;
+#[cfg(test)]
+use bumbledb::Witness;
+use bumbledb::schema::SchemaDescriptor;
+use bumbledb::{Admission, AnswerValue, Db, Error, InstanceBuilder, Query, RelationId, Value};
 
 #[cfg(test)]
 use crate::naive::ConditionalAbort;
@@ -170,21 +173,15 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
         .as_slice()
         .iter()
         .map(|violation| match violation {
-            bumbledb::Violation::Functionality(fv) => Violation::Functionality {
-                statement: fv.statement(),
-            },
-            bumbledb::Violation::Containment {
-                statement,
-                direction,
-                ..
-            } => Violation::Containment {
-                statement: *statement,
+            bumbledb::Violation::Functionality { id, .. } => {
+                Violation::Functionality { statement: *id }
+            }
+            bumbledb::Violation::Containment { id, direction, .. } => Violation::Containment {
+                statement: *id,
                 direction: *direction,
             },
-            bumbledb::Violation::Capacity {
-                statement, measure, ..
-            } => Violation::Capacity {
-                statement: *statement,
+            bumbledb::Violation::Capacity { id, measure, .. } => Violation::Capacity {
+                statement: *id,
                 measure: *measure,
             },
         })
@@ -206,8 +203,8 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
         Ok(())
     });
     match outcome {
-        Ok(()) => Verdict::Committed,
-        Err(Error::CommitRejected { violations }) => Verdict::Aborted(cited(&violations)),
+        Ok(Admission::Accepted(_)) => Verdict::Committed,
+        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations)),
         Err(Error::ClosedRelationWrite { relation }) => {
             Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
@@ -222,6 +219,46 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     }
 }
 
+/// One complete-admission candidate through [`InstanceBuilder::admit`]:
+/// load ordinary facts, then the packed-freeze roster. Shared with the
+/// complete-admission serializer (`conformance::complete`), which
+/// records the agreed verdict against [`NaiveDb::judge_complete`].
+pub(crate) fn engine_admit(
+    schema: SchemaDescriptor,
+    facts: &[(RelationId, Vec<Value>)],
+) -> Verdict {
+    let mut builder = InstanceBuilder::new(schema)
+        .unwrap_or_else(|err| panic!("engine refused a complete-admission schema: {err}"));
+    for (rel, fact) in facts {
+        if let Err(err) = builder.load_dyn(*rel, [fact.as_slice()]) {
+            return admit_load_error(err);
+        }
+    }
+    match builder.admit() {
+        Ok(Admission::Accepted(_)) => Verdict::Committed,
+        Ok(Admission::Rejected(violations)) => Verdict::Aborted(cited(&violations)),
+        Err(Error::ClosedRelationWrite { relation }) => {
+            Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
+        }
+        Err(Error::CapacityRayMeasure { statement, .. }) => {
+            Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
+        }
+        Err(other) => panic!("engine refused complete admission: {other:?}"),
+    }
+}
+
+fn admit_load_error(err: Error) -> Verdict {
+    match err {
+        Error::ClosedRelationWrite { relation } => {
+            Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
+        }
+        Error::CapacityRayMeasure { statement, .. } => {
+            Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
+        }
+        other => panic!("engine refused a complete-admission load: {other:?}"),
+    }
+}
+
 /// One delta through the engine's conditional write path
 /// (`Db::write_from` under `witness`), as a [`ConditionalVerdict`] —
 /// the conditional sibling of [`engine_write`], mapping the typed
@@ -230,7 +267,7 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
 #[cfg(test)]
 pub(crate) fn engine_write_from<S>(
     db: &Db<S>,
-    witness: &Snapshot<'_, S>,
+    witness: &Witness<S>,
     delta: &Delta,
 ) -> ConditionalVerdict {
     let outcome = db.write_from(witness, |tx| {
@@ -243,14 +280,14 @@ pub(crate) fn engine_write_from<S>(
         Ok(())
     });
     match outcome {
-        Ok(()) => ConditionalVerdict::Committed,
-        Err(Error::GenerationMoved { witnessed, current }) => ConditionalVerdict::Moved {
+        Ok(ConditionalWrite::Accepted(_)) => ConditionalVerdict::Committed,
+        Ok(ConditionalWrite::Rejected(violations)) => {
+            ConditionalVerdict::Aborted(cited(&violations))
+        }
+        Ok(ConditionalWrite::Moved { witnessed, current }) => ConditionalVerdict::Moved {
             witnessed: witnessed.value(),
             current: current.value(),
         },
-        Err(Error::CommitRejected { violations }) => {
-            ConditionalVerdict::Aborted(cited(&violations))
-        }
         Err(Error::ClosedRelationWrite { relation }) => {
             ConditionalVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
@@ -284,7 +321,7 @@ pub(crate) fn naive_write_from(
 pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Answers {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args = crate::families::param_args(params);
-    let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
+    let outcome = db.read(|snap| snap.execute_collect(&mut prepared, &args));
     match outcome {
         Ok(buffer) => Answers::Ok(
             buffer
@@ -310,7 +347,7 @@ fn owned_value(value: AnswerValue<'_>) -> Value {
         AnswerValue::Bool(v) => Value::Bool(v),
         AnswerValue::U64(v) => Value::U64(v),
         AnswerValue::I64(v) => Value::I64(v),
-        AnswerValue::String(v) => Value::String(Box::from(v.as_bytes())),
+        AnswerValue::String(v) => Value::String(v.into()),
         AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
         AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
         AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),

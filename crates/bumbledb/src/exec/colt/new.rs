@@ -1,4 +1,4 @@
-use super::{BoundView, Colt, Cursor, NodeRef, NodeState, Positions, SelectionLevel, View};
+use super::{BoundView, Colt, NodeState, Positions, SelectionLevel, View};
 
 impl Colt {
     pub(super) fn bound_view(&self) -> &BoundView {
@@ -10,7 +10,6 @@ impl Colt {
     /// `join_schema` the join levels below them.
     #[must_use]
     pub fn new(view: View, selections: &[SelectionLevel], join_schema: Vec<Vec<usize>>) -> Self {
-        let selection_levels = selections.len();
         let schema_columns: Vec<Vec<usize>> = selections
             .iter()
             .map(|level| level.columns().to_vec())
@@ -18,17 +17,11 @@ impl Colt {
             .collect();
         Self {
             view,
-            selection_levels,
             selection_kinds: selections.iter().map(SelectionLevel::kind).collect(),
             union_mark: None,
             select_hits: Vec::new(),
             select_positions: Vec::new(),
-            start: Cursor::Node(NodeRef(0)),
-            select_state: if selection_levels == 0 {
-                super::SelectState::Vacuous
-            } else {
-                super::SelectState::Pending
-            },
+            start: Self::initial_start(selections.len()),
             schema_columns,
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
@@ -52,17 +45,11 @@ impl Colt {
     pub fn unbound_sibling(&self) -> Self {
         Self {
             view: View::Unbound,
-            selection_levels: self.selection_levels,
             selection_kinds: self.selection_kinds.clone(),
             union_mark: None,
             select_hits: Vec::new(),
             select_positions: Vec::new(),
-            start: Cursor::Node(NodeRef(0)),
-            select_state: if self.selection_levels == 0 {
-                super::SelectState::Vacuous
-            } else {
-                super::SelectState::Pending
-            },
+            start: Self::initial_start(self.selection_depth()),
             schema_columns: self.schema_columns.clone(),
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
@@ -94,12 +81,7 @@ impl Colt {
         self.buckets.clear();
         self.dense.clear();
         self.union_mark = None;
-        self.start = Cursor::Node(NodeRef(0));
-        self.select_state = if self.selection_levels == 0 {
-            super::SelectState::Vacuous
-        } else {
-            super::SelectState::Pending
-        };
+        self.start = Self::initial_start(self.selection_depth());
         // The epoch advance is what refuses cross-reset resume tokens
         // (the mint sites stamp it into bits 56-62; presentation
         // asserts equality). 7 bits, wrapping.

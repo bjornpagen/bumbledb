@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Error;
+use crate::error::{Error, FindIndex};
 use crate::ir::FoldOp;
 
 /// The constant-group fast path — one group
@@ -286,7 +286,7 @@ fn constant_over_slot_folds_value_times_count() {
         assert!(
             matches!(
                 err,
-                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: FindIndex(1) })
             ),
             "{err:?}"
         );
@@ -362,7 +362,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
         assert!(
             matches!(
                 err,
-                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: FindIndex(1) })
             ),
             "batch {batch}: {err:?}"
         );

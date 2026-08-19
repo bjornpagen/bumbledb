@@ -49,7 +49,9 @@ bumbledb::schema! {
 #[test]
 fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
     let dir = common::TempDir::new("keyed-get-both-scopes");
-    let db = Db::create(dir.path(), KeyedGet).expect("create");
+    let db = Db::create(dir.path(), KeyedGet)
+        .expect("create")
+        .expect("accepted");
     let (grp, task) = db
         .write(|tx| {
             let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
@@ -70,7 +72,9 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
             }])?;
             Ok((grp, task))
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     db.read(|snap| {
         assert_eq!(
@@ -113,7 +117,8 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
         );
         Ok(())
     })
-    .expect("write-scope keyed get");
+    .expect("write-scope keyed get")
+    .unwrap();
 }
 
 /// The const-id arithmetic under mirror offsets: schema admission
@@ -140,7 +145,9 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
     );
 
     let dir = common::TempDir::new("keyed-get-mirror-offsets");
-    let db = Db::create(dir.path(), KeyedGet).expect("schema admission succeeds");
+    let db = Db::create(dir.path(), KeyedGet)
+        .expect("schema admission succeeds")
+        .expect("accepted");
     let grp = db
         .write(|tx| {
             let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
@@ -161,7 +168,9 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
             }])?;
             Ok(grp)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
     db.read(|snap| {
         let by_key = snap
             .get(TaskByKindSubject {
@@ -187,7 +196,9 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
 #[test]
 fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
     let dir = common::TempDir::new("keyed-get-string-keys");
-    let db = Db::create(dir.path(), KeyedGet).expect("create");
+    let db = Db::create(dir.path(), KeyedGet)
+        .expect("create")
+        .expect("accepted");
 
     db.read(|snap| {
         assert_eq!(
@@ -229,7 +240,8 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
         );
         Ok(())
     })
-    .expect("pending-first resolution");
+    .expect("pending-first resolution")
+    .unwrap();
 }
 
 /// The final-state overlay through a declared key: insert then keyed-get
@@ -239,7 +251,9 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
 #[test]
 fn keyed_get_observes_the_final_state_overlay() {
     let dir = common::TempDir::new("keyed-get-final-state");
-    let db = Db::create(dir.path(), KeyedGet).expect("create");
+    let db = Db::create(dir.path(), KeyedGet)
+        .expect("create")
+        .expect("accepted");
     let (grp, task) = db
         .write(|tx| {
             let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
@@ -298,7 +312,9 @@ fn keyed_get_observes_the_final_state_overlay() {
             );
             Ok((grp, task))
         })
-        .expect("pre-commit overlay reads");
+        .expect("pre-commit overlay reads")
+        .unwrap()
+        .value;
 
     // Every pre-commit answer equals the post-commit read.
     db.read(|snap| {

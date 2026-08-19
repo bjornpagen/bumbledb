@@ -13,8 +13,8 @@ use crate::storage::read;
 use crate::testutil::TempDir;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, ValueType,
 };
 
 /// R(id u64, flag bool, a i64, b i64).
@@ -82,7 +82,7 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
             .expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -93,24 +93,23 @@ fn oracle(
     keep: impl Fn(u64, bool, i64, i64) -> bool,
 ) -> Vec<u64> {
     let txn = env.read_txn().expect("txn");
-    let layout = schema.relation(R).layout();
     read::scan(&txn, schema, R)
         .expect("scan")
         .map(|entry| {
             let (_, bytes) = entry.expect("ok");
-            let id = match decode_field(bytes, layout, 0).expect("decode") {
+            let id = match decode_field(bytes, 0).expect("decode") {
                 crate::encoding::ValueRef::U64(v) => v,
                 other => panic!("{other:?}"),
             };
-            let flag = match decode_field(bytes, layout, 1).expect("decode") {
+            let flag = match decode_field(bytes, 1).expect("decode") {
                 crate::encoding::ValueRef::Bool(v) => v,
                 other => panic!("{other:?}"),
             };
-            let a = match decode_field(bytes, layout, 2).expect("decode") {
+            let a = match decode_field(bytes, 2).expect("decode") {
                 crate::encoding::ValueRef::I64(v) => v,
                 other => panic!("{other:?}"),
             };
-            let b = match decode_field(bytes, layout, 3).expect("decode") {
+            let b = match decode_field(bytes, 3).expect("decode") {
                 crate::encoding::ValueRef::I64(v) => v,
                 other => panic!("{other:?}"),
             };
@@ -133,22 +132,22 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
 
     // flag == true AND a >= -10 AND a < 15
     let predicates = vec![
         FilterPredicate::Compare {
-            field: FieldId(1),
+            field: FieldId(1).into(),
             op: WordCmp::Eq,
             value: Const::Byte(1),
         },
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Ge,
             value: Const::Word(u64::from_be_bytes(encode_i64(-10))),
         },
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Lt,
             value: Const::Word(u64::from_be_bytes(encode_i64(15))),
         },
@@ -167,10 +166,10 @@ fn same_fact_field_equality_pairs_work() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
     let predicates = vec![FilterPredicate::FieldsCompare {
-        left: FieldId(2),
-        right: FieldId(3),
+        left: FieldId(2).into(),
+        right: FieldId(3).into(),
         op: WordCmp::Eq,
     }];
     let view = apply(&image, &predicates, &[], Vec::new());
@@ -185,9 +184,9 @@ fn unsatisfiable_filter_yields_an_empty_survivor_set() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
     let predicates = vec![FilterPredicate::Compare {
-        field: FieldId(0),
+        field: FieldId(0).into(),
         op: WordCmp::Eq,
         value: Const::Word(u64::MAX),
     }];
@@ -203,7 +202,7 @@ fn no_predicates_yield_the_all_variant() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, R).expect("build");
+    let image = build(&txn.catalog(), &schema, R).expect("build");
     let view = apply(&image, &[], &[], Vec::new());
     assert!(matches!(view, View::Bound(BoundView::All(_))));
     assert_eq!(view.len(), 50);
@@ -218,13 +217,13 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let predicates = vec![FilterPredicate::Compare {
-        field: FieldId(0),
+        field: FieldId(0).into(),
         op: WordCmp::Ge,
         value: Const::Word(u64::from_be_bytes(encode_u64(40))),
     }];
 
     let (image, view) = build_with_filters(&txn, &schema, R, &predicates, &[], Vec::new())?;
-    let reference = build(&txn, &schema, R)?;
+    let reference = build(&txn.catalog(), &schema, R)?;
     // Byte-identical columns (addresses differ; contents must not).
     assert_eq!(image.row_count(), reference.row_count());
     for field in 0..4 {
@@ -259,7 +258,7 @@ fn interval_schema() -> Schema {
             name: "P".into(),
             fields: vec![
                 field("id", ValueType::U64),
-                field("during", interval_i64.clone()),
+                field("during", interval_i64),
                 field("review", interval_i64),
                 field("at", ValueType::I64),
             ],
@@ -328,9 +327,9 @@ fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> 
         delta.insert(&view, P, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    build(&txn, &schema, P).expect("build")
+    build(&txn.catalog(), &schema, P).expect("build")
 }
 
 /// PRD 14 criterion: `PointIn` survives exactly the rows whose interval
@@ -344,7 +343,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     // 9 == start of [9,12) (row 2, survives) and == end of [2,9)
     // (row 1, dies).
     let at_nine = vec![FilterPredicate::PointIn {
-        field: P_DURING,
+        field: P_DURING.into(),
         point: ViewWordSource::Word(w(9)),
     }];
     assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
@@ -352,7 +351,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     // 2 == start of [2,9) (survives), == end of [-5,2) (dies), and an
     // interior point of [1,3).
     let at_two = vec![FilterPredicate::PointIn {
-        field: P_DURING,
+        field: P_DURING.into(),
         point: ViewWordSource::Word(w(2)),
     }];
     assert_eq!(
@@ -362,7 +361,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
 
     // The same point through the bind-time param slice.
     let via_param = vec![FilterPredicate::PointIn {
-        field: P_DURING,
+        field: P_DURING.into(),
         point: ViewWordSource::Param(ParamId(0)),
     }];
     assert_eq!(
@@ -376,7 +375,7 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
     let dir = TempDir::new("view-any-point-in");
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::AnyPointIn {
-        field: P_DURING,
+        field: P_DURING.into(),
         set: SetConst::ParamSet(ParamId(0)),
     }];
 
@@ -402,8 +401,8 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     // INTERSECTS: the point-sets share a point (the 9-bit composite).
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::INTERSECTS,
         }),
         [1, 2, 3, 5]
@@ -411,8 +410,8 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     // COVERS (⊇): equals ∪ contains ∪ started-by ∪ finished-by.
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::COVERS,
         }),
         [1, 2, 5]
@@ -420,8 +419,8 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     // A singleton basic: exact equality through the algebra.
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::EQUALS,
         }),
         [5]
@@ -430,24 +429,24 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     // fixture boundaries (rows 1 and 2 sit at start, rows 3 and 4 at end).
     assert_eq!(
         run(FilterPredicate::FieldsPointIn {
-            interval: P_DURING,
-            point: P_AT,
+            interval: P_DURING.into(),
+            point: P_AT.into(),
         }),
         [1, 2, 5]
     );
     // Interval fields compare pairwise over their two-word spans.
     assert_eq!(
         run(FilterPredicate::FieldsCompare {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             op: WordCmp::Eq,
         }),
         [5]
     );
     assert_eq!(
         run(FilterPredicate::FieldsCompare {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             op: WordCmp::Ne,
         }),
         [1, 2, 3, 4]
@@ -462,7 +461,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
     // Scalar field within [2,9): membership with the half-open boundary
     // (at == 2 survives, at == 9 dies).
     let scalar_within = vec![FilterPredicate::FieldWithin {
-        field: P_AT,
+        field: P_AT.into(),
         outer: IntervalConst::Interval {
             start: w(2),
             end: w(9),
@@ -479,7 +478,7 @@ fn interval_constants_compare_pairwise_under_eq() {
     let dir = TempDir::new("view-interval-const");
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::Compare {
-        field: P_DURING,
+        field: P_DURING.into(),
         op: WordCmp::Eq,
         value: Const::Interval {
             start: w(2),
@@ -497,7 +496,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
     let dir = TempDir::new("view-param-set");
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::Compare {
-        field: P_ID,
+        field: P_ID.into(),
         op: WordCmp::Eq,
         value: Const::ParamSet(ParamId(0)),
     }];
@@ -519,7 +518,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     let image = interval_image(&dir);
     // Durations of P_ROWS' `during`: 7, 3, 7, 4, 2 (by id).
     let dur_lt = |bound: u64| FilterPredicate::DurationCompare {
-        field: P_DURING,
+        field: P_DURING.into(),
         op: OrderCmp::Lt,
         value: WordOrParam::Word(bound),
     };
@@ -540,7 +539,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     // borrowed slice, the measure refines its survivors (order law).
     let mixed = vec![
         FilterPredicate::Compare {
-            field: P_ID,
+            field: P_ID.into(),
             op: WordCmp::Ge,
             value: Const::Word(3),
         },
@@ -553,9 +552,9 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     // refinement (a mixed list). Durations vs the u64 id column:
     // only id 5 (duration 2) sits strictly under its id.
     let fields_lt = FilterPredicate::DurationFieldsCompare {
-        interval: P_DURING,
+        interval: P_DURING.into(),
         op: OrderCmp::Lt,
-        scalar: P_ID,
+        scalar: P_ID.into(),
     };
     assert_eq!(
         sorted_ids(&apply(
@@ -568,7 +567,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     );
     let mixed = vec![
         FilterPredicate::Compare {
-            field: P_ID,
+            field: P_ID.into(),
             op: WordCmp::Ge,
             value: Const::Word(4),
         },

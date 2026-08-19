@@ -17,14 +17,15 @@ use std::collections::BTreeMap;
 
 use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
-    CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof, Enforcement,
-    FactLayout, FieldDescriptor, FieldId, Generation, IntervalTail, KeyForm, KeyId, KeyStatement,
-    LiteralSet, MemberSet, Relation, RelationBody, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, SchemaWarning, SealedBound, SealedWeight, Side, StatementDescriptor,
-    StatementId, StatementRef, ValueMismatch, ValueType, Weight, value_matches,
+    CompiledSide, CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof,
+    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, IntervalTail,
+    KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody,
+    RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning, SealedBound,
+    SealedWeight, Side, StatementDescriptor, StatementId, StatementRef, Survivors, ValueMismatch,
+    ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
-use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
+use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use bumbledb_theory::Value;
 
@@ -109,7 +110,8 @@ impl ValidateDescriptor for SchemaDescriptor {
         // spelling — so two spellings of one statement cannot fork the
         // sealed links (two fingerprint-equal schemas seal the same
         // mirrors).
-        let normalized: Vec<StatementDescriptor> = descriptors.iter().map(normalize).collect();
+        let normalized: Vec<StatementIdentity> =
+            descriptors.iter().map(StatementIdentity::of).collect();
         let key_count = descriptors
             .iter()
             .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
@@ -183,17 +185,18 @@ impl ValidateDescriptor for SchemaDescriptor {
                         source: canonical_side(source),
                         target: canonical_side(target),
                         enforcement,
+                        survivors: survivors_of(&relations[source.relation.0 as usize]),
                         checks: CompiledSides {
-                            source: compiled_checks(
+                            source: compiled_side(
                                 &source.selection,
-                                &relations[source.relation.0 as usize].fields,
+                                &relations[source.relation.0 as usize],
                             ),
-                            target: compiled_checks(
+                            target: compiled_side(
                                 &target.selection,
-                                &relations[target.relation.0 as usize].fields,
+                                &relations[target.relation.0 as usize],
                             ),
                         },
-                        mirror: mirror_of(&normalized, idx),
+                        pairing: Pairing::OneWay,
                     });
                     StatementRef::Containment(containment_id)
                 }
@@ -228,13 +231,13 @@ impl ValidateDescriptor for SchemaDescriptor {
                         source: canonical_side(source),
                         enforcement: sealed.enforcement,
                         checks: CompiledSides {
-                            source: compiled_checks(
+                            source: compiled_side(
                                 &source.selection,
-                                &relations[source.relation.0 as usize].fields,
+                                &relations[source.relation.0 as usize],
                             ),
-                            target: compiled_checks(
+                            target: compiled_side(
                                 &target.selection,
-                                &relations[target.relation.0 as usize].fields,
+                                &relations[target.relation.0 as usize],
                             ),
                         },
                     });
@@ -253,6 +256,7 @@ impl ValidateDescriptor for SchemaDescriptor {
             }
             order.push(sealed);
         }
+        pair_mirrors(&mut containments, &order, &normalized);
 
         for (((relation, rel_keys), outgoing), (capacity_sources, capacity_targets)) in relations
             .iter_mut()
@@ -290,7 +294,7 @@ impl ValidateDescriptor for SchemaDescriptor {
 /// The `==` partner of the statement at `index`: the first *other*
 /// containment in the NORMALIZED materialized list whose normalized sides
 /// are exactly the swapped sides — the one swapped-sides comparison site,
-/// over the one statement identity ([`normalize`]), so a respelled literal
+/// over the one statement identity ([`StatementIdentity`]), so a respelled literal
 /// set or binding order cannot hide a pair. Sealing calls it over **all**
 /// statements (the lowered pair need not be adjacent — legal for
 /// hand-built descriptors); the declared-side diagnostic renderer calls it
@@ -300,8 +304,8 @@ impl ValidateDescriptor for SchemaDescriptor {
 /// [`StatementErrorKind::DuplicateStatement`] rejects identical normalized
 /// statements. On a rejected declaration first-match is best-effort
 /// diagnostics.
-pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Option<StatementId> {
-    let StatementDescriptor::Containment { source, target } = &normalized[index] else {
+fn mirror_of(normalized: &[StatementIdentity], index: usize) -> Option<StatementId> {
+    let StatementIdentity::Containment { source, target } = &normalized[index] else {
         return None;
     };
     normalized
@@ -311,7 +315,7 @@ pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Opt
             *other != index
                 && matches!(
                     descriptor,
-                    StatementDescriptor::Containment {
+                    StatementIdentity::Containment {
                         source: mirror_source,
                         target: mirror_target,
                     } if mirror_source == target && mirror_target == source
@@ -327,10 +331,11 @@ pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Opt
 pub(super) fn mirror_links(
     descriptors: &[StatementDescriptor],
 ) -> BTreeMap<StatementId, StatementId> {
-    let normalized: Vec<StatementDescriptor> = descriptors.iter().map(normalize).collect();
+    let normalized: Vec<StatementIdentity> =
+        descriptors.iter().map(StatementIdentity::of).collect();
     (0..normalized.len())
         .filter_map(|index| {
-            let StatementDescriptor::Containment { .. } = &normalized[index] else {
+            let StatementIdentity::Containment { .. } = &normalized[index] else {
                 return None;
             };
             mirror_of(&normalized, index).map(|partner| (statement_id(index), partner))
@@ -343,6 +348,36 @@ pub(super) fn mirror_links(
 /// minted, so the expect is a true invariant).
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
+}
+
+/// Fill [`ContainmentStatement::pairing`] after every containment has a
+/// witness id — a partner later in the list is not yet minted at push
+/// time, so the stored identity is the arena id, not a re-resolved
+/// [`StatementId`].
+fn pair_mirrors(
+    containments: &mut [ContainmentStatement],
+    order: &[StatementRef],
+    normalized: &[StatementIdentity],
+) {
+    for containment in containments.iter_mut() {
+        containment.pairing = match mirror_of(normalized, usize::from(containment.id.0)) {
+            None => Pairing::OneWay,
+            Some(partner) => match order[usize::from(partner.0)] {
+                StatementRef::Containment(id) => Pairing::Mirror(id),
+                StatementRef::Key(_) | StatementRef::Capacity(_) => {
+                    unreachable!("mirror_of only pairs containments")
+                }
+            },
+        };
+    }
+}
+
+fn survivors_of(source: &Relation) -> Survivors {
+    if source.body.closed_rows().is_some() {
+        Survivors::SealedRows
+    } else {
+        Survivors::ReverseEdges
+    }
 }
 
 /// Canonical projection identity. Construction sorts once and refuses
@@ -478,9 +513,8 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) | (Value::FixedBytes(x), Value::FixedBytes(y)) => {
-            x.cmp(y)
-        }
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {
             (x.start(), x.end()).cmp(&(y.start(), y.end()))
         }
@@ -521,41 +555,84 @@ fn canonical_side(side: &Side) -> Side {
     }
 }
 
-/// The descriptor with each selection sorted by [`FieldId`] and each
-/// binding's literal set canonicalized — σ is a set of bindings over sets
-/// of literals, so neither written order is identity (roster "duplicate
-/// statements (identical normalized sides and form)"). THE statement
-/// identity: duplicate rejection and [`mirror_of`] both compare this form.
-pub(super) fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
-    fn side(side: &Side) -> Side {
-        let canonical = canonical_side(side);
-        let mut selection = canonical.selection.to_vec();
+/// One side in statement-identity form: each literal set canonical, then
+/// the selection sorted by [`FieldId`]. The only constructor sorts, so
+/// identity comparison cannot spell a raw or merely-literal-sorted
+/// [`Side`]. Sealed arenas still store [`canonical_side`] (literal order
+/// only); duplicate rejection and [`mirror_of`] compare this type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSide {
+    relation: RelationId,
+    projection: Box<[FieldId]>,
+    selection: Box<[(FieldId, LiteralSet)]>,
+}
+
+impl NormalizedSide {
+    fn new(side: &Side) -> Self {
+        let mut selection: Vec<_> = side
+            .selection
+            .iter()
+            .map(|(field, literals)| (*field, canonical_literals(literals)))
+            .collect();
         selection.sort_by_key(|(field, _)| *field);
-        Side {
-            relation: canonical.relation,
-            projection: canonical.projection,
+        Self {
+            relation: side.relation,
+            projection: side.projection.clone(),
             selection: selection.into_boxed_slice(),
         }
     }
-    match descriptor {
-        StatementDescriptor::Functionality { .. } => descriptor.clone(),
-        StatementDescriptor::Containment { source, target } => StatementDescriptor::Containment {
-            source: side(source),
-            target: side(target),
-        },
-        StatementDescriptor::Capacity {
-            target,
-            weight,
-            lo,
-            hi,
-            source,
-        } => StatementDescriptor::Capacity {
-            target: side(target),
-            weight: *weight,
-            lo: *lo,
-            hi: *hi,
-            source: side(source),
-        },
+}
+
+/// THE statement identity (roster "duplicate statements (identical
+/// normalized sides and form)"). Duplicate rejection and [`mirror_of`]
+/// both compare this form — never a raw [`StatementDescriptor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StatementIdentity {
+    Functionality {
+        relation: RelationId,
+        projection: Box<[FieldId]>,
+    },
+    Containment {
+        source: NormalizedSide,
+        target: NormalizedSide,
+    },
+    Capacity {
+        target: NormalizedSide,
+        weight: Weight,
+        lo: u64,
+        hi: Option<Bound>,
+        source: NormalizedSide,
+    },
+}
+
+impl StatementIdentity {
+    fn of(descriptor: &StatementDescriptor) -> Self {
+        match descriptor {
+            StatementDescriptor::Functionality {
+                relation,
+                projection,
+            } => Self::Functionality {
+                relation: *relation,
+                projection: projection.clone(),
+            },
+            StatementDescriptor::Containment { source, target } => Self::Containment {
+                source: NormalizedSide::new(source),
+                target: NormalizedSide::new(target),
+            },
+            StatementDescriptor::Capacity {
+                target,
+                weight,
+                lo,
+                hi,
+                source,
+            } => Self::Capacity {
+                target: NormalizedSide::new(target),
+                weight: *weight,
+                lo: *lo,
+                hi: *hi,
+                source: NormalizedSide::new(source),
+            },
+        }
     }
 }
 
@@ -598,8 +675,7 @@ fn validate_functionality(
     let tail = interval_position.map(|pos| {
         let idx = usize::from(projection.ordered()[pos].0);
         match relation.fields[idx].value_type {
-            ValueType::Interval { .. } => IntervalTail::General,
-            ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width },
+            ty if ty.is_interval() => IntervalTail::of(ty).expect("interval field"),
             _ => unreachable!("interval_positions found an interval field"),
         }
     });
@@ -630,12 +706,7 @@ fn validate_functionality(
     let width: usize = projection
         .ordered()
         .iter()
-        .map(|field| {
-            relation.fields[usize::from(field.0)]
-                .value_type
-                .type_desc()
-                .width()
-        })
+        .map(|field| relation.fields[usize::from(field.0)].value_type.width())
         .sum();
     if width > MAX_DETERMINANT_WIDTH {
         return Err(StatementErrorKind::DeterminantKeyTooWide { width }.at(id));
@@ -654,7 +725,8 @@ fn validate_functionality(
             for earlier in &rows[..row_idx] {
                 let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
                     let idx = usize::from(field.0);
-                    field_bytes(&row.fact, layout, idx) == field_bytes(&earlier.fact, layout, idx)
+                    field_bytes(layout.encoded(&row.fact), idx)
+                        == field_bytes(layout.encoded(&earlier.fact), idx)
                 });
                 if !scalars_agree {
                     continue;
@@ -669,10 +741,10 @@ fn validate_functionality(
                         // encode at validate, so a malformed tail is a
                         // programmer invariant, never data.
                         let (a_start, a_end) = tail
-                            .words(field_bytes(&row.fact, layout, idx))
+                            .words(field_bytes(layout.encoded(&row.fact), idx))
                             .expect("sealed rows hold canonical interval bytes");
                         let (b_start, b_end) = tail
-                            .words(field_bytes(&earlier.fact, layout, idx))
+                            .words(field_bytes(layout.encoded(&earlier.fact), idx))
                             .expect("sealed rows hold canonical interval bytes");
                         a_start < b_end && b_start < a_end
                     }
@@ -680,7 +752,7 @@ fn validate_functionality(
                 if collide {
                     return Err(StatementErrorKind::ClosedStatementRefuted {
                         relation: relation_id,
-                        row: row_idx,
+                        row: RowIndex(row_idx),
                     }
                     .at(id));
                 }
@@ -737,6 +809,7 @@ fn validate_containment(
 
     let resolved = resolve_target_key(
         id,
+        source,
         target,
         &target_projection,
         relations,
@@ -754,7 +827,7 @@ fn validate_containment(
         relations[source.relation.0 as usize].body.closed_rows(),
     ) {
         let layout = &relations[source.relation.0 as usize].layout;
-        let phi = compiled_checks(
+        let phi = encodable_checks(
             &source.selection,
             &relations[source.relation.0 as usize].fields,
         );
@@ -765,13 +838,13 @@ fn validate_containment(
             let word = decoded_word(layout, source.projection[0], &row.fact);
             // An out-of-range word narrows to non-membership — the same
             // miss the commit path takes (`storage/commit/judgment.rs`)
-            // and the `AxiomIndex` contract ("values beyond `u16` are
-            // absent") applied at validate: the row escapes the member
-            // set, so the statement is refuted, never a panic.
+            // and the `AxiomIndex` contract ("values beyond `u8::MAX`
+            // are absent") applied at validate: the row escapes the
+            // member set, so the statement is refuted, never a panic.
             if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: source.relation,
-                    row: row_idx,
+                    row: RowIndex(row_idx),
                 }
                 .at(id));
             }
@@ -889,17 +962,13 @@ fn validate_capacity(
         }
         Weight::DurationOf(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
-            let tail = match &descriptor.value_type {
-                ValueType::Interval { .. } => IntervalTail::General,
-                ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width: *width },
-                _ => {
-                    return Err(StatementErrorKind::CapacityWeightNotDuration {
-                        relation: source.relation,
-                        field,
-                    }
-                    .at(id));
+            let tail = IntervalTail::of(descriptor.value_type).ok_or_else(|| {
+                StatementErrorKind::CapacityWeightNotDuration {
+                    relation: source.relation,
+                    field,
                 }
-            };
+                .at(id)
+            })?;
             SealedWeight::Duration { field, tail }
         }
     };
@@ -935,17 +1004,13 @@ fn validate_capacity(
         }
         Some(Bound::TargetDuration(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
-            let tail = match &descriptor.value_type {
-                ValueType::Interval { .. } => IntervalTail::General,
-                ValueType::FixedInterval { width, .. } => IntervalTail::Fixed { width: *width },
-                _ => {
-                    return Err(StatementErrorKind::CapacityBoundNotDuration {
-                        relation: target.relation,
-                        field,
-                    }
-                    .at(id));
+            let tail = IntervalTail::of(descriptor.value_type).ok_or_else(|| {
+                StatementErrorKind::CapacityBoundNotDuration {
+                    relation: target.relation,
+                    field,
                 }
-            };
+                .at(id)
+            })?;
             if !matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
@@ -956,8 +1021,14 @@ fn validate_capacity(
     // Probe-ability, the containment rule reused: Y resolves a declared
     // key of B (a closed target takes the member-set arm through the same
     // call — the closed-side mirror).
-    let enforcement =
-        resolve_capacity_target(id, target, &target_projection, relations, descriptors)?;
+    let enforcement = resolve_capacity_target(
+        id,
+        source,
+        target,
+        &target_projection,
+        relations,
+        descriptors,
+    )?;
 
     // Both sides constant: the measure judgment is decidable here — per
     // ψ-selected parent axiom, the φ-selected child axioms sharing its
@@ -976,8 +1047,8 @@ fn validate_capacity(
             .closed_rows()
             .expect("the Closed enforcement arm resolves only against a closed target");
         let source_layout = &relations[source.relation.0 as usize].layout;
-        let phi = compiled_checks(&source.selection, source_fields);
-        let psi = compiled_checks(&target.selection, &target_relation.fields);
+        let phi = encodable_checks(&source.selection, source_fields);
+        let psi = encodable_checks(&target.selection, &target_relation.fields);
         for (row_idx, parent) in target_rows.iter().enumerate() {
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
@@ -994,34 +1065,34 @@ fn validate_capacity(
                 id,
             )
             .expect("sealed extension rows carry no ray or inverted intervals");
-            let measure: u128 =
-                source_rows
-                    .iter()
-                    .filter(|child| {
-                        sealed_satisfies(&phi, source_layout, &child.fact)
-                            && source.projection.iter().zip(target.projection.iter()).all(
-                                |(s, t)| {
-                                    field_bytes(&child.fact, source_layout, usize::from(s.0))
-                                        == field_bytes(
-                                            &parent.fact,
-                                            &target_relation.layout,
-                                            usize::from(t.0),
-                                        )
-                                },
-                            )
-                    })
-                    .map(|child| {
-                        u128::from(
-                            crate::storage::commit::judgment::measure_weight(
-                                sealed_weight,
-                                source_layout,
-                                &child.fact,
-                                id,
-                            )
-                            .expect("sealed extension rows carry no ray or inverted intervals"),
+            let measure: u128 = source_rows
+                .iter()
+                .filter(|child| {
+                    sealed_satisfies(&phi, source_layout, &child.fact)
+                        && source
+                            .projection
+                            .iter()
+                            .zip(target.projection.iter())
+                            .all(|(s, t)| {
+                                field_bytes(source_layout.encoded(&child.fact), usize::from(s.0))
+                                    == field_bytes(
+                                        target_relation.layout.encoded(&parent.fact),
+                                        usize::from(t.0),
+                                    )
+                            })
+                })
+                .map(|child| {
+                    u128::from(
+                        crate::storage::commit::judgment::measure_weight(
+                            sealed_weight,
+                            source_layout,
+                            &child.fact,
+                            id,
                         )
-                    })
-                    .sum();
+                        .expect("sealed extension rows carry no ray or inverted intervals"),
+                    )
+                })
+                .sum();
             let over = match resolved_hi {
                 crate::schema::BoundCeiling::Unbounded => false,
                 crate::schema::BoundCeiling::Finite(hi) => measure > u128::from(hi),
@@ -1029,7 +1100,7 @@ fn validate_capacity(
             if measure < u128::from(lo) || over {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,
-                    row: row_idx,
+                    row: RowIndex(row_idx),
                 }
                 .at(id));
             }
@@ -1060,10 +1131,20 @@ fn known_field(
 
 /// One encodable literal's sealed canonical bytes, at its field's
 /// encoding (a fixed-width interval binding seals its one-word start).
-fn encoded_literal(literal: &Value, desc: bumbledb_theory::TypeDesc) -> Box<[u8]> {
+fn encoded_literal(literal: &Value, desc: bumbledb_theory::schema::ValueType) -> Box<[u8]> {
     let mut bytes = Vec::with_capacity(16);
     crate::encoding::encode_literal(literal, desc, &mut bytes);
     bytes.into()
+}
+
+/// One side's σ compiled at validate. Closed relations refuse `str`
+/// columns, so interned text is unrepresentable on that arm.
+fn compiled_side(selection: &[(FieldId, LiteralSet)], relation: &Relation) -> CompiledSide {
+    if relation.body.closed_rows().is_some() {
+        CompiledSide::Closed(encodable_checks(selection, &relation.fields))
+    } else {
+        CompiledSide::Ordinary(compiled_checks(selection, &relation.fields))
+    }
 }
 
 /// One side's σ compiled at validate: canonical bytes sealed for every
@@ -1081,13 +1162,11 @@ fn compiled_checks(
     selection
         .iter()
         .map(|(field, literals)| {
-            let desc = fields[usize::from(field.0)].value_type.type_desc();
+            let desc = fields[usize::from(field.0)].value_type;
             match canonical_literals(literals) {
-                LiteralSet::One(Value::String(raw)) => CompiledCheck::Interned {
+                LiteralSet::One(Value::String(text)) => CompiledCheck::Interned {
                     field: *field,
-                    text: std::str::from_utf8(&raw)
-                        .expect("selection literals validated UTF-8")
-                        .into(),
+                    text: text.clone(),
                 },
                 LiteralSet::One(literal) => CompiledCheck::Encoded {
                     field: *field,
@@ -1101,12 +1180,10 @@ fn compiled_checks(
                         texts: values
                             .iter()
                             .map(|value| {
-                                let Value::String(raw) = value else {
+                                let Value::String(text) = value else {
                                     unreachable!("validated string binding is homogeneous")
                                 };
-                                std::str::from_utf8(raw)
-                                    .expect("selection literals validated UTF-8")
-                                    .into()
+                                text.clone()
                             })
                             .collect(),
                     }
@@ -1123,32 +1200,48 @@ fn compiled_checks(
         .collect()
 }
 
+/// Closed-side σ: interned text is a compile error, not a silent false.
+fn encodable_checks(
+    selection: &[(FieldId, LiteralSet)],
+    fields: &[FieldDescriptor],
+) -> Box<[EncodableCheck]> {
+    selection
+        .iter()
+        .map(|(field, literals)| {
+            let desc = fields[usize::from(field.0)].value_type;
+            match canonical_literals(literals) {
+                LiteralSet::One(Value::String(_)) => {
+                    unreachable!("closed relations refuse str columns")
+                }
+                LiteralSet::One(literal) => EncodableCheck::Encoded {
+                    field: *field,
+                    bytes: encoded_literal(&literal, desc),
+                },
+                LiteralSet::Many(values) if matches!(values.first(), Some(Value::String(_))) => {
+                    unreachable!("closed relations refuse str columns")
+                }
+                LiteralSet::Many(values) => EncodableCheck::EncodedSet {
+                    field: *field,
+                    alternatives: values
+                        .iter()
+                        .map(|literal| encoded_literal(literal, desc))
+                        .collect(),
+                },
+            }
+        })
+        .collect()
+}
+
 /// σ over one sealed row: per binding, a byte compare against the sealed
 /// encoding (singleton) or membership among the sealed alternatives (set).
-/// Closed relations refuse `str` columns, so the `Interned` arms are
-/// absent for a validated closed side. Keeping the evaluator total makes
-/// malformed internal data fail the predicate instead of opening a panic
-/// path.
-fn sealed_satisfies(checks: &[CompiledCheck], layout: &FactLayout, fact: &[u8]) -> bool {
-    checks.iter().all(|check| match check {
-        CompiledCheck::Encoded { field, bytes } => {
-            field_bytes(fact, layout, usize::from(field.0)) == &bytes[..]
-        }
-        CompiledCheck::EncodedSet {
-            field,
-            alternatives,
-        } => {
-            let actual = field_bytes(fact, layout, usize::from(field.0));
-            alternatives.iter().any(|bytes| actual == &bytes[..])
-        }
-        CompiledCheck::Interned { .. } | CompiledCheck::InternedSet { .. } => false,
-    })
+fn sealed_satisfies(checks: &[EncodableCheck], layout: &FactLayout, fact: &[u8]) -> bool {
+    checks.iter().all(|check| check.matches(layout, fact))
 }
 
 /// One u64 field decoded off a sealed row's canonical bytes (big-endian,
 /// order-preserving — `docs/architecture/10-data-model.md`).
 fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
-    u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)))
+    u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)))
 }
 
 /// Roster "unknown relation … ids": the relation for a statement-named id.
@@ -1222,8 +1315,10 @@ fn validate_side_pair<'t>(
     // compares whole projected tuples.
     if source.projection.len() != target.projection.len() {
         return Err(StatementErrorKind::ContainmentArityMismatch {
-            source: source.projection.len(),
-            target: target.projection.len(),
+            mismatch: Mismatch {
+                witnessed: source.projection.len(),
+                required: target.projection.len(),
+            },
         }
         .at(id));
     }
@@ -1339,7 +1434,7 @@ fn validate_side_selection(
 }
 
 /// Roster "selection literal type mismatch (including out-of-range enum
-/// ordinals and non-UTF-8 string literals)" — the one shared
+/// ordinals)" — the one shared
 /// [`value_matches`] check, so the σ rules cannot drift from the
 /// query-literal and dynamic-fact boundaries. Interval literals already
 /// carry the checked [`crate::Interval`] representation.
@@ -1350,13 +1445,8 @@ fn validate_selection_literal(
     value_type: &ValueType,
     literal: &Value,
 ) -> Result<(), SchemaError> {
-    value_matches(literal, value_type).map_err(|mismatch| match mismatch {
-        ValueMismatch::Type => {
-            StatementErrorKind::SelectionLiteralTypeMismatch { relation, field }.at(id)
-        }
-        ValueMismatch::Utf8 => {
-            StatementErrorKind::SelectionLiteralNotUtf8 { relation, field }.at(id)
-        }
+    value_matches(literal, value_type).map_err(|ValueMismatch::Type| {
+        StatementErrorKind::SelectionLiteralTypeMismatch { relation, field }.at(id)
     })
 }
 
@@ -1368,6 +1458,7 @@ fn validate_selection_literal(
 /// field sets are rejected by [`StatementErrorKind::DuplicateFunctionality`].
 fn resolve_target_key(
     id: StatementId,
+    source: &Side,
     target: &Side,
     target_projection: &Projection<'_>,
     relations: &[Relation],
@@ -1426,11 +1517,12 @@ fn resolve_target_key(
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    let key_permutation = key_permutation(target_projection, key_projection);
+    let key_projection_in_order =
+        source_key_projection(&source.projection, target_projection, key_projection);
     let target_key = functionality_key_id(descriptors, key_idx);
 
     if interval_position.is_some() {
-        let FunctionalityEvidence::Pointwise(disjoint, _) = validate_functionality(
+        let FunctionalityEvidence::Pointwise(disjoint, target_tail) = validate_functionality(
             statement_id(key_idx),
             target.relation,
             key_projection,
@@ -1445,14 +1537,15 @@ fn resolve_target_key(
         };
         Ok(Enforcement::IntervalCoverage {
             target_key,
-            key_permutation,
+            key_projection: key_projection_in_order,
             disjoint,
             source_tail,
+            target_tail,
         })
     } else {
         Ok(Enforcement::ScalarProbe {
             target_key,
-            key_permutation,
+            key_projection: key_projection_in_order,
         })
     }
 }
@@ -1461,6 +1554,7 @@ fn resolve_target_key(
 /// is unrepresentable — projections already refused interval positions.
 fn resolve_capacity_target(
     id: StatementId,
+    source: &Side,
     target: &Side,
     target_projection: &Projection<'_>,
     relations: &[Relation],
@@ -1487,7 +1581,11 @@ fn resolve_capacity_target(
     };
     Ok(CapacityEnforcement::ScalarProbe {
         target_key: functionality_key_id(descriptors, key_idx),
-        key_permutation: key_permutation(target_projection, key_projection),
+        key_projection: source_key_projection(
+            &source.projection,
+            target_projection,
+            key_projection,
+        ),
     })
 }
 
@@ -1512,16 +1610,20 @@ fn matching_functionality<'a>(
         })
 }
 
-fn key_permutation(target_projection: &Projection<'_>, key_projection: &[FieldId]) -> Box<[u16]> {
+fn source_key_projection(
+    source_projection: &[FieldId],
+    target_projection: &Projection<'_>,
+    key_projection: &[FieldId],
+) -> Box<[FieldId]> {
     key_projection
         .iter()
         .map(|key_field| {
-            let source_pos = target_projection
+            let pos = target_projection
                 .ordered()
                 .iter()
                 .position(|field| field == key_field)
                 .expect("set-equal projection contains every key field");
-            u16::try_from(source_pos).expect("field count fits u16")
+            source_projection[pos]
         })
         .collect()
 }
@@ -1597,13 +1699,12 @@ fn missing_target_key(
 /// extension passed validation before statement resolution, so every
 /// declaration index is below [`super::MAX_EXTENSION_ROWS`].
 fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
-    let psi = compiled_checks(&side.selection, &target.fields);
+    let psi = encodable_checks(&side.selection, &target.fields);
     let mut members = MemberSet::empty();
     for (idx, row) in rows.iter().enumerate() {
         if sealed_satisfies(&psi, &target.layout, &row.fact) {
-            let index = AxiomIndex(
-                u16::try_from(idx).expect("the validated extension cap is below u16::MAX"),
-            );
+            let index =
+                AxiomIndex(u8::try_from(idx).expect("the validated extension cap is below 256"));
             members.insert(index);
         }
     }
@@ -1728,12 +1829,7 @@ fn validate_relation(
         }
     }
 
-    let layout = FactLayout::new(
-        &fields
-            .iter()
-            .map(|f| f.value_type.type_desc())
-            .collect::<Vec<_>>(),
-    );
+    let layout = FactLayout::new(&fields.iter().map(|f| f.value_type).collect::<Vec<_>>());
 
     let body = match extension {
         None => RelationBody::Ordinary { fresh: None },
@@ -1800,9 +1896,11 @@ fn validate_extension(
         if row.values.len() != columns {
             return Err(SchemaError::ExtensionArityMismatch {
                 relation: rel_id,
-                row: row_idx,
-                expected: columns,
-                supplied: row.values.len(),
+                row: RowIndex(row_idx),
+                mismatch: Mismatch {
+                    witnessed: row.values.len(),
+                    required: columns,
+                },
             });
         }
         let mut fact = Vec::with_capacity(layout.fact_width());
@@ -1812,16 +1910,11 @@ fn validate_extension(
         for (value, (field_idx, field)) in row.values.iter().zip(fields.iter().enumerate().skip(1))
         {
             let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
-            value_matches(value, &field.value_type).map_err(|mismatch| match mismatch {
-                // `str` columns are refused above, so Utf8 cannot arise;
-                // the match stays total and maps malformed internal data
-                // to the ordinary type-mismatch error.
-                ValueMismatch::Type | ValueMismatch::Utf8 => {
-                    SchemaError::ExtensionValueTypeMismatch {
-                        relation: rel_id,
-                        row: row_idx,
-                        field: field_id,
-                    }
+            value_matches(value, &field.value_type).map_err(|ValueMismatch::Type| {
+                SchemaError::ExtensionValueTypeMismatch {
+                    relation: rel_id,
+                    row: RowIndex(row_idx),
+                    field: field_id,
                 }
             })?;
             // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)`
@@ -1837,14 +1930,14 @@ fn validate_extension(
             if is_ray {
                 return Err(SchemaError::ExtensionIntervalRay {
                     relation: rel_id,
-                    row: row_idx,
+                    row: RowIndex(row_idx),
                     field: field_id,
                 });
             }
             // Total here: String and enums (refused columns) and AllenMask
             // (no field type) all fail `value_matches` before reaching the
             // encoder.
-            crate::encoding::encode_literal(value, field.value_type.type_desc(), &mut fact);
+            crate::encoding::encode_literal(value, field.value_type, &mut fact);
         }
         debug_assert_eq!(fact.len(), layout.fact_width());
         sealed.push(super::SealedRow {

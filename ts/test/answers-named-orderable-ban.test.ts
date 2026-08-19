@@ -111,20 +111,21 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 
 	before(function seed() {
 		const created = native.dbCreate(storeDir, lower(Oncall))
-		assert.ok(created.ok, "the store admits")
+		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
 		// The native seam is RAW: closed cells are declaration-order row ids
 		// (Sev: Info 0, Warn 1, Crit 2, Fatal 3; Priority: Crit 0, Low 1) —
 		// the name↔id bijection is the SDK marshal's, above this seam.
-		const tx = native.dbWriteBegin(db)
-		native.txInsert(tx, INCIDENT_ID, [[1n, 0n, 1n]])
-		native.txInsert(tx, INCIDENT_ID, [[2n, 1n, 1n]])
-		native.txInsert(tx, INCIDENT_ID, [[3n, 2n, 0n]])
-		native.txInsert(tx, INCIDENT_ID, [[4n, 3n, 0n]])
-		native.txInsert(tx, EDGE_ID, [[1n, 2n]])
-		native.txInsert(tx, EDGE_ID, [[2n, 3n]])
-		const committed = native.txCommit(tx)
-		assert.ok(committed.ok, "the seed commit lands")
+		const committed = native.dbWrite(db, function write(tx) {
+			native.txInsert(tx, INCIDENT_ID, [[1n, 0n, 1n]])
+			native.txInsert(tx, INCIDENT_ID, [[2n, 1n, 1n]])
+			native.txInsert(tx, INCIDENT_ID, [[3n, 2n, 0n]])
+			native.txInsert(tx, INCIDENT_ID, [[4n, 3n, 0n]])
+			native.txInsert(tx, EDGE_ID, [[1n, 2n]])
+			native.txInsert(tx, EDGE_ID, [[2n, 3n]])
+			return true
+		})
+		assert.equal(committed.tag, "accepted", "the seed commit lands")
 	})
 
 	/** The typed execute seam — exactly the shape the `Db` runtime consumes. */
@@ -133,9 +134,9 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		if (!prepared.ok) {
 			assert.fail(`engine prepare refused: ${prepared.message}`)
 		}
-		const snap = native.dbSnapshot(db).snapshot
-		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
-		native.snapshotClose(snap)
+		const rows = native.dbRead(db, function read(instance, _witness) {
+			return native.preparedExecute(prepared.prepared, instance, wireParams(q.data.params, params))
+		})
 		native.preparedClose(prepared.prepared)
 		return decodeAnswers<Row>(q.data.finds, rows)
 	}
@@ -146,9 +147,9 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		if (!prepared.ok) {
 			assert.fail(`engine prepare refused: ${prepared.message}`)
 		}
-		const snap = native.dbSnapshot(db).snapshot
-		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
-		native.snapshotClose(snap)
+		const rows = native.dbRead(db, function read(instance, _witness) {
+			return native.preparedExecute(prepared.prepared, instance, wireParams(q.data.params, params))
+		})
 		native.preparedClose(prepared.prepared)
 		return rows
 	}

@@ -273,7 +273,7 @@ fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect()
 }
 

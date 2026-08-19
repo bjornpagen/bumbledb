@@ -49,12 +49,7 @@ fn iterations() -> u64 {
 /// `Holder` rows synthesized directly: the one dependency-free relation,
 /// so a prefix of any length commits cleanly (no containment sources).
 fn rows() -> impl Iterator<Item = Vec<Value>> {
-    (0..FACTS).map(|i| {
-        vec![
-            Value::U64(i),
-            Value::String(format!("holder-{i}").into_bytes().into_boxed_slice()),
-        ]
-    })
+    (0..FACTS).map(|i| vec![Value::U64(i), Value::String(format!("holder-{i}").into())])
 }
 
 /// Flush-to-media contention: write a few MiB and `sync_all` (which is
@@ -114,10 +109,17 @@ fn collection_insert_survives_commit_pressure() {
 
     for i in 0..iters {
         let dir = root.join(format!("db-{i}"));
-        let db = Db::create(&dir, Ledger).expect("create store");
+        let db = Db::create(&dir, Ledger)
+            .expect("create store")
+            .expect("accepted");
         let loaded = db
-            .write(|tx| tx.insert_dyn(ids::HOLDER, rows()).map(|r| r.changed))
-            .unwrap_or_else(|e| panic!("iteration {i}: {e}"));
+            .write(|tx| {
+                tx.insert_dyn(ids::HOLDER, rows())
+                    .map(bumbledb::MutationReport::changed)
+            })
+            .unwrap_or_else(|e| panic!("iteration {i}: {e}"))
+            .unwrap()
+            .value;
         assert_eq!(loaded, FACTS, "iteration {i}: short load");
         drop(db);
         std::fs::remove_dir_all(&dir).expect("scratch teardown");

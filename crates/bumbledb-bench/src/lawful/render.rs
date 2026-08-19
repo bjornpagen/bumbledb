@@ -70,7 +70,7 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
     out.push_str(
         "\n### rejection latency\n\nThe `law_reject_*` rows price a REFUSED commit \
          round-trip: on the engine, the full dependency judgment plus the abort \
-         (`Error::CommitRejected`, the complete violation set decoded); on SQLite, the \
+         (`Admission::Rejected`, the complete violation set decoded); on SQLite, the \
          constraint failure — UNIQUE, FK, or a trigger's `RAISE(ABORT)` — plus the \
          `ROLLBACK`. No rejected sample commits anything on either engine (the \
          post-state fold certifies it).\n",

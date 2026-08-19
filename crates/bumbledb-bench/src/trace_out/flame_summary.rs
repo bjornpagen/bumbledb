@@ -20,7 +20,7 @@ impl FlameSummary {
         }
         for event in events
             .iter()
-            .filter(|e| matches!(e, TraceEvent::Point { cat, .. } if *cat != Category::Phase))
+            .filter(|e| matches!(e, TraceEvent::Point { .. } if e.cat() != Category::Phase))
         {
             by_name.entry(event.name()).or_default().0.push(0);
         }

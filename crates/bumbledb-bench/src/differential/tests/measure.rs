@@ -257,7 +257,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
         // dedup over measure values (a stay and a shift sharing one
         // measure collapse).
         (
-            Query::Cq {
+            Query {
                 interiors: vec![],
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
@@ -274,6 +274,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                         conditions: vec![],
                     },
                 ],
+                rec: None,
             },
             vec![],
         ),
@@ -284,7 +285,9 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
 fn measure_queries_agree_with_the_naive_model() {
     let descriptor = schema();
     let dir = TempDir::new("differential-measure");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let mut ops = vec![Op::Write(bounded_corpus())];
@@ -306,7 +309,9 @@ fn measure_queries_agree_with_the_naive_model() {
 fn measure_error_verdicts_agree_with_the_naive_model() {
     let descriptor = schema();
     let dir = TempDir::new("differential-measure-errors");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     // Two near-maximal u64 spans in one room (Sum overflows u64), one

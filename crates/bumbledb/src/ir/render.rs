@@ -140,15 +140,18 @@ pub fn render(schema: &Schema, query: &Query) -> String {
     let refs = ClosedRefs::build(schema);
     let mut out = String::new();
     match query {
-        Query::Cq {
-            interiors, rules, ..
+        Query {
+            interiors,
+            rules,
+            rec: None,
+            ..
         } => {
             render_interiors(&mut out, schema, &refs, interiors);
             render_main(&mut out, schema, &refs, rules);
         }
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rec: Some(rec),
             rules,
             ..
         } => {
@@ -514,9 +517,9 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         Value::IntervalI64(interval) => {
             let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }
-        Value::String(bytes) => {
+        Value::String(text) => {
             out.push('"');
-            for c in String::from_utf8_lossy(bytes).chars() {
+            for c in text.chars() {
                 let _ = write!(out, "{}", c.escape_debug());
             }
             out.push('"');

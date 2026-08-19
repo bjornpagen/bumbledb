@@ -44,7 +44,10 @@ fn insert_one(env: &Environment, schema: &Schema, x: u64) -> bool {
     let mut delta = WriteDelta::new(schema);
     delta.insert(&view, R, &fact(schema, x)).expect("insert");
     drop(view);
-    commit(delta, env).expect("commit").changed()
+    commit(delta, env)
+        .expect("commit")
+        .expect("admitted")
+        .changed()
 }
 
 #[test]
@@ -315,7 +318,7 @@ fn commit_and_advance(
 ) -> GenerationId {
     let dirty = delta.dirty_relations();
     let floors = delta.inserted_floors();
-    let report = commit(delta, env).expect("commit");
+    let report = commit(delta, env).expect("commit").expect("admitted");
     assert!(report.changed(), "the fixture commits are state-changing");
     cache.advance(report.generation(), &dirty, &floors);
     report.generation()
@@ -410,7 +413,7 @@ fn a_below_boundary_insert_evicts_the_append_base() {
 fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDelta<'_>) {
     let dirty = delta.dirty_relations();
     let floors = delta.inserted_floors();
-    let report = commit(delta, env).expect("commit");
+    let report = commit(delta, env).expect("commit").expect("admitted");
     assert!(report.changed());
     cache.advance(report.generation(), &dirty, &floors);
 }
@@ -545,7 +548,7 @@ fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
         4,
         "one append covered all three commits"
     );
-    let rebuilt = crate::image::build(&txn, &schema, R).expect("from-scratch rebuild");
+    let rebuilt = crate::image::build(&txn.catalog(), &schema, R).expect("from-scratch rebuild");
     assert_images_identical(&appended, &rebuilt, 1);
     assert_eq!(
         cache.keys(),
@@ -622,7 +625,7 @@ fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, R, &fact(&schema, 1)).expect("delete");
     drop(view);
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(report.changed());
     cache.advance(report.generation(), &[], &[]);
 

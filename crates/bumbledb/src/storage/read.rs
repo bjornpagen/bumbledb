@@ -8,12 +8,11 @@
 //! scan, `S` the planner.
 
 mod check_width;
-mod data_entries;
 mod determinant_row;
 mod fact_row;
 mod fetch;
+#[cfg(test)]
 mod row_count;
-mod row_id_high_water;
 mod row_id_value;
 mod scan;
 
@@ -22,10 +21,16 @@ mod tests;
 
 pub(crate) use check_width::check_width;
 
-pub use data_entries::data_entries;
-pub use determinant_row::{DETERMINANT_KEY_HEADER, begin_determinant_key, determinant_row_for_key};
+pub use determinant_row::{DETERMINANT_KEY_HEADER, begin_determinant_key};
 pub use fact_row::{fact_row, fact_row_by_hash};
-pub use fetch::{fact_at, fact_for_key, fetch};
+pub use fetch::{fact_at, fact_for_key};
+#[cfg(test)]
 pub use row_count::row_count;
-pub use row_id_high_water::row_id_high_water;
-pub use scan::{scan, scan_from};
+pub use scan::scan;
+
+#[cfg(test)]
+pub use determinant_row::determinant_row_for_key;
+#[cfg(test)]
+pub use fetch::fetch;
+#[cfg(test)]
+pub use scan::scan_from;

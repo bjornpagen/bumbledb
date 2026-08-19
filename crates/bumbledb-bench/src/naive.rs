@@ -71,7 +71,7 @@ pub struct NaiveDb {
     /// stores words; it needs the ORDER because the engine walks
     /// capacity parents in encoded-key order, and a `str` key encodes as
     /// its intern word ([`NaiveDb::encoded_key`]).
-    dict: Vec<Box<[u8]>>,
+    dict: Vec<Box<str>>,
 }
 
 /// One write delta: facts to remove and facts to insert, as decoded value
@@ -195,7 +195,7 @@ impl NaiveDb {
             .relations
             .iter()
             .map(|relation| {
-                let declared = relation.fields.iter().map(|field| field.value_type.clone());
+                let declared = relation.fields.iter().map(|field| field.value_type);
                 if relation.extension.is_some() {
                     std::iter::once(ValueType::U64).chain(declared).collect()
                 } else {
@@ -231,7 +231,7 @@ impl NaiveDb {
             .collect();
         // The create-commit interns the extension rows' `str` values
         // (declaration order) — the committed dictionary's seed.
-        let mut dict: Vec<Box<[u8]>> = Vec::new();
+        let mut dict: Vec<Box<str>> = Vec::new();
         for extension in extensions.iter().flatten() {
             for row in extension {
                 for value in &row.0 {
@@ -251,6 +251,109 @@ impl NaiveDb {
             generation: 0,
             dict,
         }
+    }
+
+    /// Stage ordinary facts as a complete-admission candidate without
+    /// incremental judgment. Closed relations stay the sealed
+    /// extension; a closed write is a programming error (the surface
+    /// refuses those before any final state is formed).
+    ///
+    /// # Panics
+    ///
+    /// If a fact names a closed relation — complete admission never
+    /// stages those.
+    pub fn load_candidate(&mut self, facts: &[(RelationId, Vec<Value>)]) {
+        for (rel, fact) in facts {
+            assert!(
+                self.extensions[rel.0 as usize].is_none(),
+                "complete admission stages ordinary facts only"
+            );
+            for value in fact {
+                if let Value::String(raw) = value
+                    && !self.dict.contains(raw)
+                {
+                    self.dict.push(raw.clone());
+                }
+            }
+            self.relations[rel.0 as usize].insert(Tuple(fact.clone()));
+        }
+    }
+
+    /// Complete initial admission over the current instance: every
+    /// declared obligation, no delta restriction. Closed-source
+    /// containments and empty child groups are visible — the class
+    /// incremental `judge` cannot see without a holds-before premise.
+    /// Bridge: `Txn.completeAdmissionB` / `judgeB` over the candidate.
+    #[must_use]
+    pub fn judge_complete(&self) -> Vec<Violation> {
+        let state = &self.relations;
+        let minted = &self.dict;
+        let mut found: Vec<Violation> = Vec::new();
+        for (sid, statement) in self.statements.iter().enumerate() {
+            let StatementDescriptor::Functionality {
+                relation,
+                projection,
+            } = statement
+            else {
+                continue;
+            };
+            for fact in &state[relation.0 as usize] {
+                if self.functionality_violated(state, *relation, projection, fact) {
+                    found.push(Violation::Functionality {
+                        statement: statement_id(sid),
+                    });
+                    break;
+                }
+            }
+        }
+        if !found.is_empty() {
+            return sealed(found);
+        }
+        for (sid, statement) in self.statements.iter().enumerate() {
+            match statement {
+                StatementDescriptor::Containment { source, target } => {
+                    for fact in &state[source.relation.0 as usize] {
+                        if satisfies_selection(fact, &source.selection)
+                            && !self.contained(state, source, target, fact)
+                        {
+                            found.push(Violation::Containment {
+                                statement: statement_id(sid),
+                                direction: Direction::SourceUnsatisfied,
+                            });
+                            break;
+                        }
+                    }
+                }
+                StatementDescriptor::Capacity {
+                    target,
+                    weight,
+                    lo,
+                    hi,
+                    source,
+                } => {
+                    if let Some(Bound::TargetDuration(field)) = hi
+                        && self.target_facts(state, target).any(|parent| {
+                            satisfies_selection(parent, &target.selection)
+                                && is_ray(&parent.0[field.0 as usize])
+                        })
+                    {
+                        return vec![Violation::CapacityRayMeasure {
+                            statement: statement_id(sid),
+                        }];
+                    }
+                    if let Some(measure) =
+                        self.capacity_violated(state, minted, target, *weight, *lo, *hi, source)
+                    {
+                        found.push(Violation::Capacity {
+                            statement: statement_id(sid),
+                            measure,
+                        });
+                    }
+                }
+                StatementDescriptor::Functionality { .. } => {}
+            }
+        }
+        sealed(found)
     }
 
     /// The committed facts of one relation.
@@ -347,7 +450,7 @@ impl NaiveDb {
     fn judged(
         &self,
         delta: &Delta,
-    ) -> Result<(Vec<BTreeSet<Tuple>>, Vec<Box<[u8]>>), Vec<Violation>> {
+    ) -> Result<(Vec<BTreeSet<Tuple>>, Vec<Box<str>>), Vec<Violation>> {
         for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
             if self.extensions[relation.0 as usize].is_some() {
                 return Err(vec![Violation::ClosedRelationWrite {
@@ -410,8 +513,8 @@ impl NaiveDb {
     /// resolve, never mint. Insert-time encoding interns regardless of
     /// the verdict, so the judgment's key ordering sees these ranks even
     /// on a delta the commit rejects (where they then die unflushed).
-    fn minted(&self, delta: &Delta) -> Vec<Box<[u8]>> {
-        let mut minted: Vec<Box<[u8]>> = Vec::new();
+    fn minted(&self, delta: &Delta) -> Vec<Box<str>> {
+        let mut minted: Vec<Box<str>> = Vec::new();
         for (_, fact) in &delta.inserts {
             for value in fact {
                 if let Value::String(raw) = value
@@ -466,7 +569,7 @@ impl NaiveDb {
         &self,
         state: &[BTreeSet<Tuple>],
         inserted: &[BTreeSet<Tuple>],
-        minted: &[Box<[u8]>],
+        minted: &[Box<str>],
     ) -> Vec<Violation> {
         let mut found: Vec<Violation> = Vec::new();
         for (rel, facts) in inserted.iter().enumerate() {
@@ -624,7 +727,7 @@ impl NaiveDb {
     fn capacity_violated(
         &self,
         state: &[BTreeSet<Tuple>],
-        minted: &[Box<[u8]>],
+        minted: &[Box<str>],
         target: &Side,
         weight: Weight,
         lo: u64,
@@ -704,7 +807,7 @@ impl NaiveDb {
     /// per-field surrogate compare IS the image byte compare.
     fn encoded_key(
         &self,
-        minted: &[Box<[u8]>],
+        minted: &[Box<str>],
         parent: &Tuple,
         order: &[bumbledb::FieldId],
     ) -> Tuple {
@@ -723,7 +826,7 @@ impl NaiveDb {
     /// the delta's mint position past the committed length. A stored
     /// string is always one of the two — anything else is a model bug,
     /// panicked not tolerated.
-    fn intern_rank(&self, minted: &[Box<[u8]>], raw: &[u8]) -> u64 {
+    fn intern_rank(&self, minted: &[Box<str>], raw: &str) -> u64 {
         let rank = self
             .dict
             .iter()

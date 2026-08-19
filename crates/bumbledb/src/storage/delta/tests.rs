@@ -73,11 +73,17 @@ fn insert_then_delete_of_absent_fact_cancels_to_an_empty_delta() {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let f = fact(&schema, 1, 100);
-    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::Recorded
+    );
     // The delete cancels the pending Insert: the net effect against
     // committed state is nothing, so nothing is recorded
     // (docs/architecture/50-storage.md net dispositions).
-    assert!(delta.delete(&view, R, &f).expect("delete"));
+    assert_eq!(
+        delta.delete(&view, R, &f).expect("delete"),
+        DeltaEffect::Cancelled
+    );
     assert_eq!(delta.disposition(R, &f), None);
     assert!(delta.is_empty());
 }
@@ -93,29 +99,43 @@ fn delete_then_insert_of_a_committed_fact_cancels_to_an_empty_delta() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &f).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(delta.delete(&view, R, &f).expect("delete"));
+    assert_eq!(
+        delta.delete(&view, R, &f).expect("delete"),
+        DeltaEffect::Recorded
+    );
     // The re-insert cancels the pending Delete — a no-op insert is
     // unrepresentable, never recorded and never judged
     // (docs/architecture/50-storage.md net dispositions).
-    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::Cancelled
+    );
     assert_eq!(delta.disposition(R, &f), None);
     assert!(delta.is_empty());
 }
 
 #[test]
-fn idempotent_double_insert_reports_true_false() {
+fn idempotent_double_insert_reports_recorded_then_noop() {
     let dir = TempDir::new("delta-double-insert");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let f = fact(&schema, 1, 100);
-    assert!(delta.insert(&view, R, &f).expect("insert"));
-    assert!(!delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::Recorded
+    );
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::NoOp
+    );
 }
 
 #[test]
@@ -129,12 +149,21 @@ fn long_alternating_sequences_net_against_committed_state() {
     // Each insert/delete pair on an absent fact cancels: the delta stays
     // net-empty however long the sequence runs.
     for _ in 0..7 {
-        assert!(delta.insert(&view, R, &f).expect("insert"));
-        assert!(delta.delete(&view, R, &f).expect("delete"));
+        assert_eq!(
+            delta.insert(&view, R, &f).expect("insert"),
+            DeltaEffect::Recorded
+        );
+        assert_eq!(
+            delta.delete(&view, R, &f).expect("delete"),
+            DeltaEffect::Cancelled
+        );
         assert_eq!(delta.disposition(R, &f), None);
     }
     // An unpaired trailing op records its genuine net effect.
-    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::Recorded
+    );
     assert_eq!(delta.disposition(R, &f), Some(Disposition::Insert));
 }
 
@@ -153,10 +182,9 @@ fn reserve_is_strictly_increasing_and_reads_q_once() {
     // in-memory next must win — Q is read once per (relation, field).
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut buf = [0u8; keys::FRESH_KEY_LEN];
-        let len = keys::fresh_key(&mut buf, R, ID);
+        let key = keys::fresh_key(R, ID);
         env.data()
-            .put(wtxn.raw_mut(), &buf[..len], 100u64.to_le_bytes().as_slice())
+            .put(wtxn.raw_mut(), &key, 100u64.to_le_bytes().as_slice())
             .expect("put");
         wtxn.commit().expect("commit");
     }
@@ -175,10 +203,11 @@ fn explicit_value_above_mark_advances_generated_successors() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(
+    assert_eq!(
         delta
             .insert(&view, R, &fact(&schema, 50, 1))
-            .expect("insert")
+            .expect("insert"),
+        DeltaEffect::Recorded
     );
     assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 51);
 }
@@ -282,10 +311,9 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
     // Committed base: Q = 6.
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut buf = [0u8; keys::FRESH_KEY_LEN];
-        let len = keys::fresh_key(&mut buf, R, ID);
+        let key = keys::fresh_key(R, ID);
         env.data()
-            .put(wtxn.raw_mut(), &buf[..len], 6u64.to_le_bytes().as_slice())
+            .put(wtxn.raw_mut(), &key, 6u64.to_le_bytes().as_slice())
             .expect("put");
         wtxn.commit().expect("commit");
     }
@@ -347,10 +375,10 @@ fn determinant_map_mirrors_the_fact_dispositions() {
     // A no-op operation records nothing: deleting an absent fact must
     // not shadow another fact's live key tuple.
     let mut idle = WriteDelta::new(&schema);
-    assert!(
-        !idle
-            .delete(&view, R, &fact(&schema, 9, 900))
-            .expect("delete")
+    assert_eq!(
+        idle.delete(&view, R, &fact(&schema, 9, 900))
+            .expect("delete"),
+        DeltaEffect::NoOp
     );
     assert_eq!(idle.determinant_overlay(KEY, &encode_u64(9)), None);
 }
@@ -370,7 +398,9 @@ fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &old).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     for insert_first in [true, false] {
@@ -407,13 +437,21 @@ fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &old).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let transient = fact(&schema, 7, 999);
-    assert!(delta.insert(&view, R, &transient).expect("insert"));
-    assert!(delta.delete(&view, R, &transient).expect("delete"));
+    assert_eq!(
+        delta.insert(&view, R, &transient).expect("insert"),
+        DeltaEffect::Recorded
+    );
+    assert_eq!(
+        delta.delete(&view, R, &transient).expect("delete"),
+        DeltaEffect::Cancelled
+    );
     assert!(delta.is_empty(), "the pair cancelled to nothing");
     assert_eq!(
         delta.determinant_overlay(KEY, &encode_u64(7)),
@@ -465,13 +503,19 @@ fn cancelling_a_replaced_insert_does_not_restore_it() {
     let second = fact(&schema, 7, 999);
     delta.insert(&view, R, &first).expect("insert");
     delta.insert(&view, R, &second).expect("insert");
-    assert!(delta.delete(&view, R, &first).expect("delete first"));
+    assert_eq!(
+        delta.delete(&view, R, &first).expect("delete first"),
+        DeltaEffect::Cancelled
+    );
     assert_eq!(
         delta.determinant_overlay(KEY, &encode_u64(7)),
         Some(DeterminantOverlay::Present(second.as_slice())),
         "the later insert still owns the tuple"
     );
-    assert!(delta.delete(&view, R, &second).expect("delete second"));
+    assert_eq!(
+        delta.delete(&view, R, &second).expect("delete second"),
+        DeltaEffect::Cancelled
+    );
     assert_eq!(
         delta.determinant_overlay(KEY, &encode_u64(7)),
         None,
@@ -494,7 +538,9 @@ fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &old).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -527,7 +573,9 @@ fn determinant_overwrites_never_reclone_the_scratch() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &old).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -654,7 +702,9 @@ fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
                 .expect("insert");
         }
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
 
@@ -701,17 +751,25 @@ fn a_cancelled_delete_reinsert_pair_dirties_nothing() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, R, &f).expect("insert");
         drop(view);
-        crate::storage::commit::commit(delta, &env).expect("commit");
+        crate::storage::commit::commit(delta, &env)
+            .expect("commit")
+            .expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(delta.delete(&view, R, &f).expect("delete"));
+    assert_eq!(
+        delta.delete(&view, R, &f).expect("delete"),
+        DeltaEffect::Recorded
+    );
     assert_eq!(
         delta.dirty_relations(),
         vec![R],
         "a live pending delete dirties its relation"
     );
-    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, R, &f).expect("insert"),
+        DeltaEffect::Cancelled
+    );
     assert_eq!(
         delta.dirty_relations(),
         vec![],

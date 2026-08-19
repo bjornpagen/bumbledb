@@ -41,8 +41,6 @@ pub use phase_table::render_phase_table;
 pub use split_harness::split_harness;
 pub use write_chrome::{write_chrome, write_trace_file, write_trace_pair};
 
-#[cfg(test)]
-use bumbledb::obs::Category;
 use bumbledb::obs::TraceEvent;
 
 /// The one traced-artifact fold every `--trace`-bearing lane shares:

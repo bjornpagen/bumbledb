@@ -7,9 +7,7 @@
 
 use super::*;
 use crate::ir::WordCmp;
-use crate::ir::normalize::{
-    IntervalWord, OccBind, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord,
-};
+use crate::ir::normalize::{IntervalWord, OccBind, SlotWidth};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
 
@@ -70,12 +68,12 @@ fn tagged_interval_views(
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     (0..data.len())
         .map(|rel| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn, schema, rel_id).expect("build")
+            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
         })
         .collect()
 }
@@ -86,8 +84,8 @@ fn tagged_interval_views(
 /// `PointIn` point form (word comparisons), both pinned in
 /// `ir/normalize/tests.rs`.
 fn interval_pair_query(
-    word_residuals: Vec<PlacedWordComparison>,
-    allen_residuals: Vec<PlacedAllen>,
+    word_residuals: Vec<FilterPredicate>,
+    allen_residuals: Vec<FilterPredicate>,
 ) -> NormalizedQuery {
     let occurrences = vec![
         Occurrence {
@@ -127,13 +125,6 @@ fn interval_pair_query(
     }
 }
 
-fn side(var: u16, word: IntervalWord) -> VarWord {
-    VarWord {
-        var: VarId(var),
-        word,
-    }
-}
-
 /// The thirteen Allen configurations of A's interval against B's fixed
 /// `[10, 20)`, tagged 1..=13 in Allen order.
 const ALLEN: &[(u64, u64, u64)] = &[
@@ -155,8 +146,8 @@ const ALLEN: &[(u64, u64, u64)] = &[
 /// Runs an interval-pair query and returns the surviving A tags.
 fn surviving_tags(
     name: &str,
-    word_residuals: Vec<PlacedWordComparison>,
-    allen_residuals: Vec<PlacedAllen>,
+    word_residuals: Vec<FilterPredicate>,
+    allen_residuals: Vec<FilterPredicate>,
     order: &[u16],
 ) -> BTreeSet<u64> {
     let dir = TempDir::new(name);
@@ -170,10 +161,10 @@ fn surviving_tags(
 }
 
 /// One Allen mask residual between the two occurrences' intervals.
-fn allen_residual(mask: AllenMask) -> Vec<PlacedAllen> {
-    vec![PlacedAllen {
-        lhs: VarId(1),
-        rhs: VarId(3),
+fn allen_residual(mask: AllenMask) -> Vec<FilterPredicate> {
+    vec![FilterPredicate::FieldsAllen {
+        left: OperandAddr::from(VarId(1)),
+        right: OperandAddr::from(VarId(3)),
         mask,
     }]
 }
@@ -186,15 +177,15 @@ fn allen_residual(mask: AllenMask) -> Vec<PlacedAllen> {
 #[test]
 fn point_membership_word_residuals_evaluate_over_slot_words() {
     let point_in = vec![
-        PlacedWordComparison {
+        FilterPredicate::FieldsCompare {
             op: WordCmp::Le,
-            lhs: side(1, IntervalWord::Start),
-            rhs: side(3, IntervalWord::Start),
+            left: OperandAddr::var_word(VarId(1), IntervalWord::Start.offset()),
+            right: OperandAddr::var_word(VarId(3), IntervalWord::Start.offset()),
         },
-        PlacedWordComparison {
+        FilterPredicate::FieldsCompare {
             op: WordCmp::Lt,
-            lhs: side(3, IntervalWord::Start),
-            rhs: side(1, IntervalWord::End),
+            left: OperandAddr::var_word(VarId(3), IntervalWord::Start.offset()),
+            right: OperandAddr::var_word(VarId(1), IntervalWord::End.offset()),
         },
     ];
     let expected: BTreeSet<u64> = [3, 4, 5, 6, 7, 8].into_iter().collect();
@@ -389,10 +380,10 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         delta.insert(&view, RelationId(1), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     let views: Vec<Arc<crate::image::RelationImage>> = (0..2)
-        .map(|rel| crate::image::build(&txn, &schema, RelationId(rel)).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
         .collect();
 
     // Exactly `normalize`'s lowering for the fixture (pinned in
@@ -564,10 +555,10 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     let views: Vec<Arc<crate::image::RelationImage>> = (0..3)
-        .map(|rel| crate::image::build(&txn, &schema, RelationId(rel)).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
         .collect();
 
     let (x, d, t) = (VarId(0), VarId(1), VarId(2));
@@ -675,10 +666,10 @@ fn negated_membership_rejects_only_covered_events() {
         delta.insert(&view, RelationId(1), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     let views: Vec<Arc<crate::image::RelationImage>> = (0..2)
-        .map(|rel| crate::image::build(&txn, &schema, RelationId(rel)).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
         .collect();
 
     let (x, t) = (VarId(0), VarId(1));
@@ -887,12 +878,12 @@ fn keyed_span_views(
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     (0..data.len())
         .map(|rel| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn, schema, rel_id).expect("build")
+            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
         })
         .collect()
 }
@@ -931,17 +922,17 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
     NormalizedQuery {
         dead: None,
         occurrences,
-        residuals: vec![PlacedComparison {
+        residuals: vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(3)),
             op: WordCmp::Lt,
-            lhs: VarId(0),
-            rhs: VarId(3),
         }],
         word_residuals: vec![],
         allen_residuals: masks
             .iter()
-            .map(|mask| PlacedAllen {
-                lhs: VarId(2),
-                rhs: VarId(4),
+            .map(|mask| FilterPredicate::FieldsAllen {
+                left: OperandAddr::from(VarId(2)),
+                right: OperandAddr::from(VarId(4)),
                 mask: *mask,
             })
             .collect(),
@@ -1376,9 +1367,9 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
             ]
         })
         .collect();
-    let residual = |lhs: u16, mask: AllenMask| PlacedAllen {
-        lhs: VarId(lhs),
-        rhs: VarId(5),
+    let residual = |lhs: u16, mask: AllenMask| FilterPredicate::FieldsAllen {
+        left: OperandAddr::from(VarId(lhs)),
+        right: OperandAddr::from(VarId(5)),
         mask,
     };
     let query_for = |m1: AllenMask, m2: AllenMask| NormalizedQuery {
@@ -1522,9 +1513,9 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
             occurrences: occurrences.clone(),
             residuals: vec![],
             word_residuals: vec![],
-            allen_residuals: vec![PlacedAllen {
-                lhs: VarId(1),
-                rhs: VarId(3),
+            allen_residuals: vec![FilterPredicate::FieldsAllen {
+                left: OperandAddr::from(VarId(1)),
+                right: OperandAddr::from(VarId(3)),
                 mask,
             }],
             duration_residuals: Vec::new(),

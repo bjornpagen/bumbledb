@@ -30,6 +30,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import type { Db as DbValue, RelationFields, Selected } from "#index.ts"
 import { closed, contained, Db, key, mirrors, on, relation, renderStatement, schema, u64 } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-marshal-"))
@@ -100,7 +101,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 	const ids: { savings?: bigint } = {}
 
 	test("insert with the handle NAME round-trips through tx reads, scan, and get", async function roundTrip() {
-		db = await Db.create(storeDir, Ledger)
+		db = accepted(await Db.create(storeDir, Ledger))
 		const written = db.write(function seed(tx) {
 			const minted = put(tx, Account, { kind: "Savings" })
 			ids.savings = minted.id
@@ -114,7 +115,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 			assert.ok(read, "the final-state point read sees the pending insert")
 			assert.strictEqual(read.kind, "Savings", "the tx point read decodes the id back to the NAME")
 		})
-		assert.ok(written.ok, "the seed commit lands")
+		assert.equal(written.tag, "accepted", "the seed commit lands")
 		const rows = db.scan(Account)
 		assert.equal(rows.length, 1)
 		assert.strictEqual(must(rows[0]).kind, "Savings", "scan decodes the id back to the NAME")
@@ -131,7 +132,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 				"delete reaches the closed arm through rowOf"
 			)
 		})
-		assert.ok(cycle.ok, "the net-zero delta commits")
+		assert.equal(cycle.tag, "accepted", "the net-zero delta commits")
 		assert.equal(db.scan(Account).length, 1, "the checking row died in its own delta")
 	})
 
@@ -192,7 +193,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 		const rejected = db.write(function orphanSavings(tx) {
 			put(tx, Account, { kind: "Savings" })
 		})
-		assert.ok(!rejected.ok, "a savings account without terms violates the mirror")
+		assert.equal(rejected.tag, "rejected", "a savings account without terms violates the mirror")
 		const violation = must(
 			rejected.violations.find(function byKind(candidate) {
 				return candidate.kind === "containment"
@@ -211,12 +212,12 @@ describe("the marshal bijection over closed rosters", function suite() {
 	})
 
 	test("an out-of-roster id in a LAWLESS store is a pointed read throw, never a fallback", async function lawlessRead() {
-		const writer = await Db.create(lawlessDir, LawlessWriter)
+		const writer = accepted(await Db.create(lawlessDir, LawlessWriter))
 		const seeded = writer.write(function seedRaw(tx) {
 			/** The writer twin types the column as plain u64 — no law pins it, so any bigint commits. */
 			put(tx, RawLawlessAccount, { kind: 7n })
 		})
-		assert.ok(seeded.ok, "the lawless writer commits a raw out-of-roster id")
+		assert.equal(seeded.tag, "accepted", "the lawless writer commits a raw out-of-roster id")
 		copyStore(lawlessDir, lawlessCopyDir)
 		const reader = await Db.open(lawlessCopyDir, LawlessReader)
 		assert.throws(function scanLawless() {

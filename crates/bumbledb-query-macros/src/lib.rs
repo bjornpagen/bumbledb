@@ -2425,10 +2425,7 @@ fn emit_cq(theory: &str, interiors: &[InteriorGroup], main: &[ParsedRule]) -> Pa
     Ok(format!(
         "{{ {lets}let rules = ::std::vec![{main_rules}]; \
              let head = ::bumbledb::Rule::head(&rules[0]); \
-             ::bumbledb::Query::Cq {{ \
-                 interiors: ::std::vec![{interior_defs}], \
-                 head, \
-                 rules }} }}"
+             ::bumbledb::Query::cq(::std::vec![{interior_defs}], head, rules) }}"
     ))
 }
 
@@ -2462,11 +2459,11 @@ fn emit_reach(
     Ok(format!(
         "{{ {lets}let rules = ::std::vec![{main_rules}]; \
              let head = ::bumbledb::Rule::head(&rules[0]); \
-             ::bumbledb::Query::Reach {{ \
-                 interiors: ::std::vec![{interior_defs}], \
-                 rec: ::bumbledb::Rec {{ base: rec_base, rec: rec_step }}, \
+             ::bumbledb::Query::reach( \
+                 ::std::vec![{interior_defs}], \
+                 ::bumbledb::Rec {{ base: rec_base, rec: rec_step }}, \
                  head, \
-                 rules }} }}"
+                 rules) }}"
     ))
 }
 

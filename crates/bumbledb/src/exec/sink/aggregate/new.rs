@@ -1,5 +1,6 @@
 use crate::exec::sink::{
-    AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupTable, SinkSpec,
+    AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupState, GroupTable,
+    SinkSpec,
 };
 use crate::exec::wordmap::WordMap;
 
@@ -71,9 +72,6 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 }
 
 impl AggregateSink {
-    pub(super) fn pack_slot(&self) -> Option<usize> {
-        pack_slot(&self.finds)
-    }
     /// Builds the sink. `slot_count` is the plan's binding-slot count in
     /// **words** (an interval variable holds two — the `SlotWidth` layout);
     /// Unhinted, seen-set-retaining construction (tests).
@@ -267,6 +265,17 @@ impl AggregateSink {
                 ordinals: Vec::new(),
             }
         };
+        let group_state = if let Some(slot) = pack_slot(&finds) {
+            GroupState::Pack {
+                slot,
+                claims: Vec::new(),
+            }
+        } else {
+            GroupState::Folds {
+                accs: Vec::new(),
+                n_aggs,
+            }
+        };
         Self {
             dedup,
             groups,
@@ -279,7 +288,6 @@ impl AggregateSink {
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
-            pack_claims: Vec::new(),
             #[cfg(test)]
             group_probes: 0,
             group_spans,
@@ -287,8 +295,7 @@ impl AggregateSink {
             measures,
             real_slots: slot_count,
             ray: crate::exec::sink::RayPoison::Clear,
-            accs: Vec::new(),
-            n_aggs,
+            group_state,
         }
     }
 
@@ -330,6 +337,9 @@ impl AggregateSink {
         self.binding_scratch.clear();
         self.binding_scratch
             .resize(slot_count + self.measures.len(), 0);
+        if let GroupState::Pack { slot, .. } = &mut self.group_state {
+            *slot = pack_slot(&self.finds).expect("Pack heads stay Pack across rules");
+        }
     }
 
     /// Groups held (finalize's reservation).
@@ -369,7 +379,9 @@ impl AggregateSink {
     /// (docs/architecture/40-execution.md § the rule loop).
     pub fn reset(&mut self) {
         self.groups.clear();
-        self.accs.clear();
+        if let GroupState::Folds { accs, .. } = &mut self.group_state {
+            accs.clear();
+        }
         self.ray = crate::exec::sink::RayPoison::Clear;
         if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();

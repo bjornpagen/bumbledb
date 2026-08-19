@@ -59,6 +59,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             point_probes: Vec::new(),
             new_vars,
             suffix_skip: super::SuffixSkip::Forbidden, // refined by validation from sink_vars
+            estimate: node.estimate,
         });
     }
     Ok(nodes)

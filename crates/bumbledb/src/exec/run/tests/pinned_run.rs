@@ -12,6 +12,7 @@ use crate::ir::WordCmp;
 /// All-vars sinks: aggregate plans mark every node sink-relevant.
 fn split_plan(normalized: &NormalizedQuery, schema: &Schema) -> ValidatedPlan {
     let node = |vars: &[u16]| crate::plan::fj::Node {
+        estimate: 0,
         subatoms: vec![crate::plan::fj::Subatom {
             occ: OccId(0),
             vars: vars.iter().map(|v| VarId(*v)).collect(),
@@ -20,7 +21,7 @@ fn split_plan(normalized: &NormalizedQuery, schema: &Schema) -> ValidatedPlan {
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![node(&[0]), node(&[1])],
     };
-    validate(&plan, normalized, schema, vec![0; 2], &all_vars(normalized)).expect("valid plan")
+    validate(&plan, normalized, schema, &all_vars(normalized)).expect("valid plan")
 }
 
 /// GROUP BY g: Count + Sum(x) — the Sum reads a leaf key word, so the
@@ -69,10 +70,10 @@ fn pinned_run_matches_the_recursive_path() {
         vec![],
         // g < x at the leaf: kills (2,1) and (3,2) — the batched arm's
         // residual pass must compact exactly as the recursive one.
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             op: WordCmp::Lt,
-            lhs: VarId(0),
-            rhs: VarId(1),
         }],
     ] {
         let n_residuals = residuals.len();

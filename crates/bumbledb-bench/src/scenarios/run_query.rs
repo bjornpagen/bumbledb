@@ -22,10 +22,10 @@ use crate::translate::{Translated, translate};
               query would put an indirection on the timed path to save \
               bytes nothing is short of"
 )]
-enum Engine<'d> {
+enum Engine {
     /// A prepared query, reused across every warmup and sample.
-    Prepared(bumbledb::PreparedQuery<'d, SchemaDescriptor>),
-    /// The keyed-get point read: `Snapshot::get_dyn` through the resolved
+    Prepared(bumbledb::PreparedQuery<SchemaDescriptor>),
+    /// The keyed-get point read: `ReadInstance::get_dyn` through the resolved
     /// key statement — no query, no plan, no prepared object to hold.
     KeyedGet {
         relation: RelationId,
@@ -33,7 +33,7 @@ enum Engine<'d> {
     },
 }
 
-impl Engine<'_> {
+impl Engine {
     /// The engine side of one param set, decoded to canonical answers —
     /// the gate's one execution fold over either surface (a keyed get
     /// answers a 0-or-1-row multiset: the full fact in declaration
@@ -56,13 +56,13 @@ impl Engine<'_> {
             Self::KeyedGet {
                 relation,
                 statement,
-            } => stores
+            } => Ok(stores
                 .db
                 .read(|snap| snap.get_dyn(*relation, *statement, params))
                 .map_err(|e| format!("get_dyn: {e:?}"))?
                 .map(|fact| compare::from_fact(&fact))
                 .into_iter()
-                .collect(),
+                .collect()),
         }
     }
 }
@@ -70,8 +70,8 @@ impl Engine<'_> {
 /// The gated pre-timing state: everything [`gate`] proved agreement for,
 /// carried into the timing half — the gate/time split makes
 /// "oracle-gated before ever timed" a call-order fact.
-pub(super) struct Gated<'d> {
-    engine: Engine<'d>,
+pub(super) struct Gated {
+    engine: Engine,
     types: Vec<ValueType>,
     /// The `SQLite` lane list from [`Twin`]: `(lane name, SQL)`.
     lanes: Vec<(&'static str, Translated)>,
@@ -83,12 +83,12 @@ pub(super) struct Gated<'d> {
 /// lane compares the result multisets (`compare::multisets`) — a
 /// disagreement is an error naming the query, lane, and set, and nothing
 /// gets timed. The gate is NEVER capped: correctness is sacred.
-pub(super) fn gate<'d>(
-    stores: &'d Stores,
+pub(super) fn gate(
+    stores: &Stores,
     scenario: &Scenario,
     sq: &ScenarioQuery,
     seed: u64,
-) -> Result<Gated<'d>, String> {
+) -> Result<Gated, String> {
     let schema = (scenario.schema)();
     let sets = (sq.params)(seed);
     let (mut engine, types, lanes) = match &sq.surface {
@@ -102,7 +102,7 @@ pub(super) fn gate<'d>(
                 .signature()
                 .columns
                 .iter()
-                .map(|column| column.ty().clone())
+                .map(|column| *column.ty())
                 .collect();
             let canonical = || {
                 translate(&query, schema, &[])
@@ -127,7 +127,7 @@ pub(super) fn gate<'d>(
                 .relation(*relation)
                 .fields()
                 .iter()
-                .map(|field| field.value_type.clone())
+                .map(|field| field.value_type)
                 .collect();
             // A keyed get's canonical rendering IS SQLite's best shot —
             // the prepared point SELECT through the UNIQUE index — so no

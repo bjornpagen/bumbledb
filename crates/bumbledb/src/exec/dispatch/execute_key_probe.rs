@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::exec::run::{Bindings, Sink};
 use crate::image::view::Const;
 use crate::schema::Schema;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
 
 /// Executes the key probe: key bytes from constants, one `U`/`M` get,
 /// one `F` fetch, remaining filters on the fact bytes, then the single
@@ -23,9 +23,9 @@ use crate::storage::env::ReadTxn;
 )] // the prepared query's split borrows,
 // exactly like `run_join`'s — bundling
 // would only rename the same eight things
-pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
+pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters, Cat: CatalogRead>(
     plan: &KeyProbePlan,
-    txn: &ReadTxn<'_>,
+    catalog: &Cat,
     schema: &Schema,
     params: &[Const],
     key_scratch: &mut Vec<u8>,
@@ -33,15 +33,19 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
     sink: &mut S,
     counters: &mut C,
 ) -> Result<()> {
-    let Some(fact) = key_probe_fact(plan, txn, schema, params, key_scratch)? else {
+    let Some(stored) = key_probe_fact(plan, catalog, schema, params, key_scratch)? else {
         return Ok(());
     };
+    let fact = schema
+        .relation(plan.relation)
+        .layout()
+        .encoded(stored.as_ref());
     // The single binding, through the ordinary sink (the aggregate-find
     // key-probe path; plain-variable key_probes take the direct lane).
     // Interval variables occupy their two-slot span.
     bindings.reset();
     for var in &plan.vars {
-        match fact_operand(schema, plan.relation, fact, var.field)? {
+        match fact_operand(fact, var.field)? {
             FactOperand::Word(word) => bindings.set(var.slot, word),
             FactOperand::Pair(start, end) => {
                 debug_assert_eq!(var.width, 2, "the SlotWidth layout");

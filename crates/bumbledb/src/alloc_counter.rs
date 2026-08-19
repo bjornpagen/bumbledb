@@ -21,8 +21,8 @@
 //! while bytes account both sides (`alloc_bytes += new_size`,
 //! `dealloc_bytes += old_size` — bytes answer "how much").
 //!
-//! Window vs absolute: [`reset`] zeroes the four window counters
-//! (events + bytes); `live_bytes` is an absolute process-lifetime value.
+//! Window vs absolute: [`reset`] zeroes [`AllocWindow`]; [`AllocAbsolute`]
+//! (`live_bytes`, `peak_live_bytes`) is process-lifetime and survives reset.
 //!
 //! Sanctioned allocation windows, documented per the protocol: the first
 //! execution after prepare (COLT pools, sink maps, and view buffers grow
@@ -50,6 +50,14 @@ static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "alloc-counter")]
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "alloc-counter")]
+static PEAK_LIVE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "alloc-counter")]
+fn bump_live(add: u64) {
+    let prev = LIVE_BYTES.fetch_add(add, Ordering::Relaxed);
+    PEAK_LIVE.fetch_max(prev.saturating_add(add), Ordering::Relaxed);
+}
 
 /// The wrapping allocator, registered as the global allocator whenever the
 /// `alloc-counter` feature is on.
@@ -64,7 +72,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        bump_live(bytes);
         // SAFETY: forwarded contract.
         unsafe { System.alloc(layout) }
     }
@@ -77,7 +85,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        bump_live(bytes);
         // SAFETY: forwarded contract.
         unsafe { System.alloc_zeroed(layout) }
     }
@@ -99,9 +107,13 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let new = new_size as u64;
         ALLOC_BYTES.fetch_add(new, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(old, Ordering::Relaxed);
-        // Live moves by the delta: add the new footprint, drop the old.
-        LIVE_BYTES.fetch_add(new, Ordering::Relaxed);
-        LIVE_BYTES.fetch_sub(old, Ordering::Relaxed);
+        // Live moves by the net delta — never the add-then-sub spike —
+        // so peak-live is the true high-water.
+        if new >= old {
+            bump_live(new - old);
+        } else {
+            LIVE_BYTES.fetch_sub(old - new, Ordering::Relaxed);
+        }
         // SAFETY: forwarded contract.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -111,9 +123,9 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-/// One reading of every counter (windows and absolutes together).
+/// Window-relative counters: events and bytes since the last [`reset`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AllocSnapshot {
+pub struct AllocWindow {
     /// Allocation events (including reallocations) since the last [`reset`].
     pub allocs: u64,
     /// Deallocation events since the last [`reset`].
@@ -122,8 +134,23 @@ pub struct AllocSnapshot {
     pub alloc_bytes: u64,
     /// Bytes deallocated since the last [`reset`].
     pub dealloc_bytes: u64,
+}
+
+/// Process-lifetime counters: live heap and its high-water.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllocAbsolute {
     /// Absolute live heap bytes right now.
     pub live_bytes: u64,
+    /// Peak live heap bytes since process start (the high-water of
+    /// [`Self::live_bytes`]).
+    pub peak_live_bytes: u64,
+}
+
+/// One reading of every counter, split by time base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllocSnapshot {
+    pub window: AllocWindow,
+    pub absolute: AllocAbsolute,
 }
 
 /// Reads every counter at once.
@@ -131,11 +158,16 @@ pub struct AllocSnapshot {
 #[must_use]
 pub fn snapshot() -> AllocSnapshot {
     AllocSnapshot {
-        allocs: ALLOCATIONS.load(Ordering::Relaxed),
-        deallocs: DEALLOCATIONS.load(Ordering::Relaxed),
-        alloc_bytes: ALLOC_BYTES.load(Ordering::Relaxed),
-        dealloc_bytes: DEALLOC_BYTES.load(Ordering::Relaxed),
-        live_bytes: LIVE_BYTES.load(Ordering::Relaxed),
+        window: AllocWindow {
+            allocs: ALLOCATIONS.load(Ordering::Relaxed),
+            deallocs: DEALLOCATIONS.load(Ordering::Relaxed),
+            alloc_bytes: ALLOC_BYTES.load(Ordering::Relaxed),
+            dealloc_bytes: DEALLOC_BYTES.load(Ordering::Relaxed),
+        },
+        absolute: AllocAbsolute {
+            live_bytes: LIVE_BYTES.load(Ordering::Relaxed),
+            peak_live_bytes: PEAK_LIVE.load(Ordering::Relaxed),
+        },
     }
 }
 
@@ -184,19 +216,33 @@ mod tests {
         let v: Vec<u8> = Vec::with_capacity(8 * MIB_USIZE);
         let mid = snapshot();
         assert!(
-            mid.alloc_bytes - before.alloc_bytes >= 8 * MIB,
+            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * MIB,
             "allocating 8 MiB must move alloc_bytes by at least that"
         );
         assert!(
-            mid.live_bytes >= before.live_bytes + 4 * MIB,
+            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * MIB,
             "live rises by roughly the probe (background noise is KiBs)"
+        );
+        assert!(
+            mid.absolute.peak_live_bytes >= mid.absolute.live_bytes,
+            "peak-live is the high-water of live"
         );
         drop(v);
         let after = snapshot();
-        assert!(after.dealloc_bytes.saturating_sub(mid.dealloc_bytes) >= 8 * MIB);
         assert!(
-            after.live_bytes <= mid.live_bytes.saturating_sub(4 * MIB),
+            after
+                .window
+                .dealloc_bytes
+                .saturating_sub(mid.window.dealloc_bytes)
+                >= 8 * MIB
+        );
+        assert!(
+            after.absolute.live_bytes <= mid.absolute.live_bytes.saturating_sub(4 * MIB),
             "live falls back after the free"
+        );
+        assert!(
+            after.absolute.peak_live_bytes >= mid.absolute.peak_live_bytes,
+            "peak-live is monotone"
         );
     }
 
@@ -210,11 +256,15 @@ mod tests {
         // ticked them since — assert they are tiny relative to the probe,
         // not exactly zero (the gate binary asserts exact zero in its
         // single-threaded world).
-        assert!(snap.alloc_bytes < MIB, "windows rebased: {snap:?}");
-        assert!(snap.dealloc_bytes < MIB, "windows rebased: {snap:?}");
+        assert!(snap.window.alloc_bytes < MIB, "windows rebased: {snap:?}");
+        assert!(snap.window.dealloc_bytes < MIB, "windows rebased: {snap:?}");
         assert!(
-            snap.live_bytes >= 8 * MIB,
+            snap.absolute.live_bytes >= 8 * MIB,
             "live is absolute and survives reset"
+        );
+        assert!(
+            snap.absolute.peak_live_bytes >= snap.absolute.live_bytes,
+            "peak is absolute and survives reset"
         );
         drop(keep);
     }
@@ -226,16 +276,22 @@ mod tests {
         let v = vec![0u8; 8 * MIB_USIZE];
         let mid = snapshot();
         assert!(
-            mid.alloc_bytes - before.alloc_bytes >= 8 * MIB,
+            mid.window.alloc_bytes - before.window.alloc_bytes >= 8 * MIB,
             "a zeroed 8 MiB allocation moves alloc_bytes by at least that"
         );
         assert!(
-            mid.live_bytes >= before.live_bytes + 4 * MIB,
+            mid.absolute.live_bytes >= before.absolute.live_bytes + 4 * MIB,
             "live rises by roughly the probe"
         );
         drop(v);
         let after = snapshot();
-        assert!(after.dealloc_bytes.saturating_sub(mid.dealloc_bytes) >= 8 * MIB);
+        assert!(
+            after
+                .window
+                .dealloc_bytes
+                .saturating_sub(mid.window.dealloc_bytes)
+                >= 8 * MIB
+        );
     }
 
     #[test]
@@ -248,14 +304,17 @@ mod tests {
         v.reserve_exact(14 * MIB_USIZE);
         let after = snapshot();
         assert!(
-            after.alloc_bytes - before.alloc_bytes >= 16 * MIB,
+            after.window.alloc_bytes - before.window.alloc_bytes >= 16 * MIB,
             "growth allocates the new footprint"
         );
         assert!(
-            after.dealloc_bytes - before.dealloc_bytes >= 2 * MIB,
+            after.window.dealloc_bytes - before.window.dealloc_bytes >= 2 * MIB,
             "growth accounts the old footprint as freed bytes"
         );
-        let live_delta = after.live_bytes.saturating_sub(before.live_bytes);
+        let live_delta = after
+            .absolute
+            .live_bytes
+            .saturating_sub(before.absolute.live_bytes);
         assert!(
             (13 * MIB..=17 * MIB).contains(&live_delta),
             "live moves by roughly the delta: {live_delta}"

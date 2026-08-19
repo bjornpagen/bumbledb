@@ -20,6 +20,6 @@ pub(super) fn acquire_lock(path: &Path) -> Result<std::fs::File> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(std::fs::TryLockError::WouldBlock) => Err(Error::EnvironmentLocked),
-        Err(std::fs::TryLockError::Error(err)) => Err(Error::Io(err)),
+        Err(std::fs::TryLockError::Error(err)) => Err(Error::from(err)),
     }
 }

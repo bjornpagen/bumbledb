@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
-use crate::error::{CorruptionError, Error, Result, Violations};
+use crate::error::{Admission, CorruptionError, Error, Result, Violations};
 use crate::obs;
 use crate::storage::delta::WriteDelta;
-use crate::storage::env::{Environment, WriteTxn};
-use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
-use bumbledb_theory::schema::{FieldId, RelationId};
+use crate::storage::env::{Environment, FreshMarks, WriteTxn};
+use crate::storage::keys::{self, StatKind};
+use bumbledb_theory::schema::RelationId;
 
 use super::plan::plan_commit;
-use super::{Applied, CommitReport, apply, crashpoint, judgment};
+use super::{CommitReport, apply, crashpoint, judgment};
 
 /// The bound on [`commit_bounded`]'s retries of the transient
 /// commit-sync class — a decision, not a knob. With the 10 ms-doubling
@@ -45,11 +45,12 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
                 retries += 1;
                 obs::event(
                     obs::names::COMMIT_SYNC_RETRY,
-                    obs::Category::Commit,
-                    u64::from(retries),
-                    error
-                        .raw_os_error()
-                        .map_or(0, |code| u64::from(code.unsigned_abs())),
+                    obs::TraceArgs::Pair(
+                        u64::from(retries),
+                        error
+                            .raw_os_error()
+                            .map_or(0, |code| u64::from(code.unsigned_abs())),
+                    ),
                 );
                 std::thread::sleep(std::time::Duration::from_millis(10 << (retries - 1)));
             }
@@ -68,7 +69,7 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
 ///
 /// # Errors
 ///
-/// `CommitRejected` on a final state violating the theory, carrying the
+/// `Admission::Rejected` on a final state violating the theory, carrying the
 /// COMPLETE violation set in materialized statement order: every
 /// violated key statement (phase 2, which preempts the judgment), or
 /// every violated containment statement — a source left without its
@@ -84,7 +85,7 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
     clippy::needless_pass_by_value,
     reason = "consuming the delta is the commit boundary contract"
 )] // consuming the delta IS the contract: a commit ends it
-pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
+pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<Admission<CommitReport>> {
     // The empty delta is the *only* no-op commit shape — net dispositions
     // make every recorded entry a genuine state change. It commits without
     // touching query-visible state: the tx id does not advance and no
@@ -98,7 +99,18 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // see values, not words), so recycling an unflushed provisional intern
     // id is invisible.
     if delta.is_empty() {
-        obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
+        obs::event(obs::names::COMMIT_NOOP, obs::TraceArgs::None);
+        // Incremental empty-delta no-op. Sound iff the base already
+        // satisfies the theory (`State.models`). This is not complete
+        // admission: an empty [`IncrementalObligations`] roster would
+        // also accept, which misses closed-source containments, floored
+        // empty capacity groups, and every other untouched obligation.
+        // Format 8 create complete-admits first, so this shortcut is
+        // legal on that admitted base. Ordinary open refuses every
+        // earlier format; this arm never blesses a format-7 store.
+        // InstanceBuilder / create use
+        // [`crate::schema::CompleteObligations`], never this path.
+        //
         // The burn precedes the generation read: once the delta reaches
         // `commit()`, the write region's drop guard has disarmed and
         // commit owns the flush on EVERY termination — a generation read
@@ -111,11 +123,11 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        return Ok(CommitReport::Noop { generation });
+        return Ok(Admission::Accepted(CommitReport::Noop { generation }));
     }
 
     crashpoint!("after-staging");
-    let mut commit_span = obs::span(obs::names::COMMIT, obs::Category::Commit);
+    let mut commit_span = obs::span(obs::names::COMMIT);
     // The plan: every derivable key byte and check set, computed as a
     // pure function of (delta, schema) before the write lock. Selection
     // literals encode once per commit here — the resolution reads only
@@ -130,50 +142,23 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         let plan = {
             let view = env.read_txn()?;
             let selections = judgment::Selections::encode(&delta, &view)?;
-            plan_commit(&delta, schema, selections)?
+            plan_commit(&delta, selections)?
         };
         commit_bounded(|| {
-            let Applied {
-                mut txn,
-                row_id_next,
-            } = apply(&plan, env, schema)?;
+            let applied = match apply(&plan, env)? {
+                Admission::Rejected(violations) => {
+                    return Ok(Admission::Rejected(violations));
+                }
+                Admission::Accepted(applied) => applied,
+            };
             crashpoint!("before-judgment");
-
-            // Phase 3, the judgment phase: final-state probes inside this same
-            // write transaction (LMDB write txns read their own writes) — the
-            // containment source side over the plan's probe list, then the
-            // target side over the plan's disestablished-determinant check sets.
-            // Both sides are scan-complete collectors; the rejection is the
-            // sealed COMPLETE violation set, never its first member.
-            let final_state = judgment::FinalStateView::new(&txn, schema, &plan);
-            if let Some(violations) = judgment::judge(&final_state)? {
-                return Err(Error::CommitRejected { violations });
-            }
-
-            // Phase 4: counters — row counts, row-id high-waters, fresh
-            // sequences, pending dictionary entries and the dictionary
-            // next-id.
-            {
-                let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-                let interns = delta.pending_interns().count() as u64;
-                flush_counters(&mut txn, &delta, &row_id_next, env)?;
-                span.set_args(interns, 0);
-            }
-
-            // The storage tx id advances exactly once per state-changing
-            // commit.
-            let new_generation = txn.generation()?.next();
-            txn.put_generation(new_generation)?;
-            crashpoint!("after-judgment");
-
-            // Phase 5: LMDB commit (fsync per environment defaults) — the
-            // fsync-bound number, isolated.
-            {
-                let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
-                txn.commit()?;
-            }
-            crashpoint!("after-commit");
-            Ok(CommitReport::Changed { new_generation })
+            let judged = match applied.judge(&plan)? {
+                Admission::Rejected(violations) => {
+                    return Ok(Admission::Rejected(violations));
+                }
+                Admission::Accepted(judged) => judged,
+            };
+            Ok(Admission::Accepted(judged.finish(&delta, env)?))
         })
     })();
     // The never-reissue law spans the abort: every aborted attempt still
@@ -184,14 +169,13 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // counters-only commit writes exactly the dirty marks — no generation
     // bump, no cache advance). The in-process floor is raised even when
     // the disk write fails; a flush failure is parked and retried at the
-    // next write begin. A sealed `CommitRejected` is never replaced by
+    // next write begin. A sealed rejection is never replaced by
     // that flush error (or by a later decoration failure).
-    let flush = if outcome.is_err() {
-        flush_escaped_fresh_ids(env, &delta)
-    } else {
-        Ok(())
+    let flush = match &outcome {
+        Ok(Admission::Accepted(_)) => Ok(()),
+        Ok(Admission::Rejected(_)) | Err(_) => flush_escaped_fresh_ids(env, &delta),
     };
-    // The one rejection exit: every `CommitRejected` — phase 2's key
+    // The one rejection exit: every theory rejection — phase 2's key
     // set, phase 3's containment/capacity set — passes here, so the cited
     // facts decode here, ONCE, while the delta's provisional intern ids
     // are still resolvable: the abort burned its escaped *fresh* ids but
@@ -200,11 +184,11 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // as a dangling id (`docs/architecture/30-dependencies.md` §
     // rendering the rejection). Decoration is best-effort: a `read_txn`
     // or decode failure leaves the sealed set undecoded rather than
-    // swapping the error kind.
+    // converting a Rejected into an Err.
     let report = match outcome {
-        Err(Error::CommitRejected { violations }) => {
+        Ok(Admission::Rejected(violations)) => {
             let violations = decorate_rejected(violations, schema, env, &delta);
-            return Err(Error::CommitRejected { violations });
+            return Ok(Admission::Rejected(violations));
         }
         Err(other) => {
             return Err(match flush {
@@ -212,13 +196,13 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
                 Ok(()) => other,
             });
         }
-        Ok(report) => {
+        Ok(Admission::Accepted(report)) => {
             env.clear_pending_fresh_flush();
             report
         }
     };
-    commit_span.set_args(1, 0);
-    Ok(report)
+    commit_span.set_flag(true);
+    Ok(Admission::Accepted(report))
 }
 
 /// Decodes cited facts for a sealed rejection. Any secondary failure
@@ -250,7 +234,7 @@ fn decorate_rejected(
 ///
 /// `Corruption` on undecodable fact bytes or a genuinely dangling intern
 /// id (pending and committed both miss); `Lmdb` on dictionary reads. The
-/// caller keeps the sealed `CommitRejected` when this fails.
+/// caller keeps the sealed rejection when this fails.
 fn decode_cited_facts(
     violations: &Violations,
     schema: &crate::schema::Schema,
@@ -258,34 +242,34 @@ fn decode_cited_facts(
     delta: &WriteDelta<'_>,
 ) -> Result<Vec<Box<[crate::error::CitedFact]>>> {
     use crate::error::{CitedFact, Violation};
-    use crate::schema::StatementView;
-    let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.as_slice().len());
-    for violation in violations.as_slice() {
+    let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.len());
+    for violation in violations {
         let (relation, facts): (_, Vec<&[u8]>) = match violation {
-            Violation::Functionality(functionality) => {
-                let StatementView::Key(_, key) = schema.statement(functionality.statement()) else {
+            Violation::Functionality { .. } => {
+                let crate::schema::StatementView::Key(_, key) =
+                    schema.statement(violation.statement_id())
+                else {
                     unreachable!("a Functionality citation names a key statement");
                 };
                 (
                     key.relation,
-                    std::iter::once(functionality.fact())
-                        .chain(functionality.incumbent())
+                    std::iter::once(violation.fact())
+                        .chain(violation.incumbent())
                         .collect(),
                 )
             }
-            Violation::Containment {
-                statement, fact, ..
-            } => {
-                let StatementView::Containment(_, containment) = schema.statement(*statement)
+            Violation::Containment { fact, .. } => {
+                let crate::schema::StatementView::Containment(_, containment) =
+                    schema.statement(violation.statement_id())
                 else {
                     unreachable!("a Containment citation names a containment statement");
                 };
                 (containment.source.relation, vec![fact.as_ref()])
             }
-            Violation::Capacity {
-                statement, fact, ..
-            } => {
-                let StatementView::Capacity(_, capacity) = schema.statement(*statement) else {
+            Violation::Capacity { fact, .. } => {
+                let crate::schema::StatementView::Capacity(_, capacity) =
+                    schema.statement(violation.statement_id())
+                else {
                     unreachable!("a Capacity citation names a capacity statement");
                 };
                 (capacity.target.relation, vec![fact.as_ref()])
@@ -301,16 +285,21 @@ fn decode_cited_facts(
                         "cited fact width",
                     )));
                 }
-                let values = crate::encoding::decode_values(bytes, layout, |id| {
-                    match delta.pending_raw(id) {
-                        Some(raw) => Ok(Box::from(raw)),
-                        None => Ok(Box::from(crate::storage::dict::resolve(view, id)?)),
-                    }
+                let values = crate::encoding::decode_values(layout.encoded(bytes), |id| {
+                    let id = crate::encoding::InternId::from_raw(id);
+                    let raw = match delta.pending_raw(id) {
+                        Some(raw) => raw,
+                        None => crate::storage::dict::resolve(view, id)?,
+                    };
+                    std::str::from_utf8(raw)
+                        .map(Box::from)
+                        .map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id.raw())))
                 })?;
-                Ok(CitedFact {
+                Ok(CitedFact::new(
                     relation,
-                    values: values.into_boxed_slice(),
-                })
+                    layout.field_count(),
+                    values.into_boxed_slice(),
+                ))
             })
             .collect::<Result<Box<[CitedFact]>>>()?;
         cited.push(decoded);
@@ -332,10 +321,7 @@ pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>)
     env.note_escaped_fresh(delta.dirty_fresh_marks());
     let mut marks = env.take_pending_fresh_flush();
     for (rel, field, next) in delta.dirty_fresh_marks() {
-        marks
-            .entry((rel, field))
-            .and_modify(|held| *held = (*held).max(next))
-            .or_insert(next);
+        marks.join(rel, field, next);
     }
     persist_or_park(env, marks)
 }
@@ -347,7 +333,7 @@ pub(crate) fn flush_pending_escaped_fresh_ids(env: &Environment) -> Result<()> {
     persist_or_park(env, env.take_pending_fresh_flush())
 }
 
-fn persist_or_park(env: &Environment, marks: BTreeMap<(RelationId, FieldId), u64>) -> Result<()> {
+fn persist_or_park(env: &Environment, marks: FreshMarks) -> Result<()> {
     if marks.is_empty() {
         return Ok(());
     }
@@ -360,28 +346,26 @@ fn persist_or_park(env: &Environment, marks: BTreeMap<(RelationId, FieldId), u64
     }
 }
 
-fn persist_fresh_marks(
-    env: &Environment,
-    marks: &BTreeMap<(RelationId, FieldId), u64>,
-) -> Result<()> {
+fn persist_fresh_marks(env: &Environment, marks: &FreshMarks) -> Result<()> {
     #[cfg(test)]
     if env.consume_fresh_flush_failure() {
-        return Err(Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull)));
+        return Err(Error::Lmdb(crate::error::LmdbFailure::Mdb(
+            heed::MdbError::MapFull,
+        )));
     }
     commit_bounded(|| {
         let mut txn = env.write_txn()?;
         let data = txn.env().data();
-        let mut key: KeyBuf = [0; MAX_KEY];
         let mut count = 0u64;
-        let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-        for ((rel, field), next) in marks {
-            let len = keys::fresh_key(&mut key, *rel, *field);
-            data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+        let mut span = obs::span(obs::names::COUNTERS_FLUSH);
+        for ((rel, field), next) in marks.iter() {
+            let key = keys::fresh_key(rel, field);
+            data.put(txn.raw_mut(), &key, next.to_le_bytes().as_slice())?;
             count += 1;
         }
-        span.set_args(0, count);
+        span.set_count(count);
         span.end();
-        let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+        let _s = obs::span(obs::names::LMDB_COMMIT);
         txn.commit()
     })
 }
@@ -390,20 +374,19 @@ fn persist_fresh_marks(
 /// fresh next-values (`Q`), pending dictionary entries, and the
 /// dictionary next-id. Parked escaped-id burns merge into the `Q` puts
 /// so a later successful commit makes them durable.
-fn flush_counters(
+pub(super) fn flush_counters(
     txn: &mut WriteTxn<'_>,
     delta: &WriteDelta<'_>,
     row_id_next: &BTreeMap<RelationId, u64>,
     env: &Environment,
 ) -> Result<()> {
     let data = txn.env().data();
-    let mut key: KeyBuf = [0; MAX_KEY];
     for (rel, count_delta) in delta.row_count_deltas() {
         if count_delta == 0 {
             continue;
         }
-        let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
-        let current = match data.get(txn.raw(), &key[..len])? {
+        let key = keys::stat_key(rel, StatKind::RowCount);
+        let current = match data.get(txn.raw(), &key)? {
             Some(bytes) => crate::storage::stored_u64(bytes, "S row count")?,
             None => 0,
         };
@@ -420,32 +403,27 @@ fn flush_counters(
                 )));
             }
         };
-        data.put(txn.raw_mut(), &key[..len], updated.to_le_bytes().as_slice())?;
+        data.put(txn.raw_mut(), &key, updated.to_le_bytes().as_slice())?;
         crashpoint!("mid-write-s");
     }
     for (rel, next) in row_id_next {
-        let len = keys::stat_key(&mut key, *rel, StatKind::RowIdHighWater);
-        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+        let key = keys::stat_key(*rel, StatKind::RowIdHighWater);
+        data.put(txn.raw_mut(), &key, next.to_le_bytes().as_slice())?;
     }
-    let mut q_marks = BTreeMap::new();
+    let mut q_marks = FreshMarks::default();
     for (rel, field, next) in delta.fresh_marks() {
-        q_marks.insert((rel, field), next);
+        q_marks.join(rel, field, next);
     }
-    for ((rel, field), next) in env.peek_pending_fresh_flush() {
-        q_marks
-            .entry((rel, field))
-            .and_modify(|held| *held = (*held).max(next))
-            .or_insert(next);
-    }
+    q_marks.join_all(env.peek_pending_fresh_flush());
     for ((rel, field), next) in q_marks {
-        let len = keys::fresh_key(&mut key, rel, field);
-        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+        let key = keys::fresh_key(rel, field);
+        data.put(txn.raw_mut(), &key, next.to_le_bytes().as_slice())?;
     }
-    for (raw, id) in delta.pending_interns() {
-        crate::storage::dict::put_pending(txn, raw, id)?;
-    }
-    if let Some(dict_next) = delta.dict_next() {
-        txn.put_dict_next_id(dict_next)?;
+    if let Some(interns) = delta.interns() {
+        for (raw, id) in interns.entries() {
+            crate::storage::dict::put_pending(txn, raw, id)?;
+        }
+        txn.put_dict_next_id(interns.next_id())?;
     }
     Ok(())
 }

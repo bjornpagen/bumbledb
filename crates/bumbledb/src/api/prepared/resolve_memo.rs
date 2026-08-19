@@ -2,8 +2,7 @@ use super::{Answers, ResolveMemo};
 
 use crate::error::{Error, Result};
 use crate::obs;
-use crate::storage::dict;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
 
 impl ResolveMemo {
     pub(super) fn new() -> Self {
@@ -31,9 +30,9 @@ impl ResolveMemo {
     /// so reads never re-validate (parse, don't validate). Strings are
     /// the only interned type, so the key is the bare word — the tag
     /// byte died with variable bytes (docs/architecture/50-storage.md).
-    pub(super) fn resolve(
+    pub(super) fn resolve<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         word: u64,
         buffer: &mut Answers,
     ) -> Result<(usize, usize)> {
@@ -53,12 +52,11 @@ impl ResolveMemo {
             if let (range, false) = self.arena_ranges.get_or_insert_with(&key, || (0, 0)) {
                 (range.0 as usize, range.1 as usize)
             } else {
-                let raw = dict::resolve(txn, word)?;
+                let stored = catalog.dict_resolve(crate::encoding::InternId::from_raw(word))?;
+                let raw = stored.as_ref();
                 obs::event(
                     obs::names::DICT_RESOLVE,
-                    obs::Category::Storage,
-                    word,
-                    raw.len() as u64,
+                    obs::TraceArgs::Pair(word, raw.len() as u64),
                 );
                 let text = std::str::from_utf8(raw).map_err(|_| {
                     Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))

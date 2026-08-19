@@ -477,7 +477,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // the spanning seen-set is the union — 40-execution's rule
         // loop, differentially pinned against the model's set union).
         (
-            Query::Cq {
+            Query {
                 interiors: vec![],
                 head: vec![HeadTerm::Var],
                 rules: vec![
@@ -501,6 +501,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         })],
                     },
                 ],
+                rec: None,
             },
             vec![],
         ),
@@ -509,7 +510,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // booking matched by both rules folds once — the union fold,
         // 20-query-ir § aggregation).
         (
-            Query::Cq {
+            Query {
                 interiors: vec![],
                 head: vec![
                     HeadTerm::Aggregate(HeadOp::Sum),
@@ -536,6 +537,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         })],
                     },
                 ],
+                rec: None,
             },
             vec![],
         ),
@@ -543,7 +545,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // of room ?0 ∪ references >= ?0 (params bind once; every rule
         // reads the shared slot).
         (
-            Query::Cq {
+            Query {
                 interiors: vec![],
                 head: vec![HeadTerm::Var],
                 rules: vec![
@@ -564,6 +566,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         })],
                     },
                 ],
+                rec: None,
             },
             vec![ParamValue::Scalar(Value::U64(2))],
         ),
@@ -586,7 +589,9 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 
     let descriptor = schema();
     let dir = TempDir::new("differential-net-disposition");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     // Pre-seed {a, b}: a booking and the marker it requires.
@@ -639,7 +644,9 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 fn fixed_200_op_stream_agrees_with_the_engine() {
     let descriptor = schema();
     let dir = TempDir::new("differential-200");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let mut rng = Rng(0x0021_0001);

@@ -4,7 +4,7 @@ use super::{COMPANIES, HOT_KEYWORDS, HOT_PEOPLE, KEYWORDS, KINDS, MOVIES, PEOPLE
 use crate::corpus_gen::Rng;
 
 pub(super) fn s(text: String) -> Value {
-    Value::String(text.into_bytes().into())
+    Value::String(text.into())
 }
 
 /// One deterministic row (pure in (seed, relation, index) — params can

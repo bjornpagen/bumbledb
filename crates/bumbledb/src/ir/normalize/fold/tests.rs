@@ -1,6 +1,7 @@
 use super::super::{OccBind, OccId, Role, normalize_rules};
 use super::*;
 use crate::encoding::encode_i64;
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, VarId};
 use crate::ir::{CmpOp, WordCmp};
@@ -8,7 +9,8 @@ use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::dict::SENTINEL_ID;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, ValueType,
 };
 
 /// R(id u64 fresh, a i64, k u64) + P(emp u64, during interval<i64>,
@@ -43,7 +45,7 @@ fn schema() -> Schema {
                 name: "P".into(),
                 fields: vec![
                     field("emp", ValueType::U64),
-                    field("during", interval_i64.clone()),
+                    field("during", interval_i64),
                     field("review", interval_i64),
                     field("at", ValueType::I64),
                 ],
@@ -237,12 +239,12 @@ fn an_order_conjunction_folds_to_one_summary() {
         normalized.occurrences[0].filters,
         vec![
             FilterPredicate::Compare {
-                field: R_A,
+                field: R_A.into(),
                 op: WordCmp::Ge,
                 value: Const::Word(w(7)),
             },
             FilterPredicate::Compare {
-                field: R_A,
+                field: R_A.into(),
                 op: WordCmp::Le,
                 value: Const::Word(w(19)),
             },
@@ -267,7 +269,7 @@ fn an_eq_pin_subsumes_its_folded_bounds() {
     assert_eq!(
         normalized.occurrences[0].filters,
         vec![FilterPredicate::Compare {
-            field: R_A,
+            field: R_A.into(),
             op: WordCmp::Eq,
             value: Const::Word(w(5)),
         }],
@@ -391,12 +393,12 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
     let schema = schema();
     let filters = vec![
         FilterPredicate::Compare {
-            field: R_A,
+            field: R_A.into(),
             op: WordCmp::Gt,
             value: Const::Word(w(5)),
         },
         FilterPredicate::Compare {
-            field: R_A,
+            field: R_A.into(),
             op: WordCmp::Lt,
             value: Const::Word(w(3)),
         },
@@ -444,7 +446,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
         point_vars: vec![],
     };
     let mut empty_set = vec![occurrence(vec![FilterPredicate::Compare {
-        field: FieldId(2),
+        field: FieldId(2).into(),
         op: WordCmp::Eq,
         value: Const::WordSet(vec![SENTINEL_ID]),
     }])];
@@ -452,12 +454,12 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
 
     let mut disjoint = vec![occurrence(vec![
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 2]),
         },
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Eq,
             value: Const::Word(7),
         },
@@ -469,12 +471,12 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
 
     let mut member = vec![occurrence(vec![
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 7]),
         },
         FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Eq,
             value: Const::Word(7),
         },

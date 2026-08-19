@@ -587,7 +587,7 @@ fn curve_point<S>(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
 
     // The engine's answers for every draw — the gate's left side.
@@ -595,7 +595,7 @@ fn curve_point<S>(
     let mut ours_answers = Vec::with_capacity(bundle.draws.len());
     for draw in &bundle.draws {
         let args = param_args(draw);
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{name}: execute: {e:?}"))?;
         ours_answers.push(compare::from_answers(&buffer, &types));
     }
@@ -632,7 +632,7 @@ fn curve_point<S>(
     let (ours, mut ghz) = clockproxy::frequency_checked(|| {
         harness::measure(proto, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })
@@ -765,7 +765,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty().clone())
+            .map(|column| *column.ty())
             .collect()
     };
 
@@ -781,12 +781,12 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         let mut buffer = Answers::new();
         let start = Instant::now();
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("warmth execute: {e:?}"))?;
         let first = elapsed_ns(start);
         std::hint::black_box(buffer.len());
         let start = Instant::now();
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("warmth execute: {e:?}"))?;
         let second = elapsed_ns(start);
         std::hint::black_box(buffer.len());
@@ -808,7 +808,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         let mut buffer = Answers::new();
         let measured = harness::measure(MEMO_PROTOCOL, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })?;
@@ -1256,7 +1256,6 @@ mod tests {
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
@@ -1555,13 +1554,13 @@ mod tests {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty().clone())
+            .map(|column| *column.ty())
             .collect();
         let mut buffer = Answers::new();
         let mut ours = Vec::new();
         for draw in &bundle.draws {
             let args = param_args(draw);
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("{e:?}"))
                 .expect("execute");
             ours.push(compare::from_answers(&buffer, &types));

@@ -29,9 +29,9 @@ use crate::image::build::image_with_tolerance;
 use crate::image::view::{FilterPredicate, apply};
 use crate::image::{Column, RelationImage, SET_STRIDE};
 use crate::ir::WordCmp;
-use bumbledb_theory::TypeDesc;
 use bumbledb_theory::schema::FieldId;
 use bumbledb_theory::schema::IntervalElement;
+use bumbledb_theory::schema::ValueType;
 
 /// The shipped rule (production `PAD_TOLERANCE`).
 const SHIPPED: usize = 384;
@@ -226,7 +226,7 @@ const PAIRS_PER_BLOCK: u64 = 3;
     reason = "the falsifier reads as one protocol: trace, warm, alternate, report"
 )]
 fn stride_band_ab_falsifier() {
-    let field_types = vec![TypeDesc::U64; COLS];
+    let field_types = vec![ValueType::U64; COLS];
     // Arm A — the shipped rule: residue 1024 passes unpadded (poison).
     let mut poison = image_with_tolerance(&field_types, POISON_ROWS, SHIPPED);
     // Arm B — the widened rule: the same shape pads to the exact multiple.
@@ -260,8 +260,8 @@ fn stride_band_ab_falsifier() {
 
     let preds: Vec<FilterPredicate> = (0..4)
         .map(|j| FilterPredicate::FieldsCompare {
-            left: FieldId(2 * j),
-            right: FieldId(2 * j + 1),
+            left: FieldId(2 * j).into(),
+            right: FieldId(2 * j + 1).into(),
             op: WordCmp::Le,
         })
         .collect();
@@ -410,7 +410,7 @@ fn stride_band_ab_falsifier() {
 fn stride_band_ab_falsifier_small_pitch() {
     const ROWS_POISON: usize = 524_416; // ×8 = 4 MiB + 1 KiB
     const ROWS_HEALTHY: usize = 524_288; // ×8 = 4 MiB exactly
-    let field_types = vec![TypeDesc::U64; 24];
+    let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS_POISON, SHIPPED);
     let mut cured = image_with_tolerance(&field_types, ROWS_POISON, WIDENED);
     let mut healthy = image_with_tolerance(&field_types, ROWS_HEALTHY, WIDENED);
@@ -500,7 +500,7 @@ fn stride_band_ab_falsifier_small_pitch() {
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_ab_residue_128_discriminator() {
     const ROWS: usize = 524_304; // ×8 = 4 MiB + 128 B
-    let field_types = vec![TypeDesc::U64; 24];
+    let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS, 0);
     let mut cured = image_with_tolerance(&field_types, ROWS, SHIPPED);
     for &s in &strides(&poison) {
@@ -567,7 +567,7 @@ fn stride_band_ab_residue_128_discriminator() {
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_residue_sweep() {
-    let field_types = vec![TypeDesc::U64; 24];
+    let field_types = vec![ValueType::U64; 24];
     for residue in [128usize, 256, 384, 512, 768, 1024, 1536, 2048] {
         let rows = (4 * 1024 * 1024 + residue) / 8;
         let mut poison = image_with_tolerance(&field_types, rows, 0);
@@ -629,7 +629,7 @@ fn stride_band_residue_sweep() {
 /// never moves (the slack is pre-paid per column).
 #[test]
 fn widened_band_pads_the_kilobyte_residue() {
-    let field_types = vec![TypeDesc::U64; COLS];
+    let field_types = vec![ValueType::U64; COLS];
     // 8320 × 8 B = 65 KiB = 4 × 16 KiB + 1 KiB: past the tier gate,
     // residue 1024.
     let rows = 8320;
@@ -669,12 +669,12 @@ fn widened_band_pads_the_kilobyte_residue() {
 #[test]
 #[ignore = "host-pinned falsifier: the expected set transcribes the reference host's allocator layout — run on the macOS M2 Max"]
 fn corpus_shapes_move_only_where_the_band_says() {
-    use TypeDesc::{I64, Interval, String as Str, U64};
+    use ValueType::{I64, Interval, String as Str, U64};
     let iv = Interval {
         element: IntervalElement::I64,
     };
     // (name, field types, [S rows, M rows, L rows])
-    let shapes: Vec<(&str, Vec<TypeDesc>, [usize; 3])> = vec![
+    let shapes: Vec<(&str, Vec<ValueType>, [usize; 3])> = vec![
         ("Holder", vec![U64, Str], [125, 1_250, 12_500]),
         ("Account", vec![U64, U64, U64], [500, 5_000, 50_000]),
         ("Instrument", vec![U64, Str], [512, 512, 512]),

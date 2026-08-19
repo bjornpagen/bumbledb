@@ -18,7 +18,7 @@ pub const DETERMINANT_KEY_HEADER: usize = 1 + 4 + 2;
 /// oversized scratch (post-mortem §25). Byte equality with the codec's
 /// writer is pinned by `composed_determinant_key_matches_the_codec`.
 pub fn begin_determinant_key(out: &mut Vec<u8>, rel: RelationId, statement: StatementId) {
-    out.push(keys::NS_DETERMINANT);
+    out.push(keys::Namespace::Determinant.tag());
     out.extend_from_slice(&rel.0.to_be_bytes());
     out.extend_from_slice(&statement.0.to_be_bytes());
 }

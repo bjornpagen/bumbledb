@@ -82,7 +82,7 @@ fn build_occurrences(
             // positional reading `lean/Bumbledb/Query/Denotation.lean:
             // tupleFact` promises; the transient image is built with
             // exactly these types, so the spans agree by construction).
-            let field_types: Vec<bumbledb_theory::TypeDesc> = match occurrence.source() {
+            let field_types: Vec<bumbledb_theory::schema::ValueType> = match occurrence.source() {
                 crate::ir::AtomSource::Edb(relation) => {
                     let layout = schema.relation(relation).layout();
                     (0..layout.field_count())
@@ -92,7 +92,7 @@ fn build_occurrences(
                 crate::ir::AtomSource::Interior(id) => signatures[id.index()]
                     .columns
                     .iter()
-                    .map(|column| column.ty().type_desc())
+                    .map(|column| *column.ty())
                     .collect(),
             };
             // A positive occurrence's Eq-constants become selection
@@ -176,10 +176,9 @@ pub fn validate(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
-    estimates: Vec<u64>,
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
-    validate_with_signatures(plan, normalized, schema, &[], estimates, sink_vars)
+    validate_with_signatures(plan, normalized, schema, &[], sink_vars)
 }
 
 /// [`validate`] with the interiors/rec signature surface: an `Interior`
@@ -206,7 +205,6 @@ pub fn validate_with_signatures(
     normalized: &NormalizedQuery,
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
-    estimates: Vec<u64>,
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
     check_occurrence_coverage(plan, normalized)?;
@@ -258,42 +256,46 @@ pub fn validate_with_signatures(
 
     // Residual placement: the earliest node at which both sides are bound.
     for (residual_idx, residual) in normalized.residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, &[residual.lhs, residual.rhs]) else {
+        let (left, right, _) = residual.compare_sides();
+        let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
             return Err(PlanError::UnplacedResidual {
                 residual: residual_idx,
             });
         };
-        nodes[node].residuals.push(*residual);
+        nodes[node].residuals.push(residual.clone());
     }
     // Decomposed point-membership word residuals: the same rule over
     // the word operands' variables.
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, &[residual.lhs.var, residual.rhs.var]) else {
+        let (left, right, _) = residual.compare_sides();
+        let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
             return Err(PlanError::UnplacedWordResidual {
                 residual: residual_idx,
             });
         };
-        nodes[node].word_residuals.push(*residual);
+        nodes[node].word_residuals.push(residual.clone());
     }
     // Allen residuals: the same rule again — the earliest node binding
     // both interval variables.
     for (residual_idx, residual) in normalized.allen_residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, &[residual.lhs, residual.rhs]) else {
+        let (left, right, _) = residual.allen_sides();
+        let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
             return Err(PlanError::UnplacedAllenResidual {
                 residual: residual_idx,
             });
         };
-        nodes[node].allen_residuals.push(*residual);
+        nodes[node].allen_residuals.push(residual.clone());
     }
     // Measure residuals: the same rule — the earliest node binding the
     // interval variable and its u64 comparison side.
     for (residual_idx, residual) in normalized.duration_residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, &[residual.interval, residual.scalar]) else {
+        let (interval, scalar, _) = residual.duration_sides();
+        let Some(node) = earliest_bound_node(&bound, &[interval.var(), scalar.var()]) else {
             return Err(PlanError::UnplacedDurationResidual {
                 residual: residual_idx,
             });
         };
-        nodes[node].duration_residuals.push(*residual);
+        nodes[node].duration_residuals.push(residual.clone());
     }
     // Anti-probe attachment: the earliest node binding the negated
     // occurrence's whole variable set — probe keys plus point-filter
@@ -390,6 +392,5 @@ pub fn validate_with_signatures(
         nodes,
         slots,
         distinctness,
-        estimates,
     })
 }

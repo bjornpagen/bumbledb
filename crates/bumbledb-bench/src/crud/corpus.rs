@@ -71,9 +71,10 @@ pub fn load_stores(
     for rel in [ids::DOC, ids::COUNTER] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(sizes, seed, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("load: {e:?}"))?;
+        .map_err(|e| format!("load: {e:?}"))?
+        .unwrap();
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;

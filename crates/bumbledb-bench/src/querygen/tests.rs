@@ -22,8 +22,7 @@ const CFG: GenConfig = GenConfig {
 fn a_thousand_queries_validate_and_translate() {
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, target::Target).expect("create");
+    let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
     let mut naive_routed = 0u64;
     for i in 0..N {
@@ -217,8 +216,7 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
     use super::construct::random_query_tagged;
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen-grounding");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, target::Target).expect("create");
+    let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
     let (mut eliminated, mut refused) = (0u32, 0u32);
     for i in 0..N {
@@ -231,7 +229,7 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
         match variant {
             GroundVariant::Walk => {
                 assert_eq!(
-                    stats.rules()[0].eliminated.len(),
+                    stats.rules()[0].eliminated().len(),
                     1,
                     "walk {i} must eliminate"
                 );
@@ -244,12 +242,12 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
                     "ImportBatch"
                 };
                 assert_eq!(
-                    stats.rules()[0].eliminated.len(),
+                    stats.rules()[0].eliminated().len(),
                     1,
                     "DU walk {i} must eliminate"
                 );
                 assert_eq!(
-                    stats.rules()[0].eliminated[0].relation,
+                    stats.rules()[0].eliminated()[0].relation,
                     fallen,
                     "DU walk {i} fells the wrong side"
                 );
@@ -257,9 +255,9 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
             }
             GroundVariant::WalkExtraField | GroundVariant::DuMissingPhi => {
                 assert!(
-                    stats.rules()[0].eliminated.is_empty(),
+                    stats.rules()[0].eliminated().is_empty(),
                     "near-miss {i} must refuse: {:?}",
-                    stats.rules()[0].eliminated
+                    stats.rules()[0].eliminated()
                 );
                 refused += 1;
             }
@@ -345,14 +343,14 @@ fn generated_string_literals_are_nul_free() {
             for atom in rule.atoms.iter().chain(&rule.negated) {
                 for (_, term) in &atom.bindings {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
-                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                        assert!(!raw.contains('\0'), "a generated literal carries NUL");
                     }
                 }
             }
             for comparison in rule.conditions.iter().map(crate::querygen::leaf) {
                 for term in [&comparison.lhs, &comparison.rhs] {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
-                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                        assert!(!raw.contains('\0'), "a generated literal carries NUL");
                     }
                 }
             }
@@ -458,7 +456,7 @@ fn check_miss(
         Value::String(raw) => {
             *saw_string = true;
             assert!(
-                raw.starts_with(b"missing-"),
+                raw.starts_with("missing-"),
                 "miss-draw string params are guaranteed misses"
             );
         }
@@ -536,7 +534,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         }
     }
     let dir = crate::fixture::TempDir::new("recursive-arm-engine");
-    let engine = bumbledb::Db::create(dir.path(), target::descriptor()).expect("create engine");
+    let engine = target::publish_admitted(dir.path());
     engine
         .write(|tx| {
             for rel in [target::ids::ORG, target::ids::ORG_PARENT] {
@@ -546,7 +544,8 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
             }
             Ok(())
         })
-        .expect("the org tree satisfies the statements");
+        .expect("the org tree satisfies the statements")
+        .unwrap();
 
     let mut rng = Rng::new(SEED);
     let mut tally = RecursiveCoverage::default();
@@ -609,13 +608,14 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         }
 
         if variant == RecursiveVariant::EmptyDelta {
-            let Query::Reach { rec, .. } = &query else {
+            let Query { rec: Some(rec), .. } = &query else {
                 panic!("empty-delta variant is Reach");
             };
-            let base_only = Query::Cq {
+            let base_only = Query {
                 interiors: vec![],
                 head: rec.head(),
                 rules: rec.base.iter().map(bumbledb::RecRule::to_rule).collect(),
+                rec: None,
             };
             let base_answers = naive
                 .query(&base_only, &[])
@@ -632,7 +632,10 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         let mut prepared = engine.prepare(&query).expect("the drawn closure validates");
         prepared.set_derived_budget(1, u64::MAX);
         let error = engine
-            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .read(|snap| {
+                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                    .map(|_| ())
+            })
             .expect_err("a one-round budget cannot close a nonempty closure");
         assert!(
             matches!(
@@ -643,7 +646,10 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         );
         prepared.set_derived_budget(1 << 16, u64::MAX);
         engine
-            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .read(|snap| {
+                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                    .map(|_| ())
+            })
             .expect("the widened budget closes the fixpoint");
         tally.budget_trip += 1;
     }
@@ -655,7 +661,10 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
             .expect("the drawn interiors query validates");
         prepared.set_derived_budget(0, 0);
         let error = engine
-            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .read(|snap| {
+                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                    .map(|_| ())
+            })
             .expect_err("a zero-tuple budget trips on interiors");
         assert!(
             matches!(
@@ -666,7 +675,10 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         );
         prepared.set_derived_budget(0, u64::MAX);
         engine
-            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .read(|snap| {
+                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                    .map(|_| ())
+            })
             .expect("tight rounds alone must not trip interiors-only");
         tally.preamble_ledger_trip += 1;
     }
@@ -702,9 +714,9 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
         RecRule, RecStep, Rule, Term, VarId,
     };
 
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![Atom {
@@ -728,7 +740,7 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
                 }],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],

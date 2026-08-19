@@ -26,7 +26,9 @@ bumbledb::schema! {
 #[test]
 fn point_reads_observe_the_final_state_before_commit() {
     let dir = common::TempDir::new("points-read-your-writes");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     let id = db
         .write(|tx| {
@@ -38,11 +40,11 @@ fn point_reads_observe_the_final_state_before_commit() {
             };
             // Insert, then read back through the pending delta — the
             // holder string exists only as a provisional intern id here.
-            assert_eq!(tx.insert([&acct])?.changed, 1);
+            assert_eq!(tx.insert([&acct])?.changed(), 1);
             assert!(tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, Some(acct));
             // Delete: the final state no longer holds the fact.
-            assert_eq!(tx.delete([&acct])?.changed, 1);
+            assert_eq!(tx.delete([&acct])?.changed(), 1);
             assert!(!tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, None);
             // Delete + reinsert(modified): the key re-establishes with
@@ -51,13 +53,15 @@ fn point_reads_observe_the_final_state_before_commit() {
                 balance: 42,
                 ..acct
             };
-            assert_eq!(tx.insert([&modified])?.changed, 1);
+            assert_eq!(tx.insert([&modified])?.changed(), 1);
             assert!(tx.contains(&modified)?);
             assert!(!tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, Some(modified));
             Ok(id)
         })
-        .expect("write");
+        .expect("write")
+        .unwrap()
+        .value;
 
     // The post-commit point reads answer identically.
     let survivor = Account {
@@ -74,7 +78,8 @@ fn point_reads_observe_the_final_state_before_commit() {
         assert_eq!(tx.get(id)?, Some(survivor));
         Ok(())
     })
-    .expect("post-commit point reads");
+    .expect("post-commit point reads")
+    .unwrap();
 
     // And the read-transaction view agrees fact-for-fact.
     db.read(|snap| {
@@ -91,7 +96,9 @@ fn point_reads_observe_the_final_state_before_commit() {
 #[test]
 fn point_reads_fall_through_to_committed_state() {
     let dir = common::TempDir::new("points-committed-fallthrough");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let id = db
         .write(|tx| {
             let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
@@ -102,7 +109,9 @@ fn point_reads_fall_through_to_committed_state() {
             }])?;
             Ok(id)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     db.write(|tx| {
         // Touch an unrelated fact so the delta is nonempty but the probed
@@ -131,7 +140,8 @@ fn point_reads_fall_through_to_committed_state() {
         assert_eq!(tx.get(AccountId(999))?, None);
         Ok(())
     })
-    .expect("fallthrough reads");
+    .expect("fallthrough reads")
+    .unwrap();
 }
 
 /// Regression: a compensating delete that *cancels* a pending insert nets
@@ -139,11 +149,13 @@ fn point_reads_fall_through_to_committed_state() {
 /// committed owner, typed and dynamic alike, and the blessed upsert idiom
 /// composed after the cancelled pair takes the seen arm and commits
 /// cleanly (the poisoned overlay used to deny the committed row and
-/// steer the idiom into a spurious `CommitRejected`).
+/// steer the idiom into a spurious `Admission::Rejected`).
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_row() {
     let dir = common::TempDir::new("points-cancelled-insert");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let id = db
         .write(|tx| {
             let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
@@ -154,7 +166,9 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             }])?;
             Ok(id)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     db.write(|tx| {
         // A pending insert on the committed key, then its compensating
@@ -165,7 +179,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
                 holder: "ada",
                 balance: 20,
             }])?
-            .changed,
+            .changed(),
             1
         );
         assert_eq!(
@@ -174,7 +188,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
                 holder: "ada",
                 balance: 20,
             }])?
-            .changed,
+            .changed(),
             1
         );
 
@@ -209,7 +223,8 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         }])?;
         Ok(())
     })
-    .expect("the composed upsert commits cleanly");
+    .expect("the composed upsert commits cleanly")
+    .unwrap();
 
     db.read(|snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
@@ -257,7 +272,9 @@ fn every_fresh_field_is_its_own_typed_key() {
     assert_eq!(<TagId as Key>::STATEMENT, bumbledb::schema::StatementId(2));
 
     let dir = common::TempDir::new("points-multi-fresh-keys");
-    let db = Db::create(dir.path(), Registry).expect("create");
+    let db = Db::create(dir.path(), Registry)
+        .expect("create")
+        .expect("accepted");
     let (left, right) = db
         .write(|tx| {
             let left = tx.reserve::<LeftId>(1)?.start().expect("nonempty");
@@ -267,7 +284,9 @@ fn every_fresh_field_is_its_own_typed_key() {
             assert_eq!(tx.get(right)?, Some(Pair { left, right }));
             Ok((left, right))
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
     db.read(|snap| {
         assert_eq!(snap.get(left)?, Some(Pair { left, right }));
         assert_eq!(snap.get(right)?, Some(Pair { left, right }));
@@ -277,14 +296,16 @@ fn every_fresh_field_is_its_own_typed_key() {
     .expect("read");
 }
 
-/// `Snapshot::get` — the committed-state sibling of `WriteTx::get`,
+/// `ReadInstance::get` — the committed-state sibling of `WriteTx::get`,
 /// through the same typed key value: a committed fact comes back from
 /// the read scope (`db.read(|snap| snap.get(id))`), and an unallocated
 /// id misses cleanly.
 #[test]
 fn snapshot_get_reads_committed_state_through_the_fresh_key() {
     let dir = common::TempDir::new("points-snapshot-get");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let id = db
         .write(|tx| {
             let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
@@ -295,7 +316,9 @@ fn snapshot_get_reads_committed_state_through_the_fresh_key() {
             }])?;
             Ok(id)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     db.read(|snap| {
         assert_eq!(
@@ -341,7 +364,9 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
             }
         }
         Ok(())
-    })
+    })?
+    .unwrap();
+    Ok(())
 }
 
 /// A counter increment round-trips across three write transactions: the
@@ -350,7 +375,9 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
 #[test]
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     let dir = common::TempDir::new("points-upsert-counter");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     // An explicit fresh value is legal on the write path; the high-water
     // mark advances past it.
     let id = AccountId(7);
@@ -381,7 +408,9 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
 #[test]
 fn snapshot_contains_answers_typed_membership_against_committed_state() {
     let dir = common::TempDir::new("points-snap-contains");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let id = db
         .write(|tx| {
             let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
@@ -392,7 +421,9 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
             }])?;
             Ok(id)
         })
-        .expect("write");
+        .expect("write")
+        .unwrap()
+        .value;
     db.read(|snap| {
         let committed = Account {
             id,
@@ -424,7 +455,9 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
 )]
 fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let dir = common::TempDir::new("points-snap-generation");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let before = db.generation().expect("generation");
     assert_eq!(db.read(|snap| snap.generation()).expect("read"), before);
     db.write(|tx| {
@@ -436,7 +469,8 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
         }])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let after = db.read(|snap| snap.generation()).expect("read");
     assert_eq!(after, db.generation().expect("generation"));
     assert_ne!(before, after);
@@ -476,7 +510,9 @@ fn schema_warnings_surface_on_the_handle() {
         ],
     };
     let dir = common::TempDir::new("points-schema-warnings");
-    let db = Db::create(dir.path(), descriptor).expect("create");
+    let db = Db::create(dir.path(), descriptor)
+        .expect("create")
+        .expect("accepted");
     let warnings = db.schema_warnings();
     assert_eq!(warnings.len(), 1);
     let SchemaWarning::RedundantSuperkey {

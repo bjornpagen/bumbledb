@@ -51,10 +51,13 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
-        facts += db.write(|tx| {
-            tx.insert_dyn(rel, relation_rows(cfg, rel))
-                .map(|r| r.changed)
-        })?;
+        facts += db
+            .write(|tx| {
+                tx.insert_dyn(rel, relation_rows(cfg, rel))
+                    .map(bumbledb::MutationReport::changed)
+            })?
+            .unwrap()
+            .value;
     }
     Ok(LoadStats::of(facts, start.elapsed()))
 }
@@ -263,7 +266,6 @@ mod tests {
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
@@ -276,7 +278,9 @@ mod tests {
             seed: 1,
             scale: Scale::S,
         };
-        let db = Db::create(&dir.join("db"), Ledger).expect("create");
+        let db = Db::create(&dir.join("db"), Ledger)
+            .expect("create")
+            .expect("accepted");
         let ours = load_bumbledb(&db, cfg).expect("bumbledb load");
         let (conn, theirs) = load_sqlite(&dir.join("oracle.sqlite"), cfg).expect("sqlite load");
         assert_eq!(ours.facts, theirs.facts);

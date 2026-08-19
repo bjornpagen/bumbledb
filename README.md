@@ -39,7 +39,7 @@ bumbledb::schema! {
     Account(status) <= Status(id);
 }
 
-let db = bumbledb::Db::create(path, Ledger)?;
+let db = bumbledb::Db::create(path, Ledger)?.expect("accepted");
 
 // The two inserts commit together after the database checks the finished state.
 db.write(|tx| {
@@ -49,7 +49,7 @@ db.write(|tx| {
     let account = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
     tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
     Ok(())
-})?;
+})?.unwrap();
 
 // Find the holders who have an open account.
 let q = bumbledb_query::query!(Ledger {
@@ -76,8 +76,8 @@ The Rust crates can be used from the current release tag:
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.14.0" }
-bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.14.0" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.15.0" }
+bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.15.0" }
 ```
 
 The TypeScript package ships with a native binary for macOS on Apple Silicon:
@@ -526,8 +526,9 @@ results with the engine.
 
 ## Current release
 
-Version **0.14.0** covers the Rust engine, C ABI, and
-`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **2**.
+Version **0.15.0** covers the Rust engine, C ABI, and
+`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **3**.
+Storage format is **8**.
 
 Bumbledb uses one writer and concurrent snapshot readers. The engine owns no
 threads, does not open a network port, and keeps query execution in the

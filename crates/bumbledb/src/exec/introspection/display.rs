@@ -38,7 +38,7 @@ impl fmt::Display for IntrospectionReport<'_> {
                     writeln!(
                         f,
                         "  distinct_bindings: {}",
-                        if stats.distinct_bindings {
+                        if stats.distinct_bindings() {
                             "proven"
                         } else {
                             "unproven"
@@ -47,11 +47,17 @@ impl fmt::Display for IntrospectionReport<'_> {
                     writeln!(
                         f,
                         "  emitted bindings: {}, absorbed by the union seen-set: {}",
-                        stats.emitted, stats.absorbed,
+                        stats.emitted(),
+                        stats.absorbed(),
                     )?;
                 }
                 if multi {
-                    let absorbed: u64 = self.stats.rules().iter().map(|r| r.absorbed).sum();
+                    let absorbed: u64 = self
+                        .stats
+                        .rules()
+                        .iter()
+                        .map(crate::api::stats::RuleStats::absorbed)
+                        .sum();
                     writeln!(
                         f,
                         "head union: {} emitted across {} rules, {} absorbed",
@@ -185,7 +191,7 @@ fn fmt_free_join(
         // negated, grounding-eliminated).
         if let Some(pin) = stats
             .into_iter()
-            .flat_map(|stats| stats.pinned.iter())
+            .flat_map(|stats| stats.pinned().iter())
             .find(|p| usize::from(p.occurrence) == occ_idx)
         {
             write!(
@@ -206,7 +212,7 @@ fn fmt_free_join(
     };
     // The grounding's marks (`plan/ground.rs`): occurrences the
     // plan never joined, with the licensing statement.
-    for eliminated in &stats.eliminated {
+    for eliminated in stats.eliminated() {
         writeln!(
             f,
             "  eliminated: {} via {}",
@@ -218,7 +224,7 @@ fn fmt_free_join(
     // (the vocabulary's names, the set IS the payload); a negated
     // fold's attached set is the complement, and the named handles are
     // what the deleted anti-probe would have rejected.
-    for folded in &stats.folded {
+    for folded in stats.folded() {
         let set = folded.handles.join(", ");
         if folded.negated {
             writeln!(f, "  folded: !{} → {{{set}}} rejected", folded.rendered)?;
@@ -227,7 +233,7 @@ fn fmt_free_join(
         }
     }
     for (node_idx, node) in plan.nodes().iter().enumerate() {
-        let node_stats = &stats.nodes[node_idx];
+        let node_stats = &stats.nodes()[node_idx];
         writeln!(f, "  node {node_idx}:")?;
         for (sub_idx, subatom) in node.subatoms.iter().enumerate() {
             let cover = &node_stats.covers[sub_idx];
@@ -264,8 +270,8 @@ fn fmt_free_join(
                 write!(
                     f,
                     " {:#06x}({}/13)",
-                    placed.mask.bits(),
-                    placed.mask.popcount()
+                    placed.allen_sides().2.bits(),
+                    placed.allen_sides().2.popcount()
                 )?;
             }
             writeln!(f)?;

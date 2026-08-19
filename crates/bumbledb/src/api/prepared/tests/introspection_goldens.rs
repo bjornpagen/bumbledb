@@ -1,11 +1,11 @@
-//! Byte-exact contract fixtures for introspection v6. These deliberately
+//! Byte-exact contract fixtures for introspection v7. These deliberately
 //! exercise every plan-class/diagnostic family whose wording is public.
 
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadOp, HeadTerm};
 
-const JOIN_WITH_GROUND_FOLD: &str = r"introspection v6
+const JOIN_WITH_GROUND_FOLD: &str = r"introspection v7
 query:
 (v0, v2) | Reading(id: v0, kind: v1, value: v2), Kind(id: v1, rank == 20);
 signature: (u64, i64)
@@ -23,7 +23,7 @@ access path: free join (1 nodes)
   emitted bindings: 3, absorbed by the union seen-set: 0
 ";
 
-const STATICALLY_EMPTY: &str = r"introspection v6
+const STATICALLY_EMPTY: &str = r"introspection v7
 query:
 (v0, v2) | Reading(id: v0, kind: v1, value: v2), Kind(id: v1, rank == 99);
 signature: (u64, i64)
@@ -31,7 +31,7 @@ access path: statically empty
 statically empty: rule 0: folded to ∅: Kind{rank == 99}
 ";
 
-const KEY_PROBE: &str = r"introspection v6
+const KEY_PROBE: &str = r"introspection v7
 query:
 (v0) | Posting(id == 1, amount: v0);
 signature: (i64)
@@ -44,7 +44,7 @@ access path: key probe
   emitted bindings: 1, absorbed by the union seen-set: 0
 ";
 
-const AGGREGATE_UNION: &str = r"introspection v6
+const AGGREGATE_UNION: &str = r"introspection v7
 query:
 (v0, Sum(v1)) | Posting(account == 3, memo: v0, amount: v1);
 (v0, Sum(v1)) | Posting(account == 7, memo: v0, amount: v1);
@@ -85,7 +85,7 @@ head union: 3 emitted across 2 rules, 1 absorbed
 disjoint_rules: unproven
 ";
 
-const UNRESOLVED_LITERAL: &str = r#"introspection v6
+const UNRESOLVED_LITERAL: &str = r#"introspection v7
 query:
 (v0) | Posting(memo == "z-unresolved", amount: v0), Posting(memo == "a-unresolved", amount: v0);
 signature: (i64)
@@ -111,7 +111,7 @@ access path: free join (2 nodes)
 "#;
 
 fn assert_golden(
-    prepared: &mut PreparedQuery<'_, ()>,
+    prepared: &mut PreparedQuery<()>,
     txn: &crate::storage::env::ReadTxn<'_>,
     cache: &ImageCache,
     expected: &str,
@@ -207,24 +207,25 @@ fn aggregate_union_golden_and_stats_parity() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
         rules: vec![rule(3), rule(7)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let (_, display) = prepared
         .introspect(&txn, &cache, &[])
         .expect("introspection");
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(stats.introspection_version, 6);
+    assert_eq!(stats.introspection_version, 7);
     assert_eq!(display.matches("rule ").count(), stats.rules().len());
     assert_eq!(
         display.matches("  node ").count(),
         stats
             .rules()
             .iter()
-            .map(|rule| rule.nodes.len())
+            .map(|rule| rule.nodes().len())
             .sum::<usize>()
     );
     assert_golden(&mut prepared, &txn, &cache, AGGREGATE_UNION);
@@ -246,7 +247,7 @@ fn unresolved_literal_golden() {
                 bindings: vec![
                     (
                         FieldId(2),
-                        Term::Literal(Value::String(b"z-unresolved".as_slice().into())),
+                        Term::Literal(Value::String("z-unresolved".into())),
                     ),
                     (FieldId(3), Term::Var(VarId(0))),
                 ],
@@ -256,7 +257,7 @@ fn unresolved_literal_golden() {
                 bindings: vec![
                     (
                         FieldId(2),
-                        Term::Literal(Value::String(b"a-unresolved".as_slice().into())),
+                        Term::Literal(Value::String("a-unresolved".into())),
                     ),
                     (FieldId(3), Term::Var(VarId(0))),
                 ],

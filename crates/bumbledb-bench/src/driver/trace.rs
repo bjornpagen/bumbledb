@@ -40,7 +40,9 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     // never the verified corpus.
     let scratch = paths.root.join("trace-scratch");
     let _ = std::fs::remove_dir_all(&scratch);
-    let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
+    let db = Db::create(&scratch.join("db"), Ledger)
+        .map_err(|e| format!("{e:?}"))?
+        .expect("accepted");
     corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
 
     let query = (family.query)();
@@ -49,7 +51,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     let mut buffer = Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     };

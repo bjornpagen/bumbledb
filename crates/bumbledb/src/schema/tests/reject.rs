@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
+use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 
 fn target_key(key: u16, projection: &[FieldId]) -> TargetKeyCandidate {
     TargetKeyCandidate {
@@ -124,7 +124,7 @@ fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
     let wide = |name: String, count: usize, value_type: ValueType, columns: usize| {
         let decl = one_relation(
             (0..count)
-                .map(|i| field(&format!("{name}{i}"), value_type.clone()))
+                .map(|i| field(&format!("{name}{i}"), value_type))
                 .collect(),
         );
         assert_eq!(
@@ -169,7 +169,7 @@ fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
         ValueType::FixedBytes { len: 0 }, // invalid — but the cap fires first
     ] {
         let mut fields: Vec<FieldDescriptor> = (0..66_000)
-            .map(|i| field(&format!("c{i}"), filler.clone()))
+            .map(|i| field(&format!("c{i}"), filler))
             .collect();
         fields.push(FieldDescriptor {
             name: "id".into(),
@@ -430,7 +430,7 @@ fn rejects_functionality_with_two_intervals() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
     };
-    let mut decl = one_relation(vec![field("a", iv.clone()), field("b", iv)]);
+    let mut decl = one_relation(vec![field("a", iv), field("b", iv)]);
     decl.statements
         .push(fd(RelationId(0), &[FieldId(0), FieldId(1)]));
     assert_eq!(
@@ -536,8 +536,10 @@ fn rejects_containment_arity_mismatch() {
     assert_eq!(
         decl.validate().unwrap_err(),
         StatementErrorKind::ContainmentArityMismatch {
-            source: 2,
-            target: 1
+            mismatch: Mismatch {
+                witnessed: 2,
+                required: 1,
+            },
         }
         .at(StatementId(0))
     );
@@ -635,31 +637,6 @@ fn rejects_selection_literal_type_mismatch() {
     );
 }
 
-/// Roster "… non-UTF-8 string literals".
-#[test]
-fn rejects_non_utf8_string_selection_literal() {
-    let decl = two_relations(
-        vec![field("a", ValueType::U64), field("name", ValueType::String)],
-        vec![field("x", ValueType::U64)],
-        vec![containment(
-            side_where(
-                RelationId(0),
-                &[FieldId(0)],
-                vec![(FieldId(1), Value::String(Box::new([0xFF])))],
-            ),
-            side(RelationId(1), &[FieldId(0)]),
-        )],
-    );
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::SelectionLiteralNotUtf8 {
-            relation: RelationId(0),
-            field: FieldId(1)
-        }
-        .at(StatementId(0))
-    );
-}
-
 /// The interval literal bound rule: `start >= end` denotes no points, and a
 /// fact never denotes nothing.
 /// Roster "IND whose target projection matches no key of the target".
@@ -718,7 +695,7 @@ fn rejects_interval_containment_without_pointwise_key() {
         element: IntervalElement::I64,
     };
     let decl = two_relations(
-        vec![field("who", ValueType::U64), field("span", iv.clone())],
+        vec![field("who", ValueType::U64), field("span", iv)],
         vec![field("who", ValueType::U64), field("during", iv)],
         vec![
             fd(RelationId(1), &[FieldId(0)]),
@@ -882,9 +859,11 @@ fn rejects_an_extension_arity_mismatch() {
             .unwrap_err(),
         SchemaError::ExtensionArityMismatch {
             relation: RelationId(0),
-            row: 0,
-            expected: 1,
-            supplied: 2
+            row: RowIndex(0),
+            mismatch: Mismatch {
+                witnessed: 2,
+                required: 1,
+            },
         }
     );
 }
@@ -899,7 +878,7 @@ fn rejects_an_extension_value_type_mismatch() {
             .unwrap_err(),
         SchemaError::ExtensionValueTypeMismatch {
             relation: RelationId(0),
-            row: 0,
+            row: RowIndex(0),
             field: FieldId(1)
         }
     );
@@ -921,7 +900,7 @@ fn rejects_a_ray_axiom() {
     };
     let expected = SchemaError::ExtensionIntervalRay {
         relation: RelationId(0),
-        row: 0,
+        row: RowIndex(0),
         field: FieldId(1),
     };
     assert_eq!(
@@ -956,7 +935,7 @@ fn rejects_str_on_a_closed_relation() {
         relations: vec![closed(
             "Currency",
             vec![field("label", ValueType::String)],
-            vec![row("Usd", vec![Value::String("dollar".as_bytes().into())])],
+            vec![row("Usd", vec![Value::String("dollar".into())])],
         )],
         statements: vec![],
     };
@@ -1209,7 +1188,7 @@ fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
-            row: 1
+            row: RowIndex(1)
         }
         .at(StatementId(2))
     );
@@ -1246,7 +1225,7 @@ fn rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range() 
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
-            row: 1
+            row: RowIndex(1)
         }
         .at(StatementId(2))
     );
@@ -1271,7 +1250,7 @@ fn rejects_a_declared_key_the_axioms_refute() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
-            row: 1
+            row: RowIndex(1)
         }
         .at(StatementId(1))
     );
@@ -1311,7 +1290,7 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
-            row: 1
+            row: RowIndex(1)
         }
         .at(StatementId(1))
     );
@@ -1741,7 +1720,7 @@ fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
-            row: 0
+            row: RowIndex(0)
         }
         .at(StatementId(2))
     );
@@ -1834,8 +1813,10 @@ fn rejects_a_window_arity_mismatch() {
     assert_eq!(
         decl.validate().unwrap_err(),
         StatementErrorKind::ContainmentArityMismatch {
-            source: 2,
-            target: 1
+            mismatch: Mismatch {
+                witnessed: 2,
+                required: 1,
+            },
         }
         .at(StatementId(1))
     );
@@ -1874,7 +1855,7 @@ fn rejects_a_closed_to_closed_window_the_axioms_refute() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(1),
-            row: 0
+            row: RowIndex(0)
         }
         .at(StatementId(2))
     );

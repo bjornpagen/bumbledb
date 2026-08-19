@@ -65,7 +65,7 @@ fn interval_schema() -> Schema {
                 },
                 FieldDescriptor {
                     name: "during".into(),
-                    value_type: interval.clone(),
+                    value_type: interval,
                     generation: Generation::None,
                 },
                 FieldDescriptor {
@@ -112,14 +112,7 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
             | FindTerm::AggregateMeasure { .. } => None,
         })
         .collect();
-    validate(
-        &fj_plan,
-        &normalized,
-        schema,
-        join_order.estimates.clone(),
-        &sink_vars,
-    )
-    .expect("valid plan")
+    validate(&fj_plan, &normalized, schema, &sink_vars).expect("valid plan")
 }
 
 /// The outer-join idiom's join half: `A ⋈ B` — golden node shapes, no
@@ -263,9 +256,9 @@ fn allen_residual_query_validates_into_the_witness() {
     assert!(witness.nodes()[0].allen_residuals.is_empty());
     assert_eq!(
         witness.nodes()[1].allen_residuals,
-        vec![PlacedAllen {
-            lhs: d1,
-            rhs: d2,
+        vec![FilterPredicate::FieldsAllen {
+            left: OperandAddr::from(d1),
+            right: OperandAddr::from(d2),
             mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
         }]
     );

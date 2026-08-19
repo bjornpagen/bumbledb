@@ -13,7 +13,7 @@
 use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
 use crate::schema::ValidateDescriptor as _;
 use crate::schema::{ContainmentId, Enforcement, KeyId, Schema};
-use crate::storage::commit::plan::{CommitPlan, DeterminantOp, EdgeOp, FactOp};
+use crate::storage::commit::plan::{CommitPlan, DeleteOp, DeterminantOp, InsertOp, Owed, RKeyOp};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
@@ -243,7 +243,9 @@ fn link(schema: &Schema, p: u64, q: u64) -> Vec<u8> {
 
 /// Commits `facts` as one base delta.
 fn commit_base(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
-    apply_delta(env, schema, &[], facts).expect("base commit");
+    apply_delta(env, schema, &[], facts)
+        .expect("base commit")
+        .expect("admitted");
 }
 
 /// Records `deletes` then `inserts` into one delta and derives its plan,
@@ -269,7 +271,13 @@ fn plan_of<'d>(
 /// the delta's `(relation, fact_hash)` order — hash order is not
 /// meaningful to assert against, and facts of different relations may
 /// share bytes).
-fn op_for<'a, 'd>(ops: &'a [FactOp<'d>], rel: RelationId, fact: &[u8]) -> &'a FactOp<'d> {
+fn delete_for<'a, 'd>(ops: &'a [DeleteOp<'d>], rel: RelationId, fact: &[u8]) -> &'a DeleteOp<'d> {
+    ops.iter()
+        .find(|op| op.relation() == rel && op.fact() == fact)
+        .expect("an op exists for every net disposition")
+}
+
+fn insert_for<'a, 'd>(ops: &'a [InsertOp<'d>], rel: RelationId, fact: &[u8]) -> &'a InsertOp<'d> {
     ops.iter()
         .find(|op| op.relation() == rel && op.fact() == fact)
         .expect("an op exists for every net disposition")
@@ -287,14 +295,24 @@ fn assert_determinant(
         determinant,
         "determinant bytes"
     );
-    assert_eq!(op.tail().is_some(), pointwise, "pointwise marker");
+    assert_eq!(
+        matches!(op, DeterminantOp::Pointwise { .. }),
+        pointwise,
+        "pointwise marker"
+    );
 }
 
-fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes: &[u8]) {
-    assert_eq!(edge.statement, statement);
-    assert_eq!(edge.containment, containment_id(statement));
+fn assert_edge<W>(schema: &Schema, edge: &RKeyOp<W>, statement: StatementId, key_bytes: &[u8]) {
+    let containment = edge.containment().expect("containment R key");
+    assert_eq!(schema.containment(containment).id, statement);
+    assert_eq!(containment, containment_id(statement));
     assert_eq!(&*edge.key_bytes, key_bytes, "permuted key bytes");
-    assert_eq!(schema.containment(edge.containment).id, statement);
+}
+
+fn only_containment<'a, W>(mut keys: impl Iterator<Item = &'a RKeyOp<W>>) -> &'a RKeyOp<W> {
+    let edge = keys.next().expect("one containment");
+    assert!(keys.next().is_none(), "exactly one containment");
+    edge
 }
 
 // ---------- per-fact ops: determinants and edges ----------
@@ -316,17 +334,20 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
 
     assert!(plan.deletes.is_empty());
     assert_eq!(plan.inserts.len(), 2);
-    let account_op = op_for(&plan.inserts, ACCOUNT, &a);
+    let account_op = insert_for(&plan.inserts, ACCOUNT, &a);
     assert_eq!(account_op.relation(), ACCOUNT);
     let [determinant] = account_op.determinants() else {
         panic!("one key statement");
     };
     assert_determinant(determinant, ACCOUNT_KEY, &encode_u64(7), false);
-    assert!(account_op.edges().is_empty(), "Account has no outgoing");
+    assert!(
+        account_op.containment_r_keys().next().is_none(),
+        "Account has no outgoing"
+    );
 
     // The pointwise determinant: scalar prefix ‖ the interval's whole 16 bytes,
     // marked for the ordered-neighbor probe.
-    let room_op = op_for(&plan.inserts, ROOM, &r);
+    let room_op = insert_for(&plan.inserts, ROOM, &r);
     let mut room_determinant = Vec::new();
     room_determinant.extend_from_slice(&encode_u64(3));
     room_determinant.extend_from_slice(&encode_interval_u64(
@@ -356,9 +377,9 @@ fn fact_ops_carry_the_delta_computed_hash() {
         &[(ACCOUNT, a.clone())],
         &[(ACCOUNT, b.clone())],
     );
-    let deleted = op_for(&plan.deletes, ACCOUNT, &a);
+    let deleted = delete_for(&plan.deletes, ACCOUNT, &a);
     assert_eq!(deleted.fact_hash(), &crate::encoding::fact_hash(&a));
-    let inserted = op_for(&plan.inserts, ACCOUNT, &b);
+    let inserted = insert_for(&plan.inserts, ACCOUNT, &b);
     assert_eq!(inserted.fact_hash(), &crate::encoding::fact_hash(&b));
 }
 
@@ -406,12 +427,15 @@ fn source_selection_gates_the_edges() {
     );
 
     // Inside σ: one edge, projection bytes in target key order.
-    let [edge] = op_for(&plan.inserts, REPORT, &urgent).edges() else {
-        panic!("one satisfied containment");
-    };
+    let edge = only_containment(insert_for(&plan.inserts, REPORT, &urgent).containment_r_keys());
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Outside σ: no edge, so no R put and no source probe — by absence.
-    assert!(op_for(&plan.inserts, REPORT, &calm).edges().is_empty());
+    assert!(
+        insert_for(&plan.inserts, REPORT, &calm)
+            .containment_r_keys()
+            .next()
+            .is_none()
+    );
 }
 
 #[test]
@@ -430,13 +454,9 @@ fn pair_statements_edge_their_own_directions() {
     );
 
     // The == pair is two statements; each side owes exactly its own probe.
-    let [edge] = op_for(&plan.inserts, PARENT, &p).edges() else {
-        panic!("one outgoing statement");
-    };
+    let edge = only_containment(insert_for(&plan.inserts, PARENT, &p).containment_r_keys());
     assert_edge(&schema, edge, TOTALITY, &encode_u64(4));
-    let [edge] = op_for(&plan.inserts, CHILD, &c).edges() else {
-        panic!("one outgoing statement");
-    };
+    let edge = only_containment(insert_for(&plan.inserts, CHILD, &c).containment_r_keys());
     assert_edge(&schema, edge, ARM, &encode_u64(4));
 }
 
@@ -455,9 +475,7 @@ fn edge_key_bytes_land_in_target_key_order() {
     let mut expected = Vec::new();
     expected.extend_from_slice(&encode_u64(2)); // q -> Combo.x
     expected.extend_from_slice(&encode_u64(1)); // p -> Combo.y
-    let [edge] = op_for(&plan.inserts, LINK, &l).edges() else {
-        panic!("one outgoing statement");
-    };
+    let edge = only_containment(insert_for(&plan.inserts, LINK, &l).containment_r_keys());
     assert_edge(&schema, edge, LINK_COMBO, &expected);
 }
 
@@ -475,12 +493,12 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
     expected.extend_from_slice(&encode_interval_u64(
         bumbledb_theory::Interval::<u64>::new(12, 15).expect("nonempty interval"),
     ));
-    let [edge] = op_for(&plan.inserts, STAY, &s).edges() else {
-        panic!("one outgoing statement");
-    };
+    let edge = only_containment(insert_for(&plan.inserts, STAY, &s).containment_r_keys());
     assert_edge(&schema, edge, STAY_ROOM, &expected);
     assert!(matches!(
-        schema.containment(edge.containment).enforcement,
+        schema
+            .containment(edge.containment().expect("containment"))
+            .enforcement,
         Enforcement::IntervalCoverage { .. }
     ));
 }
@@ -497,11 +515,9 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     let mut delta = WriteDelta::new(&schema);
     let plan = plan_of(&env, &mut delta, &[(REPORT, r.clone())], &[]);
     assert!(plan.inserts.is_empty());
-    let op = op_for(&plan.deletes, REPORT, &r);
+    let op = delete_for(&plan.deletes, REPORT, &r);
     assert!(op.determinants().is_empty(), "Report has no key statements");
-    let [edge] = op.edges() else {
-        panic!("one satisfied containment");
-    };
+    let edge = only_containment(op.containment_r_keys());
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Report has no keys, so nothing was disestablished.
     assert!(plan.target_checks.is_empty());
@@ -530,7 +546,12 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     let statements: Vec<_> = check
         .dependents
         .iter()
-        .map(|d| (schema.containment(d.containment).id, d.psi_qualified))
+        .map(|d| {
+            (
+                schema.containment(d.containment).id,
+                matches!(d.owed, Owed::IfEstablisherFails),
+            )
+        })
         .collect();
     assert_eq!(
         statements,
@@ -569,7 +590,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
         schema.containment(dependent.containment).id,
         TRANSFER_ACCOUNT
     );
-    assert!(dependent.psi_qualified);
+    assert!(matches!(dependent.owed, Owed::IfEstablisherFails));
 }
 
 /// The byte-sorted insert index (`CommitPlan::inserts_fact`, the W10
@@ -674,5 +695,26 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
         schema.containment(dependent.containment).enforcement,
         Enforcement::IntervalCoverage { .. }
     ));
-    assert!(!dependent.psi_qualified);
+    assert!(matches!(dependent.owed, Owed::Unconditional));
+}
+
+/// An empty delta's incremental roster is empty. Complete admission
+/// walks the schema spine instead — this fixture's keys and dependents
+/// are instance-dependent, so that roster is non-empty.
+#[test]
+fn empty_delta_incremental_roster_is_empty_complete_roster_is_not() {
+    let schema = schema();
+    assert!(
+        schema.complete_obligations().iter().next().is_some(),
+        "complete roster is the spine, not the empty incremental plan"
+    );
+
+    let dir = TempDir::new("empty-incremental");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let delta = WriteDelta::new(&schema);
+    let plan = plan_for(&delta, &env);
+    assert!(
+        plan.incremental_obligations().is_empty(),
+        "empty delta enumerates no incremental obligations — not complete admission"
+    );
 }

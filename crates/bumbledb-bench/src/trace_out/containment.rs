@@ -34,7 +34,7 @@ pub(super) fn sweep(events: &[TraceEvent]) -> Sweep<'_> {
     let mut spans: Vec<(usize, &TraceEvent)> = events
         .iter()
         .enumerate()
-        .filter(|(_, e)| matches!(e, TraceEvent::Span { cat, .. } if *cat != Category::Phase))
+        .filter(|(_, e)| matches!(e, TraceEvent::Span { .. } if e.cat() != Category::Phase))
         .collect();
     spans.sort_by_key(|&(recorded, e)| {
         (

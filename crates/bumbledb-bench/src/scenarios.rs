@@ -82,7 +82,7 @@ pub enum Surface {
     Query(fn() -> Query),
     /// 0.5.0's keyed get: the typed point read through a declared key FD,
     /// via the dynamic entry the TS SDK bridge calls
-    /// (`Snapshot::get_dyn` — scenario stores are `Db<SchemaDescriptor>`,
+    /// (`ReadInstance::get_dyn` — scenario stores are `Db<SchemaDescriptor>`,
     /// so the dynamic surface is the reachable twin of the macro-typed
     /// `snap.get(key)`). The answer is the full fact in field declaration
     /// order (0 or 1 rows); the `SQLite` twin is the prepared point

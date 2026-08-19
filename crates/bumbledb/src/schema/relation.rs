@@ -2,7 +2,7 @@
 
 use super::{
     CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation,
-    RelationBody, ValueType,
+    RelationBody,
 };
 
 impl Relation {
@@ -82,10 +82,6 @@ impl Relation {
     pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<IntervalTail> {
         projection
             .iter()
-            .find_map(|field| match self.field(*field).value_type {
-                ValueType::Interval { .. } => Some(IntervalTail::General),
-                ValueType::FixedInterval { width, .. } => Some(IntervalTail::Fixed { width }),
-                _ => None,
-            })
+            .find_map(|field| IntervalTail::of(self.field(*field).value_type))
     }
 }

@@ -48,10 +48,11 @@ fn by_account_rule(account: u64) -> Rule {
 /// Q(memo, amount) :- account 3's postings ∪ account 7's postings, both
 /// under one `amount >= ?0` param.
 fn union_query() -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![by_account_rule(3), by_account_rule(7)],
+        rec: None,
     }
 }
 
@@ -202,17 +203,18 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
         ],
         rules: vec![agg_rule(3), agg_rule(7)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     // Head projection per binding = (amount): {10, 25} ∪ {25, 40} =
@@ -254,14 +256,15 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
         rules: vec![rule(3), rule(7)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(String, i64)> = (0..out.len())
         .map(|answer| {
@@ -314,10 +317,11 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
+        rec: None,
     };
     let Err(err) = prepare(&txn, &cache, &schema, &query) else {
         panic!("fold-free nullary Count across written rules must refuse at validation");
@@ -356,10 +360,11 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
+        rec: None,
     };
     let Err(err) = prepare(&txn, &cache, &schema, &query) else {
         panic!("grouped fold-free Count across written rules must refuse at validation");
@@ -422,13 +427,14 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
             }),
         ])],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
         ],
         rules: vec![rule],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
@@ -437,7 +443,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
         "the or lowered to two disjunct rules"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     // Distinct full bindings with amount ≥ 25: (3, "b", 25),
@@ -478,17 +484,17 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     assert_eq!(stats.rules().len(), 2, "per-rule stats");
     assert_eq!(stats.emits, 4, "2 + 2 bindings reached the sink");
     assert_eq!(
-        (stats.rules()[0].emitted, stats.rules()[0].absorbed),
+        (stats.rules()[0].emitted(), stats.rules()[0].absorbed()),
         (2, 0),
         "rule 0 seeds the union"
     );
     assert_eq!(
-        (stats.rules()[1].emitted, stats.rules()[1].absorbed),
+        (stats.rules()[1].emitted(), stats.rules()[1].absorbed()),
         (2, 1),
         "rule 1 re-derives ('b', 25) and the spanning seen-set absorbs it"
     );
     for rule in stats.rules() {
-        assert!(!rule.nodes.is_empty(), "per-rule node stats exist");
+        assert!(!rule.nodes().is_empty(), "per-rule node stats exist");
     }
 
     let (_, report) = prepared
@@ -536,10 +542,11 @@ fn a_key_probe_rule_unions_through_the_sink() {
     };
     let mut rule0 = by_account_rule(3);
     rule0.conditions.clear(); // no param: the key-probe rule binds none
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule0, key_probe_rule],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
@@ -547,7 +554,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
         "rule 1 classifies as the point fast path"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers_of(&out),

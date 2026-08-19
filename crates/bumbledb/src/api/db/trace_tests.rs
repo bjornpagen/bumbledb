@@ -24,20 +24,23 @@ fn schema() -> SchemaDescriptor {
 
 const R: RelationId = RelationId(0);
 
-fn names(events: &[obs::TraceEvent]) -> Vec<&'static str> {
-    events.iter().map(|e| e.name()).collect()
+fn names(events: &[obs::TraceEvent]) -> Vec<obs::TracePoint> {
+    events.iter().map(|e| e.point()).collect()
 }
 
 /// The write-path capture contract.
 #[test]
 fn write_path_traces_phases_with_counts() {
     let dir = TempDir::new("db-trace-write");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(R, [&[Value::U64(99)]])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
 
     // Three inserts + one delete: the six phase spans, in order, with
     // the counts from the delta's own entries.
@@ -49,9 +52,10 @@ fn write_path_traces_phases_with_counts() {
         tx.delete_dyn(R, [&[Value::U64(99)]])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .expect("accepted");
     let events = obs::finish_capture();
-    let phase_order: Vec<&str> = events
+    let phase_order: Vec<obs::TracePoint> = events
         .iter()
         .filter(|e| {
             [
@@ -62,9 +66,9 @@ fn write_path_traces_phases_with_counts() {
                 obs::names::COUNTERS_FLUSH,
                 obs::names::LMDB_COMMIT,
             ]
-            .contains(&e.name())
+            .contains(&e.point())
         })
-        .map(|e| e.name())
+        .map(|e| e.point())
         .collect();
     assert_eq!(
         phase_order,
@@ -78,11 +82,15 @@ fn write_path_traces_phases_with_counts() {
         ],
         "the canonical order, recorded in drop order per phase"
     );
-    let by_name = |n: &str| events.iter().find(|e| e.name() == n).expect("phase");
+    let by_name = |n| events.iter().find(|e| e.point() == n).expect("phase");
     assert_eq!(by_name(obs::names::APPLY_DELETES).a0(), 1);
     assert_eq!(by_name(obs::names::APPLY_INSERTS).a0(), 3);
     assert_eq!(by_name(obs::names::COMMIT).a0(), 1, "commit changed flag");
-    assert_eq!(by_name(obs::names::WRITE_TXN).a0(), 1, "committed flag");
+    assert_eq!(
+        by_name(obs::names::WRITE_TXN).args(),
+        obs::TraceArgs::Flag(true),
+        "committed flag"
+    );
 
     // A net-no-op write: commit_noop, no phase spans.
     obs::start_capture();
@@ -90,7 +98,8 @@ fn write_path_traces_phases_with_counts() {
         tx.insert_dyn(R, [&[Value::U64(0)]])?; // already present
         Ok(())
     })
-    .expect("noop write");
+    .expect("noop write")
+    .expect("accepted");
     let noop = obs::finish_capture();
     let noop_names = names(&noop);
     assert!(
@@ -153,13 +162,16 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
         ],
     };
     let dir = TempDir::new("db-trace-redundant-insert");
-    let db = Db::create(dir.path(), containment_schema).expect("create");
+    let db = Db::create(dir.path(), containment_schema)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(TARGET, [&[Value::U64(5)]])?;
         tx.insert_dyn(CLAIM, [&[Value::U64(5)]])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
 
     // The redundant insert beside an unrelated genuine change (which
     // keeps the delta nonempty; Extra has no outgoing statements): the
@@ -170,11 +182,12 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
         tx.insert_dyn(EXTRA, [&[Value::U64(1)]])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .expect("accepted");
     let events = obs::finish_capture();
     let source = events
         .iter()
-        .find(|e| e.name() == obs::names::JUDGMENT_SOURCE)
+        .find(|e| e.point() == obs::names::JUDGMENT_SOURCE)
         .expect("judgment span");
     assert_eq!(source.a0(), 0, "zero probes for the redundant insert");
 
@@ -185,11 +198,12 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
         tx.insert_dyn(CLAIM, [&[Value::U64(6)]])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .expect("accepted");
     let events = obs::finish_capture();
     let source = events
         .iter()
-        .find(|e| e.name() == obs::names::JUDGMENT_SOURCE)
+        .find(|e| e.point() == obs::names::JUDGMENT_SOURCE)
         .expect("judgment span");
     assert_eq!(source.a0(), 1, "one probe for the genuine insert");
 }
@@ -219,7 +233,9 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         statements: vec![],
     };
     let dir = TempDir::new("db-trace-noop-fresh");
-    let db = Db::create(dir.path(), fresh_schema).expect("create");
+    let db = Db::create(dir.path(), fresh_schema)
+        .expect("create")
+        .expect("accepted");
     let rel = RelationId(0);
     // Resolve once, mint per row: the witness is the untyped mint handle.
     let id_field = db.fresh_field(rel, FieldId(0)).expect("fresh field");
@@ -228,7 +244,8 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         tx.insert_dyn(rel, [&[Value::U64(id), Value::U64(42)]])
             .map(|_| ())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
     assert_eq!(db.generation().expect("generation").value(), 1);
 
     // Q(id, v) :- S(id, v) — a full-scan free join that builds views.
@@ -248,13 +265,18 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-        .expect("first execute builds");
+    db.read(|snap| {
+        snap.execute_collect(&mut prepared, &[] as &[crate::BindValue])
+            .map(|_| ())
+    })
+    .expect("first execute builds");
 
     // The no-op commit: an escaped reserve, no facts.
     let escaped = db
         .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
-        .expect("bare reserve");
+        .expect("bare reserve")
+        .expect("accepted")
+        .value;
     assert_eq!(escaped, 1);
     assert_eq!(
         db.generation().expect("generation").value(),
@@ -264,8 +286,11 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
 
     // The next execution memo-hits: nothing was evicted or rebuilt.
     obs::start_capture();
-    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-        .expect("second execute");
+    db.read(|snap| {
+        snap.execute_collect(&mut prepared, &[] as &[crate::BindValue])
+            .map(|_| ())
+    })
+    .expect("second execute");
     let events = obs::finish_capture();
     let ns = names(&events);
     assert!(ns.contains(&obs::names::VIEW_MEMO_HIT), "{ns:?}");
@@ -275,27 +300,33 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     // And the escaped id persisted: the next reserve continues.
     let next = db
         .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
-        .expect("reserve");
+        .expect("reserve")
+        .expect("accepted")
+        .value;
     assert_eq!(next, 2);
 }
 
 #[test]
 fn a_collection_insert_is_one_write() {
     let dir = TempDir::new("db-trace-insert");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     let n = 8_192u64;
     obs::start_capture();
     let loaded = db
         .write(|tx| {
             tx.insert_dyn(R, (0..n).map(|v| vec![Value::U64(v)]))
-                .map(|r| r.changed)
+                .map(crate::MutationReport::changed)
         })
-        .expect("insert");
+        .expect("insert")
+        .unwrap()
+        .value;
     let events = obs::finish_capture();
     assert_eq!(loaded, n);
     let writes = events
         .iter()
-        .filter(|e| e.name() == obs::names::WRITE_TXN)
+        .filter(|e| e.point() == obs::names::WRITE_TXN)
         .count();
     assert_eq!(
         writes, 1,
@@ -312,12 +343,15 @@ fn a_collection_insert_is_one_write() {
 #[test]
 fn compact_records_its_completed_durability_chain() {
     let dir = TempDir::new("db-trace-compact");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(R, [&[Value::U64(1)]])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
 
     let dest = dir.path().join("compacted");
     obs::start_capture();
@@ -325,7 +359,7 @@ fn compact_records_its_completed_durability_chain() {
     let events = obs::finish_capture();
     let durable = events
         .iter()
-        .find(|e| e.name() == obs::names::COMPACT_DURABLE)
+        .find(|e| e.point() == obs::names::COMPACT_DURABLE)
         .expect("the durability-chain event");
     assert_eq!(durable.a0(), 2, "dest dirent + parent dirent, both synced");
 }
@@ -339,11 +373,13 @@ fn compact_records_its_completed_durability_chain() {
 fn create_records_its_completed_durability_chain() {
     let dir = TempDir::new("db-trace-create");
     obs::start_capture();
-    let _db = Db::create(dir.path(), schema()).expect("create");
+    let _db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     let events = obs::finish_capture();
     let durable = events
         .iter()
-        .find(|e| e.name() == obs::names::CREATE_DURABLE)
+        .find(|e| e.point() == obs::names::CREATE_DURABLE)
         .expect("the durability-chain event");
     assert_eq!(durable.a0(), 2, "store dirent + parent dirent, both synced");
 }
@@ -376,7 +412,9 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         statements: vec![],
     };
     let dir = TempDir::new("db-trace-abort-burn");
-    let db = Db::create(dir.path(), fresh_schema).expect("create");
+    let db = Db::create(dir.path(), fresh_schema)
+        .expect("create")
+        .expect("accepted");
     let id_field = db
         .fresh_field(RelationId(0), FieldId(0))
         .expect("fresh field");
@@ -384,21 +422,23 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         (
             events
                 .iter()
-                .filter(|e| e.name() == obs::names::COUNTERS_FLUSH)
+                .filter(|e| e.point() == obs::names::COUNTERS_FLUSH)
                 .count(),
             events
                 .iter()
-                .filter(|e| e.name() == obs::names::LMDB_COMMIT)
+                .filter(|e| e.point() == obs::names::LMDB_COMMIT)
                 .count(),
         )
     };
 
     // The Err abort: the guard's one counters-only commit.
     obs::start_capture();
-    let aborted: Result<()> = db.write(|tx| {
+    let aborted = db.write(|tx| {
         tx.reserve_at(id_field, 1)?.start().expect("nonempty");
-        Err(crate::error::Error::Overflow(
-            crate::error::OverflowKind::Aggregate { find: 0 },
+        Err::<(), _>(crate::error::Error::Overflow(
+            crate::error::OverflowKind::Aggregate {
+                find: crate::error::FindIndex(0),
+            },
         ))
     });
     let events = obs::finish_capture();
@@ -412,7 +452,7 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     // The panicked write: the guard's drop is the only flush.
     obs::start_capture();
     let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _: Result<()> = db.write(|tx| {
+        let _ = db.write(|tx| -> Result<()> {
             assert_eq!(
                 tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
                 1,
@@ -434,7 +474,8 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 2);
         Ok(())
     })
-    .expect("mint after both aborts");
+    .expect("mint after both aborts")
+    .expect("accepted");
 }
 
 /// Lane I2 — the integrity sweep, formerly wholly dark. `verify_store`
@@ -444,20 +485,23 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
 #[test]
 fn verify_store_traces_every_namespace_pass_in_order() {
     let dir = TempDir::new("db-trace-verify");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(R, [&[Value::U64(1)]])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
 
     obs::start_capture();
     let report = db.verify_store().expect("verify");
     let events = obs::finish_capture();
-    assert!(report.findings.is_empty(), "a clean store");
+    assert!(report.findings().is_empty(), "a clean store");
 
     // The pass spans, in the canonical sweep order, each inside the outer.
-    let pass_order: Vec<&str> = events
+    let pass_order: Vec<obs::TracePoint> = events
         .iter()
         .filter(|e| {
             [
@@ -470,9 +514,9 @@ fn verify_store_traces_every_namespace_pass_in_order() {
                 obs::names::VERIFY_FRESH,
                 obs::names::VERIFY_DICT,
             ]
-            .contains(&e.name())
+            .contains(&e.point())
         })
-        .map(|e| e.name())
+        .map(|e| e.point())
         .collect();
     assert_eq!(
         pass_order,
@@ -490,7 +534,7 @@ fn verify_store_traces_every_namespace_pass_in_order() {
     );
     let outer = events
         .iter()
-        .find(|e| e.name() == obs::names::VERIFY_STORE)
+        .find(|e| e.point() == obs::names::VERIFY_STORE)
         .expect("the outer sweep span");
     assert_eq!(outer.a0(), 0, "a clean store raises no findings");
     for e in &events {
@@ -507,12 +551,16 @@ fn verify_store_traces_every_namespace_pass_in_order() {
 #[test]
 fn an_aborting_write_records_no_lmdb_commit() {
     let dir = TempDir::new("db-trace-abort");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     obs::start_capture();
-    let result: Result<()> = db.write(|tx| {
+    let result = db.write(|tx| {
         tx.insert_dyn(R, [&[Value::U64(1)]])?;
-        Err(crate::error::Error::Overflow(
-            crate::error::OverflowKind::Aggregate { find: 0 },
+        Err::<(), _>(crate::error::Error::Overflow(
+            crate::error::OverflowKind::Aggregate {
+                find: crate::error::FindIndex(0),
+            },
         ))
     });
     let events = obs::finish_capture();
@@ -521,9 +569,13 @@ fn an_aborting_write_records_no_lmdb_commit() {
     assert!(!ns.contains(&obs::names::LMDB_COMMIT), "{ns:?}");
     let write_txn = events
         .iter()
-        .find(|e| e.name() == obs::names::WRITE_TXN)
+        .find(|e| e.point() == obs::names::WRITE_TXN)
         .expect("write_txn span");
-    assert_eq!(write_txn.a0(), 0, "aborted flag");
+    assert_eq!(
+        write_txn.args(),
+        obs::TraceArgs::None,
+        "aborted write never sets the committed flag — distinct from Flag(false) and Count(0)"
+    );
 }
 
 /// The snapshot point-read surface is lit (the formerly wholly dark
@@ -554,12 +606,15 @@ fn point_reads_trace_hits_and_misses() {
             projection: Box::new([bumbledb_theory::schema::FieldId(0)]),
         }],
     };
-    let db = Db::create(dir.path(), keyed).expect("create");
+    let db = Db::create(dir.path(), keyed)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(RelationId(0), [&[Value::U64(7), Value::U64(70)]])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
 
     obs::start_capture();
     let mut out = Vec::new();
@@ -582,7 +637,7 @@ fn point_reads_trace_hits_and_misses() {
     let events = obs::finish_capture();
     let point_reads: Vec<u64> = events
         .iter()
-        .filter(|e| e.name() == obs::names::POINT_READ)
+        .filter(|e| e.point() == obs::names::POINT_READ)
         .map(|e| e.a0())
         .collect();
     assert_eq!(

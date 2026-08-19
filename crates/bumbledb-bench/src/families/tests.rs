@@ -29,8 +29,9 @@ fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
 fn all_sixteen_validate_and_prepare() {
     let dir = std::env::temp_dir().join("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
+        .expect("create")
+        .expect("accepted");
     assert_eq!(all().len(), 16);
     for family in all() {
         db.prepare(&(family.query)())
@@ -90,7 +91,7 @@ fn params_are_deterministic_with_the_documented_misses() {
     let ParamValue::Scalar(Value::String(raw)) = &string[3][0] else {
         panic!("string param")
     };
-    assert!(raw.starts_with(b"missing-"), "string set 4 is a miss");
+    assert!(raw.starts_with("missing-"), "string set 4 is a miss");
     // The set family's documented sizes: 1, 3 (hot account 0 in), 8, 0.
     let sets = draws("entries_for_account_set");
     let lens: Vec<usize> = sets
@@ -247,15 +248,17 @@ fn balance_counts_equal_amounts_separately() {
     // Engine side.
     let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for (rel, values) in &rows {
             tx.insert_dyn(*rel, [values])?;
         }
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
     let mut prepared = db.prepare(&balance_query()).expect("prepare");
     let out = db
         .read(|snap| snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(0)]))
@@ -290,7 +293,7 @@ fn balance_counts_equal_amounts_separately() {
 }
 
 fn s(text: &str) -> Value {
-    Value::String(text.as_bytes().into())
+    Value::String(text.into())
 }
 
 /// The depth lane's identity (R22, finding 088): four atoms — one plan
@@ -337,12 +340,13 @@ fn deep_chain_reaches_node_three_at_runtime() {
 
     let dir = std::env::temp_dir().join("bumbledb-bench-deep-chain");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     let cfg = GenConfig {
         seed: 1,
         scale: Scale::S,
     };
-    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger).expect("create");
+    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger)
+        .expect("create")
+        .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
 
     let family = all()
@@ -354,7 +358,7 @@ fn deep_chain_reaches_node_three_at_runtime() {
     let mut buffer = bumbledb::Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{e:?}"))?;
         Ok(buffer.len() as u64)
     };

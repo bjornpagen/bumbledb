@@ -22,8 +22,17 @@ import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
 /** The opaque database handle (owns the LMDB environment + exclusive lock). */
 type DbHandle = { readonly __brand: "bumbledb.db" }
 
-/** One live MVCC read snapshot. */
-type SnapshotHandle = { readonly __brand: "bumbledb.snapshot" }
+/** One live borrowed instance valid only inside a read callback. */
+type InstanceHandle = { readonly __brand: "bumbledb.instance" }
+
+/** One cloneable generation witness. May outlive the read that minted it. */
+type WitnessHandle = { readonly __brand: "bumbledb.witness" }
+
+/** One unproved heap builder. Spent by `instanceBuilderAdmit` / close. */
+type BuilderHandle = { readonly __brand: "bumbledb.builder" }
+
+/** One admitted heap instance. */
+type OwnedHandle = { readonly __brand: "bumbledb.owned" }
 
 /**
  * One exhumed store — the read-only, theory-less open (engine 70-api.md
@@ -37,7 +46,7 @@ type ExhumeHandle = { readonly __brand: "bumbledb.exhume" }
 
 /**
  * One live write transaction — the submitted delta with the engine's
- * final-state point-read view. Spent by `txCommit`/`txAbort`.
+ * final-state point-read view. Valid only inside a write callback.
  */
 type TxHandle = { readonly __brand: "bumbledb.tx" }
 
@@ -295,14 +304,22 @@ type Violation =
 	  }
 
 /**
- * `dbCreate`/`dbOpen`'s domain outcome. `schemaError` spans both spec
+ * `dbCreate`'s domain outcome. Admission is `accepted` / `rejected`.
+ * Declaration-boundary refusals ride as their own tags (not theory
+ * admission) and the SDK throws them.
+ */
+type CreateResult =
+	| { readonly tag: "accepted"; readonly db: DbHandle }
+	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
+	| { readonly tag: "schemaError"; readonly message: string }
+	| { readonly tag: "newtypeMismatch"; readonly message: string }
+
+/**
+ * `dbOpen`'s domain outcome. `schemaError` spans both spec
  * resolution (unresolvable names, banned spellings — every issue in one
  * message) and schema validation at the declaration boundary;
- * `newtypeMismatch` is the coherence wall's own kind — a spec whose
- * statement pairs faces with disagreeing newtype labels (the engine twin
- * of the schema-level class wall; unreachable through the typed builder,
- * which computes every label from the laws, so only a raw spec can reach
- * it); `fingerprintMismatch` is `dbOpen`'s stored-theory refusal.
+ * `newtypeMismatch` is the coherence wall's own kind; `fingerprintMismatch`
+ * is `dbOpen`'s stored-theory refusal.
  */
 type DbOpenResult =
 	| { readonly ok: true; readonly db: DbHandle }
@@ -314,12 +331,11 @@ type DbOpenResult =
 
 /**
  * `dbExhume`'s domain outcome: the live exhume handle, or one of the three
- * adoption-era refusals as data — `descriptorMissing` (the store predates
- * self-describing stores and has not been adopted; the remedy is one
- * fingerprint-matching `dbOpen` under the creating schema),
- * `formatMismatch`, and `corruption` (the persisted descriptor fails its
- * integrity gates). Genuine failures — a missing path, a held exclusive
- * lock — throw.
+ * typed refusals as data — `descriptorMissing` (a format-8 store whose
+ * descriptor key is absent; open never back-fills), `formatMismatch`
+ * (including every format-7 store), and `corruption` (the persisted
+ * descriptor fails its integrity gates). Genuine failures — a missing
+ * path, a held exclusive lock — throw.
  */
 type ExhumeResult =
 	| { readonly ok: true; readonly exhume: ExhumeHandle }
@@ -330,29 +346,23 @@ type ExhumeResult =
 	  }
 
 /**
- * `dbWriteFrom`'s domain outcome: the live witnessed transaction, or the
- * typed stale-premise verdict (a state-changing commit landed after the
- * witness snapshot; retry policy is host-side).
+ * `dbWrite` / `dbWriteFrom` native outcome. The SDK attaches the callback
+ * return onto the accepted arm. Moved is data, never an error kind.
  */
-type WriteFromResult =
-	| { readonly ok: true; readonly tx: TxHandle }
-	| {
-			readonly ok: false
-			readonly kind: "generationMoved"
-			readonly witnessed: bigint
-			readonly current: bigint
-	  }
+type NativeWriteOutcome =
+	| { readonly tag: "accepted"; readonly generation: bigint }
+	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
+	| { readonly tag: "abandoned" }
+	| { readonly tag: "moved"; readonly witnessed: bigint; readonly current: bigint }
 
 /**
- * `txCommit`'s domain outcome: the committed generation, or the COMPLETE
- * violation set (every violated statement cited once, per direction for a
- * containment, in materialized statement order).
+ * Builder `admit` native outcome.
  */
-type CommitResult =
-	| { readonly ok: true; readonly generation: bigint }
-	| { readonly ok: false; readonly violations: readonly Violation[] }
+type AdmitResult =
+	| { readonly tag: "accepted"; readonly value: OwnedHandle }
+	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
 
-/** `dbPrepare`'s domain outcome (IR roster errors are data). */
+/** `dbPrepare`/`instancePrepare`'s domain outcome (IR roster errors are data). */
 type PrepareResult =
 	| { readonly ok: true; readonly prepared: PreparedHandle }
 	| { readonly ok: false; readonly kind: "irError"; readonly message: string }
@@ -374,13 +384,40 @@ interface Staleness {
 	readonly maxRatio: number
 }
 
-/**
- * `dbSnapshot`'s reply: the live handle WITH its witnessed generation —
- * one crossing carries both (read inside the snapshot's own transaction,
- * the race-closing rule of 50-storage.md), so no second `dbGeneration`
- * call exists to pay or defend (finding 016's bridge shape).
- */
-type SnapshotOpened = { readonly ok: true; readonly snapshot: SnapshotHandle; readonly generation: bigint }
+type ErrorFamilyKind =
+	| "formatMismatch"
+	| "schemaMismatch"
+	| "alreadyInitialized"
+	| "destinationExists"
+	| "publishedButUnsynced"
+	| "environmentLocked"
+	| "storeKindMismatch"
+	| "descriptorMissing"
+	| "io"
+	| "lmdb"
+	| "readersFull"
+	| "schema"
+	| "validation"
+	| "factShape"
+	| "freshExhausted"
+	| "closedRelationWrite"
+	| "commitSync"
+	| "transactionPoisoned"
+	| "foreignPrepared"
+	| "foreignWitness"
+	| "param"
+	| "measureOfRay"
+	| "capacityRayMeasure"
+	| "derivedBudgetExceeded"
+	| "overflow"
+	| "resultBytesOverflow"
+	| "corruption"
+
+type AdmissionTag = "accepted" | "rejected"
+type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"
+type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
+type ExhumeKind = "descriptorMissing" | "formatMismatch" | "corruption"
+type PrepareKind = "irError"
 
 /**
  * The plan-as-data report (ruled 2026-07-23, R13): the engine's
@@ -415,7 +452,7 @@ interface Native {
 	 * kind crosses this bridge). Refuses an already-initialized directory
 	 * (throws); schema failures return as data.
 	 */
-	dbCreate(path: string, spec: SchemaSpec): DbOpenResult
+	dbCreate(path: string, spec: SchemaSpec): CreateResult
 	/**
 	 * Opens an existing durable store, verifying format version, store
 	 * kind, and schema fingerprint (`fingerprintMismatch` as data).
@@ -439,16 +476,16 @@ interface Native {
 	dbFingerprint(db: DbHandle): string
 	/**
 	 * The current committed generation — diagnostics only. The write-side
-	 * witness is always the SNAPSHOT handle (`dbWriteFrom`), never this
-	 * integer: an integer witness would be a claim a caller could fabricate
-	 * or stale-cache (the engine's recorded refusal).
+	 * witness is always a {@link WitnessHandle}, never this integer.
 	 */
 	dbGeneration(db: DbHandle): bigint
+	/** Publishes an admitted heap instance at `path` without re-judgment. */
+	dbFromInstance(path: string, instance: OwnedHandle): DbHandle
 
 	/**
 	 * Opens a store FROM ITS OWN PERSISTED DESCRIPTOR (the read-only,
 	 * theory-less open; engine 70-api.md § exhume) — no schema crosses in.
-	 * The three adoption-era refusals return as data ({@link ExhumeResult});
+	 * The three typed refusals return as data ({@link ExhumeResult});
 	 * genuine failures throw. The handle's deterministic teardown is
 	 * `exhumeClose` (R12); GC reclamation remains the backstop only.
 	 */
@@ -477,42 +514,33 @@ interface Native {
 	exhumeScan(exhume: ExhumeHandle, relationName: string): FactValue[][]
 
 	/**
-	 * Opens one MVCC read snapshot as a live handle, returned WITH its
-	 * witnessed generation — one crossing carries both (finding 016), so
-	 * no separate `dbGeneration` call (with its own transient read
-	 * transaction and fault-pairing close branch) exists on this path.
+	 * Runs `callback` synchronously inside the engine read lease. The
+	 * instance handle is invalid after the callback returns; the witness
+	 * handle is a clone and may escape.
 	 */
-	dbSnapshot(db: DbHandle): SnapshotOpened
-	/** Closes the snapshot, releasing its LMDB reader slot. */
-	snapshotClose(snap: SnapshotHandle): void
-	/** Full-relation export in row-id order (one row per fact). */
-	snapshotScan(snap: SnapshotHandle, relationId: number): FactValue[][]
-	/** Committed-state membership of one fact (sealed field order). */
-	snapshotContains(snap: SnapshotHandle, relationId: number, values: readonly FactValue[]): boolean
-	/**
-	 * Committed-state point lookup through a key statement (`keyValues` in
-	 * the statement's projection order); `null` on a miss.
-	 */
-	snapshotGet(
-		snap: SnapshotHandle,
+	dbRead<R>(db: DbHandle, callback: (instance: InstanceHandle, witness: WitnessHandle) => R): R
+	instanceGeneration(instance: InstanceHandle): bigint
+	instanceScan(instance: InstanceHandle, relationId: number): FactValue[][]
+	instanceContains(instance: InstanceHandle, relationId: number, values: readonly FactValue[]): boolean
+	instanceGet(
+		instance: InstanceHandle,
 		relationId: number,
 		keyStatementId: number,
 		keyValues: readonly FactValue[]
 	): FactValue[] | null
+	instancePrepare(instance: InstanceHandle, query: ParsedQuery): PrepareResult
+	witnessClose(witness: WitnessHandle): void
 
 	/**
-	 * Begins a write transaction: the submitted delta. One write
-	 * transaction may be open per db handle at a time (single-writer
-	 * engine; a second begin throws rather than deadlocking the process).
+	 * Runs `callback` synchronously inside the engine write region.
+	 * Return `true` to commit, `false` to abandon. Nested writes throw.
 	 */
-	dbWriteBegin(db: DbHandle): TxHandle
+	dbWrite(db: DbHandle, callback: (tx: TxHandle) => boolean): NativeWriteOutcome
 	/**
-	 * Begins a WITNESSED write transaction: commits only if no
-	 * state-changing commit landed since `snap` was taken —
-	 * `generationMoved` as data otherwise (the optimistic
-	 * read-compute-write loop's entry; retry policy stays host-side).
+	 * Witnessed write: `moved` is data when the store advanced since the
+	 * witness was minted. The callback does not run on that arm.
 	 */
-	dbWriteFrom(db: DbHandle, snap: SnapshotHandle): WriteFromResult
+	dbWriteFrom(db: DbHandle, witness: WitnessHandle, callback: (tx: TxHandle) => boolean): NativeWriteOutcome
 	/**
 	 * Records a collection of inserts into the delta; returns the engine
 	 * `{ submitted, changed }` report. `rows` is an array of value-arrays
@@ -534,14 +562,6 @@ interface Native {
 	 * `count === 0n` is empty and does not yield a start.
 	 */
 	txReserve(tx: TxHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
-	/**
-	 * Commits the delta: every dependency statement judged against the
-	 * final state; a rejection carries the complete violation rendering.
-	 * The handle is spent either way.
-	 */
-	txCommit(tx: TxHandle): CommitResult
-	/** Aborts the delta (LMDB was never touched). The handle is spent. */
-	txAbort(tx: TxHandle): void
 
 	/**
 	 * Prepares a query (IR as data, ids only; plan pinned at prepare).
@@ -549,24 +569,32 @@ interface Native {
 	 */
 	dbPrepare(db: DbHandle, query: ParsedQuery): PrepareResult
 	/**
-	 * Executes against a snapshot with positional params. One-copy owned
+	 * Executes against a live instance with positional params. One-copy owned
 	 * rows out, column order = the query's head order; answers are a set
 	 * — the host sorts.
 	 */
-	preparedExecute(prepared: PreparedHandle, snap: SnapshotHandle, params: readonly QueryParam[]): FactValue[][]
+	preparedExecute(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): FactValue[][]
 	/**
 	 * Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
-	 * query against the snapshot with counting instrumentation (the
-	 * engine's `Snapshot::profile`, ANALYZE semantics) and returns the
-	 * structured stats — plan sections and counters as plain values.
-	 * Scalar params only (the engine's profile entry has no param-set
-	 * spelling).
+	 * query against a store read with counting instrumentation and returns
+	 * the structured stats. Store-read only.
 	 */
-	preparedExplain(prepared: PreparedHandle, snap: SnapshotHandle, params: readonly QueryParam[]): Explain
-	/** The pull-based plan-drift signal against a snapshot. */
-	preparedStaleness(prepared: PreparedHandle, snap: SnapshotHandle): Staleness
+	preparedExplain(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): Explain
+	/** The pull-based plan-drift signal against a store read. */
+	preparedStaleness(prepared: PreparedHandle, instance: InstanceHandle): Staleness
 	/** Releases the prepared query. */
 	preparedClose(prepared: PreparedHandle): void
+
+	instanceBuilderNew(spec: SchemaSpec): BuilderHandle
+	instanceBuilderLoad(
+		builder: BuilderHandle,
+		relationId: number,
+		rows: readonly (readonly FactValue[])[]
+	): WireMutationReport
+	instanceBuilderClose(builder: BuilderHandle): void
+	instanceBuilderAdmit(builder: BuilderHandle): Promise<AdmitResult>
+	ownedInstanceClose(instance: OwnedHandle): void
+	ownedRead<R>(instance: OwnedHandle, callback: (instance: InstanceHandle) => R): R
 }
 
 /**
@@ -657,16 +685,21 @@ function bridged<T>(context: string, run: () => T): T {
 }
 
 export type {
+	AdmissionTag,
+	AdmitResult,
 	AggOpIr,
 	AtomIr,
 	AtomSourceIr,
+	BuilderHandle,
 	CmpOpIr,
-	CommitResult,
 	ComparisonIr,
 	ConditionTreeIr,
+	CreateResult,
 	DbHandle,
 	DbOpenResult,
+	ErrorFamilyKind,
 	ExhumeHandle,
+	ExhumeKind,
 	ExhumeResult,
 	Explain,
 	FactValue,
@@ -674,6 +707,7 @@ export type {
 	FoldOpIr,
 	HeadOpIr,
 	HeadTermIr,
+	InstanceHandle,
 	InteriorIr,
 	IntervalValue,
 	Manifest,
@@ -682,16 +716,18 @@ export type {
 	ManifestRow,
 	ManifestStatement,
 	Native,
+	NativeWriteOutcome,
 	OccurrenceDrift,
+	OpenKind,
+	OwnedHandle,
 	ParsedQuery,
 	PreparedHandle,
+	PrepareKind,
 	PrepareResult,
 	QueryIr,
 	QueryParam,
 	RecIr,
 	RuleIr,
-	SnapshotHandle,
-	SnapshotOpened,
 	Staleness,
 	StatementKindTag,
 	TaggedValue,
@@ -701,6 +737,7 @@ export type {
 	ViolationFact,
 	WireFreshRange,
 	WireMutationReport,
-	WriteFromResult
+	WitnessHandle,
+	WriteTag
 }
 export { bridged, loadNativeBinding, native, SHIPPED_PLATFORMS }

@@ -6,12 +6,14 @@
 use std::sync::Arc;
 
 use crate::image::RelationImage;
-use bumbledb_theory::schema::FieldId;
 
 mod apply;
+mod eval;
 
 pub use apply::apply;
-pub(crate) use apply::mask_of;
+pub(crate) use eval::{
+    Loaded, OperandAddr, Operands, SlotOps, duration_holds, holds, is_prepare_resolvable, mask_of,
+};
 
 #[cfg(test)]
 mod build_with_filters;
@@ -149,7 +151,7 @@ pub enum FilterPredicate {
     /// `Eq` (a value-equality binding); every interval-pair *predicate*
     /// is an `Allen` kind below.
     Compare {
-        field: FieldId,
+        field: OperandAddr,
         op: crate::ir::WordCmp,
         value: Const,
     },
@@ -163,15 +165,15 @@ pub enum FilterPredicate {
     /// their two-word span — repeated-variable `Eq` only: interval
     /// comparisons canonicalize to masks).
     FieldsCompare {
-        left: FieldId,
-        right: FieldId,
+        left: OperandAddr,
+        right: OperandAddr,
         op: crate::ir::WordCmp,
     },
     /// Point membership in the interval field: `start ≤ p AND p < end`
     /// over the field's two column words (the lowering of a membership
     /// binding, and of `PointIn(field, point-constant)`).
     PointIn {
-        field: FieldId,
+        field: OperandAddr,
         point: ViewWordSource,
     },
     /// Point-set membership in the interval field: any element of the
@@ -180,13 +182,13 @@ pub enum FilterPredicate {
     /// is [`SetConst::ParamSet`] in the lowered template and resolves to a
     /// [`SetConst::WordSet`] per execution, exactly like a `Compare`
     /// constant.
-    AnyPointIn { field: FieldId, set: SetConst },
+    AnyPointIn { field: OperandAddr, set: SetConst },
     /// Same-atom `Allen` over two interval fields:
     /// `classify(left, right) ∈ mask` — four endpoint words and the mask,
     /// the whole algebra as one shape.
     FieldsAllen {
-        left: FieldId,
-        right: FieldId,
+        left: OperandAddr,
+        right: OperandAddr,
         mask: MaskConst,
     },
     /// `Allen` between an interval field (always the **left** operand —
@@ -194,21 +196,24 @@ pub enum FilterPredicate {
     /// an interval constant (`Interval`/`Param` by construction):
     /// `classify(field, other) ∈ mask`.
     FieldAllen {
-        field: FieldId,
+        field: OperandAddr,
         other: IntervalConst,
         mask: MaskConst,
     },
     /// Same-atom `PointIn` with a point field (the predicate form of the
     /// membership rule, and the lowering of a same-atom membership-var
     /// binding): `interval.start ≤ point AND point < interval.end`.
-    FieldsPointIn { interval: FieldId, point: FieldId },
+    FieldsPointIn {
+        interval: OperandAddr,
+        point: OperandAddr,
+    },
     /// A scalar field's point within a constant interval — the reversed
     /// point membership `PointIn(constant, field)`:
     /// `outer.start ≤ f AND f < outer.end`. `outer` is `Interval`/`Param`
     /// by construction; the field is scalar by construction (an interval
     /// field under a constant is [`FilterPredicate::FieldAllen`]).
     FieldWithin {
-        field: FieldId,
+        field: OperandAddr,
         outer: IntervalConst,
     },
     /// The measure against a constant: `(end − start) <op> value` over
@@ -231,7 +236,7 @@ pub enum FilterPredicate {
     /// [`crate::Error::MeasureOfRay`] iff some complete binding's folded
     /// verdict is Ray (`exec/verdict.rs`).
     DurationCompare {
-        field: FieldId,
+        field: OperandAddr,
         op: crate::ir::OrderCmp,
         value: WordOrParam,
     },
@@ -241,10 +246,40 @@ pub enum FilterPredicate {
     /// occurrence). Ray semantics and the filter-order law as
     /// [`FilterPredicate::DurationCompare`].
     DurationFieldsCompare {
-        interval: FieldId,
+        interval: OperandAddr,
         op: crate::ir::OrderCmp,
-        scalar: FieldId,
+        scalar: OperandAddr,
     },
+}
+
+impl FilterPredicate {
+    /// Whole-value or word residual sides — kind-grouped lists only.
+    pub(crate) fn compare_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::WordCmp) {
+        match *self {
+            Self::FieldsCompare { left, right, op } => (left, right, op),
+            _ => unreachable!("kind-grouped compare residual"),
+        }
+    }
+
+    /// Allen residual sides — kind-grouped lists only.
+    pub(crate) fn allen_sides(&self) -> (OperandAddr, OperandAddr, MaskConst) {
+        match *self {
+            Self::FieldsAllen { left, right, mask } => (left, right, mask),
+            _ => unreachable!("kind-grouped Allen residual"),
+        }
+    }
+
+    /// Measure residual sides — kind-grouped lists only.
+    pub(crate) fn duration_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::OrderCmp) {
+        match *self {
+            Self::DurationFieldsCompare {
+                interval,
+                scalar,
+                op,
+            } => (interval, scalar, op),
+            _ => unreachable!("kind-grouped duration residual"),
+        }
+    }
 }
 
 /// A view bound to a generation: every position, or the filter's survivors.

@@ -10,21 +10,17 @@
  * BDB_STATUS_ABORTED (the caller's callback aborted; no error),
  * BDB_STATUS_ERROR (a bdb_error* is written; the caller owns it and
  * frees it with bdb_error_destroy), BDB_STATUS_MISUSE (a contract
- * violation — null required pointer, stale snapshot/tx ref, index out
+ * violation — null required pointer, stale instance/tx ref, index out
  * of range, unknown enum tag, bool payload other than 0/1; no error is
  * allocated).
  *
- * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref live in a stable
- * heap slot inside the owning bdb_db. The callback receives a pointer
- * into that slot; when the callback returns the slot is invalidated
- * (alive = false, engine pointers nulled). A stashed pointer still names
- * the db's slot and answers BDB_STATUS_MISUSE rather than use-after-free.
- * They are never owned or destroyed by the caller. bdb_db_write_from may
- * be called from inside a read callback with that callback's still-live
- * snapshot ref; nested writes are refused with a typed
- * BDB_ERROR_KIND_ENVIRONMENT_LOCKED error. One live read callback per
- * handle (the single snapshot slot); nested or concurrent reads, and
- * destroy during a live callback, are refused.
+ * Lexical capabilities: each callback mints its own bdb_instance_ref
+ * (and, for store reads, a borrowed bdb_witness). When the callback
+ * returns the slot is invalidated. A stashed pointer answers
+ * BDB_STATUS_MISUSE rather than use-after-free. bdb_db_write_from takes
+ * a witness (borrowed or retained via bdb_witness_retain). Concurrent
+ * MVCC reads on one handle are allowed. Theory rejection and a moved
+ * generation fill an admission union under BDB_STATUS_OK.
  *
  * Callbacks: an extern "C" function pointer invoked from Rust. A C++
  * exception thrown through a callback is unsupported (it would unwind
@@ -54,23 +50,44 @@ typedef enum bdb_status {
   BDB_STATUS_MISUSE = 3,
 } bdb_status;
 
+// Admission discriminant. Zero is the documented empty/uninitialized
+// state and is never returned with `BDB_STATUS_OK`.
+typedef enum bdb_admission_tag {
+  BDB_ADMISSION_TAG_EMPTY = 0,
+  BDB_ADMISSION_TAG_ACCEPTED = 1,
+  BDB_ADMISSION_TAG_REJECTED = 2,
+  BDB_ADMISSION_TAG_MOVED = 3,
+} bdb_admission_tag;
+
+// Tagged fresh-id range. Empty is the tag, never `{0, 0}`.
+typedef enum bdb_fresh_range_tag {
+  BDB_FRESH_RANGE_TAG_EMPTY = 0,
+  BDB_FRESH_RANGE_TAG_NON_EMPTY = 1,
+} bdb_fresh_range_tag;
+
+// Origin of a [`bdb_error`]: engine taxonomy vs bridge marshal/busy.
+typedef enum bdb_error_origin {
+  BDB_ERROR_ORIGIN_ENGINE = 0,
+  BDB_ERROR_ORIGIN_BRIDGE = 1,
+} bdb_error_origin;
+
 // The C error kind — one constant per engine error family, plus the
-// bridge-synthesized `Panic`.
+// bridge-synthesized `Panic`, `BusyHandle`, and `Marshal`. Proved write
+// outcomes are admission-union arms, not kinds.
 typedef enum bdb_error_kind {
   BDB_ERROR_KIND_SCHEMA,
   BDB_ERROR_KIND_SCHEMA_MISMATCH,
   BDB_ERROR_KIND_FORMAT_MISMATCH,
   BDB_ERROR_KIND_ALREADY_INITIALIZED,
-  BDB_ERROR_KIND_NOT_INITIALIZED,
+  BDB_ERROR_KIND_DESTINATION_EXISTS,
+  BDB_ERROR_KIND_PUBLISHED_BUT_UNSYNCED,
   BDB_ERROR_KIND_ENVIRONMENT_LOCKED,
   BDB_ERROR_KIND_STORE_KIND_MISMATCH,
   BDB_ERROR_KIND_DESCRIPTOR_MISSING,
   BDB_ERROR_KIND_READERS_FULL,
   BDB_ERROR_KIND_VALIDATION,
-  BDB_ERROR_KIND_COMMIT_REJECTED,
   BDB_ERROR_KIND_COMMIT_SYNC,
-  BDB_ERROR_KIND_GENERATION_MOVED,
-  BDB_ERROR_KIND_FOREIGN_SNAPSHOT,
+  BDB_ERROR_KIND_FOREIGN_WITNESS,
   BDB_ERROR_KIND_FOREIGN_PREPARED,
   BDB_ERROR_KIND_FACT_SHAPE,
   BDB_ERROR_KIND_CLOSED_RELATION_WRITE,
@@ -86,6 +103,8 @@ typedef enum bdb_error_kind {
   BDB_ERROR_KIND_IO,
   BDB_ERROR_KIND_LMDB,
   BDB_ERROR_KIND_PANIC,
+  BDB_ERROR_KIND_BUSY_HANDLE,
+  BDB_ERROR_KIND_MARSHAL,
 } bdb_error_kind;
 
 // A violated statement's form tag (`bumbledb::StatementKind`, spelled C).
@@ -95,10 +114,9 @@ typedef enum bdb_statement_kind {
   BDB_STATEMENT_KIND_CAPACITY,
 } bdb_statement_kind;
 
-// A containment citation's violated side; `None` for key and capacity
-// citations.
+// A containment citation's violated side. Live only on the containment
+// payload arm.
 typedef enum bdb_violation_direction {
-  BDB_VIOLATION_DIRECTION_NONE,
   BDB_VIOLATION_DIRECTION_SOURCE_UNSATISFIED,
   BDB_VIOLATION_DIRECTION_TARGET_REQUIRED,
 } bdb_violation_direction;
@@ -260,43 +278,42 @@ typedef enum bdb_query_kind {
 // The opaque, reusable answers carrier.
 typedef struct bdb_answers bdb_answers;
 
-// The opaque database handle: the engine behind an `Arc` (prepared
-// queries co-own it below the boundary — never visible to C), the
-// admitted descriptor (violation rendering, fingerprint readback), the
-// bridge-level writer/reader flags, and the heap slots that give
-// snapshot/tx refs a stable address for as long as this `Box` lives.
+// Opaque database handle.
 typedef struct bdb_db bdb_db;
 
-// The opaque error handle: kind + rendered message + the structured
-// payloads the host reads back. Owned by the caller after a
-// `BDB_STATUS_ERROR` return; freed by [`bdb_error_destroy`].
+// The opaque error handle: origin, kind, rendered message. Owned by the
+// caller after a `BDB_STATUS_ERROR` return; freed by [`bdb_error_destroy`].
 typedef struct bdb_error bdb_error;
 
+// Opaque heap builder. Spent by [`bdb_instance_builder_admit`].
+typedef struct bdb_instance_builder bdb_instance_builder;
+
+// Borrowed query surface, valid only during the callback that minted it.
+typedef struct bdb_instance_ref bdb_instance_ref;
+
+// Opaque admitted heap instance.
+typedef struct bdb_owned_instance bdb_owned_instance;
+
 // The opaque prepared-query handle. Field order is load-bearing: the
-// prepared value borrows the engine through the `Arc` and must drop
-// first (the Node bridge's `PreparedHandle`, verbatim).
+// prepared value drops before the optional store `Arc`. Heap-prepared
+// queries hold `None`.
 typedef struct bdb_prepared bdb_prepared;
 
-// The owned row carrier for scans and point reads: engine values copied
-// out whole (one crossing), decoded cell by cell on the host. Views handed
-// out by [`bdb_row_set_get`] borrow this carrier and die with it.
-// Arity is a property of the set (the relation's width), not of a row
-// index — inbound collections are already rectangular.
+// Owned row carrier for scans and point reads.
 typedef struct bdb_row_set bdb_row_set;
 
-// A borrowed snapshot capability, valid ONLY inside the read callback it
-// was passed to (§16). The struct lives in a heap slot on [`bdb_db`] so
-// a stashed C pointer remains a real object after the callback: every
-// use re-checks `alive`, and a stale ref answers `BDB_STATUS_MISUSE`
-// instead of being replayed or use-after-freeing a stack frame.
-typedef struct bdb_snapshot_ref bdb_snapshot_ref;
-
-// A borrowed write-transaction capability, valid ONLY inside the write
-// callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
-// its engine pointer so `bdb_tx_reserve` can resolve fresh fields without
-// a second handle argument. `in_op` makes `transaction()` exclusive
-// across threads for the duration of one `bdb_tx_*` entry.
+// Borrowed write-transaction capability, valid only inside the write
+// callback.
 typedef struct bdb_tx_ref bdb_tx_ref;
+
+// Owning handle for a rejected admission's violation set. Destroy with
+// [`bdb_violations_destroy`].
+typedef struct bdb_violations bdb_violations;
+
+// Generation witness: cloneable evidence. A callback argument is borrowed
+// and invalidated when the callback returns. [`bdb_witness_retain`] clones
+// an owning handle.
+typedef struct bdb_witness bdb_witness;
 
 // A borrowed UTF-8 text view (NOT NUL-terminated; the length is the
 // contract). A null `data` with `len == 0` is the empty string; a null
@@ -473,24 +490,20 @@ typedef struct bdb_schema_spec {
   size_t statement_count;
 } bdb_schema_spec;
 
-// The 64 lowercase hex chars of the store's schema fingerprint — the
-// cross-host identity (NOT NUL-terminated; the width is the type).
+typedef union bdb_db_admission_value {
+  struct bdb_db *accepted;
+  struct bdb_violations *rejected;
+} bdb_db_admission_value;
+
+typedef struct bdb_db_admission {
+  enum bdb_admission_tag tag;
+  union bdb_db_admission_value value;
+} bdb_db_admission;
+
+// 64 lowercase hex chars of the store's schema fingerprint.
 typedef struct bdb_fingerprint {
   uint8_t hex[64];
 } bdb_fingerprint;
-
-// The read callback: synchronous, on the calling thread, with a
-// snapshot ref valid only until it returns. The return is an integer
-// tag (`bdb_callback_control`); unknown values are `BDB_STATUS_MISUSE`.
-// Invoked directly from Rust. A C++ exception through this function is
-// unsupported.
-typedef uint32_t (*bdb_read_callback)(void *context, const struct bdb_snapshot_ref *snapshot);
-
-// The write callback: synchronous, on the calling thread, with a tx ref
-// valid only until it returns. `Ok` commits the delta (the engine judges
-// dependencies against the final state); `Abort` drops it — LMDB never
-// saw a fact. Direct invoke as [`bdb_read_callback`].
-typedef uint32_t (*bdb_write_callback)(void *context, struct bdb_tx_ref *transaction);
 
 // Facts consumed vs facts that changed the in-memory final-state view.
 typedef struct bdb_mutation_report {
@@ -498,29 +511,48 @@ typedef struct bdb_mutation_report {
   uint64_t changed;
 } bdb_mutation_report;
 
-// Wire encoding of a fresh-id range from one `bdb_tx_reserve`.
-// Empty is `{ start: 0, end_exclusive: 0 }` **at this boundary only** —
-// `start` is not a minted id when `start == end_exclusive`. Hosts must
-// not treat 0 as minted on empty (0 is also the first legal minted id).
 typedef struct bdb_fresh_range {
+  enum bdb_fresh_range_tag tag;
   uint64_t start;
   uint64_t end_exclusive;
 } bdb_fresh_range;
 
-// One rendered violation of a rejected commit, viewed: the statement's
-// fingerprint-pinned id, its form tag, its canonical spelling (borrowed
-// from the owning [`bdb_error`]), the containment direction where the
-// form has one, and the capacity measure (u128 as two u64 words) where
-// the form has one.
-typedef struct bdb_violation {
-  uint16_t statement;
-  enum bdb_statement_kind kind;
-  struct bdb_string_view spelling;
-  enum bdb_violation_direction direction;
-  bool has_measure;
-  uint64_t measure_lo;
-  uint64_t measure_hi;
-} bdb_violation;
+typedef union bdb_instance_admission_value {
+  struct bdb_owned_instance *accepted;
+  struct bdb_violations *rejected;
+} bdb_instance_admission_value;
+
+typedef struct bdb_instance_admission {
+  enum bdb_admission_tag tag;
+  union bdb_instance_admission_value value;
+} bdb_instance_admission;
+
+// Heap-instance callback: the same query surface, no witness.
+typedef uint32_t (*bdb_owned_instance_read_callback)(void *context,
+                                                     const struct bdb_instance_ref *instance);
+
+// Store-read callback: instance + borrowed witness.
+typedef uint32_t (*bdb_db_read_callback)(void *context,
+                                         const struct bdb_instance_ref *instance,
+                                         const struct bdb_witness *witness);
+
+typedef uint32_t (*bdb_write_callback)(void *context, struct bdb_tx_ref *transaction);
+
+typedef struct bdb_moved_generations {
+  uint64_t witnessed;
+  uint64_t current;
+} bdb_moved_generations;
+
+typedef union bdb_write_admission_value {
+  uint64_t accepted_generation;
+  struct bdb_violations *rejected;
+  struct bdb_moved_generations moved;
+} bdb_write_admission_value;
+
+typedef struct bdb_write_admission {
+  enum bdb_admission_tag tag;
+  union bdb_write_admission_value value;
+} bdb_write_admission;
 
 // One head position; `op` is read for `Aggregate`.
 typedef struct bdb_head_term {
@@ -658,6 +690,31 @@ typedef struct bdb_query {
   union bdb_query_payload payload;
 } bdb_query;
 
+// Capacity measure as two u64 words (lo then hi). Live only on the
+// capacity payload arm.
+typedef struct bdb_capacity_measure {
+  uint64_t lo;
+  uint64_t hi;
+} bdb_capacity_measure;
+
+// Per-kind payload of [`bdb_violation`]. Inspect the arm that matches
+// `kind`; the other cells are uninitialized.
+typedef union bdb_violation_payload {
+  uint8_t functionality;
+  enum bdb_violation_direction containment;
+  struct bdb_capacity_measure capacity;
+} bdb_violation_payload;
+
+// One rendered violation, viewed: statement id, form tag, canonical
+// spelling (borrowed from the owning [`bdb_violations`]), and the
+// kind's payload arm.
+typedef struct bdb_violation {
+  uint16_t statement;
+  enum bdb_statement_kind kind;
+  struct bdb_string_view spelling;
+  union bdb_violation_payload payload;
+} bdb_violation;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -666,8 +723,9 @@ extern "C" {
 // bridge's `engine_version` as a C string the host can print.
 const char *bdb_version(void);
 
-// C ABI generation. `2` is collection-valued insert/delete and `reserve`.
-// Bump on a layout-visible change.
+// C ABI generation. `3` is instance-lifetime: admission unions, the
+// builder/owned/witness handles, and the retirement of snapshot-named
+// functions.
 uint32_t bdb_abi_version(void);
 
 // Mints an empty answers carrier (never fails; owns nothing yet).
@@ -695,96 +753,121 @@ enum bdb_status bdb_answers_get(const struct bdb_answers *answers,
 // Frees the carrier (invalidating every view borrowed from it).
 enum bdb_status bdb_answers_destroy(struct bdb_answers *answers);
 
-// Executes a prepared query against the snapshot with positional
+// Executes a prepared query against the instance with positional
 // params, filling the caller's reusable carrier (cleared first,
-// capacity retained — the `execute_into` lane, §23). The prepared handle
-// is taken exclusively for the call (`&mut` on the engine side — one
-// execution at a time, §20/§22); executing a prepared query against a
-// snapshot of a different database is the engine's own typed
+// capacity retained). The prepared handle is taken exclusively for the
+// call (`&mut` on the engine side — one execution at a time); executing
+// a prepared query against a foreign instance is the engine's own typed
 // `BDB_ERROR_KIND_FOREIGN_PREPARED`.
-enum bdb_status bdb_snapshot_execute(const struct bdb_snapshot_ref *snapshot,
+enum bdb_status bdb_instance_execute(const struct bdb_instance_ref *instance,
                                      struct bdb_prepared *prepared,
                                      const struct bdb_param *params,
                                      size_t param_count,
                                      struct bdb_answers *answers,
                                      struct bdb_error **out_error);
 
-// Creates a fresh DURABLE store at `path` from a schema spec. Schema
-// resolution/validation failures are `BDB_ERROR_KIND_SCHEMA`.
+// Creates a fresh DURABLE store. Empty that does not hold is
+// `BDB_ADMISSION_REJECTED` with no directory. `BDB_STATUS_OK` always
+// fills `out_admission` (never the empty tag).
 enum bdb_status bdb_db_create(struct bdb_string_view path,
                               const struct bdb_schema_spec *spec,
-                              struct bdb_db **out_db,
+                              struct bdb_db_admission *out_admission,
                               struct bdb_error **out_error);
 
-// Opens an existing durable store, verifying format version, store
-// kind, and schema fingerprint (`BDB_ERROR_KIND_SCHEMA_MISMATCH` on drift).
+// Opens an existing durable store. No admission union — format-8 open
+// carries admission provenance.
 enum bdb_status bdb_db_open(struct bdb_string_view path,
                             const struct bdb_schema_spec *spec,
                             struct bdb_db **out_db,
                             struct bdb_error **out_error);
 
-// Opens or initializes an EPHEMERAL store at `path` (`MDB_NOSYNC`; a
-// machine crash loses the store by the kind's own claim — every other
-// semantic is identical to a durable store).
+// Opens or initializes an EPHEMERAL store. Fresh initialize and wipe
+// complete-admit empty; an existing admitted format-8 store reopens as
+// accepted.
 enum bdb_status bdb_db_ephemeral(struct bdb_string_view path,
                                  const struct bdb_schema_spec *spec,
-                                 struct bdb_db **out_db,
+                                 struct bdb_db_admission *out_admission,
                                  struct bdb_error **out_error);
 
-// Destroys the handle: prepared queries keep their own engine reference
-// (the `Arc` below the boundary), so the environment — and its exclusive
-// lock — releases when the last of them is destroyed.
+// Raw-copies an admitted heap instance into a new durable store.
+enum bdb_status bdb_db_from_instance(struct bdb_string_view path,
+                                     const struct bdb_owned_instance *instance,
+                                     struct bdb_db **out_db,
+                                     struct bdb_error **out_error);
+
 enum bdb_status bdb_db_destroy(struct bdb_db *db);
 
-// The open store's schema fingerprint, 64 lowercase hex chars — the
-// cross-host identity readback (the Node bridge's
-// `dbFingerprint`, verbatim): `create` stored this exact value and
-// `open` verified it, so the descriptor's fingerprint IS the store's.
-// Dumb-bridge legal: validation and blake3 are the ENGINE's own
-// functions re-run on the already-admitted descriptor; the bridge only
-// hex-encodes the 32 bytes.
 enum bdb_status bdb_db_fingerprint(const struct bdb_db *db,
                                    struct bdb_fingerprint *out_fingerprint,
                                    struct bdb_error **out_error);
 
-// Runs `callback` over one consistent read snapshot (§16): the engine's
-// `Db::read` closure model, synchronous on the calling thread. The
-// snapshot ref is invalidated when the callback returns.
-// `BDB_STATUS_ABORTED` when the callback returned `Abort`.
+enum bdb_status bdb_instance_builder_new(const struct bdb_schema_spec *spec,
+                                         struct bdb_instance_builder **out_builder,
+                                         struct bdb_error **out_error);
+
+enum bdb_status bdb_instance_builder_load(struct bdb_instance_builder *builder,
+                                          uint32_t relation,
+                                          const struct bdb_value *values,
+                                          size_t value_count,
+                                          size_t row_count,
+                                          struct bdb_mutation_report *out_report,
+                                          struct bdb_error **out_error);
+
+enum bdb_status bdb_instance_builder_delete(struct bdb_instance_builder *builder,
+                                            uint32_t relation,
+                                            const struct bdb_value *values,
+                                            size_t value_count,
+                                            size_t row_count,
+                                            struct bdb_mutation_report *out_report,
+                                            struct bdb_error **out_error);
+
+enum bdb_status bdb_instance_builder_reserve(struct bdb_instance_builder *builder,
+                                             uint32_t relation,
+                                             uint16_t field,
+                                             uint64_t count,
+                                             struct bdb_fresh_range *out_range,
+                                             struct bdb_error **out_error);
+
+// Consumes the builder on every outcome and nulls the caller's pointer.
+enum bdb_status bdb_instance_builder_admit(struct bdb_instance_builder **builder,
+                                           struct bdb_instance_admission *out_admission,
+                                           struct bdb_error **out_error);
+
+enum bdb_status bdb_instance_builder_destroy(struct bdb_instance_builder *builder);
+
+enum bdb_status bdb_owned_instance_destroy(struct bdb_owned_instance *instance);
+
+// Borrows an owned instance through the common [`bdb_instance_ref`]
+// query surface.
+enum bdb_status bdb_owned_instance_read(const struct bdb_owned_instance *instance,
+                                        bdb_owned_instance_read_callback callback,
+                                        void *context,
+                                        struct bdb_error **out_error);
+
 enum bdb_status bdb_db_read(const struct bdb_db *db,
-                            bdb_read_callback callback,
+                            bdb_db_read_callback callback,
                             void *context,
                             struct bdb_error **out_error);
 
-// Runs `callback` as the single writer (§17): the engine's `Db::write`
-// closure model. `Ok` from the callback commits — the dependency
-// judgment runs against the final state, and a rejection is
-// `BDB_ERROR_KIND_COMMIT_REJECTED` carrying the complete violation set.
-// `Abort` drops the delta (`BDB_STATUS_ABORTED`; LMDB untouched).
-// Re-entrant writes on this handle are refused with
-// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine's assertion.
 enum bdb_status bdb_db_write(const struct bdb_db *db,
                              bdb_write_callback callback,
                              void *context,
+                             struct bdb_write_admission *out_admission,
                              struct bdb_error **out_error);
 
-// `bdb_db_write` conditional on a still-live snapshot (§18): the
-// engine's `Db::write_from`. Callable from inside the read callback that
-// owns `snapshot` (the sanctioned nesting — module doc). A
-// state-changing commit since the snapshot returns
-// `BDB_ERROR_KIND_GENERATION_MOVED` (payload: witnessed/current); retry is
-// host policy.
 enum bdb_status bdb_db_write_from(const struct bdb_db *db,
-                                  const struct bdb_snapshot_ref *snapshot,
+                                  const struct bdb_witness *witness,
                                   bdb_write_callback callback,
                                   void *context,
+                                  struct bdb_write_admission *out_admission,
                                   struct bdb_error **out_error);
 
-// Records a collection of inserts into the delta. `values` is
-// `row_count × value_count` cells in row-major order (`value_count` is
-// the relation arity). `row_count == 0` is lawful and does not read
-// `values`. Shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` —
-// the whole collection is checked before any row enters the delta.
+enum bdb_status bdb_witness_retain(const struct bdb_witness *witness,
+                                   struct bdb_witness **out_witness,
+                                   struct bdb_error **out_error);
+
+enum bdb_status bdb_witness_destroy(struct bdb_witness *witness);
+
 enum bdb_status bdb_tx_insert(const struct bdb_tx_ref *transaction,
                               uint32_t relation,
                               const struct bdb_value *values,
@@ -793,8 +876,6 @@ enum bdb_status bdb_tx_insert(const struct bdb_tx_ref *transaction,
                               struct bdb_mutation_report *out_report,
                               struct bdb_error **out_error);
 
-// Records a collection of deletes into the delta. Layout as
-// [`bdb_tx_insert`].
 enum bdb_status bdb_tx_delete(const struct bdb_tx_ref *transaction,
                               uint32_t relation,
                               const struct bdb_value *values,
@@ -803,18 +884,13 @@ enum bdb_status bdb_tx_delete(const struct bdb_tx_ref *transaction,
                               struct bdb_mutation_report *out_report,
                               struct bdb_error **out_error);
 
-// Final-state membership (base + pending delta — the view the commit
-// judgment judges, which is what makes check-then-act race-free).
 enum bdb_status bdb_tx_contains(const struct bdb_tx_ref *transaction,
                                 uint32_t relation,
                                 const struct bdb_value *values,
                                 size_t value_count,
-                                bool *out_contains,
+                                uint8_t *out_contains,
                                 struct bdb_error **out_error);
 
-// Final-state point lookup through a key statement (`key_values` in the
-// statement's projection order). A hit writes a one-row
-// [`bdb_row_set`] the caller owns; a miss writes null.
 enum bdb_status bdb_tx_get(const struct bdb_tx_ref *transaction,
                            uint32_t relation,
                            uint16_t key_statement,
@@ -823,12 +899,6 @@ enum bdb_status bdb_tx_get(const struct bdb_tx_ref *transaction,
                            struct bdb_row_set **out_row,
                            struct bdb_error **out_error);
 
-// Mints `count` consecutive fresh values for `(relation, field)`.
-// `count == 0` is the empty wire range `{0, 0}` and does not read or
-// advance the sequence — `start` is not a minted id on empty. The bridge
-// re-resolves the field per call because the C surface carries no witness
-// type (ids at this surface are data; a mis-aimed pair is typed
-// `BDB_ERROR_KIND_FACT_SHAPE`).
 enum bdb_status bdb_tx_reserve(const struct bdb_tx_ref *transaction,
                                uint32_t relation,
                                uint16_t field,
@@ -836,18 +906,14 @@ enum bdb_status bdb_tx_reserve(const struct bdb_tx_ref *transaction,
                                struct bdb_fresh_range *out_range,
                                struct bdb_error **out_error);
 
-// Committed-state membership of one dynamic fact (sealed field order).
-enum bdb_status bdb_snapshot_contains(const struct bdb_snapshot_ref *snapshot,
+enum bdb_status bdb_instance_contains(const struct bdb_instance_ref *instance,
                                       uint32_t relation,
                                       const struct bdb_value *values,
                                       size_t value_count,
-                                      bool *out_contains,
+                                      uint8_t *out_contains,
                                       struct bdb_error **out_error);
 
-// Committed-state point lookup of the full fact through a key statement
-// (`key_values` in the statement's projection order). A hit writes a
-// one-row [`bdb_row_set`] the caller owns; a miss writes null.
-enum bdb_status bdb_snapshot_get(const struct bdb_snapshot_ref *snapshot,
+enum bdb_status bdb_instance_get(const struct bdb_instance_ref *instance,
                                  uint32_t relation,
                                  uint16_t key_statement,
                                  const struct bdb_value *key_values,
@@ -855,66 +921,62 @@ enum bdb_status bdb_snapshot_get(const struct bdb_snapshot_ref *snapshot,
                                  struct bdb_row_set **out_row,
                                  struct bdb_error **out_error);
 
-// Full-relation export in `row_id` order (the ETL/derivation read):
-// one owned [`bdb_row_set`] crossing, iterated host-side — never one FFI
-// call per cell (§37).
-enum bdb_status bdb_snapshot_scan(const struct bdb_snapshot_ref *snapshot,
+enum bdb_status bdb_instance_scan(const struct bdb_instance_ref *instance,
                                   uint32_t relation,
                                   struct bdb_row_set **out_rows,
                                   struct bdb_error **out_error);
 
-// Number of rows.
+enum bdb_status bdb_instance_row_count(const struct bdb_instance_ref *instance,
+                                       uint32_t relation,
+                                       uint64_t *out_count,
+                                       struct bdb_error **out_error);
+
+enum bdb_status bdb_instance_prepare(const struct bdb_instance_ref *instance,
+                                     const struct bdb_query *query,
+                                     struct bdb_prepared **out_prepared,
+                                     struct bdb_error **out_error);
+
 size_t bdb_row_set_len(const struct bdb_row_set *rows);
 
-// The set's cell count (sealed field order — one width for the
-// relation, not per row). Empty sets answer 0.
 size_t bdb_row_set_arity(const struct bdb_row_set *rows);
 
-// One cell, viewed — string/bytes payloads BORROW the row set and die
-// with it. Bounds-checked: `BDB_STATUS_MISUSE` out of range.
 enum bdb_status bdb_row_set_get(const struct bdb_row_set *rows,
                                 size_t row,
                                 size_t column,
                                 struct bdb_value *out_value);
 
-// Frees a row set (invalidating every view borrowed from it).
 enum bdb_status bdb_row_set_destroy(struct bdb_row_set *rows);
 
-// The error's kind. A null handle answers `Panic` — the accessor cannot
-// carry a status, and `Panic` is the one kind that always means "stop
-// trusting this process's bridge state".
+// The error's origin. A null handle answers `Bridge`.
+enum bdb_error_origin bdb_error_get_origin(const struct bdb_error *error);
+
+// The error's kind. A null handle answers `Panic`.
 enum bdb_error_kind bdb_error_get_kind(const struct bdb_error *error);
 
 // The rendered message, borrowed from the error (valid until
-// `bdb_error_destroy`). UTF-8, NOT NUL-terminated — the length is the
-// contract.
+// `bdb_error_destroy`). UTF-8, NOT NUL-terminated.
 enum bdb_status bdb_error_get_message(const struct bdb_error *error,
                                       struct bdb_string_view *out_message);
-
-// The `GenerationMoved` payload: the witnessed and current generations.
-// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_KIND_GENERATION_MOVED`.
-enum bdb_status bdb_error_get_generation_moved(const struct bdb_error *error,
-                                               uint64_t *out_witnessed,
-                                               uint64_t *out_current);
-
-// The rendered violation count of a `BDB_ERROR_KIND_COMMIT_REJECTED` error
-// (0 for every other kind, and for a null handle).
-size_t bdb_error_violation_count(const struct bdb_error *error);
-
-// One rendered violation, viewed (the spelling borrows from the error —
-// valid until `bdb_error_destroy`). Bounds-checked:
-// `BDB_STATUS_MISUSE` past [`bdb_error_violation_count`].
-enum bdb_status bdb_error_get_violation(const struct bdb_error *error,
-                                        size_t index,
-                                        struct bdb_violation *out_violation);
 
 // Frees an error. Exactly once per owned error; a null pointer is
 // misuse.
 enum bdb_status bdb_error_destroy(struct bdb_error *error);
 
+// The rendered violation count (0 for a null handle).
+size_t bdb_violations_len(const struct bdb_violations *violations);
+
+// One rendered violation, viewed (the spelling borrows from the handle).
+// Bounds-checked: `BDB_STATUS_MISUSE` past [`bdb_violations_len`].
+enum bdb_status bdb_violations_get(const struct bdb_violations *violations,
+                                   size_t index,
+                                   struct bdb_violation *out_violation);
+
+// Frees a violations handle. A null pointer is misuse.
+enum bdb_status bdb_violations_destroy(struct bdb_violations *violations);
+
 // Prepares a query against the database: the engine validates,
 // normalizes, reads statistics, and plans ONCE; the returned handle is
-// reusable across snapshots of this database (`&mut` per execution —
+// reusable across reads of this database (`&mut` per execution —
 // one execution at a time; the handle is not thread-shareable).
 // Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 enum bdb_status bdb_db_prepare(const struct bdb_db *db,

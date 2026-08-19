@@ -1,3 +1,4 @@
+use crate::encoding::FactView;
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
@@ -7,7 +8,7 @@ use bumbledb_theory::schema::RelationId;
 use super::check_width::check_width;
 
 /// `F` get: the canonical bytes of the fact at `row_id`, borrowed from the
-/// LMDB page.
+/// LMDB page, width-proved against the relation layout.
 ///
 /// # Errors
 ///
@@ -15,41 +16,38 @@ use super::check_width::check_width;
 /// from `M`/`U` in the same snapshot must resolve; `Corruption
 /// (WrongFactWidth)` when the stored value does not match the schema's
 /// fact width. Never a skip.
-pub fn fetch<'txn>(
+pub fn fetch<'txn, 's>(
     txn: &'txn ReadTxn<'_>,
-    schema: &Schema,
+    schema: &'s Schema,
     rel: RelationId,
     row_id: u64,
-) -> Result<&'txn [u8]> {
-    let mut key = [0u8; keys::FACT_KEY_LEN];
-    let len = keys::fact_key(&mut key, rel, row_id);
-    debug_assert_eq!(len, key.len());
+) -> Result<FactView<'txn, 's>> {
+    let key = keys::fact_key(rel, row_id);
     let bytes = txn
         .env()
         .data()
-        .get(txn.raw(), &key[..len])?
+        .get(txn.raw(), &key)?
         .ok_or(Error::Corruption(CorruptionError::MissingFact {
             relation: rel,
             row_id,
         }))?;
-    check_width(schema, rel, row_id, bytes)?;
-    Ok(bytes)
+    check_width(schema, rel, row_id, bytes)
 }
 
 /// The committed point-read leg over a composed determinant key
 /// ([`super::begin_determinant_key`] + determinant bytes): `U` probe →
-/// `F` fetch — one body behind `Snapshot::{get, get_dyn}` and
+/// `F` fetch — one body behind `ReadInstance::{get, get_dyn}` and
 /// `WriteTx`'s committed arm.
 ///
 /// # Errors
 ///
 /// As [`fetch`], plus `Corruption` on a malformed `U` row-id value.
-pub fn fact_for_key<'txn>(
+pub fn fact_for_key<'txn, 's>(
     txn: &'txn ReadTxn<'_>,
-    schema: &Schema,
+    schema: &'s Schema,
     rel: RelationId,
     key: &[u8],
-) -> Result<Option<&'txn [u8]>> {
+) -> Result<Option<FactView<'txn, 's>>> {
     match super::determinant_row::determinant_row_for_key(txn, key)? {
         Some(row_id) => fetch(txn, schema, rel, row_id).map(Some),
         None => Ok(None),
@@ -68,20 +66,15 @@ pub fn fact_for_key<'txn>(
 ///
 /// `Lmdb` on storage failure; `Corruption(WrongFactWidth)` on a stored
 /// fact not matching the schema's width.
-pub fn fact_at<'txn>(
+pub fn fact_at<'txn, 's>(
     txn: &'txn ReadTxn<'_>,
-    schema: &Schema,
+    schema: &'s Schema,
     rel: RelationId,
     row_id: u64,
-) -> Result<Option<&'txn [u8]>> {
-    let mut key = [0u8; keys::FACT_KEY_LEN];
-    let len = keys::fact_key(&mut key, rel, row_id);
-    debug_assert_eq!(len, key.len());
+) -> Result<Option<FactView<'txn, 's>>> {
+    let key = keys::fact_key(rel, row_id);
     match txn.env().data().get(txn.raw(), &key)? {
-        Some(bytes) => {
-            check_width(schema, rel, row_id, bytes)?;
-            Ok(Some(bytes))
-        }
+        Some(bytes) => check_width(schema, rel, row_id, bytes).map(Some),
         None => Ok(None),
     }
 }

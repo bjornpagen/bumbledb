@@ -18,7 +18,19 @@ the per-statement dispatcher (`Statement.checkB`,
 key phase then statement phase, mirroring `Txn.judge` and proved to
 agree with its verdict and its violation sets, phase for phase, with
 NO instance-side premise beyond the merge (`Txn.judgeB_agrees`,
-`Txn.mem_keyViolationsB`, `Txn.mem_statementViolationsB`).
+`Txn.mem_keyViolationsB`, `Txn.mem_statementViolationsB`). The
+complete-roster executable twins (`Txn.completeKeyViolationsB`,
+`Txn.completeStatementViolationsB`, `Txn.mem_completeKeyViolationsB`,
+`Txn.mem_completeStatementViolationsB`) ride the same membership
+idiom over `RowInstance` and `W.den`. The roster-bridge Bool
+(`Txn.completeRosterPassesB`, `Txn.completeRosterPassesB_iff`,
+`Txn.completeRosterPassesB_iff_holds`) is both complete-roster
+lists empty, agreeing with `Txn.completeRosterPasses` under the
+merge and with `holds` once the schema is validated. Complete
+admission of a raw instance is `Txn.completeAdmissionB` (L5) —
+`judgeB` over the candidate, no delta; the incremental lane's
+closed-source fence lifts because the complete verdict is not
+delta-restricted.
 
 Placement recorded: the file sits at the tree root beside `Txn.lean`
 because its subject is the WRITE-side judgment — statements,
@@ -1116,6 +1128,149 @@ theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
       | true =>
         exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
 
+/-- The complete key roster, executable and position-tagged: declared
+functionality statements the checker refutes whose relation is
+ordinary. Closed functionality is skipped (`Statement.closedConstant`). -/
+def completeKeyViolationsB (T : Theory) (W : RowInstance) :
+    List (Statement × Nat) :=
+  T.statements.zipIdx.filter fun p =>
+    p.1.isKey && !p.1.closedConstant T && !p.1.checkB T W
+
+/-- The complete statement roster, executable: declared non-key
+statements the checker refutes that still depend on ordinary facts. -/
+def completeStatementViolationsB (T : Theory) (W : RowInstance) :
+    List (Statement × Nat) :=
+  T.statements.zipIdx.filter fun p =>
+    !p.1.isKey && !p.1.closedConstant T && !p.1.checkB T W
+
+/-- The executable complete key citations are exactly
+`Txn.completeKeyViolations`, membership for membership. -/
+theorem mem_completeKeyViolationsB {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) {st : Statement} :
+    st ∈ (completeKeyViolationsB T W).map (·.1) ↔
+      st ∈ Txn.completeKeyViolations T W.den := by
+  unfold completeKeyViolationsB
+  rw [zipIdx_filter_fst
+    (fun st : Statement =>
+      st.isKey && !st.closedConstant T && !st.checkB T W)]
+  constructor
+  · intro h
+    obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
+    obtain ⟨h12, h3⟩ := andB_iff.mp hcond
+    obtain ⟨h1, h2⟩ := andB_iff.mp h12
+    refine ⟨⟨⟨hmem, fun hj => ?_⟩, h1⟩, ?_⟩
+    · rw [(Statement.checkB_iff hclosed).mpr hj] at h3
+      exact nomatch h3
+    · cases hc : st.closedConstant T with
+      | false => rfl
+      | true =>
+        rw [hc] at h2
+        exact nomatch h2
+  · rintro ⟨⟨⟨hmem, hj⟩, hk⟩, hdep⟩
+    refine List.mem_filter.mpr ⟨hmem, andB_iff.mpr
+      ⟨andB_iff.mpr ⟨hk, ?_⟩, ?_⟩⟩
+    · rw [hdep]
+      rfl
+    · cases hc : st.checkB T W with
+      | false => rfl
+      | true =>
+        exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
+
+/-- The executable complete statement citations are exactly
+`Txn.completeStatementViolations`, membership for membership. -/
+theorem mem_completeStatementViolationsB {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) {st : Statement} :
+    st ∈ (completeStatementViolationsB T W).map (·.1) ↔
+      st ∈ Txn.completeStatementViolations T W.den := by
+  unfold completeStatementViolationsB
+  rw [zipIdx_filter_fst
+    (fun st : Statement =>
+      !st.isKey && !st.closedConstant T && !st.checkB T W)]
+  constructor
+  · intro h
+    obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
+    obtain ⟨h12, h3⟩ := andB_iff.mp hcond
+    obtain ⟨h1, h2⟩ := andB_iff.mp h12
+    refine ⟨⟨⟨hmem, fun hj => ?_⟩, ?_⟩, ?_⟩
+    · rw [(Statement.checkB_iff hclosed).mpr hj] at h3
+      exact nomatch h3
+    · cases hk : st.isKey with
+      | false => rfl
+      | true =>
+        rw [hk] at h1
+        exact nomatch h1
+    · cases hc : st.closedConstant T with
+      | false => rfl
+      | true =>
+        rw [hc] at h2
+        exact nomatch h2
+  · rintro ⟨⟨⟨hmem, hj⟩, hk⟩, hdep⟩
+    refine List.mem_filter.mpr ⟨hmem, andB_iff.mpr
+      ⟨andB_iff.mpr ⟨?_, ?_⟩, ?_⟩⟩
+    · rw [hk]
+      rfl
+    · rw [hdep]
+      rfl
+    · cases hc : st.checkB T W with
+      | false => rfl
+      | true =>
+        exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
+
+/-- **L3, executable.** Both complete-roster citation lists are empty —
+the complete roster passes on this row instance. -/
+def completeRosterPassesB (T : Theory) (W : RowInstance) : Bool :=
+  (completeKeyViolationsB T W).isEmpty &&
+  (completeStatementViolationsB T W).isEmpty
+
+/-- The executable roster-pass flag is `Txn.completeRosterPasses`,
+under the merge. No validation witness: emptiness is emptiness. -/
+theorem completeRosterPassesB_iff {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) :
+    completeRosterPassesB T W = true ↔
+      completeRosterPasses T W.den := by
+  unfold completeRosterPassesB completeRosterPasses
+  rw [Bool.and_eq_true]
+  constructor
+  · intro ⟨hke, hse⟩
+    have hkn : completeKeyViolationsB T W = [] :=
+      List.isEmpty_iff.mp hke
+    have hsn : completeStatementViolationsB T W = [] :=
+      List.isEmpty_iff.mp hse
+    constructor
+    · intro st hst
+      have hm := (mem_completeKeyViolationsB hclosed).mpr hst
+      rw [hkn] at hm
+      exact nomatch hm
+    · intro st hst
+      have hm := (mem_completeStatementViolationsB hclosed).mpr hst
+      rw [hsn] at hm
+      exact nomatch hm
+  · intro ⟨hke, hse⟩
+    constructor
+    · refine List.isEmpty_iff.mpr ?_
+      cases h : completeKeyViolationsB T W with
+      | nil => rfl
+      | cons p ps =>
+        have hm : p.1 ∈ (p :: ps).map (·.1) := List.mem_cons_self ..
+        rw [← h] at hm
+        exact absurd ((mem_completeKeyViolationsB hclosed).mp hm) (hke p.1)
+    · refine List.isEmpty_iff.mpr ?_
+      cases h : completeStatementViolationsB T W with
+      | nil => rfl
+      | cons p ps =>
+        have hm : p.1 ∈ (p :: ps).map (·.1) := List.mem_cons_self ..
+        rw [← h] at hm
+        exact absurd ((mem_completeStatementViolationsB hclosed).mp hm)
+          (hse p.1)
+
+/-- **L3, executable roster bridge.** On a validated schema the
+complete-roster Bool decides `holds` of the denoted instance. -/
+theorem completeRosterPassesB_iff_holds {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) (hv : closedConstantHolds T) :
+    completeRosterPassesB T W = true ↔ holds T W.den := by
+  rw [completeRosterPassesB_iff hclosed,
+      completeRosterPasses_iff_holds W.den hv]
+
 /-- **The two-phase agreement**: `judgeB` and `Txn.judge` render one
 verdict on EVERY row instance — accept together (and the accepted
 state is the judged instance), or reject in the SAME phase, the
@@ -1181,6 +1336,31 @@ theorem judgeB_agrees {T : Theory} {W : RowInstance}
       cases hsv : statementViolationsB T W with
       | nil => exact absurd hsv hne
       | cons a l => rfl
+
+/-- **L5.** The executable complete-admission judge: `judgeB` over
+the candidate instance, no pre-state and no delta. The incremental
+lane's recorded scope fences exclude closed-source containments
+because a delta-restricted engine verdict would mismatch this
+oracle; those fences lift here. -/
+abbrev completeAdmissionB := judgeB
+
+/-- Complete admission is the two-phase judge — one denotation. -/
+theorem completeAdmissionB_eq_judgeB : completeAdmissionB = judgeB :=
+  rfl
+
+/-- **L5.** Complete admission and `Txn.judge` render one verdict on
+every row instance — `judgeB_agrees` under the complete-admission
+name the packed-freeze lockstep cites. -/
+theorem completeAdmissionB_agrees {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) :
+    (completeAdmissionB T W = none ∧
+      ∃ h, completeAdmission T W.den = .ok ⟨W.den, h⟩) ∨
+    (completeAdmissionB T W = some (true, keyViolationsB T W) ∧
+      completeAdmission T W.den = .reject (keyViolationSet T W.den)) ∨
+    (completeAdmissionB T W = some (false, statementViolationsB T W) ∧
+      completeAdmission T W.den =
+        .reject (statementViolationSet T W.den)) :=
+  judgeB_agrees hclosed
 
 end Txn
 

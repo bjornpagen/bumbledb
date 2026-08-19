@@ -120,7 +120,13 @@ fn ephemeral_twin<S: bumbledb::schema::Theory + Copy>(
         .map_err(|e| format!("compact {name}: {e:?}"))?;
     drop(db);
     std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove {name}-load: {e}"))?;
-    Db::ephemeral(&target, schema).map_err(|e| format!("open ephemeral {name}: {e:?}"))
+    match Db::ephemeral(&target, schema) {
+        Err(error) => Err(format!("open ephemeral {name}: {error:?}")),
+        Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
+        Ok(bumbledb::Admission::Rejected(violations)) => Err(format!(
+            "open ephemeral {name}: empty rejected: {violations}"
+        )),
+    }
 }
 
 /// `bench`. Returns the exit code: 0 when every selected gate family

@@ -313,12 +313,14 @@ enum SelectionKind {
     Set,
 }
 
-/// Selection-free tries are vacuous success, not a pretend-ran bit.
+/// Selection-free tries are vacuous success. A cursor exists only on
+/// the arms that have one — `Pending` is the unselected selection-bearing
+/// start, not a dummy root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectState {
-    Vacuous,
+enum Start {
+    Vacuous(Cursor),
     Pending,
-    Done,
+    Selected(Cursor),
 }
 
 /// Pool high-water snapshot taken just before a select builds its first
@@ -344,13 +346,9 @@ struct PoolMark {
 /// every capacity retained (the 40-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
-    /// Prepended selection levels (docs/architecture/40-execution.md): one trie
-    /// level per Eq-constant, probed once per execution with the resolved
-    /// words. Everything below a successful probe is exactly the filtered
-    /// subtrie a view scan used to produce — built lazily, only for keys
-    /// actually asked about.
-    selection_levels: usize,
-    /// Per selection level: point-probe vs set-union ([`SelectionLevel`]).
+    /// Per selection level: point-probe vs set-union ([`SelectionKind`]).
+    /// Depth (`selection_kinds.len()`) is the prepended Eq-constant
+    /// prefix (docs/architecture/40-execution.md); join levels sit below.
     selection_kinds: Vec<SelectionKind>,
     /// The union watermark of the current execution's set probes, if any
     /// ([`PoolMark`]).
@@ -359,10 +357,9 @@ pub struct Colt {
     select_hits: Vec<Cursor>,
     /// Per-select union-position scratch (capacity retained).
     select_positions: Vec<u32>,
-    /// The post-selection start cursor for the current execution.
-    start: Cursor,
-    /// Whether [`Colt::select`] is vacuous (no levels), pending, or done.
-    select_state: SelectState,
+    /// The post-selection start for the current execution. A cursor is
+    /// present only after a vacuous or completed select.
+    start: Start,
     /// Per trie level — selection levels first, then join levels — the
     /// image column index of each key variable. Public APIs take *join*
     /// levels; internal code indexes this directly.
@@ -400,6 +397,24 @@ pub struct Colt {
     /// force axis. Wraps at 128 (7 bits); a wrap-collision needs a
     /// token held across exactly 128 resets, far past any driver shape.
     epoch: u8,
+}
+
+impl Colt {
+    fn selection_depth(&self) -> usize {
+        self.selection_kinds.len()
+    }
+
+    fn join_index(&self, level: usize) -> usize {
+        self.selection_depth() + level
+    }
+
+    fn initial_start(selection_depth: usize) -> Start {
+        if selection_depth == 0 {
+            Start::Vacuous(Cursor::Node(NodeRef(0)))
+        } else {
+            Start::Pending
+        }
+    }
 }
 
 mod append_child;

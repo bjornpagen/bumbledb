@@ -7,14 +7,14 @@ use std::ops::Range;
 
 /// Facts consumed vs facts that changed the in-memory final-state view
 /// at call time. The length-1 report is `{ submitted: 1, changed: 0|1 }`.
-/// The engine constructs reports through [`MutationReport::from_counts`];
-/// `changed <= submitted` is the invariant.
+/// `changed` counts recorded and cancelled net dispositions; intern-skips
+/// and already-matching state do not increment. The engine constructs
+/// reports through [`MutationReport::from_counts`]; `changed <= submitted`
+/// is the invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MutationReport {
-    /// Facts presented to the collection.
-    pub submitted: u64,
-    /// Facts that changed the in-memory final-state view at call time.
-    pub changed: u64,
+    submitted: u64,
+    changed: u64,
 }
 
 impl MutationReport {
@@ -28,6 +28,18 @@ impl MutationReport {
     pub(super) const fn from_counts(submitted: u64, changed: u64) -> Self {
         debug_assert!(changed <= submitted);
         Self { submitted, changed }
+    }
+
+    /// Facts presented to the collection.
+    #[must_use]
+    pub const fn submitted(self) -> u64 {
+        self.submitted
+    }
+
+    /// Facts that changed the in-memory final-state view at call time.
+    #[must_use]
+    pub const fn changed(self) -> u64 {
+        self.changed
     }
 }
 
@@ -105,10 +117,20 @@ impl<T> FreshRange<T> {
 #[allow(private_bounds)]
 impl<T: FreshWord> FreshRange<T> {
     pub(super) fn minted(start: u64, count: NonZeroU64) -> Self {
+        debug_assert!(
+            start.checked_add(count.get()).is_some(),
+            "reserve refuses a range whose exclusive end overflows"
+        );
         Self::NonEmpty {
             start: T::from_word(start),
             count,
         }
+    }
+
+    fn exclusive_end(start: u64, count: NonZeroU64) -> u64 {
+        start
+            .checked_add(count.get())
+            .expect("FreshRange::minted is the one overflow check")
     }
 
     /// Exclusive bound as a raw word — not a minted id. Empty has none;
@@ -118,7 +140,7 @@ impl<T: FreshWord> FreshRange<T> {
     pub fn end_exclusive_raw(self) -> Option<u64> {
         match self {
             Self::Empty => None,
-            Self::NonEmpty { start, count } => start.to_word().checked_add(count.get()),
+            Self::NonEmpty { start, count } => Some(Self::exclusive_end(start.to_word(), count)),
         }
     }
 
@@ -129,7 +151,7 @@ impl<T: FreshWord> FreshRange<T> {
             Self::Empty => None,
             Self::NonEmpty { start, count } => {
                 let raw = start.to_word();
-                Some(raw..raw + count.get())
+                Some(raw..Self::exclusive_end(raw, count))
             }
         }
     }
@@ -155,7 +177,7 @@ impl<T: FreshWord> FreshRange<T> {
                 let raw = start.to_word();
                 FreshRangeIter {
                     next: raw,
-                    end: raw + count.get(),
+                    end: Self::exclusive_end(raw, count),
                     marker: std::marker::PhantomData,
                 }
             }

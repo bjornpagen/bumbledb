@@ -36,18 +36,21 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
-use heed::{AnyTls, RoTxn};
-
-use super::plan::{CommitPlan, EdgeOp, FactOp};
+use super::plan::{CommitPlan, IncrementalObligations, MarkWeight, Owed, RKeyOp};
 use super::{decode_row_id, fact_by_row};
-use crate::encoding::{FactLayout, encode_u64, field_bytes, field_word_bytes};
-use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
+use crate::encoding::{FactLayout, InternId, encode_u64, field_bytes, field_word_bytes};
+use crate::error::{
+    Admission, Check, CorruptionError, Direction, Error, Result, Violation, Violations,
+};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, BoundCeiling, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
-    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyForm, KeyId, Schema,
-    SealedBound, SealedWeight, StatementView,
+    CompiledSide, ContainmentId, DisjointDeterminantProof, EncodableCheck, Enforcement,
+    IntervalTail, KeyForm, KeyId, Schema, SealedBound, SealedWeight, Survivors,
+};
+use crate::storage::catalog::{
+    Bounds, CatalogMap, CatalogRead, LmdbPeekCatalog, LmdbSortedGets, ReadCursor, SortedGets,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -78,11 +81,12 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
 /// containments (both directions) and capacity statements (per touched
 /// parent) — and seals the complete violation set of the phase
 /// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
-pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violations>> {
+pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Admission<()>> {
+    let obligations = view.plan.incremental_obligations();
     let mut violations = Vec::new();
-    check_source(view, &mut violations)?;
-    check_target(view, &mut violations)?;
-    check_capacities(view, &mut violations)?;
+    check_source(view, &obligations, &mut violations)?;
+    check_target(view, &obligations, &mut violations)?;
+    check_capacities(view, &obligations, &mut violations)?;
     Ok(Violations::seal(violations))
 }
 
@@ -147,13 +151,12 @@ pub(crate) fn measure_weight(
     match weight {
         SealedWeight::Unit => Ok(1),
         SealedWeight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
-            fact,
-            layout,
+            layout.encoded(fact),
             usize::from(field.0),
         ))),
         SealedWeight::Duration { field, tail } => interval_measure(
             tail,
-            field_bytes(fact, layout, usize::from(field.0)),
+            field_bytes(layout.encoded(fact), usize::from(field.0)),
             statement,
             fact,
         ),
@@ -176,11 +179,11 @@ pub(crate) fn resolve_bound(
         SealedBound::Unbounded => Ok(BoundCeiling::Unbounded),
         SealedBound::Lit(n) => Ok(BoundCeiling::Finite(n)),
         SealedBound::TargetField(field) => Ok(BoundCeiling::Finite(u64::from_be_bytes(
-            field_word_bytes(parent_fact, layout, usize::from(field.0)),
+            field_word_bytes(layout.encoded(parent_fact), usize::from(field.0)),
         ))),
         SealedBound::Duration { field, tail } => interval_measure(
             tail,
-            field_bytes(parent_fact, layout, usize::from(field.0)),
+            field_bytes(layout.encoded(parent_fact), usize::from(field.0)),
             statement,
             parent_fact,
         )
@@ -198,10 +201,46 @@ pub(crate) fn expected_slot_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<Option<u64>> {
-    if matches!(statement.weight, SealedWeight::Unit) {
-        return Ok(None);
+    match SlotShape::of(statement.weight) {
+        SlotShape::Empty => Ok(None),
+        SlotShape::Word => Ok(Some(child_weight(statement, layout, fact)?)),
     }
-    Ok(Some(child_weight(statement, layout, fact)?))
+}
+
+/// The C17 `R` value-slot shape, resolved once per statement from
+/// [`SealedWeight`] — not re-tested per walked entry.
+#[derive(Clone, Copy)]
+pub(crate) enum SlotShape {
+    Empty,
+    Word,
+}
+
+impl SlotShape {
+    pub(crate) fn of(weight: SealedWeight) -> Self {
+        match weight {
+            SealedWeight::Unit => Self::Empty,
+            SealedWeight::Field(_) | SealedWeight::Duration { .. } => Self::Word,
+        }
+    }
+
+    fn decode(self, value: &[u8]) -> Result<u64> {
+        match self {
+            Self::Empty => {
+                if !value.is_empty() {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "R capacity value width",
+                    )));
+                }
+                Ok(1)
+            }
+            Self::Word => {
+                let word: [u8; 8] = value.try_into().map_err(|_| {
+                    Error::Corruption(CorruptionError::MalformedValue("R capacity value width"))
+                })?;
+                Ok(u64::from_le_bytes(word))
+            }
+        }
+    }
 }
 
 /// The interval measure in encoded word space: `end − start` over the
@@ -284,26 +323,29 @@ pub(crate) struct SideChecks {
 /// id, or `None` when no fact can carry the value — the one seam between
 /// [`Selections::encode`] (delta-aware) and [`Selections::encode_committed`]
 /// (committed dictionary only).
-type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
+type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<InternId>> + 'a;
 
 /// Pre-encoded selections for every `Containment` and `Capacity`
 /// statement, built once per commit — the commit-local scratch that keeps
-/// literal encoding out of the per-fact loops.
-pub(crate) struct Selections {
+/// literal encoding out of the per-fact loops. Carries the schema it was
+/// encoded from so `plan_commit` and the later phases derive from one
+/// witness, not a matching triple of arguments.
+pub(crate) struct Selections<'s> {
+    schema: &'s Schema,
     /// Dense by [`ContainmentId`]; every slot is a containment by type.
     checks: Box<[SideChecks]>,
     /// Dense by [`CapacityId`]; every slot is a capacity statement by type.
     capacities: Box<[SideChecks]>,
 }
 
-impl Selections {
+impl<'s> Selections<'s> {
     /// Materializes every containment statement's selection checks from
     /// the sealed compile ([`CompiledCheck`], the staging law): canonical
     /// bytes copy as-is; only `str` literals resolve — through the
     /// delta's pending map, then the committed dictionary — and a double
     /// miss proves no fact can satisfy the selection
     /// ([`SelectionCheck::Never`]).
-    pub(crate) fn encode(delta: &WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
+    pub(crate) fn encode(delta: &'s WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
         Self::encode_with(delta.schema(), &mut |raw| delta.resolve(view, raw))
     }
 
@@ -312,19 +354,29 @@ impl Selections {
     /// through the committed dictionary alone — a miss proves no
     /// *committed* fact can satisfy the selection, exactly the judgment
     /// the sweeper re-checks.
-    pub(crate) fn encode_committed(schema: &Schema, view: &ReadTxn<'_>) -> Result<Self> {
+    pub(crate) fn encode_committed(schema: &'s Schema, view: &ReadTxn<'_>) -> Result<Self> {
         Self::encode_with(schema, &mut |raw| crate::storage::dict::lookup(view, raw))
     }
 
+    /// Encodes selections through a caller-supplied intern lookup — the
+    /// heap-admit path has a [`crate::storage::catalog::CatalogRead`],
+    /// not a [`WriteDelta`].
+    pub(crate) fn encode_lookup(
+        schema: &'s Schema,
+        mut lookup: impl FnMut(&[u8]) -> Result<Option<InternId>>,
+    ) -> Result<Self> {
+        Self::encode_with(schema, &mut lookup)
+    }
+
     /// The shared constructor over an [`InternResolver`].
-    fn encode_with(schema: &Schema, resolve: &mut InternResolver<'_>) -> Result<Self> {
+    fn encode_with(schema: &'s Schema, resolve: &mut InternResolver<'_>) -> Result<Self> {
         let checks = schema
             .containments()
             .iter()
             .map(|statement| {
                 Ok(SideChecks {
-                    source: resolve_checks(&statement.checks.source, resolve)?,
-                    target: resolve_checks(&statement.checks.target, resolve)?,
+                    source: resolve_side(&statement.checks.source, resolve)?,
+                    target: resolve_side(&statement.checks.target, resolve)?,
                 })
             })
             .collect::<Result<Box<[_]>>>()?;
@@ -333,12 +385,32 @@ impl Selections {
             .iter()
             .map(|statement| {
                 Ok(SideChecks {
-                    source: resolve_checks(&statement.checks.source, resolve)?,
-                    target: resolve_checks(&statement.checks.target, resolve)?,
+                    source: resolve_side(&statement.checks.source, resolve)?,
+                    target: resolve_side(&statement.checks.target, resolve)?,
                 })
             })
             .collect::<Result<Box<[_]>>>()?;
-        Ok(Self { checks, capacities })
+        Ok(Self {
+            schema,
+            checks,
+            capacities,
+        })
+    }
+
+    /// The schema these selections were encoded from.
+    pub(crate) fn schema(&self) -> &'s Schema {
+        self.schema
+    }
+
+    /// Rebind to the schema borrow the plan lives on — same pointer,
+    /// shorter lifetime, so `plan_commit` stores one `'d`.
+    pub(crate) fn bind(self, schema: &Schema) -> Selections<'_> {
+        debug_assert!(std::ptr::eq(self.schema, schema));
+        Selections {
+            schema,
+            checks: self.checks,
+            capacities: self.capacities,
+        }
     }
 
     /// The checks of a validation-minted containment witness.
@@ -350,6 +422,39 @@ impl Selections {
     pub(crate) fn capacity(&self, id: CapacityId) -> &SideChecks {
         &self.capacities[usize::from(id.0)]
     }
+}
+
+fn resolve_side(side: &CompiledSide, resolve: &mut InternResolver<'_>) -> Result<SelectionCheck> {
+    if side.is_empty() {
+        return Ok(SelectionCheck::Empty);
+    }
+    if let Some(checks) = side.ordinary() {
+        resolve_checks(checks, resolve)
+    } else if let Some(checks) = side.closed() {
+        Ok(resolve_encodable(checks))
+    } else {
+        unreachable!("CompiledSide is Ordinary or Closed")
+    }
+}
+
+fn resolve_encodable(checks: &[EncodableCheck]) -> SelectionCheck {
+    if checks.is_empty() {
+        return SelectionCheck::Empty;
+    }
+    SelectionCheck::Compare(
+        checks
+            .iter()
+            .map(|check| match check {
+                EncodableCheck::Encoded { field, bytes } => {
+                    (*field, FieldCheck::One(bytes.clone()))
+                }
+                EncodableCheck::EncodedSet {
+                    field,
+                    alternatives,
+                } => (*field, FieldCheck::AnyOf(alternatives.clone())),
+            })
+            .collect(),
+    )
 }
 
 /// One side's sealed checks into the commit-local form: `Encoded` bytes
@@ -373,14 +478,14 @@ fn resolve_checks(
                 alternatives,
             } => (*field, FieldCheck::AnyOf(alternatives.clone())),
             CompiledCheck::Interned { field, text } => match resolve(text.as_bytes())? {
-                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id)))),
+                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id.raw())))),
                 None => return Ok(SelectionCheck::Never),
             },
             CompiledCheck::InternedSet { field, texts } => {
                 let mut alternatives = Vec::with_capacity(texts.len());
                 for text in texts {
                     if let Some(id) = resolve(text.as_bytes())? {
-                        alternatives.push(Box::new(encode_u64(id)) as Box<[u8]>);
+                        alternatives.push(Box::new(encode_u64(id.raw())) as Box<[u8]>);
                     }
                 }
                 if alternatives.is_empty() {
@@ -403,7 +508,10 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
         SelectionCheck::Empty => true,
         SelectionCheck::Never => false,
         SelectionCheck::Compare(fields) => fields.iter().all(|(field, literal)| {
-            literal.matches(field_bytes(fact_bytes, layout, usize::from(field.0)))
+            literal.matches(field_bytes(
+                layout.encoded(fact_bytes),
+                usize::from(field.0),
+            ))
         }),
     }
 }
@@ -412,14 +520,13 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
 /// recorded and the scan continues (the reject path is scan-complete);
 /// every other error — corruption, storage — propagates and aborts the
 /// judgment outright.
-fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
-    match outcome {
-        Ok(()) => Ok(()),
-        Err(Error::CommitRejected { violations: found }) => {
-            violations.extend(found);
+pub(crate) fn collect(outcome: Result<Check>, violations: &mut Vec<Violation>) -> Result<()> {
+    match outcome? {
+        Check::Holds => Ok(()),
+        Check::Violated(violation) => {
+            violations.push(violation);
             Ok(())
         }
-        Err(other) => Err(other),
     }
 }
 
@@ -438,12 +545,14 @@ fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
 /// witness consequence are at the sort below.
 pub(super) fn check_source(
     view: &FinalStateView<'_, '_, '_>,
+    obligations: &IncrementalObligations<'_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let FinalStateView { txn, schema, plan } = view;
-    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
+    let catalog = LmdbPeekCatalog::new(txn);
+    let mut checker = Checker::new(&catalog, schema);
     let mut probes = 0u64;
-    let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
+    let mut span = obs::span(obs::names::JUDGMENT_SOURCE);
     // Probes run in target-key order, not the delta's hash order: the T8
     // commit-size sweep (`bumbledb-bench sweep-commit`) measured
     // hash-order probes paying 1.20–1.33x over key-sorted from ~256
@@ -454,15 +563,10 @@ pub(super) fn check_source(
     // order — and the surviving witness, now the KEY-LEAST violator per
     // citation (`tests/witness_stability.rs`, the licensed flip) — is
     // deterministic whatever the sort algorithm does with equal keys.
-    let edge_count = plan.inserts.iter().map(|op| op.edges().len()).sum();
-    let mut worklist: Vec<(&EdgeOp, &[u8])> = Vec::with_capacity(edge_count);
-    worklist.extend(
-        plan.inserts
-            .iter()
-            .flat_map(|op| op.edges().iter().map(|edge| (edge, op.fact()))),
-    );
-    worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
-        (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
+    let mut worklist: Vec<(ContainmentId, &RKeyOp<MarkWeight>, &[u8])> =
+        obligations.source_edges().collect();
+    worklist.sort_unstable_by(|(a, a_edge, a_fact), (b, b_edge, b_fact)| {
+        (*a, &a_edge.key_bytes, *a_fact).cmp(&(*b, &b_edge.key_bytes, *b_fact))
     });
     // The sort's completion (T8): within one containment group the
     // derived probe keys ascend (one fixed prefix, ascending key bytes),
@@ -472,30 +576,22 @@ pub(super) fn check_source(
     // group boundary: across containments the derived keys may go
     // backward, and the walker's verdicts are sound only over ascending
     // probes.
-    let mut sorted_gets = SortedGets::new(txn.raw(), txn.env().data());
+    let mut sorted_gets = LmdbSortedGets::new(txn.raw(), txn.env().data());
     let mut group: Option<crate::schema::ContainmentId> = None;
-    for (edge, fact_bytes) in worklist {
+    for (containment, edge, fact_bytes) in worklist {
         probes += 1;
-        if group != Some(edge.containment) {
+        if group != Some(containment) {
             sorted_gets.reset();
-            group = Some(edge.containment);
+            group = Some(containment);
         }
-        let statement = schema.containment(edge.containment);
-        let probe = Probe {
-            statement: statement.id,
-            target_relation: statement.target.relation,
-            target_key: match &statement.enforcement {
-                Enforcement::ScalarProbe { target_key, .. }
-                | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
-                Enforcement::Closed { .. } => {
-                    unreachable!("closed-target containments produce memberships, not edges")
-                }
-            },
-            target_check: &plan.selections.containment(edge.containment).target,
-            key_bytes: &edge.key_bytes,
+        let statement = schema.containment(containment);
+        let probe = Probe::of(
+            statement,
+            &plan.selections.containment(containment).target,
+            &edge.key_bytes,
             fact_bytes,
-            direction: Direction::SourceUnsatisfied,
-        };
+            Direction::SourceUnsatisfied,
+        );
         let outcome = match &statement.enforcement {
             Enforcement::ScalarProbe { .. } => {
                 checker.check_scalar_sorted(&probe, &mut sorted_gets)
@@ -503,39 +599,66 @@ pub(super) fn check_source(
             Enforcement::IntervalCoverage {
                 disjoint,
                 source_tail,
+                target_tail,
                 ..
-            } => checker.check_coverage(*disjoint, *source_tail, &probe),
-            Enforcement::Closed { .. } => unreachable!("classified above"),
+            } => checker.check_coverage(*disjoint, *source_tail, *target_tail, &probe),
+            Enforcement::Closed { .. } => {
+                unreachable!("closed-target containments produce memberships, not edges")
+            }
         };
         collect(outcome, violations)?;
     }
-    for op in &plan.inserts {
-        let FactOp::Insert {
-            memberships, fact, ..
-        } = op
-        else {
-            continue;
-        };
-        for membership in memberships {
-            let statement = schema.containment(membership.containment);
-            let Enforcement::Closed { members } = &statement.enforcement else {
-                continue;
-            };
-            if !membership
-                .axiom
-                .is_some_and(|index| members.contains(index))
-            {
-                violations.push(Violation::Containment {
-                    statement: statement.id,
-                    direction: Direction::SourceUnsatisfied,
-                    fact: (*fact).into(),
-                });
-            }
-        }
+    for membership in obligations.memberships() {
+        collect(Ok(membership.check.clone()), violations)?;
     }
-    span.set_args(probes, 0);
+    span.set_count(probes);
     span.end();
     Ok(())
+}
+
+/// A surviving interval source, parsed where the `R` key entered the
+/// coverage scan. Deduped by identity; the walk payload is minted with
+/// the element so the walk does not rematch or re-validate.
+#[derive(Clone, Copy)]
+struct AffectedSource<'a> {
+    containment: ContainmentId,
+    source_rel: RelationId,
+    source_row: u64,
+    key_bytes: &'a [u8],
+    disjoint: DisjointDeterminantProof,
+    source_tail: IntervalTail,
+    target_tail: IntervalTail,
+}
+
+impl AffectedSource<'_> {
+    fn identity(&self) -> (ContainmentId, RelationId, u64, &[u8]) {
+        (
+            self.containment,
+            self.source_rel,
+            self.source_row,
+            self.key_bytes,
+        )
+    }
+}
+
+impl PartialEq for AffectedSource<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for AffectedSource<'_> {}
+
+impl PartialOrd for AffectedSource<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AffectedSource<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity().cmp(&other.identity())
+    }
 }
 
 /// The target-side judgment: every key tuple the plan's check set names —
@@ -572,11 +695,12 @@ pub(super) fn check_source(
 )] // the target-side judgment, one phase per block
 pub(super) fn check_target(
     view: &FinalStateView<'_, '_, '_>,
+    obligations: &IncrementalObligations<'_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let FinalStateView { txn, schema, plan } = view;
     let data = txn.env().data();
-    let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
+    let mut span = obs::span(obs::names::JUDGMENT_TARGET);
     let mut scanned = 0u64;
     let mut key: KeyBuf = [0; MAX_KEY];
     // The survivor partition's membership test — sources inserted this
@@ -590,8 +714,8 @@ pub(super) fn check_target(
     // disestablished segments of one (statement, prefix-group) collapse
     // to one coverage walk per source. The key bytes stay borrowed from
     // the transaction (the judgment writes nothing, so the pages hold).
-    let mut affected: BTreeSet<(ContainmentId, &[u8])> = BTreeSet::new();
-    for check in &plan.target_checks {
+    let mut affected: BTreeSet<AffectedSource<'_>> = BTreeSet::new();
+    for check in obligations.target_checks() {
         let determinant = check.determinant.as_bytes();
         let key_statement = schema.key(check.key);
         // The establishing fact of a re-landed determinant, fetched at most
@@ -601,7 +725,7 @@ pub(super) fn check_target(
         for dependent in &check.dependents {
             let statement = schema.containment(dependent.containment);
             let sid = statement.id;
-            if dependent.psi_qualified {
+            if let Owed::IfEstablisherFails = dependent.owed {
                 let fact = if let Some(fact) = establisher {
                     fact
                 } else {
@@ -622,165 +746,162 @@ pub(super) fn check_target(
                 scanned += 1;
                 counted = true;
             }
-            if let Enforcement::IntervalCoverage { source_tail, .. } = &statement.enforcement {
-                // Interval form: conservatively scan the whole prefix
-                // group and filter by intersection. An optimized lower
-                // bound would need the maximum source-interval length,
-                // which we refuse to track — the group is small and this
-                // is the delete path. The disestablished tuple reads at
-                // the TARGET key's tail; each surviving edge's key bytes
-                // read at the SOURCE projection's tail — the two ends of
-                // one seam, each derived from its own field's type.
-                let target_tail = schema
-                    .key_tail(key_statement)
-                    .expect("an interval dependent resolves a pointwise key");
-                let source_tail = *source_tail;
-                let (ts, te) = target_tail
-                    .words(&determinant[determinant.len() - target_tail.bytes()..])
-                    .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                        "U determinant tail",
-                    )))?;
-                let group = &determinant[..determinant.len() - target_tail.bytes()];
-                let p_len = keys::reverse_prefix(&mut key, sid, group);
-                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
-                    (Bound::Included(&key[..p_len]), Bound::Unbounded);
-                for group_entry in data.range(txn.raw(), &bounds)? {
-                    let (k, _) = group_entry?;
-                    if !k.starts_with(&key[..p_len]) {
-                        break;
-                    }
-                    let Some((_, key_bytes, _, _)) = keys::parse_reverse_key(k) else {
-                        return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "R key shape",
-                        )));
-                    };
-                    // Same statement, same target key: any other key-bytes
-                    // width is corrupt data, a hard error.
-                    if key_bytes.len() != group.len() + source_tail.bytes() {
-                        return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "R key width",
-                        )));
-                    }
-                    // Half-open intersection of the source interval
-                    // `[ss, se)` with the disestablished `[ts, te)`:
-                    // `ss < te && ts < se` on the order-preserving words.
-                    let (ss, se) = source_tail
-                        .words(&key_bytes[key_bytes.len() - source_tail.bytes()..])
+            match (statement.survivors, &statement.enforcement) {
+                (
+                    Survivors::ReverseEdges,
+                    Enforcement::IntervalCoverage {
+                        disjoint,
+                        source_tail,
+                        target_tail,
+                        ..
+                    },
+                ) => {
+                    // Interval form: conservatively scan the whole prefix
+                    // group and filter by intersection. An optimized lower
+                    // bound would need the maximum source-interval length,
+                    // which we refuse to track — the group is small and this
+                    // is the delete path. The disestablished tuple reads at
+                    // the TARGET key's tail; each surviving edge's key bytes
+                    // read at the SOURCE projection's tail — the two ends of
+                    // one seam, each derived from its own field's type.
+                    let source_tail = *source_tail;
+                    let target_tail = *target_tail;
+                    let (ts, te) = target_tail
+                        .words(&determinant[determinant.len() - target_tail.bytes()..])
                         .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                            "R key interval tail",
+                            "U determinant tail",
                         )))?;
-                    if ss < te && ts < se {
-                        affected.insert((dependent.containment, k));
+                    let group = &determinant[..determinant.len() - target_tail.bytes()];
+                    let prefix = keys::reverse_prefix(&mut key, sid, group);
+                    let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+                        (Bound::Included(prefix), Bound::Unbounded);
+                    for group_entry in data.range(txn.raw(), &bounds)? {
+                        let (k, _) = group_entry?;
+                        if !k.starts_with(prefix) {
+                            break;
+                        }
+                        let Some((_, key_bytes, source_rel, source_row)) =
+                            keys::parse_reverse_key(k)
+                        else {
+                            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                                "R key shape",
+                            )));
+                        };
+                        if key_bytes.len() != group.len() + source_tail.bytes() {
+                            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                                "R key width",
+                            )));
+                        }
+                        let (ss, se) = source_tail
+                            .words(&key_bytes[key_bytes.len() - source_tail.bytes()..])
+                            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                                "R key interval tail",
+                            )))?;
+                        if ss < te && ts < se {
+                            affected.insert(AffectedSource {
+                                containment: dependent.containment,
+                                key_bytes,
+                                source_rel,
+                                source_row,
+                                disjoint: *disjoint,
+                                source_tail,
+                                target_tail,
+                            });
+                        }
                     }
                 }
-            } else if schema
-                .relation(statement.source.relation)
-                .body()
-                .closed_rows()
-                .is_some()
-            {
-                // Domain quantification: a constant source writes no `R`
-                // edges — the surviving sources ARE the sealed
-                // extension's φ-rows, scanned directly (≤256 rows, the
-                // delete path; an axiom is never an inserted fact, so
-                // the survivor partition is trivial here). Any axiom
-                // projecting to the disestablished tuple is a stranded
-                // source outright
-                // (`docs/architecture/30-dependencies.md`).
-                if let Some(row) =
-                    closed_source_survivor(schema, plan, dependent.containment, determinant)
-                {
-                    violations.push(Violation::Containment {
-                        statement: sid,
-                        direction: Direction::TargetRequired,
-                        fact: row,
-                    });
+                (Survivors::SealedRows, Enforcement::ScalarProbe { .. }) => {
+                    // Domain quantification: a constant source writes no `R`
+                    // edges — the surviving sources ARE the sealed
+                    // extension's φ-rows.
+                    if let Some(row) =
+                        closed_source_survivor(schema, plan, dependent.containment, determinant)
+                    {
+                        violations.push(Violation::containment(
+                            schema.cite(sid),
+                            sid,
+                            Direction::TargetRequired,
+                            row,
+                        ));
+                    }
                 }
-            } else {
-                // Scalar form: any surviving entry under the exact key
-                // bytes is a stranded source — the first PRE-EXISTING
-                // one is the witness (an inserted survivor is the
-                // source side's work; its own probe missed the same
-                // tuple).
-                let p_len = keys::reverse_prefix(&mut key, sid, determinant);
-                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
-                    (Bound::Included(&key[..p_len]), Bound::Unbounded);
-                for entry in data.range(txn.raw(), &bounds)? {
-                    let (r_key, _) = entry?;
-                    if !r_key.starts_with(&key[..p_len]) {
+                (
+                    Survivors::ReverseEdges,
+                    Enforcement::ScalarProbe { .. } | Enforcement::Closed { .. },
+                ) => {
+                    let prefix = keys::reverse_prefix(&mut key, sid, determinant);
+                    let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+                        (Bound::Included(prefix), Bound::Unbounded);
+                    for entry in data.range(txn.raw(), &bounds)? {
+                        let (r_key, _) = entry?;
+                        if !r_key.starts_with(prefix) {
+                            break;
+                        }
+                        let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
+                            Error::Corruption(CorruptionError::MalformedValue("R key shape")),
+                        )?;
+                        let fact = fact_by_row(data, txn.raw(), schema, source_rel, source_row)?;
+                        if plan.inserts_fact(source_rel, fact.bytes()) {
+                            continue;
+                        }
+                        violations.push(Violation::containment(
+                            schema.cite(sid),
+                            sid,
+                            Direction::TargetRequired,
+                            fact.bytes().into(),
+                        ));
                         break;
                     }
-                    let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
-                        Error::Corruption(CorruptionError::MalformedValue("R key shape")),
-                    )?;
-                    let fact = fact_by_row(data, txn.raw(), schema, source_rel, source_row)?;
-                    if plan.inserts_fact(source_rel, fact) {
-                        continue;
-                    }
-                    violations.push(Violation::Containment {
-                        statement: sid,
-                        direction: Direction::TargetRequired,
-                        fact: fact.into(),
-                    });
-                    break;
+                }
+                (Survivors::SealedRows, Enforcement::Closed { .. }) => {
+                    // Closed-to-closed is validation-discharged; closed
+                    // source against a closed target never reaches the
+                    // incremental target scan (no dependents on a closed
+                    // auto-key).
+                }
+                (Survivors::SealedRows, Enforcement::IntervalCoverage { .. }) => {
+                    unreachable!("closed sources refuse interval containments at validate")
                 }
             }
         }
     }
-    // The deduped walks, each against the final `U` state.
-    let mut checker = Checker::new(txn.raw(), data, schema);
-    for &(containment_id, r_key) in &affected {
-        let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(r_key) else {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "R key shape",
-            )));
-        };
-        let Some(StatementView::Containment(stored_id, stored_statement)) =
-            schema.statement_checked(sid)
-        else {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "R key statement",
-            )));
-        };
-        let statement = schema.containment(containment_id);
-        if stored_id != containment_id || stored_statement.id != statement.id {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "R key statement",
-            )));
-        }
-        let Enforcement::IntervalCoverage {
-            target_key,
-            disjoint,
-            source_tail,
-            ..
-        } = &statement.enforcement
-        else {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "R key statement",
-            )));
-        };
-        let fact_bytes = fact_by_row(data, txn.raw(), schema, source_rel, source_row)?;
-        if plan.inserts_fact(source_rel, fact_bytes) {
+    // The deduped walks, each against the final `U` state. The element
+    // was parsed where the `R` key entered — nothing left to re-validate.
+    let catalog = LmdbPeekCatalog::new(txn);
+    let mut checker = Checker::new(&catalog, schema);
+    for source in &affected {
+        let statement = schema.containment(source.containment);
+        let fact_bytes = fact_by_row(
+            data,
+            txn.raw(),
+            schema,
+            source.source_rel,
+            source.source_row,
+        )?;
+        if plan.inserts_fact(source.source_rel, fact_bytes.bytes()) {
             // The survivor partition again: an inserted source's
             // coverage demand is the source side's probe, not a
             // target-side conviction.
             continue;
         }
-        let probe = Probe {
-            statement: sid,
-            target_relation: statement.target.relation,
-            target_key: *target_key,
-            target_check: &plan.selections.containment(containment_id).target,
-            key_bytes,
-            fact_bytes,
-            direction: Direction::TargetRequired,
-        };
+        let probe = Probe::of(
+            statement,
+            &plan.selections.containment(source.containment).target,
+            source.key_bytes,
+            fact_bytes.bytes(),
+            Direction::TargetRequired,
+        );
         collect(
-            checker.check_coverage(*disjoint, *source_tail, &probe),
+            checker.check_coverage(
+                source.disjoint,
+                source.source_tail,
+                source.target_tail,
+                &probe,
+            ),
             violations,
         )?;
     }
-    span.set_args(scanned, 0);
+    span.set_count(scanned);
     span.end();
     Ok(())
 }
@@ -801,13 +922,15 @@ pub(super) fn check_target(
 /// statement is judged whether or not a containment subsumes its floor.
 pub(super) fn check_capacities(
     view: &FinalStateView<'_, '_, '_>,
+    obligations: &IncrementalObligations<'_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let FinalStateView { txn, schema, plan } = view;
-    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
-    let mut span = obs::span(obs::names::JUDGMENT_CAPACITIES, obs::Category::Commit);
+    let catalog = LmdbPeekCatalog::new(txn);
+    let mut checker = Checker::new(&catalog, schema);
+    let mut span = obs::span(obs::names::JUDGMENT_CAPACITIES);
     let mut judged = 0u64;
-    for check in &plan.capacity_checks {
+    for check in obligations.capacity_checks() {
         judged += 1;
         let statement = schema.capacity(check.capacity);
         let checks = plan.selections.capacity(check.capacity);
@@ -816,7 +939,7 @@ pub(super) fn check_capacities(
             violations,
         )?;
     }
-    span.set_args(judged, 0);
+    span.set_count(judged);
     span.end();
     Ok(())
 }
@@ -832,23 +955,11 @@ pub(crate) fn capacity_child_image<'a>(
     fact: &[u8],
     out: &'a mut DeterminantImage,
 ) -> &'a DeterminantImage {
-    match &statement.enforcement {
-        CapacityEnforcement::ScalarProbe {
-            key_permutation, ..
-        } => keys::permuted_determinant_image(
-            layout,
-            &statement.source.projection,
-            key_permutation,
-            fact,
-            out,
-        ),
-        // A closed target's one probe-able identity is the synthetic id:
-        // the projection is a single field, so statement order IS
-        // determinant order.
-        CapacityEnforcement::Closed { .. } => {
-            keys::determinant_image(layout, &statement.source.projection, fact, out)
-        }
-    }
+    let projection = statement
+        .enforcement
+        .key_projection()
+        .unwrap_or(&statement.source.projection);
+    keys::determinant_image(layout.encoded(fact), projection, out)
 }
 
 /// The R16 8-byte-determinant decode, spelled ONCE: a fresh-keyed
@@ -877,22 +988,23 @@ fn establishing_fact<'t>(
     determinant: &[u8],
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
-    if statement.form().as_fresh_row().is_some() {
+    if matches!(statement.form(), KeyForm::FreshRow { .. }) {
         return fact_by_row(
             data,
             txn.raw(),
             schema,
             statement.relation,
             fresh_row_word(determinant)?,
-        );
+        )
+        .map(crate::encoding::FactView::bytes);
     }
     let mut buf: KeyBuf = [0; MAX_KEY];
-    let u_len = keys::determinant_key(&mut buf, statement.relation, statement.id, determinant);
-    let value = data
-        .get(txn.raw(), &buf[..u_len])?
-        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-            "re-established U determinant",
-        )))?;
+    let u_key = keys::determinant_key(&mut buf, statement.relation, statement.id, determinant);
+    let value =
+        data.get(txn.raw(), u_key)?
+            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                "re-established U determinant",
+            )))?;
     fact_by_row(
         data,
         txn.raw(),
@@ -900,6 +1012,7 @@ fn establishing_fact<'t>(
         statement.relation,
         decode_row_id(value)?,
     )
+    .map(crate::encoding::FactView::bytes)
 }
 
 /// The first sealed source axiom inside φ projecting to the
@@ -915,15 +1028,7 @@ fn closed_source_survivor(
 ) -> Option<Box<[u8]>> {
     let statement = schema.containment(containment_id);
     let source = &statement.source;
-    let key_permutation = match &statement.enforcement {
-        Enforcement::ScalarProbe {
-            key_permutation, ..
-        }
-        | Enforcement::IntervalCoverage {
-            key_permutation, ..
-        } => key_permutation,
-        Enforcement::Closed { .. } => return None,
-    };
+    let key_projection = statement.enforcement.key_projection()?;
     let relation = schema.relation(source.relation);
     let layout = relation.layout();
     let phi = &plan.selections.containment(containment_id).source;
@@ -932,13 +1037,7 @@ fn closed_source_survivor(
         if !satisfies(phi, layout, &row.fact) {
             continue;
         }
-        keys::permuted_determinant_image(
-            layout,
-            &source.projection,
-            key_permutation,
-            &row.fact,
-            &mut derived,
-        );
+        keys::determinant_image(layout.encoded(&row.fact), key_projection, &mut derived);
         if derived.as_bytes() == determinant {
             return Some(row.fact.clone());
         }
@@ -966,100 +1065,41 @@ pub(crate) struct Probe<'a> {
     pub(crate) direction: Direction,
 }
 
-impl Probe<'_> {
-    /// The convicting error — one probe, one violation, carried as the
-    /// singleton sealed set (callers collect and re-seal the union). The
-    /// judgment speaks about sources, so the payload is the source fact:
-    /// the inserted fact whose target is missing, or the survivor whose
-    /// required target was disestablished.
-    fn unsatisfied(&self) -> Error {
-        Error::CommitRejected {
-            violations: Violations::one(Violation::Containment {
-                statement: self.statement,
-                direction: self.direction,
-                fact: self.fact_bytes.into(),
-            }),
-        }
-    }
-}
-
-/// The T8 walker: exact-key gets over an ASCENDING probe sequence,
-/// answered by one shared forward cursor instead of an independent
-/// root-to-leaf descent per probe. The cursor steps leaf-sequentially
-/// toward each probe under a bounded budget and repositions with one
-/// descent when the gap is wide (or on first use); an entry ABOVE the
-/// probe is the miss verdict and stays PENDING for the next probe, so
-/// duplicate probe keys re-answer from the pending slot. Sound only
-/// over ascending probes — [`check_source`] resets it at every
-/// containment-group boundary, and the unsorted probe sites
-/// ([`Checker::check_scalar`]'s other callers) never touch it.
-struct SortedGets<'a> {
-    txn: &'a RoTxn<'a, AnyTls>,
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    range: Option<heed::RoRange<'a, heed::types::Bytes, heed::types::Bytes>>,
-    /// The last cursor entry not yet consumed — at or above every probe
-    /// answered so far.
-    pending: Option<(&'a [u8], &'a [u8])>,
-}
-
-impl<'a> SortedGets<'a> {
-    /// Leaf steps paid toward a probe before falling back to a fresh
-    /// descent: about a fraction of one leaf page of `U` entries, so a
-    /// dense probe group walks and a sparse one descends — the fallback
-    /// costs exactly what the pre-T8 exact get cost.
-    const WALK_BUDGET: usize = 16;
-
-    fn new(
-        txn: &'a RoTxn<'a, AnyTls>,
-        data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+impl<'a> Probe<'a> {
+    /// One probe minted from the sealed statement — probe kind resolved
+    /// at validation (`Enforcement::target_key`).
+    pub(crate) fn of(
+        statement: &crate::schema::ContainmentStatement,
+        target_check: &'a SelectionCheck,
+        key_bytes: &'a [u8],
+        fact_bytes: &'a [u8],
+        direction: Direction,
     ) -> Self {
         Self {
-            txn,
-            data,
-            range: None,
-            pending: None,
+            statement: statement.id,
+            target_relation: statement.target.relation,
+            target_key: statement
+                .enforcement
+                .target_key()
+                .expect("edged containments resolve a target key"),
+            target_check,
+            key_bytes,
+            fact_bytes,
+            direction,
         }
     }
 
-    /// Forgets the cursor position — the group boundary (the next probe
-    /// may sort below the last one).
-    fn reset(&mut self) {
-        self.range = None;
-        self.pending = None;
-    }
-
-    /// The exact-key get, assuming `key` is ≥ every key probed since the
-    /// last [`Self::reset`].
-    fn get(&mut self, key: &[u8]) -> Result<Option<&'a [u8]>> {
-        if let Some(range) = self.range.as_mut() {
-            for _ in 0..Self::WALK_BUDGET {
-                match self.pending {
-                    Some((k, v)) => match k.cmp(key) {
-                        std::cmp::Ordering::Less => self.pending = None,
-                        std::cmp::Ordering::Equal => return Ok(Some(v)),
-                        std::cmp::Ordering::Greater => return Ok(None),
-                    },
-                    None => match range.next().transpose()? {
-                        Some(entry) => self.pending = Some(entry),
-                        // The tree holds nothing at or above the cursor,
-                        // and the cursor started at or below this probe:
-                        // a miss, and every later (greater) probe misses
-                        // the same way without re-descending.
-                        None => return Ok(None),
-                    },
-                }
-            }
-        }
-        // First probe of the group, or the gap outran the budget: one
-        // descent repositions the cursor at the probe.
-        let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(key), Bound::Unbounded);
-        let mut range = self.data.range(self.txn, &bounds)?;
-        self.pending = range.next().transpose()?;
-        self.range = Some(range);
-        match self.pending {
-            Some((k, v)) if k == key => Ok(Some(v)),
-            _ => Ok(None),
-        }
+    /// The convicting check — one probe, one violation. The judgment
+    /// speaks about sources, so the payload is the source fact: the
+    /// inserted fact whose target is missing, or the survivor whose
+    /// required target was disestablished.
+    fn unsatisfied(&self, schema: &Schema) -> Check {
+        Check::Violated(Violation::containment(
+            schema.cite(self.statement),
+            self.statement,
+            self.direction,
+            self.fact_bytes.into(),
+        ))
     }
 }
 
@@ -1068,29 +1108,32 @@ impl<'a> SortedGets<'a> {
 /// by three callers: the commit path's two sides (over the write
 /// transaction's own-writes view) and `Db::verify_store`'s global
 /// re-verification (over a read snapshot) — never a copy.
-pub(crate) struct Checker<'a> {
-    txn: &'a RoTxn<'a, AnyTls>,
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+pub(crate) struct Checker<'a, C: CatalogRead> {
+    catalog: &'a C,
     schema: &'a Schema,
     key: KeyBuf,
 }
 
-impl<'a> Checker<'a> {
-    pub(crate) fn new(
-        txn: &'a RoTxn<'a, AnyTls>,
-        data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-        schema: &'a Schema,
-    ) -> Self {
+impl<'a, C: CatalogRead> Checker<'a, C> {
+    pub(crate) fn new(catalog: &'a C, schema: &'a Schema) -> Self {
         Self {
-            txn,
-            data,
+            catalog,
             schema,
             key: [0; MAX_KEY],
         }
     }
 
-    fn row_fact(&self, relation: RelationId, row_id: u64) -> Result<&'a [u8]> {
-        fact_by_row(self.data, self.txn, self.schema, relation, row_id)
+    fn row_fact(&self, relation: RelationId, row_id: u64) -> Result<Vec<u8>> {
+        let stored = self
+            .catalog
+            .fetch_fact(relation, row_id)?
+            .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                relation,
+                row_id,
+            }))?;
+        let bytes = stored.as_ref();
+        crate::storage::read::check_width(self.schema, relation, row_id, bytes)?;
+        Ok(bytes.to_vec())
     }
 
     /// Scalar target probe: one `U` get on the target key's determinant. A miss
@@ -1100,24 +1143,25 @@ impl<'a> Checker<'a> {
     /// its determinant IS the `F` row id, so the probe is one `F` get and
     /// the value found is the target fact itself — one descent, σ check
     /// included.
-    pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
+    pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<Check> {
         let target_key = self.schema.key(probe.target_key);
         if target_key.form().as_fresh_row().is_some() {
             let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
-                return Err(probe.unsatisfied());
+                return Ok(probe.unsatisfied(self.schema));
             };
-            return self.check_fact(probe, fact);
+            return Ok(self.check_fact(probe, &fact));
         }
-        let u_len = keys::determinant_key(
+        let u_key = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
             target_key.id,
             probe.key_bytes,
         );
-        let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-            return Err(probe.unsatisfied());
+        let Some(value) = self.catalog.get(CatalogMap::Data, u_key)? else {
+            return Ok(probe.unsatisfied(self.schema));
         };
-        self.check_segment(probe, value)
+        let value = value.as_ref().to_vec();
+        self.check_segment(probe, &value)
     }
 
     /// [`Checker::check_scalar`]'s sorted-worklist twin (the T8
@@ -1125,29 +1169,29 @@ impl<'a> Checker<'a> {
     /// one get answered by the caller's [`SortedGets`] walker — legal
     /// only where probe keys ascend within the walker's current group
     /// ([`check_source`]'s sort provides exactly that).
-    fn check_scalar_sorted(&mut self, probe: &Probe<'_>, gets: &mut SortedGets<'a>) -> Result<()> {
+    fn check_scalar_sorted<G: SortedGets>(
+        &mut self,
+        probe: &Probe<'_>,
+        gets: &mut G,
+    ) -> Result<Check> {
         let target_key = self.schema.key(probe.target_key);
         if target_key.form().as_fresh_row().is_some() {
-            let f_len = keys::fact_key(
-                &mut self.key,
-                probe.target_relation,
-                fresh_row_word(probe.key_bytes)?,
-            );
-            let Some(fact) = gets.get(&self.key[..f_len])? else {
-                return Err(probe.unsatisfied());
+            let f_key = keys::fact_key(probe.target_relation, fresh_row_word(probe.key_bytes)?);
+            let Some(fact) = gets.get(&f_key)? else {
+                return Ok(probe.unsatisfied(self.schema));
             };
-            return self.check_fact(probe, fact);
+            return Ok(self.check_fact(probe, fact.as_ref()));
         }
-        let u_len = keys::determinant_key(
+        let u_key = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
             target_key.id,
             probe.key_bytes,
         );
-        let Some(value) = gets.get(&self.key[..u_len])? else {
-            return Err(probe.unsatisfied());
+        let Some(value) = gets.get(u_key)? else {
+            return Ok(probe.unsatisfied(self.schema));
         };
-        self.check_segment(probe, value)
+        self.check_segment(probe, value.as_ref())
     }
 
     /// The coverage walk (`docs/architecture/30-dependencies.md`
@@ -1173,8 +1217,9 @@ impl<'a> Checker<'a> {
         &mut self,
         disjoint: DisjointDeterminantProof,
         source_tail: IntervalTail,
+        target_tail: IntervalTail,
         probe: &Probe<'_>,
-    ) -> Result<()> {
+    ) -> Result<Check> {
         disjoint.authorize_coverage();
         let target_key = self.schema.key(probe.target_key);
         // The two tails of one seam, each derived from its own field's
@@ -1186,10 +1231,6 @@ impl<'a> Checker<'a> {
         // other-width) side of one element — and the walk is width-blind
         // by construction, because both tails parse to order-preserving
         // words (`docs/architecture/30-dependencies.md` § Q1).
-        let target_tail = self
-            .schema
-            .key_tail(target_key)
-            .expect("IntervalCoverage resolves a pointwise key");
         // The scratch holds the source-shaped determinant key
         // `U | rel | stmt | prefix | source-tail`. Only slices of it are
         // used: the group prefix and the seek key `group ‖ s` (both
@@ -1200,7 +1241,8 @@ impl<'a> Checker<'a> {
             probe.target_relation,
             target_key.id,
             probe.key_bytes,
-        );
+        )
+        .len();
         let group_len = full_src_len - source_tail.bytes();
         let seek_len = group_len + 8;
         let (source_start, source_end) = source_tail
@@ -1218,60 +1260,25 @@ impl<'a> Checker<'a> {
         // proves nothing covers `s` (the group is disjoint and
         // start-ordered), so there is no entry segment and the sweep
         // gaps at `s` over an empty walk.
-        let at_or_after = self
-            .data
-            .get_greater_than_or_equal_to(self.txn, &self.key[..seek_len])?
-            .filter(|(k, _)| k.starts_with(&self.key[..seek_len]));
-        let located = match at_or_after {
-            Some(hit) => Some(hit),
-            None => match self.data.get_lower_than(self.txn, &self.key[..seek_len])? {
-                Some((k, v)) if k.starts_with(&self.key[..group_len]) => {
-                    if k.len() != full_len {
-                        return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "U determinant key length",
-                        )));
-                    }
-                    let (_, pred_end) = target_tail.words(&k[group_len..]).ok_or(
-                        Error::Corruption(CorruptionError::MalformedValue("U determinant tail")),
-                    )?;
-                    (pred_end > source_start).then_some((k, v))
-                }
-                _ => None,
-            },
-        };
-        let (entry, chain) = match located {
-            Some((entry_key, entry_value)) => {
-                let Some(segment) = (entry_key.len() == full_len)
-                    .then(|| segment_words(entry_key, entry_value, target_tail))
-                    .flatten()
-                else {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "U determinant key length",
-                    )));
-                };
-                // The forward chain: everything past the entry, in key
-                // order — shape-checked and parsed by the adapter below,
-                // walked by the sweep.
-                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
-                    (Bound::Excluded(entry_key), Bound::Unbounded);
-                (Some(segment), Some(self.data.range(self.txn, &bounds)?))
-            }
-            None => (None, None),
-        };
-        let segments = DeterminantSegments {
-            entry,
-            chain,
-            group: &self.key[..group_len],
-            full_len,
-            tail: target_tail,
-        };
+        let seek = self.key[..seek_len].to_vec();
+        let group = self.key[..group_len].to_vec();
+        let located =
+            self.locate_coverage_entry(&seek, &group, full_len, target_tail, source_start)?;
+        let segments = self.collect_coverage_segments(located, &group, full_len, target_tail)?;
         sweep(
-            segments,
+            segments.into_iter().map(Ok),
             Some((source_start, source_end)),
             &mut GapAt {
                 checker: self,
                 probe,
             },
+        )
+        .map_or_else(
+            |fail| match fail {
+                ProbeFail::Cite => Ok(probe.unsatisfied(self.schema)),
+                ProbeFail::Infra(error) => Err(error),
+            },
+            |()| Ok(Check::Holds),
         )
     }
 
@@ -1296,7 +1303,8 @@ impl<'a> Checker<'a> {
         statement: &CapacityStatement,
         checks: &SideChecks,
         parent_key: &[u8],
-    ) -> Result<()> {
+    ) -> Result<Check> {
+        let parent_owned: Option<Vec<u8>>;
         let parent_fact: &[u8] = match &statement.enforcement {
             CapacityEnforcement::ScalarProbe { target_key, .. } => {
                 let key_statement = self.schema.key(*target_key);
@@ -1308,21 +1316,21 @@ impl<'a> Checker<'a> {
                         let Some(fact) =
                             self.fresh_row_fact(statement.target.relation, parent_key)?
                         else {
-                            return Ok(());
+                            return Ok(Check::Holds);
                         };
                         fact
                     }
                     KeyForm::Scalar | KeyForm::Pointwise { .. } => {
-                        let u_len = keys::determinant_key(
+                        let u_key = keys::determinant_key(
                             &mut self.key,
                             statement.target.relation,
                             key_statement.id,
                             parent_key,
                         );
-                        let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-                            return Ok(());
+                        let Some(value) = self.catalog.get(CatalogMap::Data, u_key)? else {
+                            return Ok(Check::Holds);
                         };
-                        let row_id = decode_row_id(value)?;
+                        let row_id = decode_row_id(value.as_ref())?;
                         // The holder's fact bytes are needed eagerly only by
                         // ψ and by a dependent bound. An empty-ψ
                         // literal-bound statement judges its whole hot path
@@ -1347,24 +1355,23 @@ impl<'a> Checker<'a> {
                             if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
                                 let parent_fact =
                                     self.row_fact(statement.target.relation, row_id)?;
-                                return Err(Error::CommitRejected {
-                                    violations: Violations::one(Violation::Capacity {
-                                        statement: statement.id,
-                                        fact: parent_fact.into(),
-                                        measure,
-                                    }),
-                                });
+                                return Ok(self.capacity_violation(
+                                    statement,
+                                    parent_fact.into(),
+                                    measure,
+                                ));
                             }
-                            return Ok(());
+                            return Ok(Check::Holds);
                         }
                         self.row_fact(statement.target.relation, row_id)?
                     }
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
-                if !satisfies(&checks.target, layout, fact) {
-                    return Ok(());
+                if !satisfies(&checks.target, layout, &fact) {
+                    return Ok(Check::Holds);
                 }
-                fact
+                parent_owned = Some(fact);
+                parent_owned.as_ref().expect("just stored")
             }
             // A closed parent: the member set IS the ψ-selected roster,
             // and the parent tuple is the axiom's 8-byte id encoding.
@@ -1376,7 +1383,7 @@ impl<'a> Checker<'a> {
                 };
                 let id = u64::from_be_bytes(word);
                 if !AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
-                    return Ok(());
+                    return Ok(Check::Holds);
                 }
                 let rows = self
                     .schema
@@ -1395,15 +1402,23 @@ impl<'a> Checker<'a> {
         let hi = self.resolve_hi(statement, parent_fact)?;
         let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
         if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
-            return Err(Error::CommitRejected {
-                violations: Violations::one(Violation::Capacity {
-                    statement: statement.id,
-                    fact: parent_fact.into(),
-                    measure,
-                }),
-            });
+            return Ok(self.capacity_violation(statement, parent_fact.into(), measure));
         }
-        Ok(())
+        Ok(Check::Holds)
+    }
+
+    fn capacity_violation(
+        &self,
+        statement: &CapacityStatement,
+        fact: Box<[u8]>,
+        measure: u128,
+    ) -> Check {
+        Check::Violated(Violation::capacity(
+            self.schema.cite(statement.id),
+            statement.id,
+            fact,
+            measure,
+        ))
     }
 
     /// The capacity ceiling, resolved per touched parent against the
@@ -1467,33 +1482,19 @@ impl<'a> Checker<'a> {
         let floor_only_decided = |measure: u128| {
             matches!(hi, BoundCeiling::Unbounded) && measure >= u128::from(statement.lo)
         };
-        let unit = matches!(statement.weight, SealedWeight::Unit);
-        let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
-        let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
-            (Bound::Included(&self.key[..p_len]), Bound::Unbounded);
+        let slot = SlotShape::of(statement.weight);
+        let prefix_owned = keys::reverse_prefix(&mut self.key, statement.id, parent_key).to_vec();
+        let bounds = Bounds {
+            start: Bound::Included(prefix_owned.as_slice()),
+            end: Bound::Unbounded,
+        };
+        let mut range = self.catalog.range(CatalogMap::Data, bounds)?;
         let mut measure = 0u128;
-        for entry in self.data.range(self.txn, &bounds)? {
-            let (k, v) = entry?;
-            if !k.starts_with(&self.key[..p_len]) {
+        while let Some(entry) = ReadCursor::next(&mut range)? {
+            if !entry.key.starts_with(&prefix_owned) {
                 break;
             }
-            // Value discipline per the declared weight — a width
-            // disagreeing with the declaration is corruption, never a
-            // fallback (the format gate proved no old data).
-            let weight = if unit {
-                if !v.is_empty() {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity value width",
-                    )));
-                }
-                1
-            } else {
-                let word: [u8; 8] = v.try_into().map_err(|_| {
-                    Error::Corruption(CorruptionError::MalformedValue("R capacity value width"))
-                })?;
-                u64::from_le_bytes(word)
-            };
-            measure += u128::from(weight);
+            measure += u128::from(slot.decode(entry.value)?);
             if floor_only_decided(measure) {
                 break;
             }
@@ -1509,14 +1510,15 @@ impl<'a> Checker<'a> {
         &mut self,
         relation: RelationId,
         determinant: &[u8],
-    ) -> Result<Option<&'a [u8]>> {
+    ) -> Result<Option<Vec<u8>>> {
         let row_id = fresh_row_word(determinant)?;
-        let f_len = keys::fact_key(&mut self.key, relation, row_id);
-        match self.data.get(self.txn, &self.key[..f_len])? {
+        let f_key = keys::fact_key(relation, row_id);
+        match self.catalog.get(CatalogMap::Data, &f_key)? {
             None => Ok(None),
             Some(bytes) => {
+                let bytes = bytes.as_ref();
                 crate::storage::read::check_width(self.schema, relation, row_id, bytes)?;
-                Ok(Some(bytes))
+                Ok(Some(bytes.to_vec()))
             }
         }
     }
@@ -1524,28 +1526,106 @@ impl<'a> Checker<'a> {
     /// The per-segment target-selection check: with an empty σ the determinant
     /// hit alone is the proof; otherwise the found target fact is fetched
     /// (one `F` get via the determinant's row id) and byte-checked against σ.
-    fn check_segment(&self, probe: &Probe<'_>, value: &[u8]) -> Result<()> {
+    fn check_segment(&self, probe: &Probe<'_>, value: &[u8]) -> Result<Check> {
         if matches!(probe.target_check, SelectionCheck::Empty) {
-            return Ok(());
+            return Ok(Check::Holds);
         }
         let row_id = decode_row_id(value)?;
         let target_fact = self.row_fact(probe.target_relation, row_id)?;
-        self.check_fact(probe, target_fact)
+        Ok(self.check_fact(probe, &target_fact))
     }
 
     /// The σ half of a probe over a target fact already in hand — the
     /// fresh-row probe's tail (the `F` value IS the fact) and
     /// [`Checker::check_segment`]'s.
-    fn check_fact(&self, probe: &Probe<'_>, target_fact: &[u8]) -> Result<()> {
+    fn check_fact(&self, probe: &Probe<'_>, target_fact: &[u8]) -> Check {
         if matches!(probe.target_check, SelectionCheck::Empty) {
-            return Ok(());
+            return Check::Holds;
         }
         let layout = self.schema.relation(probe.target_relation).layout();
         if satisfies(probe.target_check, layout, target_fact) {
-            Ok(())
+            Check::Holds
         } else {
-            Err(probe.unsatisfied())
+            probe.unsatisfied(self.schema)
         }
+    }
+
+    fn locate_coverage_entry(
+        &self,
+        seek: &[u8],
+        group: &[u8],
+        full_len: usize,
+        target_tail: IntervalTail,
+        source_start: u64,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        if let Some(hit) = self.catalog.greater_or_equal(CatalogMap::Data, seek)?
+            && hit.key.starts_with(seek)
+        {
+            return Ok(Some((hit.key.to_vec(), hit.value.to_vec())));
+        }
+        match self.catalog.lower(CatalogMap::Data, seek)? {
+            Some(pred) if pred.key.starts_with(group) => {
+                if pred.key.len() != full_len {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "U determinant key length",
+                    )));
+                }
+                let (_, pred_end) =
+                    target_tail
+                        .words(&pred.key[group.len()..])
+                        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                            "U determinant tail",
+                        )))?;
+                Ok((pred_end > source_start).then(|| (pred.key.to_vec(), pred.value.to_vec())))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn collect_coverage_segments(
+        &self,
+        located: Option<(Vec<u8>, Vec<u8>)>,
+        group: &[u8],
+        full_len: usize,
+        target_tail: IntervalTail,
+    ) -> Result<Vec<(u64, u64, Vec<u8>)>> {
+        let Some((entry_key, entry_value)) = located else {
+            return Ok(Vec::new());
+        };
+        let Some((_, _, _)) = (entry_key.len() == full_len)
+            .then(|| segment_words(&entry_key, &entry_value, target_tail))
+            .flatten()
+        else {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "U determinant key length",
+            )));
+        };
+        let mut segments = Vec::new();
+        let (start, end, _) =
+            segment_words(&entry_key, &entry_value, target_tail).expect("length-checked above");
+        segments.push((start, end, entry_value));
+        let bounds = Bounds {
+            start: Bound::Excluded(entry_key.as_slice()),
+            end: Bound::Unbounded,
+        };
+        let mut range = self.catalog.range(CatalogMap::Data, bounds)?;
+        while let Some(entry) = ReadCursor::next(&mut range)? {
+            if !entry.key.starts_with(group) {
+                break;
+            }
+            if entry.key.len() != full_len {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U determinant key length",
+                )));
+            }
+            let Some((start, end, _)) = segment_words(entry.key, entry.value, target_tail) else {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U determinant key length",
+                )));
+            };
+            segments.push((start, end, entry.value.to_vec()));
+        }
+        Ok(segments)
     }
 }
 
@@ -1573,84 +1653,40 @@ fn segment_words<'t>(
     Some((start, end, value))
 }
 
-/// One prefix group's determinant entries as sweep segments: the located entry
-/// first, then the forward chain, ending at the group boundary. The
-/// key-shape corruption checks live here — the trust boundary stays
-/// where the data enters — so the shared walk sees only parsed words.
-struct DeterminantSegments<'t, 'k, I> {
-    /// The entry segment, already shape-checked, yielded first; `None`
-    /// when nothing covers the source's start (the sweep gaps there).
-    entry: Option<DeterminantSegment<'t>>,
-    /// The chain cursor past the entry; `None` without an entry, and
-    /// dropped at the group boundary or on a malformed key.
-    chain: Option<I>,
-    /// The prefix-group bytes; a key outside them ends the walk.
-    group: &'k [u8],
-    /// Every key in the group has exactly this length; anything else is
-    /// corruption, never a silently skipped segment.
-    full_len: usize,
-    /// The target key's interval-tail shape — how each stored key's
-    /// trailing interval parses to words.
-    tail: IntervalTail,
-}
-
-impl<'t, I> Iterator for DeterminantSegments<'t, '_, I>
-where
-    I: Iterator<Item = std::result::Result<(&'t [u8], &'t [u8]), heed::Error>>,
-{
-    type Item = Result<DeterminantSegment<'t>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(segment) = self.entry.take() {
-            return Some(Ok(segment));
-        }
-        let step = self.chain.as_mut()?.next();
-        let Some(step) = step else {
-            self.chain = None;
-            return None;
-        };
-        let (key, value) = match step {
-            Ok(kv) => kv,
-            Err(err) => {
-                self.chain = None;
-                return Some(Err(err.into()));
-            }
-        };
-        if !key.starts_with(self.group) {
-            self.chain = None;
-            return None;
-        }
-        let Some(segment) = (key.len() == self.full_len)
-            .then(|| segment_words(key, value, self.tail))
-            .flatten()
-        else {
-            self.chain = None;
-            return Some(Err(Error::Corruption(CorruptionError::MalformedValue(
-                "U determinant key length",
-            ))));
-        };
-        Some(Ok(segment))
-    }
-}
-
 /// The checker's continuation shape: gap-at. Any maximal run short of
 /// the source window convicts the probe's side, and every consumed
 /// segment re-runs the target-selection check (one `F` get when σ is
 /// nonempty). `Pack`'s emit-maximal sibling drives the same sweep from
 /// its own call site (`docs/architecture/20-query-ir.md`).
-struct GapAt<'c, 'a, 'p> {
-    checker: &'c Checker<'a>,
+struct GapAt<'c, 'a, 'p, C: CatalogRead> {
+    checker: &'c Checker<'a, C>,
     probe: &'c Probe<'p>,
 }
 
-impl<'v> Continuation<u64, &'v [u8]> for GapAt<'_, '_, '_> {
-    type Error = Error;
+/// Coverage-walk failure: infrastructure vs a cited gap. Never an
+/// [`Error`] used as a semantic verdict.
+enum ProbeFail {
+    Infra(Error),
+    Cite,
+}
 
-    fn segment(&mut self, value: &'v [u8]) -> Result<()> {
-        self.checker.check_segment(self.probe, value)
+impl From<Error> for ProbeFail {
+    fn from(error: Error) -> Self {
+        Self::Infra(error)
+    }
+}
+
+impl<C: CatalogRead> Continuation<u64, Vec<u8>> for GapAt<'_, '_, '_, C> {
+    type Error = ProbeFail;
+
+    fn segment(&mut self, value: Vec<u8>) -> std::result::Result<(), ProbeFail> {
+        match self.checker.check_segment(self.probe, &value)? {
+            Check::Holds => Ok(()),
+            Check::Violated(_) => Err(ProbeFail::Cite),
+        }
     }
 
-    fn maximal(&mut self, _: u64, _: u64) -> Result<()> {
-        Err(self.probe.unsatisfied())
+    fn maximal(&mut self, _: u64, _: u64) -> std::result::Result<(), ProbeFail> {
+        Err(ProbeFail::Cite)
     }
 }

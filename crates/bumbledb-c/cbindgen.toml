@@ -29,21 +29,17 @@ header = """
  * BDB_STATUS_ABORTED (the caller's callback aborted; no error),
  * BDB_STATUS_ERROR (a bdb_error* is written; the caller owns it and
  * frees it with bdb_error_destroy), BDB_STATUS_MISUSE (a contract
- * violation — null required pointer, stale snapshot/tx ref, index out
+ * violation — null required pointer, stale instance/tx ref, index out
  * of range, unknown enum tag, bool payload other than 0/1; no error is
  * allocated).
  *
- * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref live in a stable
- * heap slot inside the owning bdb_db. The callback receives a pointer
- * into that slot; when the callback returns the slot is invalidated
- * (alive = false, engine pointers nulled). A stashed pointer still names
- * the db's slot and answers BDB_STATUS_MISUSE rather than use-after-free.
- * They are never owned or destroyed by the caller. bdb_db_write_from may
- * be called from inside a read callback with that callback's still-live
- * snapshot ref; nested writes are refused with a typed
- * BDB_ERROR_KIND_ENVIRONMENT_LOCKED error. One live read callback per
- * handle (the single snapshot slot); nested or concurrent reads, and
- * destroy during a live callback, are refused.
+ * Lexical capabilities: each callback mints its own bdb_instance_ref
+ * (and, for store reads, a borrowed bdb_witness). When the callback
+ * returns the slot is invalidated. A stashed pointer answers
+ * BDB_STATUS_MISUSE rather than use-after-free. bdb_db_write_from takes
+ * a witness (borrowed or retained via bdb_witness_retain). Concurrent
+ * MVCC reads on one handle are allowed. Theory rejection and a moved
+ * generation fill an admission union under BDB_STATUS_OK.
  *
  * Callbacks: an extern "C" function pointer invoked from Rust. A C++
  * exception thrown through a callback is unsupported (it would unwind
@@ -79,8 +75,20 @@ include = [
     "bdb_condition_kind",
     "bdb_cmp_op_kind",
     "bdb_query_kind",
+    "bdb_admission_tag",
+    "bdb_fresh_range_tag",
+    "bdb_error_origin",
     "bdb_mutation_report",
     "bdb_fresh_range",
+    "bdb_moved_generations",
+    "bdb_instance_admission",
+    "bdb_db_admission",
+    "bdb_write_admission",
+    "bdb_violation",
+    "bdb_capacity_measure",
+    "bdb_error_kind",
+    "bdb_statement_kind",
+    "bdb_violation_direction",
 ]
 [enum]
 rename_variants = "ScreamingSnakeCase"

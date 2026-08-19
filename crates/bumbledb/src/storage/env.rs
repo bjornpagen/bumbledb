@@ -1,13 +1,10 @@
 //! LMDB environment lifecycle, `_meta` contents, and transaction wrappers
 //! (docs/architecture/50-storage.md). Authority: `docs/architecture/50-storage.md`, `70-api.md`.
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::atomic::AtomicU32;
-use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 
-use bumbledb_theory::schema::{FieldId, RelationId};
 use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn, RwTxn, WithoutTls};
 
@@ -16,25 +13,48 @@ mod create;
 mod debug;
 mod ephemeral;
 mod escaped_fresh;
+pub(crate) use escaped_fresh::FreshMarks;
 pub(crate) mod exhume;
 mod maintenance;
 mod open;
 mod open_env;
+mod publish;
 mod read_meta;
 mod readtxn;
 mod txn;
 mod writetxn;
 
+pub(crate) use ephemeral::EphemeralClass;
+pub(crate) use publish::PublishCatalog;
+use read_meta::MetaKey;
+#[cfg(test)]
+use read_meta::{StoreMeta, parse_meta};
+
 #[cfg(test)]
 mod tests;
 
-/// Process-distinct environment instance ids, minted at `create`/`open`.
-/// Starts at 1 — 0 stays "no environment" forever. Per-process distinctness
-/// is exactly sufficient: every piece of derived state keyed by an
-/// instance (the view memo, prepared queries) is process-local, and a
-/// wiped-and-recreated store necessarily passes through a new
-/// [`Environment`].
-static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
+/// Process-local owner token. Identity is the allocation address, not a
+/// counter: not persisted, not derived from payload, unique per
+/// [`Environment::assemble`], shared by every read of that open
+/// environment. Prepared queries and conditional-write witnesses hold
+/// a clone; `same` is [`Arc::ptr_eq`].
+#[derive(Clone)]
+pub(crate) struct CatalogIdentity(Arc<CatalogIdentityCell>);
+
+struct CatalogIdentityCell {
+    /// Unique heap object; the address is the identity.
+    _private: (),
+}
+
+impl CatalogIdentity {
+    pub(crate) fn mint() -> Self {
+        Self(Arc::new(CatalogIdentityCell { _private: () }))
+    }
+
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 /// Storage format version, checked before the schema fingerprint on open.
 /// Version 1: statement-keyed `U` and statement-scoped `R` layouts
@@ -68,9 +88,16 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// moved (the weight descriptor, dependent bounds, the re-minted
 /// statement-form tag) and the `R` namespace gained the weighted
 /// value slot, so every v6 fingerprint and every weighted-statement
-/// `R` entry decodes wrong — one bump covers both. No other version
-/// opens and no migration path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 7;
+/// `R` entry decodes wrong — one bump covers both. Version 8 is
+/// admission provenance: every ordinary writable handle began from a
+/// complete empty admission, a raw copy of an admitted instance, a
+/// compact of an admitted format-8 store, or an incremental commit on
+/// an admitted format-8 base. Open consults the persisted descriptor
+/// (reads it; never back-fills) after version, kind, roster, and
+/// fingerprint. Every earlier version — format 7 included — refuses
+/// on every open surface. No format-7 decoder and no migration path
+/// exist — ETL is the story.
+pub const FORMAT_VERSION: u32 = 8;
 
 /// The store KIND, marked on disk in `_meta` beside the format version
 /// and fingerprint (`docs/architecture/50-storage.md`). A kind is a
@@ -208,28 +235,33 @@ const MAP_SIZE: usize = 32 << 30;
 /// [`crate::error::Error::ReadersFull`], never a raw LMDB passthrough.
 pub(crate) const MAX_READERS: u32 = 1024;
 
-/// `_meta` keys, single-byte.
-const META_FORMAT_VERSION: &[u8] = &[0];
-const META_FINGERPRINT: &[u8] = &[1];
-const META_TX_ID: &[u8] = &[2];
-const META_DICT_NEXT_ID: &[u8] = &[3];
-const META_STORE_KIND: &[u8] = &[4];
+/// `_meta` key aliases — [`MetaKey`] owns the table.
+#[cfg(test)]
+const META_FORMAT_VERSION: &[u8] = MetaKey::FORMAT_VERSION.key;
+#[cfg(test)]
+const META_FINGERPRINT: &[u8] = MetaKey::FINGERPRINT.key;
+const META_TX_ID: &[u8] = MetaKey::GENERATION.key;
+const META_DICT_NEXT_ID: &[u8] = MetaKey::DICT_NEXT.key;
+#[cfg(test)]
+const META_STORE_KIND: &[u8] = MetaKey::STORE_KIND.key;
 /// The canonical schema-descriptor bytes — the fingerprint's exact
 /// preimage, persisted so the store is self-describing
 /// (`docs/architecture/50-storage.md` § the `_meta` block). Written at
-/// creation, back-filled by any successful fingerprint-matching open.
-/// Readers: [`Environment::exhume`] and `Db::verify_store`'s descriptor
-/// pass. Deliberately NOT consulted by the ordinary open path, so its
-/// absence on a pre-descriptor store is the typed "not yet adopted"
-/// state — never a silent default — and no format-version bump applies
-/// (the version-bump law targets keys open DECODES; open only writes
-/// this one).
-const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
+/// creation. Format 8 open decodes this key after version, kind,
+/// roster, and fingerprint: absence is
+/// [`crate::error::CorruptionError::MetaMissing`], a hash disagreeing
+/// with the stored fingerprint is
+/// [`crate::error::CorruptionError::DescriptorFingerprintDesync`]. No
+/// back-fill and no "not yet adopted" state — those were the format-7
+/// adoption decoder, deleted at the cutover.
+const META_SCHEMA_DESCRIPTOR: &[u8] = MetaKey::DESCRIPTOR.key;
 
 /// Three live environment modes (R17/R18): durable writer, ephemeral
 /// writer, exhume reader. Disk [`StoreKind`] stays the persisted sum.
 pub(crate) enum EnvMode {
     Durable {
+        /// Held until `Environment` drops; never read.
+        #[allow(dead_code)]
         lock: std::fs::File,
     },
     Ephemeral {
@@ -257,11 +289,10 @@ pub struct Environment {
     meta: Database<Bytes, Bytes>,
     data: Database<Bytes, Bytes>,
     dict: Database<Bytes, Bytes>,
-    /// This environment's process-distinct identity (never 0). Prepared
-    /// queries record it and refuse to execute against any other
-    /// environment's snapshots — the generation clock knows whose clock
-    /// it is.
-    instance: u64,
+    /// This environment's process-distinct identity. Prepared queries
+    /// record it and refuse to execute against any other environment's
+    /// snapshots — the generation clock knows whose clock it is.
+    identity: CatalogIdentity,
     /// Writer lock vs exhume vs ephemeral marker — one sum, not two
     /// independent Options.
     mode: EnvMode,
@@ -269,11 +300,11 @@ pub struct Environment {
     /// an id to the host, this floor never retreats in this process —
     /// even when the counters-only disk flush fails
     /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
-    escaped_fresh: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
+    escaped_fresh: Mutex<escaped_fresh::FreshMarks>,
     /// Dirty `Q` marks whose durable write has not yet succeeded. Retried
     /// at the next write begin; a still-failing retry poisons `reserve` until
-    /// the burn is durable.
-    pending_fresh_flush: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
+    /// the burn is durable. Clean vs parked is the enum, not map emptiness.
+    pending_fresh_flush: Mutex<escaped_fresh::FlushState>,
     /// Test-only: remaining injected failures of the escaped-id flush.
     #[cfg(test)]
     fail_fresh_flush: AtomicU32,
@@ -328,7 +359,19 @@ pub(super) fn clear_orphan_marker(dir: &std::path::Path) -> crate::error::Result
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(crate::error::Error::Io(e)),
+        Err(e) => Err(crate::error::Error::from(e)),
+    }
+}
+
+/// A fresh-store constructor refuses any existing destination, including
+/// an empty directory — an existing path is a previous claim on the name.
+pub(crate) fn refuse_existing_destination(path: &std::path::Path) -> crate::error::Result<()> {
+    if path.exists() {
+        Err(crate::error::Error::DestinationExists {
+            path: path.to_path_buf(),
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -355,14 +398,13 @@ fn parent_dir(dir: &std::path::Path) -> &std::path::Path {
     }
 }
 
-/// Test-only `_meta` fixture surgery: the pre-descriptor-store,
+/// Test-only `_meta` fixture surgery: the missing-descriptor,
 /// desynced-descriptor, and version-mismatch fixtures the exhume and
 /// `verify_store` tests build by mutating a real store's meta block —
 /// mirroring on-disk states no current production path can produce.
 #[cfg(test)]
 impl Environment {
-    /// Deletes the persisted schema descriptor — the exact on-disk shape
-    /// of a store created before descriptors were persisted.
+    /// Deletes the persisted schema descriptor — a torn format-8 `_meta`.
     pub(crate) fn strip_schema_descriptor_for_tests(&self) -> crate::error::Result<()> {
         let mut wtxn = self.env.write_txn()?;
         self.meta.delete(&mut wtxn, META_SCHEMA_DESCRIPTOR)?;
@@ -412,35 +454,50 @@ impl Environment {
             meta,
             data,
             dict,
-            instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            identity: CatalogIdentity::mint(),
             mode,
-            escaped_fresh: Mutex::new(BTreeMap::new()),
-            pending_fresh_flush: Mutex::new(BTreeMap::new()),
+            escaped_fresh: Mutex::new(escaped_fresh::FreshMarks::default()),
+            pending_fresh_flush: Mutex::new(escaped_fresh::FlushState::default()),
             #[cfg(test)]
             fail_fresh_flush: AtomicU32::new(0),
         }
     }
 
-    /// Arm the ephemeral dirty marker after a successful ephemeral open.
-    /// The writer lock is already held from Durable assemble.
-    pub(super) fn arm_ephemeral(&mut self, dirty_marker: std::path::PathBuf) {
-        match std::mem::replace(&mut self.mode, EnvMode::Exhume) {
-            EnvMode::Durable { lock } => {
-                self.mode = EnvMode::Ephemeral { lock, dirty_marker };
-            }
-            other => {
-                self.mode = other;
-                unreachable!("ephemeral open always holds the writer lock");
+    /// On-disk kind of this writing handle. Heap instances are not a
+    /// [`StoreKind`].
+    pub(crate) fn kind(&self) -> StoreKind {
+        match self.mode {
+            EnvMode::Durable { .. } => StoreKind::Durable,
+            EnvMode::Ephemeral { .. } => StoreKind::Ephemeral,
+            EnvMode::Exhume => {
+                unreachable!("writer surfaces never hold an exhume environment")
             }
         }
     }
 
+    /// Assembles [`EnvMode`] once. Ephemeral carries the marker path
+    /// from the first construction; there is no later rewrite.
+    pub(super) fn mode_for(
+        kind: StoreKind,
+        lock: std::fs::File,
+        dirty_marker: Option<std::path::PathBuf>,
+    ) -> EnvMode {
+        match kind {
+            StoreKind::Durable => EnvMode::Durable { lock },
+            StoreKind::Ephemeral => EnvMode::Ephemeral {
+                lock,
+                dirty_marker: dirty_marker
+                    .expect("ephemeral assembly carries the dirty-marker path"),
+            },
+        }
+    }
+
     /// This environment's process-distinct identity (readers: prepared
-    /// queries via [`ReadTxn::env_instance`]; `Db::write_from`'s
+    /// queries via [`ReadTxn::identity`]; `Db::write_from`'s
     /// witness check, which compares a snapshot's identity against the
     /// database being written).
-    pub(crate) fn instance(&self) -> u64 {
-        self.instance
+    pub(crate) fn identity(&self) -> &CatalogIdentity {
+        &self.identity
     }
 
     /// The `_dict` database handle (reader: `storage::dict`).
@@ -452,6 +509,13 @@ impl Environment {
     /// `storage::commit`).
     pub(crate) fn data(&self) -> Database<Bytes, Bytes> {
         self.data
+    }
+
+    /// Parses the live `_meta` block.
+    #[cfg(test)]
+    pub(crate) fn read_store_meta(&self) -> crate::error::Result<StoreMeta> {
+        let rtxn = self.read_txn()?;
+        parse_meta(&self.meta, rtxn.raw())
     }
 }
 
@@ -478,8 +542,8 @@ impl ReadTxn<'_> {
 
     /// The owning environment's process-distinct identity — the value a
     /// prepared query records at prepare and checks at execute.
-    pub(crate) fn env_instance(&self) -> u64 {
-        self.env.instance
+    pub(crate) fn identity(&self) -> &CatalogIdentity {
+        self.env.identity()
     }
 
     /// Unwraps the raw transaction for the reader cache:

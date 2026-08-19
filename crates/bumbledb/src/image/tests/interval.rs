@@ -10,7 +10,7 @@ use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys;
 use crate::storage::read;
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
@@ -88,7 +88,7 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
             .expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -98,7 +98,7 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, T).expect("build");
+    let image = build(&txn.catalog(), &schema, T).expect("build");
     assert_eq!(image.row_count(), 3);
 
     // The field→column map: three fields, four columns — the interval
@@ -184,16 +184,13 @@ fn inverted_interval_halves_abort_the_build() {
     };
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::fact_key(&mut key, T, victim);
-        env.data()
-            .put(wtxn.raw_mut(), &key[..len], &corrupt)
-            .expect("put");
+        let key = keys::fact_key(T, victim);
+        env.data().put(wtxn.raw_mut(), &key, &corrupt).expect("put");
         wtxn.commit().expect("commit");
     }
 
     let txn = env.read_txn().expect("txn");
-    let err = build(&txn, &schema, T).unwrap_err();
+    let err = build(&txn.catalog(), &schema, T).unwrap_err();
     let mut halves = [0u8; 16];
     halves.copy_from_slice(&corrupt[offset..offset + 16]);
     assert!(

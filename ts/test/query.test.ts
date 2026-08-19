@@ -132,31 +132,32 @@ describe("the query surface against a real store", function suite() {
 
 	before(function seed() {
 		const created = native.dbCreate(storeDir, lower(Ledger))
-		assert.ok(created.ok, "the store admits")
+		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
-		const tx = native.dbWriteBegin(db)
-		native.txInsert(tx, HOLDER_ID, [[ids.ada, "ada", 1n]])
-		native.txInsert(tx, HOLDER_ID, [[ids.grace, "grace", 2n]])
-		native.txInsert(tx, HOLDER_ID, [[ids.kurt, "kurt", 3n]])
-		native.txInsert(tx, HOLDER_ID, [[ids.lone, "lone", 9n]])
-		const checking = 0n
-		const savings = 1n
-		native.txInsert(tx, ACCOUNT_ID, [
-			[ids.adaChecking, ids.ada, checking, 5n, { start: 0n, end: 10n }, 1n, true, new Uint8Array([1, 2])]
-		])
-		native.txInsert(tx, ACCOUNT_ID, [
-			[ids.adaSavings, ids.ada, savings, 7n, { start: 20n, end: 30n }, 25n, false, new Uint8Array([3, 4])]
-		])
-		native.txInsert(tx, ACCOUNT_ID, [
-			[ids.graceSavings, ids.grace, savings, 3n, { start: 5n, end: 15n }, 6n, false, new Uint8Array([5, 6])]
-		])
-		native.txInsert(tx, ACCOUNT_ID, [
-			[ids.kurtChecking, ids.kurt, checking, 9n, { start: 40n, end: 50n }, 45n, true, new Uint8Array([7, 8])]
-		])
-		native.txInsert(tx, PARENT_ID, [[ids.grace, ids.ada]])
-		native.txInsert(tx, PARENT_ID, [[ids.kurt, ids.grace]])
-		const committed = native.txCommit(tx)
-		assert.ok(committed.ok, "the seed commit lands")
+		const committed = native.dbWrite(db, function write(tx) {
+			native.txInsert(tx, HOLDER_ID, [[ids.ada, "ada", 1n]])
+			native.txInsert(tx, HOLDER_ID, [[ids.grace, "grace", 2n]])
+			native.txInsert(tx, HOLDER_ID, [[ids.kurt, "kurt", 3n]])
+			native.txInsert(tx, HOLDER_ID, [[ids.lone, "lone", 9n]])
+			const checking = 0n
+			const savings = 1n
+			native.txInsert(tx, ACCOUNT_ID, [
+				[ids.adaChecking, ids.ada, checking, 5n, { start: 0n, end: 10n }, 1n, true, new Uint8Array([1, 2])]
+			])
+			native.txInsert(tx, ACCOUNT_ID, [
+				[ids.adaSavings, ids.ada, savings, 7n, { start: 20n, end: 30n }, 25n, false, new Uint8Array([3, 4])]
+			])
+			native.txInsert(tx, ACCOUNT_ID, [
+				[ids.graceSavings, ids.grace, savings, 3n, { start: 5n, end: 15n }, 6n, false, new Uint8Array([5, 6])]
+			])
+			native.txInsert(tx, ACCOUNT_ID, [
+				[ids.kurtChecking, ids.kurt, checking, 9n, { start: 40n, end: 50n }, 45n, true, new Uint8Array([7, 8])]
+			])
+			native.txInsert(tx, PARENT_ID, [[ids.grace, ids.ada]])
+			native.txInsert(tx, PARENT_ID, [[ids.kurt, ids.grace]])
+			return true
+		})
+		assert.equal(committed.tag, "accepted", "the seed commit lands")
 	})
 
 	/**
@@ -170,9 +171,9 @@ describe("the query surface against a real store", function suite() {
 		if (!prepared.ok) {
 			assert.fail(`engine prepare refused: ${prepared.message}`)
 		}
-		const snap = native.dbSnapshot(db).snapshot
-		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
-		native.snapshotClose(snap)
+		const rows = native.dbRead(db, function read(instance, _witness) {
+			return native.preparedExecute(prepared.prepared, instance, wireParams(q.data.params, params))
+		})
 		native.preparedClose(prepared.prepared)
 		return decodeAnswers<Row>(q.data.finds, rows)
 	}

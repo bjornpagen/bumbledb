@@ -2,18 +2,19 @@
 //! into structure-of-arrays slabs (docs/architecture/40-execution.md D1,
 //! `50-storage.md`; the per-fact decode kernel lives in `super::decode`) —
 //! and the synthesis path, which fills the same slabs from a closed
-//! relation's sealed extension with no LMDB transaction anywhere.
+//! relation's sealed extension with no catalog anywhere.
 
+use std::ops::Bound;
 use std::sync::Arc;
 
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, Exceeded, Result};
 use crate::schema::{Relation, Schema};
-use crate::storage::env::ReadTxn;
-use crate::storage::read;
-use bumbledb_theory::TypeDesc;
+use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, FactCursor, ReadCursor};
+use crate::storage::keys;
 use bumbledb_theory::schema::RelationId;
+use bumbledb_theory::schema::ValueType;
 
-use super::decode::{decode_fact, decode_plan, fill_columns};
+use super::decode::{decode_fact, decode_plan, fill_one};
 use super::{
     Column, ColumnSpan, ColumnView, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder,
     column_spans,
@@ -39,7 +40,7 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
 
 /// An image's allocated-but-unfilled frame: the field→column map, the
 /// placed columns, and the two backing slabs, sized for `row_count` rows
-/// of the given field shape. Shared by the two fill paths — the LMDB
+/// of the given field shape. Shared by the two fill paths — the catalog
 /// scan ([`build`]) and closed-relation synthesis ([`synthesize_closed`]).
 struct Frame {
     spans: Box<[ColumnSpan]>,
@@ -54,7 +55,7 @@ struct Frame {
 /// tracker-aliasing rule, measured). Every slab-size computation is
 /// checked; overflow is typed Corruption *before* any allocation is
 /// attempted.
-fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
+fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
     allocate_with(field_types, row_count, StridePadder::new())
 }
 
@@ -65,7 +66,7 @@ fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
 /// alignment plus pad), so the tolerance moves column starts within the
 /// slack and never the allocation.
 fn allocate_with(
-    field_types: &[TypeDesc],
+    field_types: &[ValueType],
     row_count: usize,
     mut padder: StridePadder,
 ) -> Result<Frame> {
@@ -150,9 +151,7 @@ fn seal(
 fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::DistinctState]> {
     let span = crate::obs::span_args(
         crate::obs::names::IMAGE_DISTINCTS,
-        crate::obs::Category::Image,
-        frame.columns.len() as u64,
-        row_count as u64,
+        crate::obs::TraceArgs::Pair(frame.columns.len() as u64, row_count as u64),
     );
     let states =
         super::distinct::count_columns(&frame.columns, row_count, &frame.words, &frame.bytes);
@@ -166,7 +165,7 @@ fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::Distinc
 /// layouts go through [`allocate`] and the one shipped tolerance.
 #[cfg(test)]
 pub(super) fn image_with_tolerance(
-    field_types: &[TypeDesc],
+    field_types: &[ValueType],
     row_count: usize,
     tolerance: usize,
 ) -> Arc<RelationImage> {
@@ -178,6 +177,83 @@ pub(super) fn image_with_tolerance(
     .expect("falsifier row counts sit far below the checked slab ceiling");
     let distincts = count_frame(row_count, &frame);
     seal(row_count, frame, distincts)
+}
+
+/// Prefix `F` scan: the relation's live facts in row-id order.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)]
+fn fill_scan<C: CatalogRead>(
+    catalog: &C,
+    rel: RelationId,
+    plan: &[super::decode::Decode],
+    fact_width: usize,
+    from: usize,
+    row_count: usize,
+    words: &mut [u64],
+    bytes: &mut [u8],
+) -> Result<usize> {
+    let mut facts = catalog.scan_facts(rel)?;
+    let mut position = from;
+    while let Some(entry) = FactCursor::next(&mut facts)? {
+        position = fill_one(
+            rel,
+            plan,
+            fact_width,
+            entry.bytes,
+            position,
+            row_count,
+            words,
+            bytes,
+        )?;
+    }
+    Ok(position)
+}
+
+/// Suffix `F` range from `from_row_id` through the relation's last fact
+/// key — the image-append tail. Mis-shaped keys are typed corruption.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)]
+fn fill_from<C: CatalogRead>(
+    catalog: &C,
+    rel: RelationId,
+    from_row_id: u64,
+    plan: &[super::decode::Decode],
+    fact_width: usize,
+    from: usize,
+    row_count: usize,
+    words: &mut [u64],
+    bytes: &mut [u8],
+) -> Result<usize> {
+    let lo = keys::fact_key(rel, from_row_id);
+    let hi = keys::fact_key(rel, u64::MAX);
+    let mut range = catalog.range(
+        CatalogMap::Data,
+        Bounds {
+            start: Bound::Included(lo.as_slice()),
+            end: Bound::Included(hi.as_slice()),
+        },
+    )?;
+    let mut position = from;
+    while let Some(entry) = ReadCursor::next(&mut range)? {
+        keys::parse_fact_key(entry.key).ok_or(Error::Corruption(
+            CorruptionError::MalformedValue("F key length"),
+        ))?;
+        position = fill_one(
+            rel,
+            plan,
+            fact_width,
+            entry.value,
+            position,
+            row_count,
+            words,
+            bytes,
+        )?;
+    }
+    Ok(position)
 }
 
 /// Builds the full-width image of `rel` from one sequential scan.
@@ -197,38 +273,40 @@ pub(super) fn image_with_tolerance(
 /// from the same counters the fill loop trusts; `rel` names a closed
 /// relation — closed images synthesize from the theory, and the cache
 /// branches before this path).
-pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<RelationImage>> {
+pub(crate) fn build<C: CatalogRead>(
+    catalog: &C,
+    schema: &Schema,
+    rel: RelationId,
+) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
         relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
-    let claimed = read::row_count(txn, rel)?;
+    let claimed = catalog.row_count(rel)?;
 
     // The reopen-trust ceiling: the stored `S` count is data, and a
     // corrupt-but-plausible value (2^40 passes every checked size
     // computation) would drive the slab `vec!`s below into a
-    // multi-terabyte allocation. Bound it by the `_data` DBI entry count
+    // multi-terabyte allocation. Bound it by the `_data` entry count
     // — an over-approximation (the DBI spans F/M/U/R/Q/S, so it counts
     // far more than this relation's F rows), which a ceiling is allowed
     // to be: no real row count can exceed it, and the scan cross-check
     // below stays the exactness guarantee.
-    let witness = read::data_entries(txn)?;
+    let witness = catalog.len(CatalogMap::Data)?;
     if claimed > witness {
         return Err(Error::Corruption(CorruptionError::CounterDesync {
             relation: rel,
-            claimed,
-            witness,
+            exceeded: Exceeded {
+                observed: claimed,
+                ceiling: witness,
+            },
         }));
     }
     let row_count = usize::try_from(claimed).expect("64-bit usize");
 
-    let field_types: Vec<TypeDesc> = relation
-        .fields()
-        .iter()
-        .map(|f| f.value_type.type_desc())
-        .collect();
+    let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let mut frame = allocate(&field_types, row_count)?;
 
     // One sequential scan fills every column (positions = scan ordinals),
@@ -236,13 +314,11 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
-        crate::obs::Category::Image,
-        row_count as u64,
-        layout.fact_width() as u64,
+        crate::obs::TraceArgs::Pair(row_count as u64, layout.fact_width() as u64),
     );
-    let position = fill_columns(
+    let position = fill_scan(
+        catalog,
         rel,
-        read::scan(txn, schema, rel)?,
         &plan,
         layout.fact_width(),
         0,
@@ -303,8 +379,8 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
 /// Only on programmer-invariant violations: `rel` names a closed relation,
 /// or `base` was built for a different relation shape (the column layouts
 /// disagree).
-pub fn append(
-    txn: &ReadTxn<'_>,
+pub(crate) fn append<C: CatalogRead>(
+    catalog: &C,
     schema: &Schema,
     rel: RelationId,
     base: &RelationImage,
@@ -316,16 +392,18 @@ pub fn append(
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
-    let claimed = read::row_count(txn, rel)?;
+    let claimed = catalog.row_count(rel)?;
 
     // The same reopen-trust ceiling as `build`: the stored count is data
     // and must not size an allocation unchecked.
-    let witness = read::data_entries(txn)?;
+    let witness = catalog.len(CatalogMap::Data)?;
     if claimed > witness {
         return Err(Error::Corruption(CorruptionError::CounterDesync {
             relation: rel,
-            claimed,
-            witness,
+            exceeded: Exceeded {
+                observed: claimed,
+                ceiling: witness,
+            },
         }));
     }
     let row_count = usize::try_from(claimed).expect("64-bit usize");
@@ -339,11 +417,7 @@ pub fn append(
         }));
     }
 
-    let field_types: Vec<TypeDesc> = relation
-        .fields()
-        .iter()
-        .map(|f| f.value_type.type_desc())
-        .collect();
+    let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let mut frame = allocate(&field_types, row_count)?;
     assert_eq!(
         frame.columns.len(),
@@ -370,13 +444,12 @@ pub fn append(
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
-        crate::obs::Category::Image,
-        (row_count - base_rows) as u64,
-        layout.fact_width() as u64,
+        crate::obs::TraceArgs::Pair((row_count - base_rows) as u64, layout.fact_width() as u64),
     );
-    let position = fill_columns(
+    let position = fill_from(
+        catalog,
         rel,
-        read::scan_from(txn, schema, rel, from_row_id)?,
+        from_row_id,
         &plan,
         layout.fact_width(),
         base_rows,
@@ -396,9 +469,7 @@ pub fn append(
     // exact state and insert only the tail — never re-walk the prefix.
     let span = crate::obs::span_args(
         crate::obs::names::IMAGE_DISTINCTS,
-        crate::obs::Category::Image,
-        frame.columns.len() as u64,
-        (row_count - base_rows) as u64,
+        crate::obs::TraceArgs::Pair(frame.columns.len() as u64, (row_count - base_rows) as u64),
     );
     let mut distincts = base.distincts.clone();
     super::distinct::extend_columns(
@@ -468,7 +539,7 @@ impl TransientImage {
     /// magnitude below it).
     pub fn refill<'r>(
         &mut self,
-        field_types: &[TypeDesc],
+        field_types: &[ValueType],
         row_count: usize,
         rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
@@ -494,7 +565,7 @@ impl TransientImage {
     /// As [`Self::refill`]: programmer-invariant violations only.
     pub fn append<'r, I>(
         &mut self,
-        field_types: &[TypeDesc],
+        field_types: &[ValueType],
         filled: usize,
         row_count: usize,
         rows_since: impl FnOnce(usize) -> I,
@@ -520,7 +591,7 @@ impl TransientImage {
     /// `policy`.
     fn fill<'r, I>(
         &mut self,
-        field_types: &[TypeDesc],
+        field_types: &[ValueType],
         filled: usize,
         row_count: usize,
         rows_since: impl FnOnce(usize) -> I,
@@ -636,19 +707,13 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
         .expect("synthesize_closed takes a closed relation");
     let layout = relation.layout();
     let row_count = extension.len();
-    let field_types: Vec<TypeDesc> = relation
-        .fields()
-        .iter()
-        .map(|f| f.value_type.type_desc())
-        .collect();
+    let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let mut frame = allocate(&field_types, row_count)
         .expect("the extension-row cap keeps every slab size computation in range");
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
-        crate::obs::Category::Image,
-        row_count as u64,
-        layout.fact_width() as u64,
+        crate::obs::TraceArgs::Pair(row_count as u64, layout.fact_width() as u64),
     );
     for (position, row) in extension.iter().enumerate() {
         decode_fact(

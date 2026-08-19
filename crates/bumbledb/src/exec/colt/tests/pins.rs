@@ -62,9 +62,9 @@ fn view4_of(dir: &TempDir, schema: &Schema, n: u64) -> Arc<crate::image::Relatio
         delta.insert(&view, R, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    crate::image::build(&txn, schema, R).expect("build")
+    crate::image::build(&txn.catalog(), schema, R).expect("build")
 }
 
 /// Identity, pinned in a general register: an empty asm template whose
@@ -505,13 +505,13 @@ fn force_and_iterate(colt: &mut Colt) -> u64 {
 )]
 fn chunk_geometry_force_iterate_ab() {
     use crate::image::TransientImage;
-    use bumbledb_theory::TypeDesc;
+    use bumbledb_theory::schema::ValueType;
     let n: u64 = 1 << 18;
     for &fanout in &[2u64, 4, 8, 64] {
         let words: Vec<[u64; 2]> = (0..n).map(|i| [i / fanout, i]).collect();
         let mut slot = TransientImage::default();
         let image = slot.refill(
-            &[TypeDesc::U64, TypeDesc::U64],
+            &[ValueType::U64, ValueType::U64],
             words.len(),
             words.iter().map(|row| &row[..]),
         );

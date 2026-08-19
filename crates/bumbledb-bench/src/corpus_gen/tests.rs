@@ -20,12 +20,12 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     assert_ne!(a, other, "seeds diverge");
     // The golden: changing the generator — or the storage format, now a
     // live ingredient — re-baselines every corpus. Re-baselined by the
-    // capacity cutover: STORAGE_FORMAT_VERSION bumped to 7 (pre-cutover
-    // stores refuse to open, so a cached corpus written under v6 must
+    // format-8 cutover: STORAGE_FORMAT_VERSION bumped to 8 (pre-cutover
+    // stores refuse to open, so a cached corpus written under v7 must
     // regenerate); the generator itself is unmoved.
     assert_eq!(
         digest_hex(&a),
-        "fa73e680324f9b26dd1c8504899c43beec8eef48953ca4bdf4ca432623caaca8",
+        "666300aae0901a6829a5bd283aacc592a5b3995e114458ca13232ee3415bd54b",
         "generator output changed — re-baseline deliberately"
     );
 }

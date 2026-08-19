@@ -1,4 +1,5 @@
 use super::*;
+use crate::image::view::OperandAddr;
 use crate::ir::normalize::{NormalizedQuery, OccBind, Occurrence, Role};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
@@ -70,7 +71,7 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
 /// descriptors derived from the negated occurrences, every variable one
 /// slot wide (these fixtures are scalar-only; interval fixtures go
 /// through real normalization in `witness.rs`).
-fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) -> NormalizedQuery {
+fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<FilterPredicate>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
         .filter(|o| o.role == Role::Negated)

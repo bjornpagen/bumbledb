@@ -67,11 +67,7 @@ struct Typing {
 
 fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
     match atom.source {
-        AtomSource::Edb(relation) => target::schema()
-            .relation(relation)
-            .field(field)
-            .value_type
-            .clone(),
+        AtomSource::Edb(relation) => target::schema().relation(relation).field(field).value_type,
         // Derived columns are positional and scalar in this grammar
         // (interval-typed derived columns are translator-inexpressible).
         AtomSource::Interior(_) => ValueType::U64,
@@ -129,7 +125,7 @@ fn typing(rule: &Rule) -> Typing {
                 continue;
             }
             if let Term::Var(var) = term {
-                t.var_types.entry(*var).or_insert(ty.clone());
+                t.var_types.entry(*var).or_insert(ty);
                 if let AtomSource::Edb(relation) = atom.source {
                     t.var_pos.entry(*var).or_insert((relation, *field));
                 }
@@ -162,7 +158,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
         for (field, term) in &atom.bindings {
             let Term::Var(var) = term else { continue };
             let field_interval = field_type(atom, *field).is_interval();
-            let var_interval = t.var_types.get(var).is_some_and(ValueType::is_interval);
+            let var_interval = t.var_types.get(var).is_some_and(|ty| ty.is_interval());
             if !field_interval || var_interval {
                 eq_atoms.entry(*var).or_default().insert(index);
             }
@@ -187,7 +183,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 continue;
             }
             if let Term::Var(var) = term
-                && !t.var_types.get(var).is_some_and(ValueType::is_interval)
+                && !t.var_types.get(var).is_some_and(|ty| ty.is_interval())
             {
                 needs.insert(index);
             }
@@ -206,7 +202,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 continue; // a same-atom pair is a filter, not a join
             }
             for var in [lhs, rhs] {
-                if t.var_types.get(var).is_some_and(ValueType::is_interval) {
+                if t.var_types.get(var).is_some_and(|ty| ty.is_interval()) {
                     needs.extend(t.var_atoms[var].iter().copied());
                 }
             }
@@ -223,7 +219,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             let field_interval = field_type(atom, *field).is_interval();
             let is_membership = field_interval
                 && match term {
-                    Term::Var(var) => !t.var_types.get(var).is_some_and(ValueType::is_interval),
+                    Term::Var(var) => !t.var_types.get(var).is_some_and(|ty| ty.is_interval()),
                     Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => true,
                     _ => false,
                 };
@@ -314,7 +310,7 @@ impl Coverage {
                         self.membership_param += 1;
                         true
                     }
-                    Term::Var(var) if !t.var_types.get(var).is_some_and(ValueType::is_interval) => {
+                    Term::Var(var) if !t.var_types.get(var).is_some_and(|ty| ty.is_interval()) => {
                         self.membership_var += 1;
                         true
                     }
@@ -348,8 +344,8 @@ impl Coverage {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
                     .var_types
                     .get(var)
-                    .expect("comparison variables are atom-bound")
-                    .clone(),
+                    .copied()
+                    .expect("comparison variables are atom-bound"),
                 _ => unreachable!("the grammar never compares two constants"),
             };
             self.matrix[op_index(comparison.op)][type_index(&ty)] += 1;
@@ -466,7 +462,7 @@ impl Coverage {
         for term in &rule.finds {
             match term {
                 FindTerm::Var(var) => {
-                    if t.var_types.get(var).is_some_and(ValueType::is_interval) {
+                    if t.var_types.get(var).is_some_and(|ty| ty.is_interval()) {
                         interval_finds += 1;
                         projected_words += 2;
                     } else {

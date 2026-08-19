@@ -40,7 +40,7 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
         .verify_store()
         .map_err(|e| format!("verify store: {e:?}"))?;
     print!("{}", render_report(schema(), &report));
-    Ok(i32::from(!report.findings.is_empty()))
+    Ok(i32::from(!report.findings().is_empty()))
 }
 
 /// The finding's statement id, when its variant carries one — the hook
@@ -52,10 +52,9 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::PointwiseOverlap { statement, .. }
         | StoreFinding::FactWithoutReverseEdge { statement, .. }
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
-        | StoreFinding::JudgmentViolation { statement, .. }
-        | StoreFinding::CapacityViolation { statement, .. }
         | StoreFinding::ReverseEdgeWeightDesync { statement, .. }
         | StoreFinding::FreshRowDeterminantEntry { statement, .. } => Some(*statement),
+        StoreFinding::Judgment(violation) => Some(violation.statement_id()),
         StoreFinding::FactWithoutMembership { .. }
         | StoreFinding::MembershipWithoutFact { .. }
         | StoreFinding::RowCountDesync { .. }
@@ -76,7 +75,7 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
 /// in the macro notation), the dictionary statistic, and the verdict.
 fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let mut out = String::new();
-    for finding in &report.findings {
+    for finding in report.findings() {
         let _ = write!(out, "finding: {finding:?}");
         if let Some(id) = finding_statement(finding) {
             let _ = write!(out, " — statement: {}", render::render(schema, id));
@@ -86,15 +85,15 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let _ = writeln!(
         out,
         "dangling intern ids (the accepted leak): {}",
-        report.dangling_intern_ids
+        report.dangling_intern_ids()
     );
-    if report.findings.is_empty() {
+    if report.findings().is_empty() {
         let _ = writeln!(out, "verify-store OK: namespaces coherent, judgments hold");
     } else {
         let _ = writeln!(
             out,
             "verify-store FAILED: {} finding(s)",
-            report.findings.len()
+            report.findings().len()
         );
     }
     out
@@ -103,6 +102,7 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bumbledb::{RelationId, StoreVerdict};
 
     /// The statement renderer engages exactly on the statement-carrying
     /// variants, in the ledger schema's own notation.
@@ -116,12 +116,16 @@ mod tests {
             .find(|&id| render::render(schema, id).contains("<="))
             .expect("the ledger schema declares containments");
         let report = StoreReport {
-            findings: vec![StoreFinding::JudgmentViolation {
-                statement: containment,
-                direction: bumbledb::Direction::TargetRequired,
-                fact: Box::new([0; 8]),
-            }],
-            dangling_intern_ids: 0,
+            verdict: StoreVerdict::Desynced {
+                findings: vec![StoreFinding::FactWithoutDeterminant {
+                    relation: RelationId(0),
+                    statement: containment,
+                    row_id: 0,
+                    determinant_key: Box::new([]),
+                }]
+                .into(),
+                dangling_intern_ids: 0,
+            },
         };
         let rendered = render_report(schema, &report);
         assert!(
@@ -134,8 +138,9 @@ mod tests {
         );
 
         let clean = StoreReport {
-            findings: Vec::new(),
-            dangling_intern_ids: 3,
+            verdict: StoreVerdict::Coherent {
+                dangling_intern_ids: 3,
+            },
         };
         let rendered = render_report(schema, &clean);
         assert!(rendered.contains("verify-store OK"), "{rendered}");

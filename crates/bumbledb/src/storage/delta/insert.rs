@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::{FieldId, Generation, RelationId};
 
-use super::{Disposition, WriteDelta};
+use super::{DeltaEffect, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
     /// Records an insert, netted against committed state
@@ -14,7 +14,7 @@ impl WriteDelta<'_> {
         view: &ReadTxn<'_>,
         rel: RelationId,
         fact_bytes: &[u8],
-    ) -> Result<bool> {
+    ) -> Result<DeltaEffect> {
         self.apply(view, rel, fact_bytes, Disposition::Insert)
     }
 
@@ -41,7 +41,7 @@ impl WriteDelta<'_> {
         rel: RelationId,
         fact_bytes: &[u8],
         want: Disposition,
-    ) -> Result<bool> {
+    ) -> Result<DeltaEffect> {
         if want == Disposition::Insert {
             self.advance_fresh_marks(view, rel, fact_bytes)?;
         }
@@ -51,12 +51,12 @@ impl WriteDelta<'_> {
             Disposition::Delete => -1,
         };
         match self.facts.get(&(rel, hash)).copied() {
-            Some((_, have)) if have == want => Ok(false),
+            Some((_, have)) if have == want => Ok(DeltaEffect::NoOp),
             Some((slice, _)) => {
                 self.facts.remove(&(rel, hash));
                 self.cancel_determinants(rel, fact_bytes, slice);
                 *self.row_count_delta.entry(rel).or_insert(0) += sign;
-                Ok(true)
+                Ok(DeltaEffect::Cancelled)
             }
             None => {
                 let present = self.present(view, rel, &hash)?;
@@ -65,13 +65,13 @@ impl WriteDelta<'_> {
                     Disposition::Delete => !present,
                 };
                 if redundant {
-                    return Ok(false);
+                    return Ok(DeltaEffect::NoOp);
                 }
                 let slice = self.arena.alloc(fact_bytes);
                 self.facts.insert((rel, hash), (slice, want));
                 self.record_determinants(rel, fact_bytes, slice, want);
                 *self.row_count_delta.entry(rel).or_insert(0) += sign;
-                Ok(true)
+                Ok(DeltaEffect::Recorded)
             }
         }
     }
@@ -104,7 +104,7 @@ impl WriteDelta<'_> {
                 continue;
             }
             let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-            let value = decode_u64(field_word_bytes(fact_bytes, relation.layout(), idx));
+            let value = decode_u64(field_word_bytes(relation.layout().encoded(fact_bytes), idx));
             let mark = self.fresh_mark(view, rel, field_id)?;
             // `saturating_add`: an explicit u64::MAX is legal to insert; the
             // sequence is then exhausted for the generator (`reserve` errors).

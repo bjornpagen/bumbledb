@@ -187,7 +187,7 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 	const dir = path.join(tmpRoot, name)
 	const spec = lower(theory)
 	const created = native.dbCreate(dir, spec)
-	assert.ok(created.ok, `${name}: the engine admits the theory`)
+	assert.equal(created.tag, "accepted", `${name}: the engine admits the theory`)
 	const fingerprint = native.dbFingerprint(created.db)
 	native.dbClose(created.db)
 	const recipe = recipeIdOf(name)
@@ -814,14 +814,14 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// update-where, witnessed: query the premise on the attempt's snapshot,
 		// then delete(old) + insert(new) per matched fact — "still Queued" is
 		// the witness; the claim and its lease commit together (the mirrors).
-		const outcome = db.read(function updateWhere(snap) {
-			const queued = snap.execute(prepared, {})
+		const outcome = db.read(function updateWhere(instance, witness) {
+			const queued = instance.execute(prepared, {})
 			if (queued.length === 0) {
-				return db.writeFrom(snap, function decline() {
+				return db.writeFrom(witness, function decline() {
 					return abandon("nothing queued")
 				})
 			}
-			return db.writeFrom(snap, function claim(tx) {
+			return db.writeFrom(witness, function claim(tx) {
 				for (const row of queued) {
 					tx.delete(Job, [{ id: row.id, state: "Queued", payload: row.payload }])
 					put(tx, Job, { id: row.id, state: "Running", payload: row.payload })
@@ -830,8 +830,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 				return undefined
 			})
 		})
-		assert.ok(!outcome.ok, "the empty store has nothing queued — the loop abandons")
-		assert.ok("abandoned" in outcome && outcome.abandoned === "nothing queued")
+		assert.equal(outcome.tag !== "accepted", true, "the empty store has nothing queued — the loop abandons")
+		assert.equal(outcome.tag, "abandoned")
+		assert.equal(outcome.abandoned, "nothing queued")
 	})
 
 	test("21. derived relations", async function r21() {
@@ -983,7 +984,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			put(tx, Parent, { child: must(minted.mid), parent: must(minted.root) })
 			put(tx, Parent, { child: must(minted.leaf), parent: must(minted.mid) })
 		})
-		assert.ok(seededForest.ok, "the three-level forest lands")
+		assert.equal(seededForest.tag, "accepted", "the three-level forest lands")
 		const root = must(minted.root)
 
 		// The host loop — the frontier discipline IS semi-naive evaluation's Δ:
@@ -1181,7 +1182,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			minted.grp = g.id
 			minted.course = p.id
 		})
-		assert.ok(seeded.ok, "the seed commits")
+		assert.equal(seeded.tag, "accepted", "the seed commits")
 		const grp = must(minted.grp)
 		const course = must(minted.course)
 
@@ -1196,10 +1197,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		assert.ok(byId, "the fresh field answers the primary point read")
 		assert.equal(byId.grp, grp)
 
-		// snap.get — the same spelling inside a read scope (the symmetry rule):
+		// instance.get — the same spelling inside a read scope (the symmetry rule):
 		assert.equal(
-			db.read(function inScope(snap) {
-				return snap.get(Course, courseGrpKey, { grp })?.id
+			db.read(function inScope(instance, _witness) {
+				return instance.get(Course, courseGrpKey, { grp })?.id
 			}),
 			course,
 			"the read scope agrees with the standalone spelling"
@@ -1215,7 +1216,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			assert.equal(pending.id, p.id)
 			assert.equal(tx.get(Course, { id: p.id })?.title, "proofs", "the primary form agrees pre-commit")
 		})
-		assert.ok(mutated.ok, "the keyed read-modify-write commits")
+		assert.equal(mutated.tag, "accepted", "the keyed read-modify-write commits")
 	})
 
 	test("31. the power budget — the weighted capacity law with the pinned-column idiom", async function r31() {

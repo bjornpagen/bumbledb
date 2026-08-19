@@ -41,6 +41,7 @@
 use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
+use crate::interval::overlap::Probe;
 
 /// The group-size floor for the index: below it the plain suffix
 /// enumeration + batch classify stays (the n² of a tiny group is
@@ -106,7 +107,7 @@ impl Executor {
             else {
                 continue;
             };
-            let mask = self.allen_masks[node_idx][r_idx];
+            let mask = self.precompute[node_idx].allen_masks[r_idx];
             let mask = if matches!(lhs, Source::Slot(_)) {
                 mask.converse()
             } else {
@@ -176,7 +177,7 @@ impl Executor {
         // The amortization gate lives in the cache: the group's first
         // probe declines (`None` — this parent runs generic, cheaper
         // than paying the sort for one query), the second builds.
-        let Some(dir) = self.overlap.probe(&self.overlap_key, |triples| {
+        let Probe::Ready(dir) = self.overlap.probe(&self.overlap_key, |triples| {
             let walked = colt.for_each_suffix_run(cover_cursor, |run| match run {
                 SuffixRun::Identity { start, len } => {
                     for position in start..start + len {

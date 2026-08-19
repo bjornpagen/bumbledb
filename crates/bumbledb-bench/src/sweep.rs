@@ -60,7 +60,7 @@ use std::path::Path;
 
 use bumbledb::digest::Digest;
 use bumbledb::obs;
-use bumbledb::{Db, Error, Violation};
+use bumbledb::{Admission, Db, Violation};
 
 use crate::corpus_gen::Rng;
 use crate::harness::{Stats, stats};
@@ -251,7 +251,7 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
         }
         Ok(())
     });
-    let Err(Error::CommitRejected { violations }) = outcome else {
+    let Ok(Admission::Rejected(violations)) = outcome else {
         return Err(format!(
             "hash-model pin: the probe commit was not rejected as expected: {outcome:?}"
         ));
@@ -289,10 +289,10 @@ struct JudgmentSpans {
 }
 
 fn judgment_spans(events: &[obs::TraceEvent]) -> JudgmentSpans {
-    let sum = |name: &str| -> u64 {
+    let sum = |point: obs::TracePoint| -> u64 {
         events
             .iter()
-            .filter(|event| event.name() == name)
+            .filter(|event| event.point() == point)
             .map(|event| event.dur_ns())
             .sum()
     };
@@ -325,7 +325,8 @@ fn run_cell(
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("sweep scratch: {e}"))?;
     let db = Db::ephemeral(dir, world::WindowedWorld)
-        .map_err(|e| format!("sweep ephemeral create: {e:?}"))?;
+        .map_err(|e| format!("sweep ephemeral create: {e:?}"))?
+        .expect("accepted");
     load(&db, mass)?;
     pin_hash_model(&db)?;
     let mut next_id = ID_BASE;
@@ -350,7 +351,9 @@ fn run_cell(
             Ok(())
         });
         let events = obs::finish_capture();
-        outcome.map_err(|e| format!("sweep commit (size {k}, {}): {e:?}", order.label()))?;
+        outcome
+            .map_err(|e| format!("sweep commit (size {k}, {}): {e:?}", order.label()))?
+            .unwrap();
         let spans = judgment_spans(&events);
         src.push(spans.source);
         win.push(spans.capacities);

@@ -240,12 +240,16 @@ pub enum ProjSource {
 }
 
 /// Projection execution is either all direct slots (the fast paths) or
-/// includes a computed measure (the ray-checking paths). The sum removes
-/// the former `has_measures` flag + per-source assertion agreement.
+/// includes a computed measure (the ray-checking paths). The measure
+/// table and resolved batch sources live only on the measured arm.
 #[derive(Debug)]
 enum ProjectionSources {
     Plain(Vec<usize>),
-    Measured(Vec<ProjSource>),
+    Measured {
+        sources: Vec<ProjSource>,
+        measures: Vec<(usize, usize)>,
+        resolved: Vec<MeasuredSource>,
+    },
 }
 
 /// Expands find specs into projected word sources, find-**word** order:
@@ -265,7 +269,11 @@ fn sources_of(finds: &[SinkSpec], measures: &[(usize, usize)]) -> ProjectionSour
                 .collect(),
         )
     } else {
-        ProjectionSources::Measured(sources)
+        ProjectionSources::Measured {
+            sources,
+            measures: measures.to_vec(),
+            resolved: Vec::new(),
+        }
     }
 }
 
@@ -323,22 +331,17 @@ pub struct ProjectionSink {
     /// Parsed, measure-free head specs. Kept for allocation-silent
     /// re-aiming across rules; emit paths consume `sources` below.
     finds: Vec<SinkSpec>,
-    /// Derived measure word → original interval start slot, minted with
-    /// `finds` by the constructor parse.
-    measures: Vec<(usize, usize)>,
     /// The projected word sources in find-**word** order: an interval
     /// find contributes its two consecutive slots (the `SlotWidth` layout,
     /// expanded by the constructor's caller from the plan's layout map);
     /// a measure find contributes ONE computed word
-    /// ([`ProjSource::Measure`]).
+    /// ([`ProjSource::Measure`]). Measure table and resolved batch
+    /// sources sit inside the [`ProjectionSources::Measured`] arm.
     sources: ProjectionSources,
     /// The measure poison: the first ray the projection reached
     /// (`end == MAX` has no finite measure) — surfaced after the run as
     /// the typed [`crate::Error::MeasureOfRay`].
     ray: RayPoison,
-    /// The measured paths' batch-resolved sources, aligned with
-    /// `sources` (rebuilt at batch/scan entry; empty on the fast paths).
-    measured_sources: Vec<MeasuredSource>,
     seen: WordMap<()>,
     scratch: Vec<u64>,
     /// Per-slot leaf-batch sources, recomputed at batch entry —
@@ -428,6 +431,20 @@ enum FoldSource {
     Column(usize),
 }
 
+/// Fold accumulators and Pack claim lists are exclusive: validation
+/// admits at most one Pack per head and no fold companions.
+#[derive(Debug)]
+pub(in crate::exec::sink) enum GroupState {
+    Folds {
+        accs: Vec<Acc>,
+        n_aggs: usize,
+    },
+    Pack {
+        slot: usize,
+        claims: Vec<Vec<[u64; 2]>>,
+    },
+}
+
 /// The aggregate sink: group map keyed by the group-key words, folding each
 /// distinct full binding exactly once. Never returns `SkipSuffix` — the
 /// skip is illegal under aggregation (any new bound variable multiplies
@@ -471,22 +488,8 @@ pub struct AggregateSink {
     /// domain, the SWAR map otherwise — never a hot-loop branch beyond
     /// the enum's own dispatch (finding 049).
     groups: GroupTable,
-    /// Flat accumulator rows: `accs[group * n_aggs ..][..n_aggs]`.
-    accs: Vec<Acc>,
-    n_aggs: usize,
-    /// Per group: `Pack`'s claim accumulation list — `[start, end]`
-    /// encoded word pairs, appended raw at fold time (identical and
-    /// overlapping claims collapse in the finalize sweep, never here)
-    /// and pooled by group index (capacity
-    /// retained across executions, cleared at group creation). Memory is
-    /// O(the group's claims) — the allocation contract's retained
-    /// high-water scratch.
-    /// Measures and Pack fold per row — derived words exist only in
-    /// the scratch row, and Pack's group state is a claim list, so no
-    /// gather kernel or scan pushdown applies; batches route through
-    /// the per-row scratch fold. Pack presence is `SinkSpec::Pack` on
-    /// `finds`, not a stored option.
-    pack_claims: Vec<Vec<[u64; 2]>>,
+    /// Fold accumulators or Pack claim lists — exclusive by validation.
+    group_state: GroupState,
     /// Head-projection / DNF-span key assembly scratch (union regimes).
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,

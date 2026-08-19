@@ -125,7 +125,6 @@ impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!("bumbledb-node-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }
 }
@@ -156,7 +155,11 @@ fn the_bridge_typestate_and_the_macro_twin_open_each_other_s_stores() {
 
     // Created through the bridge's exact typestate (`Db<SchemaDescriptor>`
     // — what every JS `dbCreate` produces), opened under the macro twin.
-    drop(Db::create(&dir.0, CrossHost.descriptor()).expect("descriptor create"));
+    drop(
+        Db::create(&dir.0, CrossHost.descriptor())
+            .expect("descriptor create")
+            .expect("accepted"),
+    );
     drop(Db::open(&dir.0, CrossHost).expect("the macro twin opens the descriptor-created store"));
 
     // And the runtime lane (the bridge's `dbOpen`) reopens it as well.

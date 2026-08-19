@@ -8,12 +8,20 @@
 pub mod cache;
 pub mod view;
 
+mod bind;
 mod build;
 mod decode;
 mod distinct;
+mod epoch;
+mod frozen;
 mod stride;
 
-pub use build::{TransientImage, append, build, synthesize_closed};
+pub(crate) use bind::{ImageBind, LmdbImages};
+pub(crate) use epoch::ViewEpoch;
+pub(crate) use frozen::FrozenSource;
+
+pub use build::{TransientImage, synthesize_closed};
+pub(crate) use build::{append, build};
 
 /// The 16 KiB granule two hardware structures key on (measured):
 /// the L1D's set congruence (256 sets × 64 B lines,
@@ -98,16 +106,16 @@ pub struct ColumnSpan {
 /// field its `⌈N/8⌉` word columns (one plain word column for N ≤ 8),
 /// every other field one column of its width.
 #[must_use]
-pub fn column_spans(field_types: &[bumbledb_theory::TypeDesc]) -> Box<[ColumnSpan]> {
-    use bumbledb_theory::TypeDesc;
+pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[ColumnSpan]> {
+    use bumbledb_theory::schema::ValueType;
     let mut next_column = 0u16;
     field_types
         .iter()
         .map(|desc| {
             let width = match desc {
-                TypeDesc::Bool => ColumnWidth::Byte,
-                TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => ColumnWidth::Word,
-                TypeDesc::FixedBytes { len } => {
+                ValueType::Bool => ColumnWidth::Byte,
+                ValueType::U64 | ValueType::I64 | ValueType::String => ColumnWidth::Word,
+                ValueType::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
                         .expect("bytes width is at most 8 words")
                     {
@@ -115,7 +123,9 @@ pub fn column_spans(field_types: &[bumbledb_theory::TypeDesc]) -> Box<[ColumnSpa
                         count => ColumnWidth::Words { count },
                     }
                 }
-                TypeDesc::Interval { .. } | TypeDesc::FixedInterval { .. } => ColumnWidth::WordPair,
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+                    ColumnWidth::WordPair
+                }
             };
             let span = ColumnSpan {
                 first_column: next_column,

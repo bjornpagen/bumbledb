@@ -44,52 +44,55 @@ impl TupleOwners {
         }
     }
 
-    /// Remove `slice`. `false` means no owners remain — the overlay entry
-    /// must drop so the committed state answers (never `Absent` on cancel).
-    fn cancel(&mut self, slice: ArenaSlice) -> bool {
+    /// Remove `slice`. `None` means no owners remain — the overlay entry
+    /// drops so the committed state answers (never `Absent` on cancel).
+    fn cancel(self, slice: ArenaSlice) -> Option<Self> {
         match self {
             Self::Insert {
                 fact,
-                replaced,
-                deletes,
-            } if *fact == slice => {
+                mut replaced,
+                mut deletes,
+            } if fact == slice => {
                 if let Some(prev) = replaced.pop() {
-                    *fact = prev;
-                    true
+                    Some(Self::Insert {
+                        fact: prev,
+                        replaced,
+                        deletes,
+                    })
+                } else if deletes.is_empty() {
+                    None
                 } else {
-                    let mut deletes = std::mem::take(deletes);
-                    if deletes.is_empty() {
-                        false
-                    } else {
-                        let head = deletes.remove(0);
-                        *self = Self::Deletes {
-                            head,
-                            rest: deletes,
-                        };
-                        true
-                    }
+                    let head = deletes.remove(0);
+                    Some(Self::Deletes {
+                        head,
+                        rest: deletes,
+                    })
                 }
             }
             Self::Insert {
-                replaced, deletes, ..
+                fact,
+                mut replaced,
+                mut deletes,
             } => {
                 replaced.retain(|owner| *owner != slice);
                 deletes.retain(|owner| *owner != slice);
-                true
+                Some(Self::Insert {
+                    fact,
+                    replaced,
+                    deletes,
+                })
             }
-            Self::Deletes { head, rest } if *head == slice => {
-                let mut rest_v = std::mem::take(rest);
-                if rest_v.is_empty() {
-                    false
+            Self::Deletes { head, mut rest } if head == slice => {
+                if rest.is_empty() {
+                    None
                 } else {
-                    *head = rest_v.remove(0);
-                    *rest = rest_v;
-                    true
+                    let head = rest.remove(0);
+                    Some(Self::Deletes { head, rest })
                 }
             }
-            Self::Deletes { rest, .. } => {
+            Self::Deletes { head, mut rest } => {
                 rest.retain(|owner| *owner != slice);
-                true
+                Some(Self::Deletes { head, rest })
             }
         }
     }
@@ -119,9 +122,8 @@ impl WriteDelta<'_> {
         for &key_id in relation.keys() {
             let statement = self.schema.key(key_id);
             keys::determinant_image(
-                relation.layout(),
+                relation.layout().encoded(fact_bytes),
                 &statement.projection,
-                fact_bytes,
                 &mut self.determinant_scratch,
             );
             let per_key = self.determinants.entry(key_id).or_default();
@@ -160,19 +162,18 @@ impl WriteDelta<'_> {
         for &key_id in relation.keys() {
             let statement = self.schema.key(key_id);
             keys::determinant_image(
-                relation.layout(),
+                relation.layout().encoded(fact_bytes),
                 &statement.projection,
-                fact_bytes,
                 &mut self.determinant_scratch,
             );
             let Some(per_key) = self.determinants.get_mut(&key_id) else {
                 continue;
             };
-            let Some(owners) = per_key.get_mut(self.determinant_scratch.as_bytes()) else {
+            let Some(owners) = per_key.remove(self.determinant_scratch.as_bytes()) else {
                 continue;
             };
-            if !owners.cancel(slice) {
-                per_key.remove(self.determinant_scratch.as_bytes());
+            if let Some(owners) = owners.cancel(slice) {
+                per_key.insert(self.determinant_scratch.clone(), owners);
             }
         }
     }

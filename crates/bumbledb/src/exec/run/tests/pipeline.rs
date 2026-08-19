@@ -33,10 +33,10 @@ fn pipelined_executor_matches_oracle() {
                 occurrence(1, 1, &[(0, 1), (1, 2)]),
                 occurrence(2, 2, &[(0, 2), (1, 3)]),
             ],
-            vec![PlacedComparison {
+            vec![FilterPredicate::FieldsCompare {
+                left: OperandAddr::from(VarId(0)),
+                right: OperandAddr::from(VarId(3)),
                 op: WordCmp::Ne,
-                lhs: VarId(0),
-                rhs: VarId(3),
             }],
         );
         let sinks = all_vars(&normalized);

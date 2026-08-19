@@ -1260,7 +1260,7 @@ fn allen_dense_scans_record_one_batch_event() {
 
     let hits: Vec<&crate::obs::TraceEvent> = events
         .iter()
-        .filter(|e| e.name() == crate::obs::names::KERNEL_ALLEN)
+        .filter(|e| e.point() == crate::obs::names::KERNEL_ALLEN)
         .collect();
     assert_eq!(
         hits.len(),

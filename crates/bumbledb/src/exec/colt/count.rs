@@ -8,7 +8,7 @@ impl Colt {
     #[cfg(test)]
     #[must_use]
     pub fn arity(&self, level: usize) -> usize {
-        self.arity_at(self.selection_levels + level)
+        self.arity_at(self.join_index(level))
     }
 
     /// Key arity at an internal (selection-inclusive) level.

@@ -15,12 +15,12 @@ use super::{
 };
 use crate::error::{Error, Result};
 use crate::exec::run::Counters;
-use crate::image::cache::ImageCache;
+use crate::image::ImageBind;
 use crate::image::view::Const;
 use crate::image::{RelationImage, TransientImage};
 use crate::schema::Schema;
-use crate::storage::env::ReadTxn;
-use bumbledb_theory::TypeDesc;
+use crate::storage::catalog::CatalogRead;
+use bumbledb_theory::schema::ValueType;
 
 /// The default rec-round budget. Generous by the safety theorem's own
 /// measure: a real closure's round count is its graph's diameter.
@@ -38,7 +38,7 @@ pub const DEFAULT_DERIVED_TUPLES: u64 = 10_000_000;
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
     pub(super) rec: Vec<RecArm>,
-    pub(super) field_types: Vec<TypeDesc>,
+    pub(super) field_types: Vec<ValueType>,
     pub(super) sink: crate::exec::sink::ProjectionSink,
     pub(super) units: usize,
     pub(super) scratch: RecPingPong,
@@ -104,7 +104,7 @@ impl DerivedImages {
     fn stash_finished(
         &mut self,
         id: usize,
-        field_types: &[TypeDesc],
+        field_types: &[ValueType],
         sink: &ProjectionSink,
     ) -> Arc<RelationImage> {
         debug_assert_eq!(
@@ -158,16 +158,16 @@ impl RecPingPong {
 
 /// Shared per-run context (split borrows of the prepared query).
 #[derive(Clone, Copy)]
-struct RunCtx<'a> {
+struct RunCtx<'a, Cat, Img> {
     schema: &'a Schema,
-    txn: &'a ReadTxn<'a>,
-    cache: &'a ImageCache,
+    catalog: &'a Cat,
+    images: &'a Img,
     resolved_params: &'a [Const],
     missed_params: &'a [bool],
     fast_eligible: bool,
 }
 
-impl<S> PreparedQuery<'_, S> {
+impl<S> PreparedQuery<S> {
     /// Amends this prepared query's derived-tuples / rec-rounds budget.
     /// The rounds axis is stored on the Reach arm and ignored on Cq
     /// (rounds never advance). The tuples axis judges every query —
@@ -185,13 +185,14 @@ impl<S> PreparedQuery<'_, S> {
         clippy::too_many_lines,
         reason = "the derived phase reads as one protocol: interiors, then rec"
     )]
-    pub(super) fn run_derived<C: Counters>(
+    pub(super) fn run_derived<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        counters: &mut C,
+        catalog: &C,
+        images: &I,
+        counters: &mut Cnt,
     ) -> Result<bool> {
         let derived_count = match &self.pipeline {
+            PreparedPipeline::PointProbe { .. } => 0,
             PreparedPipeline::Cq { interiors, .. } => interiors.len(),
             PreparedPipeline::Reach { derived_count, .. } => {
                 usize::try_from(*derived_count).expect("derived_count stored at validate")
@@ -208,15 +209,14 @@ impl<S> PreparedQuery<'_, S> {
                 }
             }
         }
-        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
+        let fast_eligible = self.latch.is_latched() && self.params.is_empty();
         let mut latched = 0u32;
         let mut ran = false;
         let mut derived_tuples: u64 = 0;
 
         let n_interiors = self.pipeline.interiors().len();
         if n_interiors > 0 {
-            let mut interiors_span =
-                crate::obs::span(crate::obs::names::INTERIORS, crate::obs::Category::Execute);
+            let mut interiors_span = crate::obs::span(crate::obs::names::INTERIORS);
             let mut interior_emits: u64 = 0;
             for i in 0..n_interiors {
                 {
@@ -225,9 +225,9 @@ impl<S> PreparedQuery<'_, S> {
                     interiors[i].sink.reset();
                 }
                 let ctx = RunCtx {
-                    schema: self.schema,
-                    txn,
-                    cache,
+                    schema: self.schema.as_ref(),
+                    catalog,
+                    images,
                     resolved_params: &self.resolved_params,
                     missed_params: &self.missed_params,
                     fast_eligible,
@@ -244,7 +244,7 @@ impl<S> PreparedQuery<'_, S> {
                     let units = interiors[i].units;
                     let interior = &mut interiors[i];
                     ran |= run_into_projection(
-                        ctx,
+                        &ctx,
                         &mut interior.rules,
                         rule_idx,
                         units,
@@ -278,20 +278,20 @@ impl<S> PreparedQuery<'_, S> {
                         run_ray_probe_sets(
                             sets,
                             Some(&mut self.derived),
-                            self.schema,
-                            txn,
-                            cache,
+                            self.schema.as_ref(),
+                            catalog,
+                            images,
                             &self.resolved_params,
                             &self.missed_params,
-                            self.unresolved_literals == 0 && self.params.is_empty(),
+                            self.latch.is_latched() && self.params.is_empty(),
                             &mut self.bindings,
                             counters,
                         )?
                     };
-                    self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+                    self.latch = self.latch.credit(latched);
                 }
             }
-            interiors_span.set_args(n_interiors as u64, interior_emits);
+            interiors_span.set_pair(n_interiors as u64, interior_emits);
         }
 
         let rec_ran = match &mut self.pipeline {
@@ -310,9 +310,9 @@ impl<S> PreparedQuery<'_, S> {
                     &mut self.derived,
                     &mut self.bindings,
                     &mut self.determinant_key,
-                    self.schema,
-                    txn,
-                    cache,
+                    self.schema.as_ref(),
+                    catalog,
+                    images,
                     &self.resolved_params,
                     &self.missed_params,
                     fast_eligible,
@@ -321,11 +321,11 @@ impl<S> PreparedQuery<'_, S> {
                     derived_tuples,
                 )?
             }
-            PreparedPipeline::Cq { .. } => false,
+            PreparedPipeline::Cq { .. } | PreparedPipeline::PointProbe { .. } => false,
         };
         ran |= rec_ran;
 
-        self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+        self.latch = self.latch.credit(latched);
         Ok(ran)
     }
 
@@ -351,7 +351,7 @@ impl<S> PreparedQuery<'_, S> {
     clippy::too_many_lines,
     reason = "the driver reads as one protocol: reset, round 0, Δ loop, budget"
 )]
-fn run_reach<C: Counters>(
+fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
     driver: &mut ReachDriver,
     rec_id: usize,
     rounds_budget: u32,
@@ -360,17 +360,17 @@ fn run_reach<C: Counters>(
     bindings: &mut Bindings,
     determinant_key: &mut Vec<u8>,
     schema: &Schema,
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+    catalog: &C,
+    images: &I,
     resolved_params: &[Const],
     missed_params: &[bool],
     fast_eligible: bool,
-    counters: &mut C,
+    counters: &mut Cnt,
     latched: &mut u32,
     mut derived_tuples: u64,
 ) -> Result<bool> {
     let mut ran = false;
-    let mut reach_span = crate::obs::span(crate::obs::names::REACH, crate::obs::Category::Execute);
+    let mut reach_span = crate::obs::span(crate::obs::names::REACH);
 
     driver.sink.reset();
     driver.scratch.begin();
@@ -385,24 +385,21 @@ fn run_reach<C: Counters>(
 
     let ctx = RunCtx {
         schema,
-        txn,
-        cache,
+        catalog,
+        images,
         resolved_params,
         missed_params,
         fast_eligible,
     };
 
-    let mut round_span = Some(crate::obs::span(
-        crate::obs::names::FIXPOINT_ROUND,
-        crate::obs::Category::Execute,
-    ));
+    let mut round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
     let mut round_emits_before = counters.emits();
 
     // Round 0: base arms into the rec sink.
     for rule_idx in 0..driver.base.len() {
         fill_finished_images(&driver.base[rule_idx], derived);
         ran |= run_into_projection(
-            ctx,
+            &ctx,
             &mut driver.base,
             rule_idx,
             driver.units,
@@ -419,7 +416,7 @@ fn run_reach<C: Counters>(
     let newly = driver.sink.len() as u64;
     counters.fixpoint_round(emitted, emitted.saturating_sub(newly));
     if let Some(mut span) = round_span.take() {
-        span.set_args(emitted, emitted.saturating_sub(newly));
+        span.set_pair(emitted, emitted.saturating_sub(newly));
     }
 
     let mut rounds: u32 = 0;
@@ -429,17 +426,14 @@ fn run_reach<C: Counters>(
         let any_delta = len > driver.scratch.watermark;
         if !any_delta {
             derived.stash_finished(rec_id, &driver.field_types, &driver.sink);
-            reach_span.set_args(u64::from(rounds), tuples);
+            reach_span.set_pair(u64::from(rounds), tuples);
             break;
         }
         if rounds >= rounds_budget || tuples > tuples_budget {
             return Err(Error::DerivedBudgetExceeded { rounds, tuples });
         }
         rounds += 1;
-        round_span = Some(crate::obs::span(
-            crate::obs::names::FIXPOINT_ROUND,
-            crate::obs::Category::Execute,
-        ));
+        round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
         round_emits_before = counters.emits();
         let flip = usize::from(driver.scratch.flip);
         let since = driver.scratch.watermark;
@@ -470,7 +464,7 @@ fn run_reach<C: Counters>(
                 },
             );
             ran |= run_free_join_into_projection(
-                ctx,
+                &ctx,
                 &mut driver.rec[arm_idx].rule,
                 driver.units,
                 &derived.occ_images,
@@ -485,7 +479,7 @@ fn run_reach<C: Counters>(
         let newly = (driver.sink.len() - driver.scratch.watermark) as u64;
         counters.fixpoint_round(emitted, emitted.saturating_sub(newly));
         if let Some(mut span) = round_span.take() {
-            span.set_args(emitted, emitted.saturating_sub(newly));
+            span.set_pair(emitted, emitted.saturating_sub(newly));
         }
         derived_tuples = tuples;
     }
@@ -572,23 +566,23 @@ fn fill_plan_images(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-pub(super) fn run_ray_probe_sets<C: Counters>(
+pub(super) fn run_ray_probe_sets<Cnt: Counters, C: CatalogRead, I: ImageBind>(
     sets: &mut [super::RayProbeSet],
     mut derived: Option<&mut DerivedImages>,
     schema: &Schema,
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+    catalog: &C,
+    images: &I,
     resolved_params: &[crate::image::view::Const],
     missed_params: &[bool],
     fast_eligible: bool,
     bindings: &mut Bindings,
-    counters: &mut C,
+    counters: &mut Cnt,
 ) -> Result<u32> {
     let mut latched = 0u32;
     let empty = OccImages::default();
     let mut no_retired = Vec::new();
     for set in sets {
-        set.verdict.resolve_interns(txn)?;
+        set.verdict.resolve_interns(catalog)?;
         let super::RayProbeSet { verdict, probes } = set;
         for probe in probes {
             if let Some(derived) = derived.as_mut() {
@@ -599,7 +593,7 @@ pub(super) fn run_ray_probe_sets<C: Counters>(
                     true
                 } else {
                     let complete = super::bind::resolve_filters(
-                        txn,
+                        catalog,
                         &mut probe.rule.plan,
                         resolved_params,
                         missed_params,
@@ -623,21 +617,20 @@ pub(super) fn run_ray_probe_sets<C: Counters>(
                 resolved_params,
                 probe.measured_slot,
             );
-            let (images, retired) = match derived.as_mut() {
+            let (occ_images, retired) = match derived.as_mut() {
                 Some(derived) => (&derived.occ_images, &mut derived.retired),
                 None => (&empty, &mut no_retired),
             };
             run_join(
                 &probe.rule.plan,
                 schema,
-                txn,
-                cache,
+                images,
                 &mut probe.rule.executor,
                 bindings,
                 &probe.rule.resolved_filters,
                 &probe.rule.resolved_selections,
                 &mut probe.rule.memo,
-                images,
+                occ_images,
                 retired,
                 &mut arbiter,
                 counters,
@@ -655,8 +648,8 @@ pub(super) fn run_ray_probe_sets<C: Counters>(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-fn run_into_projection<C: Counters>(
-    ctx: RunCtx<'_>,
+fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
+    ctx: &RunCtx<'_, Cat, Img>,
     rules: &mut [PreparedRule],
     rule_idx: usize,
     units: usize,
@@ -666,7 +659,7 @@ fn run_into_projection<C: Counters>(
     bindings: &mut Bindings,
     determinant_key: &mut Vec<u8>,
     latched: &mut u32,
-    counters: &mut C,
+    counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
     match &mut rules[rule_idx] {
@@ -677,7 +670,7 @@ fn run_into_projection<C: Counters>(
             }
             crate::exec::dispatch::execute_key_probe(
                 &rule.plan,
-                ctx.txn,
+                ctx.catalog,
                 ctx.schema,
                 ctx.resolved_params,
                 determinant_key,
@@ -698,8 +691,8 @@ fn run_into_projection<C: Counters>(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-fn run_free_join_into_projection<C: Counters>(
-    ctx: RunCtx<'_>,
+fn run_free_join_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
+    ctx: &RunCtx<'_, Cat, Img>,
     rule: &mut FreeJoinRule,
     units: usize,
     occ_images: &OccImages,
@@ -707,7 +700,7 @@ fn run_free_join_into_projection<C: Counters>(
     sink: &mut ProjectionSink,
     bindings: &mut Bindings,
     latched: &mut u32,
-    counters: &mut C,
+    counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
     bindings.resize(rule.plan.slot_count());
@@ -715,7 +708,7 @@ fn run_free_join_into_projection<C: Counters>(
         true
     } else {
         let complete = super::bind::resolve_filters(
-            ctx.txn,
+            ctx.catalog,
             &mut rule.plan,
             ctx.resolved_params,
             ctx.missed_params,
@@ -740,8 +733,7 @@ fn run_free_join_into_projection<C: Counters>(
     run_join(
         &rule.plan,
         ctx.schema,
-        ctx.txn,
-        ctx.cache,
+        ctx.images,
         &mut rule.executor,
         bindings,
         &rule.resolved_filters,

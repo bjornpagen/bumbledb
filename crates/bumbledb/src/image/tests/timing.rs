@@ -39,7 +39,7 @@ fn image_build_split_evidence() {
         delta.insert(&txn0, R, &bytes).expect("insert");
     }
     drop(txn0);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
 
     // Walk floor: drain the cursor, touch every fact byte cheaply.
@@ -49,15 +49,15 @@ fn image_build_split_evidence() {
         for entry in crate::storage::read::scan(&txn, &schema, R).expect("scan") {
             let (_, fact) = entry.expect("entry");
             sink = sink
-                .wrapping_add(u64::from(fact[0]))
-                .wrapping_add(fact.len() as u64);
+                .wrapping_add(u64::from(fact.bytes()[0]))
+                .wrapping_add(fact.bytes().len() as u64);
         }
     }
     let walk = walk.elapsed() / 5;
 
     let full = std::time::Instant::now();
     for _ in 0..5 {
-        let image = build(&txn, &schema, R).expect("build");
+        let image = build(&txn.catalog(), &schema, R).expect("build");
         sink = sink.wrapping_add(image.row_count() as u64);
     }
     let full = full.elapsed() / 5;

@@ -17,6 +17,7 @@ import * as path from "node:path"
 import { after, test } from "node:test"
 import type { Fact } from "#index.ts"
 import { Db, key, relation, schema, str, u64 } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-f5-"))
@@ -32,7 +33,7 @@ const attemptTextKey = key(AttemptText, ["attempt"])
 const theory = schema("F5RevisionDance", { F5Attempt: Attempt, F5AttemptText: AttemptText }, [attemptTextKey])
 
 test("settle revision dance: delete-by-full-value hits, keyed reinsert lands", async function run() {
-	const db = await Db.create(storeDir, theory)
+	const db = accepted(await Db.create(storeDir, theory))
 	/**
 	 * Multi-KB prompt with non-ASCII, matching the app's rendered-prompt scale.
 	 */
@@ -43,7 +44,7 @@ test("settle revision dance: delete-by-full-value hits, keyed reinsert lands", a
 		put(tx, AttemptText, { attempt: fresh.id, prompt: promptText, output: "" })
 		minted.id = fresh.id
 	})
-	assert.equal(first.ok, true, "placeholder insert must commit")
+	assert.equal(first.tag, "accepted", "placeholder insert must commit")
 	const attemptId = minted.id
 	assert.ok(attemptId !== undefined)
 	const output = JSON.stringify({ verdict: "accepted", note: "…" })
@@ -59,7 +60,7 @@ test("settle revision dance: delete-by-full-value hits, keyed reinsert lands", a
 		put(tx, AttemptText, { attempt: attemptId, prompt: promptText, output })
 	})
 	assert.equal(deleted.changed, 1n, "delete-by-full-value must hit the placeholder row")
-	assert.equal(second.ok, true, "revision commit must pass the attemptTextKey judgment")
+	assert.equal(second.tag, "accepted", "revision commit must pass the attemptTextKey judgment")
 	const rows = db.read(function scanText(snap) {
 		return snap.scan(AttemptText)
 	})

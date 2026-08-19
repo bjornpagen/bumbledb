@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::StatementErrorKind;
 
-fn member_set(indices: &[u16]) -> MemberSet {
+fn member_set(indices: &[u8]) -> MemberSet {
     let mut members = MemberSet::empty();
     for &index in indices {
         members.insert(AxiomIndex(index));
@@ -242,9 +242,9 @@ fn example_schema_resolves_exactly() {
     .expect("the 30-dependencies example schema is valid");
 
     assert!(schema.keys().iter().all(|key| !key.form().is_pointwise()));
-    let probe = |target_key: u16| Enforcement::ScalarProbe {
+    let probe = |target_key: u16, source: u16| Enforcement::ScalarProbe {
         target_key: KeyId(target_key),
-        key_permutation: Box::new([0]),
+        key_projection: Box::new([FieldId(source)]),
     };
     assert_eq!(
         schema
@@ -253,19 +253,19 @@ fn example_schema_resolves_exactly() {
             .map(|statement| &statement.enforcement)
             .collect::<Vec<_>>(),
         vec![
-            &probe(0), // id 2: Account(holder) <= Holder(id)
-            &probe(2), // id 3: Account(id | Savings) <= SavingsTerms(account)
-            &probe(1), // id 4: SavingsTerms(account) <= Account(id | Savings)
+            &probe(0, 1), // id 2: Account(holder) <= Holder(id)
+            &probe(2, 0), // id 3: Account(id | Savings) <= SavingsTerms(account)
+            &probe(1, 0), // id 4: SavingsTerms(account) <= Account(id | Savings)
         ]
     );
 
     // The sealed `==` pairing: the lowered pair links symmetrically;
-    // The one-way containment (id 2) carries `None`; keys have no mirror
+    // The one-way containment (id 2) carries `OneWay`; keys have no pairing
     // field at all.
     let mirrors: Vec<Option<StatementId>> = schema
         .containments()
         .iter()
-        .map(|statement| statement.mirror)
+        .map(|statement| statement.mirror_id(&schema))
         .collect();
     assert_eq!(
         mirrors,
@@ -291,7 +291,7 @@ fn pointwise_key_and_containment_resolve() {
             RelationDescriptor {
                 extension: None,
                 name: "Booking".into(),
-                fields: vec![field("room", ValueType::U64), field("during", iv.clone())],
+                fields: vec![field("room", ValueType::U64), field("during", iv)],
             },
             RelationDescriptor {
                 extension: None,
@@ -315,17 +315,16 @@ fn pointwise_key_and_containment_resolve() {
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::IntervalCoverage {
             target_key: KeyId(0),
-            ref key_permutation,
+            ref key_projection,
             ..
-        } if **key_permutation == [0, 1]
+        } if **key_projection == [FieldId(0), FieldId(1)]
     ));
     assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 }
 
 /// The target projection may be any permutation of the key: the recorded
-/// permutation is the INVERSE form — determinant position → statement
-/// projection index — so the per-fact encoder is a straight indexed
-/// gather (`keys::permuted_determinant_image`).
+/// projection is the source fields in target-key determinant order — the
+/// sealed permuted gather (`keys::determinant_image`).
 #[test]
 fn permuted_target_projection_resolves_with_permutation() {
     let schema = SchemaDescriptor {
@@ -357,15 +356,15 @@ fn permuted_target_projection_resolves_with_permutation() {
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::ScalarProbe {
             target_key: KeyId(0),
-            key_permutation: Box::new([1, 0]),
+            key_projection: Box::new([FieldId(1), FieldId(0)]),
         }
     );
 }
 
-/// The inverse direction pinned by a 3-cycle (a 2-field permutation is an
+/// Source fields in key order, pinned by a 3-cycle (a 2-field permutation is an
 /// involution — identical under either convention): determinant order
-/// (a, b, c) against projection order (c, a, b) stores `[1, 2, 0]`, the
-/// projection index per determinant position.
+/// (a, b, c) against projection order (c, a, b) stores `[y, z, x]` when
+/// source projection is identity — `[FieldId(1), FieldId(2), FieldId(0)]`.
 #[test]
 fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
     let schema = SchemaDescriptor {
@@ -405,7 +404,7 @@ fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::ScalarProbe {
             target_key: KeyId(0),
-            key_permutation: Box::new([1, 2, 0]),
+            key_projection: Box::new([FieldId(1), FieldId(2), FieldId(0)]),
         }
     );
 }
@@ -749,7 +748,7 @@ fn power_tree() -> SchemaDescriptor {
                 fields: vec![
                     field("id", ValueType::U64),
                     field("supply", ValueType::U64),
-                    field("span", interval.clone()),
+                    field("span", interval),
                 ],
             },
             RelationDescriptor {

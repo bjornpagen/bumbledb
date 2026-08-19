@@ -99,7 +99,7 @@ pub(super) fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, 
         delta.insert(&view, READING, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// `Q(id, value) :- Reading(id, kind = x, value), Kind(id = x, rank == <rank>)`.
@@ -165,11 +165,12 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
     assert_eq!(
-        prepared.unresolved_literals, 0,
+        prepared.latch.remaining(),
+        0,
         "a plan-constant set is pre-resolved — it must not block the latch"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         values_of(&out),
@@ -179,7 +180,7 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
     // Warm re-execution rides the fully-latched fast path (the resolved
     // tables are final) and answers identically.
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("warm execute");
     assert_eq!(values_of(&out), vec![210, 211, 220]);
 }
@@ -203,10 +204,10 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
     obs::start_capture();
     prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let events = obs::finish_capture();
-    let count = |name: &str| events.iter().filter(|e| e.name() == name).count();
+    let count = |name| events.iter().filter(|e| e.point() == name).count();
     assert_eq!(
         count(obs::names::VIEW_BUILD),
         1,
@@ -234,7 +235,7 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(stats.rules().len(), 1);
-    let folded = &stats.rules()[0].folded;
+    let folded = &stats.rules()[0].folded();
     assert_eq!(folded.len(), 1);
     assert_eq!(folded[0].relation, "Kind");
     assert_eq!(folded[0].rendered, "Kind{rank == 20}");
@@ -265,7 +266,7 @@ fn an_empty_fold_prepares_the_statically_empty_query() {
         "no Kind row has rank 99: the rule died at prepare"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 0);
     let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");

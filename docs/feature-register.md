@@ -313,9 +313,9 @@ under the tag) — both rows shipped 2026-07-19:
 
 - **Keyed get** — **shipped (this wave, 2026-07-19)**: reading through the
   declared key FDs IS the obvious spelling on both the read scope and the
-  write transaction — Rust `snap.get(key)` / `tx.get(key)` over the generated
+  write transaction — Rust `instance.get(key)` / `tx.get(key)` over the generated
   `Key` values, TS `get(relation, keyStatement, key)` on
-  `Db`/`ReadScope`/`Tx`; the terminal record is
+  `Db`/`ReadInstance`/`Tx`; the terminal record is
   `docs/architecture/70-api.md` ledger row (b), the at-most-one answer
   derived (`lean/Bumbledb/Dependencies.lean: keyed_get_at_most_one`), pinned
   by `crates/bumbledb/tests/keyed_get.rs`, `ts/test/keyed-get.test.ts`, and

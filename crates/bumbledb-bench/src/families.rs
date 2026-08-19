@@ -44,19 +44,13 @@ pub fn scalar_draw(values: Vec<Value>) -> Draw {
 
 /// One owned scalar as the engine's borrowed [`BindValue`] — str/bytes
 /// payloads by reference (the bind surface borrows; the draws own).
-///
-/// # Panics
-///
-/// On non-UTF-8 `Value::String` bytes — the corpus interns text.
 #[must_use]
 pub fn bind_value(value: &Value) -> BindValue<'_> {
     match value {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
-        Value::String(raw) => {
-            BindValue::Str(std::str::from_utf8(raw).expect("corpus strings are UTF-8"))
-        }
+        Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),

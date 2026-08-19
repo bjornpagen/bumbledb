@@ -999,9 +999,9 @@ discipline — snapshot-derived writes detect movement
 final-state point reads need no earlier witness.
 
 The generation witness: read the model, propose a delta, commit iff the model
-you read is still the model. The SDK ships one-shot `writeFrom` (must run
-inside the read callback that owns the snapshot). Retry on
-`ErrGenerationMoved` is host policy — a short loop around `db.read` +
+you read is still the model. The SDK ships one-shot `writeFrom` (the witness
+escapes the read callback; the instance does not). Retry on
+`{ tag: "moved" }` is host policy — a short loop around `db.read` +
 `writeFrom` if the host wants it. `abandon(payload)`
 declines to commit without issuing anything — from `db.write` and
 `db.writeFrom` alike (the sentinel's contract is unconditional, and
@@ -1027,18 +1027,22 @@ const stillQueued = query(Jobs).rule((r) => {
 	return r.match(Job, { id, state: "Queued", payload }).find({ id, payload })
 })
 
-const db = await Db.create("./jobs.db", Jobs)
+const created = await Db.create("./jobs.db", Jobs)
+if (created.tag !== "accepted") {
+	throw new Error("create rejected")
+}
+const db = created.value
 const prepared = db.prepare(stillQueued)
 
-// The witnessed write: premise reads via `snap`, the delta via `tx`. On a
-// moved generation `writeFrom` throws `ErrGenerationMoved` — retry is host
-// policy. The other two idioms: insert-select is the same shape (query
+// The witnessed write: premise reads via `instance`, the delta via `tx`.
+// On a moved generation `writeFrom` returns `{ tag: "moved" }` — retry is
+// host policy. The other two idioms: insert-select is the same shape (query
 // source answers, insert the derived facts); key-shaped read-modify-write
 // uses `tx.get`/`tx.contains` — final-state point reads need no earlier
 // witness.
-const outcome = db.read(function attempt(snap) {
-	return db.writeFrom(snap, function updateWhere(tx) {
-		const queued = snap.execute(prepared, {})
+const outcome = db.read(function attempt(instance, witness) {
+	return db.writeFrom(witness, function updateWhere(tx) {
+		const queued = instance.execute(prepared, {})
 		if (queued.length === 0) {
 			return abandon("nothing queued")
 		}
@@ -1211,7 +1215,11 @@ The loop (the compiled, driven copy is in `test/cookbook.test.ts`, over a
 three-level forest with the exact reachable set asserted):
 
 ```ts
-const db = await Db.create("./closure.db", Closure)
+const created = await Db.create("./closure.db", Closure)
+if (created.tag !== "accepted") {
+	throw new Error("create rejected")
+}
+const db = created.value
 const stepPrepared = db.prepare(step)
 const root = 1n // the host's chosen root node id
 
@@ -1595,7 +1603,11 @@ runtime shape check. The primary 2-arg form needs no statement: the fresh
 field IS the primary key.
 
 ```ts
-const db = await Db.create("./courses.db", KeyedRead)
+const created = await Db.create("./courses.db", KeyedRead)
+if (created.tag !== "accepted") {
+	throw new Error("create rejected")
+}
+const db = created.value
 
 const minted: { grp?: bigint } = {}
 db.write((tx) => {
@@ -1611,7 +1623,7 @@ const grp = minted.grp ?? 0n
 const byGroup = db.get(Course, courseGrpKey, { grp })
 
 // snap.get — the same spelling inside a read scope:
-const viaSnap = db.read((snap) => snap.get(Course, courseGrpKey, { grp }))
+const viaSnap = db.read((instance) => instance.get(Course, courseGrpKey, { grp }))
 
 // tx.get — key-shaped read-modify-write, final-state (recipe 20's third
 // idiom): per-fact premises need no earlier snapshot witness.

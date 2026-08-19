@@ -7,14 +7,14 @@
 
 use super::*;
 
-use crate::error::{Error, Violation};
+use crate::error::{Admission, Conflict, Result, Violation};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::testutil::TempDir;
+use crate::testutil::{TempDir, expect_rejected};
 
 /// Applies both facts as inserts in one delta against an empty base.
-fn in_delta(name: &str, a: &[u8], b: &[u8]) -> crate::error::Result<()> {
+fn in_delta(name: &str, a: &[u8], b: &[u8]) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -23,8 +23,8 @@ fn in_delta(name: &str, a: &[u8], b: &[u8]) -> crate::error::Result<()> {
     delta.insert(&view, BOOKING, a).expect("record insert");
     delta.insert(&view, BOOKING, b).expect("record insert");
     drop(view);
-    let result = commit(delta, &env).map(|_| ());
-    if result.is_err() {
+    let result = commit(delta, &env).map(|admission| admission.map(|_| ()));
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         // An aborted commit leaves the base state untouched.
         assert!(committed_data(&env).is_empty());
     }
@@ -32,7 +32,7 @@ fn in_delta(name: &str, a: &[u8], b: &[u8]) -> crate::error::Result<()> {
 }
 
 /// Commits `first`, then inserts `second` in a fresh delta.
-fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> crate::error::Result<()> {
+fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -41,15 +41,15 @@ fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> crate::error::Result<
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, BOOKING, first).expect("record insert");
         drop(view);
-        commit(delta, &env).expect("base commit");
+        commit(delta, &env).expect("base commit").expect("admitted");
     }
     let before = committed_data(&env);
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta.insert(&view, BOOKING, second).expect("record insert");
     drop(view);
-    let result = commit(delta, &env).map(|_| ());
-    if result.is_err() {
+    let result = commit(delta, &env).map(|admission| admission.map(|_| ()));
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         assert_eq!(committed_data(&env), before);
     }
     result
@@ -57,22 +57,20 @@ fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> crate::error::Result<
 
 /// In-delta violation: application order follows fact-hash order, so
 /// either fact may be the incumbent — assert the pair, not the roles.
-fn assert_in_delta_violation(result: crate::error::Result<()>, a: &[u8], b: &[u8]) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+fn assert_in_delta_violation(result: Result<Admission<()>>, a: &[u8], b: &[u8]) {
+    let violations = expect_rejected(result);
     let [
-        Violation::Functionality(crate::error::FunctionalityViolation::Pointwise {
-            statement,
+        Violation::Functionality {
+            id,
             fact,
-            incumbent,
-        }),
+            conflict: Conflict::Pointwise { incumbent },
+            ..
+        },
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
-    assert_eq!(*statement, BOOKING_KEY);
+    assert_eq!(*id, BOOKING_KEY);
     assert!(
         (**fact == *a && **incumbent == *b) || (**fact == *b && **incumbent == *a),
         "violation names {fact:?} against {incumbent:?}"
@@ -81,22 +79,20 @@ fn assert_in_delta_violation(result: crate::error::Result<()>, a: &[u8], b: &[u8
 
 /// Cross-delta violation: the committed fact is the incumbent, the new
 /// fact the offender — the roles are deterministic.
-fn assert_cross_delta_violation(result: crate::error::Result<()>, first: &[u8], second: &[u8]) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+fn assert_cross_delta_violation(result: Result<Admission<()>>, first: &[u8], second: &[u8]) {
+    let violations = expect_rejected(result);
     let [
-        Violation::Functionality(crate::error::FunctionalityViolation::Pointwise {
-            statement,
+        Violation::Functionality {
+            id,
             fact,
-            incumbent,
-        }),
+            conflict: Conflict::Pointwise { incumbent },
+            ..
+        },
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
-    assert_eq!(*statement, BOOKING_KEY);
+    assert_eq!(*id, BOOKING_KEY);
     assert_eq!(**fact, *second);
     assert_eq!(&**incumbent, first);
 }
@@ -177,7 +173,9 @@ fn adjacent_left_in_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 5, 10, 1);
-    in_delta("fd-adjacent-left-in", &a, &b).expect("adjacency is legal");
+    in_delta("fd-adjacent-left-in", &a, &b)
+        .expect("adjacency is legal")
+        .unwrap();
 }
 
 #[test]
@@ -185,7 +183,9 @@ fn adjacent_left_cross_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 5, 10, 1);
-    cross_delta("fd-adjacent-left-cross", &a, &b).expect("adjacency is legal");
+    cross_delta("fd-adjacent-left-cross", &a, &b)
+        .expect("adjacency is legal")
+        .unwrap();
 }
 
 #[test]
@@ -194,7 +194,9 @@ fn adjacent_right_in_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 20, 25, 1);
-    in_delta("fd-adjacent-right-in", &a, &b).expect("adjacency is legal");
+    in_delta("fd-adjacent-right-in", &a, &b)
+        .expect("adjacency is legal")
+        .unwrap();
 }
 
 #[test]
@@ -202,7 +204,9 @@ fn adjacent_right_cross_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 20, 25, 1);
-    cross_delta("fd-adjacent-right-cross", &a, &b).expect("adjacency is legal");
+    cross_delta("fd-adjacent-right-cross", &a, &b)
+        .expect("adjacency is legal")
+        .unwrap();
 }
 
 #[test]
@@ -210,7 +214,9 @@ fn disjoint_in_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 30, 40, 1);
-    in_delta("fd-disjoint-in", &a, &b).expect("disjoint intervals coexist");
+    in_delta("fd-disjoint-in", &a, &b)
+        .expect("disjoint intervals coexist")
+        .unwrap();
 }
 
 #[test]
@@ -218,7 +224,9 @@ fn disjoint_cross_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 30, 40, 1);
-    cross_delta("fd-disjoint-cross", &a, &b).expect("disjoint intervals coexist");
+    cross_delta("fd-disjoint-cross", &a, &b)
+        .expect("disjoint intervals coexist")
+        .unwrap();
 }
 
 #[test]
@@ -227,7 +235,9 @@ fn same_interval_different_prefix_in_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 2, 10, 20, 1);
-    in_delta("fd-other-prefix-in", &a, &b).expect("groups are independent");
+    in_delta("fd-other-prefix-in", &a, &b)
+        .expect("groups are independent")
+        .unwrap();
 }
 
 #[test]
@@ -235,7 +245,9 @@ fn same_interval_different_prefix_cross_delta_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 2, 10, 20, 1);
-    cross_delta("fd-other-prefix-cross", &a, &b).expect("groups are independent");
+    cross_delta("fd-other-prefix-cross", &a, &b)
+        .expect("groups are independent")
+        .unwrap();
 }
 
 // ---------- final-state judgment ----------
@@ -253,7 +265,7 @@ fn delete_then_reinsert_overlapping_in_one_delta_passes() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, BOOKING, &old).expect("record insert");
         drop(view);
-        commit(delta, &env).expect("base commit");
+        commit(delta, &env).expect("base commit").expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -262,7 +274,9 @@ fn delete_then_reinsert_overlapping_in_one_delta_passes() {
         .insert(&view, BOOKING, &booking_fact(&schema, 1, 15, 25, 1))
         .expect("record insert");
     drop(view);
-    commit(delta, &env).expect("the freed window admits the replacement");
+    commit(delta, &env)
+        .expect("the freed window admits the replacement")
+        .expect("admitted");
 }
 
 // ---------- rays (`end == MAX` denotes `[s, ∞)`; no special code) ----------
@@ -284,7 +298,9 @@ fn bounded_interval_adjacent_to_ray_passes() {
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, 9, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
-    cross_delta("fd-ray-adjacent", &a, &b).expect("adjacency at the ray's start is legal");
+    cross_delta("fd-ray-adjacent", &a, &b)
+        .expect("adjacency at the ray's start is legal")
+        .unwrap();
 }
 
 // ---------- the fresh-row auto-key: the F put-conflict (R16) ----------
@@ -324,17 +340,19 @@ fn doc_fact(schema: &Schema, id: u64, body: u64) -> Vec<u8> {
 /// One recorded Functionality citing the fresh auto-key, incumbent
 /// unnamed (the scalar-arm convention), the offending fact one of the
 /// pair.
-fn assert_fresh_row_violation(err: &crate::error::Error, facts: &[&[u8]]) {
-    let crate::error::Error::CommitRejected { violations } = err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+fn assert_fresh_row_violation(violations: &crate::error::Violations, facts: &[&[u8]]) {
     let [
-        Violation::Functionality(crate::error::FunctionalityViolation::Scalar { statement, fact }),
+        Violation::Functionality {
+            id,
+            fact,
+            conflict: Conflict::Scalar,
+            ..
+        },
     ] = violations.as_slice()
     else {
         panic!("expected one fresh-row key citation, got {violations:?}");
     };
-    assert_eq!(*statement, DOC_KEY);
+    assert_eq!(*id, DOC_KEY);
     assert!(facts.iter().any(|candidate| **fact == **candidate));
 }
 
@@ -350,14 +368,14 @@ fn duplicate_fresh_id_in_one_delta_aborts_with_the_auto_key() {
     delta.insert(&view, DOC, &a).expect("insert");
     delta.insert(&view, DOC, &b).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    assert_fresh_row_violation(&err, &[&a, &b]);
+    let violations = expect_rejected(commit(delta, &env));
+    assert_fresh_row_violation(&violations, &[&a, &b]);
     // The abort left no data — only the burned Q high-water (the
     // never-reissue law persists escaped fresh marks on every abort).
     assert!(
         committed_data(&env)
             .iter()
-            .all(|(k, _)| k[0] == crate::storage::keys::NS_FRESH),
+            .all(|(k, _)| k[0] == crate::storage::keys::Namespace::Fresh.tag()),
         "the abort left nothing but the burned Q mark"
     );
 }
@@ -373,7 +391,7 @@ fn duplicate_fresh_id_across_deltas_aborts_with_the_auto_key() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, DOC, &incumbent).expect("insert");
         drop(view);
-        commit(delta, &env).expect("base commit");
+        commit(delta, &env).expect("base commit").expect("admitted");
     }
     let before = committed_data(&env);
     let contender = doc_fact(&schema, 7, 2);
@@ -381,8 +399,8 @@ fn duplicate_fresh_id_across_deltas_aborts_with_the_auto_key() {
     let mut delta = WriteDelta::new(&schema);
     delta.insert(&view, DOC, &contender).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    assert_fresh_row_violation(&err, &[&contender]);
+    let violations = expect_rejected(commit(delta, &env));
+    assert_fresh_row_violation(&violations, &[&contender]);
     assert_eq!(committed_data(&env), before, "the abort left the base");
 }
 
@@ -400,7 +418,7 @@ fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, DOC, &old).expect("insert");
         drop(view);
-        commit(delta, &env).expect("base commit");
+        commit(delta, &env).expect("base commit").expect("admitted");
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -409,7 +427,9 @@ fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
         .insert(&view, DOC, &doc_fact(&schema, 7, 2))
         .expect("insert");
     drop(view);
-    commit(delta, &env).expect("the freed row id admits the replacement");
+    commit(delta, &env)
+        .expect("the freed row id admits the replacement")
+        .expect("admitted");
 }
 
 #[test]
@@ -426,7 +446,7 @@ fn scan_order_is_fresh_order_not_insertion_order() {
             .insert(&view, DOC, &doc_fact(&schema, id, body))
             .expect("insert");
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
     }
     let rtxn = env.read_txn().expect("txn");
     let prefix = key(|b| crate::storage::keys::fact_prefix(b, DOC));
@@ -489,20 +509,17 @@ fn fresh_f_conflict_still_cites_the_secondary_unique_key() {
             (PERSON, person_fact(&schema, 2, 20)),
         ],
     )
-    .expect("base");
+    .expect("base")
+    .unwrap();
     let colliding = person_fact(&schema, 1, 20);
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta.insert(&view, PERSON, &colliding).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected CommitRejected, got {err:?}");
-    };
+    let violations = expect_rejected(commit(delta, &env));
     let statements: Vec<_> = violations
-        .as_slice()
         .iter()
-        .map(crate::error::Violation::statement)
+        .map(crate::error::Violation::statement_id)
         .collect();
     assert_eq!(
         statements,
@@ -517,13 +534,14 @@ fn a_short_cited_f_value_is_typed_corruption_not_a_panic() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let incumbent = booking_fact(&schema, 1, 10, 20, 0);
-    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())]).expect("base");
+    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())])
+        .expect("base")
+        .expect("admitted");
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: crate::storage::keys::KeyBuf = [0; crate::storage::keys::MAX_KEY];
-        let len = crate::storage::keys::fact_key(&mut key, BOOKING, 0);
+        let key = crate::storage::keys::fact_key(BOOKING, 0);
         env.data()
-            .put(wtxn.raw_mut(), &key[..len], &[0xAB])
+            .put(wtxn.raw_mut(), &key, &[0xAB])
             .expect("truncate F");
         wtxn.commit().expect("commit");
     }
@@ -539,8 +557,7 @@ fn a_short_cited_f_value_is_typed_corruption_not_a_panic() {
             Error::Corruption(crate::error::CorruptionError::WrongFactWidth {
                 relation: BOOKING,
                 row_id: 0,
-                actual: 1,
-                ..
+                mismatch: crate::error::Mismatch { witnessed: 1, .. },
             })
         ),
         "{err:?}"
@@ -556,17 +573,18 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let incumbent = booking_fact(&schema, 1, 10, 20, 0);
-    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())]).expect("base");
+    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())])
+        .expect("base")
+        .expect("admitted");
     {
         let mut corrupted = incumbent.clone();
         // Interval words sit at bytes 8..24; start == end is invalid.
         corrupted[8..16].copy_from_slice(&10u64.to_be_bytes());
         corrupted[16..24].copy_from_slice(&10u64.to_be_bytes());
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: crate::storage::keys::KeyBuf = [0; crate::storage::keys::MAX_KEY];
-        let len = crate::storage::keys::fact_key(&mut key, BOOKING, 0);
+        let key = crate::storage::keys::fact_key(BOOKING, 0);
         env.data()
-            .put(wtxn.raw_mut(), &key[..len], &corrupted)
+            .put(wtxn.raw_mut(), &key, &corrupted)
             .expect("corrupt F");
         wtxn.commit().expect("commit");
     }
@@ -575,14 +593,11 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
     let mut delta = WriteDelta::new(&schema);
     delta.insert(&view, BOOKING, &contender).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("decoration must not replace CommitRejected, got {err:?}");
-    };
+    let violations = expect_rejected(commit(delta, &env));
     assert!(
         matches!(
             violations.as_slice(),
-            [Violation::Functionality(fv)] if fv.statement() == BOOKING_KEY
+            [Violation::Functionality { id, .. }] if *id == BOOKING_KEY
         ),
         "{violations:?}"
     );

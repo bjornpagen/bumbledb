@@ -42,7 +42,7 @@ fn cq_digest(emits: u64, rules: &[RuleStats]) -> report::ExecDigest {
     use std::fmt::Write as _;
     let mut worst = 1.0_f64;
     let mut covers = String::new();
-    for (index, node) in rules.iter().flat_map(|r| &r.nodes).enumerate() {
+    for (index, node) in rules.iter().flat_map(RuleStats::nodes).enumerate() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
@@ -69,7 +69,7 @@ fn cq_digest(emits: u64, rules: &[RuleStats]) -> report::ExecDigest {
         worst_estimate_factor: worst,
         covers,
         emitted: emits,
-        absorbed: rules.iter().map(|rule| rule.absorbed).sum(),
+        absorbed: rules.iter().map(RuleStats::absorbed).sum(),
     }
 }
 
@@ -145,14 +145,14 @@ impl BenchRun<'_> {
             .signature()
             .columns
             .iter()
-            .map(|column| column.ty().clone())
+            .map(|column| *column.ty())
             .collect();
 
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = Answers::new();
-        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_, S>| {
+        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<S>| {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };

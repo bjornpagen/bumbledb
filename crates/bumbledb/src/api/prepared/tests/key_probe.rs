@@ -35,15 +35,14 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
-    assert!(
-        matches!(
-            prepared.pipeline.main_rules(),
-            [PreparedRule::KeyProbe(KeyProbeRule {
-                key_probe_finds: Some(_),
-                ..
-            })]
-        ),
-        "plain-variable key_probe takes the fast lane"
+    let PreparedPipeline::PointProbe { rule, finds } = &prepared.pipeline else {
+        panic!("plain-variable key_probe takes the fast lane");
+    };
+    assert_eq!(finds.len(), 3, "one find column per projected variable");
+    assert_eq!(
+        rule.plan.vars.len(),
+        3,
+        "PointProbe stores KeyProbeRule, not a tagged PreparedRule"
     );
     let mut out = Answers::new();
     // Hit: every cell decoded straight from the fact.
@@ -98,13 +97,7 @@ fn a_key_probe_prepare_and_execute_build_no_image() {
     let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
-        matches!(
-            prepared.pipeline.main_rules(),
-            [PreparedRule::KeyProbe(KeyProbeRule {
-                key_probe_finds: Some(_),
-                ..
-            })]
-        ),
+        matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
         "the fast lane classified"
     );
     let mut out = Answers::new();
@@ -142,12 +135,12 @@ fn key_probe_queries_flow_through_the_same_surface() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.pipeline.main_rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(
+        matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
+        "plain-variable key_probe takes the fast lane"
+    );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::I64(42));
@@ -217,7 +210,7 @@ fn insert_bookings(env: &Environment, schema: &Schema, rows: &[(u64, (u64, u64),
         delta.insert(&view, RelationId(0), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// Q(label) :- Booking(room = 1, span <op> ?span-term) with the span term
@@ -257,13 +250,13 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
     )));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.pipeline.main_rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(
+        matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
+        "pointwise key lookup takes the fast lane"
+    );
 
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(100));
@@ -279,7 +272,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(answers.len(), 1);
     assert_eq!(
-        stats.rules()[0].key_probe,
+        stats.rules()[0].key_probe(),
         Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let near = booking_query(Term::Literal(Value::IntervalU64(
@@ -289,7 +282,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let (answers, stats) = near.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(answers.len(), 0);
     assert_eq!(
-        stats.rules()[0].key_probe,
+        stats.rules()[0].key_probe(),
         Some(crate::api::stats::KeyProbeStats { hit: false })
     );
     #[cfg(feature = "trace")]
@@ -324,10 +317,10 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
 
     let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert!(
-        stats.rules()[0].key_probe.is_none(),
+        stats.rules()[0].key_probe().is_none(),
         "the scan+filter path, not the key_probe"
     );
-    assert!(!stats.rules()[0].nodes.is_empty());
+    assert!(!stats.rules()[0].nodes().is_empty());
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), AnswerValue::U64(100));
 
@@ -335,14 +328,14 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     let query = booking_query(Term::Literal(Value::U64(25)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(200));
     let query = booking_query(Term::Literal(Value::U64(15)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 0);
 }
@@ -393,7 +386,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     );
     delta.insert(&view, RelationId(0), &bytes).expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
 
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
@@ -427,7 +420,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     assert!(report.contains("full-fact membership probe"), "{report}");
 
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(1));
@@ -441,7 +434,9 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     // A different interval value is a different fact: the empty set (a
     // global aggregate over nothing emits no row, 20-query-ir).
     let mut absent = prepare(&txn, &cache, &schema, &count_stay((5, 11))).expect("prepare");
-    let out = absent.execute_collect(&txn, &cache, &[]).expect("execute");
+    let out = absent
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     assert_eq!(out.len(), 0);
 }
 
@@ -490,7 +485,7 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     );
     delta.insert(&view, RelationId(0), &bytes).expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
@@ -513,22 +508,20 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
         matches!(
-            prepared.pipeline.main_rules(),
-            [PreparedRule::KeyProbe(KeyProbeRule {
-                key_probe_finds: None,
-                ..
-            })]
+            &prepared.pipeline,
+            PreparedPipeline::Cq { rules, .. }
+                if matches!(rules.as_slice(), [PreparedRule::KeyProbe(_)])
         ),
         "aggregate key probe keeps the sink"
     );
     let executed = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let (profiled, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(executed.len(), profiled.len());
     assert_eq!(executed.get(0, 0), profiled.get(0, 0));
     assert_eq!(
-        stats.rules()[0].key_probe,
+        stats.rules()[0].key_probe(),
         Some(crate::api::stats::KeyProbeStats { hit: true }),
         "counted path still names the key-probe classification; it did not fabricate a direct-lane miss/hit from out.len() alone"
     );
@@ -577,7 +570,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     );
     delta.insert(&view, RelationId(0), &bytes).expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
 
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
@@ -595,10 +588,10 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.pipeline.main_rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(
+        matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
+        "plain-variable key_probe takes the fast lane"
+    );
 
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])
@@ -631,7 +624,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
 )]
 fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic() {
     use crate::error::CorruptionError;
-    use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+    use crate::storage::keys;
     use crate::storage::read;
 
     // Slot(room u64, span interval<u64, 5>, label u64) keyed by room.
@@ -676,7 +669,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         encode_fact(
             &[
                 ValueRef::U64(1),
-                ValueRef::FixedIntervalU64(
+                ValueRef::IntervalU64(
                     bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
                 ),
                 ValueRef::U64(100),
@@ -686,7 +679,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         );
         delta.insert(&view, RelationId(0), &bytes).expect("insert");
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
     }
 
     // Q(span, label) :- Slot(room = 1, span, label) — the key-probe fast lane.
@@ -708,11 +701,13 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         // Sanity: the healthy fact answers through the fast lane.
         let txn = env.read_txn().expect("txn");
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-        assert!(matches!(
-            prepared.pipeline.main_rules(),
-            [PreparedRule::KeyProbe(_)]
-        ));
-        let out = prepared.execute_collect(&txn, &cache, &[]).expect("hit");
+        assert!(
+            matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
+            "plain-variable key_probe takes the fast lane"
+        );
+        let out = prepared
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
+            .expect("hit");
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 1), AnswerValue::U64(100));
     }
@@ -735,6 +730,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         let txn = env.read_txn().expect("txn");
         read::fetch(&txn, &schema, RelationId(0), victim)
             .expect("fetch")
+            .bytes()
             .to_vec()
     };
     // At-bound (`u64::MAX - 5 + 5 = u64::MAX`, the ray sentinel) and
@@ -744,17 +740,14 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         corrupt[offset..offset + 8].copy_from_slice(&corrupt_start.to_be_bytes());
         {
             let mut wtxn = env.write_txn().expect("txn");
-            let mut key: KeyBuf = [0; MAX_KEY];
-            let len = keys::fact_key(&mut key, RelationId(0), victim);
-            env.data()
-                .put(wtxn.raw_mut(), &key[..len], &corrupt)
-                .expect("put");
+            let key = keys::fact_key(RelationId(0), victim);
+            env.data().put(wtxn.raw_mut(), &key, &corrupt).expect("put");
             wtxn.commit().expect("commit");
         }
         let txn = env.read_txn().expect("txn");
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let err = prepared
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect_err("corrupt stored start convicts");
         assert!(
             matches!(
@@ -791,11 +784,11 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &scan).expect("prepare");
     assert!(
-        !matches!(prepared.pipeline.main_rules(), [PreparedRule::KeyProbe(_)]),
+        !matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
         "the all-vars scan must not take the key-probe lane"
     );
     let err = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect_err("the image build convicts the corrupt start");
     assert!(
         matches!(

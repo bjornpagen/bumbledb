@@ -83,10 +83,8 @@ impl WriteDelta<'_> {
 /// (the one id allocator, R16: every committed row id sits strictly
 /// below it).
 pub(crate) fn read_fresh_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
-    let mut buf = [0u8; keys::FRESH_KEY_LEN];
-    let len = keys::fresh_key(&mut buf, rel, field);
-    debug_assert_eq!(len, buf.len());
-    let disk = match view.env().data().get(view.raw(), &buf[..len])? {
+    let buf = keys::fresh_key(rel, field);
+    let disk = match view.env().data().get(view.raw(), &buf)? {
         Some(bytes) => crate::storage::stored_u64(bytes, "Q fresh next")?,
         None => 0,
     };

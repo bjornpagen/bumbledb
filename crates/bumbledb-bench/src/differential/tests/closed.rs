@@ -9,7 +9,7 @@
 //! the same store (the `SQLite` third lane runs in verify's randomized
 //! lane over the same theory).
 
-use bumbledb::{Db, Direction, Value};
+use bumbledb::{Direction, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::differential::{Op, run};
@@ -106,7 +106,7 @@ fn case_delta(case: &ClosedWriteCase) -> Delta {
 #[test]
 fn the_closed_write_classes_agree_with_the_engine() {
     let dir = TempDir::new("differential-closed");
-    let db = Db::create(dir.path(), target::Target).expect("create target store");
+    let db = target::publish_admitted(dir.path());
     let mut naive = NaiveDb::new(&target::descriptor());
 
     let mut rng = Rng::new(CFG.seed);

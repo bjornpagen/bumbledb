@@ -107,7 +107,9 @@ fn agreed(db: &Db<SchemaDescriptor>, naive: &mut NaiveDb, delta: &Delta) -> Verd
 fn a_ray_weight_refuses_with_one_agreed_verdict() {
     let descriptor = descriptor();
     let dir = TempDir::new("capacity-ray-weight");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
     let refusal = Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement: REFUSAL }]);
 
@@ -177,7 +179,9 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
 fn a_ray_ceiling_refuses_with_one_agreed_verdict() {
     let descriptor = descriptor();
     let dir = TempDir::new("capacity-ray-ceiling");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     // The parent's own span is the ray: the dependent ceiling resolves

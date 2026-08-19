@@ -23,6 +23,7 @@ import { closed } from "#closed.ts"
 import { type BoolField, bool, type Infer, type U64Field, u64 } from "#fields.ts"
 import { contained, Db, on, relation, schema } from "#index.ts"
 import type { SelectionInput } from "#relation.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
@@ -155,12 +156,12 @@ describe("handles named like methods — pure data, no reserved names", function
 	test("the roster round-trips through a real store", async function probeWeirdRoundTrip() {
 		const Uses = relation("Uses", { id: u64.fresh, kind: Weird.id })
 		const WeirdTheory = schema("WeirdTheory", { Weird, Uses }, [contained(on(Uses, "kind"), on(Weird, "id"))])
-		const db = await Db.create(path.join(tmpRoot, "weird"), WeirdTheory)
+		const db = accepted(await Db.create(path.join(tmpRoot, "weird"), WeirdTheory))
 		const result = db.write(function seed(tx) {
 			const written = put(tx, Uses, { kind: "match" })
 			assert.equal(typeof written.id, "bigint")
 		})
-		assert.ok(result.ok, "the commit lands")
+		assert.equal(result.tag, "accepted", "the commit lands")
 		const rows = db.scan(Uses)
 		assert.equal(rows.length, 1)
 		assert.equal(rows[0]?.kind, "match", "the decoded fact speaks the handle name")

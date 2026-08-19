@@ -1,7 +1,7 @@
 use super::{R, populated, schema};
 use crate::error::{CorruptionError, Error};
 use crate::image::build;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys;
 use crate::storage::read;
 use crate::testutil::TempDir;
 
@@ -20,15 +20,12 @@ fn scan_corruption_aborts_the_build() {
                 .expect("nonempty")
         };
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::fact_key(&mut key, R, victim);
-        env.data()
-            .put(wtxn.raw_mut(), &key[..len], &[0xFF])
-            .expect("put");
+        let key = keys::fact_key(R, victim);
+        env.data().put(wtxn.raw_mut(), &key, &[0xFF]).expect("put");
         wtxn.commit().expect("commit");
     }
     let txn = env.read_txn().expect("txn");
-    let err = build(&txn, &schema, R).unwrap_err();
+    let err = build(&txn.catalog(), &schema, R).unwrap_err();
     assert!(
         matches!(
             err,
@@ -52,30 +49,25 @@ fn a_corrupt_row_count_above_the_store_witness_is_counter_desync() {
     let env = populated(&dir, &schema);
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::stat_key(&mut key, R, keys::StatKind::RowCount);
+        let key = keys::stat_key(R, keys::StatKind::RowCount);
         env.data()
-            .put(
-                wtxn.raw_mut(),
-                &key[..len],
-                CLAIMED.to_le_bytes().as_slice(),
-            )
+            .put(wtxn.raw_mut(), &key, CLAIMED.to_le_bytes().as_slice())
             .expect("plant");
         wtxn.commit().expect("commit");
     }
     let txn = env.read_txn().expect("txn");
-    let err = build(&txn, &schema, R).map(|_| ()).unwrap_err();
+    let err = build(&txn.catalog(), &schema, R).map(|_| ()).unwrap_err();
     match err {
-        Error::Corruption(CorruptionError::CounterDesync {
-            relation,
-            claimed,
-            witness,
-        }) => {
+        Error::Corruption(CorruptionError::CounterDesync { relation, exceeded }) => {
             assert_eq!(relation, R);
-            assert_eq!(claimed, CLAIMED);
+            assert_eq!(exceeded.observed, CLAIMED);
             // The witness over-approximates the 10 real rows (the DBI
             // spans every namespace) but stays store-sized.
-            assert!((10..CLAIMED).contains(&witness), "witness {witness}");
+            assert!(
+                (10..CLAIMED).contains(&exceeded.ceiling),
+                "witness {}",
+                exceeded.ceiling
+            );
         }
         other => panic!("expected CounterDesync, got {other:?}"),
     }

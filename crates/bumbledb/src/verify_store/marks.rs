@@ -8,15 +8,18 @@
 //! one scan shared across every statement.
 
 use crate::encoding::encode_u64;
-use crate::error::{Error, Result, Violation};
+use crate::error::{Check, Error, Result};
 use crate::schema::CapacityEnforcement;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::commit::judgment;
 
 use super::{StoreFinding, Sweep};
 
-pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
+pub(super) fn sweep<C: CatalogRead + Copy>(
+    s: &mut Sweep<'_, C>,
+    checker: &mut judgment::Checker<'_, C>,
+) -> Result<()> {
     let schema = s.schema;
-    let mut checker = judgment::Checker::new(s.txn.raw(), s.data, schema);
 
     // Every closed-parent capacity statement, every ψ-selected axiom: the
     // axiom's id encoding is the parent tuple, and the commit path's own
@@ -38,32 +41,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             // the finding push.
             let checks = s.selections.capacity(capacity_id);
             match checker.check_capacity(statement, checks, &parent) {
-                Err(Error::CommitRejected { violations }) => {
-                    for violation in violations {
-                        let Violation::Capacity {
-                            statement,
-                            fact,
-                            measure,
-                        } = violation
-                        else {
-                            unreachable!("the capacity check cites capacity statements only");
-                        };
-                        s.push(StoreFinding::CapacityViolation {
-                            statement,
-                            fact,
-                            measure,
-                        });
-                    }
-                }
+                Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
+                Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
                 // A ray met at measure time (C10's judge-side refusal)
                 // is CONTENT under the sweeper's discipline: report,
                 // never error.
                 Err(Error::CapacityRayMeasure { .. }) => {
                     s.malformed(&parent, "capacity measure of a ray");
                 }
-                // A corruption inside the probe is a namespace desync
-                // another pass convicts on its own.
-                Ok(()) | Err(Error::Corruption(_)) => {}
                 Err(other) => return Err(other),
             }
         }

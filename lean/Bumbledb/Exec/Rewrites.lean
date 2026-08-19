@@ -34,7 +34,7 @@ the identity variable mapping.
   `plan/ground/evaluate.rs::fold_step` (first foldable occurrence per
   call); `plan/ground/evaluate.rs::fold_positive` (survivors, the
   membership attachment, the rule-death channel);
-  `plan/ground/evaluate.rs::parse_resolvable` (params, pending
+  `plan/ground/evaluate.rs::is_prepare_resolvable` (params, pending
   interns, and measures refuse);
   `plan/ground/evaluate.rs::surviving_ids` (the prepare-time σ over
   sealed rows); `plan/ground/evaluate.rs::fold_negated` (the
@@ -88,7 +88,7 @@ the identity variable mapping.
   attaches single-field memberships to siblings, so payload must be
   dead; the substitution carries payload constraints wholesale and
   needs no deadness premise. `Atom.foldableB` (vars and literals only)
-  mirrors `parse_resolvable`'s refusals as the modeled acceptance;
+  mirrors `is_prepare_resolvable`'s refusals as the modeled acceptance;
   preservation never spends it — the param refusal is stage discipline
   (prepared plans carry resolved constants), not semantics.
 * **The negated complement fold is unmodeled**
@@ -326,10 +326,10 @@ nonempty) yields an always-true condition — the "satisfaction proved"
 deletion arm, subsumed. -/
 
 /-- The modeled foldability screen: bindings are variables and
-literals only. Mirrors `parse_resolvable`'s refusals — params and
+literals only. Mirrors `is_prepare_resolvable`'s refusals — params and
 pending interns are stage-3 values a stage-2 pass must not judge,
 measures raise per execution
-(`plan/ground/evaluate.rs::parse_resolvable`). Recorded: the
+(`plan/ground/evaluate.rs::is_prepare_resolvable`). Recorded: the
 preservation theorem never spends this screen (the narrowing note). -/
 def Atom.foldableB (a : Atom) : Bool :=
   a.bindings.all fun bd =>

@@ -6,9 +6,9 @@
 //! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{Fact, Key, WriteTx, plumbing};
+use super::{Fact, Key, Probe, WriteTx, plumbing};
 use crate::encoding::encode_u64;
-use crate::error::{FactShapeError, Result};
+use crate::error::{DynIdError, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use crate::schema::{KeyForm, KeyId, KeyStatement, Relation, RelationBody, Schema, StatementView};
 use crate::storage::delta::DeterminantOverlay;
@@ -17,7 +17,7 @@ use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 /// Resolves a data-supplied `(relation, key statement)` pair to the
 /// sealed key — the shared shape gate of both point-read surfaces
-/// ([`WriteTx::get_dyn`] and [`super::Snapshot::get_dyn`]): the id must
+/// ([`WriteTx::get_dyn`] and [`super::ReadInstance::get_dyn`]): the id must
 /// name a `Functionality` statement ON the queried relation, or the
 /// mismatch is a typed error, never an index panic.
 pub(super) fn key_statement_of(
@@ -26,17 +26,17 @@ pub(super) fn key_statement_of(
     key: StatementId,
 ) -> Result<(KeyId, &KeyStatement)> {
     let Some(rel) = schema.relation_checked(relation) else {
-        return Err(FactShapeError::UnknownRelation { relation }.into());
+        return Err(DynIdError::UnknownRelation { relation }.into());
     };
     let Some(StatementView::Key(key_id, statement)) = schema.statement_checked(key) else {
-        return Err(FactShapeError::NotAKeyStatement {
+        return Err(DynIdError::NotAKeyStatement {
             relation,
             statement: key,
         }
         .into());
     };
     if statement.relation != relation || !rel.keys().contains(&key_id) {
-        return Err(FactShapeError::NotAKeyStatement {
+        return Err(DynIdError::NotAKeyStatement {
             relation,
             statement: key,
         }
@@ -58,25 +58,28 @@ pub(super) fn encode_determinant_with(
     projection: &[FieldId],
     key_values: &[Value],
     out: &mut Vec<u8>,
-    mut resolve_str: impl FnMut(&str) -> Result<Option<u64>>,
+    mut resolve_str: impl FnMut(&str) -> Result<Option<crate::encoding::InternId>>,
 ) -> Result<bool> {
     let rel = schema.relation(relation);
     if key_values.len() != projection.len() {
         return Err(FactShapeError::ArityMismatch {
             relation,
-            expected: projection.len(),
-            supplied: key_values.len(),
+            mismatch: Mismatch {
+                witnessed: key_values.len(),
+                required: projection.len(),
+            },
         }
         .into());
     }
     for (value, &field) in key_values.iter().zip(projection) {
-        match bumbledb_theory::schema::value_matches_parsing(value, &rel.field(field).value_type) {
-            Err(mismatch) => return Err(shape_mismatch(relation, field, mismatch).into()),
-            // The check's parse travels with the acceptance (parse,
-            // don't validate) — the dictionary probe consumes the
-            // `&str` directly, no second scan.
-            Ok(Some(text)) => match resolve_str(text)? {
-                Some(id) => out.extend_from_slice(&encode_u64(id)),
+        if let Err(mismatch) =
+            bumbledb_theory::schema::value_matches(value, &rel.field(field).value_type)
+        {
+            return Err(shape_mismatch(relation, field, mismatch).into());
+        }
+        match value {
+            Value::String(text) => match resolve_str(text)? {
+                Some(id) => out.extend_from_slice(&encode_u64(id.raw())),
                 None => return Ok(false),
             },
             // Every self-encoding value takes the one type-aware
@@ -86,12 +89,8 @@ pub(super) fn encode_determinant_with(
             // a stored fact (String peeled above per the encoder's
             // contract; a mask value is unreachable — the check
             // rejected it: not a field type).
-            Ok(None) => {
-                crate::encoding::encode_literal(
-                    value,
-                    rel.field(field).value_type.type_desc(),
-                    out,
-                );
+            _ => {
+                crate::encoding::encode_literal(value, rel.field(field).value_type, out);
             }
         }
     }
@@ -149,9 +148,8 @@ pub(super) fn closed_fact_by_determinant<'rel>(
         crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
     for row in extension {
         crate::storage::keys::determinant_image(
-            rel.layout(),
+            rel.layout().encoded(&row.fact),
             &statement.projection,
-            &row.fact,
             &mut derived,
         );
         if derived.as_bytes() == determinant {
@@ -181,7 +179,7 @@ impl<S> WriteTx<'_, S> {
     /// `Lmdb` on the membership probe or dictionary reads.
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.with_scratch(|tx, bytes| {
-            if !fact.encode_delete(tx, bytes)? {
+            if matches!(fact.encode_probe(tx, bytes)?, Probe::ProvablyAbsent) {
                 return Ok(false);
             }
             tx.delta.contains(&tx.view, F::RELATION, bytes)
@@ -194,7 +192,7 @@ impl<S> WriteTx<'_, S> {
     /// committed `U` → `F` path otherwise. The key value's TYPE carries the
     /// relation and the key statement (`K::STATEMENT`, computed at `schema!`
     /// expansion), so which key FD a read goes through is never a runtime
-    /// question. The committed-state sibling is [`super::Snapshot::get`];
+    /// question. The committed-state sibling is [`super::ReadInstance::get`];
     /// data-supplied key statements go through [`WriteTx::get_dyn`].
     ///
     /// The returned fact is a **view at the transaction's lifetime**:
@@ -225,13 +223,13 @@ impl<S> WriteTx<'_, S> {
     ///             }
     ///         }
     ///         Ok(())
-    ///     })
+    ///     })?.expect("accepted");
+    ///     Ok(())
     /// }
     /// # let dir = std::env::temp_dir().join("bumbledb-doc-upsert");
     /// # let _ = std::fs::remove_dir_all(&dir);
-    /// # std::fs::create_dir_all(&dir).unwrap();
-    /// # let db = bumbledb::Db::create(&dir, Ledger).unwrap();
-    /// # let id = db.write(|tx| Ok(tx.reserve::<AccountId>(1)?.start().expect("count 1"))).unwrap();
+    /// # let db = bumbledb::Db::create(&dir, Ledger).unwrap().expect("accepted");
+    /// # let id = db.write(|tx| Ok(tx.reserve::<AccountId>(1)?.start().expect("count 1"))).unwrap().unwrap().value;
     /// # add(&db, id, 10).unwrap();
     /// # add(&db, id, 32).unwrap();
     /// # db.write(|tx| {
@@ -263,14 +261,14 @@ impl<S> WriteTx<'_, S> {
         let mut key_bytes = std::mem::take(&mut self.scratch);
         key_bytes.clear();
         read::begin_determinant_key(&mut key_bytes, relation, K::STATEMENT);
-        let filled = key.determinant_write(self, &mut key_bytes);
+        let filled = key.encode_determinant(self, &mut key_bytes);
         self.scratch = key_bytes;
-        if !filled? {
+        if matches!(filled?, Probe::ProvablyAbsent) {
             return Ok(None);
         }
         let this: &'tx Self = self;
         match this.fact_by_key(relation, key_id, &this.scratch)? {
-            Some(bytes) => K::Fact::decode_write(this, bytes).map(Some),
+            Some(bytes) => K::Fact::decode(this, bytes).map(Some),
             None => Ok(None),
         }
     }
@@ -307,7 +305,7 @@ impl<S> WriteTx<'_, S> {
 
     /// [`WriteTx::get_dyn`] into a caller-provided buffer — the pooled
     /// point-read lane, the write-transaction sibling of
-    /// [`super::Snapshot::get_dyn_into`]: the values `Vec` is the
+    /// [`super::ReadInstance::get_dyn_into`]: the values `Vec` is the
     /// caller's, its capacity retained across gets, so a warm keyed
     /// get's allocator traffic shrinks to the variable-width payload
     /// boxes alone. `Ok(true)` = hit, `out` holds the fact's fields in
@@ -393,10 +391,14 @@ impl<S> WriteTx<'_, S> {
                 Some(DeterminantOverlay::Absent) => Ok(None),
                 None => match path {
                     PointRead::FreshRow { row_id } => {
-                        read::fact_at(&self.view, self.schema, relation, row_id)
+                        Ok(read::fact_at(&self.view, self.schema, relation, row_id)?
+                            .map(crate::encoding::FactView::bytes))
                     }
                     PointRead::Determinant => {
-                        read::fact_for_key(&self.view, self.schema, relation, u_key)
+                        Ok(
+                            read::fact_for_key(&self.view, self.schema, relation, u_key)?
+                                .map(crate::encoding::FactView::bytes),
+                        )
                     }
                     PointRead::Closed => unreachable!("closed relations have no delta overlay"),
                 },
@@ -407,7 +409,7 @@ impl<S> WriteTx<'_, S> {
     /// Decodes canonical fact bytes into owned values in the caller's
     /// buffer, resolving intern ids pending-first (a fact inserted this
     /// transaction carries provisional ids) — the dynamic sibling of
-    /// [`Fact::decode_write`]. Fields the key statement's projection
+    /// [`Fact::decode`]. Fields the key statement's projection
     /// fixed take the caller's supplied values
     /// ([`crate::encoding::decode_values_keyed_into`] — the probe
     /// already proved them byte-identical to the stored ones).
@@ -420,14 +422,14 @@ impl<S> WriteTx<'_, S> {
         out: &mut Vec<Value>,
     ) -> Result<()> {
         crate::encoding::decode_values_keyed_into(
-            fact,
-            self.schema.relation(relation).layout(),
+            self.schema.relation(relation).layout().encoded(fact),
             projection,
             key_values,
             |id| {
-                Ok(Box::from(
-                    plumbing::resolve_string_write(self, id)?.as_bytes(),
-                ))
+                Ok(Box::from(plumbing::resolve_string_write(
+                    self,
+                    crate::encoding::InternId::from_raw(id),
+                )?))
             },
             out,
         )

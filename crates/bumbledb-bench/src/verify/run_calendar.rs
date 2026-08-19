@@ -291,7 +291,9 @@ pub(super) fn run_calendar_naive<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
 
     let naive_dir = cfg.out_dir.join("cal-naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
-    let db = Db::create(&naive_dir, Scheduling).expect("create calendar naive-slice store");
+    let db = Db::create(&naive_dir, Scheduling)
+        .expect("create calendar naive-slice store")
+        .expect("accepted");
     // The declared descriptor, extensions included — the model seeds
     // `Rsvp` and `Arm` from the ground axioms at construction.
     let mut naive = NaiveDb::new(&bumbledb::Theory::descriptor(Scheduling));

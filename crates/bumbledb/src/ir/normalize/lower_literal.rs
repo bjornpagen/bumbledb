@@ -16,8 +16,8 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         Value::Bool(b) => Const::Byte(encode_bool(*b)),
         Value::U64(v) => Const::Word(*v),
         Value::I64(v) => Const::Word(i64_word(*v)),
-        Value::String(bytes) => Const::PendingIntern {
-            bytes: bytes.clone(),
+        Value::String(text) => Const::PendingIntern {
+            bytes: Box::from(text.as_bytes()),
         },
         Value::FixedBytes(raw) => fixed_bytes_const(raw),
         Value::IntervalU64(interval) => Const::Interval {

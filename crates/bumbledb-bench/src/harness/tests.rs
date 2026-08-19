@@ -196,8 +196,8 @@ fn the_alloc_window_returns_a_snapshot() {
     )
     .expect("measures");
     let alloc = m.alloc.expect("windowed");
-    assert!(alloc.allocs >= 4, "each sample allocates");
-    assert!(alloc.alloc_bytes >= 4 * 4096);
+    assert!(alloc.window.allocs >= 4, "each sample allocates");
+    assert!(alloc.window.alloc_bytes >= 4 * 4096);
 }
 
 #[cfg(not(feature = "obs"))]
@@ -244,8 +244,9 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
 
     let dir = std::env::temp_dir().join("bumbledb-bench-harness-cold");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
+        .expect("create")
+        .expect("accepted");
     let generations = RefCell::new(Vec::new());
     measure_cold(proto, org_touch(&db), || {
         let generation = db.generation().map_err(|e| format!("{e:?}"))?;

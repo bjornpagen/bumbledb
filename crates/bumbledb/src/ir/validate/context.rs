@@ -1,5 +1,5 @@
 use super::{ClassifiedComparison, Context, DurationOperand, ParamKind, SealedConst, TypeSlot};
-use crate::error::ValidationError;
+use crate::error::{AtomIndex, ValidationError};
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{CmpOp, Comparison, ParamId, Term, Value, VarId};
@@ -8,9 +8,7 @@ use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 /// The structural type of a literal, for matching against a field or
-/// variable type — the shared [`crate::schema::value_matches`] check, so a
-/// non-UTF-8 `String` literal is a type mismatch here exactly as it is at
-/// bind time and on the dynamic write path.
+/// variable type — the shared [`crate::schema::value_matches`] check.
 use bumbledb_theory::schema::{ValueMismatch as LiteralMismatch, value_matches as literal_matches};
 
 /// The scalar type of an interval's element domain.
@@ -78,7 +76,10 @@ fn check_interval_field_literal(
         // `MIN ..= MAX−1`, so the ceiling can be inside no interval.
         (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
             if at_domain_ceiling(value) {
-                Err(ValidationError::PointLiteralAtCeiling { atom, field })
+                Err(ValidationError::PointLiteralAtCeiling {
+                    atom: AtomIndex(atom),
+                    field,
+                })
             } else {
                 Ok(())
             }
@@ -88,9 +89,15 @@ fn check_interval_field_literal(
         (Value::IntervalU64(_), IntervalElement::U64)
         | (Value::IntervalI64(_), IntervalElement::I64) => match literal_matches(value, interval) {
             Ok(()) => Ok(()),
-            Err(_) => Err(ValidationError::LiteralTypeMismatch { atom, field }),
+            Err(_) => Err(ValidationError::LiteralTypeMismatch {
+                atom: AtomIndex(atom),
+                field,
+            }),
         },
-        _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
+        _ => Err(ValidationError::LiteralTypeMismatch {
+            atom: AtomIndex(atom),
+            field,
+        }),
     }
 }
 
@@ -330,16 +337,14 @@ impl Context {
             Some(TypeSlot::Mono(_)) => Ok(()),
             Some(TypeSlot::Bivalent { interval }) => {
                 if bivalent_admits(interval, value_type) {
-                    self.var_slots
-                        .insert(var, TypeSlot::Mono(value_type.clone()));
+                    self.var_slots.insert(var, TypeSlot::Mono(*value_type));
                     Ok(())
                 } else {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
             None => {
-                self.var_slots
-                    .insert(var, TypeSlot::Mono(value_type.clone()));
+                self.var_slots.insert(var, TypeSlot::Mono(*value_type));
                 Ok(())
             }
         }
@@ -369,7 +374,7 @@ impl Context {
                 self.var_slots.insert(
                     var,
                     TypeSlot::Bivalent {
-                        interval: interval.clone(),
+                        interval: *interval,
                     },
                 );
                 Ok(())
@@ -389,16 +394,14 @@ impl Context {
             Some(TypeSlot::Mono(_)) => Ok(()),
             Some(TypeSlot::Bivalent { interval }) => {
                 if bivalent_admits(interval, value_type) {
-                    self.param_slots
-                        .insert(param, TypeSlot::Mono(value_type.clone()));
+                    self.param_slots.insert(param, TypeSlot::Mono(*value_type));
                     Ok(())
                 } else {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
             None => {
-                self.param_slots
-                    .insert(param, TypeSlot::Mono(value_type.clone()));
+                self.param_slots.insert(param, TypeSlot::Mono(*value_type));
                 Ok(())
             }
         }
@@ -428,7 +431,7 @@ impl Context {
                 self.param_slots.insert(
                     param,
                     TypeSlot::Bivalent {
-                        interval: interval.clone(),
+                        interval: *interval,
                     },
                 );
                 Ok(())
@@ -497,7 +500,7 @@ impl Context {
                         >= schema.relations().len()
                     {
                         return Err(ValidationError::UnknownRelation {
-                            atom: occ_idx,
+                            atom: AtomIndex(occ_idx),
                             relation: relation_id,
                         });
                     }
@@ -513,7 +516,7 @@ impl Context {
             for (binding_idx, (field, term)) in atom.bindings.iter().enumerate() {
                 if atom.bindings[..binding_idx].iter().any(|(f, _)| f == field) {
                     return Err(ValidationError::DuplicateFieldBinding {
-                        atom: occ_idx,
+                        atom: AtomIndex(occ_idx),
                         field: *field,
                     });
                 }
@@ -522,7 +525,7 @@ impl Context {
                         let relation = schema.relation(relation_id);
                         if usize::from(field.0) >= relation.fields().len() {
                             return Err(ValidationError::UnknownField {
-                                atom: occ_idx,
+                                atom: AtomIndex(occ_idx),
                                 field: *field,
                             });
                         }
@@ -608,7 +611,7 @@ impl Context {
             // measure).
             Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
-                    atom: occ_idx,
+                    atom: AtomIndex(occ_idx),
                     field,
                 });
             }
@@ -646,17 +649,15 @@ impl Context {
             }
             Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
-                    atom: occ_idx,
+                    atom: AtomIndex(occ_idx),
                     field,
                 });
             }
             Term::Literal(value) => match literal_matches(value, field_type) {
                 Ok(()) => {}
-                // A non-UTF-8 String literal is a type mismatch:
-                // `Value::String` documents the UTF-8 contract.
-                Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
+                Err(LiteralMismatch::Type) => {
                     return Err(ValidationError::LiteralTypeMismatch {
-                        atom: occ_idx,
+                        atom: AtomIndex(occ_idx),
                         field,
                     });
                 }
@@ -935,11 +936,11 @@ impl Context {
     fn term_mono_type(&self, term: &Term) -> Option<ValueType> {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
-                Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
+                Some(TypeSlot::Mono(value_type)) => Some(*value_type),
                 _ => None,
             },
             Term::Param(param) | Term::ParamSet(param) => match self.param_slots.get(param) {
-                Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
+                Some(TypeSlot::Mono(value_type)) => Some(*value_type),
                 _ => None,
             },
             Term::Literal(value) => Some(literal_anchor_type(value)),
@@ -957,21 +958,18 @@ impl Context {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
                 Some(TypeSlot::Bivalent { interval }) if bivalent_admits(interval, value_type) => {
-                    self.var_slots
-                        .insert(*var, TypeSlot::Mono(value_type.clone()));
+                    self.var_slots.insert(*var, TypeSlot::Mono(*value_type));
                     true
                 }
                 _ => false,
             },
             Term::Param(param) => match self.param_slots.get(param) {
                 None => {
-                    self.param_slots
-                        .insert(*param, TypeSlot::Mono(value_type.clone()));
+                    self.param_slots.insert(*param, TypeSlot::Mono(*value_type));
                     true
                 }
                 Some(TypeSlot::Bivalent { interval }) if bivalent_admits(interval, value_type) => {
-                    self.param_slots
-                        .insert(*param, TypeSlot::Mono(value_type.clone()));
+                    self.param_slots.insert(*param, TypeSlot::Mono(*value_type));
                     true
                 }
                 _ => false,
@@ -1028,7 +1026,7 @@ impl Context {
             .collect();
         for slot in self.param_slots.values_mut() {
             if let TypeSlot::Bivalent { interval } = slot {
-                *slot = TypeSlot::Mono(interval.clone());
+                *slot = TypeSlot::Mono(*interval);
             }
         }
     }
@@ -1066,7 +1064,7 @@ impl Context {
             // `Allen` fact (`EQUALS` / its complement), so exactly one
             // interval-pair form leaves validation.
             Shaped::EqVarVar { negated, lhs, rhs } => {
-                let lhs_type = self.resolved_var_type(*lhs).clone();
+                let lhs_type = *self.resolved_var_type(*lhs);
                 if *self.resolved_var_type(*rhs) != lhs_type {
                     return Err(ValidationError::IllegalComparison { index });
                 }
@@ -1090,7 +1088,7 @@ impl Context {
                 var_on_left,
                 constant,
             } => {
-                let var_type = self.resolved_var_type(*var).clone();
+                let var_type = *self.resolved_var_type(*var);
                 let value = self.check_const(index, constant, &var_type)?;
                 Ok(if var_type.is_interval() {
                     ClassifiedComparison::AllenVarConst {
@@ -1110,7 +1108,7 @@ impl Context {
             // that type is an interval, the dedicated `IntervalParamSet`
             // rejection.
             Shaped::EqVarSet { var, set } => {
-                let var_type = self.resolved_var_type(*var).clone();
+                let var_type = *self.resolved_var_type(*var);
                 if var_type.is_interval() {
                     return Err(ValidationError::IntervalParamSet { param: *set });
                 }
@@ -1129,7 +1127,7 @@ impl Context {
                     screen_order_operand(index, Some(self.resolved_var_type(*var)))?;
                     self.screen_order_closed(index, *var)?;
                 }
-                let lhs_type = self.resolved_var_type(*lhs).clone();
+                let lhs_type = *self.resolved_var_type(*lhs);
                 if !matches!(lhs_type, ValueType::U64 | ValueType::I64 | ValueType::Bool) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
@@ -1148,7 +1146,7 @@ impl Context {
                 var_on_left,
                 constant,
             } => {
-                let var_screen = Some(self.resolved_var_type(*var).clone());
+                let var_screen = Some(*self.resolved_var_type(*var));
                 let const_screen = self.constant_screen(constant);
                 let screens = if *var_on_left {
                     [var_screen, const_screen]
@@ -1159,7 +1157,7 @@ impl Context {
                     screen_order_operand(index, operand.as_ref())?;
                 }
                 self.screen_order_closed(index, *var)?;
-                let var_type = self.resolved_var_type(*var).clone();
+                let var_type = *self.resolved_var_type(*var);
                 if !matches!(var_type, ValueType::U64 | ValueType::I64 | ValueType::Bool) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
@@ -1374,7 +1372,7 @@ impl Context {
     fn constant_screen(&self, constant: &ConstSide<'_>) -> Option<ValueType> {
         match constant {
             ConstSide::Param(param) => match self.param_slots.get(param) {
-                Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
+                Some(TypeSlot::Mono(value_type)) => Some(*value_type),
                 _ => None,
             },
             ConstSide::Literal(value) => Some(literal_anchor_type(value)),
@@ -1396,9 +1394,7 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match literal_matches(value, expected) {
             Ok(()) => Ok(()),
-            Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
-                Err(ValidationError::IllegalComparison { index })
-            }
+            Err(LiteralMismatch::Type) => Err(ValidationError::IllegalComparison { index }),
         }
     }
 

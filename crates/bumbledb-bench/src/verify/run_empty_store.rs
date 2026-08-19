@@ -6,11 +6,12 @@ use crate::schema::{Ledger, schema};
 use crate::sqlmap;
 
 /// The empty-store pass: a fresh store pair with the schema loaded and
-/// **zero facts anywhere**, over which every family (the ledger pair) and
-/// a seeded slice of randomized queries (a target-schema pair) run and
-/// compare. Every gate is false, every scan empty, every aggregate folds
-/// nothing (the empty-set-not-NULL rule and the HAVING template earn
-/// their keep), every selection misses — the entire empty-relation
+/// no corpus rows. Ledger and calendar empty hold as-is. Target empty
+/// does not: [`target::publish_admitted`] seeds the three `CurrencyBacking`
+/// rows so domain quantification holds — the rest of the target is
+/// empty. Every gate is false, every corpus scan empty, every aggregate
+/// folds nothing (the empty-set-not-NULL rule and the HAVING template
+/// earn their keep), every selection misses — the empty-relation
 /// semantic surface, oracle-checked in milliseconds with zero corpus
 /// churn. Cases count into the stamp's evidence; bundles land beside the
 /// main run's.
@@ -23,7 +24,9 @@ use crate::sqlmap;
 pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let empty_dir = cfg.out_dir.join("empty-db");
     let _ = std::fs::remove_dir_all(&empty_dir);
-    let empty_db = Db::create(&empty_dir, Ledger).expect("create empty store");
+    let empty_db = Db::create(&empty_dir, Ledger)
+        .expect("create empty store")
+        .expect("accepted");
     let empty_conn = rusqlite::Connection::open_in_memory().expect("empty oracle");
     for statement in sqlmap::ddl(schema()) {
         empty_conn.execute(&statement, []).expect("empty ddl");
@@ -43,8 +46,9 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     // vacuously true against an empty gate.
     let empty_cal_dir = cfg.out_dir.join("empty-cal-db");
     let _ = std::fs::remove_dir_all(&empty_cal_dir);
-    let empty_cal =
-        Db::create(&empty_cal_dir, crate::calendar::Scheduling).expect("create empty calendar");
+    let empty_cal = Db::create(&empty_cal_dir, crate::calendar::Scheduling)
+        .expect("create empty calendar")
+        .expect("accepted");
     let cal_conn = rusqlite::Connection::open_in_memory().expect("empty calendar oracle");
     for statement in crate::calendar::corpus::ddl() {
         cal_conn
@@ -59,7 +63,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     // generated queries speak the target ledger).
     let empty_target_dir = cfg.out_dir.join("empty-target-db");
     let _ = std::fs::remove_dir_all(&empty_target_dir);
-    let empty_target = Db::create(&empty_target_dir, target::Target).expect("empty target");
+    let empty_target = target::publish_admitted(&empty_target_dir);
     let target_conn = rusqlite::Connection::open_in_memory().expect("empty target oracle");
     for statement in sqlmap::schema_ddl(target::schema()) {
         target_conn

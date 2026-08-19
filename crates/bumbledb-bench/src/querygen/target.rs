@@ -30,10 +30,11 @@
 //! write-scenario classes and the closed query shapes draw from here.
 
 use bumbledb::schema::ValidateDescriptor as _;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescriptor, ValueType};
-use bumbledb::{Schema, Value};
+use bumbledb::{Admission, Db, InstanceBuilder, Schema, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::fixture::{field, fresh};
@@ -191,8 +192,8 @@ fn closed(name: &str, handles: &[&str]) -> RelationDescriptor {
 /// draws in-domain, and entry `i` has `source == Import` iff
 /// `i % 3 == 1` iff `ImportBatch` row `(i - 1) / 3` exists.
 ///
-/// The target ledger's schema definition — the value the target stores
-/// are created with (`Db::create(dir, Target)`).
+/// The target ledger's schema definition — the value admitted Target
+/// stores are published with ([`publish_admitted`]).
 #[derive(Debug, Clone, Copy)]
 pub struct Target;
 
@@ -200,6 +201,38 @@ impl bumbledb::Theory for Target {
     fn descriptor(self) -> SchemaDescriptor {
         descriptor()
     }
+}
+
+/// Publishes an admitted Target instance at `path`.
+///
+/// Empty Target does not hold: the closed `Currency` roster is a source
+/// of `Currency(id) <= CurrencyBacking(currency)` (statement 28). The
+/// three backing rows are the corpus seed — one per currency — the
+/// smallest candidate that admits. Callers that then load the rest of
+/// the corpus incrementally start from a holds-before instance.
+///
+/// # Panics
+///
+/// On a schema, load, admit, or publish failure — the seed is
+/// construction, not a verdict the caller judges.
+#[must_use]
+pub fn publish_admitted(path: &Path) -> Db<Target> {
+    let mut builder = InstanceBuilder::new(Target).expect("target schema validates");
+    for i in 0..3 {
+        builder
+            .load_dyn(
+                ids::CURRENCY_BACKING,
+                [[Value::U64(i), Value::U64(1_000 + i)]],
+            )
+            .expect("CurrencyBacking seed");
+    }
+    let owned = match builder.admit().expect("admit") {
+        Admission::Accepted(owned) => owned,
+        Admission::Rejected(violations) => {
+            panic!("CurrencyBacking seed must admit: {violations}")
+        }
+    };
+    Db::from_instance(path, &owned).expect("publish admitted target")
 }
 
 /// # Panics
@@ -825,21 +858,14 @@ pub fn corpus_row(
     match rel {
         ids::HOLDER => vec![
             Value::U64(i),
-            Value::String(
-                string_hit(ids::HOLDER, ids::holder::NAME, &mut rng)
-                    .into_bytes()
-                    .into(),
-            ),
+            Value::String(string_hit(ids::HOLDER, ids::holder::NAME, &mut rng).into()),
         ],
         ids::ACCOUNT => vec![
             Value::U64(i),
             Value::U64(rng.range(domains.holders)),
             Value::U64(rng.range(3)),
         ],
-        ids::INSTRUMENT => vec![
-            Value::U64(i),
-            Value::String(format!("SYM{i:04}").into_bytes().into()),
-        ],
+        ids::INSTRUMENT => vec![Value::U64(i), Value::String(format!("SYM{i:04}").into())],
         ids::JOURNAL_ENTRY => vec![
             Value::U64(i),
             // Deterministic (never drawn): the DU pair requires import
@@ -855,17 +881,14 @@ pub fn corpus_row(
             Value::U64(rng.range(domains.instruments)),
             Value::I64(posting_amount(cfg, i)),
             Value::I64(posting_at(i)),
-            Value::String(format!("m{}", rng.range(MEMO_VOCAB)).into_bytes().into()),
+            Value::String(format!("m{}", rng.range(MEMO_VOCAB)).into()),
             Value::Bool(rng.chance(1, 2)),
         ],
         ids::POSTING_TAG => {
             let (posting, tag) = posting_tag(i);
             vec![Value::U64(posting), Value::U64(tag)]
         }
-        ids::ORG => vec![
-            Value::U64(i),
-            Value::String(format!("org-{i:02}").into_bytes().into()),
-        ],
+        ids::ORG => vec![Value::U64(i), Value::String(format!("org-{i:02}").into())],
         ids::ORG_PARENT => {
             let child = i + 1;
             vec![Value::U64(child), Value::U64(child / 2)]
@@ -950,8 +973,7 @@ mod tests {
         let domains = Domains::of(cfg.scale);
         let dir = std::env::temp_dir().join("bumbledb-target-tag-budget");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch");
-        let db = bumbledb::Db::create(&dir, descriptor()).expect("create");
+        let db = publish_admitted(&dir);
         for rel in 0..TARGET_RELATIONS {
             let rel = bumbledb::RelationId(rel);
             match rel {
@@ -974,23 +996,25 @@ mod tests {
                         }
                         Ok(())
                     })
-                    .expect("the DU cluster commits");
+                    .expect("the DU cluster commits")
+                    .unwrap();
                 }
                 ids::IMPORT_BATCH => {} // loaded with its entries
                 _ => {
                     db.write(|tx| {
                         tx.insert_dyn(rel, corpus_relation_rows(cfg, rel))
-                            .map(|r| r.changed)
+                            .map(bumbledb::MutationReport::changed)
                     })
-                    .expect("target insert");
+                    .expect("target insert")
+                    .unwrap();
                 }
             }
         }
         let report = db.verify_store().expect("verify_store");
         assert!(
-            report.findings.is_empty(),
+            report.findings().is_empty(),
             "the swept corpus convicts nothing: {:?}",
-            report.findings
+            report.findings()
         );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

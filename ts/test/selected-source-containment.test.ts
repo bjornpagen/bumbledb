@@ -19,6 +19,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import type { Db as DbValue } from "#index.ts"
 import { closed, contained, Db, on, relation, renderStatement, schema, str, u64 } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cind-"))
@@ -64,7 +65,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 	let grpId: bigint
 
 	test("Db.create admits Task(subject | kind == Author) <= Grp(id)", async function create() {
-		db = await Db.create(storeDir, Ledger)
+		db = accepted(await Db.create(storeDir, Ledger))
 		assert.equal(db.schema, Ledger)
 		assert.equal(renderStatement(authorSubjectIsGrp), "Task(subject | kind == Author) <= Grp(id)")
 	})
@@ -73,7 +74,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 		const rejected = db.write(function mintDead(tx) {
 			put(tx, Task, { kind: "Author", subject: 999n })
 		})
-		assert.ok(!rejected.ok, "the CIND judges the inserted source fact")
+		assert.equal(rejected.tag, "rejected", "the CIND judges the inserted source fact")
 		const violation = must(rejected.violations[0])
 		assert.equal(violation.kind, "containment")
 		assert.strictEqual(violation.statement, authorSubjectIsGrp)
@@ -83,7 +84,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 		const accepted = db.write(function mintEnrich(tx) {
 			put(tx, Task, { kind: "Enrich", subject: 999n })
 		})
-		assert.ok(accepted.ok, "the selection scopes the law to Author rows only")
+		assert.equal(accepted.tag, "accepted", "the selection scopes the law to Author rows only")
 	})
 
 	test("the repartition shape — deleting a grp whose Author task survives — is unwritable (target side)", function repartition() {
@@ -92,12 +93,12 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 			grpId = grp.id
 			put(tx, Task, { kind: "Author", subject: grp.id })
 		})
-		assert.ok(seeded.ok, "the well-founded pair lands")
+		assert.equal(seeded.tag, "accepted", "the well-founded pair lands")
 
 		const rejected = db.write(function honorRepartition(tx) {
 			assert.equal(tx.delete(Grp, [{ id: grpId, label: "sheet-1" }]).changed, 1n)
 		})
-		assert.ok(!rejected.ok, "the surviving Author task pins its grp")
+		assert.equal(rejected.tag, "rejected", "the surviving Author task pins its grp")
 		const violation = must(rejected.violations[0])
 		assert.equal(violation.kind, "containment")
 		assert.strictEqual(violation.statement, authorSubjectIsGrp)

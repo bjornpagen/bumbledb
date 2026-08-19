@@ -1358,7 +1358,7 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
         (FieldTy::I64, Literal::Int { negative, text }) => Value::I64(
             i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
         ),
-        (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text).into()),
+        (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text)),
         // The width is the type: a `bytes<N>` literal of any other
         // length is a typing mismatch, judged here (the theory's
         // judgment, `bumbledb-theory/src/schema.rs: value_inhabits`).
@@ -1469,13 +1469,15 @@ fn i64_text(negative: bool, text: &str) -> Option<i64> {
 }
 
 /// Decodes a cooked string literal's token text (quotes included) to its
-/// UTF-8 bytes.
-fn unescape_str(text: &str) -> Vec<u8> {
+/// UTF-8 text.
+fn unescape_str(text: &str) -> Box<str> {
     let body = text
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .expect("rustc lexed the string literal");
-    unescape(body, true)
+    String::from_utf8(unescape(body, true))
+        .expect("schema! string literals are UTF-8")
+        .into_boxed_str()
 }
 
 /// Decodes a cooked byte-string literal's token text (`b"…"`) to its
@@ -2229,10 +2231,9 @@ fn value_tokens(value: &Value) -> String {
         Value::Bool(v) => format!("{path}::Bool({v})"),
         Value::U64(v) => format!("{path}::U64({v})"),
         Value::I64(v) => format!("{path}::I64({v})"),
-        Value::String(bytes) => {
-            let text = std::str::from_utf8(bytes).expect("schema! string literals are UTF-8");
+        Value::String(text) => {
             format!(
-                "{path}::String(::std::boxed::Box::from(\"{}\".as_bytes()))",
+                "{path}::String(::std::boxed::Box::from(\"{}\"))",
                 text.escape_default()
             )
         }
@@ -2726,8 +2727,7 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
         Value::Bool(v) => format!("{v}"),
         Value::U64(v) => format!("{v}u64"),
         Value::I64(v) => format!("{v}i64"),
-        Value::String(bytes) => {
-            let text = std::str::from_utf8(bytes).expect("schema! string literals are UTF-8");
+        Value::String(text) => {
             format!("\"{}\"", text.escape_default())
         }
         Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
@@ -2784,129 +2784,93 @@ fn rust_field_ty(field: &Field) -> String {
 struct EncodeCx<'s> {
     /// The `RelationId` expression the width-checked boundaries cite.
     relation: &'s str,
-    /// The write-context binding (mints through the delta).
-    write: &'s str,
-    /// The delete-context binding (resolves pending-then-committed,
-    /// never mints).
-    delete: &'s str,
-    /// The read-context binding (committed dictionary only).
-    read: &'s str,
 }
 
-/// The per-field encode expressions for the three `Fact` boundaries:
-/// write (mints through the delta), delete (resolves pending-then-
-/// committed, never mints — a miss proves the fact absent), read
-/// (committed dictionary only). Word-backed fields encode identically in
-/// every context; only the interned kinds (str/bytes) split by boundary.
-fn encode_exprs(field: &Field, idx: usize, cx: &EncodeCx<'_>) -> (String, String, String) {
+fn value_type_expr(field: &Field) -> String {
+    match &field.ty {
+        FieldTy::Bool => "::bumbledb::schema::ValueType::Bool".to_owned(),
+        FieldTy::U64 => "::bumbledb::schema::ValueType::U64".to_owned(),
+        FieldTy::I64 => "::bumbledb::schema::ValueType::I64".to_owned(),
+        FieldTy::Str => "::bumbledb::schema::ValueType::String".to_owned(),
+        FieldTy::FixedBytes(len) => {
+            format!("::bumbledb::schema::ValueType::FixedBytes {{ len: {len} }}")
+        }
+        FieldTy::Interval(element) => format!(
+            "::bumbledb::schema::ValueType::Interval {{ element: ::bumbledb::schema::IntervalElement::{} }}",
+            element_suffix(*element)
+        ),
+        FieldTy::FixedInterval(element, width) => format!(
+            "::bumbledb::schema::ValueType::FixedInterval {{ element: ::bumbledb::schema::IntervalElement::{}, width: {width} }}",
+            element_suffix(*element)
+        ),
+    }
+}
+
+/// Per-field [`ValueRef`] expression for insert (mints) or probe (lookup,
+/// miss → [`Probe::ProvablyAbsent`]).
+fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> String {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
         format!("self.{}", field.name)
     };
-    let same = |expr: String| (expr.clone(), expr.clone(), expr);
     match &field.ty {
-        FieldTy::Bool => same(format!("::bumbledb::__private::ValueRef::Bool({access})")),
-        FieldTy::U64 => same(format!("::bumbledb::__private::ValueRef::U64({access})")),
-        FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
-        FieldTy::Interval(element) => same(format!(
+        FieldTy::Bool => format!("::bumbledb::__private::ValueRef::Bool({access})"),
+        FieldTy::U64 => format!("::bumbledb::__private::ValueRef::U64({access})"),
+        FieldTy::I64 => format!("::bumbledb::__private::ValueRef::I64({access})"),
+        FieldTy::Interval(element) => format!(
             "::bumbledb::__private::ValueRef::Interval{}({access})",
             element_suffix(*element)
-        )),
-        // The fixed-width family: the host hands the same checked
-        // `Interval<T>`; the boundary checks the declared width (a wide
-        // or narrow value is a typed error — the width is the type) and
-        // marks the one-word encoding.
-        FieldTy::FixedInterval(element, width) => same(format!(
+        ),
+        FieldTy::FixedInterval(element, width) => format!(
             "::bumbledb::__private::fixed_interval_{}(\
              {relation}, \
              ::bumbledb::schema::FieldId({idx}), {access}, {width}u64)?",
             element_rust(*element),
             relation = cx.relation,
-        )),
-        // Inline in every context: bytes<N> never touches the dictionary,
-        // so write/delete/read share one self-encoding expression.
-        FieldTy::FixedBytes(_) => same(format!(
-            "::bumbledb::__private::ValueRef::fixed_bytes(&{access})"
-        )),
-        FieldTy::Str => interned_exprs("str", "String", &field.name, cx),
+        ),
+        FieldTy::FixedBytes(_) => {
+            format!("::bumbledb::__private::ValueRef::fixed_bytes(&{access})")
+        }
+        FieldTy::Str if insert => format!(
+            "::bumbledb::__private::ValueRef::String(context.intern_str(self.{})?)",
+            field.name
+        ),
+        FieldTy::Str => format!(
+            "match context.lookup_str(self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(::bumbledb::Probe::ProvablyAbsent) }}",
+            field.name
+        ),
     }
 }
 
-/// The three boundary expressions for one interned field: `family`
-/// selects the plumbing functions (`intern_{family}_{write,delete,read}`)
-/// and `variant` the `ValueRef` constructor. Delete and read share the
-/// miss shape — `Ok(false)`, the fact provably absent — differing only
-/// in context binding (`cx`'s). The field is already a borrow
-/// (`&'a str`), so it passes straight through.
-fn interned_exprs(
-    family: &str,
-    variant: &str,
-    name: &str,
-    cx: &EncodeCx<'_>,
-) -> (String, String, String) {
-    let miss = |boundary: &str, ctx: &str| {
-        format!(
-            "match ::bumbledb::__private::intern_{family}_{boundary}({ctx}, self.{name})? {{ Some(id) => ::bumbledb::__private::ValueRef::{variant}(id), None => return Ok(false) }}"
-        )
-    };
-    (
-        format!(
-            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write({ctx}, self.{name})?)",
-            ctx = cx.write,
-        ),
-        miss("delete", cx.delete),
-        miss("read", cx.read),
-    )
-}
-
-/// The struct-literal arm decoding one field out of canonical fact bytes.
-/// `ctx` is the decode context's binding (`snap`/`tx`) and `suffix` selects
-/// the plumbing family (`""` = snapshot decode, `"_write"` = the write
-/// transaction's pending-aware point-read decode).
-fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
+/// The struct-literal arm decoding one field out of canonical fact bytes
+/// through [`CodecRead`]'s typed entry points — no match, no panic branch
+/// in generated code.
+fn decode_arm(field: &Field, idx: usize) -> String {
     let wrap = |expr: &str| -> String {
         match &field.newtype {
             Some(newtype) => format!("{newtype}({expr})"),
             None => expr.to_owned(),
         }
     };
-    let decode =
-        format!("::bumbledb::__private::decode{suffix}({ctx}, Self::RELATION, fact, {idx})?");
-    // Every field decodes through one shape: destructure the
-    // schema-typed `ValueRef` variant, convert; any other variant is a
-    // programmer-invariant violation.
-    let arm = |pattern: String, expr: String| {
-        format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::{pattern} => {expr}, _ => unreachable!(\"schema-typed\") }},",
-            field.name
-        )
+    let decode = |method: &str| {
+        format!("context.{method}(<Self as ::bumbledb::Fact<'a>>::RELATION, fact, {idx})?")
     };
-    match &field.ty {
-        FieldTy::Bool => arm("Bool(v)".to_owned(), "v".to_owned()),
-        FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
-        FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
-        FieldTy::Interval(element) => arm(
-            format!("Interval{}(interval)", element_suffix(*element)),
-            wrap("interval"),
-        ),
-        // A fixed-width field decodes through its own ValueRef variant —
-        // the end was re-derived from the type's width at decode.
-        FieldTy::FixedInterval(element, _) => arm(
-            format!("FixedInterval{}(interval)", element_suffix(*element)),
-            wrap("interval"),
-        ),
-        FieldTy::Str => arm(
-            "String(id)".to_owned(),
-            format!("::bumbledb::__private::resolve_string{suffix}({ctx}, id)?"),
-        ),
-        FieldTy::FixedBytes(len) => arm(
-            "FixedBytes(value)".to_owned(),
-            wrap(&format!(
-                "<[u8; {len}]>::try_from(value.as_bytes()).expect(\"schema-typed width\")"
-            )),
-        ),
-    }
+    let expr = match &field.ty {
+        FieldTy::Bool => decode("decode_bool_field"),
+        FieldTy::U64 => wrap(&decode("decode_u64_field")),
+        FieldTy::I64 => wrap(&decode("decode_i64_field")),
+        FieldTy::Interval(element) | FieldTy::FixedInterval(element, _) => wrap(&decode(&format!(
+            "decode_interval_{}_field",
+            element_rust(*element)
+        ))),
+        FieldTy::Str => decode("decode_str_field"),
+        FieldTy::FixedBytes(len) => wrap(&format!(
+            "{{ let raw = {}; let mut arr = [0u8; {len}]; arr.copy_from_slice(raw); arr }}",
+            decode("decode_fixed_bytes_field")
+        )),
+    };
+    format!("{}: {expr},", field.name)
 }
 
 fn emit_fact_struct(
@@ -2937,28 +2901,16 @@ fn emit_fact_struct(
         );
     }
 
-    let mut write_values = String::new();
-    let mut delete_values = String::new();
-    let mut read_values = String::new();
+    let mut insert_values = String::new();
+    let mut probe_values = String::new();
     let mut decode_fields = String::new();
-    let mut decode_write_fields = String::new();
     let cx = EncodeCx {
         relation: "<Self as ::bumbledb::Fact<'a>>::RELATION",
-        write: "tx",
-        delete: "tx",
-        read: "snap",
     };
     for (idx, field) in relation.fields.iter().enumerate() {
-        let (write_expr, delete_expr, read_expr) = encode_exprs(field, idx, &cx);
-        let _ = write!(write_values, "{write_expr},");
-        let _ = write!(delete_values, "{delete_expr},");
-        let _ = write!(read_values, "{read_expr},");
-        let _ = write!(decode_fields, "{}", decode_arm(field, idx, "snap", ""));
-        let _ = write!(
-            decode_write_fields,
-            "{}",
-            decode_arm(field, idx, "tx", "_write")
-        );
+        let _ = write!(insert_values, "{},", encode_value(field, idx, &cx, true));
+        let _ = write!(probe_values, "{},", encode_value(field, idx, &cx, false));
+        let _ = write!(decode_fields, "{}", decode_arm(field, idx));
     }
 
     let _ = write!(
@@ -2968,26 +2920,27 @@ fn emit_fact_struct(
          impl<'a> ::bumbledb::Fact<'a> for {self_ty} {{\n\
              type Schema = {schema_name};\n\
              const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
-             fn encode_write(&self, tx: &mut ::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()> {{\n\
-                 let values = [{write_values}];\n\
-                 ::bumbledb::__private::encode_write_fact(tx, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
+             fn encode_insert<C>(&self, context: &mut C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()>\n\
+             where\n\
+                 C: ::bumbledb::CodecWrite<{schema_name}>,\n\
+             {{\n\
+                 let values = [{insert_values}];\n\
+                 ::bumbledb::__private::encode_fact_for(context, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
                  Ok(())\n\
              }}\n\
-             fn encode_delete(&self, tx: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                 let values = [{delete_values}];\n\
-                 ::bumbledb::__private::encode_write_fact(tx, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
-                 Ok(true)\n\
+             fn encode_probe<C>(&self, context: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
+             where\n\
+                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
+             {{\n\
+                 let values = [{probe_values}];\n\
+                 ::bumbledb::__private::encode_fact_for(context, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
+                 Ok(::bumbledb::Probe::Encoded)\n\
              }}\n\
-             fn encode_read(&self, snap: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                 let values = [{read_values}];\n\
-                 ::bumbledb::__private::encode_read_fact(snap, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
-                 Ok(true)\n\
-             }}\n\
-             fn decode(snap: &'a ::bumbledb::Snapshot<'_, {schema_name}>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
+             fn decode<C>(context: &'a C, fact: &[u8]) -> ::bumbledb::Result<Self>\n\
+             where\n\
+                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
+             {{\n\
                  Ok(Self {{ {decode_fields} }})\n\
-             }}\n\
-             fn decode_write(tx: &'a ::bumbledb::WriteTx<'_, {schema_name}>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
-                 Ok(Self {{ {decode_write_fields} }})\n\
              }}\n\
          }}\n",
     );
@@ -3019,13 +2972,12 @@ fn emit_fact_struct(
                  type Schema = {schema_name};\n\
                  type Fact = {self_ty};\n\
                  const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({auto_key_id});\n\
-                 fn determinant_read(&self, _snap: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
-                     Ok(true)\n\
-                 }}\n\
-                 fn determinant_write(&self, _tx: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
-                     Ok(true)\n\
+                 fn encode_determinant<C>(&self, _context: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
+                 where\n\
+                     C: ::bumbledb::CodecRead<{schema_name}>,\n\
+                 {{\n\
+                     ::bumbledb::__private::append_field(::bumbledb::__private::ValueRef::U64(self.0), ::bumbledb::schema::ValueType::U64, out);\n\
+                     Ok(::bumbledb::Probe::Encoded)\n\
                  }}\n\
              }}\n",
         );
@@ -3173,26 +3125,22 @@ fn emit_key_struct(
     let relation_expr = format!("::bumbledb::schema::RelationId({rel_idx})");
     let cx = EncodeCx {
         relation: &relation_expr,
-        write: "tx",
-        delete: "tx",
-        read: "snap",
     };
-    let (tx_binding, snap_binding) = if borrowed {
-        ("tx", "snap")
+    let ctx_binding = if fields
+        .iter()
+        .any(|(_, field)| matches!(field.ty, FieldTy::Str))
+    {
+        "context"
     } else {
-        ("_tx", "_snap")
+        "_context"
     };
-    let mut read_body = String::new();
-    let mut write_body = String::new();
+    let mut body = String::new();
     for (idx, field) in &fields {
-        let (_, delete_expr, read_expr) = encode_exprs(field, *idx, &cx);
+        let expr = encode_value(field, *idx, &cx, false);
+        let ty = value_type_expr(field);
         let _ = write!(
-            read_body,
-            "::bumbledb::__private::append_key_field({read_expr}, out);"
-        );
-        let _ = write!(
-            write_body,
-            "::bumbledb::__private::append_key_field({delete_expr}, out);"
+            body,
+            "::bumbledb::__private::append_field({expr}, {ty}, out);"
         );
     }
     let spelling = format!(
@@ -3213,13 +3161,12 @@ fn emit_key_struct(
              type Schema = {schema_name};\n\
              type Fact = {fact_ty};\n\
              const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({statement_id});\n\
-             fn determinant_read(&self, {snap_binding}: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                 {read_body}\n\
-                 Ok(true)\n\
-             }}\n\
-             fn determinant_write(&self, {tx_binding}: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
-                 {write_body}\n\
-                 Ok(true)\n\
+             fn encode_determinant<C>(&self, {ctx_binding}: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
+             where\n\
+                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
+             {{\n\
+                 {body}\n\
+                 Ok(::bumbledb::Probe::Encoded)\n\
              }}\n\
          }}\n",
     );

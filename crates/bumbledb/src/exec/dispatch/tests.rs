@@ -2,11 +2,9 @@ use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
-use crate::image::view::ViewWordSource;
+use crate::image::view::{FilterPredicate, OperandAddr, ViewWordSource};
 use crate::ir::WordCmp;
-use crate::ir::normalize::{
-    NormalizedQuery, OccBind, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
-};
+use crate::ir::normalize::{NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::{ParamId, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -159,7 +157,7 @@ fn occurrence(vars: &[(u16, u16)], filters: Vec<FilterPredicate>) -> Occurrence 
 
 fn eq_filter(field: u16, value: Const) -> FilterPredicate {
     FilterPredicate::Compare {
-        field: FieldId(field),
+        field: FieldId(field).into(),
         op: WordCmp::Eq,
         value,
     }
@@ -215,7 +213,7 @@ fn populated_accounts(dir: &TempDir, schema: &Schema, rows: &[(u64, u64, &str)])
         delta.insert(&view, REL, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -230,7 +228,7 @@ fn populated(dir: &TempDir, schema: &Schema, rows: &[Vec<ValueRef>]) -> Environm
         delta.insert(&view, REL, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -276,11 +274,13 @@ fn a_second_atom_or_a_residual_stays_free_join() {
         &[(1, 0), (2, 1)],
         vec![eq_filter(0, Const::Word(5))],
     ));
-    with_residual.residuals.push(PlacedComparison {
-        op: WordCmp::Lt,
-        lhs: VarId(0),
-        rhs: VarId(1),
-    });
+    with_residual
+        .residuals
+        .push(FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
+            op: WordCmp::Lt,
+        });
     assert!(classify(&with_residual, &schema).is_none());
 }
 
@@ -397,7 +397,7 @@ fn a_membership_binding_is_not_a_key_cover() {
         vec![
             eq_filter(0, Const::Word(1)),
             FilterPredicate::PointIn {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 point: ViewWordSource::Word(7),
             },
         ],
@@ -449,7 +449,7 @@ fn full_fact_binding_takes_the_membership_path() {
         vec![
             eq_filter(0, Const::Word(2)),
             FilterPredicate::PointIn {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 point: ViewWordSource::Word(7),
             },
         ],
@@ -471,7 +471,7 @@ fn run_key_probe(
     let mut key = Vec::new();
     execute_key_probe(
         plan,
-        &txn,
+        &txn.catalog(),
         schema,
         params,
         &mut key,
@@ -595,8 +595,9 @@ fn pointwise_key_probe_hit_is_byte_exact() {
     ));
 
     let txn = env.read_txn().expect("txn");
+    let catalog = txn.catalog();
     let mut key = Vec::new();
-    let fact = key_probe_fact(&plan, &txn, &schema, &[], &mut key)
+    let stored = key_probe_fact(&plan, &catalog, &schema, &[], &mut key)
         .expect("probe")
         .expect("hit");
     // The probe scratch holds the whole composed `U` key (post-mortem
@@ -605,9 +606,8 @@ fn pointwise_key_probe_hit_is_byte_exact() {
     crate::storage::read::begin_determinant_key(&mut expected, REL, StatementId(0));
     let mut image = crate::storage::keys::DeterminantImage::scratch();
     crate::storage::keys::determinant_image(
-        schema.relation(REL).layout(),
+        schema.relation(REL).layout().encoded(stored.as_ref()),
         &[FieldId(0), FieldId(1)],
-        fact,
         &mut image,
     );
     expected.extend_from_slice(image.as_bytes());
@@ -660,7 +660,7 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
     assert!(
-        key_probe_fact(&plan, &txn, &schema, &[], &mut key)
+        key_probe_fact(&plan, &txn.catalog(), &schema, &[], &mut key)
             .expect("probe")
             .is_some()
     );
@@ -676,7 +676,7 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     let plan = classify(&other, &schema).expect("key probe");
     let mut key = Vec::new();
     assert!(
-        key_probe_fact(&plan, &txn, &schema, &[], &mut key)
+        key_probe_fact(&plan, &txn.catalog(), &schema, &[], &mut key)
             .expect("probe")
             .is_none()
     );
@@ -723,7 +723,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let mut key = Vec::new();
     execute_key_probe(
         &plan,
-        &txn,
+        &txn.catalog(),
         &schema,
         &[],
         &mut key,

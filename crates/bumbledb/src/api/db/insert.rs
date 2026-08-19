@@ -26,7 +26,7 @@ impl<S> WriteTx<'_, S> {
             Disposition::Insert,
             facts,
             |tx, fact, bytes| {
-                fact.encode_write(tx, bytes)?;
+                fact.encode_insert(tx, bytes)?;
                 Ok(ApplyRow::Ready)
             },
         )

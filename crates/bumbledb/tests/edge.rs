@@ -56,7 +56,9 @@ bumbledb::schema! {
 #[test]
 fn cyclic_containments_insert_in_one_transaction() {
     let dir = common::TempDir::new("edge-cyclic");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert([&Alpha {
             id: AlphaId(1),
@@ -73,19 +75,17 @@ fn cyclic_containments_insert_in_one_transaction() {
         }])?;
         Ok(())
     })
-    .expect("cycle commits: source judgments run against the final state");
+    .expect("cycle commits: source judgments run against the final state")
+    .unwrap();
 
     // And the failure half: a cycle missing one side aborts whole.
-    let err = db
-        .write(|tx| {
-            tx.insert([&Alpha {
-                id: AlphaId(5),
-                beta: BetaId(99), // no such Beta
-            }])?;
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(matches!(err, Error::CommitRejected { .. }));
+    let _ = common::expect_rejected(db.write(|tx| {
+        tx.insert([&Alpha {
+            id: AlphaId(5),
+            beta: BetaId(99), // no such Beta
+        }])?;
+        Ok(())
+    }));
 }
 
 /// Empty strings intern and round-trip (the reverse dictionary entry is
@@ -94,13 +94,17 @@ fn cyclic_containments_insert_in_one_transaction() {
 #[test]
 fn empty_strings_and_bytes_round_trip() {
     let dir = common::TempDir::new("edge-empty-intern");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let original = Blob {
         id: BlobId(1),
         payload: [0u8; 16],
         name: "",
     };
-    db.write(|tx| tx.insert([&original])).expect("write");
+    db.write(|tx| tx.insert([&original]))
+        .expect("write")
+        .unwrap();
     // The scanned views borrow the snapshot, so the comparison happens
     // inside the read closure.
     db.read(|snap| {
@@ -116,14 +120,17 @@ fn empty_strings_and_bytes_round_trip() {
 #[test]
 fn explicit_max_fresh_exhausts_the_generator() {
     let dir = common::TempDir::new("edge-fresh-max");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert([&Node {
             id: NodeId(u64::MAX),
             parent: NodeId(u64::MAX),
         }])
     })
-    .expect("explicit MAX is a legal value");
+    .expect("explicit MAX is a legal value")
+    .unwrap();
     let err = db
         .write(|tx| {
             let _: NodeId = tx.reserve(1)?.start().expect("nonempty");
@@ -179,13 +186,16 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
         }],
     };
     let dir = common::TempDir::new("edge-wide-vocabulary");
-    let db = Db::create(dir.path(), schema).expect("create");
+    let db = Db::create(dir.path(), schema)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(RelationId(1), [&[Value::U64(0)]])?;
         tx.insert_dyn(RelationId(1), [&[Value::U64(255)]])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
     let mut facts = db
         .read(|snap| snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>())
         .expect("scan");
@@ -197,13 +207,10 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
 
     // Row 256 does not exist: past the roster is the same containment
     // violation as any dangling reference.
-    let err = db
-        .write(|tx| {
-            tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(matches!(err, Error::CommitRejected { .. }));
+    let _ = common::expect_rejected(db.write(|tx| {
+        tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
+        Ok(())
+    }));
 }
 
 /// A compound key plus a containment over 1-byte fields (bool, bool):
@@ -219,7 +226,7 @@ fn one_byte_compound_determinants() {
                 fields: vec![
                     FieldDescriptor {
                         name: "state".into(),
-                        value_type: status.clone(),
+                        value_type: status,
                         generation: Generation::None,
                     },
                     FieldDescriptor {
@@ -275,7 +282,9 @@ fn one_byte_compound_determinants() {
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
     let dir = common::TempDir::new("edge-byte-determinants");
-    let db = Db::create(dir.path(), schema).expect("create");
+    let db = Db::create(dir.path(), schema)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
         tx.insert_dyn(
@@ -284,29 +293,24 @@ fn one_byte_compound_determinants() {
         )?;
         Ok(())
     })
-    .expect("validated insert commits");
+    .expect("validated insert commits")
+    .unwrap();
 
     // The containment holds over the 2-byte determinant: a watcher of a
     // missing pair aborts.
-    let err = db
-        .write(|tx| {
-            tx.insert_dyn(
-                watcher,
-                [&[Value::Bool(false), Value::Bool(false), Value::U64(1)]],
-            )?;
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(matches!(err, Error::CommitRejected { .. }));
+    let _ = common::expect_rejected(db.write(|tx| {
+        tx.insert_dyn(
+            watcher,
+            [&[Value::Bool(false), Value::Bool(false), Value::U64(1)]],
+        )?;
+        Ok(())
+    }));
 
     // The target side holds too: deleting the required pair aborts.
-    let err = db
-        .write(|tx| {
-            tx.delete_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(matches!(err, Error::CommitRejected { .. }));
+    let _ = common::expect_rejected(db.write(|tx| {
+        tx.delete_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
+        Ok(())
+    }));
 }
 
 /// Nullary use of a relation as a nonemptiness gate, end to end: a
@@ -315,7 +319,9 @@ fn one_byte_compound_determinants() {
 #[test]
 fn zero_binding_gate_with_global_count() {
     let dir = common::TempDir::new("edge-gate-count");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert([&Node {
             id: NodeId(1),
@@ -327,7 +333,8 @@ fn zero_binding_gate_with_global_count() {
         }])?;
         Ok(())
     })
-    .expect("seed");
+    .expect("seed")
+    .unwrap();
 
     // Count(nodes) gated on Gate being nonempty.
     let query = Query::single(Rule {
@@ -349,14 +356,15 @@ fn zero_binding_gate_with_global_count() {
 
     // Gate empty: no answers at all (empty-input aggregate = empty set).
     let answers = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[]))
+        .read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
         .expect("execute");
     assert!(answers.is_empty(), "an empty gate empties the query");
 
     db.write(|tx| tx.insert([&Gate { tag: "open" }]))
-        .expect("open the gate");
+        .expect("open the gate")
+        .unwrap();
     let answers = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[]))
+        .read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
         .expect("execute");
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), bumbledb::AnswerValue::U64(2));
@@ -392,7 +400,9 @@ fn mixed_params_query() -> Query {
 )] // the bind matrix: one case per arm, linear
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
     let ids = db
         .write(|tx| {
             let mut ids = Vec::new();
@@ -414,7 +424,9 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             }
             Ok(ids)
         })
-        .expect("seed");
+        .expect("seed")
+        .unwrap()
+        .value;
 
     let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
     db.read(|snap| {
@@ -426,7 +438,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             ParamArg::Scalar(BindValue::Str("rent")),
         ];
         let mut out = Answers::new();
-        snap.execute_args(&mut prepared, &args, &mut out)?;
+        snap.execute(&mut prepared, &args, &mut out)?;
         let mut got: Vec<u64> = (0..out.len())
             .map(|answer| {
                 let AnswerValue::U64(id) = out.get(answer, 0) else {
@@ -441,12 +453,12 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             vec![ids[0].0, ids[1].0],
             "accounts 10 and 11, amount 5, rent"
         );
-        let collected = snap.execute_collect_args(&mut prepared, &args)?;
+        let collected = snap.execute_collect(&mut prepared, &args)?;
         assert_eq!(collected.len(), 2);
 
         // Scalar where the set is expected: the precise per-position error.
         let err = snap
-            .execute_collect_args(
+            .execute_collect(
                 &mut prepared,
                 &[
                     ParamArg::Scalar(BindValue::I64(5)),
@@ -462,7 +474,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
         // Set where a scalar is expected.
         let err = snap
-            .execute_collect_args(
+            .execute_collect(
                 &mut prepared,
                 &[
                     ParamArg::Set(&[Value::I64(5)]),
@@ -478,7 +490,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
         // A mistyped set element names its position.
         let err = snap
-            .execute_collect_args(
+            .execute_collect(
                 &mut prepared,
                 &[
                     ParamArg::Scalar(BindValue::I64(5)),
@@ -496,7 +508,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
         );
 
         // ...and the query stays bindable after every rejection.
-        let again = snap.execute_collect_args(&mut prepared, &args)?;
+        let again = snap.execute_collect(&mut prepared, &args)?;
         assert_eq!(again.len(), 2);
         Ok(())
     })

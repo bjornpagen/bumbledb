@@ -51,7 +51,6 @@ impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!("bumbledb-exhume-{tag}"));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }
 }
@@ -66,7 +65,9 @@ impl Drop for TempDir {
 fn a_macro_declared_store_exhumes_every_relation_by_name() {
     let dir = TempDir::new("macro-roundtrip");
     {
-        let db = Db::create(&dir.0, Exhumable).expect("create");
+        let db = Db::create(&dir.0, Exhumable)
+            .expect("create")
+            .expect("accepted");
         db.write(|tx| {
             let learner: LearnerId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Learner {
@@ -84,7 +85,8 @@ fn a_macro_declared_store_exhumes_every_relation_by_name() {
             }])?;
             Ok(())
         })
-        .expect("write");
+        .expect("write")
+        .unwrap();
     }
 
     let exhumed = exhume(&dir.0).expect("exhume");
@@ -145,7 +147,7 @@ fn a_macro_declared_store_exhumes_every_relation_by_name() {
         rows("Learner"),
         vec![vec![
             Value::U64(0),
-            Value::String("ada".as_bytes().into()),
+            Value::String("ada".into()),
             Value::IntervalU64(Interval::<u64>::new(1, 4).expect("interval")),
         ]]
     );

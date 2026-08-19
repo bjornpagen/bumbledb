@@ -4,6 +4,7 @@
 //! error (`docs/architecture/20-query-ir.md`, the rules shape).
 
 use super::*;
+use crate::error::{FindIndex, Mismatch, RuleIndex};
 use crate::ir::{CmpOp, Comparison, HeadTerm, MAX_RULES, ParamId, Rule, Value};
 
 /// A one-atom rule projecting Posting.account (U64) as `Var(var)`.
@@ -28,26 +29,29 @@ fn amount_rule(var: u16) -> Rule {
 
 #[test]
 fn the_empty_rule_set_is_rejected() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![],
+        rec: None,
     };
     assert_eq!(expect_err(&query), ValidationError::EmptyRuleSet);
 }
 
 #[test]
 fn the_rule_cap_is_rejected_one_past_the_line() {
-    let at_cap = Query::Cq {
+    let at_cap = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: (0..MAX_RULES).map(|_| account_rule(0)).collect(),
+        rec: None,
     };
     validate(&schema(), &at_cap).expect("MAX_RULES rules validate");
-    let over = Query::Cq {
+    let over = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: (0..=MAX_RULES).map(|_| account_rule(0)).collect(),
+        rec: None,
     };
     assert_eq!(
         expect_err(&over),
@@ -68,17 +72,20 @@ fn head_arity_mismatch_names_the_rule() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), wide],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
         ValidationError::HeadArityMismatch {
-            rule: 1,
-            expected: 1,
-            found: 2
+            rule: RuleIndex(1),
+            mismatch: Mismatch {
+                witnessed: 2,
+                required: 1,
+            },
         }
     );
 }
@@ -93,16 +100,17 @@ fn head_aggregate_mismatch_names_the_position() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), counting],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
         ValidationError::HeadAggregateMismatch {
-            rule: 1,
-            position: 0
+            rule: RuleIndex(1),
+            position: FindIndex(0)
         }
     );
 }
@@ -115,16 +123,17 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
         rules: vec![agg(crate::ir::FoldOp::Sum), agg(crate::ir::FoldOp::Min)],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
         ValidationError::HeadAggregateMismatch {
-            rule: 1,
-            position: 0
+            rule: RuleIndex(1),
+            position: FindIndex(0)
         }
     );
 }
@@ -133,16 +142,17 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
 fn head_type_mismatch_names_rule_and_position() {
     // Rule 0 pins position 0 at U64 (Posting.account); rule 1 projects
     // I64 (Posting.amount) there.
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), amount_rule(0)],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
         ValidationError::HeadTypeMismatch {
-            rule: 1,
-            position: 0
+            rule: RuleIndex(1),
+            position: FindIndex(0)
         }
     );
 }
@@ -161,10 +171,11 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![account_rule(0), second],
+        rec: None,
     };
     let witness = validate(&schema(), &query).expect("per-rule scopes validate");
     assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
@@ -173,7 +184,7 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     assert_eq!(types, vec![ValueType::U64]);
 }
@@ -193,16 +204,18 @@ fn params_are_query_global_and_unify_across_rules() {
     };
     // Agreeing anchors (amount and at are both I64) validate; amount
     // (I64) against flag (Bool) is the typed conflict.
-    let agree = Query::Cq {
+    let agree = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![with_param(2, 0), with_param(3, 0)],
+        rec: None,
     };
     validate(&schema(), &agree).expect("agreeing anchors validate");
-    let conflict = Query::Cq {
+    let conflict = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![with_param(2, 0), with_param(5, 0)],
+        rec: None,
     };
     assert_eq!(
         expect_err(&conflict),
@@ -223,16 +236,18 @@ fn param_density_is_judged_across_the_whole_program() {
         negated: vec![],
         conditions: vec![],
     };
-    let dense = Query::Cq {
+    let dense = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![with_param(0), with_param(1)],
+        rec: None,
     };
     validate(&schema(), &dense).expect("jointly dense param ids validate");
-    let gapped = Query::Cq {
+    let gapped = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![with_param(0), with_param(2)],
+        rec: None,
     };
     assert_eq!(
         expect_err(&gapped),
@@ -247,10 +262,11 @@ fn the_single_rule_program_is_the_degenerate_case() {
     // byte-identical witness (the artifact equality the port is pinned
     // by).
     let rule = account_rule(0);
-    let explicit = Query::Cq {
+    let explicit = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![rule.clone()],
+        rec: None,
     };
     let sugar = Query::single(rule);
     assert_eq!(explicit, sugar);
@@ -321,8 +337,10 @@ fn dnf_blowup_past_the_cap_is_typed_with_the_count() {
     assert_eq!(
         expect_err(&query),
         ValidationError::DnfExceedsRules {
-            produced: 32,
-            cap: MAX_RULES
+            exceeded: crate::error::Exceeded {
+                observed: 32,
+                ceiling: MAX_RULES,
+            },
         }
     );
 }

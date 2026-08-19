@@ -25,7 +25,7 @@ impl Colt {
     ) -> (usize, BatchToken) {
         self.iter_batch_at(
             cursor,
-            self.selection_levels + level,
+            self.join_index(level),
             token,
             keys_out,
             children_out,

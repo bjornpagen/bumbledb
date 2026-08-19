@@ -14,7 +14,6 @@ const CFG: GenConfig = GenConfig {
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-calendar-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -168,7 +167,9 @@ fn chains_are_valid_under_the_pointwise_key() {
 #[test]
 fn both_stores_load_the_same_corpus() {
     let dir = scratch("corpus-load");
-    let db = Db::create(&dir.join("db"), Scheduling).expect("create");
+    let db = Db::create(&dir.join("db"), Scheduling)
+        .expect("create")
+        .expect("accepted");
     let ours = corpus::load_bumbledb(&db, CFG).expect("bumbledb load");
     let (conn, theirs) = corpus::load_sqlite(&dir.join("oracle.sqlite"), CFG).expect("sqlite load");
     assert_eq!(ours.facts, theirs.facts);
@@ -208,7 +209,9 @@ fn goldens_pin_the_translator() {
 fn every_family_has_witnesses_on_the_unit_corpus() {
     let dir = scratch("unit-witnesses");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir, Scheduling).expect("create");
+    let db = Db::create(&dir.join("db"), Scheduling)
+        .expect("create")
+        .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
     for family in families::all() {
         let query = (family.query)();
@@ -216,7 +219,7 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
         let draw = families::unit_draw(family.name, CFG.seed, &sizes);
         let args = param_args(&draw);
         let mut buffer = Answers::new();
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .expect("execute");
         assert!(
             !buffer.is_empty(),
@@ -235,7 +238,9 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
 fn the_hand_coalesce_matches_pack() {
     let dir = scratch("coalesce");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir.join("db"), Scheduling).expect("create");
+    let db = Db::create(&dir.join("db"), Scheduling)
+        .expect("create")
+        .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
     let conn = rusqlite::Connection::open_in_memory().expect("oracle");
     corpus::load_sqlite_into(&conn, CFG, sizes).expect("oracle load");
@@ -250,12 +255,12 @@ fn the_hand_coalesce_matches_pack() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);
     let mut buffer = Answers::new();
-    db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+    db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
         .expect("execute");
     let ours = crate::compare::from_answers(&buffer, &types);
 

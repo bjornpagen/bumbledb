@@ -1,12 +1,12 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_u64};
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, Mismatch, Result};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys;
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -67,7 +67,7 @@ fn fixture(dir: &TempDir, schema: &Schema) -> Environment {
             .expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
 
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
@@ -75,7 +75,7 @@ fn fixture(dir: &TempDir, schema: &Schema) -> Environment {
         .delete(&view, R, &fact(schema, 1, 20))
         .expect("delete");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -129,7 +129,9 @@ fn key_probe_hit_and_miss() {
     assert_eq!(probe(&txn, StatementId(0), &encode_u64(2)), None);
     assert_eq!(row, 2, "the fresh field's value IS the F row id");
     assert_eq!(
-        fact_at(&txn, &schema, R, 2).expect("probe"),
+        fact_at(&txn, &schema, R, 2)
+            .expect("probe")
+            .map(crate::encoding::FactView::bytes),
         Some(&fact(&schema, 2, 30)[..])
     );
     assert_eq!(fact_at(&txn, &schema, R, 1).expect("probe"), None);
@@ -155,8 +157,8 @@ fn fetch_round_trips_inserted_bytes() {
         .expect("probe")
         .expect("present");
     assert_eq!(
-        fetch(&txn, &schema, R, row).expect("fetch"),
-        fact(&schema, 2, 30)
+        fetch(&txn, &schema, R, row).expect("fetch").bytes(),
+        fact(&schema, 2, 30).as_slice()
     );
     // The deleted fact left a row-id hole: fetching it is corruption
     // (a row id reaching fetch must have come from M/U in-snapshot).
@@ -186,7 +188,7 @@ fn scan_yields_live_facts_in_row_id_order_skipping_holes() {
     let txn = env.read_txn().expect("txn");
     let rows: Vec<(u64, Vec<u8>)> = scan(&txn, &schema, R)
         .expect("scan")
-        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .map(|r| r.map(|(id, b)| (id, b.bytes().to_vec())))
         .collect::<Result<_>>()
         .expect("no corruption");
     // Exactly the two live facts, in strictly increasing row-id order,
@@ -221,15 +223,15 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
     };
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::fact_key(&mut key, R, victim);
+        let key = keys::fact_key(R, victim);
         env.data()
-            .put(wtxn.raw_mut(), &key[..len], &[0xAB, 0xCD])
+            .put(wtxn.raw_mut(), &key, &[0xAB, 0xCD])
             .expect("put");
         wtxn.commit().expect("commit");
     }
     let txn = env.read_txn().expect("txn");
-    let results: Vec<Result<(u64, &[u8])>> = scan(&txn, &schema, R).expect("scan").collect();
+    let results: Vec<Result<(u64, crate::encoding::FactView<'_, '_>)>> =
+        scan(&txn, &schema, R).expect("scan").collect();
     assert!(results[0].is_ok()); // the first live row is intact
     let err = results[1].as_ref().unwrap_err();
     assert!(
@@ -238,8 +240,10 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
             Error::Corruption(CorruptionError::WrongFactWidth {
                 relation: R,
                 row_id,
-                expected: 16,
-                actual: 2
+                mismatch: Mismatch {
+                    witnessed: 2,
+                    required: 16,
+                },
             }) if *row_id == victim
         ),
         "{err:?}"
@@ -258,10 +262,10 @@ fn a_short_f_key_is_typed_corruption_from_scan() {
     {
         let mut wtxn = env.write_txn().expect("txn");
         let mut key: keys::KeyBuf = [0; keys::MAX_KEY];
-        let p_len = keys::fact_prefix(&mut key, R);
-        assert_eq!(p_len, 5);
+        let prefix = keys::fact_prefix(&mut key, R);
+        assert_eq!(prefix.len(), 5);
         env.data()
-            .put(wtxn.raw_mut(), &key[..p_len], [0u8; 16].as_slice())
+            .put(wtxn.raw_mut(), prefix, [0u8; 16].as_slice())
             .expect("plant");
         wtxn.commit().expect("commit");
     }
@@ -297,12 +301,12 @@ fn scan_from_zero_yields_exactly_scan_over_live_facts() {
     let txn = env.read_txn().expect("txn");
     let via_scan: Vec<(u64, Vec<u8>)> = scan(&txn, &schema, R)
         .expect("scan")
-        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .map(|r| r.map(|(id, b)| (id, b.bytes().to_vec())))
         .collect::<Result<_>>()
         .expect("no corruption");
     let via_scan_from: Vec<(u64, Vec<u8>)> = scan_from(&txn, &schema, R, 0)
         .expect("scan_from")
-        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .map(|r| r.map(|(id, b)| (id, b.bytes().to_vec())))
         .collect::<Result<_>>()
         .expect("no corruption");
     assert_eq!(
@@ -313,7 +317,7 @@ fn scan_from_zero_yields_exactly_scan_over_live_facts() {
     let cut = via_scan[1].0;
     let tail: Vec<(u64, Vec<u8>)> = scan_from(&txn, &schema, R, cut)
         .expect("scan_from tail")
-        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .map(|r| r.map(|(id, b)| (id, b.bytes().to_vec())))
         .collect::<Result<_>>()
         .expect("no corruption");
     assert_eq!(tail, via_scan[1..].to_vec());
@@ -360,7 +364,7 @@ fn fact_for_key_chains_the_fetch_and_misses_honestly() {
     let hit = fact_for_key(&txn, &schema, R, &key)
         .expect("probe")
         .expect("present");
-    assert_eq!(hit, &fact(&schema, 2, 30)[..]);
+    assert_eq!(hit.bytes(), &fact(&schema, 2, 30)[..]);
     key.truncate(DETERMINANT_KEY_HEADER);
     key.extend_from_slice(&crate::encoding::encode_i64(20));
     assert_eq!(fact_for_key(&txn, &schema, R, &key).expect("probe"), None);

@@ -14,8 +14,7 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     // Projection over x only: at least one node binds nothing
     // projected — D2 has something to skip.
     let projected: BTreeSet<VarId> = [X].into_iter().collect();
-    let narrow =
-        validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &projected).expect("valid plan");
+    let narrow = validate(&plan, &normalized, &schema(3, 3), &projected).expect("valid plan");
     assert!(
         narrow
             .nodes()
@@ -27,8 +26,7 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     // The aggregate rule: every variable sink-relevant — every
     // variable-binding node absorbs any skip that reaches it.
     let all_vars: BTreeSet<VarId> = [X, A, B, C].into_iter().collect();
-    let full =
-        validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &all_vars).expect("valid plan");
+    let full = validate(&plan, &normalized, &schema(3, 3), &all_vars).expect("valid plan");
     assert!(
         full.nodes()
             .iter()
@@ -51,11 +49,12 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
     // The hand-built plan covers only the bound occurrence.
     let plan = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[X])],
         }],
     };
     assert_eq!(
-        validate(&plan, &query, &schema(2, 3), vec![0], &BTreeSet::new())
+        validate(&plan, &query, &schema(2, 3), &BTreeSet::new())
             .map(|_| ())
             .unwrap_err(),
         PlanError::MissingOccurrence { occ: OccId(1) }
@@ -65,7 +64,7 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
     let all_gates = normalized(vec![occurrence(0, 0, &[])], vec![]);
     let empty = FjPlan { nodes: vec![] };
     assert_eq!(
-        validate(&empty, &all_gates, &schema(1, 3), vec![], &BTreeSet::new())
+        validate(&empty, &all_gates, &schema(1, 3), &BTreeSet::new())
             .map(|_| ())
             .unwrap_err(),
         PlanError::MissingOccurrence { occ: OccId(0) }
@@ -75,10 +74,11 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
     // exactly what binary2fj emits — validates.
     let with_gate = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[X]), subatom(1, &[])],
         }],
     };
-    validate(&with_gate, &query, &schema(2, 3), vec![0], &BTreeSet::new())
+    validate(&with_gate, &query, &schema(2, 3), &BTreeSet::new())
         .expect("a gate subatom is the legal form");
 }
 
@@ -89,11 +89,12 @@ fn a_subatom_with_an_unknown_occurrence_is_rejected() {
     let query = normalized(vec![occurrence(0, 0, &[(1, X)])], vec![]);
     let plan = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[X]), subatom(99, &[])],
         }],
     };
     assert_eq!(
-        validate(&plan, &query, &schema(1, 3), vec![0], &BTreeSet::new())
+        validate(&plan, &query, &schema(1, 3), &BTreeSet::new())
             .map(|_| ())
             .unwrap_err(),
         PlanError::UnknownOccurrence {
@@ -114,11 +115,12 @@ fn a_subatom_over_a_negated_occurrence_is_rejected() {
     );
     let plan = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[X]), subatom(1, &[])],
         }],
     };
     assert_eq!(
-        validate(&plan, &query, &schema(2, 3), vec![0], &BTreeSet::new())
+        validate(&plan, &query, &schema(2, 3), &BTreeSet::new())
             .map(|_| ())
             .unwrap_err(),
         PlanError::NonParticipatingOccurrenceInNode {
@@ -139,8 +141,7 @@ fn anti_probe_attaches_to_the_earliest_all_bound_node() {
     occurrences.push(negated(3, 2, &[(1, X), (2, B)]));
     let query = normalized(occurrences, vec![]);
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert!(validated.nodes()[0].anti_probes.is_empty());
     assert_eq!(validated.nodes()[1].anti_probes.len(), 1);
     assert_eq!(validated.nodes()[1].anti_probes[0].occurrence, OccId(3));
@@ -157,8 +158,7 @@ fn root_only_anti_probes_attach_to_the_root() {
     occurrences.push(negated(4, 1, &[]));
     let query = normalized(occurrences, vec![]);
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     let root_probes: Vec<OccId> = validated.nodes()[0]
         .anti_probes
         .iter()
@@ -183,8 +183,7 @@ fn negated_occurrences_get_probe_order_trie_schemas() {
     occurrences.push(negated(3, 2, &[(1, B), (2, X)]));
     let query = normalized(occurrences, vec![]);
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.occurrence(OccId(3)).trie_schema, vec![vec![X, B]]);
     assert_eq!(validated.occurrence(OccId(3)).key_widths, vec![2]);
 }
@@ -205,15 +204,16 @@ fn trie_schemas_match_the_papers_triangle_worked_example() {
     let plan = FjPlan {
         nodes: vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X, Y]), subatom(1, &[Y]), subatom(2, &[X])],
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[Z]), subatom(2, &[Z])],
             },
         ],
     };
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0, 0], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.occurrence(OccId(0)).trie_schema, vec![vec![X, Y]]);
     assert_eq!(validated.occurrence(OccId(0)).key_widths, vec![2]);
     assert_eq!(
@@ -234,27 +234,25 @@ fn gj_style_plan_has_multiple_covers_on_the_first_node() {
     let plan = FjPlan {
         nodes: vec![
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[X]), subatom(1, &[X]), subatom(2, &[X])],
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(0, &[A])],
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(1, &[B])],
             },
             Node {
+                estimate: 0,
                 subatoms: vec![subatom(2, &[C])],
             },
         ],
     };
-    let validated = validate(
-        &plan,
-        &clover(),
-        &schema(3, 3),
-        vec![0; 4],
-        &BTreeSet::new(),
-    )
-    .expect("valid plan");
+    let validated =
+        validate(&plan, &clover(), &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.nodes()[0].covers, vec![0, 1, 2]);
     assert_eq!(validated.nodes()[1].covers, vec![0]);
 }
@@ -265,15 +263,14 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
     // in the unfactored clover plan — so it places on node 2.
     let query = normalized(
         clover().occurrences,
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(A),
+            right: OperandAddr::from(B),
             op: WordCmp::Lt,
-            lhs: A,
-            rhs: B,
         }],
     );
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert!(validated.nodes()[0].residuals.is_empty());
     assert_eq!(validated.nodes()[1].residuals.len(), 1);
     assert!(validated.nodes()[2].residuals.is_empty());
@@ -291,15 +288,14 @@ fn placement_rechecks_every_variable_at_every_node() {
     // Residual half: a < c places on node 2 (c binds there), never 1.
     let query = normalized(
         clover().occurrences,
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(A),
+            right: OperandAddr::from(C),
             op: WordCmp::Lt,
-            lhs: A,
-            rhs: C,
         }],
     );
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert!(validated.nodes()[0].residuals.is_empty());
     assert!(validated.nodes()[1].residuals.is_empty());
     assert_eq!(validated.nodes()[2].residuals.len(), 1);
@@ -309,8 +305,7 @@ fn placement_rechecks_every_variable_at_every_node() {
     occurrences.push(negated(3, 2, &[(1, A), (2, C)]));
     let query = normalized(occurrences, vec![]);
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     assert!(validated.nodes()[0].anti_probes.is_empty());
     assert!(validated.nodes()[1].anti_probes.is_empty());
     assert_eq!(validated.nodes()[2].anti_probes.len(), 1);
@@ -328,8 +323,8 @@ fn self_join_plans_validate_over_occurrences() {
     );
     let mut plan = binary2fj(&query, &order(&[0, 1]));
     factor(&mut plan);
-    let validated = validate(&plan, &query, &schema(1, 3), vec![0, 0], &BTreeSet::new())
-        .expect("self-joins validate");
+    let validated =
+        validate(&plan, &query, &schema(1, 3), &BTreeSet::new()).expect("self-joins validate");
     assert_eq!(validated.occurrences().len(), 2);
 }
 
@@ -337,12 +332,13 @@ fn self_join_plans_validate_over_occurrences() {
 fn duplicate_occurrence_within_a_node_is_rejected() {
     let plan = FjPlan {
         nodes: vec![Node {
+            estimate: 0,
             subatoms: vec![subatom(0, &[X, A]), subatom(0, &[])],
         }],
     };
     let mut query = clover();
     query.occurrences.truncate(1);
-    let err = validate(&plan, &query, &schema(3, 3), vec![0], &BTreeSet::new()).unwrap_err();
+    let err = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).unwrap_err();
     assert_eq!(
         err,
         PlanError::DuplicateOccurrenceInNode {
@@ -364,8 +360,7 @@ fn distinct_witness_tracks_key_coverage() {
         vec![],
     );
     let plan = binary2fj(&query, &order(&[0, 1]));
-    let validated =
-        validate(&plan, &query, &schema(2, 2), vec![0, 0], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(2, 2), &BTreeSet::new()).expect("valid plan");
     assert!(validated.distinct_witness().is_some());
 
     // Occurrence 1 binds only a non-key field -> no witness.
@@ -377,8 +372,7 @@ fn distinct_witness_tracks_key_coverage() {
         vec![],
     );
     let plan = binary2fj(&query, &order(&[0, 1]));
-    let validated =
-        validate(&plan, &query, &schema(2, 2), vec![0, 0], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(2, 2), &BTreeSet::new()).expect("valid plan");
     assert!(validated.distinct_witness().is_none());
 }
 
@@ -387,8 +381,7 @@ fn binding_slots_follow_node_order() {
     let query = clover();
     let mut plan = binary2fj(&query, &order(&[0, 1, 2]));
     factor(&mut plan);
-    let validated =
-        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
     // Factored clover: node 0 binds {x, a}, node 1 binds {b}, node 2
     // binds {c}. Slot order follows; every scalar is one slot wide.
     assert_eq!(

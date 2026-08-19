@@ -118,7 +118,7 @@ impl Colt {
     /// Only on a programmer-invariant violation: `out` shorter than the
     /// level's arity.
     pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
-        let level = self.selection_levels + level;
+        let level = self.join_index(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
             out[i] = match self.bound_view().image().column(*col) {
                 ColumnView::Words(words) => words[position as usize],
@@ -134,7 +134,7 @@ impl Colt {
     pub fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
         self.bound_view()
             .image()
-            .column(self.schema_columns[self.selection_levels + level][word])
+            .column(self.schema_columns[self.join_index(level)][word])
     }
 
     /// Whether a cursor is an unforced node at a suffix — the scan-fold

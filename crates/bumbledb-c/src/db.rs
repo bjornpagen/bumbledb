@@ -1,98 +1,186 @@
-//! Database ownership and the lexical read/write boundary: the opaque
-//! [`bdb_db`] handle, the three store constructors,
-//! the fingerprint readback, synchronous callback-scoped snapshots and
-//! write transactions, the dynamic fact surface, fresh reservation, and
-//! the owned [`bdb_row_set`] carrier for scans and point reads.
-//!
-//! # The nesting SAFETY argument (§18)
-//!
-//! `bdb_db_write_from` re-enters the engine from inside a read callback.
-//! This is sound for exactly one reason: the C callback executes
-//! synchronously inside the Rust `Db::read` closure frame on the same
-//! thread, so the `&Snapshot` behind [`bdb_snapshot_ref`] is alive for the
-//! entire nested call. Both `read` and `write_from` take `&self`, and this
-//! nesting is proven in-tree (`bumbledb-bench` witness tests;
-//! `bumbledb-query` cookbook). The bridge never STORES the snapshot
-//! reference — it only forwards the still-live callback argument — which
-//! is what avoids the Node bridge's audited `&'static Snapshot`
-//! fabrication (findings 018/021) entirely.
+//! Database ownership, heap construction, and the lexical read/write
+//! boundary: opaque handles, tagged admissions, per-callback instance
+//! refs, and cloneable witnesses.
 
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    Db, Error, FieldId, RelationId, SchemaDescriptor, Snapshot, StatementId, Value, WriteTx,
+    Admission, ConditionalWrite, Db, Error, FieldId, Instance, InstanceBuilder, OwnedInstance,
+    ReadInstance, RelationId, SchemaDescriptor, StatementId, Value, Witness, WriteTx,
 };
 
-use crate::error::{bdb_error, bdb_error_kind, fail_engine, fail_locked};
+use crate::error::{
+    bdb_error, bdb_violations, fail_busy, fail_engine, fail_schema_message,
+};
+use crate::query::{bdb_prepared, bdb_query, query_in};
 use crate::schema::{bdb_schema_spec, schema_spec_in};
 use crate::value::{bdb_string_view, bdb_value, row_in, rows_in, value_out};
 use crate::{
-    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out_to, guard, guard_value,
-    out, ref_in, require_out, tag_in,
+    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out, box_out_to, guard,
+    guard_statusless, guard_value, mut_in, out, ref_in, require_out, tag_in,
 };
 
-/// The engine typestate every handle shares: runtime-built schemas all
-/// live at `Db<SchemaDescriptor>` (the descriptor implements `Theory` as
-/// itself) — the Node bridge's `Engine` alias.
 pub(crate) type Engine = Db<SchemaDescriptor>;
 
-/// The opaque database handle: the engine behind an `Arc` (prepared
-/// queries co-own it below the boundary — never visible to C), the
-/// admitted descriptor (violation rendering, fingerprint readback), the
-/// bridge-level writer/reader flags, and the heap slots that give
-/// snapshot/tx refs a stable address for as long as this `Box` lives.
+const READERS_MASK: u32 = 0x0000_FFFF;
+const WRITING: u32 = 1 << 16;
+const WRITING_BUSY: u32 = 1 << 17;
+
+const KIND_STORE: u8 = 1;
+const KIND_HEAP: u8 = 2;
+
+/// Opaque database handle.
 pub struct bdb_db {
     pub(crate) db: Arc<Engine>,
     pub(crate) descriptor: SchemaDescriptor,
-    in_write: AtomicBool,
-    in_read: AtomicBool,
-    snapshot_slot: bdb_snapshot_ref,
-    tx_slot: bdb_tx_ref,
+    phase: AtomicU32,
+    retired: Mutex<Vec<Retired>>,
 }
 
-/// The 64 lowercase hex chars of the store's schema fingerprint — the
-/// cross-host identity (NOT NUL-terminated; the width is the type).
+#[allow(dead_code, reason = "boxes are held so stashed C pointers stay allocated")]
+enum Retired {
+    Instance(Box<bdb_instance_ref>),
+    Witness(Box<bdb_witness>),
+    Tx(Box<bdb_tx_ref>),
+}
+
+/// Opaque heap builder. Spent by [`bdb_instance_builder_admit`].
+pub struct bdb_instance_builder {
+    builder: InstanceBuilder<SchemaDescriptor>,
+    descriptor: SchemaDescriptor,
+}
+
+/// Opaque admitted heap instance.
+pub struct bdb_owned_instance {
+    instance: OwnedInstance<SchemaDescriptor>,
+    descriptor: SchemaDescriptor,
+}
+
+/// Borrowed query surface, valid only during the callback that minted it.
+pub struct bdb_instance_ref {
+    kind: u8,
+    ptr: AtomicPtr<c_void>,
+    engine: Option<Arc<Engine>>,
+    alive: AtomicBool,
+}
+
+/// Generation witness: cloneable evidence. A callback argument is borrowed
+/// and invalidated when the callback returns. [`bdb_witness_retain`] clones
+/// an owning handle.
+pub struct bdb_witness {
+    value: Witness<SchemaDescriptor>,
+    owner: *const Engine,
+    alive: AtomicBool,
+    retained: bool,
+}
+
+/// Borrowed write-transaction capability, valid only inside the write
+/// callback.
+pub struct bdb_tx_ref {
+    tx: AtomicPtr<c_void>,
+    db: AtomicPtr<c_void>,
+    alive: AtomicBool,
+    in_op: AtomicBool,
+}
+
+/// 64 lowercase hex chars of the store's schema fingerprint.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_fingerprint {
     pub hex: [u8; 64],
 }
 
-/// A borrowed snapshot capability, valid ONLY inside the read callback it
-/// was passed to (§16). The struct lives in a heap slot on [`bdb_db`] so
-/// a stashed C pointer remains a real object after the callback: every
-/// use re-checks `alive`, and a stale ref answers `BDB_STATUS_MISUSE`
-/// instead of being replayed or use-after-freeing a stack frame.
-pub struct bdb_snapshot_ref {
-    /// `*const Snapshot<'_, SchemaDescriptor>`, lifetime erased — valid
-    /// exactly while `alive` holds. Nulled on invalidate.
-    snap: AtomicPtr<c_void>,
-    alive: AtomicBool,
+/// Facts consumed vs facts that changed the in-memory final-state view.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_mutation_report {
+    pub submitted: u64,
+    pub changed: u64,
 }
 
-/// A borrowed write-transaction capability, valid ONLY inside the write
-/// callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
-/// its engine pointer so `bdb_tx_reserve` can resolve fresh fields without
-/// a second handle argument. `in_op` makes `transaction()` exclusive
-/// across threads for the duration of one `bdb_tx_*` entry.
-pub struct bdb_tx_ref {
-    /// `*mut WriteTx<'_, SchemaDescriptor>`, lifetime erased — valid
-    /// exactly while `alive` holds. Nulled on invalidate.
-    tx: AtomicPtr<c_void>,
-    /// `*const Engine` — the same handle's engine, for `fresh_field`.
-    db: AtomicPtr<c_void>,
-    alive: AtomicBool,
-    in_op: AtomicBool,
+/// Tagged fresh-id range. Empty is the tag, never `{0, 0}`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum bdb_fresh_range_tag {
+    Empty = 0,
+    NonEmpty = 1,
 }
 
-/// The owned row carrier for scans and point reads: engine values copied
-/// out whole (one crossing), decoded cell by cell on the host. Views handed
-/// out by [`bdb_row_set_get`] borrow this carrier and die with it.
-/// Arity is a property of the set (the relation's width), not of a row
-/// index — inbound collections are already rectangular.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_fresh_range {
+    pub tag: bdb_fresh_range_tag,
+    pub start: u64,
+    pub end_exclusive: u64,
+}
+
+/// Admission discriminant. Zero is the documented empty/uninitialized
+/// state and is never returned with `BDB_STATUS_OK`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum bdb_admission_tag {
+    Empty = 0,
+    Accepted = 1,
+    Rejected = 2,
+    Moved = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_moved_generations {
+    pub witnessed: u64,
+    pub current: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union bdb_instance_admission_value {
+    pub accepted: *mut bdb_owned_instance,
+    pub rejected: *mut bdb_violations,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_instance_admission {
+    pub tag: bdb_admission_tag,
+    pub value: bdb_instance_admission_value,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union bdb_db_admission_value {
+    pub accepted: *mut bdb_db,
+    pub rejected: *mut bdb_violations,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_db_admission {
+    pub tag: bdb_admission_tag,
+    pub value: bdb_db_admission_value,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union bdb_write_admission_value {
+    pub accepted_generation: u64,
+    pub rejected: *mut bdb_violations,
+    pub moved: bdb_moved_generations,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_write_admission {
+    pub tag: bdb_admission_tag,
+    pub value: bdb_write_admission_value,
+}
+
+/// Owned row carrier for scans and point reads.
 pub struct bdb_row_set {
     rows: Vec<Vec<Value>>,
     arity: usize,
@@ -105,119 +193,186 @@ impl bdb_row_set {
     }
 }
 
-/// Facts consumed vs facts that changed the in-memory final-state view.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct bdb_mutation_report {
-    pub submitted: u64,
-    pub changed: u64,
-}
+/// Store-read callback: instance + borrowed witness.
+pub type bdb_db_read_callback = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        instance: *const bdb_instance_ref,
+        witness: *const bdb_witness,
+    ) -> u32,
+>;
 
-/// Wire encoding of a fresh-id range from one `bdb_tx_reserve`.
-/// Empty is `{ start: 0, end_exclusive: 0 }` **at this boundary only** —
-/// `start` is not a minted id when `start == end_exclusive`. Hosts must
-/// not treat 0 as minted on empty (0 is also the first legal minted id).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct bdb_fresh_range {
-    pub start: u64,
-    pub end_exclusive: u64,
-}
+/// Heap-instance callback: the same query surface, no witness.
+pub type bdb_owned_instance_read_callback = Option<
+    unsafe extern "C" fn(context: *mut c_void, instance: *const bdb_instance_ref) -> u32,
+>;
 
-/// Engine [`bumbledb::FreshRange`] → C wire. Empty stays `{0, 0}` here;
-/// that encoding is not the engine type. `start` is a minted id only on
-/// the nonempty arm.
+pub type bdb_write_callback =
+    Option<unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32>;
+
 fn fresh_range_wire(range: bumbledb::FreshRange<u64>) -> bdb_fresh_range {
     match range {
         bumbledb::FreshRange::Empty => bdb_fresh_range {
+            tag: bdb_fresh_range_tag::Empty,
             start: 0,
             end_exclusive: 0,
         },
         bumbledb::FreshRange::NonEmpty { start, count } => bdb_fresh_range {
+            tag: bdb_fresh_range_tag::NonEmpty,
             start,
             end_exclusive: start + count.get(),
         },
     }
 }
 
-/// The read callback: synchronous, on the calling thread, with a
-/// snapshot ref valid only until it returns. The return is an integer
-/// tag (`bdb_callback_control`); unknown values are `BDB_STATUS_MISUSE`.
-/// Invoked directly from Rust. A C++ exception through this function is
-/// unsupported.
-pub type bdb_read_callback =
-    Option<unsafe extern "C" fn(context: *mut c_void, snapshot: *const bdb_snapshot_ref) -> u32>;
-
-/// The write callback: synchronous, on the calling thread, with a tx ref
-/// valid only until it returns. `Ok` commits the delta (the engine judges
-/// dependencies against the final state); `Abort` drops it — LMDB never
-/// saw a fact. Direct invoke as [`bdb_read_callback`].
-pub type bdb_write_callback =
-    Option<unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32>;
-
-// ---------------------------------------------------------------------------
-// Ref plumbing
-// ---------------------------------------------------------------------------
-
-impl bdb_snapshot_ref {
-    fn empty() -> Self {
-        Self {
-            snap: AtomicPtr::new(std::ptr::null_mut()),
-            alive: AtomicBool::new(false),
-        }
-    }
-
-    fn mint(&self, snap: &Snapshot<'_, SchemaDescriptor>) {
-        self.snap.store(
-            (&raw const *snap).cast::<c_void>().cast_mut(),
-            Ordering::Relaxed,
-        );
-        self.alive.store(true, Ordering::Release);
-    }
-
-    /// The borrowed snapshot, alive-checked. The returned lifetime is the
-    /// caller's borrow of the ref — legal because a live ref's snapshot
-    /// outlives the enclosing callback frame (module doc), and the ref
-    /// itself lives in the `bdb_db` heap slot until destroy.
-    pub(crate) fn snapshot(&self) -> BridgeResult<&Snapshot<'_, SchemaDescriptor>> {
-        if !self.alive.load(Ordering::Acquire) {
-            return Err(Fail::Misuse);
-        }
-        let ptr = self.snap.load(Ordering::Acquire);
-        if ptr.is_null() {
-            return Err(Fail::Misuse);
-        }
-        #[expect(
-            unsafe_code,
-            reason = "reborrowing the engine snapshot behind the lifetime-erased \
-                      ref pointer; the alive flag plus the lexical-callback \
-                      contract carry the argument"
-        )]
-        // SAFETY: `snap` was minted from a live `&Snapshot` in
-        // `bdb_db_read`'s closure frame into this heap slot; `alive` is
-        // cleared and the pointer nulled before that frame returns, so a
-        // true flag proves the closure — and therefore the snapshot — is
-        // still on the stack of this same thread. The slot itself outlives
-        // the callback (it lives in `bdb_db`).
-        unsafe {
-            Ok(&*ptr.cast::<Snapshot<'_, SchemaDescriptor>>())
-        }
-    }
-
-    fn invalidate(&self) {
-        self.alive.store(false, Ordering::Release);
-        self.snap.store(std::ptr::null_mut(), Ordering::Release);
+fn empty_db_admission() -> bdb_db_admission {
+    bdb_db_admission {
+        tag: bdb_admission_tag::Empty,
+        value: bdb_db_admission_value {
+            accepted: std::ptr::null_mut(),
+        },
     }
 }
 
-/// Clears the snapshot slot on every exit from the read closure,
-/// including a panic inside the C callback.
-struct InvalidateSnapshot<'a>(&'a bdb_snapshot_ref);
-
-impl Drop for InvalidateSnapshot<'_> {
-    fn drop(&mut self) {
-        self.0.invalidate();
+fn empty_instance_admission() -> bdb_instance_admission {
+    bdb_instance_admission {
+        tag: bdb_admission_tag::Empty,
+        value: bdb_instance_admission_value {
+            accepted: std::ptr::null_mut(),
+        },
     }
+}
+
+fn empty_write_admission() -> bdb_write_admission {
+    bdb_write_admission {
+        tag: bdb_admission_tag::Empty,
+        value: bdb_write_admission_value {
+            accepted_generation: 0,
+        },
+    }
+}
+
+fn assemble(db: Engine, descriptor: SchemaDescriptor) -> bdb_db {
+    bdb_db {
+        db: Arc::new(db),
+        descriptor,
+        phase: AtomicU32::new(0),
+        retired: Mutex::new(Vec::new()),
+    }
+}
+
+fn descriptor_of(spec: *const bdb_schema_spec) -> BridgeResult<SchemaDescriptor> {
+    let spec = schema_spec_in(ref_in(spec)?)?;
+    spec.descriptor()
+        .map_err(|error| fail_schema_message(&error.to_string()))
+}
+
+fn hex_fingerprint(descriptor: &SchemaDescriptor) -> BridgeResult<bdb_fingerprint> {
+    let schema = descriptor
+        .clone()
+        .validate()
+        .map_err(|error| fail_engine(Error::Schema(error)))?;
+    let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
+    let mut hex = [0u8; 64];
+    for (pair, byte) in hex.as_chunks_mut::<2>().0.iter_mut().zip(fingerprint.0) {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        pair[0] = DIGITS[usize::from(byte >> 4)];
+        pair[1] = DIGITS[usize::from(byte & 0x0f)];
+    }
+    Ok(bdb_fingerprint { hex })
+}
+
+fn retire(handle: &bdb_db, slot: Retired) {
+    handle
+        .retired
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(slot);
+}
+
+fn phase_readers(phase: u32) -> u32 {
+    phase & READERS_MASK
+}
+
+fn phase_writing(phase: u32) -> bool {
+    phase & WRITING != 0
+}
+
+struct ReadGuard<'a>(&'a AtomicU32);
+
+impl Drop for ReadGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
+}
+
+fn enter_read(phase: &AtomicU32) -> BridgeResult<ReadGuard<'_>> {
+    loop {
+        let cur = phase.load(Ordering::Acquire);
+        if phase_writing(cur) {
+            return Err(fail_busy(
+                "read while a write callback is live on this db handle",
+            ));
+        }
+        let readers = phase_readers(cur);
+        let next = readers
+            .checked_add(1)
+            .filter(|n| *n <= READERS_MASK)
+            .ok_or_else(|| fail_busy("reader count overflow on this db handle"))?;
+        if phase
+            .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(ReadGuard(phase));
+        }
+    }
+}
+
+struct WriteGuard<'a>(&'a AtomicU32);
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .fetch_and(!(WRITING | WRITING_BUSY), Ordering::Release);
+    }
+}
+
+fn enter_write(phase: &AtomicU32) -> BridgeResult<WriteGuard<'_>> {
+    loop {
+        let cur = phase.load(Ordering::Acquire);
+        if phase_writing(cur) {
+            return Err(fail_busy(
+                "re-entrant write on this db handle (the engine is \
+                 single-writer and non-reentrant; finish the enclosing write first)",
+            ));
+        }
+        if phase
+            .compare_exchange_weak(cur, cur | WRITING, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(WriteGuard(phase));
+        }
+    }
+}
+
+fn handle_busy(handle: &bdb_db) -> bool {
+    let phase = handle.phase.load(Ordering::Acquire);
+    phase_readers(phase) != 0 || phase_writing(phase)
+}
+
+fn callback_interrupt() -> Error {
+    Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted))
+}
+
+fn is_callback_interrupt(error: &Error) -> bool {
+    matches!(error, Error::Io(failure) if failure.kind == std::io::ErrorKind::Interrupted)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    Proceed,
+    Abort,
+    Misuse,
 }
 
 struct InOpReset<'a>(&'a AtomicBool);
@@ -228,29 +383,212 @@ impl Drop for InOpReset<'_> {
     }
 }
 
-impl bdb_tx_ref {
-    fn empty() -> Self {
+impl bdb_instance_ref {
+    fn store(engine: Arc<Engine>, snap: &ReadInstance<'_, SchemaDescriptor>) -> Self {
         Self {
-            tx: AtomicPtr::new(std::ptr::null_mut()),
-            db: AtomicPtr::new(std::ptr::null_mut()),
-            alive: AtomicBool::new(false),
+            kind: KIND_STORE,
+            ptr: AtomicPtr::new((&raw const *snap).cast::<c_void>().cast_mut()),
+            engine: Some(engine),
+            alive: AtomicBool::new(true),
+        }
+    }
+
+    fn heap(instance: &OwnedInstance<SchemaDescriptor>) -> Self {
+        Self {
+            kind: KIND_HEAP,
+            ptr: AtomicPtr::new((&raw const *instance).cast::<c_void>().cast_mut()),
+            engine: None,
+            alive: AtomicBool::new(true),
+        }
+    }
+
+    fn invalidate(&self) {
+        self.alive.store(false, Ordering::Release);
+        self.ptr.store(std::ptr::null_mut(), Ordering::Release);
+    }
+
+    fn require_live(&self) -> BridgeResult<()> {
+        if self.alive.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(Fail::Misuse)
+        }
+    }
+
+    fn with_store<R>(
+        &self,
+        body: impl FnOnce(&ReadInstance<'_, SchemaDescriptor>) -> BridgeResult<R>,
+    ) -> BridgeResult<R> {
+        self.require_live()?;
+        if self.kind != KIND_STORE {
+            return Err(Fail::Misuse);
+        }
+        let ptr = self.ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return Err(Fail::Misuse);
+        }
+        #[expect(
+            unsafe_code,
+            reason = "reborrowing the engine ReadInstance behind the lifetime-erased ref"
+        )]
+        // SAFETY: minted from a live `&ReadInstance` in the callback frame;
+        // `alive` is cleared and the pointer nulled before that frame returns.
+        unsafe {
+            body(&*ptr.cast::<ReadInstance<'_, SchemaDescriptor>>())
+        }
+    }
+
+    fn with_heap<R>(
+        &self,
+        body: impl FnOnce(&OwnedInstance<SchemaDescriptor>) -> BridgeResult<R>,
+    ) -> BridgeResult<R> {
+        self.require_live()?;
+        if self.kind != KIND_HEAP {
+            return Err(Fail::Misuse);
+        }
+        let ptr = self.ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return Err(Fail::Misuse);
+        }
+        #[expect(
+            unsafe_code,
+            reason = "reborrowing the OwnedInstance behind the lifetime-erased ref"
+        )]
+        // SAFETY: minted from a live `&OwnedInstance` in `bdb_owned_instance_read`;
+        // `alive` is cleared before that call returns. The owned handle outlives
+        // the callback (C cannot destroy it during the callback without
+        // racing the same thread).
+        unsafe {
+            body(&*ptr.cast::<OwnedInstance<SchemaDescriptor>>())
+        }
+    }
+
+    fn contains_dyn(&self, relation: RelationId, row: &[Value]) -> BridgeResult<bool> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| snap.contains_dyn(relation, row).map_err(fail_engine)),
+            KIND_HEAP => self.with_heap(|inst| inst.contains_dyn(relation, row).map_err(fail_engine)),
+            _ => Err(Fail::Misuse),
+        }
+    }
+
+    fn get_dyn(
+        &self,
+        relation: RelationId,
+        key: StatementId,
+        keys: &[Value],
+    ) -> BridgeResult<Option<Vec<Value>>> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| {
+                snap.get_dyn(relation, key, keys).map_err(fail_engine)
+            }),
+            KIND_HEAP => self.with_heap(|inst| {
+                inst.get_dyn(relation, key, keys).map_err(fail_engine)
+            }),
+            _ => Err(Fail::Misuse),
+        }
+    }
+
+    fn scan(&self, relation: RelationId) -> BridgeResult<Vec<Vec<Value>>> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| collect_scan(snap.scan(relation))),
+            KIND_HEAP => self.with_heap(|inst| collect_scan(inst.scan(relation))),
+            _ => Err(Fail::Misuse),
+        }
+    }
+
+    pub(crate) fn execute(
+        &self,
+        prepared: &mut bumbledb::PreparedQuery<SchemaDescriptor>,
+        params: &[bumbledb::ParamArg<'_>],
+        answers: &mut bumbledb::Answers,
+    ) -> BridgeResult<()> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| {
+                Instance::execute(snap, prepared, params, answers).map_err(fail_engine)
+            }),
+            KIND_HEAP => self.with_heap(|inst| {
+                Instance::execute(inst, prepared, params, answers).map_err(fail_engine)
+            }),
+            _ => Err(Fail::Misuse),
+        }
+    }
+
+    fn prepare(&self, query: &bumbledb::Query) -> BridgeResult<bumbledb::PreparedQuery<SchemaDescriptor>> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| snap.prepare(query).map_err(fail_engine)),
+            KIND_HEAP => self.with_heap(|inst| inst.prepare(query).map_err(fail_engine)),
+            _ => Err(Fail::Misuse),
+        }
+    }
+
+    fn row_count(&self, relation: RelationId) -> BridgeResult<u64> {
+        match self.kind {
+            KIND_STORE => self.with_store(|snap| snap.row_count(relation).map_err(fail_engine)),
+            KIND_HEAP => self.with_heap(|inst| inst.row_count(relation).map_err(fail_engine)),
+            _ => Err(Fail::Misuse),
+        }
+    }
+}
+
+fn collect_scan(
+    iter: bumbledb::Result<impl Iterator<Item = bumbledb::Result<Vec<Value>>>>,
+) -> BridgeResult<Vec<Vec<Value>>> {
+    let iter = iter.map_err(fail_engine)?;
+    let mut rows = Vec::new();
+    for row in iter {
+        rows.push(row.map_err(fail_engine)?);
+    }
+    Ok(rows)
+}
+
+impl bdb_witness {
+    fn borrowed_from(db: &bdb_db, value: Witness<SchemaDescriptor>) -> Self {
+        Self {
+            value,
+            owner: Arc::as_ptr(&db.db),
+            alive: AtomicBool::new(true),
+            retained: false,
+        }
+    }
+
+    fn retained_from(src: &Self) -> Self {
+        Self {
+            value: src.value.clone(),
+            owner: src.owner,
+            alive: AtomicBool::new(true),
+            retained: true,
+        }
+    }
+
+    fn invalidate(&self) {
+        self.alive.store(false, Ordering::Release);
+    }
+
+    fn live_value(&self) -> BridgeResult<&Witness<SchemaDescriptor>> {
+        if self.alive.load(Ordering::Acquire) {
+            Ok(&self.value)
+        } else {
+            Err(Fail::Misuse)
+        }
+    }
+}
+
+impl bdb_tx_ref {
+    fn mint(tx: &mut WriteTx<'_, SchemaDescriptor>, db: &Engine) -> Self {
+        Self {
+            tx: AtomicPtr::new((&raw mut *tx).cast::<c_void>()),
+            db: AtomicPtr::new((&raw const *db).cast::<c_void>().cast_mut()),
+            alive: AtomicBool::new(true),
             in_op: AtomicBool::new(false),
         }
     }
 
-    fn mint(&self, tx: &mut WriteTx<'_, SchemaDescriptor>, db: &Engine) {
-        self.tx
-            .store((&raw mut *tx).cast::<c_void>(), Ordering::Relaxed);
-        self.db.store(
-            (&raw const *db).cast::<c_void>().cast_mut(),
-            Ordering::Relaxed,
-        );
-        self.alive.store(true, Ordering::Release);
+    fn invalidate(&self) {
+        self.alive.store(false, Ordering::Release);
+        self.tx.store(std::ptr::null_mut(), Ordering::Release);
+        self.db.store(std::ptr::null_mut(), Ordering::Release);
     }
 
-    /// Exclusive claim for one `bdb_tx_*` entry: two threads cannot both
-    /// `transaction()` at once. Sequential same-thread calls are fine
-    /// (the previous entry's `_op` drops before the next).
     fn enter_op(&self) -> BridgeResult<InOpReset<'_>> {
         if !self.alive.load(Ordering::Acquire) {
             return Err(Fail::Misuse);
@@ -261,13 +599,9 @@ impl bdb_tx_ref {
         Ok(InOpReset(&self.in_op))
     }
 
-    /// The borrowed transaction, alive-checked. Caller must hold
-    /// [`Self::enter_op`]'s guard so this `&mut` is exclusive.
     #[expect(
         clippy::mut_from_ref,
-        reason = "the FFI reborrow: the mutability is the pointee's (the write \
-                  transaction the ref erases), not the ref struct's — `in_op` \
-                  makes it exclusive for the duration of the entry"
+        reason = "the FFI reborrow: mutability is the pointee's; `in_op` is exclusive"
     )]
     fn transaction(&self) -> BridgeResult<&mut WriteTx<'_, SchemaDescriptor>> {
         if !self.alive.load(Ordering::Acquire) {
@@ -279,16 +613,10 @@ impl bdb_tx_ref {
         }
         #[expect(
             unsafe_code,
-            reason = "reborrowing the engine write transaction behind the \
-                      lifetime-erased ref pointer; the alive flag plus `in_op` \
-                      exclusive carry the argument"
+            reason = "reborrowing the engine write transaction behind the lifetime-erased ref"
         )]
-        // SAFETY: `tx` was minted from the live `&mut WriteTx` in the
-        // write closure frame into this heap slot; `alive` is cleared and
-        // the pointer nulled before that frame returns. `enter_op` won
-        // the exclusive, so this is the only `&mut WriteTx` for the
-        // duration of the entry (including across threads that captured
-        // the C pointer).
+        // SAFETY: minted from the live `&mut WriteTx` in the write closure;
+        // `alive` is cleared before that frame returns. `enter_op` won exclusive.
         unsafe {
             Ok(&mut *ptr.cast::<WriteTx<'_, SchemaDescriptor>>())
         }
@@ -304,112 +632,47 @@ impl bdb_tx_ref {
         }
         #[expect(
             unsafe_code,
-            reason = "reborrowing the engine handle behind the lifetime-erased ref \
-                      pointer; same lexical argument as `transaction`"
+            reason = "reborrowing the engine handle behind the lifetime-erased ref"
         )]
-        // SAFETY: `db` points at the `Engine` owned by the `bdb_db` handle
-        // that spawned this write; destroy of that handle during its own
-        // callback is refused (typed), so the engine outlives the write
-        // call.
+        // SAFETY: `db` points at the `Engine` owned by the `bdb_db` that spawned
+        // this write; destroy during the callback is refused.
         unsafe {
             Ok(&*ptr.cast::<Engine>())
         }
     }
-
-    fn invalidate(&self) {
-        self.alive.store(false, Ordering::Release);
-        self.tx.store(std::ptr::null_mut(), Ordering::Release);
-        self.db.store(std::ptr::null_mut(), Ordering::Release);
-    }
 }
 
-/// Clears the tx slot on every exit from the write closure.
-struct InvalidateTx<'a>(&'a bdb_tx_ref);
-
-impl Drop for InvalidateTx<'_> {
-    fn drop(&mut self) {
-        self.0.invalidate();
-    }
-}
-
-/// The one abort sentinel: the error the bridge returns from the engine
-/// closure to make it drop the delta when the C callback said `Abort`.
-/// Never crosses the boundary — the `aborted` flag beside it decides the
-/// status.
-fn abort_sentinel() -> Error {
-    Error::Io(std::io::Error::other("bumbledb-c callback abort"))
-}
-
-/// The bridge-level writer guard (§17): set for the duration of
-/// `write`/`write_from`, cleared on every exit by drop.
-struct InWriteReset<'a>(&'a AtomicBool);
-
-impl Drop for InWriteReset<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
-fn enter_write(handle: &bdb_db) -> BridgeResult<InWriteReset<'_>> {
-    if handle.in_write.swap(true, Ordering::AcqRel) {
-        return Err(fail_locked(
-            "re-entrant write on this db handle (the engine is \
-             single-writer and non-reentrant; finish the enclosing write first)",
-        ));
-    }
-    Ok(InWriteReset(&handle.in_write))
-}
-
-struct InReadReset<'a>(&'a AtomicBool);
-
-impl Drop for InReadReset<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
-fn enter_read(handle: &bdb_db) -> BridgeResult<InReadReset<'_>> {
-    if handle.in_write.load(Ordering::Acquire) {
-        return Err(fail_locked(
-            "re-entrant read on this db handle (a write callback is live; \
-             finish it first)",
-        ));
-    }
-    if handle.in_read.swap(true, Ordering::AcqRel) {
-        return Err(fail_locked(
-            "re-entrant read on this db handle (one live read callback per \
-             handle — the snapshot slot is exclusive)",
-        ));
-    }
-    Ok(InReadReset(&handle.in_read))
-}
-
-fn handle_in_callback(handle: &bdb_db) -> bool {
-    handle.in_read.load(Ordering::Acquire) || handle.in_write.load(Ordering::Acquire)
-}
-
-/// Invokes a caller callback directly, then range-checks the integer
-/// control tag. No C++ trampoline: the library links with no C++ runtime.
 fn call_read_callback(
-    callback: bdb_read_callback,
+    callback: bdb_db_read_callback,
     context: *mut c_void,
-    snapshot: &bdb_snapshot_ref,
+    instance: &bdb_instance_ref,
+    witness: &bdb_witness,
 ) -> BridgeResult<bdb_callback_control> {
     let callback = callback.ok_or(Fail::Misuse)?;
     #[expect(
         unsafe_code,
-        reason = "invoking the caller's extern C function; the header contract \
-                  makes a non-null callback a valid function of this exact \
-                  signature"
+        reason = "invoking the caller's extern C function"
     )]
-    // SAFETY: non-null was just checked; the ref argument is the db's
-    // heap slot, live for the call. A C++ throw through `callback` is
-    // unsupported (76-c-abi.md).
-    let raw = unsafe { callback(context, snapshot) };
+    // SAFETY: non-null was just checked; the ref arguments are heap slots
+    // live for the call. A C++ throw through `callback` is unsupported.
+    let raw = unsafe { callback(context, instance, witness) };
     tag_in(raw)
 }
 
-/// [`call_read_callback`]'s write twin.
+fn call_owned_callback(
+    callback: bdb_owned_instance_read_callback,
+    context: *mut c_void,
+    instance: &bdb_instance_ref,
+) -> BridgeResult<bdb_callback_control> {
+    let callback = callback.ok_or(Fail::Misuse)?;
+    #[expect(
+        unsafe_code,
+        reason = "invoking the caller's extern C function"
+    )]
+    let raw = unsafe { callback(context, instance) };
+    tag_in(raw)
+}
+
 fn call_write_callback(
     callback: bdb_write_callback,
     context: *mut c_void,
@@ -418,54 +681,27 @@ fn call_write_callback(
     let callback = callback.ok_or(Fail::Misuse)?;
     #[expect(
         unsafe_code,
-        reason = "invoking the caller's extern C function; the header contract \
-                  makes a non-null callback a valid function of this exact \
-                  signature"
+        reason = "invoking the caller's extern C function"
     )]
-    // SAFETY: as `call_read_callback`.
     let raw = unsafe { callback(context, (&raw const *transaction).cast_mut()) };
     tag_in(raw)
+}
+
+fn exit_of(control: &BridgeResult<bdb_callback_control>) -> Exit {
+    match control {
+        Ok(bdb_callback_control::Ok) => Exit::Proceed,
+        Ok(bdb_callback_control::Abort) => Exit::Abort,
+        Err(_) => Exit::Misuse,
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Store lifecycle
 // ---------------------------------------------------------------------------
 
-fn open_with(
-    path: bdb_string_view,
-    spec: *const bdb_schema_spec,
-    out_db: *mut *mut bdb_db,
-    open: impl FnOnce(&std::path::Path, SchemaDescriptor) -> bumbledb::Result<Engine>,
-) -> BridgeResult<bdb_status> {
-    require_out(out_db)?;
-    let path = path.as_str("store path")?;
-    let spec = schema_spec_in(ref_in(spec)?)?;
-    // The canonical lowering: name resolution, canonical-utterance rules,
-    // coherence — all the engine's (§13). Every issue rides the message.
-    let descriptor = spec.descriptor().map_err(|error| {
-        Fail::Error(Box::new(bdb_error::synthesized(
-            bdb_error_kind::Schema,
-            format!("bumbledb: {error}"),
-        )))
-    })?;
-    let db = open(std::path::Path::new(path), descriptor.clone())
-        .map_err(|error| fail_engine(error, Some(&descriptor)))?;
-    box_out_to(
-        out_db,
-        bdb_db {
-            db: Arc::new(db),
-            descriptor,
-            in_write: AtomicBool::new(false),
-            in_read: AtomicBool::new(false),
-            snapshot_slot: bdb_snapshot_ref::empty(),
-            tx_slot: bdb_tx_ref::empty(),
-        },
-    )?;
-    Ok(bdb_status::Ok)
-}
-
-/// Creates a fresh DURABLE store at `path` from a schema spec. Schema
-/// resolution/validation failures are `BDB_ERROR_KIND_SCHEMA`.
+/// Creates a fresh DURABLE store. Empty that does not hold is
+/// `BDB_ADMISSION_REJECTED` with no directory. `BDB_STATUS_OK` always
+/// fills `out_admission` (never the empty tag).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -474,14 +710,47 @@ fn open_with(
 pub extern "C" fn bdb_db_create(
     path: bdb_string_view,
     spec: *const bdb_schema_spec,
-    out_db: *mut *mut bdb_db,
+    out_admission: *mut bdb_db_admission,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
-    guard(out_error, || open_with(path, spec, out_db, Db::create))
+    guard(out_error, || {
+        require_out(out_admission)?;
+        out(out_admission, empty_db_admission())?;
+        let path = path.as_str("store path")?;
+        let descriptor = descriptor_of(spec)?;
+        match Db::create(std::path::Path::new(path), descriptor.clone()).map_err(fail_engine)? {
+            Admission::Accepted(db) => {
+                out(
+                    out_admission,
+                    bdb_db_admission {
+                        tag: bdb_admission_tag::Accepted,
+                        value: bdb_db_admission_value {
+                            accepted: box_out(assemble(db, descriptor)),
+                        },
+                    },
+                )?;
+            }
+            Admission::Rejected(violations) => {
+                out(
+                    out_admission,
+                    bdb_db_admission {
+                        tag: bdb_admission_tag::Rejected,
+                        value: bdb_db_admission_value {
+                            rejected: box_out(bdb_violations::from_engine(
+                                &violations,
+                                &descriptor,
+                            )),
+                        },
+                    },
+                )?;
+            }
+        }
+        Ok(bdb_status::Ok)
+    })
 }
 
-/// Opens an existing durable store, verifying format version, store
-/// kind, and schema fingerprint (`BDB_ERROR_KIND_SCHEMA_MISMATCH` on drift).
+/// Opens an existing durable store. No admission union — format-8 open
+/// carries admission provenance.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -493,12 +762,19 @@ pub extern "C" fn bdb_db_open(
     out_db: *mut *mut bdb_db,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
-    guard(out_error, || open_with(path, spec, out_db, Db::open))
+    guard(out_error, || {
+        require_out(out_db)?;
+        let path = path.as_str("store path")?;
+        let descriptor = descriptor_of(spec)?;
+        let db = Db::open(std::path::Path::new(path), descriptor.clone()).map_err(fail_engine)?;
+        box_out_to(out_db, assemble(db, descriptor))?;
+        Ok(bdb_status::Ok)
+    })
 }
 
-/// Opens or initializes an EPHEMERAL store at `path` (`MDB_NOSYNC`; a
-/// machine crash loses the store by the kind's own claim — every other
-/// semantic is identical to a durable store).
+/// Opens or initializes an EPHEMERAL store. Fresh initialize and wipe
+/// complete-admit empty; an existing admitted format-8 store reopens as
+/// accepted.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -507,24 +783,77 @@ pub extern "C" fn bdb_db_open(
 pub extern "C" fn bdb_db_ephemeral(
     path: bdb_string_view,
     spec: *const bdb_schema_spec,
+    out_admission: *mut bdb_db_admission,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_admission)?;
+        out(out_admission, empty_db_admission())?;
+        let path = path.as_str("store path")?;
+        let descriptor = descriptor_of(spec)?;
+        match Db::ephemeral(std::path::Path::new(path), descriptor.clone()).map_err(fail_engine)? {
+            Admission::Accepted(db) => {
+                out(
+                    out_admission,
+                    bdb_db_admission {
+                        tag: bdb_admission_tag::Accepted,
+                        value: bdb_db_admission_value {
+                            accepted: box_out(assemble(db, descriptor)),
+                        },
+                    },
+                )?;
+            }
+            Admission::Rejected(violations) => {
+                out(
+                    out_admission,
+                    bdb_db_admission {
+                        tag: bdb_admission_tag::Rejected,
+                        value: bdb_db_admission_value {
+                            rejected: box_out(bdb_violations::from_engine(
+                                &violations,
+                                &descriptor,
+                            )),
+                        },
+                    },
+                )?;
+            }
+        }
+        Ok(bdb_status::Ok)
+    })
+}
+
+/// Raw-copies an admitted heap instance into a new durable store.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_db_from_instance(
+    path: bdb_string_view,
+    instance: *const bdb_owned_instance,
     out_db: *mut *mut bdb_db,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
-    guard(out_error, || open_with(path, spec, out_db, Db::ephemeral))
+    guard(out_error, || {
+        require_out(out_db)?;
+        let path = path.as_str("store path")?;
+        let instance = ref_in(instance)?;
+        let db = Db::from_instance(std::path::Path::new(path), &instance.instance)
+            .map_err(fail_engine)?;
+        box_out_to(out_db, assemble(db, instance.descriptor.clone()))?;
+        Ok(bdb_status::Ok)
+    })
 }
 
-/// Destroys the handle: prepared queries keep their own engine reference
-/// (the `Arc` below the boundary), so the environment — and its exclusive
-/// lock — releases when the last of them is destroyed.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
+    guard_statusless(|| {
         let handle = ref_in(db)?;
-        if handle_in_callback(handle) {
+        if handle_busy(handle) {
             return Err(Fail::Misuse);
         }
         drop(box_in(db)?);
@@ -532,13 +861,6 @@ pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
     })
 }
 
-/// The open store's schema fingerprint, 64 lowercase hex chars — the
-/// cross-host identity readback (the Node bridge's
-/// `dbFingerprint`, verbatim): `create` stored this exact value and
-/// `open` verified it, so the descriptor's fingerprint IS the store's.
-/// Dumb-bridge legal: validation and blake3 are the ENGINE's own
-/// functions re-run on the already-admitted descriptor; the bridge only
-/// hex-encodes the 32 bytes.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -551,20 +873,235 @@ pub extern "C" fn bdb_db_fingerprint(
 ) -> bdb_status {
     guard(out_error, || {
         let handle = ref_in(db)?;
-        let schema = handle
-            .descriptor
-            .clone()
-            .validate()
-            .map_err(|error| fail_engine(Error::Schema(error), Some(&handle.descriptor)))?;
-        let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-        let mut hex = [0u8; 64];
-        for (pair, byte) in hex.as_chunks_mut::<2>().0.iter_mut().zip(fingerprint.0) {
-            const DIGITS: &[u8; 16] = b"0123456789abcdef";
-            pair[0] = DIGITS[usize::from(byte >> 4)];
-            pair[1] = DIGITS[usize::from(byte & 0x0f)];
-        }
-        out(out_fingerprint, bdb_fingerprint { hex })?;
+        out(out_fingerprint, hex_fingerprint(&handle.descriptor)?)?;
         Ok(bdb_status::Ok)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Builder / owned instance
+// ---------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_new(
+    spec: *const bdb_schema_spec,
+    out_builder: *mut *mut bdb_instance_builder,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_builder)?;
+        let descriptor = descriptor_of(spec)?;
+        let builder =
+            InstanceBuilder::new(descriptor.clone()).map_err(fail_engine)?;
+        box_out_to(
+            out_builder,
+            bdb_instance_builder {
+                builder,
+                descriptor,
+            },
+        )?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_load(
+    builder: *mut bdb_instance_builder,
+    relation: u32,
+    values: *const bdb_value,
+    value_count: usize,
+    row_count: usize,
+    out_report: *mut bdb_mutation_report,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_report)?;
+        let rows = rows_in(values, value_count, row_count)?;
+        let report = mut_in(builder)?
+            .builder
+            .load_dyn(RelationId(relation), rows)
+            .map_err(fail_engine)?;
+        out(
+            out_report,
+            bdb_mutation_report {
+                submitted: report.submitted(),
+                changed: report.changed(),
+            },
+        )?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_delete(
+    builder: *mut bdb_instance_builder,
+    relation: u32,
+    values: *const bdb_value,
+    value_count: usize,
+    row_count: usize,
+    out_report: *mut bdb_mutation_report,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_report)?;
+        let rows = rows_in(values, value_count, row_count)?;
+        let report = mut_in(builder)?
+            .builder
+            .delete_dyn(RelationId(relation), rows)
+            .map_err(fail_engine)?;
+        out(
+            out_report,
+            bdb_mutation_report {
+                submitted: report.submitted(),
+                changed: report.changed(),
+            },
+        )?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_reserve(
+    builder: *mut bdb_instance_builder,
+    relation: u32,
+    field: u16,
+    count: u64,
+    out_range: *mut bdb_fresh_range,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_range)?;
+        let builder = &mut mut_in(builder)?.builder;
+        let fresh = builder
+            .fresh_field(RelationId(relation), FieldId(field))
+            .map_err(|error| fail_engine(Error::FactShape(error)))?;
+        let range = builder.reserve_at(fresh, count).map_err(fail_engine)?;
+        out(out_range, fresh_range_wire(range))?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+/// Consumes the builder on every outcome and nulls the caller's pointer.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_admit(
+    builder: *mut *mut bdb_instance_builder,
+    out_admission: *mut bdb_instance_admission,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_admission)?;
+        out(out_admission, empty_instance_admission())?;
+        let slot = mut_in(builder)?;
+        let handle = box_in(*slot)?;
+        *slot = std::ptr::null_mut();
+        match handle.builder.admit().map_err(fail_engine)? {
+            Admission::Accepted(instance) => {
+                out(
+                    out_admission,
+                    bdb_instance_admission {
+                        tag: bdb_admission_tag::Accepted,
+                        value: bdb_instance_admission_value {
+                            accepted: box_out(bdb_owned_instance {
+                                instance,
+                                descriptor: handle.descriptor,
+                            }),
+                        },
+                    },
+                )?;
+            }
+            Admission::Rejected(violations) => {
+                out(
+                    out_admission,
+                    bdb_instance_admission {
+                        tag: bdb_admission_tag::Rejected,
+                        value: bdb_instance_admission_value {
+                            rejected: box_out(bdb_violations::from_engine(
+                                &violations,
+                                &handle.descriptor,
+                            )),
+                        },
+                    },
+                )?;
+            }
+        }
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_builder_destroy(
+    builder: *mut bdb_instance_builder,
+) -> bdb_status {
+    guard_statusless(|| {
+        drop(box_in(builder)?);
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_owned_instance_destroy(
+    instance: *mut bdb_owned_instance,
+) -> bdb_status {
+    guard_statusless(|| {
+        drop(box_in(instance)?);
+        Ok(bdb_status::Ok)
+    })
+}
+
+/// Borrows an owned instance through the common [`bdb_instance_ref`]
+/// query surface.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_owned_instance_read(
+    instance: *const bdb_owned_instance,
+    callback: bdb_owned_instance_read_callback,
+    context: *mut c_void,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        let owned = ref_in(instance)?;
+        let instance_ref = Box::new(bdb_instance_ref::heap(&owned.instance));
+        let exit = exit_of(&call_owned_callback(callback, context, &instance_ref));
+        instance_ref.invalidate();
+        // The owned handle outlives this call; the ref is not stashed on a
+        // db, so keep it alive for stashed-pointer MISUSE by leaking.
+        let _ = Box::leak(instance_ref);
+        match exit {
+            Exit::Proceed => Ok(bdb_status::Ok),
+            Exit::Abort => Ok(bdb_status::Aborted),
+            Exit::Misuse => Err(Fail::Misuse),
+        }
     })
 }
 
@@ -572,10 +1109,6 @@ pub extern "C" fn bdb_db_fingerprint(
 // Lexical reads and writes
 // ---------------------------------------------------------------------------
 
-/// Runs `callback` over one consistent read snapshot (§16): the engine's
-/// `Db::read` closure model, synchronous on the calling thread. The
-/// snapshot ref is invalidated when the callback returns.
-/// `BDB_STATUS_ABORTED` when the callback returned `Abort`.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -583,86 +1116,112 @@ pub extern "C" fn bdb_db_fingerprint(
 )]
 pub extern "C" fn bdb_db_read(
     db: *const bdb_db,
-    callback: bdb_read_callback,
+    callback: bdb_db_read_callback,
     context: *mut c_void,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
         let handle = ref_in(db)?;
-        let _reader = enter_read(handle)?;
-        let mut aborted = false;
-        let mut misuse = false;
-        let result = handle.db.read(|snap| {
-            handle.snapshot_slot.mint(snap);
-            let _slot = InvalidateSnapshot(&handle.snapshot_slot);
-            let control = call_read_callback(callback, context, &handle.snapshot_slot);
-            match control {
-                Ok(bdb_callback_control::Ok) => Ok(()),
-                Ok(bdb_callback_control::Abort) => {
-                    aborted = true;
-                    Err(abort_sentinel())
-                }
-                Err(_) => {
-                    misuse = true;
-                    Err(abort_sentinel())
-                }
+        let _reader = enter_read(&handle.phase)?;
+        let exit = Cell::new(Exit::Proceed);
+        let engine = Arc::clone(&handle.db);
+        let result = engine.read(|snap| {
+            let witness_value = snap.witness()?;
+            let instance_ref = Box::new(bdb_instance_ref::store(Arc::clone(&handle.db), snap));
+            let witness = Box::new(bdb_witness::borrowed_from(handle, witness_value));
+            exit.set(exit_of(&call_read_callback(
+                callback,
+                context,
+                &instance_ref,
+                &witness,
+            )));
+            instance_ref.invalidate();
+            witness.invalidate();
+            retire(handle, Retired::Instance(instance_ref));
+            retire(handle, Retired::Witness(witness));
+            match exit.get() {
+                Exit::Proceed => Ok(()),
+                Exit::Abort | Exit::Misuse => Err(callback_interrupt()),
             }
         });
-        match result {
-            _ if misuse => Err(Fail::Misuse),
-            Ok(()) => Ok(bdb_status::Ok),
-            Err(_) if aborted => Ok(bdb_status::Aborted),
-            Err(error) => Err(fail_engine(error, Some(&handle.descriptor))),
+        match (exit.get(), result) {
+            (Exit::Misuse, _) => Err(Fail::Misuse),
+            (Exit::Abort, Ok(())) => Ok(bdb_status::Aborted),
+            (Exit::Abort, Err(error)) if is_callback_interrupt(&error) => {
+                Ok(bdb_status::Aborted)
+            }
+            (Exit::Abort | Exit::Proceed, Err(error)) => Err(fail_engine(error)),
+            (Exit::Proceed, Ok(())) => Ok(bdb_status::Ok),
         }
     })
 }
 
-/// The one write body under `bdb_db_write` / `bdb_db_write_from`.
-fn write_with(
+fn write_outcome(
     handle: &bdb_db,
     callback: bdb_write_callback,
     context: *mut c_void,
     run: impl FnOnce(
         &Engine,
         &mut dyn FnMut(&mut WriteTx<'_, SchemaDescriptor>) -> bumbledb::Result<()>,
-    ) -> bumbledb::Result<()>,
-) -> BridgeResult<bdb_status> {
-    let _writer = enter_write(handle)?;
-    let mut aborted = false;
-    let mut misuse = false;
-    let engine = &*handle.db;
+    ) -> bumbledb::Result<ConditionalWrite<()>>,
+) -> BridgeResult<(bdb_status, Option<bdb_write_admission>)> {
+    let _writer = enter_write(&handle.phase)?;
+    let exit = Cell::new(Exit::Proceed);
+    let engine = Arc::clone(&handle.db);
     let mut body = |tx: &mut WriteTx<'_, SchemaDescriptor>| -> bumbledb::Result<()> {
-        handle.tx_slot.mint(tx, engine);
-        let _slot = InvalidateTx(&handle.tx_slot);
-        let control = call_write_callback(callback, context, &handle.tx_slot);
-        match control {
-            Ok(bdb_callback_control::Ok) => Ok(()),
-            Ok(bdb_callback_control::Abort) => {
-                aborted = true;
-                Err(abort_sentinel())
-            }
-            Err(_) => {
-                misuse = true;
-                Err(abort_sentinel())
-            }
+        let tx_ref = Box::new(bdb_tx_ref::mint(tx, engine.as_ref()));
+        exit.set(exit_of(&call_write_callback(callback, context, &tx_ref)));
+        tx_ref.invalidate();
+        retire(handle, Retired::Tx(tx_ref));
+        match exit.get() {
+            Exit::Proceed => Ok(()),
+            Exit::Abort | Exit::Misuse => Err(callback_interrupt()),
         }
     };
-    let result = run(engine, &mut body);
-    match result {
-        _ if misuse => Err(Fail::Misuse),
-        Ok(()) => Ok(bdb_status::Ok),
-        Err(_) if aborted => Ok(bdb_status::Aborted),
-        Err(error) => Err(fail_engine(error, Some(&handle.descriptor))),
+    let result = run(engine.as_ref(), &mut body);
+    match (exit.get(), result) {
+        (Exit::Misuse, _) => Err(Fail::Misuse),
+        (Exit::Abort, Ok(_)) => Ok((bdb_status::Aborted, None)),
+        (Exit::Abort, Err(error)) if is_callback_interrupt(&error) => {
+            Ok((bdb_status::Aborted, None))
+        }
+        (Exit::Abort | Exit::Proceed, Err(error)) => Err(fail_engine(error)),
+        (Exit::Proceed, Ok(ConditionalWrite::Accepted(committed))) => Ok((
+            bdb_status::Ok,
+            Some(bdb_write_admission {
+                tag: bdb_admission_tag::Accepted,
+                value: bdb_write_admission_value {
+                    accepted_generation: committed.generation.value(),
+                },
+            }),
+        )),
+        (Exit::Proceed, Ok(ConditionalWrite::Rejected(violations))) => Ok((
+            bdb_status::Ok,
+            Some(bdb_write_admission {
+                tag: bdb_admission_tag::Rejected,
+                value: bdb_write_admission_value {
+                    rejected: box_out(bdb_violations::from_engine(
+                        &violations,
+                        &handle.descriptor,
+                    )),
+                },
+            }),
+        )),
+        (Exit::Proceed, Ok(ConditionalWrite::Moved { witnessed, current })) => Ok((
+            bdb_status::Ok,
+            Some(bdb_write_admission {
+                tag: bdb_admission_tag::Moved,
+                value: bdb_write_admission_value {
+                    moved: bdb_moved_generations {
+                        witnessed: witnessed.value(),
+                        current: current.value(),
+                    },
+                },
+            }),
+        )),
     }
 }
 
-/// Runs `callback` as the single writer (§17): the engine's `Db::write`
-/// closure model. `Ok` from the callback commits — the dependency
-/// judgment runs against the final state, and a rejection is
-/// `BDB_ERROR_KIND_COMMIT_REJECTED` carrying the complete violation set.
-/// `Abort` drops the delta (`BDB_STATUS_ABORTED`; LMDB untouched).
-/// Re-entrant writes on this handle are refused with
-/// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine's assertion.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -672,20 +1231,27 @@ pub extern "C" fn bdb_db_write(
     db: *const bdb_db,
     callback: bdb_write_callback,
     context: *mut c_void,
+    out_admission: *mut bdb_write_admission,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
+        require_out(out_admission)?;
+        out(out_admission, empty_write_admission())?;
         let handle = ref_in(db)?;
-        write_with(handle, callback, context, |engine, body| engine.write(body))
+        let (status, admission) = write_outcome(handle, callback, context, |engine, body| {
+            Ok(match engine.write(body)? {
+                Admission::Accepted(committed) => ConditionalWrite::Accepted(committed),
+                Admission::Rejected(violations) => ConditionalWrite::Rejected(violations),
+            })
+        })?;
+        if let Some(admission) = admission {
+            debug_assert_ne!(admission.tag, bdb_admission_tag::Empty);
+            out(out_admission, admission)?;
+        }
+        Ok(status)
     })
 }
 
-/// `bdb_db_write` conditional on a still-live snapshot (§18): the
-/// engine's `Db::write_from`. Callable from inside the read callback that
-/// owns `snapshot` (the sanctioned nesting — module doc). A
-/// state-changing commit since the snapshot returns
-/// `BDB_ERROR_KIND_GENERATION_MOVED` (payload: witnessed/current); retry is
-/// host policy.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -693,29 +1259,67 @@ pub extern "C" fn bdb_db_write(
 )]
 pub extern "C" fn bdb_db_write_from(
     db: *const bdb_db,
-    snapshot: *const bdb_snapshot_ref,
+    witness: *const bdb_witness,
     callback: bdb_write_callback,
     context: *mut c_void,
+    out_admission: *mut bdb_write_admission,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
+        require_out(out_admission)?;
+        out(out_admission, empty_write_admission())?;
         let handle = ref_in(db)?;
-        let snap = ref_in(snapshot)?.snapshot()?;
-        write_with(handle, callback, context, |engine, body| {
-            engine.write_from(snap, body)
-        })
+        let witness = ref_in(witness)?.live_value()?;
+        let (status, admission) = write_outcome(handle, callback, context, |engine, body| {
+            engine.write_from(witness, body)
+        })?;
+        if let Some(admission) = admission {
+            debug_assert_ne!(admission.tag, bdb_admission_tag::Empty);
+            out(out_admission, admission)?;
+        }
+        Ok(status)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_witness_retain(
+    witness: *const bdb_witness,
+    out_witness: *mut *mut bdb_witness,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_witness)?;
+        let src = ref_in(witness)?;
+        let _ = src.live_value()?;
+        box_out_to(out_witness, bdb_witness::retained_from(src))?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_witness_destroy(witness: *mut bdb_witness) -> bdb_status {
+    guard_statusless(|| {
+        let handle = ref_in(witness)?;
+        if !handle.retained {
+            return Err(Fail::Misuse);
+        }
+        drop(box_in(witness)?);
+        Ok(bdb_status::Ok)
     })
 }
 
 // ---------------------------------------------------------------------------
-// Transaction operations (write-callback scope)
+// Transaction operations
 // ---------------------------------------------------------------------------
 
-/// Records a collection of inserts into the delta. `values` is
-/// `row_count × value_count` cells in row-major order (`value_count` is
-/// the relation arity). `row_count == 0` is lawful and does not read
-/// `values`. Shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` —
-/// the whole collection is checked before any row enters the delta.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -738,20 +1342,18 @@ pub extern "C" fn bdb_tx_insert(
         let report = tx_ref
             .transaction()?
             .insert_dyn(RelationId(relation), rows)
-            .map_err(|error| fail_engine(error, None))?;
+            .map_err(fail_engine)?;
         out(
             out_report,
             bdb_mutation_report {
-                submitted: report.submitted,
-                changed: report.changed,
+                submitted: report.submitted(),
+                changed: report.changed(),
             },
         )?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Records a collection of deletes into the delta. Layout as
-/// [`bdb_tx_insert`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -774,20 +1376,18 @@ pub extern "C" fn bdb_tx_delete(
         let report = tx_ref
             .transaction()?
             .delete_dyn(RelationId(relation), rows)
-            .map_err(|error| fail_engine(error, None))?;
+            .map_err(fail_engine)?;
         out(
             out_report,
             bdb_mutation_report {
-                submitted: report.submitted,
-                changed: report.changed,
+                submitted: report.submitted(),
+                changed: report.changed(),
             },
         )?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Final-state membership (base + pending delta — the view the commit
-/// judgment judges, which is what makes check-then-act race-free).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -798,7 +1398,7 @@ pub extern "C" fn bdb_tx_contains(
     relation: u32,
     values: *const bdb_value,
     value_count: usize,
-    out_contains: *mut bool,
+    out_contains: *mut u8,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
@@ -809,15 +1409,12 @@ pub extern "C" fn bdb_tx_contains(
         let contains = tx_ref
             .transaction()?
             .contains_dyn(RelationId(relation), &row)
-            .map_err(|error| fail_engine(error, None))?;
-        out(out_contains, contains)?;
+            .map_err(fail_engine)?;
+        out(out_contains, u8::from(contains))?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Final-state point lookup through a key statement (`key_values` in the
-/// statement's projection order). A hit writes a one-row
-/// [`bdb_row_set`] the caller owns; a miss writes null.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -840,7 +1437,7 @@ pub extern "C" fn bdb_tx_get(
         let found = tx_ref
             .transaction()?
             .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
-            .map_err(|error| fail_engine(error, None))?;
+            .map_err(fail_engine)?;
         match found {
             Some(values) => box_out_to(out_row, bdb_row_set::from_rows(vec![values]))?,
             None => out(out_row, std::ptr::null_mut())?,
@@ -849,12 +1446,6 @@ pub extern "C" fn bdb_tx_get(
     })
 }
 
-/// Mints `count` consecutive fresh values for `(relation, field)`.
-/// `count == 0` is the empty wire range `{0, 0}` and does not read or
-/// advance the sequence — `start` is not a minted id on empty. The bridge
-/// re-resolves the field per call because the C surface carries no witness
-/// type (ids at this surface are data; a mis-aimed pair is typed
-/// `BDB_ERROR_KIND_FACT_SHAPE`).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -875,56 +1466,49 @@ pub extern "C" fn bdb_tx_reserve(
         let fresh = tx_ref
             .engine()?
             .fresh_field(RelationId(relation), FieldId(field))
-            .map_err(|error| fail_engine(Error::FactShape(error), None))?;
+            .map_err(|error| fail_engine(Error::FactShape(error)))?;
         let range = tx_ref
             .transaction()?
             .reserve_at(fresh, count)
-            .map_err(|error| fail_engine(error, None))?;
+            .map_err(fail_engine)?;
         out(out_range, fresh_range_wire(range))?;
         Ok(bdb_status::Ok)
     })
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot operations (read-callback scope)
+// Instance operations
 // ---------------------------------------------------------------------------
 
-/// Committed-state membership of one dynamic fact (sealed field order).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_snapshot_contains(
-    snapshot: *const bdb_snapshot_ref,
+pub extern "C" fn bdb_instance_contains(
+    instance: *const bdb_instance_ref,
     relation: u32,
     values: *const bdb_value,
     value_count: usize,
-    out_contains: *mut bool,
+    out_contains: *mut u8,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
-        let snap = ref_in(snapshot)?.snapshot()?;
         require_out(out_contains)?;
         let row = row_in(values, value_count)?;
-        let contains = snap
-            .contains_dyn(RelationId(relation), &row)
-            .map_err(|error| fail_engine(error, None))?;
-        out(out_contains, contains)?;
+        let contains = ref_in(instance)?.contains_dyn(RelationId(relation), &row)?;
+        out(out_contains, u8::from(contains))?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Committed-state point lookup of the full fact through a key statement
-/// (`key_values` in the statement's projection order). A hit writes a
-/// one-row [`bdb_row_set`] the caller owns; a miss writes null.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_snapshot_get(
-    snapshot: *const bdb_snapshot_ref,
+pub extern "C" fn bdb_instance_get(
+    instance: *const bdb_instance_ref,
     relation: u32,
     key_statement: u16,
     key_values: *const bdb_value,
@@ -933,12 +1517,13 @@ pub extern "C" fn bdb_snapshot_get(
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
-        let snap = ref_in(snapshot)?.snapshot()?;
         require_out(out_row)?;
         let keys = row_in(key_values, key_value_count)?;
-        let found = snap
-            .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
-            .map_err(|error| fail_engine(error, None))?;
+        let found = ref_in(instance)?.get_dyn(
+            RelationId(relation),
+            StatementId(key_statement),
+            &keys,
+        )?;
         match found {
             Some(values) => box_out_to(out_row, bdb_row_set::from_rows(vec![values]))?,
             None => out(out_row, std::ptr::null_mut())?,
@@ -947,38 +1532,72 @@ pub extern "C" fn bdb_snapshot_get(
     })
 }
 
-/// Full-relation export in `row_id` order (the ETL/derivation read):
-/// one owned [`bdb_row_set`] crossing, iterated host-side — never one FFI
-/// call per cell (§37).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_snapshot_scan(
-    snapshot: *const bdb_snapshot_ref,
+pub extern "C" fn bdb_instance_scan(
+    instance: *const bdb_instance_ref,
     relation: u32,
     out_rows: *mut *mut bdb_row_set,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
-        let snap = ref_in(snapshot)?.snapshot()?;
         require_out(out_rows)?;
-        let rows = (|| -> bumbledb::Result<Vec<Vec<Value>>> {
-            let iter = snap.scan(RelationId(relation))?;
-            let mut rows = Vec::new();
-            for row in iter {
-                rows.push(row?);
-            }
-            Ok(rows)
-        })()
-        .map_err(|error| fail_engine(error, None))?;
+        let rows = ref_in(instance)?.scan(RelationId(relation))?;
         box_out_to(out_rows, bdb_row_set::from_rows(rows))?;
         Ok(bdb_status::Ok)
     })
 }
 
-/// Number of rows.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_row_count(
+    instance: *const bdb_instance_ref,
+    relation: u32,
+    out_count: *mut u64,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_count)?;
+        let count = ref_in(instance)?.row_count(RelationId(relation))?;
+        out(out_count, count)?;
+        Ok(bdb_status::Ok)
+    })
+}
+
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
+pub extern "C" fn bdb_instance_prepare(
+    instance: *const bdb_instance_ref,
+    query: *const bdb_query,
+    out_prepared: *mut *mut bdb_prepared,
+    out_error: *mut *mut bdb_error,
+) -> bdb_status {
+    guard(out_error, || {
+        require_out(out_prepared)?;
+        let instance = ref_in(instance)?;
+        let query = query_in(ref_in(query)?)?;
+        let prepared = instance.prepare(&query)?;
+        box_out_to(
+            out_prepared,
+            bdb_prepared {
+                prepared,
+                _keep: instance.engine.clone(),
+                in_execute: AtomicBool::new(false),
+            },
+        )?;
+        Ok(bdb_status::Ok)
+    })
+}
+
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -991,8 +1610,6 @@ pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
     })
 }
 
-/// The set's cell count (sealed field order — one width for the
-/// relation, not per row). Empty sets answer 0.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1005,8 +1622,6 @@ pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set) -> usize {
     })
 }
 
-/// One cell, viewed — string/bytes payloads BORROW the row set and die
-/// with it. Bounds-checked: `BDB_STATUS_MISUSE` out of range.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1030,14 +1645,13 @@ pub extern "C" fn bdb_row_set_get(
     })
 }
 
-/// Frees a row set (invalidating every view borrowed from it).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_row_set_destroy(rows: *mut bdb_row_set) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
+    guard_statusless(|| {
         drop(box_in(rows)?);
         Ok(bdb_status::Ok)
     })

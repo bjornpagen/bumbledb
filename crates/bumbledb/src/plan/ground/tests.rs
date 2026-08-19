@@ -615,10 +615,7 @@ fn an_extra_target_selection_refuses() {
                 source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (
-                        FieldId(1),
-                        Term::Literal(Value::String(Box::from(&b"joe"[..]))),
-                    ),
+                    (FieldId(1), Term::Literal(Value::String(Box::from("joe")))),
                 ],
             },
         ],
@@ -642,10 +639,7 @@ fn an_interval_typed_pair_refuses() {
             RelationDescriptor {
                 extension: None,
                 name: "Room".into(),
-                fields: vec![
-                    field("room", ValueType::U64),
-                    field("during", during.clone()),
-                ],
+                fields: vec![field("room", ValueType::U64), field("during", during)],
             },
             RelationDescriptor {
                 extension: None,
@@ -691,7 +685,7 @@ fn an_interval_typed_pair_refuses() {
 /// The whole grounded query: validate → normalize → grounding per rule,
 /// returning each rule's normalized form with its finds — the
 /// subsumption pass's exact inputs.
-fn grounded_main(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
+fn grounded_main(schema: &Schema, query: &Query) -> Vec<(NormalizedQuery, Vec<FindTerm>)> {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut rules = normalize_rules(schema, &[], witness.rules());
     let finds: Vec<Vec<FindTerm>> = (0..rules.len())
@@ -700,7 +694,7 @@ fn grounded_main(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<V
     for (idx, rule) in rules.iter_mut().enumerate() {
         ground(rule, schema, &finds[idx]);
     }
-    (rules, finds)
+    rules.into_iter().zip(finds).collect()
 }
 
 /// The DNF residue over the DU fixture: `Q(rate) :- Det(grading = g,
@@ -751,7 +745,8 @@ fn residue_query() -> Query {
 #[test]
 fn the_dnf_residue_subsumes_the_filtered_rule() {
     let schema = du_schema();
-    let (rules, finds) = grounded_main(&schema, &residue_query());
+    let (rules, finds): (Vec<_>, Vec<_>) =
+        grounded_main(&schema, &residue_query()).into_iter().unzip();
     assert_eq!(rules.len(), 2, "two disjuncts lower to two rules");
     for rule in &rules {
         assert_eq!(
@@ -774,7 +769,8 @@ fn the_dnf_residue_subsumes_the_filtered_rule() {
 #[test]
 fn the_off_switch_covers_subsumption() {
     let schema = du_schema();
-    let (rules, finds) = grounded_main(&schema, &residue_query());
+    let (rules, finds): (Vec<_>, Vec<_>) =
+        grounded_main(&schema, &residue_query()).into_iter().unzip();
     let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
     assert!(
         with_grounding_disabled(|| subsume(&rules, &finds)).is_empty(),
@@ -816,7 +812,8 @@ fn distinct_bodies_refuse_subsumption() {
     }
     .validate()
     .expect("valid fixture");
-    let (rules, finds) = grounded_main(&schema, &residue_query());
+    let (rules, finds): (Vec<_>, Vec<_>) =
+        grounded_main(&schema, &residue_query()).into_iter().unzip();
     for rule in &rules {
         assert_eq!(roles(rule), vec![Role::Positive, Role::Positive]);
     }

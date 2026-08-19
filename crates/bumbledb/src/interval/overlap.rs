@@ -38,6 +38,8 @@
 //! several generic passes) re-pin through the `overlap_profile` rig if
 //! a workload ever shows twice-probed groups dominating.
 
+use std::num::NonZeroU32;
+
 /// The flat-sweep ceiling: groups at or below it answer queries by the
 /// fused pass over the start-sorted pairs; above it the max-end tree
 /// walk keeps the output-sensitive shape (a heavy group's linear sweep
@@ -47,21 +49,39 @@
 /// never by inspection.
 const FLAT_SWEEP_CEILING: usize = 128;
 
-/// One index's directory row: ranges into the shared slabs. `p == 0`
-/// marks a tallied-but-unbuilt group (first probe seen, no slabs);
-/// every built index has `p ≥ 1`.
+/// One index's directory row: tallied (first probe, no slabs) or built.
 #[derive(Debug, Clone, Copy)]
-struct Dir {
-    key_start: u32,
-    key_len: u32,
-    /// `starts`/`positions` base and entry count.
-    base: u32,
-    len: u32,
-    /// This index's 1-based max-end tree: `2·p` words at `tree_base`;
-    /// leaves `tree_base + p + j` hold entry j's end word.
-    tree_base: u32,
-    /// Padded leaf count (power of two, ≥ 1) — 0 ⇔ unbuilt.
-    p: u32,
+enum Dir {
+    Tallied {
+        key_start: u32,
+        key_len: u32,
+    },
+    Built {
+        key_start: u32,
+        key_len: u32,
+        base: u32,
+        len: u32,
+        tree_base: u32,
+        p: NonZeroU32,
+    },
+}
+
+impl Dir {
+    fn key_span(self) -> (u32, u32) {
+        match self {
+            Self::Tallied { key_start, key_len }
+            | Self::Built {
+                key_start, key_len, ..
+            } => (key_start, key_len),
+        }
+    }
+}
+
+/// Probe outcome: declined by the amortization gate, or a built index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Probe {
+    Declined,
+    Ready(u32),
 }
 
 /// One query's tree walk, hoisted to this index's slices.
@@ -126,72 +146,73 @@ impl OverlapCache {
     }
 
     /// One probe of `key`'s group. The first probe tallies the group
-    /// unbuilt and returns `None` — the caller runs its generic path,
-    /// the amortization gate (module docs). The second builds from
-    /// `feed` — it pushes the group's (start word, end word, position)
-    /// triples in any order; the build start-sorts them and erects the
-    /// max-end tree — and every probe from then on is a pure lookup.
-    /// `Some` carries the directory index for [`Self::query_into`].
+    /// unbuilt and returns [`Probe::Declined`] — the caller runs its
+    /// generic path, the amortization gate (module docs). The second
+    /// builds from `feed` and every probe from then on is a pure lookup.
+    /// [`Probe::Ready`] carries the directory index for [`Self::query_into`].
     pub(crate) fn probe(
         &mut self,
         key: &[u64],
         feed: impl FnOnce(&mut Vec<(u64, u64, u32)>),
-    ) -> Option<u32> {
+    ) -> Probe {
         let hash = crate::exec::colt::hash_key(key);
         let Some(found) = self.lookup(hash, key) else {
-            // First touch: the tally is the unbuilt directory entry.
-            let dir = Dir {
+            let dir = Dir::Tallied {
                 key_start: u32::try_from(self.keys.len()).expect("slabs fit u32"),
                 key_len: u32::try_from(key.len()).expect("keys are a few words"),
-                base: 0,
-                len: 0,
-                tree_base: 0,
-                p: 0,
             };
             self.keys.extend_from_slice(key);
             let dir_idx = u32::try_from(self.dirs.len()).expect("dirs fit u32");
             self.dirs.push(dir);
             self.insert(hash, dir_idx);
-            return None;
+            return Probe::Declined;
         };
-        if self.dirs[found as usize].p != 0 {
-            return Some(found);
+        if matches!(self.dirs[found as usize], Dir::Built { .. }) {
+            return Probe::Ready(found);
         }
-        // Second touch: the group proved amortization — build.
         let mut triples = std::mem::take(&mut self.triples);
         triples.clear();
         feed(&mut triples);
         triples.sort_unstable_by_key(|&(start, _, _)| start);
         let len = triples.len();
-        let p = len.next_power_of_two().max(1);
-        {
-            let dir = &mut self.dirs[found as usize];
-            dir.base = u32::try_from(self.starts.len()).expect("slabs fit u32");
-            dir.len = u32::try_from(len).expect("positions fit u32");
-            dir.tree_base = u32::try_from(self.tree.len()).expect("slabs fit u32");
-            dir.p = u32::try_from(p).expect("positions fit u32");
-        }
+        let p = NonZeroU32::new(
+            u32::try_from(len.next_power_of_two().max(1)).expect("positions fit u32"),
+        )
+        .expect("padded leaf count is ≥ 1");
+        let (key_start, key_len) = self.dirs[found as usize].key_span();
+        self.dirs[found as usize] = Dir::Built {
+            key_start,
+            key_len,
+            base: u32::try_from(self.starts.len()).expect("slabs fit u32"),
+            len: u32::try_from(len).expect("positions fit u32"),
+            tree_base: u32::try_from(self.tree.len()).expect("slabs fit u32"),
+            p,
+        };
         self.starts
             .extend(triples.iter().map(|&(start, _, _)| start));
         self.positions
             .extend(triples.iter().map(|&(_, _, position)| position));
         let tree_base = self.tree.len();
-        self.tree.resize(tree_base + 2 * p, 0);
+        let p_usize = p.get() as usize;
+        self.tree.resize(tree_base + 2 * p_usize, 0);
         for (j, &(_, end, _)) in triples.iter().enumerate() {
-            self.tree[tree_base + p + j] = end;
+            self.tree[tree_base + p_usize + j] = end;
         }
-        for i in (1..p).rev() {
+        for i in (1..p_usize).rev() {
             self.tree[tree_base + i] =
                 self.tree[tree_base + 2 * i].max(self.tree[tree_base + 2 * i + 1]);
         }
         self.triples = triples;
-        Some(found)
+        Probe::Ready(found)
     }
 
     /// Entry count of a built index — the caller's stability tripwire
     /// (a group must not grow between build and query).
     pub(crate) fn len_of(&self, dir: u32) -> usize {
-        self.dirs[dir as usize].len as usize
+        match self.dirs[dir as usize] {
+            Dir::Built { len, .. } => len as usize,
+            Dir::Tallied { .. } => unreachable!("len_of is for built indexes"),
+        }
     }
 
     /// Every position of index `dir` whose interval overlaps
@@ -210,13 +231,23 @@ impl OverlapCache {
     pub(crate) fn query_into(&self, dir: u32, q_start: u64, q_end: u64, out: &mut Vec<u32>) {
         out.clear();
         let d = self.dirs[dir as usize];
-        debug_assert!(d.p != 0, "queries touch built indexes only");
-        let base = d.base as usize;
-        let len = d.len as usize;
+        let Dir::Built {
+            base,
+            len,
+            tree_base,
+            p,
+            ..
+        } = d
+        else {
+            unreachable!("queries touch built indexes only");
+        };
+        let p = p.get() as usize;
+        let base = base as usize;
+        let len = len as usize;
         let starts = &self.starts[base..base + len];
         let positions = &self.positions[base..base + len];
         if len <= FLAT_SWEEP_CEILING {
-            let ends = &self.tree[d.tree_base as usize + d.p as usize..][..len];
+            let ends = &self.tree[tree_base as usize + p..][..len];
             for j in 0..len {
                 if starts[j] >= q_end {
                     break;
@@ -232,12 +263,12 @@ impl OverlapCache {
             return;
         }
         let walk = Walk {
-            tree: &self.tree[d.tree_base as usize..d.tree_base as usize + 2 * d.p as usize],
+            tree: &self.tree[tree_base as usize..tree_base as usize + 2 * p],
             positions,
             hi,
             q_start,
         };
-        walk.report(1, 0, d.p as usize, out);
+        walk.report(1, 0, p, out);
     }
 
     /// Directory probe: full-key equality behind the hash.
@@ -252,8 +283,8 @@ impl OverlapCache {
                 0 => return None,
                 entry => {
                     let dir = self.dirs[(entry - 1) as usize];
-                    let stored =
-                        &self.keys[dir.key_start as usize..(dir.key_start + dir.key_len) as usize];
+                    let (key_start, key_len) = dir.key_span();
+                    let stored = &self.keys[key_start as usize..(key_start + key_len) as usize];
                     if stored == key {
                         return Some(entry - 1);
                     }
@@ -272,8 +303,8 @@ impl OverlapCache {
             self.table.resize(capacity, 0);
             for existing in 0..dir_idx {
                 let dir = self.dirs[existing as usize];
-                let stored =
-                    &self.keys[dir.key_start as usize..(dir.key_start + dir.key_len) as usize];
+                let (key_start, key_len) = dir.key_span();
+                let stored = &self.keys[key_start as usize..(key_start + key_len) as usize];
                 let rehash = crate::exec::colt::hash_key(stored);
                 self.place(rehash, existing);
             }
@@ -293,7 +324,7 @@ impl OverlapCache {
 
 #[cfg(test)]
 mod tests {
-    use super::OverlapCache;
+    use super::{OverlapCache, Probe};
 
     /// A deterministic LCG (the sweep tests' twin) so the property
     /// sweeps are reproducible.
@@ -340,12 +371,13 @@ mod tests {
     fn build(cache: &mut OverlapCache, key: &[u64], group: &[(u64, u64, u32)]) -> u32 {
         assert_eq!(
             cache.probe(key, |_| panic!("a first probe never builds")),
-            None,
+            Probe::Declined,
             "the first probe declines"
         );
-        cache
-            .probe(key, |triples| triples.extend_from_slice(group))
-            .expect("the second probe builds")
+        match cache.probe(key, |triples| triples.extend_from_slice(group)) {
+            Probe::Ready(dir) => dir,
+            Probe::Declined => panic!("the second probe builds"),
+        }
     }
 
     #[test]
@@ -407,7 +439,11 @@ mod tests {
                 builds += 1;
                 t.push((0, 4, 9));
             });
-            assert_eq!(dir.is_none(), touch == 0, "only the first probe declines");
+            assert_eq!(
+                dir == Probe::Declined,
+                touch == 0,
+                "only the first probe declines"
+            );
         }
         assert_eq!(builds, 1, "the second probe builds; later touches hit");
         // A distinct key must not alias, whatever the hash does.
@@ -418,7 +454,7 @@ mod tests {
         cache.reset();
         assert_eq!(
             cache.probe(&[1, 2], |_| panic!("reset drops every tally")),
-            None,
+            Probe::Declined,
             "reset drops every index and tally"
         );
     }
@@ -431,7 +467,7 @@ mod tests {
         for k in 0..300u64 {
             assert_eq!(
                 cache.probe(&[k], |_| panic!("a once-probed group must not build")),
-                None
+                Probe::Declined
             );
         }
     }
@@ -455,7 +491,7 @@ mod tests {
             let k64 = k as u64;
             assert_eq!(
                 cache.probe(&[k64], |_| panic!("already built")),
-                Some(dir),
+                Probe::Ready(dir),
                 "a built key stays a pure lookup"
             );
             cache.query_into(dir, k64 + 1, k64 + 2, &mut out);

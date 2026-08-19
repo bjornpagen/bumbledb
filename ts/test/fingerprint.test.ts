@@ -134,7 +134,7 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 describe("the cross-host fingerprint lock", function suite() {
 	test("a JS-created store carries the pinned fingerprint across the FFI", function pin() {
 		const created = native.dbCreate(storeDir, lower(CrossHost))
-		assert.ok(created.ok, "the CrossHost theory admits")
+		assert.equal(created.tag, "accepted", "the CrossHost theory admits")
 		assert.equal(
 			native.dbFingerprint(created.db),
 			PIN,
@@ -199,7 +199,7 @@ describe("the cross-host fingerprint lock", function suite() {
 			put(tx, AuditTrail, { account: frozenA.id, rate_bps: -3n })
 			put(tx, AuditTrail, { account: frozenB.id, rate_bps: 25n })
 		})
-		assert.ok(result.ok, "the seeded state satisfies every statement of the theory")
+		assert.equal(result.tag, "accepted", "the seeded state satisfies every statement of the theory")
 		assert.equal(db.scan(Account).length, 3)
 		assert.equal(db.scan(SavingsTerms).length, 2)
 		assert.equal(db.scan(AuditTrail).length, 2)

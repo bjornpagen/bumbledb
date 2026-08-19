@@ -44,7 +44,8 @@ fn crash_child_commit_loop() {
             }
             Ok(())
         })
-        .expect("child write");
+        .expect("child write")
+        .unwrap();
     }
 }
 
@@ -53,7 +54,11 @@ fn kill_during_commit_leaves_a_consistent_database() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [5u64, 20, 60].into_iter().enumerate() {
         let dir = common::TempDir::new(&format!("crash-{round}"));
-        drop(Db::create(dir.path(), Store).expect("create"));
+        drop(
+            Db::create(dir.path(), Store)
+                .expect("create")
+                .expect("accepted"),
+        );
 
         let mut child = Command::new(&exe)
             .args([
@@ -90,7 +95,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
             // M consistency: re-inserting the live fact is a no-op.
             if let Some(existing) = live.first() {
                 assert_eq!(
-                    tx.insert([existing])?.changed,
+                    tx.insert([existing])?.changed(),
                     0,
                     "round {round}: committed fact not visible to membership"
                 );
@@ -105,7 +110,8 @@ fn kill_during_commit_leaves_a_consistent_database() {
             tx.insert([&item(next.0)])?;
             Ok(())
         })
-        .expect("write after crash");
+        .expect("write after crash")
+        .unwrap();
 
         // S consistency: image build cross-checks the stored row count
         // against a fresh F scan (RowCountMismatch is a hard error).
@@ -131,7 +137,8 @@ fn crash_child_reserve_loop() {
             let _: ItemId = tx.reserve(1)?.start().expect("nonempty");
             Ok(())
         })
-        .expect("child reserve");
+        .expect("child reserve")
+        .unwrap();
     }
 }
 
@@ -144,7 +151,11 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {
         let dir = common::TempDir::new(&format!("crash-reserve-{round}"));
-        drop(Db::create(dir.path(), Store).expect("create"));
+        drop(
+            Db::create(dir.path(), Store)
+                .expect("create")
+                .expect("accepted"),
+        );
 
         let mut child = Command::new(&exe)
             .args([
@@ -177,16 +188,21 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
         // Q is readable (not torn) and strictly monotonic across writes.
         let a: ItemId = db
             .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
-            .expect("reserve after crash");
+            .expect("reserve after crash")
+            .unwrap()
+            .value;
         let b: ItemId = db
             .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
-            .expect("reserve after crash");
+            .expect("reserve after crash")
+            .unwrap()
+            .value;
         assert_eq!(b.0, a.0 + 1, "round {round}: Q mark torn or regressed");
         // And a real insert with the minted id commits cleanly.
         db.write(|tx| {
             let id: ItemId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&item(id.0)]).map(|_| ())
         })
-        .expect("write after crash");
+        .expect("write after crash")
+        .unwrap();
     }
 }

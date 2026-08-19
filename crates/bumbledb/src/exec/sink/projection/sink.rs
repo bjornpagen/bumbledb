@@ -61,7 +61,7 @@ impl Sink for ProjectionSink {
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
-        if matches!(self.sources, ProjectionSources::Measured(_)) {
+        if matches!(self.sources, ProjectionSources::Measured { .. }) {
             return self.scan_run_measured(scan, run);
         }
         self.scan_count += run.len() as u64;
@@ -160,7 +160,7 @@ impl ProjectionSink {
 
     /// Consume every surviving row. Forbidden nodes take this path.
     fn project_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        if matches!(&self.sources, ProjectionSources::Measured(_)) {
+        if matches!(&self.sources, ProjectionSources::Measured { .. }) {
             return self.emit_batch_measured(batch);
         }
         self.prepare_plain_batch_sources(batch);
@@ -181,7 +181,7 @@ impl ProjectionSink {
     /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
     /// insert; remaining rows bind nothing sink-relevant.
     fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        if matches!(&self.sources, ProjectionSources::Measured(_)) {
+        if matches!(&self.sources, ProjectionSources::Measured { .. }) {
             return self.emit_batch_measured_until_skip(batch);
         }
         self.prepare_plain_batch_sources(batch);

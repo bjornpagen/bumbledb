@@ -4,7 +4,7 @@
 //! (which evaluates them to nothing) — folding is set-preserving by
 //! construction, and a semantic fold would diverge here first.
 
-use bumbledb::{Atom, Db, FindTerm, Query, Rule, Term, Value, VarId};
+use bumbledb::{Atom, FindTerm, Query, Rule, Term, Value, VarId};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::differential::{Op, engine_query, run};
@@ -98,7 +98,7 @@ fn base_delta() -> Delta {
 #[test]
 fn contradiction_draws_are_empty_on_both_sides() {
     let dir = TempDir::new("differential-contradiction");
-    let db = Db::create(dir.path(), target::Target).expect("create target store");
+    let db = target::publish_admitted(dir.path());
     let mut naive = NaiveDb::new(&target::descriptor());
 
     let mut rng = Rng::new(CFG.seed);

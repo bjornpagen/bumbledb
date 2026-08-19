@@ -3,7 +3,7 @@ use super::{
     ValidatedBaseArm, ValidatedInterior, ValidatedMain, ValidatedQuery, ValidatedRec,
     ValidatedRecArm,
 };
-use crate::error::ValidationError;
+use crate::error::{Exceeded, FindIndex, Mismatch, RuleIndex, ValidationError};
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 use crate::ir::{
     FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, RecRule, RecStep,
@@ -33,18 +33,9 @@ use std::collections::{BTreeMap, BTreeSet};
 ///
 /// Never: interior ids are `u32`-checked above before the `expect`.
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
-    match query {
-        Query::Cq {
-            interiors,
-            head,
-            rules,
-        } => validate_cq(schema, interiors, head, rules),
-        Query::Reach {
-            interiors,
-            rec,
-            head,
-            rules,
-        } => validate_reach(schema, interiors, rec, head, rules),
+    match &query.rec {
+        None => validate_cq(schema, &query.interiors, &query.head, &query.rules),
+        Some(rec) => validate_reach(schema, &query.interiors, rec, &query.head, &query.rules),
     }
 }
 
@@ -68,22 +59,14 @@ fn validate_cq(
     let (sealed, interiors_out, mut rule_count) = seal_interiors(
         schema,
         interiors,
-        |sealed, id| InteriorSignatures::Cq {
-            interiors: sealed,
-            reader: Some(id),
-            derived_count: derived,
-        },
+        |sealed, id| InteriorSignatures::cq(sealed, Some(id), derived),
         &mut params,
     )?;
     let main = type_main(
         schema,
         head,
         rules,
-        &InteriorSignatures::Cq {
-            interiors: &sealed,
-            reader: None,
-            derived_count: derived,
-        },
+        &InteriorSignatures::cq(&sealed, None, derived),
         &mut params,
         &mut rule_count,
     )?;
@@ -103,11 +86,7 @@ fn validate_reach(
     let (sealed, interiors_out, mut rule_count) = seal_interiors(
         schema,
         interiors,
-        |sealed, id| InteriorSignatures::ReachOpen {
-            interiors: sealed,
-            reader: Some(id),
-            derived_count: derived,
-        },
+        |sealed, id| InteriorSignatures::reach_open(sealed, Some(id), derived),
         &mut params,
     )?;
     let id = InteriorId(u32::try_from(interiors.len()).expect("derived count fits u32"));
@@ -116,11 +95,7 @@ fn validate_reach(
     let (base, rec_low) = lower_rec_pool(rec, id)?;
     let base_typing = type_rules(
         schema,
-        &InteriorSignatures::ReachOpen {
-            interiors: &sealed,
-            reader: None,
-            derived_count: derived,
-        },
+        &InteriorSignatures::reach_open(&sealed, None, derived),
         &rec_head,
         &base,
         &mut params,
@@ -130,11 +105,7 @@ fn validate_reach(
     let rec_signature = super::Signature::derive(&base[0], &base_typing[0]);
     let rec_typing = type_rules(
         schema,
-        &InteriorSignatures::ReachSealed {
-            interiors: &sealed,
-            rec: &rec_signature,
-            derived_count: derived,
-        },
+        &InteriorSignatures::reach_sealed(&sealed, &rec_signature, derived),
         &rec_head,
         &rec_low,
         &mut params,
@@ -145,8 +116,8 @@ fn validate_reach(
         let row = input_row(rule, typing);
         if let Some(position) = (0..row.len()).find(|&i| row[i] != base_row[i]) {
             return Err(ValidationError::HeadTypeMismatch {
-                rule: rule_idx,
-                position,
+                rule: RuleIndex(rule_idx),
+                position: FindIndex(position),
             });
         }
     }
@@ -179,23 +150,11 @@ fn validate_reach(
         schema,
         head,
         rules,
-        &InteriorSignatures::ReachSealed {
-            interiors: &sealed,
-            rec: rec_out.signature(),
-            derived_count: derived,
-        },
+        &InteriorSignatures::reach_sealed(&sealed, rec_out.signature(), derived),
         &mut params,
         &mut rule_count,
     )?;
-    finish_reach(
-        params,
-        interiors_out,
-        rec_out,
-        id,
-        derived,
-        main,
-        rule_count,
-    )
+    finish_reach(params, interiors_out, rec_out, main, rule_count)
 }
 
 /// Seals interiors in declaration order. `sigs` builds the typing
@@ -209,10 +168,7 @@ fn seal_interiors(
     let mut sealed: Vec<Signature> = Vec::with_capacity(interiors.len());
     let mut interiors_out = Vec::with_capacity(interiors.len());
     let mut rule_count = 0u64;
-    let mut seal_span = crate::obs::span(
-        crate::obs::names::VALIDATE_SEAL,
-        crate::obs::Category::Prepare,
-    );
+    let mut seal_span = crate::obs::span(crate::obs::names::VALIDATE_SEAL);
     for (index, interior) in interiors.iter().enumerate() {
         let id = InteriorId(u32::try_from(index).expect("derived count fits u32"));
         if interior.rules.is_empty() {
@@ -240,7 +196,7 @@ fn seal_interiors(
             rules: typings,
         });
     }
-    seal_span.set_args(interiors.len() as u64, sealed.len() as u64);
+    seal_span.set_pair(interiors.len() as u64, sealed.len() as u64);
     seal_span.end();
     Ok((sealed, interiors_out, rule_count))
 }
@@ -270,20 +226,18 @@ fn finish_cq(
     main: ValidatedMain,
     rule_count: u64,
 ) -> Result<ValidatedQuery, ValidationError> {
-    let mut rules_span = crate::obs::span(
-        crate::obs::names::VALIDATE_RULES,
-        crate::obs::Category::Prepare,
-    );
-    rules_span.set_args(rule_count, 0);
+    let mut rules_span = crate::obs::span(crate::obs::names::VALIDATE_RULES);
+    rules_span.set_count(rule_count);
     rules_span.end();
     params.check_masks_and_density()?;
     let set_params = set_params_of(&params);
-    Ok(ValidatedQuery::Cq {
+    Ok(ValidatedQuery {
         interiors,
         main,
         param_types: params.param_types,
         set_params,
         point_params: params.point_params,
+        rec: None,
     })
 }
 
@@ -291,25 +245,18 @@ fn finish_reach(
     params: ParamTables,
     interiors: Vec<ValidatedInterior>,
     rec: ValidatedRec,
-    rec_id: InteriorId,
-    derived: usize,
     main: ValidatedMain,
     rule_count: u64,
 ) -> Result<ValidatedQuery, ValidationError> {
-    let mut rules_span = crate::obs::span(
-        crate::obs::names::VALIDATE_RULES,
-        crate::obs::Category::Prepare,
-    );
-    rules_span.set_args(rule_count, 0);
+    let mut rules_span = crate::obs::span(crate::obs::names::VALIDATE_RULES);
+    rules_span.set_count(rule_count);
     rules_span.end();
     params.check_masks_and_density()?;
     let set_params = set_params_of(&params);
-    Ok(ValidatedQuery::Reach {
+    Ok(ValidatedQuery {
         interiors,
-        rec,
+        rec: Some(rec),
         main,
-        rec_id,
-        derived_count: u32::try_from(derived).expect("derived count fits u32"),
         param_types: params.param_types,
         set_params,
         point_params: params.point_params,
@@ -345,8 +292,8 @@ fn type_rules(
             pinned_row = row;
         } else if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_row[*i]) {
             return Err(ValidationError::HeadTypeMismatch {
-                rule: rule_idx,
-                position,
+                rule: RuleIndex(rule_idx),
+                position: FindIndex(position),
             });
         }
         params.unify(ctx)?;
@@ -396,9 +343,11 @@ fn lower_rec_pool(
         let depth = nesting_depth(&rule.conditions);
         if depth > MAX_CONDITION_DEPTH {
             return Err(ValidationError::ConditionNestingTooDeep {
-                rule: rule_idx,
-                depth,
-                cap: MAX_CONDITION_DEPTH,
+                rule: RuleIndex(rule_idx),
+                exceeded: Exceeded {
+                    observed: depth,
+                    ceiling: MAX_CONDITION_DEPTH,
+                },
             });
         }
     }
@@ -409,8 +358,10 @@ fn lower_rec_pool(
         .fold(0, usize::saturating_add);
     if produced > MAX_RULES {
         return Err(ValidationError::DnfExceedsRules {
-            produced,
-            cap: MAX_RULES,
+            exceeded: Exceeded {
+                observed: produced,
+                ceiling: MAX_RULES,
+            },
         });
     }
     let base = distribute_list(&base_rules);
@@ -453,10 +404,7 @@ fn lower_rules(
     empty: ValidationError,
     count_across: bool,
 ) -> Result<Vec<LoweredRule>, ValidationError> {
-    let mut span = crate::obs::span(
-        crate::obs::names::VALIDATE_LOWER,
-        crate::obs::Category::Prepare,
-    );
+    let mut span = crate::obs::span(crate::obs::names::VALIDATE_LOWER);
     if rules.is_empty() {
         return Err(empty);
     }
@@ -471,9 +419,11 @@ fn lower_rules(
         let depth = nesting_depth(&rule.conditions);
         if depth > MAX_CONDITION_DEPTH {
             return Err(ValidationError::ConditionNestingTooDeep {
-                rule: rule_idx,
-                depth,
-                cap: MAX_CONDITION_DEPTH,
+                rule: RuleIndex(rule_idx),
+                exceeded: Exceeded {
+                    observed: depth,
+                    ceiling: MAX_CONDITION_DEPTH,
+                },
             });
         }
     }
@@ -484,8 +434,10 @@ fn lower_rules(
         .fold(0, usize::saturating_add);
     if produced > MAX_RULES {
         return Err(ValidationError::DnfExceedsRules {
-            produced,
-            cap: MAX_RULES,
+            exceeded: Exceeded {
+                observed: produced,
+                ceiling: MAX_RULES,
+            },
         });
     }
     let lowered = distribute_list(rules);
@@ -512,7 +464,7 @@ fn lower_rules(
             rules: lowered.len(),
         });
     }
-    span.set_args(lowered.len() as u64, 0);
+    span.set_count(lowered.len() as u64);
     span.end();
     Ok(lowered)
 }
@@ -540,16 +492,18 @@ fn check_head_alignment(
 ) -> Result<(), ValidationError> {
     if rule.finds.len() != head.len() {
         return Err(ValidationError::HeadArityMismatch {
-            rule: rule_idx,
-            expected: head.len(),
-            found: rule.finds.len(),
+            rule: RuleIndex(rule_idx),
+            mismatch: Mismatch {
+                witnessed: rule.finds.len(),
+                required: head.len(),
+            },
         });
     }
     for (position, (term, head_term)) in rule.finds.iter().zip(head).enumerate() {
         if term.head_term() != *head_term {
             return Err(ValidationError::HeadAggregateMismatch {
-                rule: rule_idx,
-                position,
+                rule: RuleIndex(rule_idx),
+                position: FindIndex(position),
             });
         }
     }
@@ -627,7 +581,7 @@ fn validate_rule(
 /// its fold input type (the nullary `Count` is `U64`).
 /// Alignment-only — the signature is [`super::Signature::derive`].
 fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
-    let var_type = |var: &VarId| typing.var_types[var].clone();
+    let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
     rule.finds
         .iter()
         .map(|term| match term {

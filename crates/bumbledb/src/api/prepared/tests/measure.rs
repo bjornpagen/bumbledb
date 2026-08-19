@@ -97,7 +97,7 @@ fn insert_sessions(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (
         delta.insert(&view, SESSION, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i64))]) {
@@ -119,7 +119,7 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
         delta.insert(&view, SHIFT, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 fn insert_windows(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)]) {
@@ -135,7 +135,7 @@ fn insert_windows(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)]) 
         delta.insert(&view, WINDOW, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 fn u64_answers(out: &Answers, arity: usize) -> Vec<Vec<u64>> {
@@ -186,7 +186,7 @@ fn duration_find_projects_the_measure_u64() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         u64_answers(&out, 2),
@@ -227,7 +227,7 @@ fn duration_find_projects_the_measure_i64() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         u64_answers(&out, 2),
@@ -274,7 +274,7 @@ fn sum_min_max_over_the_measure() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         u64_answers(&out, 4),
@@ -313,7 +313,7 @@ fn duration_comparisons_filter_and_join() {
     let run = |query: &Query| -> Vec<Vec<u64>> {
         let mut prepared = prepare(&txn, &cache, &schema, query).expect("prepare");
         let out = prepared
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect("execute");
         u64_answers(&out, 1)
     };
@@ -441,7 +441,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     };
     let assert_ray = |query: &Query| {
         let mut prepared = prepare(&txn, &cache, &schema, query).expect("prepare");
-        match prepared.execute_collect(&txn, &cache, &[]) {
+        match prepared.execute_collect(&txn, &cache, &[] as &[BindValue]) {
             Err(Error::MeasureOfRay { start, end }) => {
                 assert_eq!((start, end), (7, u64::MAX), "the offending interval words");
             }
@@ -453,7 +453,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         let query = Query::single(rule);
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let out = prepared
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect("filtered execute");
         u64_answers(&out, out.arity())
     };
@@ -513,7 +513,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     let query = Query::single(bounded);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("bounded-end execute");
     assert_eq!(u64_answers(&out, 1), vec![vec![10]]);
 
@@ -581,9 +581,9 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    match prepared.execute_collect(&txn, &cache, &[]) {
+    match prepared.execute_collect(&txn, &cache, &[] as &[BindValue]) {
         Err(Error::Overflow(crate::error::OverflowKind::Aggregate { find })) => {
-            assert_eq!(find, 1);
+            assert_eq!(find, crate::error::FindIndex(1));
         }
         other => panic!("expected the typed overflow error, got {other:?}"),
     }
@@ -616,7 +616,7 @@ fn a_same_atom_eq_protects_the_measure_from_the_ray() {
     let run = |query: &Query| -> Vec<Vec<u64>> {
         let mut prepared = prepare(&txn, &cache, &schema, query).expect("prepare");
         let out = prepared
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect("the Eq runs before the subtraction");
         u64_answers(&out, out.arity())
     };
@@ -728,7 +728,7 @@ fn the_ray_verdict_folds_in_the_kleene_lattice() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &negated).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("the failing negation absorbs the ray");
     assert_eq!(out.len(), 0, "every binding Fails; none rays");
 
@@ -742,7 +742,7 @@ fn the_ray_verdict_folds_in_the_kleene_lattice() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &saved).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("the holding sibling disjunct saves the ray binding");
     assert_eq!(u64_answers(&out, 1), vec![vec![10], vec![20]]);
 
@@ -756,7 +756,7 @@ fn the_ray_verdict_folds_in_the_kleene_lattice() {
         conditions: vec![ConditionTree::Or(vec![tag_eq(999), measure_lt(100)])],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &poisoned).expect("prepare");
-    match prepared.execute_collect(&txn, &cache, &[]) {
+    match prepared.execute_collect(&txn, &cache, &[] as &[BindValue]) {
         Err(Error::MeasureOfRay { start, end }) => {
             assert_eq!((start, end), (7, u64::MAX), "the offending interval words");
         }

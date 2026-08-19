@@ -11,6 +11,9 @@
 //! error, and a value interned by a later write is picked up on the next
 //! execution.
 
+use std::num::NonZeroU32;
+use std::sync::Arc;
+
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::KeyProbePlan;
 use crate::exec::run::{Bindings, Executor};
@@ -37,7 +40,7 @@ mod view_memo;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::build::prepare;
+pub(crate) use self::build::{prepare, prepare_on};
 use self::staleness::OccurrencePin;
 pub use self::staleness::{OccurrenceDrift, Staleness};
 
@@ -77,6 +80,82 @@ pub enum BindValue<'a> {
 pub enum ParamArg<'a> {
     Scalar(BindValue<'a>),
     Set(&'a [crate::ir::Value]),
+}
+
+/// The one execute bind surface: scalar slices and mixed [`ParamArg`]
+/// slices are the same entry, not twin methods.
+pub trait BindArgs<'a> {
+    /// Bind this argument list onto `prepared` for `txn`.
+    ///
+    /// # Errors
+    ///
+    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time, plus the
+    /// per-position set/scalar errors on mixed arguments.
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()>;
+}
+
+impl<'a> BindArgs<'a> for &'a [BindValue<'a>] {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_params(&txn.catalog(), self)
+    }
+}
+
+impl<'a, const N: usize> BindArgs<'a> for &'a [BindValue<'a>; N] {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_params(&txn.catalog(), self)
+    }
+}
+
+impl<'a> BindArgs<'a> for &'a [ParamArg<'a>] {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_param_args(&txn.catalog(), self)
+    }
+}
+
+impl<'a, const N: usize> BindArgs<'a> for &'a [ParamArg<'a>; N] {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_param_args(&txn.catalog(), self)
+    }
+}
+
+impl<'a> BindArgs<'a> for &'a Vec<BindValue<'a>> {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_params(&txn.catalog(), self)
+    }
+}
+
+impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
+    fn bind<S>(
+        self,
+        prepared: &mut PreparedQuery<S>,
+        txn: &crate::storage::env::ReadTxn<'_>,
+    ) -> crate::error::Result<()> {
+        prepared.bind_param_args(&txn.catalog(), self)
+    }
 }
 
 /// One decoded answer cell, borrowed from [`Answers`].
@@ -168,25 +247,67 @@ pub struct Answer<'a> {
     answer: usize,
 }
 
+/// Pending intern literals vs the fully-latched fast path. The resolver
+/// returns how many literals latched; this sum is the remaining debt —
+/// not a counter that saturates when it distrusts itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Latch {
+    Pending(NonZeroU32),
+    Latched,
+}
+
+impl Latch {
+    fn from_count(n: u32) -> Self {
+        NonZeroU32::new(n).map_or(Self::Latched, Self::Pending)
+    }
+
+    fn is_latched(self) -> bool {
+        matches!(self, Self::Latched)
+    }
+
+    fn credit(self, n: u32) -> Self {
+        match self {
+            Self::Latched => {
+                debug_assert_eq!(n, 0, "a latched query has no remaining literals");
+                Self::Latched
+            }
+            Self::Pending(remaining) => Self::from_count(
+                remaining
+                    .get()
+                    .checked_sub(n)
+                    .expect("latch credits cannot exceed pending literals"),
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    fn remaining(self) -> u32 {
+        match self {
+            Self::Pending(n) => n.get(),
+            Self::Latched => 0,
+        }
+    }
+}
+
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
 /// only against same-schema snapshots (the same-environment check stays
-/// a runtime key-probe check — `env_instance`).
+/// a runtime identity check — [`crate::storage::env::CatalogIdentity`]).
 ///
 /// Not shareable across threads:
 ///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
-/// require_sync::<bumbledb::PreparedQuery<'static, ()>>();
+/// require_sync::<bumbledb::PreparedQuery<()>>();
 /// ```
-pub struct PreparedQuery<'s, S> {
-    schema: &'s Schema,
+pub struct PreparedQuery<S> {
+    schema: Arc<Schema>,
     /// The preparing environment's process-distinct identity: plan,
     /// statistics, and view memo all belong to it, so execution against
     /// any other environment's snapshot is `Error::ForeignPreparedQuery`
     /// — checked first at every execution entry.
-    env_instance: u64,
+    identity: crate::storage::env::CatalogIdentity,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
     /// § set semantics): `Some` iff the query's rules are provably
     /// pairwise disjoint, carrying the witness — the (relation, field)
@@ -237,10 +358,11 @@ pub struct PreparedQuery<'s, S> {
     resolved_params: Vec<Const>,
     /// `str` literals in the rules' templates still awaiting their
     /// dictionary word ([`Const::PendingIntern`]): decremented as each
-    /// latches (`bind.rs`), and the zero — with no params of any shape —
-    /// is the fully-latched fast path: `resolve_filters` is skipped
-    /// entirely, the resolved tables having been written once and final.
-    unresolved_literals: u32,
+    /// latches (`bind.rs`), and [`Latch::Latched`] — with no params of
+    /// any shape — is the fully-latched fast path: `resolve_filters` is
+    /// skipped entirely, the resolved tables having been written once
+    /// and final.
+    latch: Latch,
     /// Per param slot: the last successful String resolution — the
     /// bound text and its dictionary word (`bind.rs`). A HIT is final
     /// (the dictionary is append-only: a text's word never changes), so
@@ -298,15 +420,24 @@ pub struct PreparedQuery<'s, S> {
 pub(crate) struct PreparedInterior {
     pub(super) rules: Vec<PreparedRule>,
     pub(super) sink: ProjectionSink,
-    pub(super) field_types: Vec<bumbledb_theory::TypeDesc>,
+    pub(super) field_types: Vec<bumbledb_theory::schema::ValueType>,
     pub(super) units: usize,
     pub(super) ray_probes: Vec<RayProbeSet>,
 }
 
-/// One prepared pipeline. Interiors are data in both arms (the CQ is
-/// the empty prefix). Statically-dead main is `rules: []` — Empty is
-/// not a variant; the empty fast path is the zero-iteration loop.
+/// One prepared pipeline. Interiors are data in Cq and Reach (the CQ
+/// is the empty prefix). The point fast lane is its own arm, sealed at
+/// build — not re-detected by empty interiors + a find-table `Option`.
+/// Statically-dead main is `Cq { rules: [] }` — Empty is not a
+/// variant; the empty fast path is the zero-iteration loop.
 pub(crate) enum PreparedPipeline {
+    /// No-interior CQ whose single main rule is a key probe with
+    /// variable finds. The arm stores [`KeyProbeRule`] so a
+    /// [`PreparedRule::FreeJoin`] is unrepresentable.
+    PointProbe {
+        rule: KeyProbeRule,
+        finds: Vec<(bumbledb_theory::schema::FieldId, ValueType)>,
+    },
     Cq {
         interiors: Vec<PreparedInterior>,
         rules: Vec<PreparedRule>,
@@ -324,18 +455,25 @@ pub(crate) enum PreparedPipeline {
 impl PreparedPipeline {
     pub(super) fn interiors(&self) -> &[PreparedInterior] {
         match self {
+            Self::PointProbe { .. } => &[],
             Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
         }
     }
 
     pub(super) fn interiors_mut(&mut self) -> &mut Vec<PreparedInterior> {
         match self {
+            Self::PointProbe { .. } => {
+                unreachable!("PointProbe has no interiors")
+            }
             Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
         }
     }
 
+    /// Cq / Reach main rules. [`Self::PointProbe`] is a [`KeyProbeRule`], not a
+    /// tagged [`PreparedRule`] — callers of the fast lane match that arm.
     pub(super) fn main_rules(&self) -> &[PreparedRule] {
         match self {
+            Self::PointProbe { .. } => &[],
             Self::Cq { rules, .. } => rules,
             Self::Reach { main, .. } => main,
         }
@@ -343,6 +481,7 @@ impl PreparedPipeline {
 
     pub(super) fn main_rules_mut(&mut self) -> &mut [PreparedRule] {
         match self {
+            Self::PointProbe { .. } => &mut [],
             Self::Cq { rules, .. } => rules,
             Self::Reach { main, .. } => main,
         }
@@ -356,21 +495,12 @@ impl PreparedPipeline {
         )
     }
 
-    /// No-interior Cq whose single main rule is a key probe with
-    /// variable finds — the point fast lane, parsed from the pipeline.
-    pub(super) fn is_key_probe_direct(&self) -> bool {
-        matches!(
-            self,
-            Self::Cq { interiors, rules }
-                if interiors.is_empty()
-                    && matches!(
-                        rules.as_slice(),
-                        [PreparedRule::KeyProbe(KeyProbeRule {
-                            key_probe_finds: Some(_),
-                            ..
-                        })]
-                    )
-        )
+    pub(super) fn has_derived(&self) -> bool {
+        match self {
+            Self::PointProbe { .. } => false,
+            Self::Cq { interiors, .. } => !interiors.is_empty(),
+            Self::Reach { .. } => true,
+        }
     }
 }
 
@@ -468,14 +598,12 @@ pub(crate) struct KeyProbeRule {
     /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
     /// this rule's key-probe layout.
     dedup_spans: Box<[(usize, usize)]>,
-    /// The direct point lane's find table. `Some` iff every find is a plain
-    /// variable; aggregate and measure key-probe rules keep the shared sink.
-    key_probe_finds: Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>>,
 }
 
-impl<S> PreparedQuery<'_, S> {
+impl<S> PreparedQuery<S> {
     fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
         match &self.pipeline {
+            PreparedPipeline::PointProbe { .. } => {}
             PreparedPipeline::Cq { interiors, rules } => {
                 for interior in interiors {
                     for rule in &interior.rules {
@@ -513,6 +641,7 @@ impl<S> PreparedQuery<'_, S> {
     /// test affordance).
     fn visit_rules_mut(&mut self, mut visit: impl FnMut(&mut PreparedRule)) {
         match &mut self.pipeline {
+            PreparedPipeline::PointProbe { .. } => {}
             PreparedPipeline::Cq { interiors, rules } => {
                 for interior in interiors {
                     for rule in &mut interior.rules {
@@ -647,51 +776,41 @@ const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
 /// One parked view binding: a COLT (with its view and forced tries)
-/// keyed by the (generation, resolved residual filters) it was built
+/// keyed by the (epoch, resolved residual filters) it was built
 /// for. Swapped — never cloned — with the active binding on a hit.
-/// Parked bindings always carry a real generation: only executed
+/// Parked bindings always carry a real epoch: only executed
 /// bindings park (prepare leaves every slot empty).
 struct ParkedView {
-    generation: ViewGeneration,
+    epoch: crate::image::ViewEpoch,
     filters: Vec<FilterPredicate>,
     colt: Colt,
     last_used: u64,
 }
 
-/// The per-occurrence view memo (docs/architecture/40-execution.md): generational
-/// immutability makes a memoized view provably valid for its whole
-/// generation, so repeated residual bindings (range windows, Ne
+/// The per-occurrence view memo (docs/architecture/40-execution.md):
+/// an epoch-stable source makes a memoized view provably valid for
+/// its whole epoch, so repeated residual bindings (range windows, Ne
 /// constants) skip the rebuild scan entirely. Occurrences whose only
 /// conditions are selections never park — their single binding hits on
-/// generation alone (docs/architecture/40-execution.md).
+/// epoch alone (docs/architecture/40-execution.md).
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding
     /// (over [`View::Unbound`] until the first execution — prepare pins
     /// no image).
     colts: Vec<Colt>,
-    /// The active binding's generation, per occurrence (`None` =
-    /// unbound).
-    generation: Vec<Option<ViewGeneration>>,
+    /// The active binding's epoch, per occurrence (`None` = unbound).
+    epoch: Vec<Option<crate::image::ViewEpoch>>,
     /// The active binding's resolved residual filters, per occurrence.
     filters: Vec<Vec<FilterPredicate>>,
     /// Parked bindings, [`PARKED_SLOTS`] per occurrence, empty at
-    /// prepare, LRU-evicted, stale-reaped at each bind (a below-current
-    /// generation can never hit again — dropping it frees its COLT pools
-    /// and its image Arc at the first post-commit execution).
+    /// prepare, LRU-evicted, stale-reaped at each bind (a superseded
+    /// store epoch can never hit again — dropping it frees its COLT
+    /// pools and its image Arc at the first post-commit execution).
     parked: Vec<Vec<Option<ParkedView>>>,
     /// Spare survivor buffers recycled through rebuilds.
     spare_buffers: Vec<Vec<u32>>,
     /// The LRU clock, ticked once per execution.
     tick: u64,
-}
-
-/// The immutable identity of one executable view. Closed relations are
-/// keyed by the theory itself rather than by fabricating a storage
-/// generation sentinel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ViewGeneration {
-    Storage(crate::GenerationId),
-    Closed,
 }
 
 /// The two sink shapes behind one monomorphized dispatch (an enum, not

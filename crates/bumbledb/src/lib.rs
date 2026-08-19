@@ -10,9 +10,11 @@
 //!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
 //!   The macro is sugar; [`schema::SchemaDescriptor`] is the contract.
 //! - Open a handle with [`Db::create`] / [`Db::open`] — `Db::create(path,
-//!   Ledger)` — and share it across threads (`Send + Sync`; the engine
-//!   owns zero threads). `Db<S>` carries the schema as typestate: a
-//!   schema-A fact cannot reach a schema-B database (see below).
+//!   Ledger)` returns [`Admission`]`<Db>`: empty that does not hold is
+//!   rejected with no lease. Share the handle across threads (`Send +
+//!   Sync`; the engine owns zero threads). `Db<S>` carries the schema as
+//!   typestate: a schema-A fact cannot reach a schema-B database (see
+//!   below).
 //! - Write through [`Db::write`]: collection [`WriteTx::insert`] /
 //!   [`WriteTx::delete`] (empty, singleton `[&fact]`, many — one algebra,
 //!   [`MutationReport` `{ submitted, changed }`]) and [`WriteTx::reserve`]
@@ -22,9 +24,9 @@
 //!   cause. `delete(old); insert(new)` in either order is the blessed
 //!   mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
-//!   inside [`Db::read`] snapshots into a reusable [`Answers`] —
-//!   results are sets; the host sorts.
-//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::write`] +
+//!   inside [`Db::read`] on a [`ReadInstance`] into a reusable
+//!   [`Answers`] — results are sets; the host sorts.
+//! - Migrate by ETL: [`ReadInstance::scan`] exports, [`Db::write`] +
 //!   [`WriteTx::insert_dyn`] imports (schema change = a new database, never in place).
 //!
 //! Newtypes are the nominal safety layer — mixing two of them is a host
@@ -55,10 +57,9 @@
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
 //! # let _ = std::fs::remove_dir_all(&dir);
-//! # std::fs::create_dir_all(&dir).unwrap();
-//! let db = bumbledb::Db::create(&dir, Ledger).unwrap();
+//! let db = bumbledb::Db::create(&dir, Ledger).unwrap().unwrap();
 //! db.write(|tx| {
-//!     let id = tx.reserve::<ItemId>(1)?.start().expect("count 1");
+//!     let id = tx.reserve::<ItemId>(1)?.start().expect("count 1").unwrap();
 //!     tx.insert([&Item { id }]) // schema-B fact, schema-A database: rustc refuses
 //!         .map(|_| ())
 //! })
@@ -95,6 +96,9 @@
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
+#[cfg(test)]
+extern crate self as bumbledb;
+
 pub mod allen;
 /// Counting allocator for the zero-warm-allocation gate and the bench
 /// harness. Not embedding API.
@@ -122,10 +126,13 @@ mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{
-    Db, Exhumed, Fact, Fresh, FreshRange, FreshRangeIter, Key, MutationReport, Snapshot, Witness,
-    WriteTx, exhume,
+    CodecRead, CodecWrite, Db, Exhumed, Fact, Fresh, FreshRange, FreshRangeIter, Instance,
+    InstanceBuilder, Key, MutationReport, OwnedInstance, Probe, ReadInstance, Witness, WriteTx,
+    exhume,
 };
-pub use api::prepared::{Answer, AnswerValue, Answers, BindValue, ParamArg, PreparedQuery};
+pub use api::prepared::{
+    Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
+};
 /// Plan-introspection types used by the in-workspace bench harness.
 /// Not embedding API.
 #[doc(hidden)]
@@ -138,7 +145,8 @@ pub use api::stats::{
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats, StatsBody,
 };
 pub use error::{
-    Direction, Error, FunctionalityViolation, OverflowKind, Result, Violation, Violations,
+    Admission, Check, Committed, ConditionalWrite, Conflict, Direction, Error, ErrorFamily,
+    Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
 };
 pub use interval::Interval;
 /// The grounding's test-support off switch (`plan/ground.rs`): reachable only
@@ -168,7 +176,11 @@ pub use ir::{
 // vocabulary. `Db`, transactions, prepared queries, `Value`, the IR
 // vocabulary, and the rejection types (`Violation`/`Violations`) are
 // re-exported above.
-pub use error::{CitedFact, FactShapeError, SchemaError, StatementErrorKind, ValidationError};
+pub use crate::encoding::InternId;
+pub use error::{
+    AtomIndex, CitedFact, DynIdError, FactShapeError, FindIndex, RowIndex, RuleIndex, SchemaError,
+    StatementErrorKind, ValidationError,
+};
 pub use schema::fingerprint::SchemaFingerprint;
 pub use schema::{
     FieldId, FreshField, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
@@ -178,7 +190,7 @@ pub use schema::{
 /// Offline store sweeper used by the bench harness and engine tests.
 /// Not embedding API.
 #[doc(hidden)]
-pub use verify_store::{StoreFinding, StoreReport};
+pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
@@ -275,12 +287,8 @@ pub use bumbledb_macros::schema;
 /// here is part of the documented surface — the macro is the only caller.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::api::db::plumbing::{
-        decode, decode_write, encode_read_fact, encode_write_fact, fixed_interval_i64,
-        fixed_interval_u64, intern_str_delete, intern_str_read, intern_str_write, resolve_string,
-        resolve_string_write,
-    };
-    pub use crate::encoding::{ValueRef, append_key_field};
+    pub use crate::api::db::plumbing::{encode_fact_for, fixed_interval_i64, fixed_interval_u64};
+    pub use crate::encoding::{ValueRef, append_field};
 }
 
 #[cfg(test)]
@@ -289,6 +297,21 @@ pub(crate) mod testutil {
     //! dev-dependency — deps stay exactly heed + blake3).
 
     use std::path::{Path, PathBuf};
+
+    use crate::error::{Admission, Result, Violations};
+
+    /// The theory-rejection payload of an admitted-or-rejected result.
+    /// Panics on infrastructure error or unexpected acceptance.
+    #[track_caller]
+    pub fn expect_rejected<T>(result: Result<Admission<T>>) -> Violations {
+        match result {
+            Ok(Admission::Rejected(violations)) => violations,
+            Ok(Admission::Accepted(_)) => {
+                panic!("expected admission rejection, the write admitted")
+            }
+            Err(error) => panic!("expected admission rejection, the engine said {error:?}"),
+        }
+    }
 
     pub struct TempDir(PathBuf);
 
@@ -301,7 +324,6 @@ pub(crate) mod testutil {
             let path =
                 std::env::temp_dir().join(format!("bumbledb-test-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("create test dir");
             Self(path)
         }
 

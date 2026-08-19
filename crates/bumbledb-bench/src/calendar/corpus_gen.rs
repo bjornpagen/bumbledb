@@ -347,17 +347,14 @@ pub fn du_cluster_rows(
 }
 
 fn account_row(i: u64) -> Vec<Value> {
-    vec![
-        Value::U64(i),
-        Value::String(format!("acct-{i:05}").into_bytes().into()),
-    ]
+    vec![Value::U64(i), Value::String(format!("acct-{i:05}").into())]
 }
 
 fn person_row(sizes: &CalSizes, i: u64) -> Vec<Value> {
     vec![
         Value::U64(i),
         Value::U64(i / 8 % sizes.accounts.max(1)),
-        Value::String(format!("person-{i:06}").into_bytes().into()),
+        Value::String(format!("person-{i:06}").into()),
     ]
 }
 
@@ -367,10 +364,7 @@ fn calendar_row(i: u64) -> Vec<Value> {
 }
 
 fn room_row(i: u64) -> Vec<Value> {
-    vec![
-        Value::U64(i),
-        Value::String(format!("room-{i:04}").into_bytes().into()),
-    ]
+    vec![Value::U64(i), Value::String(format!("room-{i:04}").into())]
 }
 
 fn event_row(seed: u64, row: &SegmentRow) -> Vec<Value> {

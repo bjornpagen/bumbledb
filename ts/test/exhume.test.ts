@@ -11,14 +11,10 @@
  *   arrives with handles and payload values, and `scan` returns every row
  *   with values IDENTICAL (bigint/string/bytes equality) to what typed
  *   `snap.scan` returns under the true schema;
- * - the adoption loop at SDK level: the committed legacy fixture
- *   (`fixtures/legacy-store`, created by the pre-descriptor engine — see
- *   `fixtures/legacy-schema.ts` for provenance) refuses exhume with the
- *   typed `ErrExhumeNoDescriptor`, ONE fingerprint-matching `Db.open` under
- *   the creating schema (run in a child process: an in-process `Db.open`
- *   would hold the environment forever, and heed's single-open rule
- *   refuses a second same-path open) back-fills the descriptor, and the
- *   same path then exhumes successfully;
+ * - format-7 stores refuse every open surface: the committed
+ *   `fixtures/legacy-store` (see `fixtures/legacy-schema.ts` for provenance)
+ *   fails exhume as {@link ErrExhumeFormatMismatch} and fails `Db.open`
+ *   the same way — there is no descriptor back-fill and no format-7 decoder;
  * - lifetimes are disposables (R12): `Symbol.dispose` releases the engine
  *   handle and its environment deterministically (the same path
  *   re-exhumes in-process after disposal), no `close` verb exists, a
@@ -30,8 +26,6 @@
  */
 
 import assert from "node:assert/strict"
-import type { ChildProcess } from "node:child_process"
-import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -43,7 +37,7 @@ import {
 	closed,
 	contained,
 	Db,
-	ErrExhumeNoDescriptor,
+	ErrExhumeFormatMismatch,
 	i64,
 	interval,
 	key,
@@ -54,11 +48,11 @@ import {
 	str,
 	u64
 } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
+import { legacySchema } from "#test/fixtures/legacy-schema.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-exhume-"))
-const packageRoot = path.resolve(import.meta.dirname, "..")
-const adoptScript = path.join(import.meta.dirname, "fixtures", "adopt-child.ts")
 const legacyFixture = path.join(import.meta.dirname, "fixtures", "legacy-store")
 
 after(function cleanup() {
@@ -98,48 +92,12 @@ function copyStore(from: string, to: string): void {
 	fs.rmSync(path.join(to, "bumbledb.lock"), { force: true })
 }
 
-/** The adoption child's one-line JSON report (`fixtures/adopt-child.ts`). */
-interface AdoptReport {
-	readonly docRows: number
-	readonly taggedRows: number
-}
-
-/**
- * Runs the adoption child to completion and parses its report. No timeout
- * exists here (the house no-limits law): a hung child hangs the test
- * loudly, which is the correct failure mode.
- */
-function adoptInChild(dir: string): Promise<AdoptReport> {
-	return new Promise(function run(resolve, reject) {
-		const child: ChildProcess = spawn(process.execPath, [adoptScript, dir], {
-			cwd: packageRoot,
-			stdio: ["ignore", "pipe", "pipe"]
-		})
-		let out = ""
-		let err = ""
-		child.stdout?.on("data", function collect(chunk: Buffer) {
-			out += chunk.toString()
-		})
-		child.stderr?.on("data", function collectErr(chunk: Buffer) {
-			err += chunk.toString()
-		})
-		child.on("exit", function exited(code) {
-			const line = out.indexOf("\n")
-			if (code === 0 && line >= 0) {
-				resolve(JSON.parse(out.slice(0, line)))
-				return
-			}
-			reject(errors.new(`adopt child exited ${code} without a report; stderr: ${err}`))
-		})
-	})
-}
-
 describe("the exhume surface against real stores", function suite() {
 	const storeDir = path.join(tmpRoot, "store")
 	const copyDir = path.join(tmpRoot, "store-copy")
 
 	test("every field type survives the theory-less read of a process-fresh copy", async function everyFieldType() {
-		const db = await Db.create(storeDir, Exhumable)
+		const db = accepted(await Db.create(storeDir, Exhumable))
 		const written = db.write(function seed(tx) {
 			const alpha = put(tx, Specimen, {
 				label: "alpha",
@@ -160,7 +118,7 @@ describe("the exhume surface against real stores", function suite() {
 			put(tx, Reading, { specimen: alpha.id, note: "first contact", at: span(-3n, 3n) })
 			put(tx, Reading, { specimen: beta.id, note: "second contact", at: span(-9n, -1n) })
 		})
-		assert.ok(written.ok, "the seed commit lands")
+		assert.equal(written.tag, "accepted", "the seed commit lands")
 
 		copyStore(storeDir, copyDir)
 		const exhumed = await Db.exhume(copyDir)
@@ -331,34 +289,23 @@ describe("the exhume surface against real stores", function suite() {
 		}
 	})
 
-	test("the adoption loop: a legacy store refuses exhume, one open under the creating schema adopts it", async function adoption() {
+	test("a format-7 store refuses exhume and open — there is no adoption path", async function formatSevenRefused() {
 		const legacyDir = path.join(tmpRoot, "legacy")
 		copyStore(legacyFixture, legacyDir)
 
 		await assert.rejects(
-			async function beforeAdoption() {
+			async function beforeExhume() {
 				await Db.exhume(legacyDir)
 			},
 			function refusal(error: Error) {
-				assert.ok(errors.is(error, ErrExhumeNoDescriptor), `expected ErrExhumeNoDescriptor, got: ${error.message}`)
-				assert.match(error.message, /open it once under its creating schema/)
+				assert.ok(errors.is(error, ErrExhumeFormatMismatch), `expected ErrExhumeFormatMismatch, got: ${error.message}`)
+				assert.match(error.message, /storage format version 7.*expects 8/)
 				return true
 			}
 		)
 
-		const report = await adoptInChild(legacyDir)
-		assert.equal(report.docRows, 1)
-		assert.equal(report.taggedRows, 1)
-
-		const exhumed = await Db.exhume(legacyDir)
-		assert.deepEqual(
-			exhumed.descriptor.relations.map(function name(rel) {
-				return rel.name
-			}),
-			["Doc", "Tagged"],
-			"the back-filled descriptor is the creating declaration"
-		)
-		assert.deepStrictEqual(exhumed.scan("Doc"), [{ id: 0n, title: "the record outlives the schema" }])
-		assert.deepStrictEqual(exhumed.scan("Tagged"), [{ doc: 0n, tag: "legacy" }])
+		await assert.rejects(async function openLegacy() {
+			await Db.open(legacyDir, legacySchema)
+		}, /storage format version 7.*expects 8/)
 	})
 })

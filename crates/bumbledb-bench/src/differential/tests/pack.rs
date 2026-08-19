@@ -154,7 +154,9 @@ fn randomized_claim_sets_agree_with_the_naive_model() {
     let descriptor = schema();
     for round in 0..40u64 {
         let dir = TempDir::new(&format!("differential-{round}"));
-        let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+        let db = Db::create(dir.path(), descriptor.clone())
+            .expect("create engine store")
+            .expect("accepted");
         let mut naive = NaiveDb::new(&descriptor);
         let mut rng = Lcg(0x5EED_0012 ^ (round << 8));
         let ops = vec![
@@ -183,7 +185,9 @@ fn randomized_claim_sets_agree_with_the_naive_model() {
 fn the_calendar_golden_coalesces_by_hand() {
     let descriptor = schema();
     let dir = TempDir::new("calendar-golden");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let busy = |id: u64, person: u64, start: u64, end: u64| {
@@ -265,7 +269,9 @@ fn the_calendar_golden_coalesces_by_hand() {
 fn multi_rule_pack_folds_the_union_differentially() {
     let descriptor = schema();
     let dir = TempDir::new("union");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     // Two u64-slot rules over the SAME relation, split by id parity with
@@ -287,13 +293,14 @@ fn multi_rule_pack_folds_the_union_differentially() {
             rhs: Term::Literal(Value::U64(bound)),
         })],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![
             bumbledb::HeadTerm::Var,
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack),
         ],
         rules: vec![rule(bumbledb::CmpOp::Le, 2), rule(bumbledb::CmpOp::Ge, 2)],
+        rec: None,
     };
     let corpus = Delta {
         deletes: vec![],

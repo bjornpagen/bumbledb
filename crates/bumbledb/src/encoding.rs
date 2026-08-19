@@ -12,14 +12,13 @@ mod layout;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use decode::FieldDecodeError;
 pub use decode::{
     decode_bool, decode_field, decode_fixed_interval_start, decode_i64, decode_u64, field_bytes,
     field_word_bytes,
 };
 pub(crate) use decode::{decode_values, decode_values_keyed_into, split_halves};
-pub use encode::{
-    append_key_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64,
-};
+pub use encode::{append_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64};
 // The two-half interval encoders' production users live inside this
 // module (the type-aware `encode_literal` and `encode_fact` arms); the
 // crate-wide re-export survives for the byte-level test fixtures (the
@@ -28,11 +27,37 @@ pub use encode::{
 pub(crate) use encode::encode_interval_u64;
 pub use fact_hash::fact_hash;
 
-// The encoding-level type description is theory vocabulary (a type IS its
-// encoding), re-exported here so the codec's callers keep addressing it as
-// `crate::encoding::TypeDesc`; the codec itself — everything below — stays
-// engine-side.
-pub use bumbledb_theory::TypeDesc;
+// A type IS its encoding: layout vocabulary is [`ValueType`] itself.
+pub use bumbledb_theory::schema::ValueType;
+
+/// Dictionary intern id. Ids allocate from 0; [`InternId::SENTINEL`] is
+/// never minted — the miss token on query-word paths and the one owner of
+/// the `u64::MAX` reserved value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InternId(u64);
+
+impl InternId {
+    /// Never-minted miss token (`u64::MAX`).
+    pub const SENTINEL: Self = Self(u64::MAX);
+
+    /// Wraps a stored or minted id, including [`Self::SENTINEL`].
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// The raw word stored in facts and `_dict`.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Whether this is the never-minted miss token.
+    #[must_use]
+    pub const fn is_sentinel(self) -> bool {
+        self.0 == Self::SENTINEL.0
+    }
+}
 
 // `IntervalElement` rides along for the codec submodules (`decode`
 // addresses it as `super::IntervalElement`).
@@ -115,23 +140,13 @@ pub enum ValueRef {
     U64(u64),
     I64(i64),
     /// Intern id of a UTF-8 string.
-    String(u64),
+    String(InternId),
     /// A `bytes<N>` value, inline.
     FixedBytes(FixedBytesValue),
     /// Nonempty interval over U64.
     IntervalU64(Interval<u64>),
     /// Nonempty interval over I64.
     IntervalI64(Interval<i64>),
-    /// A fixed-width (`interval<u64, w>`) value: the checked interval
-    /// whose width the layout declares — [`encode_fact`] writes the
-    /// START word only (the width is the type's), and decode re-derives
-    /// the end. Constructors are the checking boundary
-    /// ([`crate::__private::fixed_interval_u64`]; the dynamic path
-    /// checks through `value_matches` first).
-    FixedIntervalU64(Interval<u64>),
-    /// A fixed-width (`interval<i64, w>`) value, as
-    /// [`ValueRef::FixedIntervalU64`].
-    FixedIntervalI64(Interval<i64>),
 }
 
 impl ValueRef {
@@ -158,7 +173,7 @@ const I64_SIGN_BIT: u64 = 1 << 63;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactLayout {
     /// Per-field `(offset, type)` in declaration order.
-    fields: Box<[(usize, TypeDesc)]>,
+    fields: Box<[(usize, ValueType)]>,
     fact_width: usize,
 }
 
@@ -183,7 +198,61 @@ impl FactLayout {
 
     /// Type of the field at `field_idx`.
     #[must_use]
-    pub fn field_type(&self, field_idx: usize) -> TypeDesc {
+    pub fn field_type(&self, field_idx: usize) -> ValueType {
         self.fields[field_idx].1
+    }
+
+    /// Parses `bytes` as a fact of this layout. Storage reads use this so a
+    /// wrong-width slice becomes [`FactView`] or absence, never a later
+    /// index panic.
+    #[must_use]
+    pub(crate) fn view<'bytes, 'layout>(
+        &'layout self,
+        bytes: &'bytes [u8],
+    ) -> Option<FactView<'bytes, 'layout>> {
+        (bytes.len() == self.fact_width).then_some(FactView {
+            bytes,
+            layout: self,
+        })
+    }
+
+    /// View over bytes this layout produced — encode path, sealed rows,
+    /// tests. Width is a programmer invariant (`encode_fact` writes
+    /// `fact_width` bytes).
+    #[must_use]
+    pub(crate) fn encoded<'bytes, 'layout>(
+        &'layout self,
+        bytes: &'bytes [u8],
+    ) -> FactView<'bytes, 'layout> {
+        debug_assert_eq!(bytes.len(), self.fact_width);
+        FactView {
+            bytes,
+            layout: self,
+        }
+    }
+}
+
+/// Canonical fact bytes whose width has been proved against their layout.
+///
+/// Storage reads parse into this; field readers and determinant slicers
+/// consume it, so a wrong-width slice cannot reach an index panic in
+/// release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FactView<'bytes, 'layout> {
+    bytes: &'bytes [u8],
+    layout: &'layout FactLayout,
+}
+
+impl<'bytes, 'layout> FactView<'bytes, 'layout> {
+    /// The proved fact bytes.
+    #[must_use]
+    pub(crate) const fn bytes(self) -> &'bytes [u8] {
+        self.bytes
+    }
+
+    /// The layout this view was proved against.
+    #[must_use]
+    pub(crate) const fn layout(self) -> &'layout FactLayout {
+        self.layout
     }
 }

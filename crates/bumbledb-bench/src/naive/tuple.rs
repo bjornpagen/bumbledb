@@ -48,9 +48,8 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) | (Value::FixedBytes(x), Value::FixedBytes(y)) => {
-            x.cmp(y)
-        }
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {
             (x.start(), x.end()).cmp(&(y.start(), y.end()))
         }

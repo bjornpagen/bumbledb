@@ -3,7 +3,7 @@
 //! `docs/architecture/30-dependencies.md` § rendering the rejection):
 //!
 //! - **The no-panic sweep over the dyn write/read surface** — malformed
-//!   arity, wrong value types, non-UTF-8 strings, unknown relation ids,
+//!   arity, wrong value types, unknown relation ids,
 //!   mis-aimed key-statement ids, and out-of-roster closed handles are
 //!   all typed [`bumbledb::FactShapeError`]s (or honest misses), never
 //!   panics: ids at this surface are data.
@@ -22,7 +22,8 @@ mod common;
 
 use bumbledb::schema::render_rejection;
 use bumbledb::{
-    Error, FactShapeError, RelationId, StatementId, StatementKind, Theory, Value, Violation,
+    DynIdError, Error, FactShapeError, RelationId, StatementId, StatementKind, Theory, Value,
+    Violation,
 };
 
 bumbledb::schema! {
@@ -57,7 +58,7 @@ const OUTDEGREE_CAPACITY: StatementId = StatementId(5);
 fn node_row(id: u64, title: &str, kind: KindId) -> Vec<Value> {
     vec![
         Value::U64(id),
-        Value::String(Box::from(title.as_bytes())),
+        Value::String(title.into()),
         Value::U64(kind.0),
     ]
 }
@@ -70,7 +71,9 @@ fn edge_row(src: u64, dst: u64) -> Vec<Value> {
 /// witness once, mint per row, insert dynamically — the ETL access
 /// pattern, ids returned to the caller.
 fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>) {
-    let db = bumbledb::Db::create(dir.path(), Graph).expect("create");
+    let db = bumbledb::Db::create(dir.path(), Graph)
+        .expect("create")
+        .expect("accepted");
     let fresh = db
         .fresh_field(Graph::NODE, Graph::NODE_ID)
         .expect("Node.id is fresh");
@@ -87,7 +90,9 @@ fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>
                 })
                 .collect::<bumbledb::Result<Vec<u64>>>()
         })
-        .expect("seed commit");
+        .expect("seed commit")
+        .unwrap()
+        .value;
     (db, ids)
 }
 
@@ -103,7 +108,7 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
                 Graph::NODE,
                 [&node_row(ids[0], "node-0", Kind::Lesson.id())]
             )?
-            .changed,
+            .changed(),
             1
         );
         assert_eq!(
@@ -111,17 +116,20 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
                 Graph::NODE,
                 [&node_row(ids[0], "renamed", Kind::Assessment.id())]
             )?
-            .changed,
+            .changed(),
             1
         );
         Ok(())
     })
-    .expect("identity rewrite commits");
+    .expect("identity rewrite commits")
+    .unwrap();
     let renamed = db
         .write(|tx| tx.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])]))
         .expect("point read")
+        .unwrap()
+        .value
         .expect("the row survived under its identity");
-    assert_eq!(renamed[1], Value::String(Box::from("renamed".as_bytes())));
+    assert_eq!(renamed[1], Value::String(Box::from("renamed")));
     // Minting is monotone past explicit values: the next mint is fresh.
     let next = db
         .write(|tx| {
@@ -135,7 +143,9 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
             tx.insert_dyn(Graph::NODE, [&node_row(fresh, "next", Kind::Lesson.id())])?;
             Ok(fresh)
         })
-        .expect("mint past explicit ids");
+        .expect("mint past explicit ids")
+        .unwrap()
+        .value;
     assert!(!ids.contains(&next), "never re-issues an observable id");
 }
 
@@ -146,12 +156,15 @@ fn a_non_fresh_field_earns_no_witness() {
     let err = db
         .fresh_field(Graph::NODE, Graph::NODE_TITLE)
         .expect_err("title is not fresh");
-    assert!(matches!(err, FactShapeError::NotAFreshField { .. }));
+    assert!(matches!(
+        err,
+        FactShapeError::Id(DynIdError::NotAFreshField { .. })
+    ));
 }
 
 /// The adversarial sweep over every dyn WRITE entry: unknown relation
-/// ids, malformed arity, wrong value types, non-UTF-8 strings — each a
-/// typed error, never a panic, on both the insert and delete lanes.
+/// ids, malformed arity, wrong value types — each a typed error, never
+/// a panic, on both the insert and delete lanes.
 #[test]
 fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
     let dir = common::TempDir::new("dyn-write-sweep");
@@ -160,16 +173,7 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
         let unknown = RelationId(99);
         let wrong_arity = vec![Value::U64(ids[0])];
         let wrong_type = vec![Value::Bool(true), Value::U64(1), Value::U64(0)];
-        let bad_utf8 = vec![
-            Value::U64(ids[0]),
-            Value::String(Box::from(&[0xFF, 0xFE][..])),
-            Value::U64(0),
-        ];
-        for (values, expect) in [
-            (&wrong_arity, "arity"),
-            (&wrong_type, "type"),
-            (&bad_utf8, "utf8"),
-        ] {
+        for (values, expect) in [(&wrong_arity, "arity"), (&wrong_type, "type")] {
             let insert = tx.insert_dyn(Graph::NODE, [values]).expect_err(expect);
             assert!(matches!(insert, Error::FactShape(_)), "{insert:?}");
             let delete = tx.delete_dyn(Graph::NODE, [values]).expect_err(expect);
@@ -181,7 +185,7 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
         ] {
             assert!(matches!(
                 outcome,
-                Error::FactShape(FactShapeError::UnknownRelation { .. })
+                Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
             ));
         }
         // A closed relation refuses writes at entry, typed.
@@ -191,7 +195,8 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
         assert!(matches!(closed, Error::ClosedRelationWrite { .. }));
         Ok(())
     })
-    .expect("the sweep commits nothing");
+    .expect("the sweep commits nothing")
+    .unwrap();
 }
 
 /// The same sweep over every dyn READ entry, write-transaction side and
@@ -220,7 +225,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             .expect_err("unknown relation");
         assert!(matches!(
             unknown,
-            Error::FactShape(FactShapeError::UnknownRelation { .. })
+            Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
         ));
         // get_dyn: a mis-aimed statement id is typed — out of range, a
         // containment, or another relation's key.
@@ -230,7 +235,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
                 .expect_err("not a key of Node");
             assert!(matches!(
                 err,
-                Error::FactShape(FactShapeError::NotAKeyStatement { .. })
+                Error::FactShape(FactShapeError::Id(DynIdError::NotAKeyStatement { .. }))
             ));
         }
         let arity = tx
@@ -249,7 +254,8 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
         ));
         Ok(())
     })
-    .expect("reads commit nothing");
+    .expect("reads commit nothing")
+    .unwrap();
 
     db.read(|snap| {
         assert!(snap.contains_dyn(Graph::NODE, &node_row(ids[0], "node-0", Kind::Lesson.id()))?);
@@ -264,13 +270,13 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             .expect_err("unknown relation");
         assert!(matches!(
             unknown,
-            Error::FactShape(FactShapeError::UnknownRelation { .. })
+            Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
         ));
         // The snapshot point read: committed state, decoded values out.
         let row = snap
             .get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])])?
             .expect("seeded row");
-        assert_eq!(row[1], Value::String(Box::from("node-0".as_bytes())));
+        assert_eq!(row[1], Value::String(Box::from("node-0")));
         assert_eq!(
             snap.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(555)])?,
             None
@@ -287,7 +293,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
                 .expect_err("not a key of Node");
             assert!(matches!(
                 err,
-                Error::FactShape(FactShapeError::NotAKeyStatement { .. })
+                Error::FactShape(FactShapeError::Id(DynIdError::NotAKeyStatement { .. }))
             ));
         }
         Ok(())
@@ -306,23 +312,18 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     let dir = common::TempDir::new("dyn-rejection-render");
     let (db, ids) = seeded(&dir, 3);
     let fresh = db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh");
-    let err = db
-        .write(|tx| {
-            let hub = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
-            tx.insert_dyn(
-                Graph::NODE,
-                [&node_row(hub, "provisional-title", Kind::Lesson.id())],
-            )?;
-            for dst in &ids {
-                tx.insert_dyn(Graph::EDGE, [&edge_row(hub, *dst)])?;
-            }
-            tx.insert_dyn(Graph::EDGE, [&edge_row(ids[0], 9999)])?;
-            Ok(hub)
-        })
-        .expect_err("three outgoing edges and a dangling target");
-    let Error::CommitRejected { violations } = err else {
-        panic!("expected a rejection, got {err:?}");
-    };
+    let violations = common::expect_rejected(db.write(|tx| {
+        let hub = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
+        tx.insert_dyn(
+            Graph::NODE,
+            [&node_row(hub, "provisional-title", Kind::Lesson.id())],
+        )?;
+        for dst in &ids {
+            tx.insert_dyn(Graph::EDGE, [&edge_row(hub, *dst)])?;
+        }
+        tx.insert_dyn(Graph::EDGE, [&edge_row(ids[0], 9999)])?;
+        Ok(hub)
+    }));
 
     let cited = violations.as_slice();
     assert!(
@@ -330,11 +331,11 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
             cited,
             [
                 Violation::Containment {
-                    statement: EDGE_DST_CONTAINMENT,
+                    id: EDGE_DST_CONTAINMENT,
                     ..
                 },
                 Violation::Capacity {
-                    statement: OUTDEGREE_CAPACITY,
+                    id: OUTDEGREE_CAPACITY,
                     measure: 3,
                     ..
                 }
@@ -345,13 +346,13 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     // The decoded cited facts: the dangling edge, and the hub node whose
     // title only the rejected transaction ever interned.
     let edge = &violations.cited_facts(0)[0];
-    assert_eq!(edge.relation, Graph::EDGE);
-    assert_eq!(edge.values[1], Value::U64(9999));
+    assert_eq!(edge.relation(), Graph::EDGE);
+    assert_eq!(edge.values()[1], Value::U64(9999));
     let hub = &violations.cited_facts(1)[0];
-    assert_eq!(hub.relation, Graph::NODE);
+    assert_eq!(hub.relation(), Graph::NODE);
     assert_eq!(
-        hub.values[1],
-        Value::String(Box::from("provisional-title".as_bytes())),
+        hub.values()[1],
+        Value::String(Box::from("provisional-title")),
         "a provisional intern id decodes at rejection time"
     );
 
@@ -374,7 +375,7 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
         rendered[1].facts()[0].fields[1],
         (
             "title".into(),
-            Value::String(Box::from("provisional-title".as_bytes()))
+            Value::String(Box::from("provisional-title"))
         )
     );
 }
@@ -387,33 +388,25 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
 fn an_fd_rejection_renders_the_key_form() {
     let dir = common::TempDir::new("dyn-rejection-fd");
     let (db, ids) = seeded(&dir, 1);
-    let err = db
-        .write(|tx| {
-            tx.insert_dyn(
-                Graph::NODE,
-                [&node_row(ids[0], "usurper", Kind::Lesson.id())],
-            )?;
-            Ok(())
-        })
-        .expect_err("two live facts claim one key");
-    let Error::CommitRejected { violations } = err else {
-        panic!("expected a rejection, got {err:?}");
-    };
+    let violations = common::expect_rejected(db.write(|tx| {
+        tx.insert_dyn(
+            Graph::NODE,
+            [&node_row(ids[0], "usurper", Kind::Lesson.id())],
+        )?;
+        Ok(())
+    }));
     let cited = violations.as_slice();
     assert!(
         matches!(
             cited,
-            [Violation::Functionality(fv)] if fv.statement() == NODE_KEY
+            [Violation::Functionality { id, .. }] if *id == NODE_KEY
         ),
         "one key citation: {cited:?}"
     );
     let fact = &violations.cited_facts(0)[0];
-    assert_eq!(fact.relation, Graph::NODE);
-    assert_eq!(fact.values[0], Value::U64(ids[0]));
-    assert_eq!(
-        fact.values[1],
-        Value::String(Box::from("usurper".as_bytes()))
-    );
+    assert_eq!(fact.relation(), Graph::NODE);
+    assert_eq!(fact.values()[0], Value::U64(ids[0]));
+    assert_eq!(fact.values()[1], Value::String(Box::from("usurper")));
 
     let rendered = render_rejection(&Graph.descriptor(), &violations);
     assert_eq!(rendered[0].kind(), StatementKind::Functionality);

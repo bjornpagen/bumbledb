@@ -1,3 +1,4 @@
+use crate::encoding::InternId;
 use crate::error::Result;
 use crate::storage::env::ReadTxn;
 
@@ -11,7 +12,7 @@ impl WriteDelta<'_> {
     /// # Errors
     ///
     /// `Lmdb` on a failed dictionary or counter read.
-    pub fn intern_str(&mut self, view: &ReadTxn<'_>, value: &str) -> Result<u64> {
+    pub fn intern_str(&mut self, view: &ReadTxn<'_>, value: &str) -> Result<InternId> {
         self.intern(view, value.as_bytes())
     }
 
@@ -21,7 +22,7 @@ impl WriteDelta<'_> {
     /// # Errors
     ///
     /// `Lmdb` on a failed dictionary read.
-    pub fn resolve_str(&self, view: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
+    pub fn resolve_str(&self, view: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
         self.resolve(view, value.as_bytes())
     }
 
@@ -31,10 +32,10 @@ impl WriteDelta<'_> {
     /// resolve). A linear scan: the pending map is value-keyed for the
     /// hot forward probes, and a transaction's novel-value set is small.
     #[must_use]
-    pub fn pending_raw(&self, id: u64) -> Option<&[u8]> {
-        self.pending_interns
-            .iter()
-            .find_map(|(raw, &candidate)| (candidate == id).then_some(raw.as_ref()))
+    pub fn pending_raw(&self, id: InternId) -> Option<&[u8]> {
+        self.interns
+            .as_ref()
+            .and_then(|interns| interns.pending_raw(id))
     }
 
     /// The non-minting sibling of [`Self::intern`], for the delete path:
@@ -45,14 +46,14 @@ impl WriteDelta<'_> {
     /// the delete is a no-op and the dictionary stays untouched.
     /// (Additional reader: the commit path's selection-literal encoding,
     /// `storage::commit::judgment`.)
-    pub(crate) fn resolve(&self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<u64>> {
-        if let Some(id) = self.pending_interns.get(raw) {
-            return Ok(Some(*id));
+    pub(crate) fn resolve(&self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
+        if let Some(id) = self.interns.as_ref().and_then(|interns| interns.get(raw)) {
+            return Ok(Some(id));
         }
         crate::storage::dict::lookup(view, raw)
     }
 
-    fn intern(&mut self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<u64> {
+    fn intern(&mut self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<InternId> {
         // Pending first: a pending value was proven absent from the
         // committed dict at mint time, and the single-writer discipline
         // freezes the committed dict for the transaction's lifetime — so
@@ -61,20 +62,24 @@ impl WriteDelta<'_> {
         if let Some(id) = self.resolve(view, raw)? {
             return Ok(id);
         }
-        let next = match self.dict_next {
-            Some(next) => next,
-            // A corrupted stored counter (u64::MAX) is typed Corruption
+        let next = match &self.interns {
+            Some(interns) => interns.next_id,
+            // A corrupted stored counter (sentinel) is typed Corruption
             // inside this read; the assert below can therefore fire only
             // for genuine in-memory exhaustion — 2^64 mints in one
             // transaction — which is a documented panic, not data.
             None => view.dict_next_id()?,
         };
+        let id = InternId::from_raw(next);
         assert!(
-            next != crate::storage::dict::SENTINEL_ID,
+            !id.is_sentinel(),
             "dictionary id space exhausted (u64::MAX is the miss sentinel)"
         );
-        self.pending_interns.insert(Box::from(raw), next);
-        self.dict_next = Some(next + 1);
-        Ok(next)
+        let next_id = next + 1;
+        match &mut self.interns {
+            Some(interns) => interns.insert(raw, id, next_id),
+            None => self.interns = Some(super::PendingInterns::first(raw, id, next_id)),
+        }
+        Ok(id)
     }
 }

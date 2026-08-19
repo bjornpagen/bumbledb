@@ -1,12 +1,14 @@
 use super::KeyProbePlan;
 use super::fact_word::{FactOperand, fact_operand};
-use crate::error::Result;
-use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
-use crate::ir::WordCmp;
+use crate::encoding::InternId;
+use crate::error::{CorruptionError, Error, Result};
+use crate::image::view::{Const, FilterPredicate, Loaded, OperandAddr, Operands, holds};
 use crate::obs;
 use crate::schema::Schema;
-use crate::storage::env::ReadTxn;
-use crate::storage::{dict, read};
+use crate::storage::catalog::CatalogRead;
+use crate::storage::dict;
+use crate::storage::read;
+use crate::storage::read::check_width;
 
 /// Resolves a constant to its canonical key-segment bytes AT ITS FIELD'S
 /// ENCODING — per field, the same canonical encoding
@@ -18,9 +20,9 @@ use crate::storage::{dict, read};
 /// A `PendingIntern` that missed the dictionary resolves to the
 /// never-minted sentinel id — the ensuing `U`/`M` probe then misses (empty
 /// result), never an insert, never an error.
-fn const_bytes(
-    txn: &ReadTxn<'_>,
-    desc: bumbledb_theory::TypeDesc,
+fn const_bytes<Cat: CatalogRead>(
+    catalog: &Cat,
+    desc: bumbledb_theory::schema::ValueType,
     value: &Const,
     params: &[Const],
     out: &mut Vec<u8>,
@@ -37,193 +39,103 @@ fn const_bytes(
         }
         Const::Interval { start, end } => {
             out.extend_from_slice(&start.to_be_bytes());
-            if !matches!(desc, bumbledb_theory::TypeDesc::FixedInterval { .. }) {
+            if !matches!(
+                desc,
+                bumbledb_theory::schema::ValueType::FixedInterval { .. }
+            ) {
                 out.extend_from_slice(&end.to_be_bytes());
             }
         }
         Const::Param(p) => {
-            return const_bytes(txn, desc, &params[usize::from(p.0)], params, out);
+            return const_bytes(catalog, desc, &params[usize::from(p.0)], params, out);
         }
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a param-set binding never reaches the key-probe path")
         }
         Const::PendingIntern { bytes } => {
-            let id = dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID);
+            let id = catalog
+                .dict_lookup(bytes)?
+                .map_or(dict::SENTINEL_ID, InternId::raw);
             out.extend_from_slice(&id.to_be_bytes());
         }
     }
     Ok(())
 }
 
-/// A filter constant in column form (for checks on the fetched fact). A
-/// dictionary miss resolves to the sentinel id, so `Eq` filters fail and
-/// `Ne` filters pass — per-operator miss semantics with no special cases.
-/// Bytes widen to words like [`FactOperand`], so scalar comparison is one
-/// word shape.
-fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<FactOperand> {
-    match value {
-        Const::Word(w) => Ok(FactOperand::Word(*w)),
-        Const::Byte(b) => Ok(FactOperand::Word(u64::from(*b))),
-        Const::Words(block) => {
-            let mut words = [0u64; 8];
-            words[..block.len()].copy_from_slice(block);
-            Ok(FactOperand::Block {
-                words,
-                count: u8::try_from(block.len()).expect("at most 8 words"),
-            })
+struct FactRow<'a, 'l, Cat: CatalogRead> {
+    fact: crate::encoding::FactView<'a, 'l>,
+    catalog: &'a Cat,
+}
+
+impl<Cat: CatalogRead> Operands for FactRow<'_, '_, Cat> {
+    type Error = crate::error::Error;
+
+    fn word(&self, at: OperandAddr) -> std::result::Result<u64, Self::Error> {
+        match fact_operand(self.fact, at.field())? {
+            FactOperand::Word(w) => Ok(w),
+            FactOperand::Pair(..) | FactOperand::Block { .. } => {
+                unreachable!("validated: word operands are scalar fields")
+            }
         }
-        Const::Interval { start, end } => Ok(FactOperand::Pair(*start, *end)),
-        Const::Param(p) => const_operand(txn, &params[usize::from(p.0)], params),
-        Const::ParamSet(_) | Const::WordSet(_) => {
-            unreachable!("classification: a param-set binding never reaches the key-probe path")
-        }
-        Const::PendingIntern { bytes } => Ok(FactOperand::Word(
-            dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID),
-        )),
     }
-}
 
-fn interval_const(value: &IntervalConst, params: &[Const]) -> (u64, u64) {
-    match value {
-        IntervalConst::Interval { start, end } => (*start, *end),
-        IntervalConst::Param(param) => match &params[usize::from(param.0)] {
-            Const::Interval { start, end } => (*start, *end),
-            _ => unreachable!("param slice: interval param resolves to an interval"),
-        },
-    }
-}
-
-/// A membership filter's resolved point word.
-fn point_word(point: &ViewWordSource, params: &[Const]) -> u64 {
-    match point {
-        ViewWordSource::Word(word) => *word,
-        ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
-            Const::Word(word) => *word,
-            _ => unreachable!("param slice: a point param resolves to a word"),
-        },
-    }
-}
-
-/// Point membership under the half-open interval: `start ≤ p AND p < end`.
-const fn point_in(start: u64, end: u64, point: u64) -> bool {
-    start <= point && point < end
-}
-
-/// Evaluates one residual filter on the fetched fact's bytes — the same
-/// word compositions the view evaluator runs over image columns
-/// (`image::view::apply`), sourced from [`fact_operand`] instead.
-fn fact_matches(
-    txn: &ReadTxn<'_>,
-    schema: &Schema,
-    plan: &KeyProbePlan,
-    fact: &[u8],
-    filter: &FilterPredicate,
-    params: &[Const],
-) -> Result<bool> {
-    // Corruption (a fixed-width start at or past the Q2 bound) is a hard
-    // error out of every read — never a skip, never a classification.
-    let operand =
-        |field| -> Result<FactOperand> { Ok(fact_operand(schema, plan.relation, fact, field)?) };
-    let pair = |field| -> Result<(u64, u64)> {
-        match operand(field)? {
-            FactOperand::Pair(start, end) => Ok((start, end)),
+    fn pair(&self, at: OperandAddr) -> std::result::Result<(u64, u64), Self::Error> {
+        match fact_operand(self.fact, at.field())? {
+            FactOperand::Pair(s, e) => Ok((s, e)),
             FactOperand::Word(_) | FactOperand::Block { .. } => {
                 unreachable!("validated: interval predicates read interval fields")
             }
         }
-    };
-    let word = |field| -> Result<u64> {
-        match operand(field)? {
-            FactOperand::Word(word) => Ok(word),
-            FactOperand::Pair(..) | FactOperand::Block { .. } => {
-                unreachable!("validated: point operands are scalar fields")
+    }
+
+    fn block(&self, at: OperandAddr) -> std::result::Result<([u64; 8], u8), Self::Error> {
+        match fact_operand(self.fact, at.field())? {
+            FactOperand::Block { words, count } => Ok((words, count)),
+            FactOperand::Word(_) | FactOperand::Pair(..) => {
+                unreachable!("validated: block operands are bytes<N>")
             }
         }
-    };
-    Ok(match filter {
-        FilterPredicate::Compare { field, op, value } => {
-            match (operand(*field)?, const_operand(txn, value, params)?) {
-                (FactOperand::Word(w), FactOperand::Word(c)) => op.compare(&w, &c),
-                // Interval-vs-interval-constant: value equality only
-                // (interval-pair *predicates* are the Allen kinds below).
-                (FactOperand::Pair(s, e), FactOperand::Pair(start, end)) => match op {
-                    WordCmp::Eq => s == start && e == end,
-                    _ => unreachable!("validated: interval constants compare under Eq only"),
-                },
-                // bytes<N>: word-wise identity — Eq/Ne only by validation.
-                (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
-                    match op {
-                        WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                        WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
-                        _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-                    }
-                }
-                _ => unreachable!("validated: filter constants match their field's shape"),
-            }
-        }
-        FilterPredicate::FieldsCompare { left, right, op } => {
-            match (operand(*left)?, operand(*right)?) {
-                (FactOperand::Word(a), FactOperand::Word(b)) => op.compare(&a, &b),
-                // Interval fields compare pairwise; validation admits
-                // Eq/Ne only.
-                (FactOperand::Pair(a_s, a_e), FactOperand::Pair(b_s, b_e)) => match op {
-                    WordCmp::Eq => a_s == b_s && a_e == b_e,
-                    WordCmp::Ne => a_s != b_s || a_e != b_e,
-                    _ => unreachable!("validated: no order comparison over intervals"),
-                },
-                // bytes<N> fields compare word-wise, Eq/Ne only.
-                (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
-                    match op {
-                        WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-                        WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
-                        _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-                    }
-                }
-                _ => unreachable!("same-fact comparison joins same-typed fields"),
-            }
-        }
-        FilterPredicate::PointIn { field, point } => {
-            let (start, end) = pair(*field)?;
-            point_in(start, end, point_word(point, params))
-        }
-        FilterPredicate::AnyPointIn { .. } => {
-            unreachable!("classification: a param-set binding never reaches the key-probe path")
-        }
-        // The Allen kinds: classify-then-test, exactly as the view
-        // evaluator runs them (`image::view::apply`) — encoded words
-        // preserve value order, so classification over fact words equals
-        // classification over values.
-        FilterPredicate::FieldsAllen { left, right, mask } => {
-            let (l_start, l_end) = pair(*left)?;
-            let (r_start, r_end) = pair(*right)?;
-            crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &l_start, &l_end, &r_start, &r_end,
-            ))
-        }
-        FilterPredicate::FieldAllen { field, other, mask } => {
-            let (f_start, f_end) = pair(*field)?;
-            let (start, end) = interval_const(other, params);
-            crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &f_start, &f_end, &start, &end,
-            ))
-        }
-        FilterPredicate::FieldsPointIn { interval, point } => {
-            let (start, end) = pair(*interval)?;
-            point_in(start, end, word(*point)?)
-        }
-        FilterPredicate::FieldWithin { field, outer } => {
-            let (start, end) = interval_const(outer, params);
-            match operand(*field)? {
-                FactOperand::Word(w) => point_in(start, end, w),
-                FactOperand::Pair(..) | FactOperand::Block { .. } => {
-                    unreachable!("validated: within-comparands are scalar words")
-                }
-            }
-        }
-        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
-            unreachable!("classify refused measure filters")
-        }
-    })
+    }
+
+    fn loaded(&self, at: OperandAddr) -> std::result::Result<Loaded, Self::Error> {
+        Ok(match fact_operand(self.fact, at.field())? {
+            FactOperand::Word(w) => Loaded::Word(w),
+            FactOperand::Pair(s, e) => Loaded::Pair(s, e),
+            FactOperand::Block { words, count } => Loaded::Block { words, count },
+        })
+    }
+
+    fn intern(&self, bytes: &[u8]) -> std::result::Result<u64, Self::Error> {
+        Ok(self
+            .catalog
+            .dict_lookup(bytes)?
+            .map_or(dict::SENTINEL_ID, InternId::raw))
+    }
+}
+
+fn fact_matches<Cat: CatalogRead>(
+    catalog: &Cat,
+    fact: crate::encoding::FactView<'_, '_>,
+    filter: &FilterPredicate,
+    params: &[Const],
+) -> Result<bool> {
+    holds(filter, &FactRow { fact, catalog }, params)
+}
+
+fn fetch_checked<'c, Cat: CatalogRead>(
+    catalog: &'c Cat,
+    schema: &Schema,
+    rel: bumbledb_theory::schema::RelationId,
+    row_id: u64,
+) -> Result<Cat::Value<'c>> {
+    let stored = catalog.fetch_fact(rel, row_id)?.ok_or(Error::Corruption(
+        CorruptionError::MissingFact {
+            relation: rel,
+            row_id,
+        },
+    ))?;
+    check_width(schema, rel, row_id, stored.as_ref())?;
+    Ok(stored)
 }
 
 /// The probe half of the key-probe path: key bytes from constants, one `U` get
@@ -231,16 +143,20 @@ fn fact_matches(
 /// fetch, remaining filters on the fact bytes. `None` = miss or a failed
 /// filter — an empty result, never an error.
 ///
+/// Returns the stored fact bytes. The caller width-proves them against
+/// the relation layout (this function already did, so
+/// [`crate::encoding::FactLayout::encoded`] is legal).
+///
 /// # Errors
 ///
 /// `Lmdb`/`Corruption` from the storage reads.
-pub(crate) fn key_probe_fact<'t>(
+pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     plan: &KeyProbePlan,
-    txn: &'t ReadTxn<'_>,
+    catalog: &'c Cat,
     schema: &Schema,
     params: &[Const],
     key_scratch: &mut Vec<u8>,
-) -> Result<Option<&'t [u8]>> {
+) -> Result<Option<Cat::Value<'c>>> {
     // Build the key bytes in the caller's reused scratch — the whole
     // composed `U` key (header + statement-projection-ordered
     // determinant) for a key_probe, full canonical fact bytes for `M` —
@@ -254,14 +170,14 @@ pub(crate) fn key_probe_fact<'t>(
     let layout = schema.relation(plan.relation).layout();
     for (field, value) in plan.kind.key() {
         let desc = layout.field_type(usize::from(field.0));
-        const_bytes(txn, desc, value, params, key_scratch)?;
+        const_bytes(catalog, desc, value, params, key_scratch)?;
     }
 
-    let mut probe_span = obs::span(obs::names::KEY_PROBE, obs::Category::Execute);
+    let mut probe_span = obs::span(obs::names::KEY_PROBE);
     // The fresh-row auto-key maintains no `U` tree (the one id allocator,
     // ruled 2026-07-23, R16): its determinant IS the row id, so the probe
     // reads `F` directly — an honest miss, one descent.
-    let fact = match &plan.kind {
+    let stored = match &plan.kind {
         super::KeyProbeKind::Uniqueness { statement, .. }
             if let Some(crate::schema::StatementView::Key(_, key)) =
                 schema.statement_checked(*statement)
@@ -271,31 +187,37 @@ pub(crate) fn key_probe_fact<'t>(
                 Ok(word) => u64::from_be_bytes(word),
                 Err(_) => unreachable!("KeyForm::FreshRow determinant is one encoded u64"),
             };
-            read::fact_at(txn, schema, plan.relation, row_id)?
-        }
-        super::KeyProbeKind::Uniqueness { .. } => {
-            match read::determinant_row_for_key(txn, key_scratch)? {
-                Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+            match catalog.fetch_fact(plan.relation, row_id)? {
+                Some(bytes) => {
+                    check_width(schema, plan.relation, row_id, bytes.as_ref())?;
+                    Some(bytes)
+                }
                 None => None,
             }
         }
+        super::KeyProbeKind::Uniqueness { .. } => match catalog.determinant_row(key_scratch)? {
+            Some(row_id) => Some(fetch_checked(catalog, schema, plan.relation, row_id)?),
+            None => None,
+        },
         super::KeyProbeKind::Membership { .. } => {
-            match read::fact_row(txn, plan.relation, key_scratch)? {
-                Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+            let hash = crate::encoding::fact_hash(key_scratch);
+            match catalog.membership_row(plan.relation, &hash)? {
+                Some(row_id) => Some(fetch_checked(catalog, schema, plan.relation, row_id)?),
                 None => None,
             }
         }
     };
-    probe_span.set_args(u64::from(fact.is_some()), 0);
-    let Some(fact) = fact else {
+    probe_span.set_flag(stored.is_some());
+    let Some(stored) = stored else {
         return Ok(None); // miss: empty result
     };
 
     // Remaining filters run on the fact bytes.
+    let fact = layout.encoded(stored.as_ref());
     for filter in &plan.remaining_filters {
-        if !fact_matches(txn, schema, plan, fact, filter, params)? {
+        if !fact_matches(catalog, fact, filter, params)? {
             return Ok(None);
         }
     }
-    Ok(Some(fact))
+    Ok(Some(stored))
 }

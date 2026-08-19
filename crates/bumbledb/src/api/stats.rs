@@ -1,12 +1,12 @@
 //! Structured per-execution statistics (docs/architecture/60-validation.md): the data
 //! behind plan introspection, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
-//! numbers, not a rendered string. Obtained via `Snapshot::profile`
+//! numbers, not a rendered string. Obtained via `ReadInstance::profile`
 //! (ANALYZE semantics: the query really executes, with counting
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 
 /// The version shared by rendered and structured plan introspection.
-pub const INTROSPECTION_VERSION: u16 = 6;
+pub const INTROSPECTION_VERSION: u16 = 7;
 
 /// One execution's counted statistics. The body is a sum matching the
 /// prepared pipeline: `reach` exists exactly on the Reach arm; interiors
@@ -182,41 +182,130 @@ pub struct DisjointRules {
     pub field: String,
 }
 
-/// One rule's counted execution under the shared sink.
+/// One rule's counted execution. The sum matches the prepared rule:
+/// key-probe fields that must be empty under the probe tag are
+/// unrepresentable on that arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuleStats {
-    /// Whether this rule carries the proof that distinct facts imply
-    /// distinct bindings. A single-rule aggregate spends this witness to
-    /// omit its binding seen-set; a union retains its spanning set.
-    pub distinct_bindings: bool,
-    /// Per plan node, in node order (empty for key-probe rules).
-    pub nodes: Vec<NodeStats>,
-    /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
-    /// off the rule plan's `Role::Eliminated` marks — no separate list
-    /// exists in the plan; this surface renders the marks. Empty for
-    /// key probes (single-atom queries have nothing to pair).
-    pub eliminated: Vec<EliminatedOccurrence>,
-    /// Occurrences the grounding-evaluator folded (`plan/ground/evaluate.rs`),
-    /// read straight off the rule plan's `Role::Folded` marks exactly as
-    /// `eliminated` reads its own. Empty for key probes.
-    pub folded: Vec<FoldedOccurrence>,
-    /// Per participating occurrence, in occurrence-id order: the
-    /// statistics the rule's plan was costed with — every node `estimate`
-    /// is estimated from (pinned rows at prepare), so a drifted plan is
-    /// visible in one read of this surface (the pull-based signal is
-    /// `PreparedQuery::staleness`). Empty for key probes (they read
-    /// no statistics); negated and grounding-eliminated occurrences earned
-    /// no statistics read at prepare and carry no entry.
-    pub pinned: Vec<PinnedRows>,
-    /// Bindings this rule emitted to the shared sink.
-    pub emitted: u64,
-    /// Of those, the ones the spanning seen-set absorbed — duplicates
-    /// within the rule or re-derivations of an earlier rule's head fact
-    /// (`emitted - absorbed` were new). Zero under a single-rule
-    /// distinct-bindings proof (nothing can be absorbed).
-    pub absorbed: u64,
-    /// Present iff this rule classified as a key probe.
-    pub key_probe: Option<KeyProbeStats>,
+pub enum RuleStats {
+    /// A key-probe rule: no plan nodes, no grounding marks, no pins.
+    KeyProbe {
+        /// Whether this rule carries the proof that distinct facts imply
+        /// distinct bindings.
+        distinct_bindings: bool,
+        /// Bindings this rule emitted.
+        emitted: u64,
+        /// Of those, the ones the spanning seen-set absorbed.
+        absorbed: u64,
+        /// Whether the probe found a fact.
+        hit: bool,
+    },
+    /// A free-join rule under the shared sink.
+    FreeJoin {
+        /// Whether this rule carries the proof that distinct facts imply
+        /// distinct bindings. A single-rule aggregate spends this witness to
+        /// omit its binding seen-set; a union retains its spanning set.
+        distinct_bindings: bool,
+        /// Per plan node, in node order.
+        nodes: Vec<NodeStats>,
+        /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
+        /// off the rule plan's `Role::Eliminated` marks — no separate list
+        /// exists in the plan; this surface renders the marks.
+        eliminated: Vec<EliminatedOccurrence>,
+        /// Occurrences the grounding-evaluator folded (`plan/ground/evaluate.rs`),
+        /// read straight off the rule plan's `Role::Folded` marks exactly as
+        /// `eliminated` reads its own.
+        folded: Vec<FoldedOccurrence>,
+        /// Per participating occurrence, in occurrence-id order: the
+        /// statistics the rule's plan was costed with — every node `estimate`
+        /// is estimated from (pinned rows at prepare), so a drifted plan is
+        /// visible in one read of this surface (the pull-based signal is
+        /// `PreparedQuery::staleness`). Negated and grounding-eliminated
+        /// occurrences earned no statistics read at prepare and carry no entry.
+        pinned: Vec<PinnedRows>,
+        /// Bindings this rule emitted to the shared sink.
+        emitted: u64,
+        /// Of those, the ones the spanning seen-set absorbed — duplicates
+        /// within the rule or re-derivations of an earlier rule's head fact
+        /// (`emitted - absorbed` were new). Zero under a single-rule
+        /// distinct-bindings proof (nothing can be absorbed).
+        absorbed: u64,
+    },
+}
+
+impl RuleStats {
+    /// Whether this rule carries the distinct-bindings proof.
+    #[must_use]
+    pub fn distinct_bindings(&self) -> bool {
+        match self {
+            Self::KeyProbe {
+                distinct_bindings, ..
+            }
+            | Self::FreeJoin {
+                distinct_bindings, ..
+            } => *distinct_bindings,
+        }
+    }
+
+    /// Bindings this rule emitted.
+    #[must_use]
+    pub fn emitted(&self) -> u64 {
+        match self {
+            Self::KeyProbe { emitted, .. } | Self::FreeJoin { emitted, .. } => *emitted,
+        }
+    }
+
+    /// Bindings the spanning seen-set absorbed.
+    #[must_use]
+    pub fn absorbed(&self) -> u64 {
+        match self {
+            Self::KeyProbe { absorbed, .. } | Self::FreeJoin { absorbed, .. } => *absorbed,
+        }
+    }
+
+    /// Per-node stats; empty for key probes.
+    #[must_use]
+    pub fn nodes(&self) -> &[NodeStats] {
+        match self {
+            Self::FreeJoin { nodes, .. } => nodes,
+            Self::KeyProbe { .. } => &[],
+        }
+    }
+
+    /// Grounding-eliminated occurrences; empty for key probes.
+    #[must_use]
+    pub fn eliminated(&self) -> &[EliminatedOccurrence] {
+        match self {
+            Self::FreeJoin { eliminated, .. } => eliminated,
+            Self::KeyProbe { .. } => &[],
+        }
+    }
+
+    /// Grounding-folded occurrences; empty for key probes.
+    #[must_use]
+    pub fn folded(&self) -> &[FoldedOccurrence] {
+        match self {
+            Self::FreeJoin { folded, .. } => folded,
+            Self::KeyProbe { .. } => &[],
+        }
+    }
+
+    /// Prepare-time pin record; empty for key probes.
+    #[must_use]
+    pub fn pinned(&self) -> &[PinnedRows] {
+        match self {
+            Self::FreeJoin { pinned, .. } => pinned,
+            Self::KeyProbe { .. } => &[],
+        }
+    }
+
+    /// The key-probe outcome, present iff this rule classified as a key probe.
+    #[must_use]
+    pub fn key_probe(&self) -> Option<KeyProbeStats> {
+        match self {
+            Self::KeyProbe { hit, .. } => Some(KeyProbeStats { hit: *hit }),
+            Self::FreeJoin { .. } => None,
+        }
+    }
 }
 
 /// One grounding-eliminated occurrence: never joined, its view never built —

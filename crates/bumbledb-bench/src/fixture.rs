@@ -61,7 +61,7 @@ pub(crate) fn side(relation: RelationId, projection: &[u16], selection: &[(u16, 
 
 #[cfg(test)]
 pub(crate) fn string(text: &str) -> Value {
-    Value::String(text.as_bytes().to_vec().into())
+    Value::String(text.into())
 }
 
 #[cfg(test)]
@@ -87,7 +87,6 @@ impl TempDir {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }
 

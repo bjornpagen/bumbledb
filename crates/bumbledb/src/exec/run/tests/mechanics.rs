@@ -21,6 +21,7 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![
                     crate::plan::fj::Subatom {
                         occ: OccId(0),
@@ -33,12 +34,14 @@ fn dynamic_cover_prefers_the_forced_small_side() {
                 ],
             },
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![crate::plan::fj::Subatom {
                     occ: OccId(0),
                     vars: vec![VarId(1)],
                 }],
             },
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![crate::plan::fj::Subatom {
                     occ: OccId(1),
                     vars: vec![VarId(2)],
@@ -46,8 +49,7 @@ fn dynamic_cover_prefers_the_forced_small_side() {
             },
         ],
     };
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, &BTreeSet::new()).expect("valid plan");
 
     // Pre-force S's root so its Exact(2) beats R's Estimate(500).
     let mut colts = colts_for(&plan, &views);
@@ -172,10 +174,10 @@ fn results_are_identical_across_batch_sizes() {
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(3)),
             op: WordCmp::Ne,
-            lhs: VarId(0),
-            rhs: VarId(3),
         }],
     );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
@@ -267,6 +269,7 @@ fn pinned_siblings_probe_without_hashing() {
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![
                     crate::plan::fj::Subatom {
                         occ: OccId(0),
@@ -283,6 +286,7 @@ fn pinned_siblings_probe_without_hashing() {
                 ],
             },
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![
                     crate::plan::fj::Subatom {
                         occ: OccId(1),
@@ -296,8 +300,7 @@ fn pinned_siblings_probe_without_hashing() {
             },
         ],
     };
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 2], &BTreeSet::new()).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
@@ -393,10 +396,10 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             op: WordCmp::Ne,
-            lhs: VarId(0),
-            rhs: VarId(1),
         }],
     );
     let plan = planned(&query, &schema, &[0, 1]);
@@ -442,14 +445,15 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 1)]),
         ],
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             op: WordCmp::Ne,
-            lhs: VarId(0),
-            rhs: VarId(1),
         }],
     );
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![crate::plan::fj::Node {
+            estimate: 0,
             subatoms: vec![
                 crate::plan::fj::Subatom {
                     occ: OccId(0),
@@ -462,7 +466,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
             ],
         }],
     };
-    let plan = validate(&plan, &query, &schema, vec![0; 1], &BTreeSet::new()).expect("valid plan");
+    let plan = validate(&plan, &query, &schema, &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();

@@ -28,8 +28,8 @@
 //! lane's rule.
 //!
 //! **Closed-SOURCE containments (domain quantification) are outside
-//! this lane** — the recorded fence: the engine's verdict is
-//! delta-restricted (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+//! this incremental lane** — the recorded fence: the engine's verdict
+//! is delta-restricted (`lean/Bumbledb/Txn/DeltaRestriction.lean:
 //! delta_restricted_commit_sound` — sound only under the holds-before
 //! premise) while `Txn.judgeB` judges the whole final state, and a
 //! closed source is exactly where the premise fails — a store whose
@@ -43,7 +43,9 @@
 //! 2026-07-15: the docs' worked example rendered "accept", judgeB
 //! rejected), so no roster fixture declares a closed source —
 //! `domain_quantification_judgments_are_outside_the_lane` pins the
-//! Rust half and the reason.
+//! Rust half and the reason. The complete-admission lane (L5,
+//! [`super::complete`]) lifts that fence: the complete verdict is not
+//! delta-restricted.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -73,7 +75,7 @@ struct JudgmentFixture {
 }
 
 /// The verdict both Rust oracles agreed on, in the lane's shape.
-enum JVerdict {
+pub(super) enum JVerdict {
     Accept,
     Reject {
         key_phase: bool,
@@ -424,7 +426,7 @@ fn permuted_schema() -> SchemaDescriptor {
             RelationDescriptor {
                 extension: None,
                 name: "Slot".into(),
-                fields: vec![field("id", ValueType::U64), field("span", interval.clone())],
+                fields: vec![field("id", ValueType::U64), field("span", interval)],
             },
             RelationDescriptor {
                 extension: None,
@@ -1077,7 +1079,7 @@ fn push_fact(out: &mut String, fact: &[Value], types: &[ValueType]) {
 /// One `{relation, facts}` block list from per-relation fact rows.
 /// `id_prefixed` is the ground-axiom shape: facts open with the
 /// synthetic row id, so positional types shift by one.
-fn push_blocks(
+pub(super) fn push_blocks(
     out: &mut String,
     blocks: &[(RelationId, Vec<Vec<Value>>)],
     schema: &SchemaDescriptor,
@@ -1097,7 +1099,7 @@ fn push_blocks(
             schema.relations[relation.0 as usize]
                 .fields
                 .iter()
-                .map(|field| field.value_type.clone()),
+                .map(|field| field.value_type),
         );
         let _ = write!(out, "{{\"relation\":{},\"facts\":[", relation.0);
         for (position, fact) in facts.iter().enumerate() {
@@ -1119,7 +1121,7 @@ fn push_blocks(
 
 /// The sealed positional type spelling (a closed relation's list opens
 /// with the synthetic id — the naive model's own sealed field space).
-fn push_relations(out: &mut String, schema: &SchemaDescriptor) {
+pub(super) fn push_relations(out: &mut String, schema: &SchemaDescriptor) {
     out.push('[');
     for (index, relation) in schema.relations.iter().enumerate() {
         if index > 0 {
@@ -1216,7 +1218,7 @@ fn push_side(out: &mut String, side: &Side) {
 
 /// The MATERIALIZED statement list — indices are the engine's
 /// statement ids (the naive model's own materialization rule).
-fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
+pub(super) fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
     out.push('[');
     for (index, statement) in schema.materialized_statements().iter().enumerate() {
         if index > 0 {
@@ -1270,7 +1272,7 @@ fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
     out.push(']');
 }
 
-fn push_verdict(out: &mut String, verdict: &JVerdict) {
+pub(super) fn push_verdict(out: &mut String, verdict: &JVerdict) {
     match verdict {
         JVerdict::Accept => out.push_str("\"accept\""),
         JVerdict::Reject {
@@ -1309,7 +1311,7 @@ fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
 /// statement-id set deduplicates a containment cited in both
 /// directions (the `Direction` refinement sits below the Lean
 /// altitude).
-fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
+pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
     match verdict {
         Verdict::Committed => JVerdict::Accept,
         Verdict::Aborted(violations) => {
@@ -1354,7 +1356,9 @@ fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
 )]
 fn render_fixture(fixture: &JudgmentFixture) -> String {
     let dir = ScratchDir::new(&format!("judgment-{}", fixture.name));
-    let db = Db::create(&dir.0, fixture.schema.clone()).expect("create judgment fixture store");
+    let db = Db::create(&dir.0, fixture.schema.clone())
+        .expect("create judgment fixture store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&fixture.schema);
     let base = Delta {
         deletes: vec![],
@@ -1595,7 +1599,9 @@ mod tests {
             .find(|fixture| fixture.name == "judgment-containment-both-directions")
             .expect("the fixture is on the roster");
         let dir = ScratchDir::new("judgment-both-directions-pin");
-        let db = Db::create(&dir.0, fixture.schema.clone()).expect("create the pin store");
+        let db = Db::create(&dir.0, fixture.schema.clone())
+            .expect("create the pin store")
+            .expect("accepted");
         let base = Delta {
             deletes: vec![],
             inserts: fixture.base.clone(),
@@ -1689,7 +1695,8 @@ mod tests {
             ],
         };
         let dir = ScratchDir::new("judgment-domain-quantification-pin");
-        let db = Db::create(&dir.0, schema.clone()).expect("create the pin store");
+        let db = Db::create_store_without_admission(&dir.0, schema.clone())
+            .expect("sweeper-fixture birth");
         let mut naive = NaiveDb::new(&schema);
         let delta = Delta {
             deletes: vec![],

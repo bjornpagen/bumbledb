@@ -758,7 +758,7 @@ the twin DDL derived FROM the table), whose totality over the materialized
 statements is a test: an engine law without a SQLite enforcement row is a
 failing build, never a silent parity gap. The rejection-latency families
 price a REFUSED commit round-trip on both sides — the typed
-`Error::CommitRejected` plus abort against constraint failure plus
+`Admission::Rejected` plus abort against constraint failure plus
 `ROLLBACK` — and structurally cannot measure an accepted commit. One
 honest asymmetry, recorded rather than hidden: with `foreign_keys=ON`
 SQLite checks constraints per statement (immediate) while the engine

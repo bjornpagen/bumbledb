@@ -34,6 +34,11 @@
 //! `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way like
 //! its query and judgment siblings.
 //!
+//! The COMPLETE-ADMISSION arm ([`complete`], `complete-*.json`)
+//! likewise: [`bumbledb::InstanceBuilder::admit`] against
+//! [`crate::naive::NaiveDb::judge_complete`], then Lean
+//! `Txn.completeAdmissionB` / `Txn.judgeB` over the candidate.
+//!
 //! ## Scope fences (each counted in [`Report`], never silent)
 //!
 //! * Tiny scale, the valid querygen arm only — the hostile arm
@@ -82,6 +87,7 @@
 //! No engine `pub` accessor was needed: `Answers` extraction via
 //! `differential::engine_query` sufficed (recorded per the PRD).
 
+pub mod complete;
 pub mod judgment;
 pub mod reach;
 
@@ -173,8 +179,8 @@ pub struct World {
     pub cfg: GenConfig,
     pub db: Db<target::Target>,
     pub naive: NaiveDb,
-    dict: BTreeMap<Box<[u8]>, u64>,
-    dict_order: Vec<Box<[u8]>>,
+    dict: BTreeMap<Box<str>, u64>,
+    dict_order: Vec<Box<str>>,
     _dir: ScratchDir,
 }
 
@@ -194,7 +200,6 @@ impl ScratchDir {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create conformance scratch dir");
         Self(path)
     }
 }
@@ -222,7 +227,7 @@ pub fn build_world(seed: u64) -> World {
         scale: Scale::Tiny,
     };
     let dir = ScratchDir::new(&format!("{seed:08x}"));
-    let db = Db::create(&dir.0, target::Target).expect("create conformance target store");
+    let db = target::publish_admitted(&dir.0);
     let mut naive = NaiveDb::new(&target::descriptor());
     let mut delta = Delta::default();
     for rel in 0..target::TARGET_RELATIONS {
@@ -233,9 +238,10 @@ pub fn build_world(seed: u64) -> World {
             _ => {
                 db.write(|tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
-                        .map(|r| r.changed)
+                        .map(bumbledb::MutationReport::changed)
                 })
-                .expect("conformance target insert");
+                .expect("conformance target insert")
+                .unwrap();
             }
         }
         for fact in target::corpus_relation_rows(cfg, rel) {
@@ -251,9 +257,10 @@ pub fn build_world(seed: u64) -> World {
             target::ids::LANE,
             target::corpus_relation_rows(cfg, target::ids::LANE),
         )
-        .map(|r| r.changed)
+        .map(bumbledb::MutationReport::changed)
     })
-    .expect("conformance lane insert");
+    .expect("conformance lane insert")
+    .unwrap();
     for fact in target::corpus_relation_rows(cfg, target::ids::LANE) {
         delta.inserts.push((target::ids::LANE, fact));
     }
@@ -311,7 +318,8 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
             }
             Ok(())
         })
-        .expect("conformance DU cluster load");
+        .expect("conformance DU cluster load")
+        .unwrap();
         start = end;
     }
 }
@@ -330,9 +338,9 @@ impl World {
 
     /// The dictionary id of a string, or the unresolved-literal
     /// exclusion.
-    fn resolve(&self, bytes: &[u8]) -> Result<u64, Exclusion> {
+    fn resolve(&self, text: &str) -> Result<u64, Exclusion> {
         self.dict
-            .get(bytes)
+            .get(text)
             .copied()
             .ok_or(Exclusion::UnresolvedLiteral)
     }
@@ -820,10 +828,11 @@ fn render_case(
     answers: &BTreeSet<Tuple>,
 ) -> Result<String, Exclusion> {
     let mut used = BTreeSet::new();
-    let Query::Cq {
+    let Query {
         interiors,
         head,
         rules,
+        rec: None,
     } = query
     else {
         panic!("query-case renderer is the CQ arm");
@@ -930,7 +939,7 @@ fn world_blocks(
         let field_types: Vec<ValueType> = descriptor
             .fields()
             .iter()
-            .map(|field| field.value_type.clone())
+            .map(|field| field.value_type)
             .collect();
         let facts: Vec<Vec<Value>> = if descriptor.body().closed_rows().is_some() {
             closed_facts(relation)
@@ -974,8 +983,7 @@ fn strings_block(world: &World, used: &BTreeSet<u64>) -> String {
         if index > 0 {
             strings_block.push(',');
         }
-        let text = std::str::from_utf8(&world.dict_order[usize::try_from(*id).expect("id fits")])
-            .expect("corpus strings are UTF-8");
+        let text = &world.dict_order[usize::try_from(*id).expect("id fits")];
         let _ = write!(strings_block, "[{id},");
         crate::json::push_str_lit(&mut strings_block, text);
         strings_block.push(']');
@@ -997,18 +1005,19 @@ pub(super) fn render_reach_query_block(
     query: &Query,
 ) -> Result<String, Exclusion> {
     match query {
-        Query::Cq {
+        Query {
             interiors,
             head,
             rules,
+            rec: None,
         } => {
             let mut main = String::new();
             push_reach_rules(world, used, &mut main, rules)?;
             render_cq_doc(world, used, interiors, head, &main)
         }
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rec: Some(rec),
             head,
             rules,
         } => {
@@ -1483,7 +1492,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         // (`union_idempotent` at the query).
         HandCase {
             name: "hand-union-overlapping-rules",
-            query: Query::Cq {
+            query: Query {
                 interiors: vec![],
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
@@ -1513,6 +1522,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                         vec![],
                     ),
                 ],
+                rec: None,
             },
             params: vec![],
         },
@@ -1807,6 +1817,7 @@ pub fn write_corpus(dir: &Path) -> Report {
     for (name, document) in cases
         .iter()
         .chain(&judgment::generate_judgment_corpus())
+        .chain(&complete::generate_complete_corpus())
         .chain(&reach_cases)
     {
         std::fs::write(dir.join(name), document).expect("write a corpus case");
@@ -1852,6 +1863,8 @@ pub fn replay_checked_in_corpus() -> usize {
         let text = std::fs::read_to_string(path).expect("read a corpus case");
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
+        } else if name.starts_with("complete-") {
+            complete::replay_complete_case(&name)
         } else if name.starts_with("reach-") {
             reach::replay_reach_case(&mut worlds, &name, &text)
         } else {
@@ -2064,6 +2077,18 @@ mod tests {
         let dir = corpus_dir();
         for (name, document) in judgment::generate_judgment_corpus() {
             std::fs::write(dir.join(&name), document).expect("write a judgment case");
+        }
+    }
+
+    /// Regenerates the complete-admission arm's `complete-*.json`
+    /// cases only — verdicts are the agreed `InstanceBuilder::admit`
+    /// and naive `judge_complete` outcome (a trophy panics).
+    #[test]
+    #[ignore = "regenerates the checked-in complete-admission cases; run deliberately"]
+    fn regenerate_the_complete_admission_corpus() {
+        let dir = corpus_dir();
+        for (name, document) in complete::generate_complete_corpus() {
+            std::fs::write(dir.join(&name), document).expect("write a complete-admission case");
         }
     }
 

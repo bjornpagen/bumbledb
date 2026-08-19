@@ -91,7 +91,7 @@ fn doc_row_sized(seed: u64, i: u64, buckets: u64) -> Vec<Value> {
     }
     vec![
         Value::U64(i),
-        Value::String(format!("doc/{i:08x}").into_bytes().into()),
+        Value::String(format!("doc/{i:08x}").into()),
         Value::U64(rng.range(buckets)),
         Value::I64(i64::try_from(rng.range(1_000_000)).expect("small")),
         // Identity-shaped: a random 32-byte payload digest, inline.
@@ -149,18 +149,18 @@ fn by_key() -> Query {
 
 fn key_params(seed: u64) -> Vec<Vec<Value>> {
     let mut rng = Rng::new(mix(seed, 903, 2));
-    let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
+    let key = |i: u64| Value::String(format!("doc/{i:08x}").into());
     vec![
         vec![key(rng.range(DOCS))],
         vec![key(rng.range(DOCS))],
         vec![key(rng.range(DOCS))],
-        vec![Value::String(b"doc/never-a-key".to_vec().into())],
+        vec![Value::String("doc/never-a-key".into())],
     ]
 }
 
 /// p5 — the keyed GET surface (0.5.0's flagship): the typed point read
 /// through the declared key law `Doc(key) -> Doc`, via the dynamic entry
-/// the TS SDK bridge calls (`Snapshot::get_dyn` — the scenario stores
+/// the TS SDK bridge calls (`ReadInstance::get_dyn` — the scenario stores
 /// are `Db<SchemaDescriptor>`, so the dynamic surface is the reachable
 /// twin of the macro-typed `snap.get(key)`). No query, no plan, no
 /// prepared object: determinant encode → index probe → full-fact decode.
@@ -184,12 +184,12 @@ fn doc_key_statement(schema: &bumbledb::Schema) -> bumbledb::StatementId {
 /// salt, so the two lanes never share a rotation by accident.
 fn keyed_get_params(seed: u64) -> Vec<Vec<Value>> {
     let mut rng = Rng::new(mix(seed, 903, 5));
-    let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
+    let key = |i: u64| Value::String(format!("doc/{i:08x}").into());
     vec![
         vec![key(rng.range(DOCS))],
         vec![key(rng.range(DOCS))],
         vec![key(rng.range(DOCS))],
-        vec![Value::String(b"doc/never-a-key".to_vec().into())],
+        vec![Value::String("doc/never-a-key".into())],
     ]
 }
 
@@ -347,12 +347,12 @@ fn scenario_smoke() -> Scenario {
     }
     fn keyed_get_params_smoke(seed: u64) -> Vec<Vec<Value>> {
         let mut rng = Rng::new(mix(seed, 903, 5));
-        let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
+        let key = |i: u64| Value::String(format!("doc/{i:08x}").into());
         vec![
             vec![key(rng.range(DOCS_SMOKE))],
             vec![key(rng.range(DOCS_SMOKE))],
             vec![key(rng.range(DOCS_SMOKE))],
-            vec![Value::String(b"doc/never-a-key".to_vec().into())],
+            vec![Value::String("doc/never-a-key".into())],
         ]
     }
     Scenario {
@@ -389,7 +389,6 @@ mod tests {
     fn keyed_get_smoke_gate_agrees() {
         let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-smoke");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         crate::scenarios::gate_scenario(&dir, &scenario_smoke(), 7)
             .expect("p5 agrees with SQLite at smoke scale");
         let _ = std::fs::remove_dir_all(&dir);
@@ -402,32 +401,35 @@ mod tests {
     fn keyed_get_returns_the_exact_fact() {
         let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-exact");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = bumbledb::Db::create(&dir, bumbledb::Theory::descriptor(Points)).expect("create");
+        let db = bumbledb::Db::create(&dir, bumbledb::Theory::descriptor(Points))
+            .expect("create")
+            .expect("accepted");
         let seed = 7;
         db.write(|tx| {
             tx.insert_dyn(ids::BUCKET, (0..BUCKETS_SMOKE).map(bucket_row))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("buckets");
+        .expect("buckets")
+        .unwrap();
         db.write(|tx| {
             tx.insert_dyn(
                 ids::DOC,
                 (0..DOCS_SMOKE).map(|i| doc_row_sized(seed, i, BUCKETS_SMOKE)),
             )
-            .map(|r| r.changed)
+            .map(bumbledb::MutationReport::changed)
         })
-        .expect("docs");
+        .expect("docs")
+        .unwrap();
         let statement = doc_key_statement(schema());
         for i in [0u64, 3, DOCS_SMOKE - 1] {
-            let key = Value::String(format!("doc/{i:08x}").into_bytes().into());
+            let key = Value::String(format!("doc/{i:08x}").into());
             let fact = db
                 .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&key)))
                 .expect("get_dyn")
                 .expect("a loaded key is a hit");
             assert_eq!(fact, doc_row_sized(seed, i, BUCKETS_SMOKE));
         }
-        let miss = Value::String(b"doc/never-a-key".to_vec().into());
+        let miss = Value::String("doc/never-a-key".into());
         let absent = db
             .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&miss)))
             .expect("get_dyn");

@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, SinkSpec, word_to_i64};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots
@@ -110,10 +110,16 @@ impl AggregateSink {
         // and was deleted — the probe IS the fast path now).
         let group_idx = self.probe_group();
 
-        let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
-        self.acc_scratch.clear();
-        self.acc_scratch
-            .extend_from_slice(&self.accs[range.clone()]);
+        let n_aggs = match &self.group_state {
+            GroupState::Folds { accs, n_aggs } => {
+                let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
+                self.acc_scratch.clear();
+                self.acc_scratch.extend_from_slice(&accs[range]);
+                *n_aggs
+            }
+            GroupState::Pack { .. } => unreachable!("constant-group fold is the Folds arm"),
+        };
+        let range = group_idx * n_aggs..(group_idx + 1) * n_aggs;
         let mut cursor = 0;
         for find in &self.finds {
             let SinkSpec::Agg(spec) = find else {
@@ -191,7 +197,10 @@ impl AggregateSink {
                 },
             }
         }
-        self.accs[range].copy_from_slice(&self.acc_scratch);
+        let GroupState::Folds { accs, .. } = &mut self.group_state else {
+            unreachable!("constant-group fold is the Folds arm");
+        };
+        accs[range].copy_from_slice(&self.acc_scratch);
     }
 }
 

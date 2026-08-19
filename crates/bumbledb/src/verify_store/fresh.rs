@@ -13,10 +13,11 @@
 use std::collections::BTreeSet;
 
 use crate::error::Result;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::keys;
 use bumbledb_theory::schema::{FieldId, Generation, RelationId};
 
-use super::{StoreFinding, Sweep, namespace};
+use super::{StoreFinding, Sweep, for_namespace};
 
 /// Whether a stored (or absent-as-zero) next-value fails the ratchet law
 /// against the tallied maximum — the exhausted-sequence exemption
@@ -31,18 +32,16 @@ fn ratchet_broken(stored: u64, max_fresh: u64) -> bool {
     stored != u64::MAX && stored <= max_fresh
 }
 
-pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
-    let txn = s.txn;
+pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     let mut seen: BTreeSet<(RelationId, FieldId)> = BTreeSet::new();
-    for entry in namespace(s.data, txn, keys::NS_FRESH)? {
-        let (key, value) = entry?;
+    for_namespace(s.catalog, keys::Namespace::Fresh, |key, value| {
         let Some((rel, field)) = keys::parse_fresh_key(key) else {
             s.malformed(key, "Q key length");
-            continue;
+            return Ok(());
         };
         let Some(relation) = s.schema.relation_checked(rel) else {
             s.malformed(key, "Q key relation");
-            continue;
+            return Ok(());
         };
         // Closed relations appear in no namespace — the entry's very
         // existence is the finding (the F pass's exemption, mirrored).
@@ -51,7 +50,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 relation: rel,
                 key: key.into(),
             });
-            continue;
+            return Ok(());
         }
         let fresh_field = relation
             .fields()
@@ -59,11 +58,11 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             .is_some_and(|descriptor| descriptor.generation == Generation::Fresh);
         if !fresh_field {
             s.malformed(key, "Q key field");
-            continue;
+            return Ok(());
         }
         let Ok(bytes) = <[u8; 8]>::try_from(value) else {
             s.malformed(key, "Q next value");
-            continue;
+            return Ok(());
         };
         let stored = u64::from_le_bytes(bytes);
         seen.insert((rel, field));
@@ -77,7 +76,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 max_fresh,
             });
         }
-    }
+        Ok(())
+    })?;
     // A tallied fresh field with no stored entry reads as zero: rows on
     // disk convict the absent sequence exactly as absent S counters are
     // convicted.

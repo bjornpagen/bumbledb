@@ -19,10 +19,10 @@ fn projection_scan_filters_residuals_like_the_oracle() {
             occurrence(0, POSTING, &[(1, 0), (2, 1)]),
             occurrence(1, POSTING, &[(1, 0), (2, 2)]),
         ],
-        vec![crate::ir::normalize::PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(1)),
+            right: OperandAddr::from(VarId(2)),
             op: crate::ir::WordCmp::Lt,
-            lhs: VarId(1),
-            rhs: VarId(2),
         }],
     );
     let plan = planned(&schema, &normalized, &[0, 1], &[1, 2]);

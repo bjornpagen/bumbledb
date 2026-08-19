@@ -14,8 +14,9 @@ import os from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import type { Db as DbValue, Fact, KeyFact, MemberRelation, ReadScope } from "#index.ts"
+import type { Db as DbValue, Fact, KeyFact, MemberRelation, ReadInstance } from "#index.ts"
 import { Db } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import type { RunStoreSchema } from "#test/fixtures/run-store-schema.ts"
 import { grp, runStoreSchema, sheet } from "#test/fixtures/run-store-schema.ts"
 import { put } from "#test/put.ts"
@@ -36,7 +37,7 @@ after(function cleanup() {
  * no scan, no `Fact<R> extends { id: infer I }` contortion, no widening.
  */
 function rowByKey<R extends MemberRelation<Rels>>(
-	snap: ReadScope<Rels>,
+	snap: ReadInstance<Rels>,
 	relation: R,
 	key: KeyFact<R>,
 	what: string
@@ -54,7 +55,7 @@ let grpId: Fact<typeof grp>["id"]
 let missingGrpId: Fact<typeof grp>["id"]
 
 before(async function create() {
-	db = await Db.create(path.join(tmpRoot, "store"), runStoreSchema)
+	db = accepted(await Db.create(path.join(tmpRoot, "store"), runStoreSchema))
 	const written = db.write(function build(tx) {
 		const sheetRow = put(tx, sheet, {
 			name: "sheet-probe",
@@ -77,7 +78,7 @@ before(async function create() {
 		missingGrpId = doomed.id
 		tx.delete(grp, [{ id: doomed.id, sheet: sheetRow.id, label: "doomed", context: "c" }])
 	})
-	assert.ok(written.ok, "the probe fixture commit admits")
+	assert.equal(written.tag, "accepted", "the probe fixture commit admits")
 })
 
 test("the generic keyed point read is spellable over MemberRelation<Rels> via exported KeyFact", function genericGet() {

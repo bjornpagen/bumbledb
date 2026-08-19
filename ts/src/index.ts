@@ -5,9 +5,8 @@
  * never declared: THE LAWS TYPE THE COLUMNS, `schema()` computing every
  * field's equivalence class FROM the statement list at both tiers), the
  * statement algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
- * runtime (exclusive-lock stores, transactions, typed violations, scoped
- * snapshot reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07, zero
- * closables), the query surface (kysely-shaped:
+ * runtime (exclusive-lock stores, transactions, typed violations, callback
+ * instance reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07), the query surface (kysely-shaped:
  * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
  * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
  * join), the head a `find` RECORD whose keys name the answer columns
@@ -51,7 +50,9 @@ export { closed } from "#closed.ts"
 export type {
 	Abandon,
 	AbandonedArm,
+	Admission,
 	CapacityViolation,
+	Committed,
 	ContainmentViolation,
 	DeclaredKeyFact,
 	DeclaredKeyViolation,
@@ -62,13 +63,28 @@ export type {
 	MirrorViolation,
 	MutationReport,
 	OffendingFact,
+	OwnedInstance,
 	Prepared,
-	ReadScope,
+	ReadInstance,
+	SyncResult,
 	Tx,
 	Violation,
-	WriteResult
+	Witness,
+	WriteFromOutcome,
+	WriteOutcome,
+	WriteTx
 } from "#db.ts"
-export { abandon, Db, ErrGenerationMoved, ErrNewtypeMismatch } from "#db.ts"
+export {
+	abandon,
+	Db,
+	ErrAsyncCallback,
+	ErrForeignPrepared,
+	ErrForeignWitness,
+	ErrNewtypeMismatch,
+	ErrSpentHandle,
+	ErrUseAfterScope,
+	InstanceBuilder
+} from "#db.ts"
 export type {
 	Exhumed,
 	ExhumedAxiom,

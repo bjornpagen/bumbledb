@@ -249,19 +249,20 @@ impl NaiveDb {
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
         let (interiors, rec, head, rules) = match query {
-            Query::Cq {
+            Query {
                 interiors,
                 head,
                 rules,
+                rec: None,
             } => (
                 interiors.as_slice(),
                 None,
                 head.as_slice(),
                 rules.as_slice(),
             ),
-            Query::Reach {
+            Query {
                 interiors,
-                rec,
+                rec: Some(rec),
                 head,
                 rules,
             } => (

@@ -15,19 +15,25 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import { test } from "node:test"
 import type {
+	AdmissionTag,
 	AggOpIr,
 	AtomSourceIr,
 	CmpOpIr,
 	ConditionTreeIr,
+	ErrorFamilyKind,
+	ExhumeKind,
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
+	OpenKind,
+	PrepareKind,
 	QueryIr,
 	QueryParam,
 	StatementKindTag,
 	TaggedValue,
 	TermIr,
-	Violation
+	Violation,
+	WriteTag
 } from "#native.ts"
 import type {
 	CapacityBoundSpec,
@@ -64,7 +70,41 @@ const ROSTERS = {
 	condition: ["leaf", "and", "or"],
 	query: ["cq", "reach"],
 	direction: ["sourceUnsatisfied", "targetRequired"],
-	param: ["set"]
+	param: ["set"],
+	errorFamily: [
+		"formatMismatch",
+		"schemaMismatch",
+		"alreadyInitialized",
+		"destinationExists",
+		"publishedButUnsynced",
+		"environmentLocked",
+		"storeKindMismatch",
+		"descriptorMissing",
+		"io",
+		"lmdb",
+		"readersFull",
+		"schema",
+		"validation",
+		"factShape",
+		"freshExhausted",
+		"closedRelationWrite",
+		"commitSync",
+		"transactionPoisoned",
+		"foreignPrepared",
+		"foreignWitness",
+		"param",
+		"measureOfRay",
+		"capacityRayMeasure",
+		"derivedBudgetExceeded",
+		"overflow",
+		"resultBytesOverflow",
+		"corruption"
+	],
+	admissionTag: ["accepted", "rejected"],
+	writeTag: ["accepted", "rejected", "abandoned", "moved"],
+	openKind: ["schemaError", "newtypeMismatch", "fingerprintMismatch"],
+	exhumeKind: ["descriptorMissing", "formatMismatch", "corruption"],
+	prepareKind: ["irError"]
 } as const
 
 /** The compile pins: each roster IS its mirrored union, exactly (both directions). */
@@ -90,7 +130,13 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.query)[number], QueryIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.direction)[number], Extract<Violation, { readonly kind: "containment" }>["direction"]>>,
 	Expect<Equal<(typeof ROSTERS.param)[number], Exclude<QueryParam["kind"], TaggedValue["kind"]>>>,
-	Expect<Equal<(typeof ROSTERS.value)[number], ValueSpec["kind"]>>
+	Expect<Equal<(typeof ROSTERS.value)[number], ValueSpec["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.errorFamily)[number], ErrorFamilyKind>>,
+	Expect<Equal<(typeof ROSTERS.admissionTag)[number], AdmissionTag>>,
+	Expect<Equal<(typeof ROSTERS.writeTag)[number], WriteTag>>,
+	Expect<Equal<(typeof ROSTERS.openKind)[number], OpenKind>>,
+	Expect<Equal<(typeof ROSTERS.exhumeKind)[number], ExhumeKind>>,
+	Expect<Equal<(typeof ROSTERS.prepareKind)[number], PrepareKind>>
 ]
 
 test("the wire-tag rosters equal the tags.json golden, key for key", function goldenAgreement() {

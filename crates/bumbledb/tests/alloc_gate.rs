@@ -30,7 +30,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     Answers, BindValue, ConditionTree, Db, NonEmpty, ParamArg, PreparedQuery, ProjectionRule,
-    Snapshot,
+    ReadInstance,
 };
 
 mod common;
@@ -251,7 +251,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                     Value::U64(id),
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
-                    Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                    Value::String(format!("memo-{}", id % 4).into()),
                 ]],
             )?;
         }
@@ -287,7 +287,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                         Value::U64(id),
                         Value::U64(account),
                         Value::I64((id.cast_signed() % 100) - 50),
-                        Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                        Value::String(format!("memo-{}", id % 4).into()),
                     ]],
                 )?;
                 id += 1;
@@ -313,7 +313,8 @@ fn populate(db: &Db<SchemaDescriptor>) {
         }
         Ok(())
     })
-    .expect("populate");
+    .expect("populate")
+    .expect("accepted");
 }
 
 /// One `Item` chain: positions exactly `1..=len` under group `doc`, notes
@@ -430,7 +431,7 @@ fn string_query() -> Query {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(3)),
-            rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
+            rhs: Term::Literal(Value::String(Box::from("memo-0"))),
         })],
     })
 }
@@ -485,7 +486,7 @@ fn latch_query() -> Query {
             bindings: vec![
                 (
                     FieldId(3),
-                    Term::Literal(Value::String(Box::from(&b"memo-1"[..]))),
+                    Term::Literal(Value::String(Box::from("memo-1"))),
                 ),
                 (FieldId(2), Term::Var(VarId(0))),
             ],
@@ -587,9 +588,9 @@ fn recursive_query() -> Query {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![account(0, 1)],
@@ -604,7 +605,7 @@ fn recursive_query() -> Query {
                 atoms: vec![account(0, 1)],
                 conditions: vec![cap],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -649,7 +650,7 @@ fn interiors_only_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query::Cq {
+    Query {
         interiors: vec![Interior {
             rules: vec![ProjectionRule {
                 finds: vec![VarId(0), VarId(1)],
@@ -671,6 +672,7 @@ fn interiors_only_query() -> Query {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     }
 }
 
@@ -706,10 +708,11 @@ fn union_rules_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
         rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
+        rec: None,
     }
 }
 
@@ -749,7 +752,7 @@ fn union_aggregate_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![
             bumbledb::HeadTerm::Var,
@@ -757,6 +760,7 @@ fn union_aggregate_query() -> Query {
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Count),
         ],
         rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
+        rec: None,
     }
 }
 
@@ -936,7 +940,8 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
             }
             Ok(())
         })
-        .expect("marks write round commits through live capacity laws");
+        .expect("marks write round commits through live capacity laws")
+        .expect("accepted");
         db.write(|tx| {
             for doc in 0..5u64 {
                 // The restoring removal: chains return to 1..=ITEM_CHAIN.
@@ -951,15 +956,16 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
             }
             Ok(())
         })
-        .expect("marks restore round commits");
+        .expect("marks restore round commits")
+        .expect("accepted");
     }
 }
 
 /// The gate protocol for one prepared query and its fixed param set.
 fn gate(
     label: &str,
-    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
-    snap: &Snapshot<'_, SchemaDescriptor>,
+    prepared: &mut PreparedQuery<SchemaDescriptor>,
+    snap: &ReadInstance<'_, SchemaDescriptor>,
     param_set: &[Vec<BindValue<'_>>],
 ) {
     let mut out = Answers::new();
@@ -988,7 +994,7 @@ fn gate(
     );
     let bytes = alloc_counter::snapshot();
     assert_eq!(
-        (bytes.alloc_bytes, bytes.dealloc_bytes),
+        (bytes.window.alloc_bytes, bytes.window.dealloc_bytes),
         (0, 0),
         "{label}: warm byte totals must be zero too"
     );
@@ -1000,20 +1006,20 @@ fn gate(
 /// twin of [`gate`].
 fn gate_args(
     label: &str,
-    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
-    snap: &Snapshot<'_, SchemaDescriptor>,
+    prepared: &mut PreparedQuery<SchemaDescriptor>,
+    snap: &ReadInstance<'_, SchemaDescriptor>,
     arg_set: &[Vec<ParamArg<'_>>],
 ) {
     let mut out = Answers::new();
     for _ in 0..8 {
         for args in arg_set {
-            snap.execute_args(prepared, args, &mut out).expect(label);
+            snap.execute(prepared, args, &mut out).expect(label);
         }
     }
     alloc_counter::reset();
     for _ in 0..8 {
         for args in arg_set {
-            snap.execute_args(prepared, args, &mut out).expect(label);
+            snap.execute(prepared, args, &mut out).expect(label);
         }
     }
     assert_eq!(
@@ -1028,7 +1034,7 @@ fn gate_args(
     );
     let bytes = alloc_counter::snapshot();
     assert_eq!(
-        (bytes.alloc_bytes, bytes.dealloc_bytes),
+        (bytes.window.alloc_bytes, bytes.window.dealloc_bytes),
         (0, 0),
         "{label}: warm byte totals must be zero too"
     );
@@ -1040,8 +1046,8 @@ fn gate_args(
 fn silent(
     label: &str,
     step: &str,
-    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
-    snap: &Snapshot<'_, SchemaDescriptor>,
+    prepared: &mut PreparedQuery<SchemaDescriptor>,
+    snap: &ReadInstance<'_, SchemaDescriptor>,
     params: &[BindValue<'_>],
     out: &mut Answers,
 ) {
@@ -1050,10 +1056,10 @@ fn silent(
     let bytes = alloc_counter::snapshot();
     assert_eq!(
         (
-            bytes.allocs,
-            bytes.deallocs,
-            bytes.alloc_bytes,
-            bytes.dealloc_bytes
+            bytes.window.allocs,
+            bytes.window.deallocs,
+            bytes.window.alloc_bytes,
+            bytes.window.dealloc_bytes
         ),
         (0, 0, 0, 0),
         "{label}: {step} must be allocation-silent"
@@ -1086,8 +1092,8 @@ fn silent(
 /// required on a high-water.
 fn escalation_gate(
     label: &str,
-    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
-    snap: &Snapshot<'_, SchemaDescriptor>,
+    prepared: &mut PreparedQuery<SchemaDescriptor>,
+    snap: &ReadInstance<'_, SchemaDescriptor>,
     params: &[Vec<BindValue<'_>>],
 ) {
     let mut out = Answers::new();
@@ -1140,17 +1146,17 @@ fn escalation_gate(
 /// surfaces. Warm the transaction scratch, then measure only the repeat path.
 fn borrowed_struct_gate() {
     let dir = common::TempDir::new("alloc-gate-borrowed");
-    let db = Db::create(dir.path(), GateLedger).expect("create");
-    let item = db
-        .write(|tx| {
-            let id: GateItemId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&GateItem {
-                id,
-                memo: "memo-borrowed",
-            }])?;
-            Ok(id)
-        })
-        .expect("seed");
+    let db = Db::create(dir.path(), GateLedger)
+        .expect("create")
+        .expect("accepted");
+    let item = common::expect_admitted(db.write(|tx| {
+        let id: GateItemId = tx.reserve(1)?.start().expect("nonempty");
+        tx.insert([&GateItem {
+            id,
+            memo: "memo-borrowed",
+        }])?;
+        Ok(id)
+    }));
     db.write(|tx| {
         // Warm the transaction's encode scratch outside the window.
         tx.insert([&GateItem {
@@ -1168,17 +1174,18 @@ fn borrowed_struct_gate() {
         let bytes = alloc_counter::snapshot();
         assert_eq!(
             (
-                bytes.allocs,
-                bytes.deallocs,
-                bytes.alloc_bytes,
-                bytes.dealloc_bytes
+                bytes.window.allocs,
+                bytes.window.deallocs,
+                bytes.window.alloc_bytes,
+                bytes.window.dealloc_bytes
             ),
             (0, 0, 0, 0),
             "borrowed-struct insert + get must be host-allocation-free"
         );
         Ok(())
     })
-    .expect("borrowed-struct gate");
+    .expect("borrowed-struct gate")
+    .expect("accepted");
 
     // The snapshot twin (ruled 2026-07-23, R15): the committed-state
     // keyed get through the declared str key — the p5 bench shape
@@ -1208,10 +1215,10 @@ fn borrowed_struct_gate() {
         let bytes = alloc_counter::snapshot();
         assert_eq!(
             (
-                bytes.allocs,
-                bytes.deallocs,
-                bytes.alloc_bytes,
-                bytes.dealloc_bytes
+                bytes.window.allocs,
+                bytes.window.deallocs,
+                bytes.window.alloc_bytes,
+                bytes.window.dealloc_bytes
             ),
             (0, 0, 0, 0),
             "snapshot keyed get (hit, contains, miss) must be host-allocation-free"
@@ -1230,7 +1237,9 @@ fn borrowed_struct_gate() {
 )]
 fn zero_warm_allocation_gate() {
     let dir = common::TempDir::new("alloc-gate");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     populate(&db);
 
     // Four rotating residual windows: exactly the view memo's capacity

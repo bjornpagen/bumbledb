@@ -1,5 +1,5 @@
 use super::apply::ApplyRow;
-use super::{Fact, MutationReport, WriteTx};
+use super::{Fact, MutationReport, Probe, WriteTx};
 use crate::error::Result;
 use crate::storage::delta::Disposition;
 
@@ -27,7 +27,7 @@ impl<S> WriteTx<'_, S> {
             Disposition::Delete,
             facts,
             |tx, fact, bytes| {
-                if fact.encode_delete(tx, bytes)? {
+                if matches!(fact.encode_probe(tx, bytes)?, Probe::Encoded) {
                     Ok(ApplyRow::Ready)
                 } else {
                     Ok(ApplyRow::Skip)

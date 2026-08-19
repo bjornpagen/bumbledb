@@ -29,13 +29,15 @@ pub fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
     let mut nodes: Vec<Node> = Vec::new();
     let first = order.order[0];
     let mut available: BTreeSet<VarId> = vars_of(first).iter().copied().collect();
+    let estimate_at = |step: usize| order.estimates.get(step).copied().unwrap_or(0);
     let mut current = Node {
         subatoms: vec![Subatom {
             occ: first,
             vars: vars_of(first),
         }],
+        estimate: estimate_at(0),
     };
-    for &next in &order.order[1..] {
+    for (step, &next) in order.order[1..].iter().enumerate() {
         let vars = vars_of(next);
         let probe: Vec<VarId> = vars
             .iter()
@@ -58,6 +60,7 @@ pub fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
                 occ: next,
                 vars: remaining,
             }],
+            estimate: estimate_at(step + 1),
         };
     }
     nodes.push(current);

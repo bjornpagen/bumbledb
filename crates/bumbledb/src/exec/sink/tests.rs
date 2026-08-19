@@ -3,7 +3,7 @@ use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Result;
 use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
-use crate::image::view::apply;
+use crate::image::view::{FilterPredicate, OperandAddr, apply};
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
@@ -138,11 +138,11 @@ fn views_of(
         delta.insert(&view, TAG, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     [POSTING, TAG]
         .iter()
-        .map(|rel| crate::image::build(&txn, schema, *rel).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), schema, *rel).expect("build"))
         .collect()
 }
 
@@ -171,12 +171,12 @@ fn payroll_views_of(
         delta.insert(&view, PAYROLL, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     // Relation-id-indexed like `views_of` (Posting/Tag images empty).
     [POSTING, TAG, PAYROLL]
         .iter()
-        .map(|rel| crate::image::build(&txn, schema, *rel).expect("build"))
+        .map(|rel| crate::image::build(&txn.catalog(), schema, *rel).expect("build"))
         .collect()
 }
 
@@ -242,7 +242,7 @@ fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence
 fn normalized(
     schema: &Schema,
     occurrences: Vec<Occurrence>,
-    residuals: Vec<crate::ir::normalize::PlacedComparison>,
+    residuals: Vec<crate::image::view::FilterPredicate>,
 ) -> NormalizedQuery {
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
@@ -278,7 +278,7 @@ fn planned(
     let mut plan = binary2fj(normalized, &join_order);
     factor(&mut plan);
     let sinks: BTreeSet<VarId> = sink_vars.iter().map(|v| VarId(*v)).collect();
-    validate(&plan, normalized, schema, vec![0; order.len()], &sinks).expect("valid plan")
+    validate(&plan, normalized, schema, &sinks).expect("valid plan")
 }
 
 /// Hand-built two-node plans (group var above the leaf — the stats
@@ -291,6 +291,7 @@ fn two_node_plan(
     sink_vars: &[u16],
 ) -> ValidatedPlan {
     let node = |vars: &[u16]| crate::plan::fj::Node {
+        estimate: 0,
         subatoms: vec![crate::plan::fj::Subatom {
             occ: OccId(0),
             vars: vars.iter().map(|v| VarId(*v)).collect(),
@@ -300,7 +301,7 @@ fn two_node_plan(
         nodes: vec![node(first), node(second)],
     };
     let sinks: BTreeSet<VarId> = sink_vars.iter().map(|v| VarId(*v)).collect();
-    validate(&plan, normalized, schema, vec![0; 2], &sinks).expect("valid plan")
+    validate(&plan, normalized, schema, &sinks).expect("valid plan")
 }
 
 fn run_aggregate(

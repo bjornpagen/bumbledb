@@ -39,7 +39,7 @@ fn calendar() -> Schema {
                 name: "Busy".into(),
                 fields: vec![
                     field("person", ValueType::U64),
-                    field("during", during.clone()),
+                    field("during", during),
                     field("kind", ValueType::U64),
                 ],
             },
@@ -112,10 +112,11 @@ fn projection_rule(relation: RelationId) -> Rule {
 #[test]
 fn calendar_union_golden() {
     let rule = projection_rule(BUSY);
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: rule.head(),
         rules: vec![rule, projection_rule(OOO)],
+        rec: None,
     };
     let schema = calendar();
     validate(&schema, &query).expect("the golden query is a real query");

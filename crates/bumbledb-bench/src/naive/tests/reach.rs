@@ -92,9 +92,9 @@ fn rows(values: &[&[u64]]) -> BTreeSet<Tuple> {
 
 /// Linear closure: identity main over the rec.
 fn closure_query() -> Query {
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge_atom(0, 1)],
@@ -109,7 +109,7 @@ fn closure_query() -> Query {
                 atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![identity_pair_main()],
     }
@@ -119,9 +119,9 @@ fn closure_query() -> Query {
 #[test]
 fn a_fold_reads_the_finished_fixpoint() {
     let naive = world(4, &[(1, 0), (2, 1), (3, 1)]);
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![edge_atom(0, 1)],
@@ -136,7 +136,7 @@ fn a_fold_reads_the_finished_fixpoint() {
                 atoms: vec![edge_atom(0, 1)],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],

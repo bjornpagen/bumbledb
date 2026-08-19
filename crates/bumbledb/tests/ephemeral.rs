@@ -8,7 +8,7 @@
 //! contents. The flag an ephemeral store carries (`NOSYNC`)
 //! changes durability mechanism only; every semantic is shared.
 
-use bumbledb::{Db, Error, Fact, Fresh, StoreKind, Value};
+use bumbledb::{Admission, Committed, Db, Error, Fact, Fresh, Mismatch, StoreKind, Value};
 
 mod common;
 
@@ -36,7 +36,11 @@ bumbledb::schema! {
 #[test]
 fn open_on_a_durable_store_succeeds() {
     let dir = common::TempDir::new("ephemeral-open-durable");
-    drop(Db::create(dir.path(), Staging).expect("create durable"));
+    drop(
+        Db::create(dir.path(), Staging)
+            .expect("create durable")
+            .expect("accepted"),
+    );
     drop(Db::open(dir.path(), Staging).expect("open durable"));
 }
 
@@ -46,7 +50,11 @@ fn open_on_a_durable_store_succeeds() {
 #[test]
 fn open_on_an_ephemeral_store_is_a_typed_store_kind_mismatch() {
     let dir = common::TempDir::new("ephemeral-open-ephemeral");
-    drop(Db::ephemeral(dir.path(), Staging).expect("create ephemeral"));
+    drop(
+        Db::ephemeral(dir.path(), Staging)
+            .expect("create ephemeral")
+            .expect("accepted"),
+    );
     let err = Db::open(dir.path(), Staging)
         .err()
         .expect("open must refuse the kind");
@@ -54,8 +62,10 @@ fn open_on_an_ephemeral_store_is_a_typed_store_kind_mismatch() {
         matches!(
             err,
             Error::StoreKindMismatch {
-                found: StoreKind::Ephemeral,
-                expected: StoreKind::Durable,
+                mismatch: Mismatch {
+                    witnessed: StoreKind::Ephemeral,
+                    required: StoreKind::Durable,
+                },
             }
         ),
         "{err:?}"
@@ -68,7 +78,11 @@ fn open_on_an_ephemeral_store_is_a_typed_store_kind_mismatch() {
 #[test]
 fn ephemeral_on_a_durable_store_is_a_typed_store_kind_mismatch() {
     let dir = common::TempDir::new("ephemeral-ephemeral-durable");
-    drop(Db::create(dir.path(), Staging).expect("create durable"));
+    drop(
+        Db::create(dir.path(), Staging)
+            .expect("create durable")
+            .expect("accepted"),
+    );
     let err = Db::ephemeral(dir.path(), Staging)
         .err()
         .expect("ephemeral must refuse the kind");
@@ -76,8 +90,10 @@ fn ephemeral_on_a_durable_store_is_a_typed_store_kind_mismatch() {
         matches!(
             err,
             Error::StoreKindMismatch {
-                found: StoreKind::Durable,
-                expected: StoreKind::Ephemeral,
+                mismatch: Mismatch {
+                    witnessed: StoreKind::Durable,
+                    required: StoreKind::Ephemeral,
+                },
             }
         ),
         "{err:?}"
@@ -90,16 +106,22 @@ fn ephemeral_on_a_durable_store_is_a_typed_store_kind_mismatch() {
 #[test]
 fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
     let dir = common::TempDir::new("ephemeral-reopen");
-    let db = Db::ephemeral(dir.path(), Staging).expect("create ephemeral");
+    let db = Db::ephemeral(dir.path(), Staging)
+        .expect("create ephemeral")
+        .expect("accepted");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Holder { id, name: "ada" }])?;
             Ok(id)
         })
-        .expect("commit");
+        .expect("commit")
+        .unwrap()
+        .value;
     drop(db);
-    let db = Db::ephemeral(dir.path(), Staging).expect("reopen ephemeral");
+    let db = Db::ephemeral(dir.path(), Staging)
+        .expect("reopen ephemeral")
+        .expect("accepted");
     db.write(|tx| {
         assert!(
             tx.contains(&Holder {
@@ -110,7 +132,8 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
         );
         Ok(())
     })
-    .expect("read back");
+    .expect("read back")
+    .unwrap();
 }
 
 // GRAVESTONE — `ephemeral_open_allocates_the_full_map_eagerly` (the
@@ -139,14 +162,18 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
 #[test]
 fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
     let dir = common::TempDir::new("ephemeral-refusal-no-mutation");
-    let db = Db::create(dir.path(), Staging).expect("create durable");
+    let db = Db::create(dir.path(), Staging)
+        .expect("create durable")
+        .expect("accepted");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Holder { id, name: "ada" }])?;
             Ok(id)
         })
-        .expect("commit one row");
+        .expect("commit one row")
+        .unwrap()
+        .value;
     drop(db);
 
     let data = dir.path().join("data.mdb");
@@ -168,8 +195,10 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
         matches!(
             err,
             Error::StoreKindMismatch {
-                found: StoreKind::Durable,
-                expected: StoreKind::Ephemeral,
+                mismatch: Mismatch {
+                    witnessed: StoreKind::Durable,
+                    required: StoreKind::Ephemeral,
+                },
             }
         ),
         "{err:?}"
@@ -195,7 +224,8 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
         );
         Ok(())
     })
-    .expect("read back");
+    .expect("read back")
+    .unwrap();
 }
 
 /// The timed-lane lock (`docs/architecture/60-validation.md` device
@@ -208,7 +238,11 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
 #[test]
 fn timed_lanes_structurally_cannot_time_an_ephemeral_store() {
     let dir = common::TempDir::new("ephemeral-timed-lane-lock");
-    drop(Db::ephemeral(dir.path(), Staging).expect("create ephemeral"));
+    drop(
+        Db::ephemeral(dir.path(), Staging)
+            .expect("create ephemeral")
+            .expect("accepted"),
+    );
     assert!(matches!(
         Db::open(dir.path(), Staging),
         Err(Error::StoreKindMismatch { .. })
@@ -216,17 +250,20 @@ fn timed_lanes_structurally_cannot_time_an_ephemeral_store() {
 }
 
 /// The matrix's create edge: `Db::create` on an ephemeral store refuses
-/// as it refuses every initialized directory — re-initializing `_meta`
-/// over live data is the corruption `AlreadyInitialized` exists for; the
-/// kind never gets a say because create never reads a store at all.
+/// as it refuses every existing destination — `DestinationExists` fires
+/// before create opens the path, so the kind never gets a say.
 #[test]
 fn create_on_an_ephemeral_store_is_already_initialized() {
     let dir = common::TempDir::new("ephemeral-create-ephemeral");
-    drop(Db::ephemeral(dir.path(), Staging).expect("create ephemeral"));
+    drop(
+        Db::ephemeral(dir.path(), Staging)
+            .expect("create ephemeral")
+            .expect("accepted"),
+    );
     let err = Db::create(dir.path(), Staging)
         .err()
         .expect("create must refuse");
-    assert!(matches!(err, Error::AlreadyInitialized), "{err:?}");
+    assert!(matches!(err, Error::DestinationExists { .. }), "{err:?}");
 }
 
 // ---------------------------------------------------------------------
@@ -255,18 +292,20 @@ enum StepOutcome {
 /// (functionality), containment rejection, and delete+insert mutation.
 fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
     let mut outcomes = Vec::new();
-    let mut step = |result: Result<(), Error>, probe: u64| {
+    let mut step = |result: Result<Admission<Committed<()>>, Error>, probe: u64| {
         let outcome = match result {
-            Ok(()) => StepOutcome::Committed {
+            Ok(Admission::Accepted(_)) => StepOutcome::Committed {
                 point_read: db
                     .write(|tx| {
                         Ok(tx
                             .get(AccountId::from_fresh(probe))?
                             .map(|account| account.balance))
                     })
-                    .expect("the point-read probe transaction commits"),
+                    .expect("the point-read probe transaction commits")
+                    .unwrap()
+                    .value,
             },
-            Err(Error::CommitRejected { violations }) => StepOutcome::Rejected { violations },
+            Ok(Admission::Rejected(violations)) => StepOutcome::Rejected { violations },
             Err(other) => panic!("only the judgment may reject the sequence: {other:?}"),
         };
         outcomes.push(outcome);
@@ -367,8 +406,12 @@ fn contents(db: &Db<Staging>) -> Vec<Vec<Value>> {
 fn the_same_ops_sequence_judges_identically_on_durable_and_ephemeral_stores() {
     let durable_dir = common::TempDir::new("ephemeral-differential-durable");
     let ephemeral_dir = common::TempDir::new("ephemeral-differential-ephemeral");
-    let durable = Db::create(durable_dir.path(), Staging).expect("create durable");
-    let ephemeral = Db::ephemeral(ephemeral_dir.path(), Staging).expect("create ephemeral");
+    let durable = Db::create(durable_dir.path(), Staging)
+        .expect("create durable")
+        .expect("accepted");
+    let ephemeral = Db::ephemeral(ephemeral_dir.path(), Staging)
+        .expect("create ephemeral")
+        .expect("accepted");
 
     let durable_outcomes = replay(&durable);
     let ephemeral_outcomes = replay(&ephemeral);

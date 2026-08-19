@@ -20,10 +20,13 @@
 //! the ordinary Free Join machinery into [`RayArbiter`], which folds
 //! this compiled verdict per binding and poisons on the first Ray.
 
-use crate::image::view::{Const, MaskConst, mask_of};
+use crate::image::view::{
+    Const, FilterPredicate, IntervalConst, OperandAddr, SlotOps, ViewWordSource, WordOrParam,
+    duration_holds, holds,
+};
+use crate::ir::WordCmp;
 use crate::ir::normalize::lower_literal;
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{OrderCmp, WordCmp};
 
 /// The three-valued verdict of one condition evaluation — the strong
 /// Kleene lattice: `Fails` absorbs `and`, `Holds` absorbs `or`, `Ray`
@@ -43,96 +46,53 @@ impl Verdict3 {
     }
 }
 
-/// One projected word span: a variable's first binding slot + width.
-#[derive(Debug, Clone, Copy)]
-struct Span {
-    slot: usize,
-    width: usize,
-}
-
-/// One compiled condition leaf, slot-level: validation's sealed
-/// comparison shapes ([`ClassifiedComparison`]) with variables resolved
-/// to the ray probe's binding-slot layout and literals lowered to
-/// column form ([`lower_literal`] — the one owner of every case).
-/// Every kind is two-valued except [`Leaf::Duration`], the IR's one
-/// partial predicate.
-#[derive(Debug)]
-enum Leaf {
-    /// Scalar (or `bytes<N>` span) var-vs-var under `Eq`/`Ne`/order.
-    VarVar { op: WordCmp, lhs: Span, rhs: Span },
-    /// Var-vs-constant under `Eq`/`Ne`/order, operator variable-on-left.
-    /// A `PendingIntern` constant evaluates as the never-minted
-    /// dictionary sentinel until [`CompiledVerdict::resolve_interns`]
-    /// latches it (the dictionary is append-only, so a hit is final).
-    VarConst {
-        op: WordCmp,
-        var: Span,
-        value: Const,
-    },
-    /// `Eq` against a bound set: span-wise membership in the sorted
-    /// flat element-major word rows.
-    VarInSet { var: Span, set: crate::ir::ParamId },
-    /// The interval-pair comparison over two variables.
-    AllenVarVar {
-        lhs: usize,
-        rhs: usize,
-        mask: MaskConst,
-    },
-    /// The interval-pair comparison against a constant interval.
-    AllenVarConst {
-        var: usize,
-        other: Const,
-        mask: MaskConst,
-    },
-    /// `interval-var ∋ point-var`.
-    PointInVarVar { interval: usize, point: usize },
-    /// `interval-var ∋ constant point`.
-    PointInVarPoint { interval: usize, point: Const },
-    /// `constant interval ∋ scalar-var`.
-    VarWithin { var: usize, outer: Const },
-    /// The measure comparison — three-valued: a ray (`end == MAX`) is
-    /// the Ray verdict, never Fails.
-    Duration {
-        interval: usize,
-        op: OrderCmp,
-        rhs: DurationSide,
-    },
-}
-
-/// The measure's comparison side, slot-level.
-#[derive(Debug)]
-enum DurationSide {
-    Slot(usize),
-    Value(Const),
-}
-
 /// One written rule's compiled verdict: the Or over its lowered
 /// disjuncts of the And over each disjunct's leaves — exactly the
 /// Kleene fold of the written condition trees, by distributivity.
 /// Compiled once at prepare against the ray probe's slot layout (the
 /// disjuncts of one written rule share one variable scope, so one
-/// layout serves them all).
+/// layout serves them all). Leaves are the shared [`FilterPredicate`]
+/// algebra, addressed at binding slots.
 #[derive(Debug)]
 pub struct CompiledVerdict {
     /// Per disjunct: `[start, end)` into `leaves`.
     disjuncts: Vec<(usize, usize)>,
-    leaves: Vec<Leaf>,
+    leaves: Vec<FilterPredicate>,
 }
 
 impl CompiledVerdict {
     /// Compiles one written rule's disjunct set against a slot layout.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )]
     pub(crate) fn compile(
         disjuncts: &[&[ClassifiedComparison]],
         slot_of: &impl Fn(crate::ir::VarId) -> usize,
         width_of: &impl Fn(crate::ir::VarId) -> usize,
     ) -> Self {
-        let span = |var: crate::ir::VarId| Span {
-            slot: slot_of(var),
-            width: width_of(var),
-        };
+        let addr = |var: crate::ir::VarId| OperandAddr::from_span(slot_of(var), width_of(var));
+        let pair = |var: crate::ir::VarId| OperandAddr::from_span(slot_of(var), 2);
+        let word = |var: crate::ir::VarId| OperandAddr::from_slot(slot_of(var));
         let sealed = |constant: &SealedConst| match constant {
             SealedConst::Param(param) => Const::Param(*param),
             SealedConst::Literal(literal) => lower_literal(literal),
+        };
+        let interval = |constant: &SealedConst| match sealed(constant) {
+            Const::Interval { start, end } => IntervalConst::Interval { start, end },
+            Const::Param(param) => IntervalConst::Param(param),
+            _ => unreachable!("validated: Allen/within constants are intervals"),
+        };
+        let point = |constant: &SealedConst| match sealed(constant) {
+            Const::Word(w) => ViewWordSource::Word(w),
+            Const::Byte(b) => ViewWordSource::Word(u64::from(b)),
+            Const::Param(param) => ViewWordSource::Param(param),
+            _ => unreachable!("validated: point constants are scalar words"),
+        };
+        let measure = |constant: &SealedConst| match sealed(constant) {
+            Const::Word(w) => WordOrParam::Word(w),
+            Const::Param(param) => WordOrParam::Param(param),
+            _ => unreachable!("validated: measure constants are u64 words"),
         };
         let mut leaves = Vec::new();
         let mut ranges = Vec::with_capacity(disjuncts.len());
@@ -140,60 +100,70 @@ impl CompiledVerdict {
             let start = leaves.len();
             for comparison in *disjunct {
                 leaves.push(match comparison {
-                    ClassifiedComparison::VarVar { op, lhs, rhs } => Leaf::VarVar {
+                    ClassifiedComparison::VarVar { op, lhs, rhs } => {
+                        FilterPredicate::FieldsCompare {
+                            left: addr(*lhs),
+                            right: addr(*rhs),
+                            op: *op,
+                        }
+                    }
+                    ClassifiedComparison::VarConst { op, var, value } => FilterPredicate::Compare {
+                        field: addr(*var),
                         op: *op,
-                        lhs: span(*lhs),
-                        rhs: span(*rhs),
-                    },
-                    ClassifiedComparison::VarConst { op, var, value } => Leaf::VarConst {
-                        op: *op,
-                        var: span(*var),
                         value: sealed(value),
                     },
-                    ClassifiedComparison::VarInSet { var, set } => Leaf::VarInSet {
-                        var: span(*var),
-                        set: *set,
+                    ClassifiedComparison::VarInSet { var, set } => FilterPredicate::Compare {
+                        field: addr(*var),
+                        op: WordCmp::Eq,
+                        value: Const::ParamSet(*set),
                     },
-                    ClassifiedComparison::AllenVarVar { lhs, rhs, mask } => Leaf::AllenVarVar {
-                        lhs: slot_of(*lhs),
-                        rhs: slot_of(*rhs),
-                        mask: *mask,
-                    },
+                    ClassifiedComparison::AllenVarVar { lhs, rhs, mask } => {
+                        FilterPredicate::FieldsAllen {
+                            left: pair(*lhs),
+                            right: pair(*rhs),
+                            mask: *mask,
+                        }
+                    }
                     ClassifiedComparison::AllenVarConst { var, other, mask } => {
-                        Leaf::AllenVarConst {
-                            var: slot_of(*var),
-                            other: sealed(other),
+                        FilterPredicate::FieldAllen {
+                            field: pair(*var),
+                            other: interval(other),
                             mask: *mask,
                         }
                     }
                     ClassifiedComparison::PointInVarVar { interval, point } => {
-                        Leaf::PointInVarVar {
-                            interval: slot_of(*interval),
-                            point: slot_of(*point),
+                        FilterPredicate::FieldsPointIn {
+                            interval: pair(*interval),
+                            point: word(*point),
                         }
                     }
-                    ClassifiedComparison::PointInVarPoint { interval, point } => {
-                        Leaf::PointInVarPoint {
-                            interval: slot_of(*interval),
-                            point: sealed(point),
-                        }
-                    }
-                    ClassifiedComparison::VarWithin { var, outer } => Leaf::VarWithin {
-                        var: slot_of(*var),
-                        outer: sealed(outer),
+                    ClassifiedComparison::PointInVarPoint {
+                        interval: iv,
+                        point: p,
+                    } => FilterPredicate::PointIn {
+                        field: pair(*iv),
+                        point: point(p),
                     },
+                    ClassifiedComparison::VarWithin { var, outer } => {
+                        FilterPredicate::FieldWithin {
+                            field: word(*var),
+                            outer: interval(outer),
+                        }
+                    }
                     ClassifiedComparison::Duration {
-                        interval,
+                        interval: iv,
                         op,
                         other,
-                    } => Leaf::Duration {
-                        interval: slot_of(*interval),
-                        op: *op,
-                        rhs: match other {
-                            DurationOperand::Var(scalar) => DurationSide::Slot(slot_of(*scalar)),
-                            DurationOperand::Const(constant) => {
-                                DurationSide::Value(sealed(constant))
-                            }
+                    } => match other {
+                        DurationOperand::Var(scalar) => FilterPredicate::DurationFieldsCompare {
+                            interval: pair(*iv),
+                            op: *op,
+                            scalar: word(*scalar),
+                        },
+                        DurationOperand::Const(constant) => FilterPredicate::DurationCompare {
+                            field: pair(*iv),
+                            op: *op,
+                            value: measure(constant),
                         },
                     },
                 });
@@ -214,16 +184,25 @@ impl CompiledVerdict {
     /// # Errors
     ///
     /// `Lmdb`/`Corruption` from the dictionary read.
-    pub(crate) fn resolve_interns(
+    pub(crate) fn resolve_interns<C: crate::storage::catalog::CatalogRead>(
         &mut self,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        catalog: &C,
     ) -> crate::error::Result<()> {
         for leaf in &mut self.leaves {
-            if let Leaf::VarConst { value, .. } = leaf
-                && let Const::PendingIntern { bytes } = value
-                && let Some(word) = crate::storage::dict::lookup(txn, bytes)?
+            if let FilterPredicate::Compare {
+                value: Const::PendingIntern { bytes },
+                ..
+            } = leaf
+                && let Some(word) = catalog.dict_lookup(bytes)?
             {
-                *value = Const::Word(word);
+                *leaf = match leaf {
+                    FilterPredicate::Compare { field, op, .. } => FilterPredicate::Compare {
+                        field: *field,
+                        op: *op,
+                        value: Const::Word(word.raw()),
+                    },
+                    _ => unreachable!(),
+                };
             }
         }
         Ok(())
@@ -234,11 +213,12 @@ impl CompiledVerdict {
     /// absorbs And, `Holds` absorbs Or), so the cut never moves the
     /// verdict — order stays unobservable.
     pub(crate) fn eval(&self, word: &impl Fn(usize) -> u64, params: &[Const]) -> Verdict3 {
+        let ops = SlotOps { word };
         let mut folded = Verdict3::Fails;
         for &(start, end) in &self.disjuncts {
             let mut conjunct = Verdict3::Holds;
             for leaf in &self.leaves[start..end] {
-                match (conjunct, leaf_verdict(leaf, word, params)) {
+                match (conjunct, leaf_verdict(leaf, &ops, params)) {
                     (_, Verdict3::Fails) => {
                         conjunct = Verdict3::Fails;
                         break;
@@ -257,142 +237,19 @@ impl CompiledVerdict {
     }
 }
 
-/// Resolves a leaf constant through the bind-time param slice (the
-/// `apply` evaluator's rule, restated over the verdict's leaves).
-fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
-    match value {
-        Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],
-        other => other,
-    }
-}
-
-/// One constant's word at a scalar position: `Word` verbatim, `Byte`
-/// widened (bool's strict 0/1 encoding), the dictionary sentinel for a
-/// still-pending intern (a miss equals nothing — the never-minted id).
-fn const_word(value: &Const, params: &[Const]) -> u64 {
-    match resolve(value, params) {
-        Const::Word(word) => *word,
-        Const::Byte(byte) => u64::from(*byte),
-        Const::PendingIntern { .. } => crate::storage::dict::SENTINEL_ID,
-        other => unreachable!("validated: a scalar comparison side resolves scalar, got {other:?}"),
-    }
-}
-
-/// One constant's encoded interval words.
-fn const_interval(value: &Const, params: &[Const]) -> (u64, u64) {
-    match resolve(value, params) {
-        Const::Interval { start, end } => (*start, *end),
-        other => unreachable!("validated: an interval side resolves to an interval, got {other:?}"),
-    }
-}
-
-/// Point membership under the half-open interval.
-const fn point_in(start: u64, end: u64, point: u64) -> bool {
-    start <= point && point < end
-}
-
-/// One leaf's verdict at one binding — two-valued everywhere except the
-/// measure, whose ray is the lattice's third value.
-fn leaf_verdict(leaf: &Leaf, word: &impl Fn(usize) -> u64, params: &[Const]) -> Verdict3 {
+fn leaf_verdict<F: Fn(usize) -> u64 + ?Sized>(
+    leaf: &FilterPredicate,
+    ops: &SlotOps<'_, F>,
+    params: &[Const],
+) -> Verdict3 {
     match leaf {
-        Leaf::VarVar { op, lhs, rhs } => {
-            debug_assert_eq!(lhs.width, rhs.width, "validated: one shared type");
-            Verdict3::of(if lhs.width == 1 {
-                op.compare(&word(lhs.slot), &word(rhs.slot))
-            } else {
-                // bytes<N> spans: word-wise identity, Eq/Ne only by
-                // validation.
-                let identical = (0..lhs.width).all(|i| word(lhs.slot + i) == word(rhs.slot + i));
-                match op {
-                    WordCmp::Eq => identical,
-                    WordCmp::Ne => !identical,
-                    _ => unreachable!("validated: spans compare under Eq/Ne only"),
-                }
-            })
-        }
-        Leaf::VarConst { op, var, value } => Verdict3::of(match resolve(value, params) {
-            Const::Words(words) => {
-                debug_assert_eq!(var.width, words.len(), "validated width");
-                let identical = words
-                    .iter()
-                    .enumerate()
-                    .all(|(i, expected)| word(var.slot + i) == *expected);
-                match op {
-                    WordCmp::Eq => identical,
-                    WordCmp::Ne => !identical,
-                    _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-                }
+        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
+            match duration_holds(leaf, ops, params).unwrap_or_else(|e| match e {}) {
+                None => Verdict3::Ray,
+                Some(holds) => Verdict3::of(holds),
             }
-            resolved => op.compare(&word(var.slot), &const_word(resolved, params)),
-        }),
-        Leaf::VarInSet { var, set } => {
-            let Const::WordSet(words) = &params[usize::from(set.0)] else {
-                unreachable!("validated: a set param resolves to a word set")
-            };
-            Verdict3::of(if var.width == 1 {
-                words.binary_search(&word(var.slot)).is_ok()
-            } else {
-                // Flat element-major rows: span-wise binary search.
-                debug_assert_eq!(words.len() % var.width, 0, "flat element-major rows");
-                let mut lo = 0usize;
-                let mut hi = words.len() / var.width;
-                let mut hit = false;
-                while lo < hi {
-                    let mid = usize::midpoint(lo, hi);
-                    let row = &words[mid * var.width..(mid + 1) * var.width];
-                    let ordering = (0..var.width)
-                        .map(|i| row[i].cmp(&word(var.slot + i)))
-                        .find(|o| o.is_ne())
-                        .unwrap_or(std::cmp::Ordering::Equal);
-                    match ordering {
-                        std::cmp::Ordering::Less => lo = mid + 1,
-                        std::cmp::Ordering::Greater => hi = mid,
-                        std::cmp::Ordering::Equal => {
-                            hit = true;
-                            break;
-                        }
-                    }
-                }
-                hit
-            })
         }
-        Leaf::AllenVarVar { lhs, rhs, mask } => Verdict3::of(mask_of(*mask, params).contains(
-            crate::allen::classify_bounds(&word(*lhs), &word(lhs + 1), &word(*rhs), &word(rhs + 1)),
-        )),
-        Leaf::AllenVarConst { var, other, mask } => {
-            let (start, end) = const_interval(other, params);
-            Verdict3::of(
-                mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                    &word(*var),
-                    &word(var + 1),
-                    &start,
-                    &end,
-                )),
-            )
-        }
-        Leaf::PointInVarVar { interval, point } => {
-            Verdict3::of(point_in(word(*interval), word(interval + 1), word(*point)))
-        }
-        Leaf::PointInVarPoint { interval, point } => Verdict3::of(point_in(
-            word(*interval),
-            word(interval + 1),
-            const_word(point, params),
-        )),
-        Leaf::VarWithin { var, outer } => {
-            let (start, end) = const_interval(outer, params);
-            Verdict3::of(point_in(start, end, word(*var)))
-        }
-        Leaf::Duration { interval, op, rhs } => {
-            let (start, end) = (word(*interval), word(interval + 1));
-            if end == u64::MAX {
-                return Verdict3::Ray;
-            }
-            let scalar = match rhs {
-                DurationSide::Slot(slot) => word(*slot),
-                DurationSide::Value(value) => const_word(value, params),
-            };
-            Verdict3::of(op.compare(&(end - start), &scalar))
-        }
+        other => Verdict3::of(holds(other, ops, params).unwrap_or_else(|e| match e {})),
     }
 }
 

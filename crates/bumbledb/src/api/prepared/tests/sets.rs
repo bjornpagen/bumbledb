@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::api::prepared::ParamArg;
+use crate::error::AtomIndex;
 use crate::ir::ParamId;
 
 /// Q(id, amount) :- Posting(id, account = ?set0, amount).
@@ -92,7 +93,7 @@ fn in_family_equals_the_union_of_per_element_executions() {
             .map(|k| Value::U64(u64::try_from(k).expect("small") * 7))
             .collect();
         let got = set_query
-            .execute_collect_args(&txn, &cache, &[ParamArg::Set(&elements)])
+            .execute_collect(&txn, &cache, &[ParamArg::Set(&elements)])
             .expect("set execution");
         // The defining construction: the union of per-element scalar
         // executions (results are sets, so union = sorted dedup).
@@ -118,10 +119,10 @@ fn in_family_equals_the_union_of_per_element_executions() {
     let dup = [Value::U64(7), Value::U64(7), Value::U64(7)];
     let once = [Value::U64(7)];
     let got_dup = set_query
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&dup)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&dup)])
         .expect("execute");
     let got_once = set_query
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&once)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&once)])
         .expect("execute");
     assert_eq!(id_amount_answers(&got_dup), id_amount_answers(&got_once));
 
@@ -160,7 +161,7 @@ fn profile_binds_param_sets_exactly_as_execute_args() {
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_set_query()).expect("prepare");
     let elements = [Value::U64(7), Value::U64(14)];
     let executed = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&elements)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&elements)])
         .expect("execute");
     assert!(!executed.is_empty(), "the fixture selects rows");
 
@@ -219,22 +220,22 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
-    let string = |text: &str| Value::String(Box::from(text.as_bytes()));
+    let string = |text: &str| Value::String(text.into());
     let with_ghost = [string("rent"), string("ghost")];
     let rent_only = [string("rent")];
     let all_ghost = [string("ghost"), string("phantom")];
 
     let got = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&with_ghost)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&with_ghost)])
         .expect("execute");
     let control = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&rent_only)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&rent_only)])
         .expect("execute");
     assert_eq!(amounts_of(&got), amounts_of(&control));
     assert_eq!(amounts_of(&got), vec![-1200, -900]);
 
     let empty = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&all_ghost)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&all_ghost)])
         .expect("execute");
     assert!(empty.is_empty(), "an all-miss set matches nothing");
 }
@@ -317,7 +318,7 @@ fn insert_interval_fixture(env: &Environment, schema: &Schema) {
         delta.insert(&view, EVENT, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 fn u64_pairs(buffer: &Answers) -> Vec<(u64, u64)> {
@@ -373,7 +374,7 @@ fn membership_point_var_join_end_to_end() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let got = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         u64_pairs(&got),
@@ -420,10 +421,10 @@ fn set_membership_matches_any_element() {
         out.sort_unstable();
         out
     };
-    let run = |prepared: &mut PreparedQuery<'_, ()>, points: &[u64]| {
+    let run = |prepared: &mut PreparedQuery<()>, points: &[u64]| {
         let values: Vec<Value> = points.iter().map(|p| Value::U64(*p)).collect();
         let got = prepared
-            .execute_collect_args(&txn, &cache, &[ParamArg::Set(&values)])
+            .execute_collect(&txn, &cache, &[ParamArg::Set(&values)])
             .expect("execute");
         emps(&got)
     };
@@ -453,7 +454,7 @@ fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
     );
     delta.insert(&view, PAYROLL, &bytes).expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -493,7 +494,7 @@ fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
     )
     .expect("prepare");
     let got = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(got.len(), 1, "MAX-1 is a point of [10, \u{221e})");
 
@@ -504,7 +505,7 @@ fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
         matches!(
             err,
             Error::Validation(crate::error::ValidationError::PointLiteralAtCeiling {
-                atom: 0,
+                atom: AtomIndex(0),
                 field: FieldId(1),
             })
         ),
@@ -549,7 +550,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &scalar_query).expect("prepare");
     let err = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(u64::MAX))])
+        .execute_collect(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(u64::MAX))])
         .expect_err("the ceiling is not a point");
     assert!(
         matches!(err, Error::PointParamAtCeiling { param: ParamId(0) }),
@@ -573,7 +574,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     let mut prepared = prepare(&txn, &cache, &schema, &set_query).expect("prepare");
     let ceiling = [Value::U64(u64::MAX)];
     let err = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&ceiling)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&ceiling)])
         .expect_err("the ceiling is not a point");
     assert!(
         matches!(err, Error::PointParamAtCeiling { param: ParamId(0) }),
@@ -581,7 +582,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     );
     let last_point = [Value::U64(u64::MAX - 1)];
     let got = prepared
-        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&last_point)])
+        .execute_collect(&txn, &cache, &[ParamArg::Set(&last_point)])
         .expect("execute");
     assert_eq!(got.len(), 1, "MAX-1 is a point of [10, \u{221e})");
 }
@@ -667,7 +668,7 @@ fn negated_set_bindings_reject_under_any_element() {
         delta.insert(&view, RelationId(1), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
@@ -691,10 +692,10 @@ fn negated_set_bindings_reject_under_any_element() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let run = |prepared: &mut PreparedQuery<'_, ()>, kinds: &[u64]| {
+    let run = |prepared: &mut PreparedQuery<()>, kinds: &[u64]| {
         let values: Vec<Value> = kinds.iter().map(|k| Value::U64(*k)).collect();
         let got = prepared
-            .execute_collect_args(&txn, &cache, &[ParamArg::Set(&values)])
+            .execute_collect(&txn, &cache, &[ParamArg::Set(&values)])
             .expect("execute");
         amounts_of(&got)
     };

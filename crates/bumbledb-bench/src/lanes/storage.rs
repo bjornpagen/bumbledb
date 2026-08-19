@@ -291,7 +291,9 @@ fn measure_world<S: bumbledb::Theory + Copy>(
 
     // ENGINE RAW: create + load, stat live.
     let raw_dir = scale_dir.join(format!("{world}-raw"));
-    let db = Db::create(&raw_dir, spec.theory).map_err(|e| fail("create raw", format!("{e:?}")))?;
+    let db = Db::create(&raw_dir, spec.theory)
+        .map_err(|e| fail("create raw", format!("{e:?}")))?
+        .expect("accepted");
     (spec.load_engine)(&db)?;
     let engine_raw_bytes = db
         .disk_size()
@@ -649,7 +651,6 @@ mod tests {
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
@@ -875,7 +876,9 @@ mod tests {
     fn disk_size_equals_the_stat_path() {
         let dir = scratch("storage-lane-disksize");
         let store = dir.join("db");
-        let db = Db::create(&store, crate::schema::Ledger).expect("create");
+        let db = Db::create(&store, crate::schema::Ledger)
+            .expect("create")
+            .expect("accepted");
         crate::corpus::load_bumbledb(
             &db,
             GenConfig {
@@ -909,7 +912,9 @@ mod tests {
         // c0: a Tiny compacted engine store under db/ plus a Tiny
         // sqlite store; c1: only a sqlite file.
         let load_dir = dir.join("db-load");
-        let db = Db::create(&load_dir, crate::schema::Ledger).expect("create");
+        let db = Db::create(&load_dir, crate::schema::Ledger)
+            .expect("create")
+            .expect("accepted");
         crate::corpus::load_bumbledb(&db, cfg).expect("load");
         db.compact(&c0.join("db")).expect("compact");
         drop(db);

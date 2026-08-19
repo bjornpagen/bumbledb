@@ -43,7 +43,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
     match rel {
         ids::HOLDER => vec![
             Value::U64(checked_id(i)),
-            Value::String(format!("holder-{i:05}").into_bytes().into()),
+            Value::String(format!("holder-{i:05}").into()),
         ],
         ids::ACCOUNT => vec![
             Value::U64(checked_id(i)),
@@ -52,7 +52,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
         ],
         ids::INSTRUMENT => vec![
             Value::U64(checked_id(i)),
-            Value::String(format!("SYM{i:04}").into_bytes().into()),
+            Value::String(format!("SYM{i:04}").into()),
         ],
         ids::JOURNAL_ENTRY => vec![
             Value::U64(checked_id(i)),
@@ -93,7 +93,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
         }
         ids::ORG => vec![
             Value::U64(checked_id(i)),
-            Value::String(format!("org-{i:02}").into_bytes().into()),
+            Value::String(format!("org-{i:02}").into()),
         ],
         ids::ORG_PARENT => {
             // A binary forest over the org ids: child c's parent is c/2 —

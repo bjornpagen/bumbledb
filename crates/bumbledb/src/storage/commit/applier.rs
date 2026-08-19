@@ -1,81 +1,83 @@
-use crate::error::{CorruptionError, Error, Result, Violation};
-use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
+use std::ops::Bound;
+
+use crate::error::{Conflict, CorruptionError, Error, Result, Violation};
+use crate::storage::catalog::{
+    Bounds, CatalogMap, CatalogWrite, PutOutcome, ReadCursor, WriteCursor,
+};
+use crate::storage::keys;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::plan::{FactOp, MarkWeight};
-use super::{Applier, crashpoint, decode_row_id, fact_by_row};
+use super::plan::{DeleteOp, DeterminantOp, InsertOp, MarkWeight};
+use super::{Applier, crashpoint, decode_row_id};
 
-impl Applier<'_, '_> {
+/// The three-state insert landing: a free row id may put; a refused
+/// fresh-key conflict still walks remaining keys for a complete
+/// rejection set. Put helpers take [`FreeRow`] by type.
+#[derive(Clone, Copy)]
+enum Landing {
+    Free(FreeRow),
+    /// Occupied fresh-row slot. The id is the third landing state the
+    /// type carries; puts take [`FreeRow`] only.
+    Refused(
+        #[expect(
+            dead_code,
+            reason = "Refused carries the conflicting row; put helpers are typed over Free"
+        )]
+        u64,
+    ),
+}
+
+/// A row id that may receive `F`/`M`/`U`/`R` puts.
+#[derive(Clone, Copy)]
+struct FreeRow(u64);
+
+impl<C: CatalogWrite> Applier<'_, '_, C> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
     /// taken from the plan. The fact exists in base state by the delta's
     /// net-disposition invariant the plan was derived from — a missing
     /// `M` entry means storage disagrees with what the plan *proved*,
     /// unambiguously corruption (docs/architecture/50-storage.md).
-    pub(super) fn delete_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
-        let FactOp::Delete {
-            relation: rel,
-            fact_hash,
-            determinants,
-            edges,
-            capacity_keys,
-            ..
-        } = op
-        else {
-            unreachable!("phase 1 applies delete ops");
-        };
-        let rel = *rel;
-        let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
+    pub(super) fn delete_fact(&mut self, op: &DeleteOp<'_>) -> Result<()> {
+        let rel = op.core.relation;
+        let m_key = keys::membership_key(rel, op.core.fact_hash);
         // One cursor descent serves the `M` read AND its delete: the
         // inclusive single-key range positions on exactly the entry (a
         // greater key falls past the end bound and reads as the same
         // miss), the row id decodes to an owned word, and the delete
         // lands at the cursor — never a second root-to-leaf descent.
         let row_id = {
-            let m_key: &[u8] = &self.key[..m_len];
-            let range = (
-                std::ops::Bound::Included(m_key),
-                std::ops::Bound::Included(m_key),
-            );
-            let mut cursor = self.data.range_mut(self.txn.raw_mut(), &range)?;
-            let Some(entry) = cursor.next() else {
+            let bounds = Bounds {
+                start: Bound::Included(m_key.as_slice()),
+                end: Bound::Included(m_key.as_slice()),
+            };
+            let mut cursor = self.catalog.range_mut(CatalogMap::Data, bounds)?;
+            let Some(entry) = ReadCursor::next(&mut cursor)? else {
                 return Err(Error::Corruption(CorruptionError::DispositionDesync {
                     relation: rel,
                 }));
             };
-            let (_, row_id_bytes) = entry?;
-            let row_id = decode_row_id(row_id_bytes)?;
-            // SAFETY: no reference into the database survives this call —
-            // the row id decoded to an owned word above, and the key
-            // bytes are the applier's own scratch (boundary unsafe, the
-            // 00-product allowlist: heed marks cursor deletion unsafe
-            // because prior borrows from the database would dangle).
-            #[expect(
-                unsafe_code,
-                reason = "heed's cursor delete is the foreign contract; no database borrow survives"
-            )]
-            unsafe {
-                cursor.del_current()?
-            };
+            let row_id = decode_row_id(entry.value)?;
+            WriteCursor::del_current(&mut cursor)?;
             row_id
         };
-        let f_len = keys::fact_key(&mut self.key, rel, row_id);
+        let f_key = keys::fact_key(rel, row_id);
         // A live M entry MUST have its F row (and every U determinant below):
         // a miss is the M/F-disagreement corruption class, a hard error —
         // never silently scrubbed (docs/architecture/50-storage.md).
-        if !self.data.delete(self.txn.raw_mut(), &self.key[..f_len])? {
+        if !self.catalog.delete(CatalogMap::Data, &f_key)? {
             return Err(Error::Corruption(CorruptionError::MembershipDesync {
                 relation: rel,
                 row_id,
             }));
         }
-        for determinant in determinants {
-            let u_len = keys::determinant_key(
+        for determinant in &op.core.determinants {
+            let u_key = keys::determinant_key(
                 &mut self.key,
                 rel,
                 determinant.statement(),
                 determinant.determinant().as_bytes(),
             );
-            if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
+            if !self.catalog.delete(CatalogMap::Data, u_key)? {
                 return Err(Error::Corruption(CorruptionError::MembershipDesync {
                     relation: rel,
                     row_id,
@@ -88,20 +90,12 @@ impl Applier<'_, '_> {
         // entry is not independently detectable here without re-deriving
         // every statement's edges; the class is deferred to the offline
         // sweeper, `Db::verify_store` (docs/architecture/50-storage.md,
-        // R-delete verification).
-        for edge in edges {
-            let r_len =
-                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
-        }
-        // Capacity edges delete KEY-symmetrically with their puts,
-        // exactly as containment edges do (and share the same
-        // blind-delete asymmetry the sweeper compensates for) — the
-        // removal is key-only; Delete carries no weight to unread.
-        for edge in capacity_keys {
-            let r_len =
-                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
+        // R-delete verification). One loop: containments and capacities
+        // are the same key-only `R` write.
+        for edge in &op.r_keys {
+            let statement = edge.statement_id(self.schema);
+            let r_key = keys::reverse_key(&mut self.key, statement, &edge.key_bytes, rel, row_id);
+            self.catalog.delete(CatalogMap::Data, r_key)?;
         }
         Ok(())
     }
@@ -123,166 +117,150 @@ impl Applier<'_, '_> {
     /// invariant the plan was derived from — a live `M` entry means
     /// storage disagrees with what the plan *proved*, unambiguously
     /// corruption (docs/architecture/50-storage.md).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one insert walks keys, edges, and capacity in declaration order"
-    )]
-    pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
-        let FactOp::Insert {
-            relation: rel,
-            fact,
-            fact_hash,
-            fresh_row,
-            determinants,
-            edges,
-            capacity_edges,
-            ..
-        } = op
-        else {
-            unreachable!("phase 2 applies insert ops");
-        };
-        let rel = *rel;
-        // The row id resolves BEFORE the membership put so the `M`
-        // pre-existence probe and the `M` put fold into one
-        // `NO_OVERWRITE` descent below — `self.key` is free scratch
-        // until the membership derivation.
-        let mut skip_puts = false;
-        let row_id = match fresh_row {
+    pub(super) fn insert_fact(&mut self, op: &InsertOp<'_>) -> Result<()> {
+        let landing = self.resolve_landing(op)?;
+        if let Landing::Free(row) = landing {
+            self.put_membership_and_fact(op, row)?;
+        }
+        for determinant in &op.core.determinants {
+            self.judge_determinant(op, landing, determinant)?;
+        }
+        if let Landing::Free(row) = landing {
+            self.put_r_keys(op, row)?;
+        }
+        Ok(())
+    }
+
+    /// One key statement of one insert: each arm mints its own
+    /// violation. Occupied exact bytes skip the put (the incumbent
+    /// keeps the determinant) and still walk remaining keys.
+    fn judge_determinant(
+        &mut self,
+        op: &InsertOp<'_>,
+        landing: Landing,
+        determinant: &DeterminantOp,
+    ) -> Result<()> {
+        let rel = op.core.relation;
+        let fact = op.core.fact;
+        match determinant {
+            DeterminantOp::Scalar {
+                statement,
+                determinant,
+            } => {
+                let u_len =
+                    keys::determinant_key(&mut self.key, rel, *statement, determinant.as_bytes())
+                        .len();
+                if self
+                    .catalog
+                    .get(CatalogMap::Data, &self.key[..u_len])?
+                    .is_some()
+                {
+                    self.violations.push(Violation::functionality(
+                        self.schema.cite(*statement),
+                        *statement,
+                        fact.into(),
+                        Conflict::Scalar,
+                    ));
+                    return Ok(());
+                }
+                if let Landing::Free(row) = landing {
+                    self.put_data(u_len, row.0.to_le_bytes().as_slice())?;
+                    crashpoint!("mid-write-u");
+                }
+            }
+            DeterminantOp::Pointwise {
+                statement,
+                determinant,
+                tail,
+            } => {
+                let u_len =
+                    keys::determinant_key(&mut self.key, rel, *statement, determinant.as_bytes())
+                        .len();
+                if let Some(value) = self.catalog.get(CatalogMap::Data, &self.key[..u_len])? {
+                    let incumbent_row = decode_row_id(value.as_ref())?;
+                    let incumbent = self.stored_fact(rel, incumbent_row)?;
+                    self.violations.push(Violation::functionality(
+                        self.schema.cite(*statement),
+                        *statement,
+                        fact.into(),
+                        Conflict::Pointwise { incumbent },
+                    ));
+                    return Ok(());
+                }
+                if let Landing::Free(row) = landing {
+                    self.put_data(u_len, row.0.to_le_bytes().as_slice())?;
+                    crashpoint!("mid-write-u");
+                }
+                self.probe_neighbors(rel, *statement, u_len, *tail, fact)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_landing(&mut self, op: &InsertOp<'_>) -> Result<Landing> {
+        let rel = op.core.relation;
+        match op.fresh_row {
             Some(fresh) => {
-                let f_len = keys::fact_key(&mut self.key, rel, fresh.row_id);
-                if self.data.get(self.txn.raw(), &self.key[..f_len])?.is_some() {
-                    // Cold aborting path: an occupied `F` slot is
-                    // ambiguous between a genuine fresh-key conflict and
-                    // base state contradicting the plan's proved absence
-                    // (the fact itself already landed). One `M` get
-                    // disambiguates — exactly the probe the hot path
-                    // folded into the `NO_OVERWRITE` put below.
-                    let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
-                    if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
+                if self.catalog.fetch_fact(rel, fresh.row_id)?.is_some() {
+                    if self
+                        .catalog
+                        .membership_row(rel, op.core.fact_hash)?
+                        .is_some()
+                    {
                         return Err(Error::Corruption(CorruptionError::DispositionDesync {
                             relation: rel,
                         }));
                     }
-                    self.violations.push(Violation::Functionality(
-                        crate::error::FunctionalityViolation::Scalar {
-                            statement: fresh.statement,
-                            fact: (*fact).into(),
-                        },
+                    self.violations.push(Violation::functionality(
+                        self.schema.cite(fresh.statement),
+                        fresh.statement,
+                        op.core.fact.into(),
+                        Conflict::Scalar,
                     ));
-                    skip_puts = true;
-                }
-                fresh.row_id
-            }
-            None => self.next_row_id(rel)?,
-        };
-        if !skip_puts {
-            let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
-            // The pre-existence probe IS the put: `NO_OVERWRITE` surfaces an
-            // occupied `M` key as `KeyExist` in the same descent the put
-            // pays anyway — one root-to-leaf walk, not two.
-            match self.data.put_with_flags(
-                self.txn.raw_mut(),
-                heed::PutFlags::NO_OVERWRITE,
-                &self.key[..m_len],
-                row_id.to_le_bytes().as_slice(),
-            ) {
-                Ok(()) => {}
-                Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
-                    return Err(Error::Corruption(CorruptionError::DispositionDesync {
-                        relation: rel,
-                    }));
-                }
-                Err(other) => return Err(other.into()),
-            }
-            crashpoint!("mid-write-m");
-            let f_len = keys::fact_key(&mut self.key, rel, row_id);
-            self.put_data(f_len, fact)?;
-            crashpoint!("mid-write-f");
-        }
-
-        for determinant in determinants {
-            let u_len = keys::determinant_key(
-                &mut self.key,
-                rel,
-                determinant.statement(),
-                determinant.determinant().as_bytes(),
-            );
-            // Every delete already landed and the insert set is
-            // deduplicated, so an occupied determinant here is a genuine
-            // violation of the final-state judgment. On a pointwise key
-            // this exact-bytes conflict is the exact-duplicate-interval
-            // case; the incumbent is named via its row_id (cold aborting
-            // path — one extra get, docs/architecture/50-storage.md).
-            // Recorded, put skipped (the incumbent keeps the determinant —
-            // later conflicts against these exact bytes convict the same
-            // statement), next determinant.
-            if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
-                let incumbent = if determinant.tail().is_some() {
-                    let incumbent_row = decode_row_id(value)?;
-                    Some(
-                        fact_by_row(self.data, self.txn.raw(), self.schema, rel, incumbent_row)?
-                            .into(),
-                    )
+                    Ok(Landing::Refused(fresh.row_id))
                 } else {
-                    None
-                };
-                self.violations
-                    .push(Violation::Functionality(match incumbent {
-                        Some(incumbent) => crate::error::FunctionalityViolation::Pointwise {
-                            statement: determinant.statement(),
-                            fact: (*fact).into(),
-                            incumbent,
-                        },
-                        None => crate::error::FunctionalityViolation::Scalar {
-                            statement: determinant.statement(),
-                            fact: (*fact).into(),
-                        },
-                    }));
-                continue;
-            }
-            if skip_puts {
-                if let Some(tail) = determinant.tail() {
-                    self.probe_neighbors(rel, determinant.statement(), u_len, tail, fact)?;
+                    Ok(Landing::Free(FreeRow(fresh.row_id)))
                 }
-                continue;
             }
-            self.put_data(u_len, row_id.to_le_bytes().as_slice())?;
-            crashpoint!("mid-write-u");
-            if let Some(tail) = determinant.tail() {
-                // The exact put cannot detect overlap — only equality —
-                // so a pointwise key additionally probes its ordered
-                // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, determinant.statement(), u_len, tail, fact)?;
+            None => Ok(Landing::Free(FreeRow(self.next_row_id(rel)?))),
+        }
+    }
+
+    fn put_membership_and_fact(&mut self, op: &InsertOp<'_>, row: FreeRow) -> Result<()> {
+        let rel = op.core.relation;
+        let m_key = keys::membership_key(rel, op.core.fact_hash);
+        let row_bytes = row.0.to_le_bytes();
+        match self
+            .catalog
+            .put_no_overwrite(CatalogMap::Data, &m_key, &row_bytes)?
+        {
+            PutOutcome::Inserted => {}
+            PutOutcome::Occupied => {
+                return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                    relation: rel,
+                }));
             }
         }
-        if skip_puts {
-            return Ok(());
-        }
-        for edge in edges {
+        crashpoint!("mid-write-m");
+        let f_key = keys::fact_key(rel, row.0);
+        self.catalog.put(CatalogMap::Data, &f_key, op.core.fact)?;
+        crashpoint!("mid-write-f");
+        Ok(())
+    }
+
+    fn put_r_keys(&mut self, op: &InsertOp<'_>, row: FreeRow) -> Result<()> {
+        let rel = op.core.relation;
+        for edge in &op.r_keys {
+            let statement = edge.statement_id(self.schema);
             let r_len =
-                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.put_data(r_len, &[])?;
-            crashpoint!("mid-write-r");
-        }
-        // Capacity edges (per φ-satisfying child): the same `R` machinery,
-        // statement-scoped — the child-group measure walk's index
-        // (`docs/architecture/50-storage.md` § key layout). A WEIGHTED
-        // statement's edge carries the child's u64 weight (LE) in the
-        // value slot (the C17 slot law), paid once here so the judge
-        // reads the walk it already does; the plan derived it
-        // ([`super::plan::MarkEdgeOp::weight`]), this put spends it.
-        // Covered by the `mid-write-r` crashpoint above: an R put
-        // boundary is one named point, whichever statement kind wrote
-        // the edge.
-        for edge in capacity_edges {
-            let r_len =
-                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
+                keys::reverse_key(&mut self.key, statement, &edge.key_bytes, rel, row.0).len();
             match edge.weight {
                 MarkWeight::Weighted(weight) => {
                     self.put_data(r_len, weight.to_le_bytes().as_slice())?;
                 }
                 MarkWeight::Unit => self.put_data(r_len, &[])?,
             }
+            crashpoint!("mid-write-r");
         }
         Ok(())
     }
@@ -305,8 +283,22 @@ impl Applier<'_, '_> {
     /// architecture — landing it would need input-order `M` keys, which
     /// the content-hash fact identity forbids by design.
     fn put_data(&mut self, len: usize, value: &[u8]) -> Result<()> {
-        self.data.put(self.txn.raw_mut(), &self.key[..len], value)?;
+        self.catalog
+            .put(CatalogMap::Data, &self.key[..len], value)?;
         Ok(())
+    }
+
+    /// Canonical fact bytes by row id, copied for a violation payload.
+    fn stored_fact(&self, rel: RelationId, row_id: u64) -> Result<Box<[u8]>> {
+        let stored = self
+            .catalog
+            .fetch_fact(rel, row_id)?
+            .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                relation: rel,
+                row_id,
+            }))?;
+        crate::storage::read::check_width(self.schema, rel, row_id, stored.as_ref())?;
+        Ok(Box::from(stored.as_ref()))
     }
 
     /// The ordered-neighbor probe for a pointwise key: after the exact `U`
@@ -347,43 +339,43 @@ impl Applier<'_, '_> {
             .expect("the plan derived this determinant from a validated fact");
 
         let mut incumbent_row: Option<u64> = None;
-        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)?
-            && pk.starts_with(prefix)
+        if let Some(pred) = self.catalog.lower(CatalogMap::Data, inserted)?
+            && pred.key.starts_with(prefix)
         {
             // Same statement, same determinant width: a prefix-sharing key
             // of any other length is corrupt data, a hard error.
-            if pk.len() != u_len {
+            if pred.key.len() != u_len {
                 return Err(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant key length",
                 )));
             }
             let (_, pe) = tail
-                .words(&pk[u_len - tail_bytes..])
+                .words(&pred.key[u_len - tail_bytes..])
                 .ok_or(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant tail",
                 )))?;
             // Predecessor `[ps, pe)`: violation iff `pe > s`.
             if pe > start {
-                incumbent_row = Some(decode_row_id(pv)?);
+                incumbent_row = Some(decode_row_id(pred.value)?);
             }
         }
         if incumbent_row.is_none()
-            && let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)?
-            && nk.starts_with(prefix)
+            && let Some(succ) = self.catalog.greater(CatalogMap::Data, inserted)?
+            && succ.key.starts_with(prefix)
         {
-            if nk.len() != u_len {
+            if succ.key.len() != u_len {
                 return Err(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant key length",
                 )));
             }
             let (ns, _) = tail
-                .words(&nk[u_len - tail_bytes..])
+                .words(&succ.key[u_len - tail_bytes..])
                 .ok_or(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant tail",
                 )))?;
             // Successor `[ns, ne)`: violation iff `ns < e`.
             if ns < end {
-                incumbent_row = Some(decode_row_id(nv)?);
+                incumbent_row = Some(decode_row_id(succ.value)?);
             }
         }
         let Some(row) = incumbent_row else {
@@ -391,13 +383,12 @@ impl Applier<'_, '_> {
         };
         // Cold aborting path: name the incumbent by its fact bytes via
         // row_id → F get (errors carry facts, never row ids).
-        let incumbent = fact_by_row(self.data, self.txn.raw(), self.schema, rel, row)?;
-        self.violations.push(Violation::Functionality(
-            crate::error::FunctionalityViolation::Pointwise {
-                statement,
-                fact: fact_bytes.into(),
-                incumbent: incumbent.into(),
-            },
+        let incumbent = self.stored_fact(rel, row)?;
+        self.violations.push(Violation::functionality(
+            self.schema.cite(statement),
+            statement,
+            fact_bytes.into(),
+            Conflict::Pointwise { incumbent },
         ));
         Ok(())
     }
@@ -409,16 +400,7 @@ impl Applier<'_, '_> {
         let next = match self.row_id_next.entry(rel) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                // Own scratch: the caller resolves the row id before any
-                // key derivation, so `self.key` holds nothing pending —
-                // but the entry above already borrows `self`, so the
-                // stack buffer is the cheaper spelling either way.
-                let mut key: KeyBuf = [0; MAX_KEY];
-                let len = keys::stat_key(&mut key, rel, StatKind::RowIdHighWater);
-                let stored = match self.data.get(self.txn.raw(), &key[..len])? {
-                    Some(bytes) => crate::storage::stored_u64(bytes, "S row-id high water")?,
-                    None => 0,
-                };
+                let stored = self.catalog.row_id_high_water(rel)?;
                 entry.insert(stored)
             }
         };

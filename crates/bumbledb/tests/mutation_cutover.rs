@@ -32,7 +32,9 @@ fn empty_fresh_range_cannot_yield_a_minted_id() {
     assert!(collected.is_empty());
 
     let dir = common::TempDir::new("mutation-empty-fresh");
-    let db = bumbledb::Db::create(dir.path(), CutoverFresh).expect("create");
+    let db = bumbledb::Db::create(dir.path(), CutoverFresh)
+        .expect("create")
+        .expect("accepted");
     let field = db
         .fresh_field(CellId::RELATION, CellId::FIELD)
         .expect("fresh field");
@@ -47,19 +49,23 @@ fn empty_fresh_range_cannot_yield_a_minted_id() {
         assert!(matches!(raw, FreshRange::Empty));
         Ok(())
     })
-    .expect("empty reserve");
+    .expect("empty reserve")
+    .unwrap();
 }
 
 #[test]
 fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
     let dir = common::TempDir::new("mutation-noop-not-applied");
-    let db = bumbledb::Db::create(dir.path(), CutoverNamed).expect("create");
-    let row = [Value::String(b"keep".as_slice().into())];
+    let db = bumbledb::Db::create(dir.path(), CutoverNamed)
+        .expect("create")
+        .expect("accepted");
+    let row = [Value::String("keep".into())];
     db.write(|tx| tx.insert_dyn(Label::RELATION, [&row]).map(|_| ()))
-        .expect("seed");
+        .expect("seed")
+        .unwrap();
     db.write(|tx| {
         assert_eq!(
-            tx.insert_dyn(Label::RELATION, [&row])?.changed,
+            tx.insert_dyn(Label::RELATION, [&row])?.changed(),
             0,
             "redundant"
         );
@@ -68,22 +74,22 @@ fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
             .expect_err("shape");
         assert!(matches!(err, Error::FactShape(_)), "{err:?}");
         assert_eq!(
-            tx.insert_dyn(
-                Label::RELATION,
-                [&[Value::String(b"next".as_slice().into())]]
-            )?
-            .changed,
+            tx.insert_dyn(Label::RELATION, [&[Value::String("next".into())]])?
+                .changed(),
             1
         );
         Ok(())
     })
-    .expect("shape fail after no-op did not poison");
+    .expect("shape fail after no-op did not poison")
+    .unwrap();
 }
 
 #[test]
-fn poison_preserves_the_original_error_and_empty_insert_still_refuses() {
+fn poison_preserves_the_original_error_and_empty_insert_is_no_engine_request() {
     let dir = common::TempDir::new("mutation-poison-kind");
-    let db = bumbledb::Db::create(dir.path(), CutoverFresh).expect("create");
+    let db = bumbledb::Db::create(dir.path(), CutoverFresh)
+        .expect("create")
+        .expect("accepted");
     let outcome = db.write(|tx| {
         tx.insert_dyn(Cell::RELATION, [&[Value::U64(u64::MAX), Value::U64(0)]])?;
         let first = tx.reserve::<CellId>(1).expect_err("exhausted");
@@ -91,18 +97,12 @@ fn poison_preserves_the_original_error_and_empty_insert_still_refuses() {
             matches!(first, Error::FreshExhausted { .. }),
             "first apply failure is the original: {first:?}"
         );
-        match tx
-            .insert_dyn(Cell::RELATION, Vec::<Vec<Value>>::new())
-            .expect_err("poisoned empty")
-        {
-            Error::TransactionPoisoned { source } => {
-                assert!(
-                    matches!(source.as_ref(), Error::FreshExhausted { .. }),
-                    "nested kind: {source:?}"
-                );
-            }
-            other => panic!("empty insert must refuse poisoned: {other:?}"),
-        }
+        assert_eq!(
+            tx.insert_dyn(Cell::RELATION, Vec::<Vec<Value>>::new())
+                .expect("empty is no engine request")
+                .submitted(),
+            0
+        );
         Ok(())
     });
     match outcome {

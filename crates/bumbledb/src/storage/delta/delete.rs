@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
 
-use super::{Disposition, WriteDelta};
+use super::{DeltaEffect, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
     /// Records a delete, netted against committed state
@@ -14,7 +14,7 @@ impl WriteDelta<'_> {
         view: &ReadTxn<'_>,
         rel: RelationId,
         fact_bytes: &[u8],
-    ) -> Result<bool> {
+    ) -> Result<DeltaEffect> {
         self.apply(view, rel, fact_bytes, Disposition::Delete)
     }
 }

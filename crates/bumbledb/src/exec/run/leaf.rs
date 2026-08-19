@@ -67,9 +67,9 @@ impl Executor {
     ) -> Flow {
         let node = &plan.nodes()[node_idx];
         let super::LeafPrecompute::Fast {
-            residual_sources,
+            scan_residuals,
+            const_residuals,
             row,
-            ..
         } = &mut self.leaf
         else {
             unreachable!("fast path is classified Fast");
@@ -82,18 +82,32 @@ impl Executor {
             counters.batch(node_idx, 1);
             counters.phase_start(node_idx, JoinPhase::Descend);
             colts[occ].gather_row(level, position, &mut row[..arity.max(1)]);
-            for (idx, (lhs_src, rhs_src)) in residual_sources.iter().enumerate() {
-                let value = |src: &Source| match *src {
-                    Source::Batch(word) => row[word],
-                    Source::Slot(slot) => bindings.get(slot),
-                };
-                let op = self.residual_slots[node_idx][idx].0.op;
-                let pass = op.compare(&value(lhs_src), &value(rhs_src));
+            let mut failed = false;
+            for (op, lhs, rhs) in const_residuals.iter() {
+                let pass = op.compare(&bindings.get(*lhs), &bindings.get(*rhs));
                 counters.residual(node_idx, pass);
                 if !pass {
-                    counters.phase_end(node_idx, JoinPhase::Descend);
-                    return Flow::Continue;
+                    failed = true;
+                    break;
                 }
+            }
+            if !failed {
+                for (op, lhs_src, rhs_src) in scan_residuals.iter() {
+                    let value = |src: &Source| match *src {
+                        Source::Batch(word) => row[word],
+                        Source::Slot(slot) => bindings.get(slot),
+                    };
+                    let pass = op.compare(&value(lhs_src), &value(rhs_src));
+                    counters.residual(node_idx, pass);
+                    if !pass {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            if failed {
+                counters.phase_end(node_idx, JoinPhase::Descend);
+                return Flow::Continue;
             }
             let batch = LeafBatch {
                 keys: row,
@@ -157,6 +171,10 @@ impl Executor {
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
     )] // the run_node context, unpacked
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )]
     pub(super) fn run_leaf_pinned_run<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -209,24 +227,45 @@ impl Executor {
         // slot is batch-varying here, not a binding); everything else
         // reads as the pinned arm does. Resolution is per (residual,
         // side) — never per entry.
-        let residual_sources = match &self.leaf {
+        let residual_lists = match &self.leaf {
             super::LeafPrecompute::Fast {
-                residual_sources, ..
-            } => residual_sources.as_slice(),
+                scan_residuals,
+                const_residuals,
+                ..
+            } => (scan_residuals.as_slice(), const_residuals.as_slice()),
             super::LeafPrecompute::Generic => {
                 unreachable!("fast path is classified Fast")
             }
         };
-        for (r_idx, (lhs_src, rhs_src)) in residual_sources.iter().enumerate() {
-            let op = self.residual_slots[node_idx][r_idx].0.op;
-            let resolve = |src: &Source| match *src {
-                Source::Batch(word) => Source::Batch(outer_arity + word),
-                Source::Slot(slot) => key_slots[..outer_arity]
-                    .iter()
-                    .position(|s| *s == slot)
-                    .map_or(Source::Slot(slot), Source::Batch),
-            };
-            let (lhs, rhs) = (resolve(lhs_src), resolve(rhs_src));
+        let (scan_residuals, const_residuals) = residual_lists;
+        let resolve_slot = |slot: usize| {
+            key_slots[..outer_arity]
+                .iter()
+                .position(|s| *s == slot)
+                .map_or(Source::Slot(slot), Source::Batch)
+        };
+        let resolve = |src: Source| match src {
+            Source::Batch(word) => Source::Batch(outer_arity + word),
+            Source::Slot(slot) => resolve_slot(slot),
+        };
+        for (op, lhs, rhs) in const_residuals {
+            let (lhs, rhs) = (resolve_slot(*lhs), resolve_slot(*rhs));
+            let k_max = scratch.survivors.len();
+            grow_scratch(&mut scratch.mask, k_max);
+            for k in 0..k_max {
+                let entry = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let value = |src: Source| match src {
+                    Source::Batch(word) => scratch.entry_keys[entry * arity + word],
+                    Source::Slot(slot) => bindings.get(slot),
+                };
+                let pass = op.compare(&value(lhs), &value(rhs));
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        for (op, lhs_src, rhs_src) in scan_residuals {
+            let (lhs, rhs) = (resolve(*lhs_src), resolve(*rhs_src));
             let k_max = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, k_max);
             for k in 0..k_max {

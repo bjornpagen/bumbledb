@@ -22,8 +22,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
-import type { Db as DbValue, Fact, ReadScope, Tx } from "#index.ts"
+import type { Db as DbValue, Fact, ReadInstance, Tx } from "#index.ts"
 import {
 	abandon,
 	bool,
@@ -32,7 +31,6 @@ import {
 	closed,
 	contained,
 	Db,
-	ErrGenerationMoved,
 	i64,
 	interval,
 	key,
@@ -46,6 +44,7 @@ import {
 	u64,
 	within
 } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-db-"))
@@ -108,7 +107,7 @@ describe("the Db runtime against a real store", function suite() {
 	let db: DbValue<(typeof Ledger)["relations"]>
 
 	test("create admits the Ledger theory", async function create() {
-		db = await Db.create(storeDir, Ledger)
+		db = accepted(await Db.create(storeDir, Ledger))
 		assert.equal(db.schema, Ledger)
 	})
 
@@ -132,7 +131,7 @@ describe("the Db runtime against a real store", function suite() {
 		}, /another live handle holds this environment's lock/)
 		await assert.rejects(async function recreate() {
 			await Db.create(storeDir, Ledger)
-		}, /another live handle holds this environment's lock|alreadyInitialized/)
+		}, /already exists/)
 	})
 
 	test("no close verb exists anywhere — lifetimes are disposables (R12)", function zeroClosables() {
@@ -145,9 +144,13 @@ describe("the Db runtime against a real store", function suite() {
 			["contains", "execute", "get", "prepare", "read", "scan", "schema", "write", "writeFrom"],
 			"the surface is exactly the pinned verbs — no retired write form survives"
 		)
-		db.read(function probeScope(snap) {
-			assert.equal("close" in snap, false, "release is Symbol.dispose, never a close verb to remember")
-			assert.equal(Symbol.dispose in snap, true, "a read scope is a disposable lifetime (R12)")
+		db.read(function probeScope(instance) {
+			assert.equal("close" in instance, false, "a read instance is a lexical lease, not a closeable handle")
+			assert.equal(
+				Symbol.dispose in instance,
+				false,
+				"InstanceBuilder, OwnedInstance, and Witness dispose; the read callback's instance does not"
+			)
 		})
 	})
 
@@ -168,8 +171,8 @@ describe("the Db runtime against a real store", function suite() {
 			assert.equal(read.holder, holder.id)
 			assert.deepEqual(read.active, { start: 0n, end: 10n })
 		})
-		assert.ok(result.ok, "the clean commit lands")
-		assert.equal(typeof result.generation, "bigint")
+		assert.equal(result.tag, "accepted", "the clean commit lands")
+		assert.equal(typeof result.value.generation, "bigint")
 	})
 
 	test("delete + reinsert with the resupplied id preserves identity (scan proves)", function resupply() {
@@ -179,7 +182,7 @@ describe("the Db runtime against a real store", function suite() {
 			const reinserted = put(tx, Holder, { id: ada, name: "ada lovelace" })
 			assert.equal(reinserted.id, ada)
 		})
-		assert.ok(result.ok)
+		assert.equal(result.tag, "accepted")
 		const holders = db.scan(Holder)
 		assert.equal(holders.length, 1)
 		assert.deepStrictEqual(holders[0], { id: ada, name: "ada lovelace" })
@@ -196,7 +199,7 @@ describe("the Db runtime against a real store", function suite() {
 			})
 			ids.audit = audit.id
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		db.read(function readBack(snap) {
 			assert.equal(typeof snap.generation, "bigint")
 			const rows = snap.scan(Audit)
@@ -253,7 +256,7 @@ describe("the Db runtime against a real store", function suite() {
 			ids.kurt = kurt.id
 			put(tx, Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
 		})
-		assert.ok(setup.ok)
+		assert.equal(setup.tag, "accepted")
 		assert.deepStrictEqual(db.get(SavingsTerms, { account: must(ids.graceAccount) }), {
 			account: ids.graceAccount,
 			rate: 3n
@@ -273,7 +276,7 @@ describe("the Db runtime against a real store", function suite() {
 			put(tx, Account, { holder: ada, kind: "Checking", active: span(3n, 4n) })
 			tx.delete(Holder, [{ id: kurt, name: "kurt" }])
 		})
-		assert.ok(!rejected.ok, "the statement judgment rejects")
+		assert.equal(rejected.tag, "rejected", "the statement judgment rejects")
 		assert.equal(rejected.violations.length, 2, "the statement phase is scan-complete")
 
 		const containmentViolation = must(
@@ -305,7 +308,7 @@ describe("the Db runtime against a real store", function suite() {
 		const rejected = db.write(function duplicateTerms(tx) {
 			put(tx, SavingsTerms, { account: must(ids.graceAccount), rate: 9n })
 		})
-		assert.ok(!rejected.ok, "the key judgment rejects")
+		assert.equal(rejected.tag, "rejected", "the key judgment rejects")
 		assert.equal(rejected.violations.length, 1, "key violations preempt the statement phase")
 		const violation = must(rejected.violations[0])
 		assert.equal(violation.kind, "functionality")
@@ -321,7 +324,7 @@ describe("the Db runtime against a real store", function suite() {
 		const rejected = db.write(function forkAda(tx) {
 			put(tx, Holder, { id: must(ids.ada), name: "imposter" })
 		})
-		assert.ok(!rejected.ok)
+		assert.equal(rejected.tag, "rejected")
 		const violation = must(rejected.violations[0])
 		assert.equal(violation.kind, "functionality")
 		assert.equal(violation.statement, undefined)
@@ -329,7 +332,7 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("a leaked read scope is invalidated the moment read(fn) returns", function usedAfterScope() {
-		let escaped: ReadScope<(typeof Ledger)["relations"]> | undefined
+		let escaped: ReadInstance<(typeof Ledger)["relations"]> | undefined
 		const generation = db.read(function capture(snap) {
 			escaped = snap
 			return snap.generation
@@ -352,39 +355,36 @@ describe("the Db runtime against a real store", function suite() {
 		const captured = db.write(function capture(tx) {
 			escaped = tx
 		})
-		assert.ok(captured.ok)
+		assert.equal(captured.tag, "accepted")
 		assert.throws(function useAfterSpend() {
 			put(must(escaped), Holder, { name: "late" })
 		}, /spent/)
 	})
 
 	test("writeFrom lands a clean witnessed commit", function witnessedCommit() {
-		const outcome = db.read(function seed(snap) {
-			const holders = snap.scan(Holder)
+		const outcome = db.read(function seed(_instance, witness) {
+			const holders = db.scan(Holder)
 			assert.ok(holders.length > 0)
-			return db.writeFrom(snap, function insert(tx) {
+			return db.writeFrom(witness, function insert(tx) {
 				put(tx, Holder, { name: "witnessed" })
 			})
 		})
-		assert.ok(outcome.ok, "the witnessed commit lands")
-		assert.equal(typeof outcome.generation, "bigint")
+		assert.equal(outcome.tag, "accepted", "the witnessed commit lands")
+		assert.equal(typeof outcome.value.generation, "bigint")
 	})
 
-	test("writeFrom throws GenerationMoved on self-inflicted contention — retry is host policy", function witnessedMoved() {
-		const spun = errors.trySync(function contend() {
-			return db.read(function compute(snap) {
-				const holders = snap.scan(Holder)
-				const mover = db.write(function race(inner) {
-					put(inner, Holder, { name: "wit-mover" })
-				})
-				assert.ok(mover.ok, "the interleaved write lands and moves the generation")
-				return db.writeFrom(snap, function insert(tx) {
-					put(tx, Holder, { name: `wit-count-${holders.length}` })
-				})
+	test("writeFrom reports moved on self-inflicted contention — retry is host policy", function witnessedMoved() {
+		const outcome = db.read(function compute(_instance, witness) {
+			const holders = db.scan(Holder)
+			const mover = db.write(function race(inner) {
+				put(inner, Holder, { name: "wit-mover" })
+			})
+			assert.equal(mover.tag, "accepted", "the interleaved write lands and moves the generation")
+			return db.writeFrom(witness, function insert(tx) {
+				put(tx, Holder, { name: `wit-count-${holders.length}` })
 			})
 		})
-		assert.ok(spun.error, "the one-shot writeFrom throws instead of retrying")
-		assert.ok(errors.is(spun.error, ErrGenerationMoved), "the throw is the typed generationMoved error")
+		assert.equal(outcome.tag, "moved", "the one-shot writeFrom reports moved instead of retrying")
 		const landed = db.scan(Holder).filter(function witnessedRows(holder) {
 			return holder.name.startsWith("wit-count-")
 		})
@@ -392,34 +392,33 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("writeFrom surfaces engine rejection as data", function witnessedRejection() {
-		const rejected = db.read(function violate(snap) {
-			assert.equal(typeof snap.generation, "bigint")
-			return db.writeFrom(snap, function insert(tx) {
+		const rejected = db.read(function violate(instance, witness) {
+			assert.equal(typeof instance.generation, "bigint")
+			return db.writeFrom(witness, function insert(tx) {
 				put(tx, SavingsTerms, { account: must(ids.graceAccount), rate: 11n })
 			})
 		})
-		assert.ok(!rejected.ok)
-		assert.ok("violations" in rejected, "the rejection is the WriteResult false arm")
+		assert.equal(rejected.tag, "rejected")
+		assert.ok("violations" in rejected, "the rejection is the rejected arm")
 		const violation = must(rejected.violations[0])
 		assert.strictEqual(violation.statement, savingsKey)
 	})
 
 	test("writeFrom abandon aborts without committing — not even an empty commit", function witnessedAbandon() {
-		const before = db.read(function generationOf(snap) {
-			return snap.generation
+		const before = db.read(function generationOf(instance) {
+			return instance.generation
 		})
-		const outcome = db.read(function bail(snap) {
-			assert.equal(snap.generation, before)
-			return db.writeFrom(snap, function decline(tx) {
+		const outcome = db.read(function bail(instance, witness) {
+			assert.equal(instance.generation, before)
+			return db.writeFrom(witness, function decline(tx) {
 				put(tx, Holder, { name: "never-lands" })
 				return abandon({ reason: "stale premise" })
 			})
 		})
-		assert.ok(!outcome.ok)
-		assert.ok("abandoned" in outcome, "the abandon payload is the outcome")
+		assert.equal(outcome.tag, "abandoned")
 		assert.deepEqual(outcome.abandoned, { reason: "stale premise" })
-		const after = db.read(function generationOf(snap) {
-			return snap.generation
+		const after = db.read(function generationOf(instance) {
+			return instance.generation
 		})
 		assert.equal(after, before, "no commit was issued on the abandon path")
 		const ghosts = db.scan(Holder).filter(function abandonedRows(holder) {
@@ -429,39 +428,38 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("writeFrom abandon works with no delta verbs (the begun transaction aborts)", function witnessedAbandonEarly() {
-		const before = db.read(function generationOf(snap) {
-			return snap.generation
+		const before = db.read(function generationOf(instance) {
+			return instance.generation
 		})
-		const outcome = db.read(function bailEarly(snap) {
-			return db.writeFrom(snap, function decline() {
-				return abandon(snap.scan(Holder).length)
+		const outcome = db.read(function bailEarly(instance, witness) {
+			const count = instance.scan(Holder).length
+			return db.writeFrom(witness, function decline() {
+				return abandon(count)
 			})
 		})
-		assert.ok(!outcome.ok)
-		assert.ok("abandoned" in outcome)
+		assert.equal(outcome.tag, "abandoned")
 		assert.equal(typeof outcome.abandoned, "number")
 		assert.equal(
-			db.read(function generationOf(snap) {
-				return snap.generation
+			db.read(function generationOf(instance) {
+				return instance.generation
 			}),
 			before
 		)
 	})
 
 	test("db.write honors abandon — the transaction rolls back, the payload is the outcome (R10)", function writeAbandon() {
-		const before = db.read(function generationOf(snap) {
-			return snap.generation
+		const before = db.read(function generationOf(instance) {
+			return instance.generation
 		})
 		const outcome = db.write(function bail(tx) {
 			put(tx, Holder, { name: "write-abandon-never-lands" })
 			return abandon({ reason: "declined" })
 		})
-		assert.ok(!outcome.ok)
-		assert.ok("abandoned" in outcome, "the abandon payload is the outcome — never a silent commit")
+		assert.equal(outcome.tag, "abandoned")
 		assert.deepEqual(outcome.abandoned, { reason: "declined" })
 		assert.equal(
-			db.read(function generationOf(snap) {
-				return snap.generation
+			db.read(function generationOf(instance) {
+				return instance.generation
 			}),
 			before,
 			"no commit was issued, not even an empty one"
@@ -487,7 +485,7 @@ describe("the Db runtime against a real store", function suite() {
 			assert.equal(tx.insert(SavingsTerms, [{ account: must(ids.graceAccount), rate: 777n }]).changed, 0n)
 			return abandon("probe only")
 		})
-		assert.ok(!committed.ok, "the probe delta abandons — the store is untouched")
+		assert.equal(committed.tag, "abandoned", "the probe delta abandons — the store is untouched")
 	})
 
 	test("empty insert/delete/reserve still enter the transaction", function emptyIsAMutation() {
@@ -513,13 +511,13 @@ describe("the Db runtime against a real store", function suite() {
 			}, /not a member of schema/)
 			return abandon("probe only")
 		})
-		assert.ok(!committed.ok)
+		assert.equal(committed.tag, "abandoned")
 	})
 
 	test("a field named `changed` is a legal cell — MutationReport is a separate value", async function changedFieldIsLegal() {
 		const Shadow = relation("Shadow", { changed: u64.fresh, note: str })
 		const Shadowed = schema("Shadowed", { Shadow }, [])
-		const shadowDb = await Db.create(path.join(tmpRoot, "shadow"), Shadowed)
+		const shadowDb = accepted(await Db.create(path.join(tmpRoot, "shadow"), Shadowed))
 		const shadowed = shadowDb.write(function insertShadow(tx) {
 			const id = tx.reserve(Shadow, "changed", 1n).at(0n)
 			assert.ok(id !== undefined)
@@ -527,10 +525,10 @@ describe("the Db runtime against a real store", function suite() {
 			assert.equal(report.changed, 1n)
 			return abandon("probe only")
 		})
-		assert.ok(!shadowed.ok)
+		assert.equal(shadowed.tag, "abandoned")
 		const Legal = relation("Legal", { id: u64.fresh, changed: bool })
 		const Kept = schema("Kept", { Legal }, [])
-		const legalDb = await Db.create(path.join(tmpRoot, "legal-changed"), Kept)
+		const legalDb = accepted(await Db.create(path.join(tmpRoot, "legal-changed"), Kept))
 		const outcome = legalDb.write(function insertLegal(tx) {
 			const id = tx.reserve(Legal, "id", 1n).at(0n)
 			assert.ok(id !== undefined)
@@ -544,33 +542,23 @@ describe("the Db runtime against a real store", function suite() {
 			)
 			return abandon("probe only")
 		})
-		assert.ok(!outcome.ok)
+		assert.equal(outcome.tag, "abandoned")
 	})
 
-	test("using snap = db.read() — the R12 acquisition: dispose releases the snapshot deterministically", function usingRead() {
-		let leaked: ReadScope<(typeof Ledger)["relations"]> | undefined
-		{
-			using snap = db.read()
-			assert.equal(typeof snap.generation, "bigint")
-			assert.ok(snap.scan(Holder).length > 0, "the scope reads while its using block is live")
-			leaked = snap
-		}
+	test("a stashed read instance throws after the callback returns", function usedAfterScope() {
+		let leaked: ReadInstance<(typeof Ledger)["relations"]> | undefined
+		db.read(function capture(instance) {
+			leaked = instance
+			assert.ok(instance.scan(Holder).length > 0, "the instance reads while the callback is live")
+		})
 		assert.ok(leaked)
 		assert.throws(function usedAfterScope() {
-			leaked.scan(Holder)
-		}, /read scope is invalidated/)
-		// An early in-callback disposal is idempotent with the owner's close:
-		// the snapshot closes exactly once, and the write path stays healthy.
-		db.read(function earlyDispose(snap) {
-			snap[Symbol.dispose]()
-			assert.throws(function afterDispose() {
-				snap.generation < 0n || snap.scan(Holder)
-			}, /read scope is invalidated/)
-		})
+			must(leaked).scan(Holder)
+		}, /invalidated|useAfterScope|closed instance/)
 		const landed = db.write(function probe(tx) {
-			put(tx, Holder, { name: "post-dispose-write" })
+			put(tx, Holder, { name: "post-stash-write" })
 		})
-		assert.ok(landed.ok, "no reader slot leaked — the write begins cleanly")
+		assert.equal(landed.tag, "accepted", "no reader slot leaked — the write begins cleanly")
 	})
 
 	test("the live handle still reads every committed fact", function liveReads() {

@@ -19,7 +19,6 @@ use super::{
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-lawful-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -166,16 +165,19 @@ fn the_lawful_twins_load_value_identical_at_tiny() {
 fn the_lawful_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
     let sizes = LawSizes::of(Scale::Tiny);
-    let db = Db::create(&dir, LawfulWorld).expect("create");
+    let db = Db::create(&dir, LawfulWorld)
+        .expect("create")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&LawfulWorld.descriptor());
 
     let mut seed = Delta::default();
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
         db.write(|tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("engine corpus");
+        .expect("engine corpus")
+        .unwrap();
         for row in corpus::relation_rows(sizes, rel) {
             seed.inserts.push((rel, row));
         }
@@ -332,7 +334,7 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
 /// Every rejection lane refuses on BOTH engines and commits NOTHING:
 /// after the untimed window setup, each of the four rejection families
 /// runs both runners to completion (the engine runner completing `Ok`
-/// IS the proof its closure observed `Error::CommitRejected` with the
+/// IS the proof its closure observed `Admission::Rejected` with the
 /// expected citation — anything else aborts it), the engine generation
 /// stands still, and every mirror table's `COUNT(*)` is unchanged.
 #[test]
@@ -417,13 +419,16 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
 fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     let dir = scratch("citations");
     let sizes = LawSizes::of(Scale::Tiny);
-    let db = Db::create(&dir, LawfulWorld).expect("create");
+    let db = Db::create(&dir, LawfulWorld)
+        .expect("create")
+        .expect("accepted");
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
         db.write(|tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .expect("corpus");
+        .expect("corpus")
+        .unwrap();
     }
     let mut cursor = LawCursor::at_base(sizes);
     lanes::fill_window_target_engine(&db, sizes, &mut cursor).expect("window setup");
@@ -434,9 +439,11 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     ) -> bumbledb::Result<()>|
      -> Vec<Cited> {
         match db.write(|tx| violate(tx)) {
-            Err(bumbledb::Error::CommitRejected { violations }) => differential::cited(&violations),
-            Ok(()) => panic!("{what}: the violating commit was accepted"),
-            Err(other) => panic!("{what}: expected CommitRejected, the engine said {other:?}"),
+            Ok(bumbledb::Admission::Rejected(violations)) => differential::cited(&violations),
+            Ok(bumbledb::Admission::Accepted(_)) => {
+                panic!("{what}: the violating commit was accepted")
+            }
+            Err(other) => panic!("{what}: expected admission rejection, the engine said {other:?}"),
         }
     };
 
@@ -608,7 +615,7 @@ fn traced_lawful_lands_the_judgment_spans() {
         let commit = std::fs::read_to_string(lane_dir.join("law_commit_attempt.json"))
             .expect("the legal commit trace");
         assert!(
-            commit.contains(bumbledb::obs::names::LMDB_COMMIT),
+            commit.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
             "the LMDB commit span reaches the legal commit artifact"
         );
     }

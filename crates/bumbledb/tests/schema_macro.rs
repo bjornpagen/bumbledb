@@ -285,7 +285,7 @@ fn the_equality_pair_seals_mirror_links() {
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
             StatementView::Key(_, _) | StatementView::Capacity(..) => None,
-            StatementView::Containment(_, statement) => statement.mirror,
+            StatementView::Containment(_, statement) => statement.mirror_id(&schema),
         })
         .collect();
     assert_eq!(
@@ -355,7 +355,9 @@ fn fact_and_key_structs_are_value_types() {
 #[test]
 fn typed_round_trip_through_fact_bytes() {
     let dir = common::TempDir::new("macro-round-trip");
-    let db = Db::create(dir.path(), Ledger).expect("create");
+    let db = Db::create(dir.path(), Ledger)
+        .expect("create")
+        .expect("accepted");
 
     let original = Account {
         id: AccountId(7),
@@ -373,12 +375,16 @@ fn typed_round_trip_through_fact_bytes() {
         tx.insert([&original])?;
         Ok(())
     })
-    .expect("write");
+    .expect("write")
+    .unwrap();
 
     db.read(|snap| {
-        // encode_read finds the committed interned values now.
+        // encode_probe finds the committed interned values now.
         let mut bytes = Vec::new();
-        assert!(original.encode_read(snap, &mut bytes).expect("encode"));
+        assert!(matches!(
+            original.encode_probe(snap, &mut bytes).expect("encode"),
+            bumbledb::Probe::Encoded
+        ));
         let decoded = Account::decode(snap, &bytes).expect("decode");
         assert_eq!(decoded, original);
 
@@ -388,7 +394,10 @@ fn typed_round_trip_through_fact_bytes() {
             name: "nobody",
         };
         let mut bytes = Vec::new();
-        assert!(!ghost.encode_read(snap, &mut bytes).expect("encode"));
+        assert!(matches!(
+            ghost.encode_probe(snap, &mut bytes).expect("encode"),
+            bumbledb::Probe::ProvablyAbsent
+        ));
         Ok(())
     })
     .expect("read");
@@ -547,7 +556,7 @@ mod selection_literals {
                 ),
                 (
                     FieldId(4),
-                    bumbledb::schema::LiteralSet::One(Value::String(Box::from(&b"north"[..])))
+                    bumbledb::schema::LiteralSet::One(Value::String(Box::from("north")))
                 ),
                 (
                     FieldId(5),
@@ -598,7 +607,9 @@ mod fixed_bytes_host_type {
     #[test]
     fn fixed_bytes_round_trip_through_the_typed_surface() {
         let dir = crate::common::TempDir::new("macro-fixed-bytes");
-        let db = Db::create(dir.path(), Content).expect("create");
+        let db = Db::create(dir.path(), Content)
+            .expect("create")
+            .expect("accepted");
         let mut digest = [0u8; 32];
         digest[31] = 0x2A;
         let original = Object {
@@ -606,7 +617,9 @@ mod fixed_bytes_host_type {
             hash: ContentHash(digest),
             head: [7u8; 9],
         };
-        db.write(|tx| tx.insert([&original])).expect("write");
+        db.write(|tx| tx.insert([&original]))
+            .expect("write")
+            .unwrap();
         db.read(|snap| {
             let back: Vec<Object> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![original]);
@@ -619,22 +632,22 @@ mod fixed_bytes_host_type {
         assert_eq!(copied, ContentHash(digest));
         // The bytes<32> key determinants writes: a second object under the
         // same hash is a functionality violation.
-        let err = db
-            .write(|tx| {
-                tx.insert([&Object {
-                    id: ObjectId(2),
-                    hash: ContentHash(digest),
-                    head: [8u8; 9],
-                }])?;
-                Ok(())
-            })
-            .unwrap_err();
-        assert!(matches!(err, bumbledb::Error::CommitRejected { .. }));
-        // encode_read is infallible for bytes<N> (no dictionary miss
+        let _ = crate::common::expect_rejected(db.write(|tx| {
+            tx.insert([&Object {
+                id: ObjectId(2),
+                hash: ContentHash(digest),
+                head: [8u8; 9],
+            }])?;
+            Ok(())
+        }));
+        // encode_probe is infallible for bytes<N> (no dictionary miss
         // exists for an inline value).
         db.read(|snap| {
             let mut bytes = Vec::new();
-            assert!(original.encode_read(snap, &mut bytes).expect("encode"));
+            assert!(matches!(
+                original.encode_probe(snap, &mut bytes).expect("encode"),
+                bumbledb::Probe::Encoded
+            ));
             let decoded = Object::decode(snap, &bytes).expect("decode");
             assert_eq!(decoded, original);
             Ok(())
@@ -663,18 +676,24 @@ mod two_schemas_per_module {
     fn two_schemas_coexist_in_one_module() {
         let dir_a = crate::common::TempDir::new("macro-two-schemas-a");
         let dir_b = crate::common::TempDir::new("macro-two-schemas-b");
-        let db_a = Db::create(dir_a.path(), LedgerA).expect("create A");
-        let db_b = Db::create(dir_b.path(), LedgerB).expect("create B");
+        let db_a = Db::create(dir_a.path(), LedgerA)
+            .expect("create A")
+            .expect("accepted");
+        let db_b = Db::create(dir_b.path(), LedgerB)
+            .expect("create B")
+            .expect("accepted");
         db_a.write(|tx| {
             let id = tx.reserve::<AlphaId>(1)?.start().expect("nonempty");
             tx.insert([&Alpha { id, note: "a" }]).map(|_| ())
         })
-        .expect("write A");
+        .expect("write A")
+        .unwrap();
         db_b.write(|tx| {
             let id = tx.reserve::<BetaId>(1)?.start().expect("nonempty");
             tx.insert([&Beta { id }]).map(|_| ())
         })
-        .expect("write B");
+        .expect("write B")
+        .unwrap();
     }
 }
 
@@ -726,7 +745,9 @@ mod closed_relations {
         // And through the real boundary: `Db::create` validates and
         // fingerprints the same descriptor.
         let dir = crate::common::TempDir::new("macro-closed-relations");
-        Db::create(dir.path(), Review).expect("create");
+        Db::create(dir.path(), Review)
+            .expect("create")
+            .expect("accepted");
     }
 
     /// The descriptor carries the extension: ground axioms in declaration
@@ -936,7 +957,9 @@ mod discriminated_union {
     fn the_du_pattern_survives_the_closed_discriminator() {
         // The theory validates through the real boundary.
         let dir = crate::common::TempDir::new("macro-du-closed");
-        let db = Db::create(dir.path(), Graph).expect("the DU theory validates");
+        let db = Db::create(dir.path(), Graph)
+            .expect("the DU theory validates")
+            .expect("accepted");
 
         // Arm-consistent: the Det parent and its arm row in one commit.
         db.write(|tx| {
@@ -948,23 +971,18 @@ mod discriminated_union {
             tx.insert([&DetArm { parent: id }])?;
             Ok(())
         })
-        .expect("a Det parent with its arm commits");
+        .expect("a Det parent with its arm commits")
+        .unwrap();
 
         // Arm-violating: a Det parent with no arm row — totality aborts.
-        let err = db
-            .write(|tx| {
-                let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
-                tx.insert([&Parent {
-                    id,
-                    kind: GK::Det.id(),
-                }])?;
-                Ok(())
-            })
-            .unwrap_err();
-        assert!(
-            matches!(err, bumbledb::Error::CommitRejected { .. }),
-            "{err:?}"
-        );
+        let _ = crate::common::expect_rejected(db.write(|tx| {
+            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
+            tx.insert([&Parent {
+                id,
+                kind: GK::Det.id(),
+            }])?;
+            Ok(())
+        }));
 
         // The other arm's parent is unconstrained by the Det statement.
         db.write(|tx| {
@@ -975,7 +993,8 @@ mod discriminated_union {
             }])?;
             Ok(())
         })
-        .expect("a Custom parent needs no Det arm");
+        .expect("a Custom parent needs no Det arm")
+        .unwrap();
     }
 }
 
@@ -1061,7 +1080,7 @@ mod equality_reverse_key {
 mod keyed_equality {
     use bumbledb::error::Direction;
     use bumbledb::schema::StatementId;
-    use bumbledb::{Db, Error, Violation};
+    use bumbledb::{Db, Violation};
 
     bumbledb::schema! {
         pub KeyedEquality;
@@ -1075,21 +1094,15 @@ mod keyed_equality {
         Source(a, b, c) == Target(x, y, z);
     }
 
-    fn assert_containment(error: Error, expected: StatementId) {
-        let Error::CommitRejected { violations } = error else {
-            panic!("expected containment rejection, got {error}");
-        };
-        let [
-            Violation::Containment {
-                statement,
-                direction,
-                ..
-            },
-        ] = violations.as_slice()
-        else {
+    fn assert_containment<T: std::fmt::Debug>(
+        result: bumbledb::Result<bumbledb::Admission<T>>,
+        expected: StatementId,
+    ) {
+        let violations = crate::common::expect_rejected(result);
+        let [Violation::Containment { id, direction, .. }] = violations.as_slice() else {
             panic!("expected one containment violation, got {violations:?}");
         };
-        assert_eq!(*statement, expected);
+        assert_eq!(*id, expected);
         assert_eq!(*direction, Direction::SourceUnsatisfied);
     }
 
@@ -1097,33 +1110,34 @@ mod keyed_equality {
     fn three_field_reordered_key_equality_validates_and_enforces_both_directions() {
         let dir = crate::common::TempDir::new("macro-keyed-equality");
         let db = Db::create(dir.path(), KeyedEquality)
-            .expect("both projected products resolve to declared keys");
+            .expect("both projected products resolve to declared keys")
+            .expect("accepted");
 
         // Forward existence: Source's projected tuple has no Target witness.
-        let error = db
-            .write(|tx| {
+        assert_containment(
+            db.write(|tx| {
                 tx.insert([&Source {
                     a: 7,
                     b: -3,
                     c: true,
                     note: "source-only",
                 }])
-            })
-            .expect_err("forward equality containment is enforced");
-        assert_containment(error, StatementId(2));
+            }),
+            StatementId(2),
+        );
 
         // Reverse existence: Target's projected tuple has no Source witness.
-        let error = db
-            .write(|tx| {
+        assert_containment(
+            db.write(|tx| {
                 tx.insert([&Target {
                     x: 7,
                     y: -3,
                     z: true,
                     weight: 99,
                 }])
-            })
-            .expect_err("reverse equality containment is enforced");
-        assert_containment(error, StatementId(3));
+            }),
+            StatementId(3),
+        );
 
         // The selected projections correspond; whole facts do not. Their
         // unprojected payloads even have different structural types, which is
@@ -1142,24 +1156,22 @@ mod keyed_equality {
                 weight: 99,
             }])
         })
-        .expect("one witness on each keyed projection commits");
+        .expect("one witness on each keyed projection commits")
+        .unwrap();
 
         // Injectivity: another Target fact with the same projected product
         // but a different payload is rejected by Target's reordered key.
-        let error = db
-            .write(|tx| {
-                tx.insert([&Target {
-                    x: 7,
-                    y: -3,
-                    z: true,
-                    weight: 100,
-                }])
-            })
-            .expect_err("the key makes the witness unique");
+        let violations = crate::common::expect_rejected(db.write(|tx| {
+            tx.insert([&Target {
+                x: 7,
+                y: -3,
+                z: true,
+                weight: 100,
+            }])
+        }));
         assert!(matches!(
-            error,
-            Error::CommitRejected { violations }
-                if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(1))
+            violations.as_slice(),
+            [Violation::Functionality { id, .. }] if *id == StatementId(1)
         ));
     }
 }
@@ -1167,7 +1179,7 @@ mod keyed_equality {
 mod redundant_superkey_warning {
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{RelationId, SchemaWarning, StatementId};
-    use bumbledb::{Db, Error, Interval, Theory as _, Violation};
+    use bumbledb::{Db, Interval, Theory as _, Violation};
 
     bumbledb::schema! {
         pub RedundantKeys;
@@ -1199,31 +1211,29 @@ mod redundant_superkey_warning {
         assert_eq!((*key, *implied_by), (keys[1], keys[0]));
 
         let dir = crate::common::TempDir::new("macro-redundant-superkey");
-        let db = Db::create(dir.path(), RedundantKeys).expect("warning is non-fatal");
-        let error = db
-            .write(|tx| {
-                tx.insert([&Window {
-                    id: 7,
-                    span: Interval::<i64>::new(0, 5).expect("interval"),
-                    payload: 10,
-                }])?;
-                tx.insert([&Window {
-                    id: 7,
-                    span: Interval::<i64>::new(3, 8).expect("interval"),
-                    payload: 20,
-                }])
-            })
-            .expect_err("both determinant plans reject the overlapping duplicate id");
-        let Error::CommitRejected { violations } = error else {
-            panic!("expected functionality violations, got {error:?}");
-        };
+        let db = Db::create(dir.path(), RedundantKeys)
+            .expect("warning is non-fatal")
+            .expect("accepted");
+        let error = db.write(|tx| {
+            tx.insert([&Window {
+                id: 7,
+                span: Interval::<i64>::new(0, 5).expect("interval"),
+                payload: 10,
+            }])?;
+            tx.insert([&Window {
+                id: 7,
+                span: Interval::<i64>::new(3, 8).expect("interval"),
+                payload: 20,
+            }])
+        });
+        let violations = crate::common::expect_rejected(error);
         assert_eq!(violations.as_slice().len(), 2);
         assert!(matches!(
             violations.as_slice(),
             [
-                Violation::Functionality(a),
-                Violation::Functionality(b),
-            ] if a.statement() == StatementId(0) && b.statement() == StatementId(1)
+                Violation::Functionality { id: a, .. },
+                Violation::Functionality { id: b, .. },
+            ] if *a == StatementId(0) && *b == StatementId(1)
         ));
     }
 }
@@ -1437,7 +1447,9 @@ mod capacity_forms {
         // And through the real boundary: `Db::create` validates the same
         // descriptor.
         let dir = crate::common::TempDir::new("macro-capacity-forms");
-        bumbledb::Db::create(dir.path(), Grid).expect("create");
+        bumbledb::Db::create(dir.path(), Grid)
+            .expect("create")
+            .expect("accepted");
     }
 }
 
@@ -1583,13 +1595,15 @@ mod fixed_width_intervals {
     #[test]
     fn typed_writes_check_the_declared_width_and_round_trip() {
         let dir = crate::common::TempDir::new("macro-fixed-interval");
-        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let db = Db::create(dir.path(), Jukebox)
+            .expect("create")
+            .expect("accepted");
         let slot = Slot {
             playlist: 1,
             slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
             track: 77,
         };
-        db.write(|tx| tx.insert([&slot])).expect("write");
+        db.write(|tx| tx.insert([&slot])).expect("write").unwrap();
         db.read(|snap| {
             let back: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![slot]);
@@ -1624,7 +1638,9 @@ mod fixed_width_intervals {
     #[test]
     fn a_width_matched_ray_is_rejected_at_the_typed_boundary() {
         let dir = crate::common::TempDir::new("macro-fixed-ray");
-        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let db = Db::create(dir.path(), Jukebox)
+            .expect("create")
+            .expect("accepted");
         let err = db
             .write(|tx| {
                 tx.insert([&Slot {
@@ -1646,7 +1662,9 @@ mod fixed_width_intervals {
     #[test]
     fn the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency() {
         let dir = crate::common::TempDir::new("macro-fixed-pointwise");
-        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let db = Db::create(dir.path(), Jukebox)
+            .expect("create")
+            .expect("accepted");
         let slot = |playlist: u64, start: u64, track: u64| Slot {
             playlist,
             slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
@@ -1660,14 +1678,11 @@ mod fixed_width_intervals {
             tx.insert([&slot(2, 12, 3)])?;
             Ok(())
         })
-        .expect("adjacency and cross-group starts are legal");
+        .expect("adjacency and cross-group starts are legal")
+        .unwrap();
         // An overlapping fixed value in the same group aborts: the
         // neighbor probe derives both ends from the type's width.
-        let err = db.write(|tx| tx.insert([&slot(1, 12, 4)])).unwrap_err();
-        assert!(
-            matches!(err, bumbledb::Error::CommitRejected { .. }),
-            "derived-bounds overlap must convict, got {err:?}"
-        );
+        let _ = crate::common::expect_rejected(db.write(|tx| tx.insert([&slot(1, 12, 4)])));
     }
 
     #[test]
@@ -1677,7 +1692,9 @@ mod fixed_width_intervals {
         // the stored one-word tail — an exact fixed-interval lookup hits,
         // a shifted one misses (empty result, never a phantom).
         let dir = crate::common::TempDir::new("macro-fixed-key-probe");
-        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let db = Db::create(dir.path(), Jukebox)
+            .expect("create")
+            .expect("accepted");
         db.write(|tx| {
             tx.insert([&Slot {
                 playlist: 1,
@@ -1685,7 +1702,8 @@ mod fixed_width_intervals {
                 track: 77,
             }])
         })
-        .expect("write");
+        .expect("write")
+        .unwrap();
         let lookup = |start: u64| {
             Query::single(Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -1709,10 +1727,13 @@ mod fixed_width_intervals {
         let mut hit = db.prepare(&lookup(10)).expect("prepare");
         let mut miss = db.prepare(&lookup(11)).expect("prepare");
         db.read(|snap| {
-            let answers = snap.execute_collect(&mut hit, &[])?;
+            let answers = snap.execute_collect(&mut hit, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 1);
             assert_eq!(answers.get(0, 0), AnswerValue::U64(77));
-            assert!(snap.execute_collect(&mut miss, &[])?.is_empty());
+            assert!(
+                snap.execute_collect(&mut miss, &[] as &[bumbledb::BindValue])?
+                    .is_empty()
+            );
             Ok(())
         })
         .expect("key probe");
@@ -1735,47 +1756,8 @@ mod fixed_width_intervals {
         })
     }
 
-    #[test]
-    fn membership_allen_and_measure_run_over_derived_bounds() {
-        let dir = crate::common::TempDir::new("macro-fixed-kernels");
-        let db = Db::create(dir.path(), Jukebox).expect("create");
-        db.write(|tx| {
-            for (start, track) in [(10u64, 1u64), (15, 2), (25, 3)] {
-                tx.insert([&Slot {
-                    playlist: 1,
-                    slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
-                    track,
-                }])?;
-            }
-            Ok(())
-        })
-        .expect("write");
-
-        // Membership: the element-typed literal at the fixed position
-        // reads point membership in the DERIVED [s, s+5)
-        // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
-        let mut covers_12 = db.prepare(&membership_query(12)).expect("prepare");
-        let mut covers_15 = db.prepare(&membership_query(15)).expect("prepare");
-        let mut covers_20 = db.prepare(&membership_query(20)).expect("prepare");
-        db.read(|snap| {
-            let answers = snap.execute_collect(&mut covers_12, &[])?;
-            assert_eq!(answers.len(), 1);
-            assert_eq!(answers.get(0, 0), AnswerValue::U64(1));
-            // Half-open at the derived end: 15 belongs to [15, 20) only.
-            let answers = snap.execute_collect(&mut covers_15, &[])?;
-            assert_eq!(answers.len(), 1);
-            assert_eq!(answers.get(0, 0), AnswerValue::U64(2));
-            // The gap [20, 25) covers nothing.
-            let answers = snap.execute_collect(&mut covers_20, &[])?;
-            assert!(answers.is_empty());
-            Ok(())
-        })
-        .expect("membership");
-
-        // Allen over derived bounds: [10,15) meets [15,20) — the classify
-        // kernel reads the image's derived end column. Equality of two
-        // fixed values canonicalizes to Allen(EQUALS) the same way.
-        let allen_query = Query::single(Rule {
+    fn allen_meets_query() -> Query {
+        Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![
                 Atom {
@@ -1801,10 +1783,70 @@ mod fixed_width_intervals {
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Var(VarId(3)),
             })],
-        });
-        let mut meets = db.prepare(&allen_query).expect("prepare");
+        })
+    }
+
+    fn measure_query() -> Query {
+        Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(1))),
+                    (FieldId(2), Term::Var(VarId(0))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        })
+    }
+
+    #[test]
+    fn membership_allen_and_measure_run_over_derived_bounds() {
+        let dir = crate::common::TempDir::new("macro-fixed-kernels");
+        let db = Db::create(dir.path(), Jukebox)
+            .expect("create")
+            .expect("accepted");
+        db.write(|tx| {
+            for (start, track) in [(10u64, 1u64), (15, 2), (25, 3)] {
+                tx.insert([&Slot {
+                    playlist: 1,
+                    slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
+                    track,
+                }])?;
+            }
+            Ok(())
+        })
+        .expect("write")
+        .unwrap();
+
+        // Membership: the element-typed literal at the fixed position
+        // reads point membership in the DERIVED [s, s+5)
+        // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
+        let mut covers_12 = db.prepare(&membership_query(12)).expect("prepare");
+        let mut covers_15 = db.prepare(&membership_query(15)).expect("prepare");
+        let mut covers_20 = db.prepare(&membership_query(20)).expect("prepare");
         db.read(|snap| {
-            let answers = snap.execute_collect(&mut meets, &[])?;
+            let answers = snap.execute_collect(&mut covers_12, &[] as &[bumbledb::BindValue])?;
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(1));
+            // Half-open at the derived end: 15 belongs to [15, 20) only.
+            let answers = snap.execute_collect(&mut covers_15, &[] as &[bumbledb::BindValue])?;
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(2));
+            // The gap [20, 25) covers nothing.
+            let answers = snap.execute_collect(&mut covers_20, &[] as &[bumbledb::BindValue])?;
+            assert!(answers.is_empty());
+            Ok(())
+        })
+        .expect("membership");
+
+        // Allen over derived bounds: [10,15) meets [15,20) — the classify
+        // kernel reads the image's derived end column. Equality of two
+        // fixed values canonicalizes to Allen(EQUALS) the same way.
+        let mut meets = db.prepare(&allen_meets_query()).expect("prepare");
+        db.read(|snap| {
+            let answers = snap.execute_collect(&mut meets, &[] as &[bumbledb::BindValue])?;
             let mut pairs: Vec<(u64, u64)> = (0..answers.len())
                 .map(|i| {
                     let (AnswerValue::U64(a), AnswerValue::U64(b)) =
@@ -1824,21 +1866,9 @@ mod fixed_width_intervals {
         // The measure of a fixed-width value is the constant w — the
         // recorded choice: Duration accepts it trivially
         // (`lean/Bumbledb/Values.lean: fixed_measure_const_u64`).
-        let measure_query = Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-            atoms: vec![Atom {
-                source: bumbledb::AtomSource::Edb(Slot::RELATION),
-                bindings: vec![
-                    (FieldId(1), Term::Var(VarId(1))),
-                    (FieldId(2), Term::Var(VarId(0))),
-                ],
-            }],
-            negated: vec![],
-            conditions: vec![],
-        });
-        let mut measures = db.prepare(&measure_query).expect("prepare");
+        let mut measures = db.prepare(&measure_query()).expect("prepare");
         db.read(|snap| {
-            let answers = snap.execute_collect(&mut measures, &[])?;
+            let answers = snap.execute_collect(&mut measures, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 3);
             for i in 0..answers.len() {
                 assert_eq!(
@@ -1874,7 +1904,7 @@ mod element_domain_typing {
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,
     };
     use bumbledb::schema::{FieldId, StatementId};
-    use bumbledb::{AllenMask, AnswerValue, Db, Error, Fact as _, Interval, Violation};
+    use bumbledb::{AllenMask, AnswerValue, Db, Fact as _, Interval, Violation};
 
     bumbledb::schema! {
         pub Playlists;
@@ -1918,6 +1948,8 @@ mod element_domain_typing {
             Ok(id)
         })
         .expect("an exact tiling commits")
+        .unwrap()
+        .value
     }
 
     /// Lock (a), the accepting half: the recipe VALIDATES (mixed widths
@@ -1925,7 +1957,9 @@ mod element_domain_typing {
     #[test]
     fn the_playlist_recipe_validates_and_a_tiling_commits() {
         let dir = crate::common::TempDir::new("macro-q1-tiling");
-        let db = Db::create(dir.path(), Playlists).expect("Q1: the recipe validates");
+        let db = Db::create(dir.path(), Playlists)
+            .expect("Q1: the recipe validates")
+            .expect("accepted");
         let id = tile(&db);
         db.read(|snap| {
             let slots: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
@@ -1942,27 +1976,24 @@ mod element_domain_typing {
     #[test]
     fn a_gap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-gap");
-        let db = Db::create(dir.path(), Playlists).expect("create");
-        let error = db
-            .write(|tx| {
-                let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
-                tx.insert([&Playlist {
-                    id,
-                    span: Interval::<u64>::new(0, 3).expect("nonempty"),
+        let db = Db::create(dir.path(), Playlists)
+            .expect("create")
+            .expect("accepted");
+        let violations = crate::common::expect_rejected(db.write(|tx| {
+            let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
+            tx.insert([&Playlist {
+                id,
+                span: Interval::<u64>::new(0, 3).expect("nonempty"),
+            }])?;
+            for (at, track) in [(0, 100), (2, 300)] {
+                tx.insert([&Slot {
+                    playlist: id,
+                    slot: unit(at),
+                    track,
                 }])?;
-                for (at, track) in [(0, 100), (2, 300)] {
-                    tx.insert([&Slot {
-                        playlist: id,
-                        slot: unit(at),
-                        track,
-                    }])?;
-                }
-                Ok(())
-            })
-            .expect_err("a gap in the partition must abort");
-        let Error::CommitRejected { violations } = error else {
-            panic!("expected a containment rejection, got {error}");
-        };
+            }
+            Ok(())
+        }));
         assert!(
             matches!(
                 violations.as_slice(),
@@ -1982,24 +2013,23 @@ mod element_domain_typing {
     #[test]
     fn an_overlap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-overlap");
-        let db = Db::create(dir.path(), Playlists).expect("create");
+        let db = Db::create(dir.path(), Playlists)
+            .expect("create")
+            .expect("accepted");
         let id = tile(&db);
-        let error = db
-            .write(|tx| {
-                tx.insert([&Slot {
-                    playlist: id,
-                    slot: unit(1),
-                    track: 999,
-                }])
-            })
-            .expect_err("an overlapping unit slot must abort");
+        let violations = crate::common::expect_rejected(db.write(|tx| {
+            tx.insert([&Slot {
+                playlist: id,
+                slot: unit(1),
+                track: 999,
+            }])
+        }));
         assert!(
             matches!(
-                &error,
-                Error::CommitRejected { violations }
-                    if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(2))
+                violations.as_slice(),
+                [Violation::Functionality { id, .. }] if *id == StatementId(2)
             ),
-            "the pointwise key convicts the overlap, got {error:?}"
+            "the pointwise key convicts the overlap, got {violations:?}"
         );
     }
 
@@ -2009,27 +2039,26 @@ mod element_domain_typing {
     #[test]
     fn a_slot_past_the_span_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-past-end");
-        let db = Db::create(dir.path(), Playlists).expect("create");
+        let db = Db::create(dir.path(), Playlists)
+            .expect("create")
+            .expect("accepted");
         let id = tile(&db);
-        let error = db
-            .write(|tx| {
-                tx.insert([&Slot {
-                    playlist: id,
-                    slot: unit(3),
-                    track: 999,
-                }])
-            })
-            .expect_err("a slot outside the span must abort");
+        let violations = crate::common::expect_rejected(db.write(|tx| {
+            tx.insert([&Slot {
+                playlist: id,
+                slot: unit(3),
+                track: 999,
+            }])
+        }));
         assert!(
             matches!(
-                &error,
-                Error::CommitRejected { violations }
-                    if matches!(violations.as_slice(), [Violation::Containment {
-                        direction: Direction::SourceUnsatisfied,
-                        ..
-                    }])
+                violations.as_slice(),
+                [Violation::Containment {
+                    direction: Direction::SourceUnsatisfied,
+                    ..
+                }]
             ),
-            "the uncovered slot convicts the slot-side coverage, got {error:?}"
+            "the uncovered slot convicts the slot-side coverage, got {violations:?}"
         );
     }
 
@@ -2040,7 +2069,9 @@ mod element_domain_typing {
     #[test]
     fn a_mixed_width_allen_query_classifies_with_hand_answers() {
         let dir = crate::common::TempDir::new("macro-q1-allen");
-        let db = Db::create(dir.path(), Playlists).expect("create");
+        let db = Db::create(dir.path(), Playlists)
+            .expect("create")
+            .expect("accepted");
         tile(&db);
         // Q(track) :- Playlist(id, span), Slot(playlist = id, slot, track),
         //             Allen(slot, span, mask).
@@ -2075,7 +2106,7 @@ mod element_domain_typing {
         let answers = |mask: AllenMask| -> Vec<u64> {
             let mut prepared = db.prepare(&query(mask)).expect("Q1: mixed widths classify");
             db.read(|snap| {
-                let out = snap.execute_collect(&mut prepared, &[])?;
+                let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
                 let mut tracks: Vec<u64> = (0..out.len())
                     .map(|i| match out.get(i, 0) {
                         AnswerValue::U64(t) => t,
@@ -2133,6 +2164,7 @@ mod newtype_coherence_pass {
     fn bare_pairs_with_bare_and_the_theory_seals() {
         let dir = crate::common::TempDir::new("m5-bare-faces");
         bumbledb::Db::create(dir.path(), BareFaces)
-            .expect("bare faces pair with bare faces — the coherence check passes");
+            .expect("bare faces pair with bare faces — the coherence check passes")
+            .expect("accepted");
     }
 }

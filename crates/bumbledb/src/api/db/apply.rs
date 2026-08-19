@@ -48,11 +48,11 @@ impl<S> WriteTx<'_, S> {
         facts: impl IntoIterator<Item = T>,
         mut encode: impl FnMut(&mut Self, T, &mut Vec<u8>) -> Result<ApplyRow>,
     ) -> Result<MutationReport> {
-        self.refuse_poisoned()?;
         let mut iter = facts.into_iter();
         let Some(first) = iter.next() else {
             return Ok(MutationReport::EMPTY);
         };
+        self.refuse_poisoned()?;
         self.refuse_closed(relation)?;
         self.apply_rows(
             relation,
@@ -75,14 +75,19 @@ impl<S> WriteTx<'_, S> {
         for fact in facts {
             submitted += 1;
             let result = self.with_scratch(|tx, bytes| match encode(tx, fact, bytes)? {
-                ApplyRow::Skip => Ok(false),
-                ApplyRow::Ready => tx.delta.apply(&tx.view, relation, bytes, want),
+                // Delete of a never-interned string: the fact cannot exist.
+                // Named separately from [`DeltaEffect::NoOp`] — the delta
+                // never saw the row.
+                ApplyRow::Skip => Ok(None),
+                ApplyRow::Ready => tx.delta.apply(&tx.view, relation, bytes, want).map(Some),
             });
             match result {
-                Ok(false) => {}
-                Ok(true) => {
-                    self.note_entered();
-                    changed += 1;
+                Ok(None) => {}
+                Ok(Some(effect)) => {
+                    if effect.changed() {
+                        self.note_entered();
+                        changed += 1;
+                    }
                 }
                 Err(error) => return Err(self.poison(error)),
             }

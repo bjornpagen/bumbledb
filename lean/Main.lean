@@ -11,7 +11,7 @@ Exit 0 on full agreement; exit 1 with the offending case files named
 otherwise — a disagreement is a finding (engine bug / naive-model bug /
 spec bug), triaged before anything else merges, never repaired here.
 
-Three arms, dispatched by file name (`lean/conformance/README.md`):
+Four arms, dispatched by file name (`lean/conformance/README.md`):
 
 * **query cases** (everything else): evaluate the denotation
   (`Bumbledb.Conformance.checkCase` — join + surface anti-join / AntiProbe,
@@ -30,7 +30,15 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   decode glue below is IO-shell material (this file), never spec:
   `verdictOf` is one pattern match on `judgeB`'s position-tagged
   payload — the compared citation list IS the proved artifact's index
-  projection (2026-07-23 audit, finding 143).
+  projection (2026-07-23 audit, finding 143). Closed-source
+  containments stay outside this incremental arm (delta-restriction).
+* **complete-admission cases** (`complete-*.json`, instance-lifetime
+  L5): the same document shape and the same `judgeB`, but `instance`
+  IS the candidate (no green pre-state). An empty delta is a no-op,
+  so `finalWorld` is the candidate and `completeAdmissionB` is
+  `judgeB` over it. The incremental lane's closed-source fence
+  **lifts**: generated worlds including closed-source containments
+  run through complete admission against `judgeB`.
 * **reach cases** (`reach-*.json`): decode a tagged Query
   (`cq` | `reach`; `Bumbledb/Query/Syntax.lean`) and run
   `Query.evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound`
@@ -494,6 +502,7 @@ def main (args : List String) : IO UInt32 := do
     a.toString.compare b.toString == .lt
   let mut failures : Nat := 0
   let mut judgments : Nat := 0
+  let mut completes : Nat := 0
   let mut reaches : Nat := 0
   for path in files do
     let text ← IO.FS.readFile path
@@ -509,6 +518,18 @@ def main (args : List String) : IO UInt32 := do
           IO.eprintln s!"  recorded but not derived: {row}"
         for row in (missingFrom want got).take 5 do
           IO.eprintln s!"  derived but not recorded: {row}"
+      | .error e =>
+        failures := failures + 1
+        IO.eprintln s!"ERROR {path}: {e}"
+    else if (path.fileName.getD "").startsWith "complete-" then
+      completes := completes + 1
+      match Bumbledb.JudgmentCase.checkJudgmentCase text with
+      | .ok none => pure ()
+      | .ok (some (want, got)) =>
+        failures := failures + 1
+        IO.eprintln s!"MISMATCH {path}: completeAdmissionB disagrees with the recorded complete-admission verdict"
+        IO.eprintln s!"  recorded: {want}"
+        IO.eprintln s!"  judged:   {got}"
       | .error e =>
         failures := failures + 1
         IO.eprintln s!"ERROR {path}: {e}"
@@ -540,7 +561,7 @@ def main (args : List String) : IO UInt32 := do
         IO.eprintln s!"ERROR {path}: {e}"
   let elapsed := (← IO.monoMsNow) - started
   IO.println
-    s!"conformance: {files.size} cases ({judgments} judgment, {reaches} reach), {failures} disagreements, {elapsed} ms"
+    s!"conformance: {files.size} cases ({judgments} judgment, {completes} complete, {reaches} reach), {failures} disagreements, {elapsed} ms"
   if failures == 0 then
     return 0
   return 1

@@ -65,10 +65,11 @@ impl Executor {
         // issued. Per-parent Slot reads, word offsets via the cover's
         // word bases (width 2 = the pairwise interval compare).
         counters.phase_start(node_idx, JoinPhase::Residual);
-        for (residual, lhs_slot, rhs_slot, width) in &self.residual_slots[node_idx] {
+        for (residual, lhs_slot, rhs_slot, width) in &self.precompute[node_idx].residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
+            let (left, right, op) = residual.compare_sides();
+            let lhs_word = super::word_base(cover_vars, left.var(), |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, right.var(), |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -79,7 +80,7 @@ impl Executor {
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
                 let pass = super::compare_wide(
-                    residual.op,
+                    op,
                     *width,
                     |offset| value(lhs_word, *lhs_slot, offset),
                     |offset| value(rhs_word, *rhs_slot, offset),
@@ -92,13 +93,14 @@ impl Executor {
         // Word residuals: the decomposed interval compositions over
         // pre-offset slot pairs — same placement, same compaction
         // (docs/architecture/20-query-ir.md, § normalization).
-        for (residual, lhs_slot, rhs_slot) in &self.word_residual_slots[node_idx] {
+        for (residual, lhs_slot, rhs_slot) in &self.precompute[node_idx].word_residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let side = |var_word: crate::ir::normalize::VarWord| {
-                super::word_base(cover_vars, var_word.var, |v| self.width_of(v))
-                    .map(|base| base + var_word.word.offset())
+            let (left, right, op) = residual.compare_sides();
+            let side = |addr: crate::image::view::OperandAddr| {
+                super::word_base(cover_vars, addr.var(), |v| self.width_of(v))
+                    .map(|base| base + addr.offset())
             };
-            let (lhs_word, rhs_word) = (side(residual.lhs), side(residual.rhs));
+            let (lhs_word, rhs_word) = (side(left), side(right));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -108,9 +110,7 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word],
                     None => scratch.pending_bindings[parent * slot_count + slot],
                 };
-                let pass = residual
-                    .op
-                    .compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
+                let pass = op.compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
             }
@@ -123,13 +123,16 @@ impl Executor {
         // and compact on the branchless cursor-write (the line-parallel
         // twin of `run_node`'s pass; docs/architecture/40-execution.md,
         // § vectorized execution).
-        for (r_idx, (residual, lhs_slot, rhs_slot)) in
-            self.allen_residual_slots[node_idx].iter().enumerate()
+        for (r_idx, (residual, lhs_slot, rhs_slot)) in self.precompute[node_idx]
+            .allen_residual_slots
+            .iter()
+            .enumerate()
         {
-            let mask = self.allen_masks[node_idx][r_idx];
+            let mask = self.precompute[node_idx].allen_masks[r_idx];
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
+            let (left, right, _) = residual.allen_sides();
+            let lhs_word = super::word_base(cover_vars, left.var(), |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, right.var(), |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.allen_gather, 4 * n);
             let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
@@ -165,13 +168,13 @@ impl Executor {
         // compare. A ray never survives the comparison (its verdict is
         // Ray, not Fails; the Kleene verdict algebra, R6 — the prepared
         // query's ray-probe pass renders it).
-        for r_idx in 0..self.duration_residual_slots[node_idx].len() {
-            let (residual, interval_slot, scalar_slot) =
-                self.duration_residual_slots[node_idx][r_idx];
+        for (residual, interval_slot, scalar_slot) in
+            &self.precompute[node_idx].duration_residual_slots
+        {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let interval_word =
-                super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
-            let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
+            let (interval, scalar, op) = residual.duration_sides();
+            let interval_word = super::word_base(cover_vars, interval.var(), |v| self.width_of(v));
+            let scalar_word = super::word_base(cover_vars, scalar.var(), |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -181,12 +184,10 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word + offset],
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
-                let start = value(interval_word, interval_slot, 0);
-                let end = value(interval_word, interval_slot, 1);
+                let start = value(interval_word, *interval_slot, 0);
+                let end = value(interval_word, *interval_slot, 1);
                 let pass = end != u64::MAX
-                    && residual
-                        .op
-                        .compare(&(end - start), &value(scalar_word, scalar_slot, 0));
+                    && op.compare(&(end - start), &value(scalar_word, *scalar_slot, 0));
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
             }
@@ -347,9 +348,10 @@ impl Executor {
             if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                 crate::obs::event(
                     crate::obs::names::PREFETCH_PASS,
-                    crate::obs::Category::Execute,
-                    scratch.survivors.len() as u64,
-                    colts[occ].probe_footprint_bytes() as u64,
+                    crate::obs::TraceArgs::Pair(
+                        scratch.survivors.len() as u64,
+                        colts[occ].probe_footprint_bytes() as u64,
+                    ),
                 );
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let parent = scratch.parents[e as usize] as usize;
@@ -430,10 +432,10 @@ impl Executor {
         // residuals above): a probed occurrence's cursor may be this
         // pass's own sibling child, and the position scan is
         // probe-class work.
-        if !self.point_probe_slots[node_idx].is_empty() {
+        if !self.precompute[node_idx].point_probes.is_empty() {
             counters.phase_start(node_idx, JoinPhase::Residual);
         }
-        for spec in &self.point_probe_slots[node_idx] {
+        for spec in &self.precompute[node_idx].point_probes {
             let cover_vars = &node.subatoms[cover_sub].vars;
             scratch.point_sources.clear();
             for (start_col, end_col, var, slot) in &spec.parts {
@@ -521,7 +523,7 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        if !self.point_probe_slots[node_idx].is_empty() {
+        if !self.precompute[node_idx].point_probes.is_empty() {
             counters.phase_end(node_idx, JoinPhase::Residual);
         }
 
@@ -530,7 +532,7 @@ impl Executor {
         // away on the same cursor-write. Slot reads go through each
         // element's parent row, exactly like the residuals above.
         anti_probe_pass(
-            &self.anti_probe_slots[node_idx],
+            &self.precompute[node_idx].anti_probes,
             node_idx,
             &node.subatoms[cover_sub].vars,
             &self.var_widths,

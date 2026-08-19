@@ -229,7 +229,6 @@ fn param_value(
                 // Guaranteed miss: no corpus vocabulary starts with this.
                 DrawKind::Miss => format!("missing-{}", rng.u64()),
             }
-            .into_bytes()
             .into(),
         ),
         // Both bool values are boundary values; every draw kind draws

@@ -85,7 +85,7 @@ fn insert_busy(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (u64,
         delta.insert(&view, BUSY, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i64))]) {
@@ -107,7 +107,7 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
         delta.insert(&view, SHIFT, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// Q(person, Pack(slot)) :- Busy(person, slot).
@@ -163,7 +163,7 @@ fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &pack_query()).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         packed_u64_answers(&out),
@@ -206,7 +206,7 @@ fn pack_absorbs_rays_over_i64_spans() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, i64, i64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
@@ -259,7 +259,9 @@ fn pack_groups_exactly_as_sum_does() {
         conditions: vec![],
     });
     let mut sum = prepare(&txn, &cache, &schema, &sum_query).expect("prepare");
-    let sum_out = sum.execute_collect(&txn, &cache, &[]).expect("execute");
+    let sum_out = sum
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     let mut sum_groups: Vec<u64> = (0..sum_out.len())
         .map(|answer| match sum_out.get(answer, 0) {
             AnswerValue::U64(person) => person,
@@ -269,7 +271,9 @@ fn pack_groups_exactly_as_sum_does() {
     sum_groups.sort_unstable();
 
     let mut pack = prepare(&txn, &cache, &schema, &pack_query()).expect("prepare");
-    let pack_out = pack.execute_collect(&txn, &cache, &[]).expect("execute");
+    let pack_out = pack
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     let mut pack_groups: Vec<u64> = packed_u64_answers(&pack_out)
         .into_iter()
         .map(|(person, _, _)| person)
@@ -317,13 +321,14 @@ fn multi_rule_pack_folds_the_union() {
             rhs: Term::Param(ParamId(param)),
         })],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![
             crate::ir::HeadTerm::Var,
             crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),
         ],
         rules: vec![rule(CmpOp::Ge, 0), rule(CmpOp::Le, 1)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared

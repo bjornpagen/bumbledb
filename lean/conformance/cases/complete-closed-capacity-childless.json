@@ -1,0 +1,17 @@
+{
+"case":"complete-closed-capacity-childless",
+"kind":"complete",
+"provenance":{"hand":"complete-closed-capacity-childless"},
+"theory":{"relations":[{"id":0,"name":"Kind","closed":true,"fields":["u64"]},
+{"id":1,"name":"Bucket","closed":false,"fields":["u64"]}],
+"ground_axioms":[{"relation":0,"facts":[
+[{"u64":0}],
+[{"u64":1}]
+]}],
+"statements":[{"functionality":{"relation":0,"projection":[0]}},
+{"capacity":{"target":{"relation":0,"projection":[0],"selection":[]},"weight":"unit","window":{"lo":1,"hi":2},"source":{"relation":1,"projection":[0],"selection":[]}}}]},
+"instance":[{"relation":1,"facts":[]}],
+"delta":{"deletes":[],
+"inserts":[]},
+"verdict":{"reject":{"phase":"statement","violations":[1]}}
+}

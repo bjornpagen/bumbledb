@@ -38,11 +38,11 @@ fn residual_bindings_memoize_under_lru() {
         let events = obs::finish_capture();
         let builds = events
             .iter()
-            .filter(|e| e.name() == obs::names::VIEW_BUILD)
+            .filter(|e| e.point() == obs::names::VIEW_BUILD)
             .count();
         let hits = events
             .iter()
-            .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
+            .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
             .count();
         (builds, hits, answers_of(&out))
     };
@@ -127,10 +127,11 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
             rhs: Term::Literal(Value::I64(0)),
         })],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![rule(3), rule(7)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
@@ -138,20 +139,20 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     // across both rules' occurrences); each occurrence builds its view.
     obs::start_capture();
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let cold = obs::finish_capture();
     assert_eq!(amounts_of(&out), vec![10, 25]);
     assert_eq!(
         cold.iter()
-            .filter(|e| e.name() == obs::names::IMAGE_BUILD)
+            .filter(|e| e.point() == obs::names::IMAGE_BUILD)
             .count(),
         1,
         "one image build across the rules — the Arc is shared by construction"
     );
     assert_eq!(
         cold.iter()
-            .filter(|e| e.name() == obs::names::VIEW_BUILD)
+            .filter(|e| e.point() == obs::names::VIEW_BUILD)
             .count(),
         2,
         "each rule's occurrence builds its filtered view once"
@@ -160,15 +161,15 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     // Warm: every rule's occurrence hits its memo — no image, no view.
     obs::start_capture();
     prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let warm = obs::finish_capture();
-    let warm_names: Vec<&str> = warm.iter().map(|e| e.name()).collect();
+    let warm_names: Vec<obs::TracePoint> = warm.iter().map(|e| e.point()).collect();
     assert!(!warm_names.contains(&obs::names::IMAGE_BUILD));
     assert!(!warm_names.contains(&obs::names::VIEW_BUILD));
     assert_eq!(
         warm.iter()
-            .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
+            .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
             .count(),
         2,
         "both rules' views memoized"
@@ -206,7 +207,7 @@ fn a_generation_bump_invalidates_the_memo() {
         .expect("execute");
     let events = obs::finish_capture();
     assert!(
-        events.iter().any(|e| e.name() == obs::names::VIEW_BUILD),
+        events.iter().any(|e| e.point() == obs::names::VIEW_BUILD),
         "the stale binding rebuilds in place"
     );
     assert_eq!(
@@ -228,8 +229,8 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let names = |events: &[obs::TraceEvent]| -> Vec<&'static str> {
-        events.iter().map(|e| e.name()).collect()
+    let names = |events: &[obs::TraceEvent]| -> Vec<obs::TracePoint> {
+        events.iter().map(|e| e.point()).collect()
     };
 
     // Prepare: the phase spans, exactly.
@@ -252,7 +253,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     // Containment: every phase inside the outer prepare span.
     let outer = events
         .iter()
-        .find(|e| e.name() == obs::names::PREPARE)
+        .find(|e| e.point() == obs::names::PREPARE)
         .expect("outer");
     for e in &events {
         assert!(e.start_ns() >= outer.start_ns());
@@ -274,7 +275,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(!first_names.contains(&obs::names::VIEW_MEMO_HIT));
     let exec = first
         .iter()
-        .find(|e| e.name() == obs::names::EXECUTE)
+        .find(|e| e.point() == obs::names::EXECUTE)
         .expect("execute span");
     assert_eq!(exec.a0(), 2, "execute a0 carries the row count");
 
@@ -319,7 +320,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(!key_probe_names.contains(&obs::names::JOIN));
     let probe = key_probe_events
         .iter()
-        .find(|e| e.name() == obs::names::KEY_PROBE)
+        .find(|e| e.point() == obs::names::KEY_PROBE)
         .expect("probe");
     assert_eq!(probe.a0(), 1, "hit flag");
 
@@ -399,9 +400,11 @@ fn closed_relation_views_stay_warm_across_generations() {
 
     let mut run = |txn: &crate::storage::env::ReadTxn<'_>| {
         obs::start_capture();
-        let out = prepared.execute_collect(txn, &cache, &[]).expect("execute");
+        let out = prepared
+            .execute_collect(txn, &cache, &[] as &[BindValue])
+            .expect("execute");
         let events = obs::finish_capture();
-        let count = |name: &'static str| events.iter().filter(|e| e.name() == name).count();
+        let count = |name| events.iter().filter(|e| e.point() == name).count();
         (
             count(obs::names::VIEW_BUILD),
             count(obs::names::VIEW_MEMO_HIT),
@@ -429,7 +432,7 @@ fn closed_relation_views_stay_warm_across_generations() {
     );
     delta.insert(&view, RelationId(0), &bytes).expect("insert");
     drop(view);
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(report.changed());
     cache.evict_older_than(report.generation());
 
@@ -472,8 +475,8 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let _prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let events = obs::finish_capture();
 
-    let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
+    let one = |name: obs::TracePoint| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.point() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
@@ -516,7 +519,7 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     within(rows, stats);
     let ladder: Vec<&obs::TraceEvent> = events
         .iter()
-        .filter(|e| e.name() == obs::names::DISTINCT_LADDER)
+        .filter(|e| e.point() == obs::names::DISTINCT_LADDER)
         .collect();
     assert!(
         !ladder.is_empty(),
@@ -558,12 +561,12 @@ fn prepare_lights_the_normalization_sub_passes() {
 
     let outer = events
         .iter()
-        .find(|e| e.name() == obs::names::NORMALIZE)
+        .find(|e| e.point() == obs::names::NORMALIZE)
         .expect("the NORMALIZE span");
     for name in [obs::names::PLACE_COMPARISONS, obs::names::NORMALIZE_FOLD] {
         let sub = events
             .iter()
-            .find(|e| e.name() == name)
+            .find(|e| e.point() == name)
             .unwrap_or_else(|| panic!("missing {name}"));
         assert!(
             sub.start_ns() >= outer.start_ns()
@@ -574,7 +577,7 @@ fn prepare_lights_the_normalization_sub_passes() {
     // A live single-atom rule folds to nothing dead.
     let fold = events
         .iter()
-        .find(|e| e.name() == obs::names::NORMALIZE_FOLD)
+        .find(|e| e.point() == obs::names::NORMALIZE_FOLD)
         .expect("fold span");
     assert_eq!(fold.a0(), 0, "the rule is not statically empty");
 }
@@ -600,10 +603,10 @@ fn prepare_lights_the_validation_interior() {
 
     let outer = events
         .iter()
-        .find(|e| e.name() == obs::names::VALIDATE)
+        .find(|e| e.point() == obs::names::VALIDATE)
         .expect("the VALIDATE span");
-    let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
+    let one = |name: obs::TracePoint| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.point() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
@@ -624,7 +627,7 @@ fn prepare_lights_the_validation_interior() {
     );
     let seal = events
         .iter()
-        .find(|e| e.name() == obs::names::VALIDATE_SEAL)
+        .find(|e| e.point() == obs::names::VALIDATE_SEAL)
         .expect("VALIDATE_SEAL runs over interior count");
     assert_eq!(seal.a0(), 0, "no interiors");
 }
@@ -642,9 +645,9 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query::Reach {
+    let query = Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: crate::ir::NonEmpty::one(crate::ir::RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![Atom {
@@ -659,7 +662,7 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
                 atoms: vec![],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -673,16 +676,16 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     };
 
     obs::start_capture();
-    let _prepared: PreparedQuery<'_, ()> =
-        super::super::prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let _prepared: PreparedQuery<()> =
+        super::prepare(&txn, &cache, &schema, &query).expect("prepare");
     let events = obs::finish_capture();
 
     let outer = events
         .iter()
-        .find(|e| e.name() == obs::names::VALIDATE)
+        .find(|e| e.point() == obs::names::VALIDATE)
         .expect("VALIDATE span");
-    let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
+    let one = |name: obs::TracePoint| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.point() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
@@ -741,11 +744,11 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
 
     let image_build = events
         .iter()
-        .find(|e| e.name() == obs::names::IMAGE_BUILD)
+        .find(|e| e.point() == obs::names::IMAGE_BUILD)
         .expect("the cold build");
     let decode = events
         .iter()
-        .find(|e| e.name() == obs::names::DECODE_BATCH)
+        .find(|e| e.point() == obs::names::DECODE_BATCH)
         .expect("the batch decode");
     assert_eq!(decode.a0(), 4, "every stored row decoded");
     assert!(
@@ -757,7 +760,7 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
     // At least one kernel scan swept the whole column — lanes = rows.
     let full_sweep = events
         .iter()
-        .filter(|e| e.name() == obs::names::KERNEL_FILTER)
+        .filter(|e| e.point() == obs::names::KERNEL_FILTER)
         .any(|e| e.a0() == 4);
     assert!(full_sweep, "a fixed-width kernel scanned all four lanes");
 }
@@ -786,23 +789,23 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
 
     obs::start_capture();
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let events = obs::finish_capture();
 
     let builds = events
         .iter()
-        .filter(|e| e.name() == obs::names::VIEW_BUILD)
+        .filter(|e| e.point() == obs::names::VIEW_BUILD)
         .count();
     let dedups = events
         .iter()
-        .filter(|e| e.name() == obs::names::VIEW_DEDUP)
+        .filter(|e| e.point() == obs::names::VIEW_DEDUP)
         .count();
     assert!(dedups >= 1, "at least one sibling clones the bound state");
     assert_eq!(builds + dedups, 3, "every occurrence binds exactly once");
     let selections = events
         .iter()
-        .find(|e| e.name() == obs::names::SELECTIONS)
+        .find(|e| e.point() == obs::names::SELECTIONS)
         .expect("the batched selection-probe span");
     assert_eq!(selections.a1(), 1, "no probe short-circuited");
 

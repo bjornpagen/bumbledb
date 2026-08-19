@@ -59,7 +59,7 @@ fn insert_items(env: &Environment, schema: &Schema, rows: &[(u64, u8, u64)]) {
         delta.insert(&view, ITEM, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// Two notes, two events, one task — the task is the negative space
@@ -86,10 +86,11 @@ fn arm_rule(kind: u8) -> Rule {
 }
 
 fn du_query(rules: Vec<Rule>) -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules,
+        rec: None,
     }
 }
 
@@ -227,10 +228,11 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
         rules: vec![rule(0), rule(1)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(prepared.disjoint_rules(), "the arms prove disjoint");
@@ -246,7 +248,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         Some(4),
         "all four head projections inhabit the spanning set"
     );
-    assert!(stats.rules().iter().all(|rule| rule.absorbed == 0));
+    assert!(stats.rules().iter().all(|rule| rule.absorbed() == 0));
     // The naive model: fold domain = ∪ head-projected bindings; per
     // group (id) the projection is the singleton (id, payload), so the
     // Sum is the payload and the kind-2 item never appears.
@@ -271,10 +273,11 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         rule.finds[1] = FindTerm::Count;
         rule
     };
-    let refused = Query::Cq {
+    let refused = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Count)],
         rules: vec![count_rule(0), count_rule(1)],
+        rec: None,
     };
     let Err(err) = prepare(&txn, &cache, &schema, &refused) else {
         panic!("fold-free nullary Count across written rules refuses");
@@ -306,7 +309,7 @@ fn a_three_arm_union_absorbs_nothing_across_rules() {
         "all three pairs share the witness"
     );
     let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert!(stats.rules().iter().all(|rule| rule.absorbed == 0));
+    assert!(stats.rules().iter().all(|rule| rule.absorbed() == 0));
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {
             let (AnswerValue::U64(id), AnswerValue::U64(payload)) =

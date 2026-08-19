@@ -11,7 +11,7 @@ use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys;
 use crate::storage::read;
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
@@ -71,7 +71,7 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
         delta.insert(&view, D, &fact(schema, i)).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }
 
@@ -81,7 +81,7 @@ fn fixed_bytes_fields_decode_into_padded_word_columns() {
     let schema = schema();
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    let image = build(&txn, &schema, D).expect("build");
+    let image = build(&txn.catalog(), &schema, D).expect("build");
 
     // Spans: bytes<9> = 2 word columns, bytes<32> = 4 — column indices
     // shift accordingly (the field→column map, never raw field indices).
@@ -129,15 +129,14 @@ fn a_nonzero_pad_byte_aborts_the_build_typed() {
         let mut corrupt = fact(&schema, 9);
         corrupt[20] = 0x5A;
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::fact_key(&mut key, D, victim);
+        let key = keys::fact_key(D, victim);
         env.data()
-            .put(wtxn.raw_mut(), &key[..len], &corrupt)
+            .put(wtxn.raw_mut(), &key, &corrupt)
             .expect("plant");
         wtxn.commit().expect("commit");
     }
     let txn = env.read_txn().expect("txn");
-    let err = build(&txn, &schema, D).unwrap_err();
+    let err = build(&txn.catalog(), &schema, D).unwrap_err();
     assert!(
         matches!(
             err,

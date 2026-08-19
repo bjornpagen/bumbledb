@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Error;
+use crate::error::{Error, FindIndex};
 use crate::exec::run::{Bindings, Flow, Sink};
 use crate::ir::FoldOp;
 
@@ -167,7 +167,7 @@ fn sum_is_order_independent_near_the_boundary() {
         assert!(
             matches!(
                 err,
-                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 0 })
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: FindIndex(0) })
             ),
             "{err:?}"
         );

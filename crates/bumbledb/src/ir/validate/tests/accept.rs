@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::FindIndex;
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
 
@@ -120,7 +121,7 @@ fn accepts_min_max_over_bool_as_all_and_any() {
     });
     assert!(matches!(
         validate(&schema(), &sum).expect_err("Sum over bool refuses"),
-        ValidationError::AggregateInputType { find: 1 }
+        ValidationError::AggregateInputType { find: FindIndex(1) }
     ));
 }
 
@@ -340,7 +341,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     assert_eq!(
         types,
@@ -364,7 +365,7 @@ fn accepts_pack_across_rules() {
         negated: vec![],
         conditions: vec![],
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![
             crate::ir::HeadTerm::Var,
@@ -374,6 +375,7 @@ fn accepts_pack_across_rules() {
             rule(vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])]),
             rule(vec![atom(ACCOUNT, vec![(1, var(0)), (VALIDITY, var(1))])]),
         ],
+        rec: None,
     };
     validate(&schema(), &query).expect("valid");
 }

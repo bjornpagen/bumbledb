@@ -81,6 +81,6 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
             .expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     env
 }

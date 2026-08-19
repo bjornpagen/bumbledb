@@ -72,7 +72,7 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
         delta.insert(&view, EVENT, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// One rule over Event: `Event(kind == <kind>, score: v0)` plus the
@@ -136,10 +136,11 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     // The dead rule was deleted at prepare — only the live plan exists.
@@ -154,7 +155,7 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     ));
 
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 
@@ -185,23 +186,28 @@ fn a_dead_rule_opens_no_rule_span() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     obs::start_capture();
     prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let events = obs::finish_capture();
-    let rule_spans: Vec<&str> = events
+    let rule_spans: Vec<obs::TracePoint> = events
         .iter()
-        .map(|e| e.name())
-        .filter(|name| name.starts_with("rule_"))
+        .map(|e| e.point())
+        .filter(|p| matches!(p, obs::TracePoint::Rule(_)))
         .collect();
-    assert_eq!(rule_spans, vec!["rule_0"], "one rule span: the live rule");
+    assert_eq!(
+        rule_spans,
+        vec![obs::names::RULE[0]],
+        "one rule span: the live rule"
+    );
 }
 
 /// The `[shape]` leg: the empty query touches no image and binds no view
@@ -218,10 +224,11 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction())],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(matches!(
@@ -231,11 +238,11 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
 
     obs::start_capture();
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let events = obs::finish_capture();
     assert_eq!(out.len(), 0);
-    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
+    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
     for touched in [
         obs::names::IMAGE_BUILD,
         obs::names::CACHE_HIT,
@@ -302,10 +309,14 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
         let mut folded = prepare(&txn, &cache, &schema, &query).expect("prepare folded");
         let mut unfolded =
             with_fold_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare raw");
-        let folded_answers = scores_of(&folded.execute_collect(&txn, &cache, &[]).expect("folded"));
+        let folded_answers = scores_of(
+            &folded
+                .execute_collect(&txn, &cache, &[] as &[BindValue])
+                .expect("folded"),
+        );
         let unfolded_answers = scores_of(
             &unfolded
-                .execute_collect(&txn, &cache, &[])
+                .execute_collect(&txn, &cache, &[] as &[BindValue])
                 .expect("unfolded"),
         );
         assert_eq!(

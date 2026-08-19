@@ -108,9 +108,9 @@ fn hoisted_gathers_match_the_per_position_reference() {
         delta.insert(&txn0, R, &bytes).expect("insert");
     }
     drop(txn0);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    let image = crate::image::build(&txn, &schema, R).expect("build");
+    let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
     // The reference reads the image columns per position — the exact
     // access the hoisted gather replaces; no assumption about the
     // image's position order.

@@ -1,17 +1,20 @@
 use super::*;
 
-use crate::error::{Error, Violation};
+use crate::error::{Conflict, Error, LmdbFailure, Violation};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::schema::{FieldId, RelationId};
 
 // ---------- 50-storage § Write path: full commit ----------
 
 fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
-    apply_delta(env, schema, &[], facts).expect("commit");
+    apply_delta(env, schema, &[], facts)
+        .expect("commit")
+        .expect("admitted");
 }
 
 #[test]
@@ -28,19 +31,18 @@ fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
     delta.insert(&view, KEYED, &a).expect("insert");
     delta.insert(&view, KEYED, &b).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
+    let violations = expect_rejected(commit(delta, &env));
     assert!(
         matches!(
-            &err,
-            Error::CommitRejected { violations } if matches!(
-                violations.as_slice(),
-                [Violation::Functionality(crate::error::FunctionalityViolation::Scalar {
-                    statement: KEYED_KEY,
-                    fact,
-                })] if **fact == a[..] || **fact == b[..]
-            )
+            violations.as_slice(),
+            [Violation::Functionality {
+                id: KEYED_KEY,
+                fact,
+                conflict: Conflict::Scalar,
+                ..
+            }] if **fact == a[..] || **fact == b[..]
         ),
-        "{err:?}"
+        "{violations:?}"
     );
     assert_eq!(committed_data(&env), before);
 }
@@ -58,19 +60,18 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
     let contender = keyed_fact(&schema, 1, 20);
     delta.insert(&view, KEYED, &contender).expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
+    let violations = expect_rejected(commit(delta, &env));
     assert!(
         matches!(
-            &err,
-            Error::CommitRejected { violations } if matches!(
-                violations.as_slice(),
-                [Violation::Functionality(crate::error::FunctionalityViolation::Scalar {
-                    statement: KEYED_KEY,
-                    fact,
-                })] if **fact == contender[..]
-            )
+            violations.as_slice(),
+            [Violation::Functionality {
+                id: KEYED_KEY,
+                fact,
+                conflict: Conflict::Scalar,
+                ..
+            }] if **fact == contender[..]
         ),
-        "{err:?}"
+        "{violations:?}"
     );
     assert_eq!(committed_data(&env), before);
 }
@@ -94,7 +95,7 @@ fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
         .expect("insert");
     drop(view);
     assert!(delta.is_empty());
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(!report.changed());
     assert_eq!(report.generation().value(), 1);
     let rtxn = env.read_txn().expect("txn");
@@ -119,7 +120,7 @@ fn insert_and_delete_of_an_absent_fact_commits_as_an_empty_delta() {
         .expect("delete");
     drop(view);
     assert!(delta.is_empty());
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(!report.changed());
     assert_eq!(report.generation().value(), 1);
     let rtxn = env.read_txn().expect("txn");
@@ -141,9 +142,12 @@ fn tx_id_advances_once_per_state_changing_commit_only() {
     // All-no-op delta: re-inserting an existing fact records nothing.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(!delta.insert(&view, TARGET, &f).expect("insert"));
+    assert_eq!(
+        delta.insert(&view, TARGET, &f).expect("insert"),
+        crate::storage::delta::DeltaEffect::NoOp
+    );
     drop(view);
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(!report.changed());
     assert_eq!(report.generation().value(), 1);
     {
@@ -182,27 +186,27 @@ fn counters_after_reopen_match_a_recount_of_f_entries() {
             .insert(&view, TARGET, &target_fact(&schema, 4))
             .expect("insert");
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
     }
 
     // Reopen: the flushed counters are the only test that can catch a
     // never-persisted high-water.
     let env = Environment::open(dir.path(), &schema).expect("open");
     let rtxn = env.read_txn().expect("txn");
-    let mut key: KeyBuf = [0; MAX_KEY];
-    let len = keys::stat_key(&mut key, TARGET, StatKind::RowCount);
+    let count_key = keys::stat_key(TARGET, StatKind::RowCount);
     let count = u64::from_le_bytes(
         env.data()
-            .get(rtxn.raw(), &key[..len])
+            .get(rtxn.raw(), &count_key)
             .expect("get")
             .expect("row count present")
             .try_into()
             .expect("u64"),
     );
-    let prefix_len = keys::fact_prefix(&mut key, TARGET);
+    let mut prefix_buf: KeyBuf = [0; MAX_KEY];
+    let prefix = keys::fact_prefix(&mut prefix_buf, TARGET);
     let scanned = env
         .data()
-        .prefix_iter(rtxn.raw(), &key[..prefix_len])
+        .prefix_iter(rtxn.raw(), prefix)
         .expect("iter")
         .count() as u64;
     assert_eq!(count, scanned);
@@ -211,16 +215,16 @@ fn counters_after_reopen_match_a_recount_of_f_entries() {
     // Target is fresh-keyed, so no S high-water exists (the one id
     // allocator, R16): the mint is Q, ratcheted past the explicit fresh
     // values 1..=4 — the stored next value is 5.
-    let hw_len = keys::stat_key(&mut key, TARGET, StatKind::RowIdHighWater);
+    let hw_key = keys::stat_key(TARGET, StatKind::RowIdHighWater);
     assert_eq!(
-        env.data().get(rtxn.raw(), &key[..hw_len]).expect("get"),
+        env.data().get(rtxn.raw(), &hw_key).expect("get"),
         None,
         "a fresh-keyed relation owns no S high-water"
     );
-    let q_len = keys::fresh_key(&mut key, TARGET, FieldId(0));
+    let q_key = keys::fresh_key(TARGET, FieldId(0));
     let q_next = u64::from_le_bytes(
         env.data()
-            .get(rtxn.raw(), &key[..q_len])
+            .get(rtxn.raw(), &q_key)
             .expect("get")
             .expect("Q next present")
             .try_into()
@@ -266,7 +270,7 @@ fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
     );
     delta.intern_str(&view, "ghost").expect("intern");
     drop(view);
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(!report.changed());
     assert_eq!(report.generation().value(), 1);
 
@@ -306,7 +310,7 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
     let before = committed_data(&env);
-    let q_key = key(|buf| keys::fresh_key(buf, TARGET, FieldId(0)));
+    let q_key = keys::fresh_key(TARGET, FieldId(0)).to_vec();
     let q_before = {
         let rtxn = env.read_txn().expect("txn");
         env.data()
@@ -327,18 +331,20 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     // must write nothing at all.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(
-        !delta
+    assert_eq!(
+        delta
             .insert(&view, TARGET, &target_fact(&schema, 5))
-            .expect("insert")
+            .expect("insert"),
+        crate::storage::delta::DeltaEffect::NoOp
     );
-    assert!(
-        !delta
+    assert_eq!(
+        delta
             .delete(&view, TARGET, &target_fact(&schema, 9))
-            .expect("delete")
+            .expect("delete"),
+        crate::storage::delta::DeltaEffect::NoOp
     );
     drop(view);
-    let report = commit(delta, &env).expect("commit");
+    let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(!report.changed());
 
     let rtxn = env.read_txn().expect("txn");
@@ -396,8 +402,7 @@ fn fresh_ids_reserved_in_a_rejected_txn_are_burned() {
         .insert(&view, KEYED, &keyed_fact(&schema, 1, 20))
         .expect("insert");
     drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    assert!(matches!(err, Error::CommitRejected { .. }), "{err:?}");
+    let _violations = expect_rejected(commit(delta, &env));
 
     // The rejected commit rolled back every fact — but it burned the id it
     // handed out: the next transaction mints past 0, never re-issuing it.
@@ -442,7 +447,7 @@ fn from_commit_types_the_raw_errno_class_and_nothing_else() {
     // LMDB-coded failures keep their established mapping.
     assert!(matches!(
         Error::from_commit(heed::Error::Mdb(heed::MdbError::MapFull)),
-        Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull))
+        Error::Lmdb(LmdbFailure::Mdb(heed::MdbError::MapFull))
     ));
     assert!(matches!(
         Error::from_commit(heed::Error::Mdb(heed::MdbError::ReadersFull)),
@@ -507,7 +512,7 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
         .insert(&view, TARGET, &target_fact(&schema, 7))
         .expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
 
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(
@@ -522,7 +527,7 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
     // counter (the production writer — no direct-write path exists).
     let mut later = WriteDelta::new(&schema);
     let next = later.intern_str(&rtxn, "other").expect("intern");
-    assert_eq!(next, id + 1);
+    assert_eq!(next.raw(), id.raw() + 1);
 }
 
 /// The never-reissue law on `commit()`'s own pre-plan exits
@@ -616,12 +621,8 @@ fn a_failed_escaped_flush_still_never_reissues_in_process() {
         .expect("insert");
     drop(view);
     env.fail_next_fresh_flushes(1);
-    let err = commit(delta, &env).unwrap_err();
-    assert!(
-        matches!(err, Error::CommitRejected { .. }),
-        "a sealed rejection survives a failed Q burn, got {err:?}"
-    );
-    let q_key = key(|buf| keys::fresh_key(buf, TARGET, FieldId(0)));
+    let _violations = expect_rejected(commit(delta, &env));
+    let q_key = keys::fresh_key(TARGET, FieldId(0)).to_vec();
     {
         let rtxn = env.read_txn().expect("txn");
         assert!(
@@ -651,14 +652,9 @@ fn s_row_count_overflow_is_labeled_overflow() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::stat_key(&mut key, KEYED, StatKind::RowCount);
+        let key = keys::stat_key(KEYED, StatKind::RowCount);
         env.data()
-            .put(
-                wtxn.raw_mut(),
-                &key[..len],
-                u64::MAX.to_le_bytes().as_slice(),
-            )
+            .put(wtxn.raw_mut(), &key, u64::MAX.to_le_bytes().as_slice())
             .expect("put S");
         wtxn.commit().expect("commit");
     }
@@ -686,13 +682,14 @@ fn s_row_count_underflow_keeps_the_underflow_label() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let fact = keyed_fact(&schema, 1, 10);
-    apply_delta(&env, &schema, &[], &[(KEYED, fact.clone())]).expect("base");
+    apply_delta(&env, &schema, &[], &[(KEYED, fact.clone())])
+        .expect("base")
+        .expect("admitted");
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let len = keys::stat_key(&mut key, KEYED, StatKind::RowCount);
+        let key = keys::stat_key(KEYED, StatKind::RowCount);
         env.data()
-            .put(wtxn.raw_mut(), &key[..len], 0u64.to_le_bytes().as_slice())
+            .put(wtxn.raw_mut(), &key, 0u64.to_le_bytes().as_slice())
             .expect("zero S");
         wtxn.commit().expect("commit");
     }

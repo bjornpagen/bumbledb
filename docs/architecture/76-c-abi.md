@@ -40,7 +40,8 @@ be C-only linkable; an exceptions-ON TU is a second language in the link.
 
 **C structs** (the hostile boundary): tagged POD views (`bdb_value`, schema
 spec, query IR), opaque handles (`bdb_db`, `bdb_prepared`, `bdb_answers`,
-`bdb_row_set`), lexical refs (`bdb_snapshot_ref`, `bdb_tx_ref`), the
+`bdb_row_set`), lexical refs (`bdb_instance_ref`, `bdb_tx_ref`), owned
+handles (`bdb_owned_instance`, `bdb_instance_builder`, `bdb_witness`), the
 `bdb_status` + `bdb_error**` protocol. Tags are `u32` so an out-of-range C enum
 is `BDB_STATUS_MISUSE`, not UB. Most payloads are flat parallel fields keyed
 by `kind`. `bdb_query` is the one C union (`Cq | Reach`).
@@ -53,17 +54,17 @@ borrow the named carrier and die with it.
 The header is generated: pinned cbindgen 0.29.4, committed at
 `crates/bumbledb-c/include/bumbledb_c.h`. `bdb_version()` is the crate version
 string (program lifetime, NUL-terminated) — the product identity, lockstep
-with the engine and the TypeScript SDK at **0.14.0**. `bdb_abi_version()` is
-`2` — layout generation, not the release spelling: collection-valued
-insert/delete, `reserve`, and the retirement of `alloc` / `bulk_load`. Bump
-on a layout-visible change.
+with the engine and the TypeScript SDK at **0.15.0**. `bdb_abi_version()` is
+`3` — layout generation, not the release spelling: admitted instances,
+synchronous read callbacks, tagged admissions, and the retirement of
+snapshot-named functions. Bump on a layout-visible change.
 
 ```text
-bdb_abi_version() == 2           layout generation (not the release spelling)
-bdb_version()                    "bumbledb-c 0.14.0"
+bdb_abi_version() == 3           layout generation (not the release spelling)
+bdb_version()                    "bumbledb-c 0.15.0"
 
 bdb_tx_reserve(tx, rel, field, count, &range, &err)
-  empty wire: {start: 0, end_exclusive: 0} — start is not a minted id
+  empty wire: tag `BDB_FRESH_RANGE_TAG_EMPTY` — `{0, 0}` is unspellable as empty
 bdb_tx_insert(tx, rel, values, arity, row_count, &report, &err)
 bdb_tx_delete(...)               same rectangular layout
   report: { submitted, changed }
@@ -78,7 +79,7 @@ nests the original apply `Error`; this surface carries the kind.
 ```c
 bdb_fresh_range ids;
 bdb_tx_reserve(tx, ACCOUNT, /* id field */ 0, 1, &ids, &err);
-/* empty is {0, 0}: ids.start is not minted when start == end_exclusive */
+/* empty is the tag; ids.start is live only on BDB_FRESH_RANGE_TAG_NON_EMPTY */
 bdb_value row[ARITY];
 /* fill row; row[0].u64 = ids.start when the range is nonempty */
 bdb_mutation_report report;
@@ -99,8 +100,9 @@ statement) are host sugar; the engine remains the wall.
 
 Not this cut:
 
-- **Flattened tags, not C unions** (except `bdb_query`). `bdb_value` and the
-  IR/spec views carry every payload field; only `kind` selects which are live.
-  Packing those as unions is an ABI bump (`bdb_abi_version`).
+- **Flattened tags, not C unions** (except `bdb_query` and the admission
+  unions). `bdb_value` and the IR/spec views carry every payload field; only
+  `kind` selects which are live. Packing those remaining views as unions is an
+  ABI bump (`bdb_abi_version`).
 - **No exhume.** Archival open is a Rust/TS surface (`70-api.md`).
 - **No explain / staleness.** Harness-only per `70-api.md`; not embedding API.

@@ -77,7 +77,7 @@ fn wide_row(r: u64) -> Vec<Value> {
     Vec::from([
         Value::U64(r),
         Value::I64(signed),
-        Value::String(format!("row-{r}").into_bytes().into_boxed_slice()),
+        Value::String(format!("row-{r}").into()),
         Value::Bool(r.is_multiple_of(2)),
         Value::FixedBytes(Box::from([byte, byte.wrapping_add(1), 0xA5])),
         Value::FixedBytes(vec![byte; 20].into_boxed_slice()),
@@ -89,12 +89,12 @@ fn wide_row(r: u64) -> Vec<Value> {
 /// Total image columns of `rel`, derived exactly as the build derives
 /// them (the field→column map).
 fn column_count(db: &Db<SchemaDescriptor>, rel: RelationId) -> usize {
-    let types: Vec<bumbledb_theory::TypeDesc> = db
+    let types: Vec<bumbledb_theory::schema::ValueType> = db
         .schema
         .relation(rel)
         .fields()
         .iter()
-        .map(|f| f.value_type.type_desc())
+        .map(|f| f.value_type)
         .collect();
     let spans = crate::image::column_spans(&types);
     spans
@@ -113,7 +113,8 @@ fn assert_matches_rebuild(db: &Db<SchemaDescriptor>, rel: RelationId) -> Arc<Rel
         .cache
         .get_or_build(&txn, &db.schema, rel)
         .expect("engine image");
-    let rebuilt = crate::image::build(&txn, &db.schema, rel).expect("from-scratch rebuild");
+    let rebuilt =
+        crate::image::build(&txn.catalog(), &db.schema, rel).expect("from-scratch rebuild");
     assert_eq!(engine.row_count(), rebuilt.row_count(), "row_count");
     let fields = db.schema.relation(rel).fields().len();
     for field in 0..fields {
@@ -143,7 +144,9 @@ fn assert_matches_rebuild(db: &Db<SchemaDescriptor>, rel: RelationId) -> Arc<Rel
 #[test]
 fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
     let dir = TempDir::new("db-append-differential");
-    let db = Db::create(dir.path(), wide_schema()).expect("create");
+    let db = Db::create(dir.path(), wide_schema())
+        .expect("create")
+        .expect("accepted");
     let mut next = 0u64;
     let mut insert_wide = |count: u64| {
         let from = next;
@@ -154,13 +157,15 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
             }
             Ok(())
         })
-        .expect("insert-only commit");
+        .expect("insert-only commit")
+        .unwrap();
     };
 
     // Generation 1: the from-scratch build (no base exists yet).
     insert_wide(4);
     db.write(|tx| tx.insert_dyn(OTHER, [&[Value::U64(0)]]).map(drop))
-        .expect("seed OTHER");
+        .expect("seed OTHER")
+        .unwrap();
     assert_matches_rebuild(&db, W);
     assert_matches_rebuild(&db, OTHER);
 
@@ -172,7 +177,8 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
         insert_wide(2 + round % 3);
         let w = assert_matches_rebuild(&db, W);
         db.write(|tx| tx.insert_dyn(OTHER, [&[Value::U64(round + 1)]]).map(drop))
-            .expect("touch OTHER only");
+            .expect("touch OTHER only")
+            .unwrap();
         let w_carried = assert_matches_rebuild(&db, W);
         assert!(
             Arc::ptr_eq(&w, &w_carried),
@@ -192,7 +198,8 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
     // fallback for W — and the rebuilt image still matches the referee.
     let victim = wide_row(1);
     db.write(|tx| tx.delete_dyn(W, [&victim]).map(drop))
-        .expect("delete from W");
+        .expect("delete from W")
+        .unwrap();
     assert_matches_rebuild(&db, W);
     // OTHER was delete-free throughout: still carried, still identical.
     assert_matches_rebuild(&db, OTHER);
@@ -209,14 +216,17 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
 #[test]
 fn the_write_path_classifies_deletes_per_relation() {
     let dir = TempDir::new("db-append-pin");
-    let db = Db::create(dir.path(), wide_schema()).expect("create");
+    let db = Db::create(dir.path(), wide_schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         for r in 0..3 {
             tx.insert_dyn(W, [&wide_row(r)])?;
         }
         tx.insert_dyn(OTHER, [&[Value::U64(0)]]).map(drop)
     })
-    .expect("seed");
+    .expect("seed")
+    .expect("accepted");
     let read = |rel: RelationId| {
         let txn = db.env.read_txn().expect("txn");
         db.cache.get_or_build(&txn, &db.schema, rel).expect("image");
@@ -237,7 +247,8 @@ fn the_write_path_classifies_deletes_per_relation() {
         tx.delete_dyn(W, [&victim])?;
         tx.insert_dyn(OTHER, [&[Value::U64(1)]]).map(drop)
     })
-    .expect("mixed commit");
+    .expect("mixed commit")
+    .expect("accepted");
     read(W);
     let after_w = db.cache_stats();
     assert_eq!(
@@ -255,7 +266,8 @@ fn the_write_path_classifies_deletes_per_relation() {
 
     // An insert-only commit into W: W appends, OTHER carries.
     db.write(|tx| tx.insert_dyn(W, [&wide_row(9)]).map(drop))
-        .expect("insert-only commit");
+        .expect("insert-only commit")
+        .unwrap();
     read(W);
     read(OTHER);
     let end = db.cache_stats();

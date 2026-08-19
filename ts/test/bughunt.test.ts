@@ -35,7 +35,9 @@ import {
 	v
 } from "#index.ts"
 import { lower } from "#lower.ts"
+import type { InstanceHandle, TxHandle } from "#native.ts"
 import { native } from "#native.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-hunt-"))
@@ -70,7 +72,7 @@ function must<T>(value: T | undefined): T {
 }
 
 describe("marshal edges and lifecycle sanity against a real store", async function suite() {
-	const db = await Db.create(path.join(tmpRoot, "store"), Theory)
+	const db = accepted(await Db.create(path.join(tmpRoot, "store"), Theory))
 
 	test("i64::MIN / i64::MAX / u64::MAX round-trip exactly", function bigintEdges() {
 		let id: bigint | undefined
@@ -78,7 +80,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			id = put(tx, Num, { u: U64_MAX, s: I64_MIN }).id
 			put(tx, Num, { u: 0n, s: I64_MAX })
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		const back = must(db.get(Num, { id: must(id) }))
 		assert.equal(back.u, U64_MAX)
 		assert.equal(back.s, I64_MIN)
@@ -129,7 +131,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const written = db.write(function seed(tx) {
 			id = put(tx, Blob, { tag: view }).id
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		assert.deepStrictEqual(must(db.get(Blob, { id: must(id) })).tag, new Uint8Array([7, 7, 7, 7]))
 	})
 
@@ -138,7 +140,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const written = db.write(function seed(tx) {
 			id = put(tx, Ray, { at: span(3n, U64_MAX), sat: span(I64_MIN, I64_MAX) }).id
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		const back = must(db.get(Ray, { id: must(id) }))
 		assert.deepEqual(back.at, { start: 3n, end: U64_MAX })
 		assert.deepEqual(back.sat, { start: I64_MIN, end: I64_MAX })
@@ -166,7 +168,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const right = db.write(function good(tx) {
 			put(tx, Slot, { when: span(10n, 12n) })
 		})
-		assert.ok(right.ok, "the exact-width value lands")
+		assert.equal(right.tag, "accepted", "the exact-width value lands")
 		/**
 		 * The refusal is the engine's structural-typing judgment: a width-5
 		 * interval is a DIFFERENT type than interval<u64, 2>, so the dyn lane
@@ -190,7 +192,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			emptyId = put(tx, Txt, { note: "" }).id
 			astralId = put(tx, Txt, { note: "𝔽😀́" }).id
 		})
-		assert.ok(written.ok)
+		assert.equal(written.tag, "accepted")
 		assert.equal(must(db.get(Txt, { id: must(emptyId) })).note, "")
 		assert.equal(must(db.get(Txt, { id: must(astralId) })).note, "𝔽😀́")
 		assert.equal(db.contains(Txt, { id: must(emptyId), note: "" }), true)
@@ -218,7 +220,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const seeded = db.write(function seed(tx) {
 			id = put(tx, Txt, { note: "intact" }).id
 		})
-		assert.ok(seeded.ok)
+		assert.equal(seeded.tag, "accepted")
 		assert.throws(
 			function containsRefused() {
 				db.contains(Txt, { id: must(id), note: "\uDC00" })
@@ -308,7 +310,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const missingTerms = db.write(function violate(tx) {
 			put(tx, Item, { kind: "Special", flag: true })
 		})
-		assert.ok(!missingTerms.ok, "the mirror judges the written orientation")
+		assert.equal(missingTerms.tag, "rejected", "the mirror judges the written orientation")
 		const forward = must(missingTerms.violations[0])
 		assert.strictEqual(forward.statement, specialMirror)
 		assert.equal(forward.kind, "containment")
@@ -331,7 +333,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			const plain = put(tx, Item, { kind: "Plain", flag: false })
 			put(tx, Terms, { item: plain.id, rate: 1n })
 		})
-		assert.ok(!seeded.ok, "the reverse orientation judges too")
+		assert.equal(seeded.tag, "rejected", "the reverse orientation judges too")
 		const reverse = must(seeded.violations[0])
 		assert.strictEqual(reverse.statement, specialMirror)
 		assert.equal(reverse.canonical, renderStatement(specialMirror))
@@ -369,11 +371,11 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			contained(on(Item2, "kind"), on(Kind, "id")),
 			bareMirror
 		])
-		const full = await Db.create(path.join(tmpRoot, "full"), Full)
+		const full = accepted(await Db.create(path.join(tmpRoot, "full"), Full))
 		const rejected = full.write(function violate(tx) {
 			put(tx, Item2, { kind: "Special" })
 		})
-		assert.ok(!rejected.ok)
+		assert.equal(rejected.tag, "rejected")
 		const violation = must(rejected.violations[0])
 		assert.strictEqual(violation.statement, bareMirror)
 		assert.equal(
@@ -395,14 +397,14 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const next = db.write(function fine(tx) {
 			put(tx, Num, { u: 2n, s: 2n })
 		})
-		assert.ok(next.ok, "the writer is free after the aborted transaction")
+		assert.equal(next.tag, "accepted", "the writer is free after the aborted transaction")
 	})
 
 	test("a thrown witnessed callback (after a delta verb) aborts and frees the writer", function thrownWitnessed() {
 		const before = db.scan(Num).length
 		assert.throws(function boom() {
-			db.read(function boom(snap) {
-				return db.writeFrom(snap, function bad(tx) {
+			db.read(function boom(_instance, witness) {
+				return db.writeFrom(witness, function bad(tx) {
 					put(tx, Num, { u: 3n, s: 3n })
 					throw errors.new("witnessed boom")
 				})
@@ -412,11 +414,11 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const next = db.write(function fine(tx) {
 			put(tx, Num, { u: 4n, s: 4n })
 		})
-		assert.ok(next.ok)
+		assert.equal(next.tag, "accepted")
 		/**
 		 * And read scopes still open/close cleanly (no leaked snapshot slots).
 		 */
-		assert.equal(typeof db.read((snap) => snap.generation), "bigint")
+		assert.equal(typeof db.read((instance) => instance.generation), "bigint")
 	})
 
 	test("a violating delta then a throw still rethrows the host error (no half-judged state)", function violateThenThrow() {
@@ -429,31 +431,33 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const clean = db.write(function fine(tx) {
 			put(tx, Num, { u: 5n, s: 5n })
 		})
-		assert.ok(clean.ok)
+		assert.equal(clean.tag, "accepted")
 	})
 
 	test("an async write callback is refused — never a silent empty commit", async function asyncCallback() {
-		const before = db.read((snap) => snap.generation)
+		const before = db.read((instance) => instance.generation)
 		const beforeRows = db.scan(Num).length
 		let lateError: unknown
 		/**
-		 * NOTE: no cast is needed — `async (tx) => {…}` returns
-		 * Promise<void>, which TS accepts where DeltaBuild's `void`
-		 * return is expected, so this compiles as plain host code.
+		 * NOTE: `write` now types the callback as `SyncResult` (thenables are
+		 * `never`). The runtime probe still needs a thenable at the seam.
 		 */
 		const attempt = errors.trySync(function admitSneaky() {
-			db.write(async function sneaky(tx) {
-				await Promise.resolve()
-				const late = errors.trySync(function lateInsert() {
-					put(tx, Num, { u: 6n, s: 6n })
-				})
-				if (late.error) {
-					lateError = late.error
+			db.write(
+				// @ts-expect-error — SyncResult forbids Promise; this is the runtime thenable probe
+				async function sneaky(tx) {
+					await Promise.resolve()
+					const late = errors.trySync(function lateInsert() {
+						put(tx, Num, { u: 6n, s: 6n })
+					})
+					if (late.error) {
+						lateError = late.error
+					}
 				}
-			})
+			)
 		})
 		await new Promise((resolve) => setImmediate(resolve))
-		const after = db.read((snap) => snap.generation)
+		const after = db.read((instance) => instance.generation)
 		if (attempt.error === undefined) {
 			/**
 			 * If the SDK admitted the thenable, the write must still be a real
@@ -478,52 +482,45 @@ describe("native handle lifecycle probes", function nativeSuite() {
 	const NativeKind = relation("NKind", { id: u64.fresh, note: str })
 	const NativeTheory = schema("NativeHunt", { NKind: NativeKind }, [])
 
-	test("double abort, commit-after-abort, and a second begin are typed refusals", function lifecycle() {
+	test("nested write and spent-handle refusals are typed", function lifecycle() {
 		const opened = native.dbCreate(path.join(tmpRoot, "native"), lower(NativeTheory))
-		assert.ok(opened.ok)
+		assert.equal(opened.tag, "accepted")
 		const handle = opened.db
-		const tx = native.dbWriteBegin(handle)
-		assert.throws(function secondBegin() {
-			native.dbWriteBegin(handle)
-		}, /already open/)
-		native.txAbort(tx)
-		assert.throws(function doubleAbort() {
-			native.txAbort(tx)
-		}, /closed transaction/)
-		assert.throws(function commitAfterAbort() {
-			native.txCommit(tx)
-		}, /closed transaction/)
-		/**
-		 * The writer is free again after the abort cleared the guard.
-		 */
-		const tx2 = native.dbWriteBegin(handle)
-		const outcome = native.txCommit(tx2)
-		assert.ok(outcome.ok, "an empty commit lands after the aborted predecessor")
-		/**
-		 * A spent-by-commit handle refuses further use.
-		 */
-		assert.throws(function abortAfterCommit() {
-			native.txAbort(tx2)
-		}, /closed transaction/)
+		let captured: TxHandle | undefined
+		native.dbWrite(handle, function write(tx) {
+			captured = tx
+			assert.throws(function nestedWrite() {
+				native.dbWrite(handle, function inner() {
+					return true
+				})
+			}, /already open/)
+			return false
+		})
+		assert.throws(function useAfterAbort() {
+			native.txInsert(captured as TxHandle, 0, [])
+		}, /closed/)
+		const outcome = native.dbWrite(handle, function empty() {
+			return true
+		})
+		assert.equal(outcome.tag, "accepted", "an empty commit lands after the aborted predecessor")
 		native.dbClose(handle)
 		assert.throws(function doubleClose() {
 			native.dbClose(handle)
 		}, /closed db/)
 	})
 
-	test("a snapshot survives its db handle close; double snapshot close is typed", function snapshotLifecycle() {
+	test("an instance handle is invalid after its callback returns", function instanceLifecycle() {
 		const opened = native.dbCreate(path.join(tmpRoot, "native-snap"), lower(NativeTheory))
-		assert.ok(opened.ok)
+		assert.equal(opened.tag, "accepted")
 		const handle = opened.db
-		const snap = native.dbSnapshot(handle).snapshot
-		assert.deepEqual(native.snapshotScan(snap, 0), [])
-		native.snapshotClose(snap)
+		let leaked: InstanceHandle | undefined
+		native.dbRead(handle, function read(instance, _witness) {
+			assert.deepEqual(native.instanceScan(instance, 0), [])
+			leaked = instance
+		})
 		assert.throws(function scanAfterClose() {
-			native.snapshotScan(snap, 0)
-		}, /closed snapshot/)
-		assert.throws(function doubleClose() {
-			native.snapshotClose(snap)
-		}, /closed snapshot/)
+			native.instanceScan(leaked as InstanceHandle, 0)
+		}, /closed instance/)
 		native.dbClose(handle)
 	})
 })

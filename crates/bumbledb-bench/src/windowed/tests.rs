@@ -10,7 +10,6 @@ use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-windowed-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -67,7 +66,9 @@ fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
 fn the_window_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, world::WindowedWorld).expect("create");
+    let db = Db::create(&dir, world::WindowedWorld)
+        .expect("create")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&world::WindowedWorld.descriptor());
 
     let mut ops = Vec::new();
@@ -120,10 +121,13 @@ fn the_window_verdicts_agree_with_the_naive_model() {
 #[test]
 fn the_window_rows_run_their_protocols() {
     let dir = scratch("rows");
-    let windowed = Db::create(&dir.join("windowed"), world::WindowedWorld).expect("create");
+    let windowed = Db::create(&dir.join("windowed"), world::WindowedWorld)
+        .expect("create")
+        .expect("accepted");
     super::load(&windowed, Mass::BENCH).expect("load windowed");
-    let unwindowed =
-        Db::create(&dir.join("baseline"), baseline::UnwindowedWorld).expect("create baseline");
+    let unwindowed = Db::create(&dir.join("baseline"), baseline::UnwindowedWorld)
+        .expect("create baseline")
+        .expect("accepted");
     super::load(&unwindowed, Mass::BENCH).expect("load baseline");
 
     let admission =

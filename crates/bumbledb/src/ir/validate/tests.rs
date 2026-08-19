@@ -47,7 +47,7 @@ fn schema() -> Schema {
                     fresh("id"),
                     field("holder", ValueType::U64),
                     field("status", ValueType::U64),
-                    field("validity", interval_u64.clone()),
+                    field("validity", interval_u64),
                 ],
             },
             RelationDescriptor {

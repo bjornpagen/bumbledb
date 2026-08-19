@@ -446,7 +446,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                     Value::U64(id),
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
-                    Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                    Value::String(format!("memo-{}", id % 4).into()),
                 ]],
             )?;
         }
@@ -488,7 +488,8 @@ fn populate(db: &Db<SchemaDescriptor>) {
         }
         Ok(())
     })
-    .expect("populate");
+    .expect("populate")
+    .unwrap();
 }
 
 // =====================================================================
@@ -533,10 +534,11 @@ fn chain_query(atoms: u16, conds: u16, rules: u16) -> Query {
             })
             .collect(),
     };
-    Query::Cq {
+    Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: (0..rules).map(|r| rule(u64::from(r))).collect(),
+        rec: None,
     }
 }
 
@@ -659,7 +661,7 @@ fn string_query() -> Query {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(3)),
-            rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
+            rhs: Term::Literal(Value::String(Box::from("memo-0"))),
         })],
     })
 }
@@ -748,9 +750,9 @@ fn recursive_query() -> Query {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0), VarId(1)],
                 atoms: vec![account(0, 1)],
@@ -765,7 +767,7 @@ fn recursive_query() -> Query {
                 atoms: vec![account(0, 1)],
                 conditions: vec![cap],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -808,7 +810,7 @@ fn interiors_only_query() -> Query {
             rhs: Term::Param(ParamId(0)),
         })],
     };
-    Query::Cq {
+    Query {
         interiors: vec![Interior {
             rules: vec![ProjectionRule {
                 finds: vec![VarId(0), VarId(1)],
@@ -830,6 +832,7 @@ fn interiors_only_query() -> Query {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     }
 }
 
@@ -853,7 +856,9 @@ fn flow_open() {
     // create / open / ephemeral / ephemeral-reopen (the probe battery).
     let dir = common::TempDir::new("census-open");
     let db = measured("open", "Db::create(fixture schema)", true, || {
-        Db::create(dir.path(), schema()).expect("create")
+        Db::create(dir.path(), schema())
+            .expect("create")
+            .expect("accepted")
     });
     drop(db);
     let db = measured("open", "Db::open(existing)", true, || {
@@ -863,14 +868,20 @@ fn flow_open() {
 
     let edir = common::TempDir::new("census-ephemeral");
     let db = measured("open", "Db::ephemeral(fresh)", true, || {
-        Db::ephemeral(edir.path(), schema()).expect("ephemeral create")
+        Db::ephemeral(edir.path(), schema())
+            .expect("ephemeral create")
+            .expect("accepted")
     });
     drop(db);
     let db = measured(
         "open",
         "Db::ephemeral(reopen: probe battery)",
         false,
-        || Db::ephemeral(edir.path(), schema()).expect("ephemeral reopen"),
+        || {
+            Db::ephemeral(edir.path(), schema())
+                .expect("ephemeral reopen")
+                .expect("accepted")
+        },
     );
     drop(db);
 
@@ -881,7 +892,11 @@ fn flow_open() {
             "open",
             &format!("Db::create(wide schema, {n} relations)"),
             false,
-            || Db::create(wdir.path(), wide_schema(n)).expect("create wide"),
+            || {
+                Db::create(wdir.path(), wide_schema(n))
+                    .expect("create wide")
+                    .expect("accepted")
+            },
         );
         drop(db);
     }
@@ -941,16 +956,16 @@ fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u6
                         Value::U64(id),
                         Value::U64(id % 20),
                         Value::I64((id.cast_signed() % 100) - 50),
-                        Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                        Value::String(format!("memo-{}", id % 4).into()),
                     ]],
                 )?;
             }
             Ok(())
         };
         if round == 2 {
-            measured("commit", label, attrib, || db.write(body).expect("commit"));
+            measured("commit", label, attrib, || db.write(body).expect("commit")).unwrap();
         } else {
-            db.write(body).expect("commit");
+            db.write(body).expect("commit").unwrap();
         }
     }
 }
@@ -977,11 +992,11 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
                     label,
                     label.starts_with("windowed append"),
                     || {
-                        db.write(|tx| f(tx)).expect("windowed commit");
+                        db.write(|tx| f(tx)).expect("windowed commit").unwrap();
                     },
                 );
             } else {
-                db.write(|tx| f(tx)).expect("windowed commit");
+                db.write(|tx| f(tx)).expect("windowed commit").unwrap();
             }
         };
         let append = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
@@ -1036,10 +1051,10 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         };
         if round == 2 {
             measured("commit", "determinant overwrite (8 tuples)", true, || {
-                db.write(seeded).expect("fd overwrite");
+                db.write(seeded).expect("fd overwrite").unwrap();
             });
         } else {
-            db.write(seeded).expect("fd overwrite");
+            db.write(seeded).expect("fd overwrite").unwrap();
         }
     }
 }
@@ -1153,12 +1168,13 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
                 Value::U64(99_000),
                 Value::U64(3),
                 Value::I64(7),
-                Value::String(b"memo-1".to_vec().into()),
+                Value::String("memo-1".into()),
             ]],
         )?;
         Ok(())
     })
-    .expect("commit");
+    .expect("commit")
+    .unwrap();
     db.read(|snap| {
         measured(
             "execute",
@@ -1182,27 +1198,39 @@ fn flow_insert_and_scan() {
     use bumbledb::Fresh as _;
     // One collection insert of 10_000 Item facts into a fresh db.
     let dir = common::TempDir::new("census-insert");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     let rows: Vec<Vec<Value>> = (0..10_000u64)
         .map(|i| vec![Value::U64(i % 97), Value::U64(i / 97 + 1), Value::U64(i)])
         .collect();
     measured("insert", "insert_dyn 10k Item rows", true, || {
         let n = db
-            .write(|tx| tx.insert_dyn(ITEM, rows.clone()).map(|r| r.changed))
-            .expect("insert");
+            .write(|tx| {
+                tx.insert_dyn(ITEM, rows.clone())
+                    .map(bumbledb::MutationReport::changed)
+            })
+            .expect("insert")
+            .unwrap()
+            .value;
         assert_eq!(n, 10_000);
     });
 
     // The dynamic scan/export lane over the loaded relation.
     db.read(|snap| {
-        measured("scan", "Snapshot::scan 10k rows (dyn export)", true, || {
-            let mut n = 0usize;
-            for row in snap.scan(ITEM).expect("scan") {
-                let row = row.expect("row");
-                n += row.len();
-            }
-            assert_eq!(n, 30_000);
-        });
+        measured(
+            "scan",
+            "ReadInstance::scan 10k rows (dyn export)",
+            true,
+            || {
+                let mut n = 0usize;
+                for row in snap.scan(ITEM).expect("scan") {
+                    let row = row.expect("row");
+                    n += row.len();
+                }
+                assert_eq!(n, 30_000);
+            },
+        );
         Ok(())
     })
     .expect("read");
@@ -1210,7 +1238,9 @@ fn flow_insert_and_scan() {
 
     // The typed lanes: collection insert of str-bearing facts + scan_facts.
     let tdir = common::TempDir::new("census-insert-typed");
-    let tdb = Db::create(tdir.path(), CensusLedger).expect("create typed");
+    let tdb = Db::create(tdir.path(), CensusLedger)
+        .expect("create typed")
+        .expect("accepted");
     let memos: Vec<String> = (0..64).map(|i| format!("memo-{i}")).collect();
     measured("insert", "typed insert 10k str facts", true, || {
         let n = tdb
@@ -1221,9 +1251,11 @@ fn flow_insert_and_scan() {
                         memo: &memos[(i % 64) as usize],
                     })
                     .collect();
-                Ok(tx.insert(&rows)?.changed)
+                Ok(tx.insert(&rows)?.changed())
             })
-            .expect("typed insert");
+            .expect("typed insert")
+            .unwrap()
+            .value;
         assert_eq!(n, 10_000);
     });
     tdb.read(|snap| {
@@ -1243,7 +1275,9 @@ fn allocation_deep_census() {
     flow_open();
 
     let dir = common::TempDir::new("census-main");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     measured("commit", "populate (fixture world, one tx)", false, || {
         populate(&db);
     });

@@ -24,12 +24,15 @@ pub fn translate_query(
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
     match query {
-        Query::Cq {
-            interiors, rules, ..
-        } => translate_cq(interiors, rules, schema, sets),
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rules,
+            rec: None,
+            ..
+        } => translate_cq(interiors, rules, schema, sets),
+        Query {
+            interiors,
+            rec: Some(rec),
             rules,
             ..
         } => translate_reach(interiors, rec, rules, schema, sets),
@@ -201,11 +204,19 @@ fn main_select(
 /// An interior or rec head column whose type is interval.
 pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
     match query {
-        Query::Cq { interiors, .. } => {
+        Query {
+            interiors,
+            rec: None,
+            ..
+        } => {
             refuse_interior_intervals(interiors, schema)?;
             Ok(())
         }
-        Query::Reach { interiors, rec, .. } => {
+        Query {
+            interiors,
+            rec: Some(rec),
+            ..
+        } => {
             let flags = refuse_interior_intervals(interiors, schema)?;
             let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
             let row = head_intervals(&rec.head(), &base, schema, &flags);

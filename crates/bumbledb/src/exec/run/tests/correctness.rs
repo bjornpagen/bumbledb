@@ -232,10 +232,10 @@ fn residuals_filter_across_atoms() {
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(1)),
+            right: OperandAddr::from(VarId(2)),
             op: WordCmp::Lt,
-            lhs: VarId(1),
-            rhs: VarId(2),
         }],
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
@@ -331,7 +331,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
             let mut fj = binary2fj(&normalized, &join_order);
             factor(&mut fj);
             crate::plan::fj::gj_split(&mut fj);
-            validate(&fj, &normalized, &schema, vec![0; n], &BTreeSet::new()).expect("valid plan")
+            validate(&fj, &normalized, &schema, &BTreeSet::new()).expect("valid plan")
         };
 
         // The oracle: brute-force nested loops over the shape.

@@ -46,6 +46,27 @@ pub enum Disposition {
     Delete,
 }
 
+/// What one [`WriteDelta::apply`] did to the fact map. Cancel and record
+/// both change the in-memory final-state view; they are not the same
+/// outcome — cancel *removes* an entry, record *adds* one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaEffect {
+    /// Pending already matched `want`, or committed state already does.
+    NoOp,
+    /// A new disposition entry appeared.
+    Recorded,
+    /// The pending opposite disposition disappeared.
+    Cancelled,
+}
+
+impl DeltaEffect {
+    /// Whether the in-memory final-state view moved.
+    #[must_use]
+    pub const fn changed(self) -> bool {
+        !matches!(self, Self::NoOp)
+    }
+}
+
 /// A determinant-map hit, resolved for point readers: the pending fact that
 /// establishes the key tuple in the final state, or its recorded absence.
 /// A map miss (no overlay at all) means the committed state answers.
@@ -172,21 +193,56 @@ pub struct WriteDelta<'s> {
     /// Net row-count change per relation, maintained alongside the
     /// changed-state reports (flushed to `S` by the 50-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,
-    /// Novel strings interned by this transaction: provisional ids
-    /// assigned from the committed dictionary counter (the counter is
-    /// in-memory-then-flush like every other counter; single-writer
-    /// discipline makes provisional = final). The dictionary is str-only
-    /// — bytes<N> values are inline, never interned — so one untagged
-    /// map; probes borrow the raw bytes (`BTreeMap<Box<[u8]>, _>` looks
-    /// up by `&[u8]`).
-    pending_interns: BTreeMap<Box<[u8]>, u64>,
-    /// The next dictionary id, lazily read once per transaction.
-    dict_next: Option<u64>,
+    /// Novel strings interned this transaction: the next-id and the
+    /// entries are one value — the counter cannot advance without them.
+    interns: Option<PendingInterns>,
 }
 
-impl<'s> WriteDelta<'s> {
+/// Provisional dictionary mints of one write: the next-id sits beside
+/// the entries it accounts for. `None` on [`WriteDelta::interns`] is
+/// "minted nothing"; an empty entry map is unrepresentable.
+pub(crate) struct PendingInterns {
+    next_id: u64,
+    entries: BTreeMap<Box<[u8]>, crate::encoding::InternId>,
+}
+
+impl PendingInterns {
+    fn first(raw: &[u8], id: crate::encoding::InternId, next_id: u64) -> Self {
+        let mut entries = BTreeMap::new();
+        entries.insert(Box::from(raw), id);
+        Self { next_id, entries }
+    }
+
+    /// The dictionary next-id to flush with these entries.
+    #[must_use]
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
+    /// Pending intern entries, keyed by raw bytes.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&[u8], crate::encoding::InternId)> + '_ {
+        self.entries.iter().map(|(raw, id)| (raw.as_ref(), *id))
+    }
+
+    fn get(&self, raw: &[u8]) -> Option<crate::encoding::InternId> {
+        self.entries.get(raw).copied()
+    }
+
+    fn pending_raw(&self, id: crate::encoding::InternId) -> Option<&[u8]> {
+        self.entries
+            .iter()
+            .find_map(|(raw, &candidate)| (candidate == id).then_some(raw.as_ref()))
+    }
+
+    fn insert(&mut self, raw: &[u8], id: crate::encoding::InternId, next_id: u64) {
+        self.entries.insert(Box::from(raw), id);
+        self.next_id = next_id;
+    }
+}
+
+impl WriteDelta<'_> {
     /// The schema this delta was accumulated against (reader: commit).
-    pub(crate) fn schema(&self) -> &'s Schema {
+    pub(crate) fn schema(&self) -> &Schema {
         self.schema
     }
 
@@ -201,9 +257,16 @@ impl<'s> WriteDelta<'s> {
         self.facts.is_empty()
     }
 
+    /// Pending interns of this transaction, if any were minted. The
+    /// next-id travels with the entries.
+    pub(crate) fn interns(&self) -> Option<&PendingInterns> {
+        self.interns.as_ref()
+    }
+
     /// The dictionary next-id to flush, if this transaction minted any
     /// provisional ids (reader: the 50-storage doc phase 4).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dict_next(&self) -> Option<u64> {
-        self.dict_next
+        self.interns.as_ref().map(PendingInterns::next_id)
     }
 }

@@ -172,7 +172,8 @@ fn one_engine_commit(db: &Db<Meter>, facts: u32, bucket: &mut u64) -> Duration {
         }
         Ok(())
     })
-    .expect("committing write succeeds");
+    .expect("committing write succeeds")
+    .unwrap();
     start.elapsed()
 }
 
@@ -201,7 +202,9 @@ struct EngineCells {
 }
 
 fn engine_cells(dir: &Path) -> EngineCells {
-    let db = Db::create(dir, Meter).expect("store creates");
+    let db = Db::create(dir, Meter)
+        .expect("store creates")
+        .expect("accepted");
     EngineCells {
         small: timed_commits(&db, SMALL_COMMITS, SMALL_FACTS),
         bulk: timed_commits(&db, LARGE_COMMITS, LARGE_FACTS),
@@ -378,7 +381,9 @@ fn ramdisk_phase_r() {
 
     // --- R3 baseline: back-to-back single-fact commits on the SSD ---
     let r3_commits: u32 = 128;
-    let r3_ssd_db = Db::create(&ssd_dir.path().join("r3"), Meter).expect("store creates");
+    let r3_ssd_db = Db::create(&ssd_dir.path().join("r3"), Meter)
+        .expect("store creates")
+        .expect("accepted");
     let r3_ssd_start = Instant::now();
     let _ = timed_commits(&r3_ssd_db, r3_commits, 1);
     let r3_ssd = r3_ssd_start.elapsed();
@@ -393,7 +398,9 @@ fn ramdisk_phase_r() {
         // R1: the fullfsync smoke test — a committing write must not
         // surface CommitSync (LMDB's data sync on Darwin is
         // fcntl(F_FULLFSYNC), no fallback; a refusing device errors here).
-        let smoke = Db::create(&disk.store_dir("smoke"), Meter).expect("store creates on HFS+");
+        let smoke = Db::create(&disk.store_dir("smoke"), Meter)
+            .expect("store creates on HFS+")
+            .expect("accepted");
         smoke
             .write(|tx| {
                 let id: SampleId = tx.reserve(1)?.start().expect("nonempty");
@@ -403,7 +410,8 @@ fn ramdisk_phase_r() {
                     amount: 1,
                 }])
             })
-            .expect("R1 FAILED on HFS+: commit (fullfsync) refused on the ram device");
+            .expect("R1 FAILED on HFS+: commit (fullfsync) refused on the ram device")
+            .unwrap();
         println!("R1 hfs+ fullfsync smoke: PASS");
 
         // R2 cells.
@@ -412,7 +420,9 @@ fn ramdisk_phase_r() {
         println!("R2 hfs+ bulk:  {}", cell(&cells.bulk));
 
         // R3: the DVFS dividend.
-        let r3_db = Db::create(&disk.store_dir("r3"), Meter).expect("store creates");
+        let r3_db = Db::create(&disk.store_dir("r3"), Meter)
+            .expect("store creates")
+            .expect("accepted");
         let start = Instant::now();
         let _ = timed_commits(&r3_db, r3_commits, 1);
         let r3_ram = start.elapsed();
@@ -499,7 +509,9 @@ fn ramdisk_phase_r() {
         // worst-case RAM bound is the attach size.
         let before = vm_sample();
         let r5_dir = disk.store_dir("r5");
-        let r5_db = Db::create(&r5_dir, Meter).expect("store creates");
+        let r5_db = Db::create(&r5_dir, Meter)
+            .expect("store creates")
+            .expect("accepted");
         // ~190 MiB of facts through large collection inserts (128 commits x 4096).
         let _ = timed_commits(&r5_db, 128, LARGE_FACTS);
         let after = vm_sample();
@@ -526,7 +538,9 @@ fn ramdisk_phase_r() {
         let disk = RamDisk::attach("APFS", &apfs_label);
         println!("attached {} at {}", disk.dev, disk.mount.display());
 
-        let smoke = Db::create(&disk.store_dir("smoke"), Meter).expect("store creates on APFS");
+        let smoke = Db::create(&disk.store_dir("smoke"), Meter)
+            .expect("store creates on APFS")
+            .expect("accepted");
         smoke
             .write(|tx| {
                 let id: SampleId = tx.reserve(1)?.start().expect("nonempty");
@@ -536,7 +550,8 @@ fn ramdisk_phase_r() {
                     amount: 1,
                 }])
             })
-            .expect("R1 FAILED on APFS: commit (fullfsync) refused on the ram device");
+            .expect("R1 FAILED on APFS: commit (fullfsync) refused on the ram device")
+            .unwrap();
         println!("R1 apfs fullfsync smoke: PASS");
 
         let cells = engine_cells(&disk.store_dir("r2"));
@@ -560,6 +575,26 @@ struct EngineFlagCell {
     bucket: u64,
     small: Vec<Duration>,
     bulk: Vec<Duration>,
+}
+
+/// Prints a warning per R6 bulk cell whose spread exceeds the R4 band;
+/// returns whether any did.
+fn r6_noise_guard(cells: &[EngineFlagCell]) -> bool {
+    let mut noisy = false;
+    for c in cells {
+        let (min, max) = spread(&c.bulk);
+        let ratio = max.as_secs_f64() / min.as_secs_f64().max(f64::EPSILON);
+        if ratio > R4_SPREAD_BAND {
+            noisy = true;
+            println!(
+                "R6 WARNING: {} bulk spread {ratio:.2}x exceeds the quiet-machine band \
+                 (max/min <= {R4_SPREAD_BAND}x) — co-tenant load suspected; the ratios \
+                 below are NOT decision-grade, re-run on a quiet machine",
+                c.name
+            );
+        }
+    }
+    noisy
 }
 
 /// R6 (the ephemeral admission's number): the small-commit shape
@@ -604,28 +639,36 @@ fn ramdisk_phase_r_ephemeral() {
     let mut cells = [
         EngineFlagCell {
             name: "create @ ssd",
-            db: Db::create(&ssd_dir.path().join("create"), Meter).expect("store creates"),
+            db: Db::create(&ssd_dir.path().join("create"), Meter)
+                .expect("store creates")
+                .expect("accepted"),
             bucket: 0,
             small: Vec::new(),
             bulk: Vec::new(),
         },
         EngineFlagCell {
             name: "ephemeral @ ssd",
-            db: Db::ephemeral(&ssd_dir.path().join("ephemeral"), Meter).expect("store creates"),
+            db: Db::ephemeral(&ssd_dir.path().join("ephemeral"), Meter)
+                .expect("store creates")
+                .expect("accepted"),
             bucket: 0,
             small: Vec::new(),
             bulk: Vec::new(),
         },
         EngineFlagCell {
             name: "create @ hfs+ ramdisk",
-            db: Db::create(&disk.store_dir("create"), Meter).expect("store creates"),
+            db: Db::create(&disk.store_dir("create"), Meter)
+                .expect("store creates")
+                .expect("accepted"),
             bucket: 0,
             small: Vec::new(),
             bulk: Vec::new(),
         },
         EngineFlagCell {
             name: "ephemeral @ hfs+ ramdisk",
-            db: Db::ephemeral(&disk.store_dir("ephemeral"), Meter).expect("store creates"),
+            db: Db::ephemeral(&disk.store_dir("ephemeral"), Meter)
+                .expect("store creates")
+                .expect("accepted"),
             bucket: 0,
             small: Vec::new(),
             bulk: Vec::new(),
@@ -650,21 +693,7 @@ fn ramdisk_phase_r_ephemeral() {
 
     // The quiet-machine guard, R4's discipline verbatim: the bulk
     // cells' max/min spread against the 2x band.
-    let mut noisy = false;
-    for c in &cells {
-        let (min, max) = spread(&c.bulk);
-        let ratio = max.as_secs_f64() / min.as_secs_f64().max(f64::EPSILON);
-        if ratio > R4_SPREAD_BAND {
-            noisy = true;
-            println!(
-                "R6 WARNING: {} bulk spread {ratio:.2}x exceeds the quiet-machine band \
-                 (max/min <= {R4_SPREAD_BAND}x) — co-tenant load suspected; the ratios \
-                 below are NOT decision-grade, re-run on a quiet machine",
-                c.name
-            );
-        }
-    }
-    let noise_tag = if noisy {
+    let noise_tag = if r6_noise_guard(&cells) {
         " [NOISY — not decision-grade]"
     } else {
         ""

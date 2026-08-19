@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
 /// A finalize-time Overflow leaves `Answers`
@@ -41,12 +42,12 @@ fn overflow_errors_leave_answers_reusable() {
     let mut out = Answers::new();
     for _ in 0..2 {
         let err = prepared
-            .execute(&txn, &cache, &[], &mut out)
+            .execute(&txn, &cache, &[] as &[BindValue], &mut out)
             .expect_err("account 7 overflows");
         assert!(
             matches!(
                 err,
-                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: FindIndex(1) })
             ),
             "{err:?}"
         );
@@ -70,7 +71,8 @@ fn overflow_errors_leave_answers_reusable() {
         })],
     });
     let mut ok = prepare(&txn, &cache, &schema, &ok_query).expect("prepares");
-    ok.execute(&txn, &cache, &[], &mut out).expect("executes");
+    ok.execute(&txn, &cache, &[] as &[BindValue], &mut out)
+        .expect("executes");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(8));
     assert_eq!(out.get(0, 1), AnswerValue::I64(4));
@@ -142,7 +144,7 @@ fn finalize_resolves_each_distinct_intern_once() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
 
-    let resolves = |prepared: &mut PreparedQuery<'_, ()>, account: u64| {
+    let resolves = |prepared: &mut PreparedQuery<()>, account: u64| {
         obs::start_capture();
         let out = prepared
             .execute_collect(&txn, &cache, &[BindValue::U64(account), BindValue::I64(-1)])
@@ -150,7 +152,7 @@ fn finalize_resolves_each_distinct_intern_once() {
         let events = obs::finish_capture();
         let count = events
             .iter()
-            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
+            .filter(|e| e.point() == obs::names::DICT_RESOLVE)
             .count();
         (out, count)
     };

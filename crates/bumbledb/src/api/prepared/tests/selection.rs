@@ -88,7 +88,11 @@ fn selection_work_is_o_selected() {
         .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::Str("hot"))])
         .expect("profile");
     assert_eq!(out.len(), 4);
-    let drawn: u64 = stats.rules()[0].nodes.iter().map(|n| n.batch_entries).sum();
+    let drawn: u64 = stats.rules()[0]
+        .nodes()
+        .iter()
+        .map(|n| n.batch_entries)
+        .sum();
     assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
 }
 
@@ -128,15 +132,15 @@ fn selection_params_rotate_without_view_rebuilds() {
             assert!(!out.is_empty());
             view_builds += events
                 .iter()
-                .filter(|e| e.name() == obs::names::VIEW_BUILD)
+                .filter(|e| e.point() == obs::names::VIEW_BUILD)
                 .count();
             memo_hits += events
                 .iter()
-                .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
+                .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
                 .count();
             let probe = events
                 .iter()
-                .find(|e| e.name() == obs::names::SELECT_PROBE)
+                .find(|e| e.point() == obs::names::SELECT_PROBE)
                 .expect("every execution probes");
             assert_eq!(probe.a1(), 1, "present keys hit");
         }
@@ -152,7 +156,7 @@ fn selection_params_rotate_without_view_rebuilds() {
         .expect("execute");
     let events = obs::finish_capture();
     assert!(out.is_empty());
-    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
+    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
     assert!(!names.contains(&obs::names::VIEW_BUILD), "{names:?}");
     assert!(!names.contains(&obs::names::SELECT_PROBE), "{names:?}");
     assert!(!names.contains(&obs::names::JOIN), "{names:?}");

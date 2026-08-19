@@ -6,73 +6,37 @@ use heed::types::Bytes;
 use crate::error::{CorruptionError, Error, Result};
 
 use super::open_env::{OpenLane, open_env};
-use super::read_meta::{check_format_version, read_fingerprint, read_store_kind};
-use super::{EnvMode, Environment, META_SCHEMA_DESCRIPTOR, StoreKind};
+use super::read_meta::{SelfDescription, parse_meta, parse_meta_head};
+use super::{EnvMode, Environment, StoreKind};
 
 /// What [`Environment::exhume`] hands the API layer: the opened
-/// environment plus the raw self-description the store carries — the
-/// caller (the one exhume entry, `crate::exhume`) verifies the descriptor
-/// hash against the fingerprint and decodes; this layer only reads.
+/// environment plus the hash-verified self-description [`parse_meta`]
+/// mints.
 pub(crate) struct ExhumedEnvironment {
     pub(crate) env: Environment,
     pub(crate) kind: StoreKind,
-    /// The stored `_meta` fingerprint, raw.
-    pub(crate) fingerprint: [u8; 32],
-    /// The persisted canonical schema-descriptor bytes.
-    pub(crate) descriptor: Vec<u8>,
+    pub(crate) description: SelfDescription,
 }
 
 impl Environment {
     /// Opens an existing environment FROM ITS OWN DESCRIPTION — no
     /// caller-supplied theory anywhere (`docs/architecture/70-api.md`
-    /// § exhume). The open-time precedence holds where it applies:
-    /// format version first, then the store-kind marker — read and
-    /// validated but never compared against an expectation, because
-    /// exhume takes no durability decision and reads BOTH kinds. There
-    /// is no fingerprint CHECK here: with no theory in hand there is
-    /// nothing to compare, and the caller's descriptor-hash verification
-    /// is the integrity gate.
-    ///
-    /// Genuinely read-only down to the storage layer (the lock law is a
-    /// writer law — ruled 2026-07-23, R17): the environment opens
-    /// `MDB_RDONLY` through the read-only lane of the one raw-open
-    /// chokepoint, dbis register through a read transaction, and no
-    /// advisory lock is taken — a read-only environment can corrupt
-    /// nothing, so there is nothing for a lock to protect. The archival
-    /// lane thereby works on read-only media, restored snapshots, and
-    /// mounted backups, with no carve-outs; from a read-only environment
-    /// the write path is unrepresentable (LMDB refuses write
-    /// transactions outright).
+    /// § exhume). Format 8 only.
     ///
     /// # Errors
     ///
     /// `Io` on a nonexistent path, `FormatMismatch` on any other
-    /// version, `Corruption(MetaMissing)`/`Corruption(StoreKindInvalid)`
-    /// on a store missing its databases or meta keys,
-    /// `DescriptorMissing` on a store not yet adopted (the remedy: one
-    /// `Db::open` under the creating schema back-fills it), `Lmdb`
-    /// otherwise.
+    /// version (format 8 only; no format-7 decode arm),
+    /// `Corruption(MetaMissing)`/`Corruption(StoreKindInvalid)`
+    /// on a store missing its databases or meta keys (descriptor
+    /// included), `Lmdb` otherwise.
     pub(crate) fn exhume(path: &Path) -> Result<ExhumedEnvironment> {
         let env = open_env(path, OpenLane::ReadOnly)?;
-        // Dbi registration through a read transaction — LMDB opens
-        // existing named databases read-only, so the old
-        // write-txn-that-writes-nothing oddity is gone with the lock.
         let rtxn = env.read_txn()?;
         let meta: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        check_format_version(&meta, &rtxn)?;
-        let kind = read_store_kind(&meta, &rtxn)?;
-        // The R18 marker outranks the meta block on an EPHEMERAL store:
-        // armed, the last session never proved its sync, so the pages
-        // this read-only open would serve are exactly the possibly-torn
-        // ones the ephemeral reopen wipes — exhume must refuse them,
-        // never serve them as verified. A durable store beside an
-        // orphaned marker reads normally: its kind carries the sync
-        // claim the marker cannot retract. (The conviction wants a
-        // dedicated typed variant; `MalformedValue` names the marker
-        // until the error vocabulary grows one — error.rs sits outside
-        // the storage estate.)
+        let (_, kind) = parse_meta_head(&meta, &rtxn)?;
         if kind == StoreKind::Ephemeral && super::dirty_marker_path(path).try_exists()? {
             return Err(Error::Corruption(CorruptionError::EphemeralDirtyArmed));
         }
@@ -82,20 +46,13 @@ impl Environment {
         let dict: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_dict"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let fingerprint = read_fingerprint(&meta, &rtxn)?;
-        let descriptor = meta
-            .get(&rtxn, META_SCHEMA_DESCRIPTOR)?
-            .map(<[u8]>::to_vec)
-            .ok_or(Error::DescriptorMissing)?;
-        // Committed, not dropped: LMDB keeps txn-opened dbi handles alive
-        // past a COMMIT only (an abort closes them) — a read commit
-        // writes nothing, so the read-only lane stays read-only.
+        let store = parse_meta(&meta, &rtxn)?;
+        store.require_preimage()?;
         rtxn.commit()?;
         Ok(ExhumedEnvironment {
             env: Self::assemble(env, meta, data, dict, EnvMode::Exhume),
-            kind,
-            fingerprint,
-            descriptor,
+            kind: store.kind,
+            description: store.self_description(),
         })
     }
 }

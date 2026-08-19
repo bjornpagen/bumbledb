@@ -9,7 +9,7 @@
 //! **The refusal contract rides in the closure's type** (the
 //! `writebench::posting_swap` precedent): a rejection sample returns
 //! `Ok(1)` ONLY on the expected refusal — ours on
-//! `Error::CommitRejected` carrying the expected citation kind, theirs
+//! `Admission::Rejected` carrying the expected citation kind, theirs
 //! on a constraint failure from the violating `INSERT` (then
 //! `ROLLBACK`). An ACCEPTED commit, or a refusal of the wrong kind, is
 //! an `Err` that aborts the whole run — the lane can never drift into
@@ -163,7 +163,7 @@ pub fn psi_statement() -> StatementId {
 /// returning this from a write closure drops the delta whole, so a
 /// refused sample commits nothing.
 fn refuse(what: &str) -> bumbledb::Error {
-    bumbledb::Error::Io(std::io::Error::other(what.to_owned()))
+    bumbledb::Error::from(std::io::Error::other(what.to_owned()))
 }
 
 /// The protocol's total closure invocations — every stream's required
@@ -274,7 +274,9 @@ pub fn fill_window_target_engine(
         }
         Ok(())
     })
-    .map_err(|e| format!("law_reject_window setup (engine): {e:?}"))
+    .map_err(|e| format!("law_reject_window setup (engine): {e:?}"))?
+    .unwrap();
+    Ok(())
 }
 
 /// The window setup, `SQLite` side: the same fill rows in one
@@ -330,7 +332,10 @@ pub fn commit_attempt_engine(
             .next()
             .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| mint_attempt(tx, op, cursor).map(|_| ()))
-            .map(|()| 1)
+            .map(|admission| {
+                admission.unwrap();
+                1
+            })
             .map_err(|e| format!("law_commit_attempt: {e:?}"))
     })
 }
@@ -407,7 +412,10 @@ pub fn commit_cluster_engine(
             }])?;
             Ok(())
         })
-        .map(|()| 4)
+        .map(|admission| {
+            admission.unwrap();
+            4
+        })
         .map_err(|e| format!("law_commit_cluster: {e:?}"))
     })
 }
@@ -469,7 +477,7 @@ pub fn commit_cluster_sqlite(
 fn cites_functionality(violations: &bumbledb::Violations) -> bool {
     violations
         .iter()
-        .any(|violation| matches!(violation, bumbledb::Violation::Functionality(_)))
+        .any(|violation| matches!(violation, bumbledb::Violation::Functionality { .. }))
 }
 
 /// Whether the sealed violation set carries a Containment citation.
@@ -490,14 +498,14 @@ fn cites_capacity(violations: &bumbledb::Violations) -> bool {
 /// Containment citation on exactly [`psi_statement`].
 fn cites_psi(violations: &bumbledb::Violations) -> bool {
     violations.iter().any(|violation| {
-        matches!(violation, bumbledb::Violation::Containment { statement, .. }
-            if *statement == psi_statement())
+        matches!(violation, bumbledb::Violation::Containment { id, .. }
+            if *id == psi_statement())
     })
 }
 
 /// One refused engine commit — the rejection lanes' shared spine. The
 /// sample is `Ok(1)` ONLY when the commit comes back
-/// `Error::CommitRejected` AND the sealed set carries the expected
+/// `Admission::Rejected` AND the sealed set carries the expected
 /// citation kind; an accepted commit, a rejection citing something
 /// else, or any other error kind (a `FreshExhausted` or a shape error
 /// would be a lane bug) is an `Err` aborting the run — the wrong fork
@@ -510,10 +518,7 @@ fn refused_commit(
     violate: impl FnOnce(&mut bumbledb::WriteTx<'_, LawfulWorld>) -> bumbledb::Result<()>,
 ) -> Result<u64, String> {
     match db.write(violate) {
-        Ok(()) => Err(format!(
-            "{family}: the violating commit was ACCEPTED — the refusal contract is broken"
-        )),
-        Err(bumbledb::Error::CommitRejected { violations }) => {
+        Ok(bumbledb::Admission::Rejected(violations)) => {
             if cites(&violations) {
                 Ok(1)
             } else {
@@ -523,8 +528,11 @@ fn refused_commit(
                 ))
             }
         }
+        Ok(bumbledb::Admission::Accepted(_)) => Err(format!(
+            "{family}: the violating commit was ACCEPTED — the refusal contract is broken"
+        )),
         Err(other) => Err(format!(
-            "{family}: expected Error::CommitRejected, the engine said {other:?}"
+            "{family}: expected admission rejection, the engine said {other:?}"
         )),
     }
 }
@@ -566,12 +574,12 @@ fn refused_insert_sqlite<P: rusqlite::Params>(
 
 /// `law_reject_key` on bumbledb: every sample offers an Attempt
 /// duplicating the seeded `(task 1, n 0)` determinant under an explicit
-/// sacrificial id — the commit MUST come back `Error::CommitRejected`
+/// sacrificial id — the commit MUST come back `Admission::Rejected`
 /// with a Functionality citation; anything else aborts the run.
 ///
 /// # Errors
 ///
-/// An accepted commit, a wrong citation, or a non-`CommitRejected`
+/// An accepted commit, a wrong citation, or a non-`Admission::Rejected`
 /// error kind, named.
 pub fn reject_key_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
@@ -612,12 +620,12 @@ pub fn reject_key_sqlite(conn: &Connection, proto: Protocol) -> Result<Measureme
 }
 
 /// `law_reject_containment` on bumbledb: every sample offers an Attempt
-/// under an ABSENT task (`tasks + 1_000_000`) — `Error::CommitRejected`
+/// under an ABSENT task (`tasks + 1_000_000`) — `Admission::Rejected`
 /// with a Containment citation, or the run aborts.
 ///
 /// # Errors
 ///
-/// An accepted commit, a wrong citation, or a non-`CommitRejected`
+/// An accepted commit, a wrong citation, or a non-`Admission::Rejected`
 /// error kind, named.
 pub fn reject_containment_engine(
     db: &Db<LawfulWorld>,
@@ -673,12 +681,12 @@ pub fn reject_containment_sqlite(
 
 /// `law_reject_window` on bumbledb (after the untimed setup filled task
 /// 0 to the cap): every sample offers a 9th attempt on task 0 —
-/// `Error::CommitRejected` with a Capacity citation, or the run
+/// `Admission::Rejected` with a Capacity citation, or the run
 /// aborts.
 ///
 /// # Errors
 ///
-/// An accepted commit, a wrong citation, or a non-`CommitRejected`
+/// An accepted commit, a wrong citation, or a non-`Admission::Rejected`
 /// error kind, named.
 pub fn reject_window_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     let mut sample = 0u64;
@@ -719,12 +727,12 @@ pub fn reject_window_sqlite(conn: &Connection, proto: Protocol) -> Result<Measur
 /// `law_reject_scope` on bumbledb: every sample offers a `SteerScope`
 /// under the seeded steer 0 — an EVEN, Observe-kind steer the ψ
 /// selection excludes (`SteerScope` carries no fresh field, so nothing
-/// burns here) — `Error::CommitRejected` with a Containment citation on
+/// burns here) — `Admission::Rejected` with a Containment citation on
 /// the ψ statement itself ([`psi_statement`]), or the run aborts.
 ///
 /// # Errors
 ///
-/// An accepted commit, a wrong citation, or a non-`CommitRejected`
+/// An accepted commit, a wrong citation, or a non-`Admission::Rejected`
 /// error kind, named.
 pub fn reject_scope_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Measurement, String> {
     harness::measure(proto, || {

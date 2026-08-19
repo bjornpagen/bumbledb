@@ -204,53 +204,6 @@ impl Occurrence {
     }
 }
 
-/// A comparison whose sides are variables — evaluated inside the join at
-/// the earliest plan node where both are bound (placement is the
-/// 40-execution doc's job). Scalar single-word semantics: interval
-/// comparisons never reach here — interval `Eq`/`Ne` canonicalize to
-/// masks ([`PlacedAllen`]) and point membership decomposes into
-/// [`PlacedWordComparison`]s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacedComparison {
-    pub op: crate::ir::WordCmp,
-    pub lhs: VarId,
-    pub rhs: VarId,
-}
-
-/// A cross-atom measure residual: `Duration(interval) <op> scalar` where
-/// the u64 side is another occurrence's variable — the measure always on
-/// the left (a comparison written scalar-first mirrors its operator at
-/// lowering, so no operand-order flag exists). Evaluated at the earliest
-/// plan node binding both variables, exactly where whole-value residuals
-/// attach: read the interval variable's two slot words, test the ray
-/// (`end == MAX` raises [`crate::Error::MeasureOfRay`] — the engine's
-/// one runtime type error), subtract, compare the u64 word. Var-vs-
-/// constant and same-atom measure comparisons never reach here — they
-/// lower to the occurrence's filter list
-/// ([`FilterPredicate::DurationCompare`] /
-/// [`FilterPredicate::DurationFieldsCompare`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacedDuration {
-    /// The measured interval variable (two slot words).
-    pub interval: VarId,
-    /// The order operator, measure-side-left.
-    pub op: crate::ir::OrderCmp,
-    /// The u64 comparison side.
-    pub scalar: VarId,
-}
-
-/// A cross-atom `Allen` residual: two interval variables and the mask —
-/// four endpoint slot words (each side's pair at its slot base) plus the
-/// mask, evaluated classify-then-test at the earliest plan node where
-/// both sides are bound, exactly where whole-value residuals attach. The
-/// mask is a literal Allen mask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacedAllen {
-    pub lhs: VarId,
-    pub rhs: VarId,
-    pub mask: bumbledb_theory::allen::AllenMask,
-}
-
 /// Which of a variable's binding words a residual side reads (the
 /// [`SlotWidth`] layout): `Start` is a scalar variable's single word or an
 /// interval variable's start word; `End` is an interval variable's end
@@ -270,29 +223,6 @@ impl IntervalWord {
             Self::End => 1,
         }
     }
-}
-
-/// One residual operand: a bound variable's word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VarWord {
-    pub var: VarId,
-    pub word: IntervalWord,
-}
-
-/// One word comparison of a decomposed cross-atom point membership
-/// (`PointIn(a, p)` between different occurrences' variables):
-/// `lhs <op> rhs` over binding-slot words — the one fixed composition
-/// (`docs/architecture/20-query-ir.md`, § normalization):
-///
-/// - `PointIn(a, p: point)` ≡ `a.start ≤ p AND p < a.end`
-///
-/// so `op` is always `Lt` or `Le`. Interval-pair predicates are never
-/// decomposed — they are [`PlacedAllen`] residuals carrying their mask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacedWordComparison {
-    pub op: crate::ir::WordCmp,
-    pub lhs: VarWord,
-    pub rhs: VarWord,
 }
 
 /// A lowered negated atom: the anti-probe residual descriptor. Attached,
@@ -362,19 +292,19 @@ impl SlotWidth {
 pub struct NormalizedQuery {
     /// Positive occurrences first, then negated — [`OccId`]s are indices.
     pub occurrences: Vec<Occurrence>,
-    /// Cross-atom whole-value comparisons.
-    pub residuals: Vec<PlacedComparison>,
+    /// Cross-atom whole-value comparisons (`FieldsCompare` over variables).
+    pub residuals: Vec<FilterPredicate>,
     /// Cross-atom point memberships, decomposed into word comparisons
-    /// over slot pairs.
-    pub word_residuals: Vec<PlacedWordComparison>,
+    /// over slot pairs (`FieldsCompare` with [`OperandAddr::var_word`]).
+    pub word_residuals: Vec<FilterPredicate>,
     /// Cross-atom `Allen` residuals: four endpoint slots + mask
     /// (interval `Eq`/`Ne` comparisons canonicalize here too — exactly
     /// one interval-pair form reaches the planner).
-    pub allen_residuals: Vec<PlacedAllen>,
+    pub allen_residuals: Vec<FilterPredicate>,
     /// Cross-atom measure residuals: two-slot read + ray test +
     /// subtraction feeding the ordinary word comparison
-    /// ([`PlacedDuration`]).
-    pub duration_residuals: Vec<PlacedDuration>,
+    /// ([`FilterPredicate::DurationFieldsCompare`]).
+    pub duration_residuals: Vec<FilterPredicate>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
     /// order — minus the ones the grounding-evaluator folded away
     /// (`plan/ground/evaluate.rs` deletes a folded negated occurrence's

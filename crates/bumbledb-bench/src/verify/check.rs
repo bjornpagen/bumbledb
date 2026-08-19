@@ -46,13 +46,13 @@ impl<S> Run<'_, S> {
                     .signature()
                     .columns
                     .iter()
-                    .map(|column| column.ty().clone())
+                    .map(|column| *column.ty())
                     .collect();
                 let mut buffer = Answers::new();
                 let args = param_args(params);
                 let ours = self
                     .db
-                    .read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+                    .read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                     .map(|()| compare::from_answers(&buffer, &types))
                     .map_err(|e| format!("{e}"));
                 let theirs = self

@@ -3,7 +3,7 @@
 This package is the TypeScript interface to the
 [Bumbledb](https://github.com/bjornpagen/bumbledb) embedded relational
 database. Schemas and queries are typed TypeScript values rather than SQL
-strings, while storage, snapshots, transactions, and query execution run in
+strings, while storage, admitted instances, transactions, and query execution run in
 the native engine.
 
 Relation declarations describe their fields, and the statements passed to
@@ -61,7 +61,11 @@ const Review = schema("Review", { Kind, Attempt, Certificate }, [
 	contained(on(Certificate, "kind"), on(Kind.where({ mastered: true }), "id"))
 ])
 
-const db = await Db.create("./review.db", Review)
+const created = await Db.create("./review.db", Review)
+if (created.tag !== "accepted") {
+	throw new Error("create rejected")
+}
+const db = created.value
 
 // All writes are checked together before the transaction commits. A fixed-set
 // column takes its name, and a wrong string is rejected by TypeScript and
@@ -73,7 +77,7 @@ const result = db.write((tx) => {
 })
 
 // A failed constraint check is returned as typed data rather than thrown.
-if (!result.ok) {
+if (result.tag === "rejected") {
 	for (const v of result.violations) {
 		console.error(v.kind, v.canonical, v.facts)
 	}
@@ -96,14 +100,11 @@ const prepared = db.prepare(certifiedAbove)
 const rows = db.execute(prepared, { floor: 15n }) // rows: { a: bigint; rank: bigint }[]
 console.log(rows)
 
-// Lifetimes are disposables, never close() (Node 26 explicit resource
-// management): a read scope acquired without a callback is released by its
-// `using` declaration at scope exit — deterministic, in the language's own
-// syntax. `db.read(fn)` remains the callback spelling of the same scope.
-{
-	using snap = db.read()
-	console.log(snap.generation, snap.execute(prepared, { floor: 15n }))
-}
+// A store read is one callback. The instance is invalid when the callback
+// returns; the witness is a clone and may escape.
+db.read((instance) => {
+	console.log(instance.generation, instance.execute(prepared, { floor: 15n }))
+})
 
 // Dispatch over the fixed set uses native `switch` narrowing.
 // `satisfies never` checks that every possible name is handled.
@@ -137,9 +138,10 @@ and query representations.
   statements. `.where` makes a reference conditional, `within` sets a count
   or measurement range, and `weigh` chooses a numeric field or interval
   duration to measure.
-- `Db.create` and `Db.open` manage embedded stores. Reads use scoped MVCC
-  snapshots through `db.read(fn)` or `using snap = db.read()`. Writes use
-  `write` or `writeFrom` and may return `abandon(payload)` to roll back
+- `Db.create` and `Db.open` manage embedded stores. Create returns an
+  `Admission`. Reads are a synchronous callback `db.read((instance, witness) => …)` —
+  the instance cannot escape; the witness may. Writes use `write` or
+  `writeFrom(witness, …)` and may return `abandon(payload)` to roll back
   explicitly. `insert` and `delete` report how many submitted records
   changed the set, and `reserve` returns never-reused IDs.
 - `query(S).rule(...)` builds typed queries. Reusing a variable created by

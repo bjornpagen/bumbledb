@@ -122,12 +122,12 @@ def Functionality (R : Set Fact) (X : List FieldId) : Prop :=
 /-- The keyed read: under a functionality statement, a fixed determinant
 image identifies at most one fact — the read surface's at-most-one answer
 is the FD's injectivity INSTANTIATED, derived, never a new axiom. The
-host surfaces (Rust `Snapshot::get`/`WriteTx::get`, the SDK's
+host surfaces (Rust `ReadInstance::get`/`WriteTx::get`, the SDK's
 `get(relation, keyStatement, key)`) are read conveniences over this fact:
 keyed get changes no commit judgment and no query denotation, so no
 conformance case moves.
 Bridge: `key_statement_of (crates/bumbledb/src/api/db/get.rs)`;
-`get (crates/bumbledb/src/api/db/snapshot.rs)`. -/
+`get (crates/bumbledb/src/api/db/read_instance.rs)`. -/
 theorem keyed_get_at_most_one {R : Set Fact} {X : List FieldId}
     (h : Functionality R X) (v : List Value) :
     ∀ f g, f ∈ R → g ∈ R → f.project X = v → g.project X = v → f = g :=
@@ -290,6 +290,68 @@ restriction theorems, `Txn/DeltaRestriction.lean`) and
 `Db::verify_store` (the global re-verification). -/
 def holds (T : Theory) (I : Instance) : Prop :=
   ∀ s, s ∈ T.statements → s.judgment T I
+
+/-- Closed-constant statements are instance-independent: every
+consulted relation is sealed, so `den_closed_independent` rewrites
+the judgment at every arm. Schema validation discharges these once;
+the complete roster skips them. -/
+theorem closedConstant_judgment_independent {T : Theory}
+    {st : Statement} (h : st.closedConstant T = true)
+    (I J : Instance) : st.judgment T I ↔ st.judgment T J := by
+  cases st with
+  | functionality R X =>
+    have hden := den_closed_independent h I J
+    simp only [Statement.judgment]
+    rw [hden]
+  | containment src tgt =>
+    cases hs : (T.closed src.relation).isSome with
+    | false => simp [Statement.closedConstant, hs] at h
+    | true =>
+      cases ht : (T.closed tgt.relation).isSome with
+      | false => simp [Statement.closedConstant, hs, ht] at h
+      | true =>
+        have hsrc := den_closed_independent hs I J
+        have htgt := den_closed_independent ht I J
+        simp only [Statement.judgment]
+        rw [hsrc, htgt]
+  | capacity tgt wt w src =>
+    cases ht : (T.closed tgt.relation).isSome with
+    | false => simp [Statement.closedConstant, ht] at h
+    | true =>
+      cases hs : (T.closed src.relation).isSome with
+      | false => simp [Statement.closedConstant, ht, hs] at h
+      | true =>
+        have hsrc := den_closed_independent hs I J
+        have htgt := den_closed_independent ht I J
+        simp only [Statement.judgment]
+        rw [hsrc, htgt]
+
+/-- The validation witness: every closed-constant declared statement
+holds at every instance. A sealed schema carries this; a self-refuting
+closed theory does not
+(`Countermodels.obligation_partition_needs_validation`). -/
+def closedConstantHolds (T : Theory) : Prop :=
+  ∀ st, st ∈ T.statements → st.closedConstant T = true →
+    ∀ I : Instance, st.judgment T I
+
+/-- Closed-constant truth is a constant of the theory: it is enough
+to check the witness at any one instance. -/
+theorem closedConstantHolds_iff_at (T : Theory) (I : Instance) :
+    closedConstantHolds T ↔
+      ∀ st, st ∈ T.statements → st.closedConstant T = true →
+        st.judgment T I := by
+  constructor
+  · intro h st hs hc
+    exact h st hs hc I
+  · intro h st hs hc J
+    exact (closedConstant_judgment_independent hc I J).mp (h st hs hc)
+
+/-- `holds` at any instance supplies the validation witness: the
+closed-constant slice cannot fail later if it holds now. -/
+theorem closedConstantHolds_of_holds {T : Theory} {I : Instance}
+    (h : holds T I) : closedConstantHolds T :=
+  fun st hs hc J =>
+    (closedConstant_judgment_independent hc I J).mp (h st hs)
 
 /-! ## Item 1 — containment is view inclusion -/
 

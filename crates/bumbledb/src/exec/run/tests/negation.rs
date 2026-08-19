@@ -77,7 +77,7 @@ fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
     // Q(x, a) :- R0(x, a), ¬R1(x, 7).
     let mut neg = negated(1, 1, &[(0, 0)]);
     neg.filters = vec![FilterPredicate::Compare {
-        field: FieldId(1),
+        field: FieldId(1).into(),
         op: WordCmp::Eq,
         value: Const::Word(7),
     }];

@@ -1,4 +1,6 @@
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, SinkSpec, measure, word_to_i64};
+use crate::exec::sink::{
+    Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, measure, word_to_i64,
+};
 
 impl AggregateSink {
     /// Folds the full binding currently in `binding_scratch`: the
@@ -45,48 +47,45 @@ impl AggregateSink {
         });
         let group_idx = self.probe_group();
 
-        if let Some(slot) = self.pack_slot() {
-            // One coalescing-fold step: append the claim raw — identical
-            // and overlapping claims collapse in the finalize sweep,
-            // never here (20-query-ir § aggregation).
-            self.pack_claims[group_idx]
-                .push([self.binding_scratch[slot], self.binding_scratch[slot + 1]]);
-            return; // validated: Pack mixes with no other aggregate
-        }
-
-        let mut acc_cursor = 0;
-        for find in &self.finds {
-            let SinkSpec::Agg(spec) = find else {
-                continue;
-            };
-            let acc = &mut self.accs[group_idx * self.n_aggs + acc_cursor];
-            acc_cursor += 1;
-            match spec {
-                AggSpec::Count => {
-                    let Acc::Count(n) = acc else {
-                        unreachable!("accumulators are seeded per op");
+        match &mut self.group_state {
+            GroupState::Pack { slot, claims } => {
+                claims[group_idx]
+                    .push([self.binding_scratch[*slot], self.binding_scratch[*slot + 1]]);
+            }
+            GroupState::Folds { accs, n_aggs } => {
+                let n_aggs = *n_aggs;
+                let mut acc_cursor = 0;
+                for find in &self.finds {
+                    let SinkSpec::Agg(spec) = find else {
+                        continue;
                     };
-                    *n += 1;
-                }
-                AggSpec::Fold {
-                    op, slot, signed, ..
-                } => {
-                    let word = self.binding_scratch[*slot];
-                    match (op, acc) {
-                        (FoldOp::Sum, Acc::SumSigned(total)) => {
-                            debug_assert!(*signed);
-                            *total += i128::from(word_to_i64(word));
+                    let acc = &mut accs[group_idx * n_aggs + acc_cursor];
+                    acc_cursor += 1;
+                    match spec {
+                        AggSpec::Count => {
+                            let Acc::Count(n) = acc else {
+                                unreachable!("accumulators are seeded per op");
+                            };
+                            *n += 1;
                         }
-                        (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                            *total += u128::from(word);
+                        AggSpec::Fold {
+                            op, slot, signed, ..
+                        } => {
+                            let word = self.binding_scratch[*slot];
+                            match (op, acc) {
+                                (FoldOp::Sum, Acc::SumSigned(total)) => {
+                                    debug_assert!(*signed);
+                                    *total += i128::from(word_to_i64(word));
+                                }
+                                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
+                                    debug_assert!(!*signed);
+                                    *total += u128::from(word);
+                                }
+                                (FoldOp::Min, Acc::Min(best)) => *best = (*best).min(word),
+                                (FoldOp::Max, Acc::Max(best)) => *best = (*best).max(word),
+                                _ => unreachable!("accumulators are seeded per op"),
+                            }
                         }
-                        (FoldOp::Min, Acc::Min(best)) => {
-                            *best = (*best).min(word);
-                        }
-                        (FoldOp::Max, Acc::Max(best)) => {
-                            *best = (*best).max(word);
-                        }
-                        _ => unreachable!("accumulators are seeded per op"),
                     }
                 }
             }

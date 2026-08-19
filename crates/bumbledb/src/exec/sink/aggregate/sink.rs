@@ -1,7 +1,9 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, FoldOp, SinkSpec, word_to_i64};
+use crate::exec::sink::{
+    Acc, AggSpec, AggregateSink, DedupState, FoldOp, GroupState, SinkSpec, word_to_i64,
+};
 use crate::image::ColumnView;
 
 use super::super::FoldSource;
@@ -27,7 +29,7 @@ impl Sink for AggregateSink {
         // Measures and Pack fold per row (derived words / claim lists
         // — no fold kernel exists); their leaves stay on
         // the batch path.
-        if self.pack_slot().is_some() || !self.measures.is_empty() {
+        if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
             return ScanOffer::Declined;
         }
         // Group spans checked word-wise: an interval group variable is
@@ -181,8 +183,11 @@ impl Sink for AggregateSink {
         // skipped this probe measured < 2% under the const-arity map
         // and was deleted — the probe IS the fast path now).
         let group_idx = self.probe_group();
-        let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
-        for (acc, partial) in self.accs[range].iter_mut().zip(&self.acc_scratch) {
+        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
+            unreachable!("scan merge is the Folds arm");
+        };
+        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
+        for (acc, partial) in accs[range].iter_mut().zip(&self.acc_scratch) {
             match (acc, partial) {
                 (Acc::SumSigned(t), Acc::SumSigned(p)) => *t += p,
                 (Acc::SumUnsigned(t), Acc::SumUnsigned(p)) => *t += p,
@@ -207,7 +212,7 @@ impl Sink for AggregateSink {
         // the scratch row, and Pack's group state is a claim list, so
         // no gather kernel applies — the per-row scratch fold is the
         // correctness path.
-        if self.pack_slot().is_some() || !self.measures.is_empty() {
+        if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
             self.fold_batch_rows(batch);
             return Flow::Continue;
         }

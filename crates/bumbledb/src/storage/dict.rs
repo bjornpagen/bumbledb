@@ -17,34 +17,41 @@
 //! interned values (accepted design: the leak is scoped to repeated text,
 //! the population interning compresses).
 
+use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, Result};
 use crate::storage::env::{ReadTxn, WriteTxn};
 
 /// `_dict` key prefixes.
-const FORWARD: u8 = 0x00;
-const REVERSE: u8 = 0x01;
+pub(crate) const FORWARD: u8 = 0x00;
+pub(crate) const REVERSE: u8 = 0x01;
 
-fn forward_key(raw: &[u8]) -> [u8; 33] {
+pub(crate) fn forward_key(raw: &[u8]) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = FORWARD;
     key[1..].copy_from_slice(blake3::hash(raw).as_bytes());
     key
 }
 
-fn reverse_key(id: u64) -> [u8; 9] {
+pub(crate) fn reverse_key(id: InternId) -> [u8; 9] {
     let mut key = [0u8; 9];
     key[0] = REVERSE;
-    key[1..].copy_from_slice(&id.to_be_bytes());
+    key[1..].copy_from_slice(&id.raw().to_be_bytes());
     key
 }
 
-/// The never-minted intern id: dictionary ids allocate from 0 upward and
-/// the mint paths assert this value is never issued, so read paths may
-/// resolve a dictionary *miss* to it. An `Eq` filter against the sentinel
-/// matches nothing; an `Ne` filter matches everything — per-operator miss
-/// semantics fall out of ordinary word comparison
-/// (docs/architecture/20-query-ir.md).
-pub(crate) const SENTINEL_ID: u64 = u64::MAX;
+pub(crate) fn intern_id_from_stored(bytes: &[u8]) -> Result<InternId> {
+    let id: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| Error::Corruption(CorruptionError::MalformedValue("dict forward id")))?;
+    Ok(InternId::from_raw(u64::from_be_bytes(id)))
+}
+
+/// The never-minted intern id, owned by [`InternId::SENTINEL`]. Word-comparison
+/// paths (bind, filters) still want the raw `u64`. An `Eq` filter against
+/// the sentinel matches nothing; an `Ne` filter matches everything —
+/// per-operator miss semantics fall out of ordinary word comparison
+/// (`docs/architecture/20-query-ir.md`).
+pub(crate) const SENTINEL_ID: u64 = InternId::SENTINEL.raw();
 
 /// Read-only lookup of a string's id. `None` means the value was never
 /// interned — on the query path that means "cannot match any fact": an
@@ -53,7 +60,7 @@ pub(crate) const SENTINEL_ID: u64 = u64::MAX;
 /// # Errors
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed stored id.
-pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
+pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
     lookup(txn, value.as_bytes())
 }
 
@@ -61,16 +68,11 @@ pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
 /// delta's pending-intern path, which must consult the committed
 /// dictionary before minting a provisional id; the sweeper's
 /// committed-only selection encoding).
-pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<u64>> {
+pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
     let dict = txn.env().dict();
     match dict.get(txn.raw(), &forward_key(raw))? {
         None => Ok(None),
-        Some(bytes) => {
-            let id: [u8; 8] = bytes.try_into().map_err(|_| {
-                Error::Corruption(CorruptionError::MalformedValue("dict forward id"))
-            })?;
-            Ok(Some(u64::from_be_bytes(id)))
-        }
+        Some(bytes) => intern_id_from_stored(bytes).map(Some),
     }
 }
 
@@ -81,12 +83,13 @@ pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<u64>> {
 /// never reused, so a reverse entry already holding the id is the
 /// never-reissue law broken — a loud typed corruption at the write
 /// itself, never a silent clobber arming a stale forward entry.
-pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result<()> {
+pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: InternId) -> Result<()> {
+    debug_assert!(!id.is_sentinel(), "dictionary id space exhausted");
     let dict = txn.env().dict();
     dict.put(
         txn.raw_mut(),
         &forward_key(raw),
-        id.to_be_bytes().as_slice(),
+        id.raw().to_be_bytes().as_slice(),
     )?;
     match dict.put_with_flags(
         txn.raw_mut(),
@@ -102,41 +105,6 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result
     }
 }
 
-/// One `_dict` reverse-map entry as the sweeper sees it: the minted id
-/// with its raw bytes, or the raw key bytes when the key is not the
-/// codec's 9-byte shape.
-pub(crate) enum ReverseEntry<'t> {
-    Id(u64, &'t [u8]),
-    Malformed(&'t [u8]),
-}
-
-/// One cursor over the reverse map, in id order (reader: `Db::verify_store`'s
-/// `_dict` pass — the dangling statistic plus the forward/reverse and
-/// counter-bound convictions, findings 004/078).
-///
-/// # Errors
-///
-/// `Lmdb` on cursor open; per-item `Lmdb` on iteration failure.
-pub(crate) fn reverse_entries<'txn>(
-    txn: &'txn ReadTxn<'_>,
-) -> Result<impl Iterator<Item = Result<ReverseEntry<'txn>>>> {
-    let iter = txn.env().dict().prefix_iter(txn.raw(), &[REVERSE])?;
-    Ok(iter.map(|entry| {
-        let (key, raw) = entry?;
-        Ok(match key[1..].try_into() {
-            Ok(id) => ReverseEntry::Id(u64::from_be_bytes(id), raw),
-            Err(_) => ReverseEntry::Malformed(key),
-        })
-    }))
-}
-
-/// Whether an id has a reverse entry — the sweeper's liveness probe
-/// (finding 004: a referenced id without one is the offline twin of the
-/// runtime `Corruption(DanglingInternId)`).
-pub(crate) fn has_reverse(txn: &ReadTxn<'_>, id: u64) -> Result<bool> {
-    Ok(txn.env().dict().get(txn.raw(), &reverse_key(id))?.is_some())
-}
-
 /// Resolves an id to its raw bytes, borrowed from the LMDB page for the
 /// transaction's lifetime.
 ///
@@ -144,10 +112,12 @@ pub(crate) fn has_reverse(txn: &ReadTxn<'_>, id: u64) -> Result<bool> {
 ///
 /// `Corruption(DanglingInternId)` when the id has no reverse entry — a fact
 /// referencing it is corrupt; never a skip.
-pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64) -> Result<&'txn [u8]> {
+pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: InternId) -> Result<&'txn [u8]> {
     let dict = txn.env().dict();
     dict.get(txn.raw(), &reverse_key(id))?
-        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(id)))
+        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(
+            id.raw(),
+        )))
 }
 
 #[cfg(test)]
@@ -179,20 +149,21 @@ mod tests {
     /// (`storage/commit/write.rs::flush_counters`). No second mint
     /// implementation exists to drift (finding 096; the retired
     /// direct-write `intern_str` was the one this suite pinned).
-    fn seed(env: &Environment, schema: &Schema, values: &[&str]) -> Vec<u64> {
+    fn seed(env: &Environment, schema: &Schema, values: &[&str]) -> Vec<InternId> {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
-        let ids: Vec<u64> = values
+        let ids: Vec<InternId> = values
             .iter()
             .map(|value| delta.intern_str(&view, value).expect("intern"))
             .collect();
         drop(view);
         let mut wtxn = env.write_txn().expect("txn");
-        for (raw, id) in delta.pending_interns() {
-            put_pending(&mut wtxn, raw, id).expect("flush pending intern");
-        }
-        if let Some(next) = delta.dict_next() {
-            wtxn.put_dict_next_id(next).expect("advance next-id");
+        if let Some(interns) = delta.interns() {
+            for (raw, id) in interns.entries() {
+                put_pending(&mut wtxn, raw, id).expect("flush pending intern");
+            }
+            wtxn.put_dict_next_id(interns.next_id())
+                .expect("advance next-id");
         }
         wtxn.commit().expect("commit");
         ids
@@ -258,7 +229,7 @@ mod tests {
         let dir = TempDir::new("dict-dangling");
         let env = env(&dir);
         let rtxn = env.read_txn().expect("txn");
-        let err = resolve(&rtxn, 12345).unwrap_err();
+        let err = resolve(&rtxn, InternId::from_raw(12345)).unwrap_err();
         assert!(
             matches!(
                 err,

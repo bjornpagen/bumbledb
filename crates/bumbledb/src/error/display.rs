@@ -13,9 +13,33 @@ use crate::schema::{Schema, render};
 use bumbledb_theory::schema::{SchemaDescriptor, StatementId};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, SchemaError, StatementErrorKind,
-    TargetKeyCandidate, ValidationError, Violation,
+    CorruptionError, Direction, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure,
+    SchemaError, StatementErrorKind, TargetKeyCandidate, ValidationError, Violation, Violations,
 };
+
+impl fmt::Display for IoFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.raw_os {
+            Some(code) => write!(f, "{}", std::io::Error::from_raw_os_error(code)),
+            None => write!(f, "{}", std::io::Error::from(self.kind)),
+        }
+    }
+}
+
+impl fmt::Display for LmdbFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "{error}"),
+            Self::Mdb(error) => write!(f, "{error}"),
+            Self::Encoding => write!(f, "error while encoding"),
+            Self::Decoding => write!(f, "error while decoding"),
+            Self::EnvAlreadyOpened => f.write_str(
+                "environment already open in this program; \
+                 close it to be able to open it again with different options",
+            ),
+        }
+    }
+}
 
 fn field_set(
     f: &mut fmt::Formatter<'_>,
@@ -72,7 +96,7 @@ impl Violation {
     /// The violated law's name.
     fn law(&self) -> &'static str {
         match self {
-            Self::Functionality(_) => "functionality",
+            Self::Functionality { .. } => "functionality",
             Self::Containment { .. } => "containment",
             Self::Capacity { .. } => "capacity",
         }
@@ -91,14 +115,14 @@ impl Violation {
                 direction: Direction::TargetRequired,
                 ..
             } => " (target side)",
-            Self::Functionality(_) | Self::Capacity { .. } => "",
+            Self::Functionality { .. } | Self::Capacity { .. } => "",
         }
     }
 
     /// The factual tail after the em-dash: what happened.
     fn tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Functionality(_) => write!(f, "two live facts claim one key"),
+            Self::Functionality { .. } => write!(f, "two live facts claim one key"),
             Self::Containment {
                 direction: Direction::SourceUnsatisfied,
                 ..
@@ -120,14 +144,27 @@ impl fmt::Display for Violation {
         write!(
             f,
             "statement {}: {} violated — ",
-            self.statement().0,
+            self.statement_id().0,
             self.law()
         )?;
         self.tail(f)
     }
 }
 
-impl fmt::Display for FactShapeError {
+impl fmt::Display for Violations {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "admission rejected: ")?;
+        for (index, violation) in self.iter().enumerate() {
+            if index > 0 {
+                write!(f, "; ")?;
+            }
+            write!(f, "{violation}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for DynIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownRelation { relation } => {
@@ -141,27 +178,6 @@ impl fmt::Display for FactShapeError {
                 "relation {}, field {}: not a fresh field",
                 relation.0, field.0
             ),
-            Self::ArityMismatch {
-                relation,
-                expected,
-                supplied,
-            } => write!(
-                f,
-                "relation {}: {supplied} values for {expected} fields",
-                relation.0
-            ),
-            Self::TypeMismatch { relation, field } => {
-                write!(
-                    f,
-                    "relation {}, field {}: wrong value kind",
-                    relation.0, field.0
-                )
-            }
-            Self::InvalidUtf8 { relation, field } => write!(
-                f,
-                "relation {}, field {}: string bytes are not UTF-8",
-                relation.0, field.0
-            ),
             Self::NotAKeyStatement {
                 relation,
                 statement,
@@ -170,6 +186,26 @@ impl fmt::Display for FactShapeError {
                 "statement {} is not a key of relation {}",
                 statement.0, relation.0
             ),
+        }
+    }
+}
+
+impl fmt::Display for FactShapeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Id(err) => write!(f, "{err}"),
+            Self::ArityMismatch { relation, mismatch } => write!(
+                f,
+                "relation {}: {} values for {} fields",
+                relation.0, mismatch.witnessed, mismatch.required
+            ),
+            Self::TypeMismatch { relation, field } => {
+                write!(
+                    f,
+                    "relation {}, field {}: wrong value kind",
+                    relation.0, field.0
+                )
+            }
         }
     }
 }
@@ -207,26 +243,21 @@ impl fmt::Display for CorruptionError {
             Self::WrongFactWidth {
                 relation,
                 row_id,
-                expected,
-                actual,
+                mismatch,
             } => write!(
                 f,
-                "relation {}: row {row_id} is {actual} bytes, schema says {expected}",
-                relation.0
+                "relation {}: row {row_id} is {} bytes, schema says {}",
+                relation.0, mismatch.witnessed, mismatch.required
             ),
             Self::RowCountMismatch { relation, stored } => write!(
                 f,
                 "relation {}: stored row count {stored} desynced from the facts",
                 relation.0
             ),
-            Self::CounterDesync {
-                relation,
-                claimed,
-                witness,
-            } => write!(
+            Self::CounterDesync { relation, exceeded } => write!(
                 f,
-                "relation {}: stored row count {claimed} exceeds the store's {witness}-entry witness",
-                relation.0
+                "relation {}: stored row count {} exceeds the store's {}-entry witness",
+                relation.0, exceeded.observed, exceeded.ceiling
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
             Self::EphemeralDirtyArmed => write!(
@@ -321,12 +352,11 @@ impl fmt::Display for SchemaError {
             Self::ExtensionArityMismatch {
                 relation: r,
                 row,
-                expected,
-                supplied,
+                mismatch,
             } => write!(
                 f,
-                "relation {}, row {row}: {supplied} values for {expected} columns",
-                r.0
+                "relation {}, row {row}: {} values for {} columns",
+                r.0, mismatch.witnessed, mismatch.required
             ),
             Self::ExtensionValueTypeMismatch {
                 relation: r,
@@ -417,9 +447,10 @@ impl fmt::Display for StatementErrorKind {
                 f,
                 "{width}-byte determinant key exceeds the key-size ceiling"
             ),
-            Self::ContainmentArityMismatch { source, target } => write!(
+            Self::ContainmentArityMismatch { mismatch } => write!(
                 f,
-                "{source} source positions against {target} target positions"
+                "{} source positions against {} target positions",
+                mismatch.witnessed, mismatch.required
             ),
             Self::ContainmentTypeMismatch { position } => {
                 write!(f, "structural type mismatch at position {position}")
@@ -438,14 +469,6 @@ impl fmt::Display for StatementErrorKind {
             } => write!(
                 f,
                 "selection literal type mismatch at relation {}, field {}",
-                r.0, fd.0
-            ),
-            Self::SelectionLiteralNotUtf8 {
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "string literal is not UTF-8 at relation {}, field {}",
                 r.0, fd.0
             ),
             Self::NoMatchingTargetKey {
@@ -595,21 +618,20 @@ impl fmt::Display for ValidationError {
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")
             }
-            Self::DnfExceedsRules { produced, cap } => write!(
+            Self::DnfExceedsRules { exceeded } => write!(
                 f,
-                "DNF distribution produces {produced} rules against the cap of {cap}"
+                "DNF distribution produces {} rules against the cap of {}",
+                exceeded.observed, exceeded.ceiling
             ),
-            Self::ConditionNestingTooDeep { rule, depth, cap } => write!(
+            Self::ConditionNestingTooDeep { rule, exceeded } => write!(
                 f,
-                "rule {rule}: condition trees nest {depth} deep against the cap of {cap}"
+                "rule {rule}: condition trees nest {} deep against the cap of {}",
+                exceeded.observed, exceeded.ceiling
             ),
-            Self::HeadArityMismatch {
-                rule,
-                expected,
-                found,
-            } => write!(
+            Self::HeadArityMismatch { rule, mismatch } => write!(
                 f,
-                "rule {rule}: {found} find terms against a head of arity {expected}"
+                "rule {rule}: {} find terms against a head of arity {}",
+                mismatch.witnessed, mismatch.required
             ),
             Self::HeadTypeMismatch { rule, position } => write!(
                 f,
@@ -853,17 +875,19 @@ impl fmt::Display for Error {
     )] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FormatMismatch { found, expected } => {
+            Self::FormatMismatch { mismatch } => {
                 write!(
                     f,
-                    "storage format version {found}, this build expects {expected}; \
-                     no migration read arm exists — ETL through the SDK is the story"
+                    "storage format version {}, this build expects {}; \
+                     no migration read arm exists — ETL through the SDK is the story",
+                    mismatch.witnessed, mismatch.required
                 )
             }
-            Self::SchemaMismatch { found, expected } => {
+            Self::SchemaMismatch { mismatch } => {
                 write!(
                     f,
-                    "stored schema fingerprint {found}, this build's schema is {expected}"
+                    "stored schema fingerprint {}, this build's schema is {}",
+                    mismatch.witnessed, mismatch.required
                 )
             }
             Self::AlreadyInitialized => {
@@ -872,27 +896,34 @@ impl fmt::Display for Error {
                     "the directory already holds an LMDB environment; open it instead"
                 )
             }
-            Self::NotInitialized => {
+            Self::DestinationExists { path } => {
                 write!(
                     f,
-                    "the store was never initialized (a crash interrupted creation); \
-                     run Db::create to initialize it"
+                    "destination {} already exists — including as an empty directory",
+                    path.display()
+                )
+            }
+            Self::PublishedButUnsynced { path, source } => {
+                write!(
+                    f,
+                    "published {} but the directory entry is unsynced: {source}",
+                    path.display()
                 )
             }
             Self::EnvironmentLocked => {
                 write!(f, "another live handle holds this environment's lock")
             }
-            Self::StoreKindMismatch { found, expected } => {
+            Self::StoreKindMismatch { mismatch } => {
                 write!(
                     f,
-                    "the store on disk is {found}, this constructor opens {expected} stores"
+                    "the store on disk is {}, this constructor opens {} stores",
+                    mismatch.witnessed, mismatch.required
                 )
             }
             Self::DescriptorMissing => {
                 write!(
                     f,
-                    "the store carries no schema descriptor (not yet adopted): \
-                     open it once under its creating schema and the descriptor back-fills"
+                    "the store carries no schema descriptor (format 8 requires it)"
                 )
             }
             Self::Io(err) => write!(f, "io: {err}"),
@@ -903,18 +934,6 @@ impl fmt::Display for Error {
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
-            Self::CommitRejected { violations } => {
-                // Compiler-style: every violated statement, in
-                // materialized statement order — the complete set.
-                write!(f, "commit rejected: ")?;
-                for (index, violation) in violations.as_slice().iter().enumerate() {
-                    if index > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{violation}")?;
-                }
-                Ok(())
-            }
             Self::FreshExhausted { relation, field } => write!(
                 f,
                 "fresh sequence exhausted (relation {}, field {})",
@@ -924,12 +943,6 @@ impl fmt::Display for Error {
                 f,
                 "relation {}: closed — its rows are ground axioms; changing them is a new theory",
                 relation.0
-            ),
-            Self::GenerationMoved { witnessed, current } => write!(
-                f,
-                "the witnessed generation moved ({witnessed} \u{2192} {current}): \
-                 a state-changing commit landed after the witness snapshot — \
-                 re-run the query, re-compute, write_from again"
             ),
             Self::CommitSync { retries, error } => write!(
                 f,
@@ -941,17 +954,18 @@ impl fmt::Display for Error {
                     "a prepared query executes only against snapshots of the database that prepared it"
                 )
             }
-            Self::ForeignSnapshot => {
+            Self::ForeignWitness => {
                 write!(
                     f,
-                    "a witness snapshot proves nothing about another database — \
-                     write_from takes snapshots of the database being written"
+                    "a witness proves nothing about another database — \
+                     write_from takes witnesses of the database being written"
                 )
             }
-            Self::ParamCountMismatch { expected, supplied } => {
+            Self::ParamCountMismatch { mismatch } => {
                 write!(
                     f,
-                    "{supplied} parameters supplied, the query takes {expected}"
+                    "{} parameters supplied, the query takes {}",
+                    mismatch.witnessed, mismatch.required
                 )
             }
             Self::ParamTypeMismatch { param, expected } => {
@@ -1021,51 +1035,65 @@ impl fmt::Display for Error {
     }
 }
 
-impl Error {
-    /// Pairs the error with the schema it speaks about: a rejected
-    /// commit (`CommitRejected`) `Display`s its complete violation set
-    /// with every cited statement rendered back in the `schema!` algebra
-    /// notation, in materialized statement order; every other variant
-    /// renders as its plain `Display`. Formatting allocates — `Display`
-    /// is never the hot path; the error payload itself stays ids and
-    /// fact bytes.
+impl Violations {
+    /// Pairs the rejection with the schema it speaks about: every cited
+    /// statement renders back in the `schema!` algebra notation, in
+    /// materialized statement order. Formatting allocates — `Display` is
+    /// never the hot path; the payload itself stays ids and fact bytes.
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
-        DisplayWith {
-            error: self,
+        ViolationsDisplayWith {
+            violations: self,
             schema,
         }
+    }
+}
+
+/// [`Violations::display_with`]'s adapter.
+struct ViolationsDisplayWith<'a> {
+    violations: &'a Violations,
+    schema: &'a Schema,
+}
+
+impl fmt::Display for ViolationsDisplayWith<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "admission rejected: ")?;
+        for (index, violation) in self.violations.iter().enumerate() {
+            if index > 0 {
+                write!(f, "; ")?;
+            }
+            let rendered = render::render(self.schema, violation.statement_id());
+            write!(
+                f,
+                "{} violated{}: `{rendered}` — ",
+                violation.law(),
+                violation.side()
+            )?;
+            violation.tail(f)?;
+        }
+        Ok(())
+    }
+}
+
+impl Error {
+    /// Pairs the error with the schema it speaks about. Theory rejection
+    /// is [`Violations::display_with`]; every `Error` variant renders as
+    /// its plain `Display`.
+    #[must_use]
+    pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
+        let _ = schema;
+        DisplayWith { error: self }
     }
 }
 
 /// [`Error::display_with`]'s adapter.
 struct DisplayWith<'a> {
     error: &'a Error,
-    schema: &'a Schema,
 }
 
 impl fmt::Display for DisplayWith<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.error {
-            Error::CommitRejected { violations } => {
-                write!(f, "commit rejected: ")?;
-                for (index, violation) in violations.as_slice().iter().enumerate() {
-                    if index > 0 {
-                        write!(f, "; ")?;
-                    }
-                    let rendered = render::render(self.schema, violation.statement());
-                    write!(
-                        f,
-                        "{} violated{}: `{rendered}` — ",
-                        violation.law(),
-                        violation.side()
-                    )?;
-                    violation.tail(f)?;
-                }
-                Ok(())
-            }
-            other => write!(f, "{other}"),
-        }
+        write!(f, "{}", self.error)
     }
 }
 

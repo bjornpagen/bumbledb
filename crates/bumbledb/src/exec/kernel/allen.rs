@@ -236,9 +236,7 @@ fn filter_chunked(
     unsafe { out.set_len(write) };
     crate::obs::event(
         crate::obs::names::KERNEL_ALLEN,
-        crate::obs::Category::Execute,
-        n as u64,
-        (write - start) as u64,
+        crate::obs::TraceArgs::Pair(n as u64, (write - start) as u64),
     );
 }
 

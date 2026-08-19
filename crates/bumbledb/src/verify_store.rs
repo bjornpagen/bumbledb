@@ -23,8 +23,8 @@
 //! Q  fresh sequences the never-reissue ratchet against the F fresh
 //!                   tallies (finding 033)
 //! _meta descriptor  blake3 of the persisted schema descriptor against the
-//!                   stored fingerprint (the self-description bond; absence
-//!                   = not yet adopted, never a finding)
+//!                   stored fingerprint (the self-description bond; format
+//!                   8 open already required the key)
 //! _dict             forward/reverse coherence, referenced-id liveness,
 //!                   the next-id bound (findings 004/078) — plus the
 //!                   dangling-id statistic (the accepted leak)
@@ -70,10 +70,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use crate::Db;
-use crate::error::{Direction, Result};
+use crate::error::{Result, Violation};
 use crate::schema::Schema;
-use crate::storage::commit::judgment::Selections;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
+use crate::storage::commit::judgment::{self, Selections};
 use crate::storage::keys;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
@@ -89,16 +89,62 @@ mod reverse;
 #[cfg(test)]
 mod tests;
 
-/// The sweep's verdict: every observed desync as a typed finding, plus the
-/// informational dictionary statistic. Empty `findings` = coherent store.
+/// The sweep's verdict: coherence, or every observed desync as a typed
+/// finding, plus the informational dictionary statistic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreReport {
-    /// Every desync observed, in pass order (F, M, U, R, S).
-    pub findings: Vec<StoreFinding>,
-    /// `_dict` reverse entries referenced by no live fact — the accepted
-    /// leak (`docs/architecture/50-storage.md`): an informational
-    /// statistic, never a finding.
-    pub dangling_intern_ids: u64,
+    pub verdict: StoreVerdict,
+}
+
+/// Empty findings are unrepresentable on the desynced arm; a coherent
+/// store never carries a findings list whose emptiness is the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreVerdict {
+    Coherent {
+        dangling_intern_ids: u64,
+    },
+    Desynced {
+        findings: Box<[StoreFinding]>,
+        dangling_intern_ids: u64,
+    },
+}
+
+impl StoreReport {
+    fn from_sweep(findings: Vec<StoreFinding>, dangling_intern_ids: u64) -> Self {
+        let verdict = if findings.is_empty() {
+            StoreVerdict::Coherent {
+                dangling_intern_ids,
+            }
+        } else {
+            StoreVerdict::Desynced {
+                findings: findings.into_boxed_slice(),
+                dangling_intern_ids,
+            }
+        };
+        Self { verdict }
+    }
+
+    /// Every desync observed, in pass order. Empty on a coherent store.
+    #[must_use]
+    pub fn findings(&self) -> &[StoreFinding] {
+        match &self.verdict {
+            StoreVerdict::Coherent { .. } => &[],
+            StoreVerdict::Desynced { findings, .. } => findings,
+        }
+    }
+
+    #[must_use]
+    pub fn dangling_intern_ids(&self) -> u64 {
+        match self.verdict {
+            StoreVerdict::Coherent {
+                dangling_intern_ids,
+            }
+            | StoreVerdict::Desynced {
+                dangling_intern_ids,
+                ..
+            } => dangling_intern_ids,
+        }
+    }
 }
 
 /// One observed desync. Payloads follow the [`CorruptionError`] discipline:
@@ -159,34 +205,12 @@ pub enum StoreFinding {
         statement: StatementId,
         reverse_key: Box<[u8]>,
     },
-    /// A containment statement globally violated by the committed state:
-    /// a live source fact inside φ whose target tuple is absent (scalar
-    /// probe miss) or whose interval is not jointly covered (coverage-walk
-    /// gap). Same payload as [`Violation::Containment`], as a finding —
-    /// per fact, so the report is already the complete citation set. The
-    /// direction is always [`Direction::TargetRequired`]: a committed
-    /// store has no just-inserted facts, so every offline violation is a
-    /// standing source whose required target is missing — the naive
-    /// model's own convention (`docs/architecture/60-validation.md`).
-    ///
-    /// [`Violation::Containment`]: crate::error::Violation::Containment
-    JudgmentViolation {
-        statement: StatementId,
-        direction: Direction,
-        /// The source fact — canonical bytes, never a row id.
-        fact: Box<[u8]>,
-    },
-    /// A capacity statement globally violated by the committed state:
-    /// a ψ-selected parent whose child-group MEASURE falls outside its
-    /// resolved window (`lean/Bumbledb/Capacity.lean: CapacityLaw`) —
-    /// the commit path's own capacity check, re-run per committed parent.
-    CapacityViolation {
-        statement: StatementId,
-        /// The convicting parent fact — canonical bytes.
-        fact: Box<[u8]>,
-        /// The witnessed child-group measure (u128 whole, C3).
-        measure: u128,
-    },
+    /// A containment or capacity statement globally violated by the
+    /// committed state — the same [`Violation`] the commit path cites.
+    /// Complete admission and the sweep cite containments
+    /// source-to-target ([`crate::error::Direction::TargetRequired`]): a committed
+    /// store has no just-inserted side.
+    Judgment(Violation),
     /// A capacity `R` edge whose value slot disagrees with the live
     /// source fact's weight-field encoding — the weight-desync finding,
     /// both directions of the sweep push it (C17, measured: the slot
@@ -294,10 +318,8 @@ pub enum StoreFinding {
     /// the stored fingerprint. The fingerprint IS blake3 of the
     /// descriptor bytes (`docs/architecture/50-storage.md` § the `_meta`
     /// block), so a store carrying a descriptor its fingerprint disowns
-    /// was altered after creation — the conviction the exhume entry's
-    /// integrity gate raises as a hard error, here as a finding. A store
-    /// carrying NO descriptor is not convicted: absence is the legal
-    /// not-yet-adopted state.
+    /// was altered after creation — the conviction ordinary open and
+    /// the exhume entry raise as a hard error, here as a finding.
     DescriptorFingerprintDesync {
         /// The stored `_meta` fingerprint.
         fingerprint: [u8; 32],
@@ -326,35 +348,37 @@ impl<S> Db<S> {
     #[doc(hidden)]
     pub fn verify_store(&self) -> Result<StoreReport> {
         let txn = self.env().read_txn()?;
+        let catalog = txn.catalog();
+        let mut checker = judgment::Checker::new(&catalog, self.schema());
         let mut sweep = Sweep {
-            data: self.env().data(),
-            txn: &txn,
+            catalog,
             schema: self.schema(),
             selections: Selections::encode_committed(self.schema(), &txn)?,
-            dict_next_id: txn.dict_next_id()?,
+            dict_next_id: catalog.dict_next_id()?.raw(),
             findings: Vec::new(),
             tallies: BTreeMap::new(),
             max_fresh: BTreeMap::new(),
             referenced_interns: BTreeSet::new(),
         };
-        let mut store_span = crate::obs::span(
-            crate::obs::names::VERIFY_STORE,
-            crate::obs::Category::Storage,
-        );
+        let mut store_span = crate::obs::span(crate::obs::names::VERIFY_STORE);
         // One span per namespace pass, each timed and charged the findings
         // it raised — pass granularity, the per-entry cursor stays unspanned.
-        sweep.pass(crate::obs::names::VERIFY_FACTS, facts::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_FACTS, |s| {
+            facts::sweep(s, &mut checker)
+        })?;
         sweep.pass(crate::obs::names::VERIFY_MEMBERSHIP, membership::sweep)?;
         sweep.pass(crate::obs::names::VERIFY_DETERMINANTS, determinants::sweep)?;
         sweep.pass(crate::obs::names::VERIFY_REVERSE, reverse::sweep)?;
-        sweep.pass(crate::obs::names::VERIFY_MARKS, marks::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_MARKS, |s| {
+            marks::sweep(s, &mut checker)
+        })?;
         sweep.pass(crate::obs::names::VERIFY_COUNTERS, counters::sweep)?;
         sweep.pass(crate::obs::names::VERIFY_FRESH, fresh::sweep)?;
         // The descriptor pass: a persisted schema descriptor must hash to
         // the stored fingerprint — they are one value twice
-        // (`docs/architecture/50-storage.md` § the `_meta` block). An
-        // absent descriptor is the legal not-yet-adopted state, never a
-        // finding.
+        // (`docs/architecture/50-storage.md` § the `_meta` block).
+        // Format 8 open already required the key; absence here is
+        // surgery on a live handle, not an adoption state.
         if let Some(descriptor) = txn.schema_descriptor()? {
             let fingerprint = txn.stored_fingerprint()?;
             let descriptor_hash =
@@ -367,21 +391,15 @@ impl<S> Db<S> {
             }
         }
         let dangling_intern_ids = {
-            let mut span = crate::obs::span(
-                crate::obs::names::VERIFY_DICT,
-                crate::obs::Category::Storage,
-            );
+            let mut span = crate::obs::span(crate::obs::names::VERIFY_DICT);
             let before = sweep.findings.len();
             let dangling = dict_stat::dangling(&mut sweep)?;
-            span.set_args((sweep.findings.len() - before) as u64, 0);
+            span.set_count((sweep.findings.len() - before) as u64);
             dangling
         };
-        store_span.set_args(sweep.findings.len() as u64, 0);
+        store_span.set_count(sweep.findings.len() as u64);
         store_span.end();
-        Ok(StoreReport {
-            findings: sweep.findings,
-            dangling_intern_ids,
-        })
+        Ok(StoreReport::from_sweep(sweep.findings, dangling_intern_ids))
     }
 }
 
@@ -393,16 +411,18 @@ struct Tally {
     max_row_id: u64,
 }
 
-/// Working state threaded through the passes: the snapshot, the schema,
+/// Working state threaded through the passes: the catalog, the schema,
 /// the committed-encoded selections, and the `F`-scan tallies the counter
 /// and dictionary passes reconcile.
-struct Sweep<'a, 'env> {
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    txn: &'a ReadTxn<'env>,
+///
+/// `C: Copy` so a namespace cursor can live on one handle while point-gets
+/// use another — both views of the same snapshot.
+struct Sweep<'a, C> {
+    catalog: C,
     schema: &'a Schema,
     /// Every containment statement's φ/ψ literals, encoded once against
     /// the committed dictionary ([`Selections::encode_committed`]).
-    selections: Selections,
+    selections: Selections<'a>,
     /// The `_meta` dictionary next-id: every referenced intern id must
     /// sit below it.
     dict_next_id: u64,
@@ -417,19 +437,34 @@ struct Sweep<'a, 'env> {
     referenced_interns: BTreeSet<u64>,
 }
 
-/// One cursor over a whole key namespace `[tag, tag + 1)` — every pass's
-/// driving range (heed copies the bounds into the cursor).
-fn namespace<'txn>(
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    txn: &'txn ReadTxn<'_>,
-    tag: u8,
-) -> Result<heed::RoRange<'txn, heed::types::Bytes, heed::types::Bytes>> {
-    let (lo, hi) = ([tag], [tag + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
-    Ok(data.range(txn.raw(), &bounds)?)
+/// `[tag, tag + 1)` bounds for one `_data` namespace.
+pub(super) fn namespace_bounds(tag: keys::Namespace) -> ([u8; 1], [u8; 1]) {
+    let t = tag.tag();
+    ([t], [t + 1])
 }
 
-impl<'a> Sweep<'a, '_> {
+/// Walks one `_data` namespace. `catalog` is a Copy handle so `visit` may
+/// issue point-gets on a different copy of the same snapshot.
+fn for_namespace<C: CatalogRead + Copy>(
+    catalog: C,
+    tag: keys::Namespace,
+    mut visit: impl FnMut(&[u8], &[u8]) -> Result<()>,
+) -> Result<()> {
+    let (lo, hi) = namespace_bounds(tag);
+    let mut range = catalog.range(
+        CatalogMap::Data,
+        Bounds {
+            start: Bound::Included(&lo),
+            end: Bound::Excluded(&hi),
+        },
+    )?;
+    while let Some(entry) = ReadCursor::next(&mut range)? {
+        visit(entry.key, entry.value)?;
+    }
+    Ok(())
+}
+
+impl<C: CatalogRead + Copy> Sweep<'_, C> {
     fn push(&mut self, finding: StoreFinding) {
         self.findings.push(finding);
     }
@@ -438,11 +473,15 @@ impl<'a> Sweep<'a, '_> {
     /// span `a0` the findings the pass raised (pass granularity — the
     /// per-entry cursor inside `f` is never spanned). Inert when the
     /// `trace` feature is off.
-    fn pass(&mut self, name: &'static str, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+    fn pass(
+        &mut self,
+        point: crate::obs::TracePoint,
+        f: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
         let before = self.findings.len();
-        let mut span = crate::obs::span(name, crate::obs::Category::Storage);
+        let mut span = crate::obs::span(point);
         f(self)?;
-        span.set_args((self.findings.len() - before) as u64, 0);
+        span.set_count((self.findings.len() - before) as u64);
         Ok(())
     }
 
@@ -453,13 +492,9 @@ impl<'a> Sweep<'a, '_> {
         });
     }
 
-    /// `F` point-get by (relation, row id), borrowed for the snapshot's
-    /// lifetime. `None` is the caller's finding to make — the sweeper
-    /// reports, never errors on content.
-    fn fact(&self, rel: RelationId, row_id: u64) -> Result<Option<&'a [u8]>> {
-        let txn = self.txn;
-        let mut key = [0u8; keys::FACT_KEY_LEN];
-        let len = keys::fact_key(&mut key, rel, row_id);
-        Ok(self.data.get(txn.raw(), &key[..len])?)
+    /// `F` point-get by (relation, row id). `None` is the caller's finding
+    /// to make — the sweeper reports, never errors on content.
+    fn fact(&self, rel: RelationId, row_id: u64) -> Result<Option<C::Value<'_>>> {
+        self.catalog.fetch_fact(rel, row_id)
     }
 }

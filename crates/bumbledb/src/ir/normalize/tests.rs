@@ -2,7 +2,7 @@ use super::lower_literal::lower_literal;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
+    Const, FilterPredicate, IntervalConst, OperandAddr, SetConst, ViewWordSource, WordOrParam,
 };
 use crate::ir::validate::validate;
 use crate::ir::{
@@ -57,7 +57,7 @@ fn schema() -> Schema {
                 name: "P".into(),
                 fields: vec![
                     field("emp", ValueType::U64),
-                    field("during", interval_i64.clone()),
+                    field("during", interval_i64),
                     field("review", interval_i64),
                     field("at", ValueType::I64),
                 ],
@@ -130,8 +130,8 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::FieldsCompare {
-            left: FieldId(1),
-            right: FieldId(2),
+            left: FieldId(1).into(),
+            right: FieldId(2).into(),
             op: WordCmp::Eq,
         }]
     );
@@ -154,9 +154,9 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         delta.insert(&view, R, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    let image = crate::image::build(&txn, &schema, R).expect("build");
+    let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
     let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
     // Exactly the a == b rows survive.
     let ids: Vec<u64> = filtered
@@ -192,12 +192,12 @@ fn literal_and_param_bindings_lower_to_eq_filters() {
         norm.occurrences[0].filters,
         vec![
             FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Eq,
                 value: Const::Word(w(-7)),
             },
             FilterPredicate::Compare {
-                field: FieldId(2),
+                field: FieldId(2).into(),
                 op: WordCmp::Eq,
                 value: Const::Param(ParamId(0)),
             },
@@ -210,7 +210,7 @@ fn string_literals_stay_raw_as_pending_interns() {
     // The fixture lacks a string field, so check lower_literal directly
     // (the unit under test).
     assert_eq!(
-        lower_literal(&Value::String(Box::from(&b"acme"[..]))),
+        lower_literal(&Value::String(Box::from("acme"))),
         Const::PendingIntern {
             bytes: Box::from(&b"acme"[..]),
         }
@@ -332,7 +332,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::Compare {
-            field: FieldId(1),
+            field: FieldId(1).into(),
             op: WordCmp::Ge, // flipped
             value: Const::Word(w(100)),
         }]
@@ -340,10 +340,10 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
     assert!(norm.occurrences[1].filters.is_empty());
     assert_eq!(
         norm.residuals,
-        vec![PlacedComparison {
+        vec![FilterPredicate::FieldsCompare {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             op: WordCmp::Lt,
-            lhs: VarId(0),
-            rhs: VarId(1),
         }]
     );
     assert!(norm.word_residuals.is_empty());
@@ -446,8 +446,8 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::FieldsCompare {
-            left: FieldId(1),
-            right: FieldId(2),
+            left: FieldId(1).into(),
+            right: FieldId(2).into(),
             op: WordCmp::Lt,
         }]
     );
@@ -472,7 +472,7 @@ fn constant_point_membership_lowers_to_point_in() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::PointIn {
-            field: P_DURING,
+            field: P_DURING.into(),
             point: ViewWordSource::Word(w(5)),
         }]
     );
@@ -497,7 +497,7 @@ fn constant_point_membership_lowers_to_point_in() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::PointIn {
-            field: P_DURING,
+            field: P_DURING.into(),
             point: ViewWordSource::Param(ParamId(0)),
         }]
     );
@@ -531,8 +531,8 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::INTERSECTS,
         }]
     );
@@ -557,8 +557,8 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     assert_eq!(
         normalized(&eq).occurrences[0].filters,
         vec![FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::EQUALS,
         }]
     );
@@ -577,8 +577,8 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     assert_eq!(
         normalized(&ne).occurrences[0].filters,
         vec![FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
+            left: P_DURING.into(),
+            right: P_REVIEW.into(),
             mask: AllenMask::EQUALS.complement(),
         }]
     );
@@ -600,8 +600,8 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::FieldsPointIn {
-            interval: P_DURING,
-            point: P_AT,
+            interval: P_DURING.into(),
+            point: P_AT.into(),
         }]
     );
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
@@ -637,7 +637,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     assert_eq!(
         negated.filters,
         vec![FilterPredicate::Compare {
-            field: FieldId(1),
+            field: FieldId(1).into(),
             op: WordCmp::Eq,
             value: Const::Word(w(-7)),
         }]
@@ -653,10 +653,6 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one lowering case per residual form
 fn cross_atom_allen_becomes_the_mask_residual() {
     // Golden (d): P(during = x), P(during = y), Allen(x, y, m) — the
     // residual carries the mask whole (four endpoint slots + mask);
@@ -685,9 +681,9 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     assert!(norm.residuals.is_empty() && norm.word_residuals.is_empty());
     assert_eq!(
         norm.allen_residuals,
-        vec![PlacedAllen {
-            lhs: VarId(0),
-            rhs: VarId(1),
+        vec![FilterPredicate::FieldsAllen {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             mask: AllenMask::INTERSECTS,
         }]
     );
@@ -714,9 +710,9 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     assert!(eq_norm.residuals.is_empty());
     assert_eq!(
         eq_norm.allen_residuals,
-        vec![PlacedAllen {
-            lhs: VarId(0),
-            rhs: VarId(1),
+        vec![FilterPredicate::FieldsAllen {
+            left: OperandAddr::from(VarId(0)),
+            right: OperandAddr::from(VarId(1)),
             mask: AllenMask::EQUALS,
         }]
     );
@@ -725,14 +721,6 @@ fn cross_atom_allen_becomes_the_mask_residual() {
 
     // Cross-atom PointIn over a point variable: x.start ≤ t AND t < x.end
     // — the point variable's single word is its Start word.
-    let start = |id: u16| VarWord {
-        var: VarId(id),
-        word: IntervalWord::Start,
-    };
-    let end = |id: u16| VarWord {
-        var: VarId(id),
-        word: IntervalWord::End,
-    };
     let point_in = query(
         vec![
             Atom {
@@ -755,15 +743,15 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     assert_eq!(
         norm.word_residuals,
         vec![
-            PlacedWordComparison {
+            FilterPredicate::FieldsCompare {
                 op: WordCmp::Le,
-                lhs: start(0),
-                rhs: start(1),
+                left: OperandAddr::var_word(VarId(0), IntervalWord::Start.offset()),
+                right: OperandAddr::var_word(VarId(1), IntervalWord::Start.offset()),
             },
-            PlacedWordComparison {
+            FilterPredicate::FieldsCompare {
                 op: WordCmp::Lt,
-                lhs: start(1),
-                rhs: end(0),
+                left: OperandAddr::var_word(VarId(1), IntervalWord::Start.offset()),
+                right: OperandAddr::var_word(VarId(0), IntervalWord::End.offset()),
             },
         ]
     );
@@ -790,7 +778,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
     assert_eq!(
         normalized(&scalar).occurrences[0].filters,
         vec![FilterPredicate::Compare {
-            field: FieldId(1),
+            field: FieldId(1).into(),
             op: WordCmp::Eq,
             value: Const::ParamSet(ParamId(0)),
         }]
@@ -808,7 +796,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
     assert_eq!(
         normalized(&point_set).occurrences[0].filters,
         vec![FilterPredicate::AnyPointIn {
-            field: P_DURING,
+            field: P_DURING.into(),
             set: SetConst::ParamSet(ParamId(0)),
         }]
     );
@@ -834,8 +822,8 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
     assert_eq!(
         norm.occurrences[0].filters,
         vec![FilterPredicate::FieldsPointIn {
-            interval: P_DURING,
-            point: P_AT,
+            interval: P_DURING.into(),
+            point: P_AT.into(),
         }]
     );
 }
@@ -886,7 +874,7 @@ fn interval_param_equality_binding_stays_an_eq_compare() {
     assert_eq!(
         normalized(&query).occurrences[0].filters,
         vec![FilterPredicate::Compare {
-            field: P_DURING,
+            field: P_DURING.into(),
             op: WordCmp::Eq,
             value: Const::Param(ParamId(0)),
         }]
@@ -902,9 +890,18 @@ fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
     let pairs = norm
         .residuals
         .iter()
-        .map(|r| (r.lhs, r.rhs))
-        .chain(norm.word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
-        .chain(norm.allen_residuals.iter().map(|r| (r.lhs, r.rhs)));
+        .map(|r| {
+            let (left, right, _) = r.compare_sides();
+            (left.var(), right.var())
+        })
+        .chain(norm.word_residuals.iter().map(|r| {
+            let (left, right, _) = r.compare_sides();
+            (left.var(), right.var())
+        }))
+        .chain(norm.allen_residuals.iter().map(|r| {
+            let (left, right, _) = r.allen_sides();
+            (left.var(), right.var())
+        }));
     for (lhs, rhs) in pairs {
         assert!(
             !norm
@@ -953,8 +950,8 @@ fn sweep_scalar_var_var_placements() {
         assert_eq!(
             norm.occurrences[0].filters,
             vec![FilterPredicate::FieldsCompare {
-                left: FieldId(1),
-                right: FieldId(2),
+                left: FieldId(1).into(),
+                right: FieldId(2).into(),
                 op: WordCmp::from_cmp(op).expect("scalar"),
             }],
             "{op:?}"
@@ -983,10 +980,10 @@ fn sweep_scalar_var_var_placements() {
         assert!(norm.occurrences.iter().all(|occ| occ.filters.is_empty()));
         assert_eq!(
             norm.residuals,
-            vec![PlacedComparison {
+            vec![FilterPredicate::FieldsCompare {
+                left: OperandAddr::from(VarId(1)),
+                right: OperandAddr::from(VarId(2)),
                 op: WordCmp::from_cmp(op).expect("scalar"),
-                lhs: VarId(1),
-                rhs: VarId(2),
             }],
             "{op:?}"
         );
@@ -1025,7 +1022,7 @@ fn sweep_scalar_var_const_placements() {
             assert_eq!(
                 norm.occurrences[0].filters,
                 vec![FilterPredicate::Compare {
-                    field: FieldId(1),
+                    field: FieldId(1).into(),
                     op: WordCmp::from_cmp(placed_op).expect("scalar"),
                     value,
                 }],
@@ -1062,7 +1059,7 @@ fn sweep_param_set_comparison_placements() {
         assert_eq!(
             normalized(&q).occurrences[0].filters,
             vec![FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Eq,
                 value: Const::ParamSet(ParamId(0)),
             }],
@@ -1091,7 +1088,7 @@ fn sweep_contains_param_placements() {
     assert_eq!(
         normalized(&point_param).occurrences[0].filters,
         vec![FilterPredicate::PointIn {
-            field: P_DURING,
+            field: P_DURING.into(),
             point: ViewWordSource::Param(ParamId(0)),
         }]
     );
@@ -1111,7 +1108,7 @@ fn sweep_contains_param_placements() {
     assert_eq!(
         normalized(&within_param).occurrences[0].filters,
         vec![FilterPredicate::FieldWithin {
-            field: E_AT,
+            field: E_AT.into(),
             outer: IntervalConst::Param(ParamId(0)),
         }]
     );
@@ -1144,7 +1141,7 @@ fn sweep_duration_placements() {
     assert_eq!(
         normalized(&literal).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
-            field: P_DURING,
+            field: P_DURING.into(),
             op: OrderCmp::Lt,
             value: WordOrParam::Word(5),
         }]
@@ -1163,7 +1160,7 @@ fn sweep_duration_placements() {
     assert_eq!(
         normalized(&mirrored).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
-            field: P_DURING,
+            field: P_DURING.into(),
             op: OrderCmp::Le,
             value: WordOrParam::Word(5),
         }]
@@ -1181,7 +1178,7 @@ fn sweep_duration_placements() {
     assert_eq!(
         normalized(&param).occurrences[0].filters,
         vec![FilterPredicate::DurationCompare {
-            field: P_DURING,
+            field: P_DURING.into(),
             op: OrderCmp::Le,
             value: WordOrParam::Param(ParamId(0)),
         }]
@@ -1200,9 +1197,9 @@ fn sweep_duration_placements() {
     assert_eq!(
         normalized(&same_atom).occurrences[0].filters,
         vec![FilterPredicate::DurationFieldsCompare {
-            interval: P_DURING,
+            interval: P_DURING.into(),
             op: OrderCmp::Gt,
-            scalar: P_EMP,
+            scalar: P_EMP.into(),
         }]
     );
 
@@ -1231,10 +1228,10 @@ fn sweep_duration_placements() {
         assert!(norm.occurrences.iter().all(|occ| occ.filters.is_empty()));
         assert_eq!(
             norm.duration_residuals,
-            vec![PlacedDuration {
-                interval: VarId(1),
+            vec![FilterPredicate::DurationFieldsCompare {
+                interval: OperandAddr::from(VarId(1)),
                 op: placed_op,
-                scalar: VarId(2),
+                scalar: OperandAddr::from(VarId(2)),
             }]
         );
     }

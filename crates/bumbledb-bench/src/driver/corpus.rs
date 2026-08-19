@@ -77,7 +77,9 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         // case — ~40% of the loaded file is freelist — and the cached
         // corpus is write-once, so it ships live-sized.
         let load_dir = paths.root.join("db-load");
-        let db = Db::create(&load_dir, Ledger).map_err(|e| format!("create db: {e:?}"))?;
+        let db = Db::create(&load_dir, Ledger)
+            .map_err(|e| format!("create db: {e:?}"))?
+            .expect("accepted");
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load bumbledb: {e:?}"))?;
         db.compact(&paths.db)
             .map_err(|e| format!("compact: {e:?}"))?;
@@ -88,7 +90,8 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         // The calendar theory: same discipline, second store pair.
         let cal_load_dir = paths.root.join("cal-db-load");
         let cal = Db::create(&cal_load_dir, crate::calendar::Scheduling)
-            .map_err(|e| format!("create cal db: {e:?}"))?;
+            .map_err(|e| format!("create cal db: {e:?}"))?
+            .expect("accepted");
         crate::calendar::corpus::load_bumbledb(&cal, cfg)
             .map_err(|e| format!("load calendar: {e:?}"))?;
         cal.compact(&paths.cal_db)

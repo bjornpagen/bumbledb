@@ -5,7 +5,7 @@
 //! (`Answers::get` panics on out-of-range; the bounds are checked HERE).
 //!
 //! The carrier is caller-owned and reusable (the engine's own warm-path
-//! allocation contract): `bdb_answers_new` once, `bdb_snapshot_execute`
+//! allocation contract): `bdb_answers_new` once, `bdb_instance_execute`
 //! into it repeatedly (each execution clears it first, retaining
 //! capacity), `bdb_answers_clear` for an explicit reset,
 //! `bdb_answers_destroy` when done. Cell views borrow the carrier and are
@@ -13,11 +13,11 @@
 
 use bumbledb::Answers;
 
-use crate::db::bdb_snapshot_ref;
-use crate::error::{bdb_error, fail_engine};
+use crate::db::bdb_instance_ref;
+use crate::error::bdb_error;
 use crate::query::{bdb_prepared, enter_execute, prepared_execute_flag};
 use crate::value::{answer_out, bdb_param, bdb_value, param_args, params_in};
-use crate::{Fail, bdb_status, box_in, box_out, guard, guard_value, mut_in, out, ref_in};
+use crate::{Fail, bdb_status, box_in, box_out, guard, guard_statusless, guard_value, mut_in, out, ref_in};
 
 /// The opaque, reusable answers carrier.
 pub struct bdb_answers {
@@ -45,7 +45,7 @@ pub extern "C" fn bdb_answers_new() -> *mut bdb_answers {
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_answers_clear(answers: *mut bdb_answers) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
+    guard_statusless(|| {
         mut_in(answers)?.answers.clear();
         Ok(bdb_status::Ok)
     })
@@ -111,26 +111,25 @@ pub extern "C" fn bdb_answers_get(
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_answers_destroy(answers: *mut bdb_answers) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
+    guard_statusless(|| {
         drop(box_in(answers)?);
         Ok(bdb_status::Ok)
     })
 }
 
-/// Executes a prepared query against the snapshot with positional
+/// Executes a prepared query against the instance with positional
 /// params, filling the caller's reusable carrier (cleared first,
-/// capacity retained — the `execute_into` lane, §23). The prepared handle
-/// is taken exclusively for the call (`&mut` on the engine side — one
-/// execution at a time, §20/§22); executing a prepared query against a
-/// snapshot of a different database is the engine's own typed
+/// capacity retained). The prepared handle is taken exclusively for the
+/// call (`&mut` on the engine side — one execution at a time); executing
+/// a prepared query against a foreign instance is the engine's own typed
 /// `BDB_ERROR_KIND_FOREIGN_PREPARED`.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_snapshot_execute(
-    snapshot: *const bdb_snapshot_ref,
+pub extern "C" fn bdb_instance_execute(
+    instance: *const bdb_instance_ref,
     prepared: *mut bdb_prepared,
     params: *const bdb_param,
     param_count: usize,
@@ -138,7 +137,7 @@ pub extern "C" fn bdb_snapshot_execute(
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
-        let snap = ref_in(snapshot)?.snapshot()?;
+        let instance = ref_in(instance)?;
         let flag = prepared_execute_flag(prepared)?;
         let _exec = enter_execute(flag)?;
         let prepared = mut_in(prepared)?;
@@ -146,8 +145,7 @@ pub extern "C" fn bdb_snapshot_execute(
         let args = param_args(&owned)?;
         let carrier = mut_in(answers)?;
         carrier.answers.clear();
-        snap.execute_args(&mut prepared.prepared, &args, &mut carrier.answers)
-            .map_err(|error| fail_engine(error, None))?;
+        instance.execute(&mut prepared.prepared, &args, &mut carrier.answers)?;
         Ok(bdb_status::Ok)
     })
 }

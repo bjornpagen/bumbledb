@@ -72,17 +72,18 @@ pub fn random_query(rng: &mut Rng) -> Query {
     // Same RNG stream as the old coin: chance then maybe `random_rec`.
     // The arm is the constructor, not an option.
     if rng.chance(1, 4) {
-        Query::Reach {
+        Query {
             interiors,
-            rec: random_rec(rng),
+            rec: Some(random_rec(rng)),
             head,
             rules,
         }
     } else {
-        Query::Cq {
+        Query {
             interiors,
             head,
             rules,
+            rec: None,
         }
     }
 }
@@ -265,7 +266,7 @@ fn random_value(rng: &mut Rng) -> Value {
         0 => Value::Bool(rng.chance(1, 2)),
         1 | 2 => Value::U64(rng.range(16)),
         3 => Value::I64(signed(rng)),
-        4 => Value::String(Box::from(&b"Fee"[..])),
+        4 => Value::String(Box::from("Fee")),
         5 => {
             Value::FixedBytes(vec![0xA5; usize::try_from(rng.range(4) * 16).expect("small")].into())
         }
@@ -411,8 +412,7 @@ mod tests {
     fn the_arm_reaches_both_verdict_classes() {
         let dir = std::env::temp_dir().join("bumbledb-bench-irgen");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = bumbledb::Db::create(&dir, target::Target).expect("create");
+        let db = target::publish_admitted(&dir);
         let mut accepted = 0u32;
         let mut rejected = 0u32;
         let mut saw_interiors = false;
@@ -420,7 +420,7 @@ mod tests {
         for seed in 0..512 {
             let query = random_query(&mut Rng::new(seed));
             saw_interiors |= !query.interiors().is_empty();
-            saw_rec |= matches!(query, Query::Reach { .. });
+            saw_rec |= matches!(query, Query { .. });
             match db.prepare(&query) {
                 Ok(_) => accepted += 1,
                 Err(_) => rejected += 1,

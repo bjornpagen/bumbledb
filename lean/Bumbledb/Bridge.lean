@@ -183,7 +183,7 @@ def ledger : List Obligation := [
   .row @Txn.capacity_delta_restriction
     `Bumbledb.Txn.capacity_delta_restriction
     "Over a clean pre-state the capacity law holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group measure walk against the final state, the bound resolved from the parent's own row."
-    "Checker::check_capacity (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_ops (crates/bumbledb/src/storage/commit/plan.rs)"
+    "Checker::check_capacity (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_insert (crates/bumbledb/src/storage/commit/plan.rs)"
     "capacity_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_removal_remeasures_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
 
   .row @Oracle.capacity_ceiling_exit_sound
@@ -199,7 +199,7 @@ def ledger : List Obligation := [
 
   .row @keyed_get_at_most_one `Bumbledb.keyed_get_at_most_one
     "A keyed point read returns at most one fact: the functionality statement's injectivity at a fixed determinant image, derived — the read surface adds no semantics."
-    "get (crates/bumbledb/src/api/db/snapshot.rs); get (crates/bumbledb/src/api/db/get.rs)"
+    "get (crates/bumbledb/src/api/db/read_instance.rs); get (crates/bumbledb/src/api/db/get.rs)"
     "keyed_get_reads_through_a_declared_key_on_both_scopes (crates/bumbledb/tests/keyed_get.rs)",
 
   .row @pointwise_key_disjoint `Bumbledb.pointwise_key_disjoint
@@ -301,7 +301,7 @@ def ledger : List Obligation := [
 
   .row @Query.snapshot_single `Bumbledb.Query.snapshot_single
     "The denotation reads one instance: two instances agreeing on every mentioned relation answer identically."
-    "Db::read (crates/bumbledb/src/api/db/read.rs); Snapshot::execute (crates/bumbledb/src/api/db/snapshot.rs)"
+    "Db::read (crates/bumbledb/src/api/db/read.rs); ReadInstance::execute (crates/bumbledb/src/api/db/read_instance.rs)"
     "pinned_plan_reads_fresh_data_at_newer_generations (crates/bumbledb/src/api/prepared/tests/snapshot.rs)",
 
   .row @Query.eval_sound `Bumbledb.Query.eval_sound
@@ -506,12 +506,12 @@ def ledger : List Obligation := [
 
   .row @Txn.witness_conflict_distinct `Bumbledb.Txn.witness_conflict_distinct
     "Witness conflicts are not dependency violations: the two failure kinds are distinct constructors, and the one generation compare aborts before anything is judged."
-    "Error::CommitRejected (crates/bumbledb/src/error.rs); Error::GenerationMoved (crates/bumbledb/src/error.rs); write.rs::write_witnessed (crates/bumbledb/src/api/db/write.rs)"
+    "Admission::Rejected (crates/bumbledb/src/error.rs); ConditionalWrite::Moved (crates/bumbledb/src/error.rs); write.rs::write_witnessed (crates/bumbledb/src/api/db/write.rs)"
     "the_interleaved_second_sequence_aborts_with_the_payload (crates/bumbledb-bench/src/differential/tests/witness.rs); a_noop_commit_between_read_and_write_does_not_abort (crates/bumbledb-bench/src/differential/tests/witness.rs)",
 
   .row @Txn.snapshot_reads_one_state `Bumbledb.Txn.snapshot_reads_one_state
     "Every read is a function of one committed state — snapshot isolation as a signature, with the generation tag invisible to reads."
-    "api/db.rs::Snapshot (crates/bumbledb/src/api/db.rs); Db::read (crates/bumbledb/src/api/db/read.rs)"
+    "api/db.rs::ReadInstance (crates/bumbledb/src/api/db.rs); Db::read (crates/bumbledb/src/api/db/read.rs)"
     "pinned_plan_reads_fresh_data_at_newer_generations (crates/bumbledb/src/api/prepared/tests/snapshot.rs)",
 
   .row @Txn.derived_soundness_vs_freshness `Bumbledb.Txn.derived_soundness_vs_freshness
@@ -521,7 +521,7 @@ def ledger : List Obligation := [
 
   .row @Txn.etl_lands_valid `Bumbledb.Txn.etl_lands_valid
     "The ETL identity: a migration that lands is already valid — export under one generation, transform, bulk-judge as one final state (the identity round-trip theorem sits beside it)."
-    "Snapshot::scan (crates/bumbledb/src/api/db/snapshot.rs); Db::write (crates/bumbledb/src/api/db/write.rs)"
+    "ReadInstance::scan (crates/bumbledb/src/api/db/read_instance.rs); Db::write (crates/bumbledb/src/api/db/write.rs)"
     "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)",
 
   /- ## The fresh allocation model -/
@@ -606,14 +606,49 @@ def ledger : List Obligation := [
   .row @Txn.judgeB_agrees `Bumbledb.Txn.judgeB_agrees
     "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — under no premise beyond the closed-roster merge."
     "judge (crates/bumbledb/src/storage/commit/judgment.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
-    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)"
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)",
+
+  /- ## Complete initial admission (instance-lifetime L1, L2, L3, L4, L5) -/
+
+  .row @Txn.completeKeyViolations_eq `Bumbledb.Txn.completeKeyViolations_eq
+    "On a theory whose closed-constant obligations hold, the complete key roster is the key-phase citation set — validation has emptied the closed-functionality slice the roster skips."
+    "apply (crates/bumbledb/src/storage/commit/apply.rs); schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs)"
+    "scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
+
+  .row @Txn.completeStatementViolations_eq
+    `Bumbledb.Txn.completeStatementViolations_eq
+    "On a theory whose closed-constant obligations hold, the complete statement roster is the statement-phase citation set — closed-to-closed containments and closed-constant capacity are validation-discharged."
+    "judge (crates/bumbledb/src/storage/commit/judgment.rs); schema/validate.rs::validate_containment (crates/bumbledb/src/schema/validate.rs)"
+    "a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_closed_to_closed_containment_the_axioms_refute (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Txn.obligation_partition `Bumbledb.Txn.obligation_partition
+    "Schema validation's closed-constant refutations plus the instance-dependent complete roster compose to holds — two witnesses, never one."
+    "schema/validate.rs::validate_containment (crates/bumbledb/src/schema/validate.rs); crate::Error::ClosedStatementRefuted (crates/bumbledb/src/error.rs); verify_store (crates/bumbledb/src/verify_store.rs)"
+    "rejects_a_closed_to_closed_containment_the_axioms_refute (crates/bumbledb/src/schema/tests/reject.rs); a_satisfied_closed_to_closed_window_validates (crates/bumbledb/src/schema/tests/valid.rs)",
+
+  .row @Txn.completeRosterPasses_iff_holds
+    `Bumbledb.Txn.completeRosterPasses_iff_holds
+    "On a validated schema the complete roster passing is exactly holds — the partition theorem with the closed-constant witness spent."
+    "crate::schema::CompleteObligations (crates/bumbledb/src/schema.rs); crate::schema::Schema::complete_obligations (crates/bumbledb/src/schema.rs); schema/validate.rs::validate (crates/bumbledb/src/schema/validate.rs)"
+    "complete_roster_skips_closed_constant_and_keeps_instance_dependent (crates/bumbledb/src/schema/tests/obligations.rs); closed_to_closed_containment_is_not_a_complete_obligation (crates/bumbledb/src/schema/tests/obligations.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
+
+  .row @closed_source_ordinary_not_closedConstant
+    `Bumbledb.closed_source_ordinary_not_closedConstant
+    "A closed source against an ordinary target stays instance-dependent — the incremental lane's closed-source fence is a delta-restriction artifact and lifts for complete admission."
+    "closed_constant (crates/bumbledb/src/schema.rs); complete_obligations (crates/bumbledb/src/schema.rs)"
+    "complete_roster_skips_closed_constant_and_keeps_instance_dependent (crates/bumbledb/src/schema/tests/obligations.rs); complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs)",
+
+  .row @Txn.completeAdmissionB_agrees `Bumbledb.Txn.completeAdmissionB_agrees
+    "Complete admission of a raw instance is the two-phase judge over that instance — judgeB stays the differential oracle, and generated worlds including closed-source containments run against it."
+    "InstanceBuilder (crates/bumbledb/src/api/db/builder.rs); engine_admit (crates/bumbledb-bench/src/differential.rs); judge_complete (crates/bumbledb-bench/src/naive.rs); generate_complete_corpus (crates/bumbledb-bench/src/conformance/complete.rs)"
+    "complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs); three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); complete_admission_rejects_unhandled_closed_source (crates/bumbledb-bench/src/naive/tests/closed.rs)"
 
 ]
 
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 98 := rfl
+theorem ledger_count : ledger.length = 104 := rfl
 
 end Bridge
 end Bumbledb

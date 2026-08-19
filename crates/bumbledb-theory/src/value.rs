@@ -8,9 +8,10 @@
 //!
 //! `Value` is dumb data except where a malformed value would erase its own
 //! denotation: interval variants carry the checked [`crate::Interval`] type,
-//! so every encodable interval is nonempty by construction. UTF-8 remains a
-//! boundary rule owned by IR/schema validation. Encoding and rendering live
-//! engine-side; nothing a consumer owns lives here.
+//! so every encodable interval is nonempty by construction, and
+//! [`Value::String`] carries [`Box<str>`] so UTF-8 is proved where the
+//! value is born. Encoding and rendering live engine-side; nothing a
+//! consumer owns lives here.
 
 /// A literal value. Exactly one variant per data-model type — no universal
 /// integer (U64 and I64 literals are exact-typed; out-of-range is
@@ -21,9 +22,9 @@ pub enum Value {
     Bool(bool),
     U64(u64),
     I64(i64),
-    /// Raw UTF-8 bytes; interning is the engine's job (resolved to an
-    /// intern id per execution — a dictionary miss means empty result).
-    String(Box<[u8]>),
+    /// UTF-8 text; interning is the engine's job (resolved to an intern
+    /// id per execution — a dictionary miss means empty result).
+    String(Box<str>),
     /// A `bytes<N>` value: exactly N raw bytes, self-encoding — the
     /// length is the type (`ValueType::FixedBytes`), so a length mismatch
     /// is a type mismatch. Never interned: identity-shaped values live

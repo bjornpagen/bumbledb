@@ -49,6 +49,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import type { Db as DbValue } from "#index.ts"
 import { closed, contained, Db, key, ne, on, query, relation, renderStatement, schema, str, u64, v } from "#index.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 function byPos<T extends { readonly pos: bigint }>(left: T, right: T): number {
@@ -212,7 +213,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	let capabilityIds: readonly bigint[] = []
 
 	test("the theory admits, and one commit seeds ~560 rows (contracts stitched same-commit)", async function seed() {
-		db = await Db.create(storeDir, OperandViews)
+		db = accepted(await Db.create(storeDir, OperandViews))
 		assert.equal(
 			renderStatement(taughtHasTransferRange),
 			"Member(capsule | kind == Taught) <= TransferRange(capsule)",
@@ -252,7 +253,11 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 			capsuleIds = capsules
 			capabilityIds = caps
 		})
-		assert.ok(landed.ok, "the seed commit satisfies all four kind-conditional inclusions at final state")
+		assert.equal(
+			landed.tag,
+			"accepted",
+			"the seed commit satisfies all four kind-conditional inclusions at final state"
+		)
 	})
 
 	test("Q1: the 8-way conjunctive rule prepares and answers correctly", function multiWay() {
@@ -345,7 +350,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 			put(tx, NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[1]) })
 			put(tx, Member, { program: progA, capsule: capsule.id, pos: 1000n, kind: "Taught" })
 		})
-		assert.ok(!rejected.ok, "the kind-conditional inclusion judges the commit")
+		assert.equal(rejected.tag, "rejected", "the kind-conditional inclusion judges the commit")
 		const violation = must(
 			rejected.violations.find(function byStatement(entry) {
 				return entry.statement === taughtHasTransferRange
@@ -362,7 +367,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 				1n
 			)
 		})
-		assert.ok(!rejected.ok, "capsule-0 backs live Taught members — its contract cannot be stripped")
+		assert.equal(rejected.tag, "rejected", "capsule-0 backs live Taught members — its contract cannot be stripped")
 		const violation = must(
 			rejected.violations.find(function byStatement(entry) {
 				return entry.statement === taughtHasTransferRange
@@ -381,12 +386,12 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 			put(tx, NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[3]) })
 			put(tx, Member, { program: progA, capsule: capsule.id, pos: 1001n, kind: "Taught" })
 		})
-		assert.ok(stitched.ok, "member and contract commit together — totality holds at final state")
+		assert.equal(stitched.tag, "accepted", "member and contract commit together — totality holds at final state")
 
 		const bare = db.write(function bareCapsuleMember(tx) {
 			put(tx, Member, { program: progA, capsule: must(capsuleIds[CAPSULES - 1]), pos: 1002n, kind: "Reviewed" })
 		})
-		assert.ok(bare.ok, "the ψ selection scopes the law to Taught rows only")
+		assert.equal(bare.tag, "accepted", "the ψ selection scopes the law to Taught rows only")
 	})
 
 	test("Q4: answers are sets — the host sorts; two executions agree", function ordering() {
@@ -450,14 +455,14 @@ describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function pri
 
 	test("empty answers on a DAG — the lattice has no cycle", async function dagIsEmpty() {
 		const primerDir = path.join(tmpRoot, "primer-store")
-		const db = await Db.create(primerDir, Primer)
+		const db = accepted(await Db.create(primerDir, Primer))
 		const seeded = db.write(function seedDag(tx) {
 			const a = put(tx, Node, {})
 			const b = put(tx, Node, {})
 			put(tx, Produces, { grp: a.id, capability: 1n })
 			put(tx, Requires, { consumer: b.id, capability: 1n, state: "Upheld" })
 		})
-		assert.ok(seeded.ok, "a one-edge DAG lands")
+		assert.equal(seeded.tag, "accepted", "a one-edge DAG lands")
 		const rows = db.execute(db.prepare(requiresCycleQuery), {})
 		assert.deepEqual(rows, [], "empty answers = DAG")
 	})

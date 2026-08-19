@@ -35,7 +35,7 @@ pub(crate) fn pinned_fields(
                 | Const::PendingIntern { .. }
         ) =>
         {
-            Some((*field, value))
+            Some((field.field(), value))
         }
         _ => None,
     })

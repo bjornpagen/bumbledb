@@ -89,13 +89,14 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
     harness::measure(write_protocol("commit_witnessed"), || {
-        db.read(|snap| {
-            db.write_from(snap, |tx| {
+        db.read(|instance| {
+            db.write_from(&instance.witness()?, |tx| {
                 let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])
-            })
+            })?
+            .unwrap();
+            Ok(1)
         })
-        .map(|_| 1)
         .map_err(|e| format!("commit_witnessed: {e:?}"))
     })
 }
@@ -121,7 +122,10 @@ pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
             }
             Ok(())
         })
-        .map(|()| 512)
+        .map(|admission| {
+            admission.unwrap();
+            512
+        })
         .map_err(|e| format!("commit_batch: {e:?}"))
     })
 }
@@ -161,9 +165,10 @@ pub fn insert_stream_bumbledb(
         for rel in non_posting_relations() {
             db.write(|tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
-                    .map(|r| r.changed)
+                    .map(bumbledb::MutationReport::changed)
             })
-            .map_err(|e| format!("seed: {e:?}"))?;
+            .map_err(|e| format!("seed: {e:?}"))?
+            .unwrap();
         }
         pending.push_back(db);
     }
@@ -175,16 +180,18 @@ pub fn insert_stream_bumbledb(
             .write(|tx| {
                 let postings = tx
                     .insert_dyn(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))?
-                    .changed;
+                    .changed();
                 let tags = tx
                     .insert_dyn(
                         ids::POSTING_TAG,
                         corpus_gen::relation_rows(cfg, ids::POSTING_TAG),
                     )?
-                    .changed;
+                    .changed();
                 Ok(postings + tags)
             })
-            .map_err(|e| format!("insert_stream: {e:?}"))?;
+            .map_err(|e| format!("insert_stream: {e:?}"))?
+            .unwrap()
+            .value;
         // Keep the store alive: its Drop must not land inside a sample.
         done.borrow_mut().push(db);
         Ok(facts)
@@ -220,7 +227,7 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
         harness::org_touch(db),
         || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
@@ -260,11 +267,11 @@ pub(crate) fn posting_swap(
     prev: &Posting,
 ) -> Result<Posting, String> {
     db.write(|tx| {
-        if tx.delete([prev])?.changed == 0 {
+        if tx.delete([prev])?.changed() == 0 {
             // The in-closure sentinel abort (the fuzz harness's
             // deliberate-abandon precedent): returning `Err` here drops
             // the delta whole, so nothing below ever reaches the store.
-            return Err(bumbledb::Error::Io(std::io::Error::other(
+            return Err(bumbledb::Error::from(std::io::Error::other(
                 "the swap touch must be delete-bearing: the previous revision was absent",
             )));
         }
@@ -274,6 +281,7 @@ pub(crate) fn posting_swap(
         Ok(next)
     })
     .map_err(|e| format!("posting swap: {e:?}"))
+    .map(|admission| admission.unwrap().value)
 }
 
 /// The first swap target — one seeded posting committed before any
@@ -298,6 +306,7 @@ pub(crate) fn posting_swap_seed(
         Ok(seed)
     })
     .map_err(|e| format!("posting swap seed: {e:?}"))
+    .map(|admission| admission.unwrap().value)
 }
 
 /// `cold_containment_walk_delete` (PRD-I2): `cold_containment_walk`'s
@@ -357,7 +366,7 @@ pub fn cold_containment_walk_delete(
         },
         || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
@@ -378,20 +387,20 @@ mod tests {
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-write-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
     /// A store holding every posting containment target (the commit families need
     /// referenced rows, not the posting mass).
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
-        let db = Db::create(dir, Ledger).expect("create");
+        let db = Db::create(dir, Ledger).expect("create").expect("accepted");
         for rel in non_posting_relations() {
             db.write(|tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(CFG, rel))
-                    .map(|r| r.changed)
+                    .map(bumbledb::MutationReport::changed)
             })
-            .expect("seed");
+            .expect("seed")
+            .unwrap();
         }
         db
     }
@@ -463,7 +472,7 @@ mod tests {
     #[test]
     fn cold_containment_walk_costs_at_least_warm() {
         let dir = scratch("cold");
-        let db = Db::create(&dir, Ledger).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
         corpus::load_bumbledb(&db, CFG).expect("load");
 
         let cold = cold_containment_walk(&db, CFG).expect("cold");
@@ -479,7 +488,7 @@ mod tests {
         let mut buffer = Answers::new();
         let warm = harness::measure(Protocol::WARM, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("warm execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })
@@ -500,7 +509,7 @@ mod tests {
     #[test]
     fn cold_containment_walk_delete_costs_at_least_warm() {
         let dir = scratch("cold-delete");
-        let db = Db::create(&dir, Ledger).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
         corpus::load_bumbledb(&db, CFG).expect("load");
 
         let cold = cold_containment_walk_delete(&db, CFG).expect("delete cold");
@@ -516,7 +525,7 @@ mod tests {
         let mut buffer = Answers::new();
         let warm = harness::measure(Protocol::WARM, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("warm execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })

@@ -107,7 +107,7 @@ pub struct RenderedFact {
 }
 
 /// Renders a rejection's complete violation set as plain data — the
-/// bindings-consumable form of [`crate::error::Error::CommitRejected`]:
+/// bindings-consumable form of a rejected [`crate::error::Admission`]:
 /// per citation, the statement id, kind tag, canonical spelling, and the
 /// offending facts as `(relation name, [(field name, value)])` rows,
 /// read off the decoded cited facts the commit boundary attached
@@ -138,7 +138,7 @@ pub fn render_rejection(
     violations
         .citations()
         .map(|(violation, cited)| {
-            let statement = violation.statement();
+            let statement = violation.statement_id();
             let spelling = if usize::from(statement.0) < materialized.len() {
                 render_materialized(descriptor, &materialized, &mirrors, statement)
             } else {
@@ -147,16 +147,17 @@ pub fn render_rejection(
             let facts = cited
                 .iter()
                 .map(|fact| RenderedFact {
-                    relation: names
-                        .relation_name(fact.relation)
-                        .map_or_else(|| format!("relation#{}", fact.relation.0).into(), Box::from),
+                    relation: names.relation_name(fact.relation()).map_or_else(
+                        || format!("relation#{}", fact.relation().0).into(),
+                        Box::from,
+                    ),
                     fields: fact
-                        .values
+                        .values()
                         .iter()
                         .enumerate()
                         .map(|(idx, value)| {
                             let field = FieldId(u16::try_from(idx).expect("field count fits u16"));
-                            let name = names.field(fact.relation, field).map_or_else(
+                            let name = names.field(fact.relation(), field).map_or_else(
                                 || format!("field#{}", field.0).into(),
                                 |descriptor| descriptor.name.clone(),
                             );
@@ -166,7 +167,7 @@ pub fn render_rejection(
                 })
                 .collect();
             match violation {
-                Violation::Functionality(_) => RenderedViolation::Functionality {
+                Violation::Functionality { .. } => RenderedViolation::Functionality {
                     statement,
                     spelling,
                     facts,
@@ -192,7 +193,7 @@ pub fn render_rejection(
 /// `SavingsTerms(account) -> SavingsTerms`, a containment as
 /// `Account(holder) <= Holder(id)` with any selection after `|`
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
-/// the sealed [`super::ContainmentStatement::mirror`] link — as
+/// the sealed [`super::ContainmentStatement::pairing`] link — as
 /// `==` once, in the pair's written orientation (both ids render the same
 /// string), and a capacity statement B-family, target-left, in its one
 /// canonical spelling (`Parent(id) <={1..3} Task(parent)`;
@@ -217,7 +218,7 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
         StatementView::Containment(_, statement) => RenderedStatement::Containment {
             source: &statement.source,
             target: &statement.target,
-            mirror: statement.mirror,
+            mirror: statement.mirror_id(schema),
         },
         StatementView::Capacity(_, statement) => RenderedStatement::Capacity {
             target: &statement.target,
@@ -698,9 +699,9 @@ fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
         Value::I64(v) => write!(f, "{v}"),
         Value::IntervalU64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::IntervalI64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
-        Value::String(bytes) => {
+        Value::String(text) => {
             write!(f, "\"")?;
-            for c in String::from_utf8_lossy(bytes).chars() {
+            for c in text.chars() {
                 write!(f, "{}", c.escape_debug())?;
             }
             write!(f, "\"")

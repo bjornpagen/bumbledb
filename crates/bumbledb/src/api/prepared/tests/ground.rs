@@ -110,7 +110,7 @@ fn populate(env: &Environment, schema: &Schema) {
         delta.insert(&view, RelationId(0), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// The existence-walk atoms: Posting(id = pid, account = x, amount = m),
@@ -134,7 +134,7 @@ fn walk_atoms() -> Vec<Atom> {
 
 /// One prepared rule's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
-fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
+fn plan_roles(prepared: &PreparedQuery<()>, rule: usize) -> Vec<Role> {
     let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
     };
@@ -254,7 +254,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
         delta.insert(&view, RelationId(1), &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// The introspection golden on the DU fixture
@@ -304,8 +304,8 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
 
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(
-        stats.rules()[0].eliminated,
-        vec![crate::api::stats::EliminatedOccurrence {
+        *stats.rules()[0].eliminated(),
+        [crate::api::stats::EliminatedOccurrence {
             occurrence: 1,
             relation: "Grading".into(),
             statement: bumbledb_theory::schema::StatementId(3),
@@ -368,10 +368,10 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
             "the off switch keeps both occurrences joining"
         );
         let with_grounding = grounded
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect("execute");
         let without = disabled
-            .execute_collect(&txn, &cache, &[])
+            .execute_collect(&txn, &cache, &[] as &[BindValue])
             .expect("execute");
         assert_eq!(
             answers(&with_grounding),
@@ -468,7 +468,7 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
             insert(0, &[ValueRef::U64(id), ValueRef::U64(b_ref)]);
         }
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
     }
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
@@ -516,10 +516,10 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
         "the off switch keeps all three occurrences joining"
     );
     let with_grounding = grounded
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let without = disabled
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_grounding),
@@ -548,10 +548,9 @@ fn per_rule_elimination_marks_one_rule_only() {
     let rule = |name_filter: bool| {
         let mut atoms = walk_atoms();
         if name_filter {
-            atoms[1].bindings.push((
-                FieldId(1),
-                Term::Literal(Value::String(Box::from(&b"cash"[..]))),
-            ));
+            atoms[1]
+                .bindings
+                .push((FieldId(1), Term::Literal(Value::String(Box::from("cash")))));
         }
         Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -560,10 +559,11 @@ fn per_rule_elimination_marks_one_rule_only() {
             conditions: vec![],
         }
     };
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: rule(false).head(),
         rules: vec![rule(false), rule(true)],
+        rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
@@ -595,10 +595,10 @@ fn per_rule_elimination_marks_one_rule_only() {
         "the off switch keeps every occurrence joining"
     );
     let with_grounding = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let without = disabled
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_grounding),
@@ -690,10 +690,10 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         "the off switch covers both passes: no elimination, no deletion"
     );
     let with_passes = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let without = disabled
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_passes),

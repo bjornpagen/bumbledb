@@ -15,8 +15,12 @@
 //! pinned by the fingerprint without being hashed separately"
 //! (`docs/architecture/10-data-model.md`).
 
+use super::wire::{
+    ClosednessTag, EncodedHi, GenerationTag, IntervalElementTag, StatementFormTag, ValueTypeTag,
+    WeightTag,
+};
 use super::{
-    Bound, FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
+    FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
     StatementView, ValueType, Weight,
 };
 use crate::encoding::encode_literal;
@@ -93,8 +97,8 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             put_bytes(out, field.name.as_bytes());
             put_value_type(out, &field.value_type);
             out.push(match field.generation {
-                Generation::None => 0,
-                Generation::Fresh => 1,
+                Generation::None => GenerationTag::None.tag(),
+                Generation::Fresh => GenerationTag::Fresh.tag(),
             });
         }
         // Closedness is theory identity: ground axioms hash in declaration
@@ -102,9 +106,9 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         // is a function of the field types already in the stream. The tag
         // keeps ordinary and closed relations from aliasing.
         match relation.body().closed_rows() {
-            None => out.push(0),
+            None => out.push(ClosednessTag::Ordinary.tag()),
             Some(rows) => {
-                out.push(1);
+                out.push(ClosednessTag::Closed.tag());
                 put_len(out, rows.len());
                 for row in rows {
                     put_bytes(out, row.handle.as_bytes());
@@ -120,7 +124,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
         match schema.statement(id) {
             StatementView::Key(_, statement) => {
-                out.push(0);
+                out.push(StatementFormTag::Functionality.tag());
                 put_relation_id(out, statement.relation);
                 put_len(out, statement.projection.len());
                 for field in &statement.projection {
@@ -128,45 +132,26 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 }
             }
             StatementView::Containment(_, statement) => {
-                out.push(1);
+                out.push(StatementFormTag::Containment.tag());
                 put_side(out, schema, &statement.source);
                 put_side(out, schema, &statement.target);
             }
             StatementView::Capacity(_, statement) => {
-                out.push(4);
+                out.push(StatementFormTag::Capacity.tag());
                 put_side(out, schema, &statement.target);
                 match statement.weight.to_weight() {
-                    Weight::Unit => out.push(0),
+                    Weight::Unit => out.push(WeightTag::Unit.tag()),
                     Weight::Field(field) => {
-                        out.push(1);
+                        out.push(WeightTag::Field.tag());
                         put_field_id(out, field);
                     }
                     Weight::DurationOf(field) => {
-                        out.push(2);
+                        out.push(WeightTag::DurationOf.tag());
                         put_field_id(out, field);
                     }
                 }
                 out.extend_from_slice(&statement.lo.to_le_bytes());
-                match statement.hi.to_bound() {
-                    None => out.push(0),
-                    Some(hi) => {
-                        out.push(1);
-                        match hi {
-                            Bound::Lit(value) => {
-                                out.push(0);
-                                out.extend_from_slice(&value.to_le_bytes());
-                            }
-                            Bound::TargetField(field) => {
-                                out.push(1);
-                                put_field_id(out, field);
-                            }
-                            Bound::TargetDuration(field) => {
-                                out.push(2);
-                                put_field_id(out, field);
-                            }
-                        }
-                    }
-                }
+                EncodedHi::from_bound(statement.hi.to_bound()).write(out);
                 put_side(out, schema, &statement.source);
             }
         }
@@ -177,9 +162,9 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
 /// preimage, materialized. These are THE bytes a store persists beside its
 /// fingerprint (`docs/architecture/50-storage.md` § the `_meta` block):
 /// one canonical encoding exists, and persisting anything else would mint
-/// a second one. Readers: store creation and the open-time back-fill
-/// (`storage/env`), `Db::verify_store`'s descriptor pass, and the exhume
-/// round-trip pin ([`crate::exhume`]).
+/// a second one. Readers: store creation, format-8 open-time
+/// `check_descriptor` (`storage/env`), `Db::verify_store`'s descriptor
+/// pass, and the exhume round-trip pin ([`crate::exhume`]).
 #[must_use]
 pub(crate) fn canonical_descriptor(schema: &Schema) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -233,11 +218,7 @@ fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
         // Literals hash at the selected FIELD's encoding — the same
         // type-aware `encode_literal` the commit judgment seals, so a
         // fixed-width interval binding hashes its one-word form.
-        let desc = schema
-            .relation(side.relation)
-            .field(*field)
-            .value_type
-            .type_desc();
+        let desc = schema.relation(side.relation).field(*field).value_type;
         // The literal COUNT precedes the literals: a one-literal binding
         // and a set binding can never alias, and the sealed side's
         // canonical (sorted, deduplicated) set order makes the stream a
@@ -261,27 +242,20 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
     // Tag 1 is the deleted enum type's tombstone; it is never reused —
     // a reissued tag would collide theories across the vocabulary cut.
     match value_type {
-        ValueType::Bool => out.push(0),
-        ValueType::U64 => out.push(2),
-        ValueType::I64 => out.push(3),
-        ValueType::String => out.push(4),
-        // The length is hashed: a width change is a new theory
-        // (`docs/architecture/10-data-model.md`).
+        ValueType::Bool => out.push(ValueTypeTag::Bool.tag()),
+        ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
+        ValueType::I64 => out.push(ValueTypeTag::I64.tag()),
+        ValueType::String => out.push(ValueTypeTag::String.tag()),
         ValueType::FixedBytes { len } => {
-            out.push(5);
+            out.push(ValueTypeTag::FixedBytes.tag());
             out.extend_from_slice(&len.to_le_bytes());
         }
-        // The interval family: the general type keeps its historical
-        // stream (tag 6 ‖ element) untouched; the fixed-width type is a
-        // DIFFERENT type and hashes under its own tag with the width fed
-        // — a width change is a new theory, exactly as a `bytes<N>`
-        // width change is (`docs/architecture/10-data-model.md`).
         ValueType::Interval { element } => {
-            out.push(6);
+            out.push(ValueTypeTag::Interval.tag());
             out.push(element_tag(*element));
         }
         ValueType::FixedInterval { element, width } => {
-            out.push(7);
+            out.push(ValueTypeTag::FixedInterval.tag());
             out.push(element_tag(*element));
             out.extend_from_slice(&width.to_le_bytes());
         }
@@ -291,8 +265,8 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
 /// The element domain's fingerprint byte, shared by both interval tags.
 fn element_tag(element: IntervalElement) -> u8 {
     match element {
-        IntervalElement::U64 => 0,
-        IntervalElement::I64 => 1,
+        IntervalElement::U64 => IntervalElementTag::U64.tag(),
+        IntervalElement::I64 => IntervalElementTag::I64.tag(),
     }
 }
 
@@ -306,16 +280,16 @@ fn element_tag(element: IntervalElement) -> u8 {
 /// per-database state, not schema identity. `FixedBytes` literals are
 /// self-encoding (their canonical bytes ARE the value, word-padded), so
 /// they take the shared encoder like every other literal.
-fn put_literal(out: &mut Vec<u8>, desc: bumbledb_theory::TypeDesc, literal: &Value) {
+fn put_literal(out: &mut Vec<u8>, desc: bumbledb_theory::schema::ValueType, literal: &Value) {
     match literal {
-        Value::String(bytes) => put_bytes(out, bytes),
+        Value::String(text) => put_bytes(out, text.as_bytes()),
         encoded => encode_literal(encoded, desc, out),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{RelationDescriptor, SchemaDescriptor, StatementId};
+    use super::super::{Bound, RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
     use crate::schema::ValidateDescriptor as _;
     use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
@@ -396,7 +370,9 @@ mod tests {
         // The fixture genuinely seals a pair (materialized ids 3 and 4:
         // two fresh auto-keys and the declared FD precede them).
         assert_eq!(
-            schema.containment(crate::schema::ContainmentId(0)).mirror,
+            schema
+                .containment(crate::schema::ContainmentId(0))
+                .mirror_id(&schema),
             Some(StatementId(4))
         );
         assert_eq!(
@@ -711,7 +687,7 @@ mod tests {
                     fields: vec![
                         field("id", ValueType::U64),
                         field("supply", ValueType::U64),
-                        field("span", interval.clone()),
+                        field("span", interval),
                     ],
                 },
                 RelationDescriptor {

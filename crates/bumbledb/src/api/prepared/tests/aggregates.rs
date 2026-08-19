@@ -58,7 +58,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
         delta.insert(&view, PAYROLL, &bytes).expect("insert");
     }
     drop(view);
-    commit(delta, env).expect("commit");
+    commit(delta, env).expect("commit").expect("admitted");
 }
 
 /// The interval find round-trip: a projected interval variable
@@ -96,7 +96,7 @@ fn interval_find_round_trips_through_answers() {
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     assert_eq!(
         types,
@@ -109,7 +109,7 @@ fn interval_find_round_trips_through_answers() {
         "the signature reports the interval type"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, i64, i64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
@@ -169,7 +169,7 @@ fn a_closed_group_key_takes_the_dense_table() {
         "the closed domain (4 rows) proves the dense table"
     );
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, i64, u64)> = (0..out.len())
         .map(|answer| {
@@ -263,7 +263,7 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
             delta.insert(&view, RelationId(0), &bytes).expect("insert");
         }
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
     }
     let cache = ImageCache::new(&edge_schema);
     let txn = env.read_txn().expect("txn");
@@ -284,7 +284,7 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
     });
     let mut prepared = prepare(&txn, &cache, &edge_schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {

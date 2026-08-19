@@ -115,10 +115,10 @@ pub fn assert_end_state(
         .db
         .verify_store()
         .map_err(|e| format!("churn store sweep: {e:?}"))?;
-    if !report.findings.is_empty() {
+    if !report.findings().is_empty() {
         return Err(format!(
             "churn store sweep found desyncs: {:?}",
-            report.findings
+            report.findings()
         ));
     }
     Ok(())

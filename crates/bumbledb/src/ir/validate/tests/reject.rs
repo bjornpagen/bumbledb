@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{AtomIndex, FindIndex};
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
 
@@ -12,7 +13,10 @@ fn rejects_unknown_relation() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::UnknownRelation { atom: 0, .. }
+        ValidationError::UnknownRelation {
+            atom: AtomIndex(0),
+            ..
+        }
     ));
 }
 
@@ -25,7 +29,7 @@ fn rejects_unknown_field() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::UnknownField {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(9)
         }
     ));
@@ -40,7 +44,7 @@ fn rejects_duplicate_field_binding() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::DuplicateFieldBinding {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(0)
         }
     ));
@@ -71,7 +75,7 @@ fn rejects_literal_type_mismatch() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::LiteralTypeMismatch {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(2)
         }
     ));
@@ -102,7 +106,7 @@ fn rejects_order_comparison_on_string_in_both_written_orders() {
     // Holder.name is a String: both written orders get the dedicated
     // equality-only refusal before generic classification.
     for literal_on_left in [false, true] {
-        let literal = Term::Literal(Value::String(Box::from(&b"x"[..])));
+        let literal = Term::Literal(Value::String(Box::from("x")));
         let (lhs, rhs) = if literal_on_left {
             (literal, var(0))
         } else {
@@ -435,7 +439,7 @@ fn rejects_sum_over_non_integer() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateInputType { find: 0 }
+        ValidationError::AggregateInputType { find: FindIndex(0) }
     ));
 }
 
@@ -451,7 +455,7 @@ fn rejects_min_and_max_over_str() {
         );
         assert!(matches!(
             expect_err(&query),
-            ValidationError::AggregateInputType { find: 0 }
+            ValidationError::AggregateInputType { find: FindIndex(0) }
         ));
     }
 }
@@ -470,7 +474,7 @@ fn rejects_aggregate_over_group_key() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateOverGroupKey { find: 1 }
+        ValidationError::AggregateOverGroupKey { find: FindIndex(1) }
     ));
 }
 
@@ -632,7 +636,7 @@ fn rejects_min_and_max_over_fixed_bytes() {
         );
         assert!(matches!(
             expect_err(&query),
-            ValidationError::AggregateInputType { find: 0 }
+            ValidationError::AggregateInputType { find: FindIndex(0) }
         ));
     }
 }
@@ -653,7 +657,10 @@ fn rejects_a_wrong_width_fixed_bytes_literal() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+        ValidationError::LiteralTypeMismatch {
+            atom: AtomIndex(0),
+            ..
+        }
     ));
 }
 
@@ -782,7 +789,7 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::PointLiteralAtCeiling {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(VALIDITY)
         }
     ));
@@ -966,7 +973,7 @@ fn rejects_duration_in_a_binding() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::DurationInBinding {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(1)
         }
     ));
@@ -1069,7 +1076,7 @@ fn rejects_a_duration_fold_over_a_group_key_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateOverGroupKey { find: 1 }
+        ValidationError::AggregateOverGroupKey { find: FindIndex(1) }
     ));
 }
 
@@ -1108,7 +1115,7 @@ fn rejects_a_second_pack_term() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MultiplePackTerms { find: 2 }
+        ValidationError::MultiplePackTerms { find: FindIndex(2) }
     ));
 }
 
@@ -1126,7 +1133,7 @@ fn rejects_pack_beside_a_fold_aggregate() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MixedPackAndFold { find: 2 }
+        ValidationError::MixedPackAndFold { find: FindIndex(2) }
     ));
 }
 
@@ -1147,7 +1154,7 @@ fn rejects_pack_beside_a_measure_fold() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::MixedPackAndFold { find: 2 }
+        ValidationError::MixedPackAndFold { find: FindIndex(2) }
     ));
 }
 
@@ -1161,7 +1168,7 @@ fn rejects_pack_over_a_non_interval_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::PackInputType { find: 1 }
+        ValidationError::PackInputType { find: FindIndex(1) }
     ));
 }
 
@@ -1175,7 +1182,7 @@ fn rejects_pack_over_a_group_key_variable() {
     );
     assert!(matches!(
         expect_err(&query),
-        ValidationError::AggregateOverGroupKey { find: 1 }
+        ValidationError::AggregateOverGroupKey { find: FindIndex(1) }
     ));
 }
 
@@ -1267,7 +1274,10 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
     );
     assert!(matches!(
         validate(&cross_domain_schema(), &query).expect_err("wrong width must reject"),
-        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+        ValidationError::LiteralTypeMismatch {
+            atom: AtomIndex(0),
+            ..
+        }
     ));
 }
 
@@ -1297,6 +1307,9 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
     );
     assert!(matches!(
         validate(&cross_domain_schema(), &query).expect_err("the width-matched ray must reject"),
-        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+        ValidationError::LiteralTypeMismatch {
+            atom: AtomIndex(0),
+            ..
+        }
     ));
 }

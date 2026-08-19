@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 fn cq_report(plan: RulePlan<'_>, rule: RuleStats) -> IntrospectionReport<'_> {
-    let emits = rule.emitted;
+    let emits = rule.emitted();
     IntrospectionReport {
         header: None,
         body: ReportBody::Cq { plans: vec![plan] },
@@ -82,12 +82,12 @@ fn views_of(
         }
     }
     drop(view);
-    commit(delta, &env).expect("commit");
+    commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     (0..data.len())
         .map(|rel| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn, schema, rel_id).expect("build")
+            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
         })
         .collect()
 }
@@ -197,14 +197,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     // path passes the witness's group key) — with the D2 first-emit
     // skip, an empty set would let the unwind prune real output.
     let sink_vars = BTreeSet::from([VarId(2)]);
-    let plan = validate(
-        &fj,
-        &normalized,
-        &schema,
-        order.estimates.clone(),
-        &sink_vars,
-    )
-    .expect("valid plan");
+    let plan = validate(&fj, &normalized, &schema, &sink_vars).expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
@@ -243,6 +236,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![
                     crate::plan::fj::Subatom {
                         occ: OccId(0),
@@ -255,12 +249,14 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
                 ],
             },
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![crate::plan::fj::Subatom {
                     occ: OccId(0),
                     vars: vec![VarId(1)],
                 }],
             },
             crate::plan::fj::Node {
+                estimate: 0,
                 subatoms: vec![crate::plan::fj::Subatom {
                     occ: OccId(1),
                     vars: vec![VarId(2)],
@@ -268,8 +264,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             },
         ],
     };
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
     // Pre-force the tiny side so its Exact(2) beats Estimate(500).
     let s_root = Colt::root();
@@ -298,7 +293,7 @@ fn key_probe_queries_report_their_classification() {
         role: Role::Positive,
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
-            field: FieldId(0),
+            field: FieldId(0).into(),
             op: WordCmp::Eq,
             value: Const::Word(5),
         }],
@@ -307,15 +302,11 @@ fn key_probe_queries_report_their_classification() {
     let key_probe = classify(&normalized, &schema).expect("key probe");
     let report = cq_report(
         RulePlan::KeyProbe(&key_probe),
-        RuleStats {
+        RuleStats::KeyProbe {
             distinct_bindings: true,
-            nodes: Vec::new(),
-            eliminated: Vec::new(),
-            folded: Vec::new(),
-            pinned: Vec::new(),
             emitted: 0,
             absorbed: 0,
-            key_probe: Some(crate::api::stats::KeyProbeStats { hit: true }),
+            hit: true,
         },
     );
     let text = format!("{report}");
@@ -353,14 +344,7 @@ fn the_counted_execution_shows_batching_engaged() {
     let mut fj = binary2fj(&normalized, &order);
     factor(&mut fj);
     let sink_vars = BTreeSet::from([VarId(0), VarId(1), VarId(2)]);
-    let plan = validate(
-        &fj,
-        &normalized,
-        &schema,
-        order.estimates.clone(),
-        &sink_vars,
-    )
-    .expect("valid plan");
+    let plan = validate(&fj, &normalized, &schema, &sink_vars).expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
@@ -408,14 +392,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     let mut fj = binary2fj(&normalized, &order);
     factor(&mut fj);
     let sink_vars = BTreeSet::from([VarId(0), VarId(1)]);
-    let plan = validate(
-        &fj,
-        &normalized,
-        &schema,
-        order.estimates.clone(),
-        &sink_vars,
-    )
-    .expect("valid plan");
+    let plan = validate(&fj, &normalized, &schema, &sink_vars).expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
@@ -427,8 +404,8 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
 
     assert_eq!(counters.emits(), 7, "three postings rejected");
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
-    assert_eq!(rule.nodes[0].anti_probe_probed, 10);
-    assert_eq!(rule.nodes[0].anti_probe_rejected, 3);
+    assert_eq!(rule.nodes()[0].anti_probe_probed, 10);
+    assert_eq!(rule.nodes()[0].anti_probe_rejected, 3);
     let report = cq_report(RulePlan::FreeJoin(&plan), rule);
     let text = format!("{report}");
     assert!(text.contains("anti-probes: 1 placed, probed=10 rejected=3"));

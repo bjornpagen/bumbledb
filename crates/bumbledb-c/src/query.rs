@@ -15,7 +15,7 @@ use bumbledb::{
 };
 
 use crate::db::{Engine, bdb_db};
-use crate::error::{bdb_error, fail_engine, fail_locked, fail_shape};
+use crate::error::{bdb_error, fail_busy, fail_engine, fail_shape};
 use crate::value::{bdb_value, value_in};
 use crate::{
     BridgeResult, Fail, bdb_status, box_in, box_out_to, c_tag, guard, ref_in, require_out,
@@ -355,7 +355,9 @@ fn fold_op_in(view: bdb_agg_op) -> BridgeResult<FoldOp> {
         bdb_head_op::Min => FoldOp::Min,
         bdb_head_op::Max => FoldOp::Max,
         bdb_head_op::Count => {
-            return Err(fail_shape("Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE"));
+            return Err(fail_shape(
+                "Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE",
+            ));
         }
         bdb_head_op::Pack => {
             return Err(fail_shape("Pack is a pack find, not a fold AGGREGATE"));
@@ -590,13 +592,14 @@ fn query_from_cq(
     rules: *const bdb_rule,
     rule_count: usize,
 ) -> BridgeResult<Query> {
-    Ok(Query::Cq {
+    Ok(Query {
         interiors: slice_in(interiors, interior_count)?
             .iter()
             .map(interior_in)
             .collect::<BridgeResult<Vec<_>>>()?,
         head: head_in(head, head_count)?,
         rules: rules_in(rules, rule_count)?,
+        rec: None,
     })
 }
 
@@ -609,15 +612,15 @@ fn query_from_reach(
     rules: *const bdb_rule,
     rule_count: usize,
 ) -> BridgeResult<Query> {
-    Ok(Query::Reach {
+    Ok(Query {
         interiors: slice_in(interiors, interior_count)?
             .iter()
             .map(interior_in)
             .collect::<BridgeResult<Vec<_>>>()?,
-        rec: rec_in(
+        rec: Some(rec_in(
             rec,
             InteriorId(u32::try_from(interior_count).map_err(|_| fail_shape("interior count"))?),
-        )?,
+        )?),
         head: head_in(head, head_count)?,
         rules: rules_in(rules, rule_count)?,
     })
@@ -670,11 +673,11 @@ pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
 // ---------------------------------------------------------------------------
 
 /// The opaque prepared-query handle. Field order is load-bearing: the
-/// prepared value borrows the engine through the `Arc` and must drop
-/// first (the Node bridge's `PreparedHandle`, verbatim).
+/// prepared value drops before the optional store `Arc`. Heap-prepared
+/// queries hold `None`.
 pub struct bdb_prepared {
-    pub(crate) prepared: PreparedQuery<'static, SchemaDescriptor>,
-    _db: std::sync::Arc<Engine>,
+    pub(crate) prepared: PreparedQuery<SchemaDescriptor>,
+    pub(crate) _keep: Option<std::sync::Arc<Engine>>,
     pub(crate) in_execute: AtomicBool,
 }
 
@@ -688,7 +691,7 @@ impl Drop for InExecuteReset<'_> {
 
 pub(crate) fn enter_execute(flag: &AtomicBool) -> BridgeResult<InExecuteReset<'_>> {
     if flag.swap(true, Ordering::AcqRel) {
-        return Err(fail_locked(
+        return Err(fail_busy(
             "re-entrant or concurrent execute on this prepared handle (one \
              execution at a time)",
         ));
@@ -712,7 +715,7 @@ pub(crate) fn prepared_execute_flag<'a>(
     // (an AtomicBool) until we win exclusive. Concurrent destroy
     // loads the same flag before `from_raw` (best-effort, analogous
     // to enter_write). The returned borrow is the handle's field; the
-    // caller holds the handle for the enclosing `bdb_snapshot_execute`.
+    // caller holds the handle for the enclosing `bdb_instance_execute`.
     unsafe {
         Ok(&(*prepared).in_execute)
     }
@@ -720,7 +723,7 @@ pub(crate) fn prepared_execute_flag<'a>(
 
 /// Prepares a query against the database: the engine validates,
 /// normalizes, reads statistics, and plans ONCE; the returned handle is
-/// reusable across snapshots of this database (`&mut` per execution —
+/// reusable across reads of this database (`&mut` per execution —
 /// one execution at a time; the handle is not thread-shareable).
 /// Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 #[unsafe(no_mangle)]
@@ -739,31 +742,12 @@ pub extern "C" fn bdb_db_prepare(
         let handle = ref_in(db)?;
         let query = query_in(ref_in(query)?)?;
         let engine = std::sync::Arc::clone(&handle.db);
-        let prepared = engine
-            .prepare(&query)
-            .map_err(|error| fail_engine(error, Some(&handle.descriptor)))?;
-        // SAFETY of the lifetime erasure: the prepared query borrows
-        // schema and cache data owned by the engine behind `engine` (an
-        // `Arc` whose heap address is stable); `bdb_prepared` carries that
-        // `Arc` and declares `prepared` first, so the borrow always drops
-        // before its owner (the Node bridge's proven ownership argument).
-        #[expect(
-            unsafe_code,
-            reason = "the self-referential handle (prepared query + its owning Arc) \
-                      needs a lifetime erasure; the SAFETY comment above carries \
-                      the drop-order argument"
-        )]
-        let prepared = unsafe {
-            std::mem::transmute::<
-                PreparedQuery<'_, SchemaDescriptor>,
-                PreparedQuery<'static, SchemaDescriptor>,
-            >(prepared)
-        };
+        let prepared = engine.prepare(&query).map_err(fail_engine)?;
         box_out_to(
             out_prepared,
             bdb_prepared {
                 prepared,
-                _db: engine,
+                _keep: Some(engine),
                 in_execute: AtomicBool::new(false),
             },
         )?;
@@ -778,7 +762,7 @@ pub extern "C" fn bdb_db_prepare(
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_prepared_destroy(prepared: *mut bdb_prepared) -> bdb_status {
-    guard(std::ptr::null_mut(), || {
+    crate::guard_statusless(|| {
         let handle = ref_in(prepared)?;
         if handle.in_execute.load(Ordering::Acquire) {
             return Err(Fail::Misuse);

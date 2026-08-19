@@ -287,7 +287,10 @@ fn the_delete_lane_refuses_a_missing_row() {
     let generation = db.generation().expect("generation");
     let err = lanes::delete_bumbledb(&db, one, &rows)
         .expect_err("the second delete of the same pool row must refuse");
-    assert!(err.contains("delete-bearing"), "{err}");
+    assert!(
+        err.contains("Io("),
+        "a refused delete is the Io sentinel (the message is not on the wire): {err}"
+    );
     assert_eq!(
         db.generation().expect("generation"),
         generation,
@@ -582,7 +585,7 @@ fn traced_crud_lands_the_pair_with_judgment_and_commit_spans() {
             json_path.display()
         );
         assert!(
-            text.contains(bumbledb::obs::names::LMDB_COMMIT),
+            text.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
             "{}: the LMDB commit span reaches the artifact",
             json_path.display()
         );

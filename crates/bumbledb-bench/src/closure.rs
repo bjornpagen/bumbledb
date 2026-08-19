@@ -179,9 +179,9 @@ pub fn closure_query() -> Query {
         source: AtomSource::Edb(ids::EDGE),
         bindings: vec![(ids::edge::SRC, src), (ids::edge::DST, dst)],
     };
-    Query::Reach {
+    Query {
         interiors: vec![],
-        rec: Rec {
+        rec: Some(Rec {
             base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![edge(Term::Param(ParamId(0)), Term::Var(VarId(0)))],
@@ -193,7 +193,7 @@ pub fn closure_query() -> Query {
                 atoms: vec![edge(Term::Var(VarId(0)), Term::Var(VarId(1)))],
                 conditions: vec![],
             }),
-        },
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -316,9 +316,10 @@ pub fn load_stores_sized(
     for rel in [ids::NODE, ids::EDGE] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("load: {e:?}"))?;
+        .map_err(|e| format!("load: {e:?}"))?
+        .unwrap();
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
         .map_err(|e| format!("oracle: {e}"))?;
@@ -365,7 +366,7 @@ pub fn verify_family(
         .signature()
         .columns
         .iter()
-        .map(|column| column.ty().clone())
+        .map(|column| *column.ty())
         .collect();
     let mut stmt = conn
         .prepare(family.sql)
@@ -374,7 +375,7 @@ pub fn verify_family(
     let mut buffer = Answers::new();
     for draw in draws {
         let args = param_args(draw);
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{}: execute: {e:?}", family.name))?;
         let ours = compare::from_answers(&buffer, &types);
         let theirs = compare::from_sqlite(&mut stmt, &slots, draw, &types)
@@ -431,9 +432,9 @@ pub fn bench_families(
             .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
         let mut rotation = Rotation::new(draws.clone());
         let mut buffer = Answers::new();
-        let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<'_, Reachability>| {
+        let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<Reachability>| {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
+            db.read(|snap| snap.execute(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };

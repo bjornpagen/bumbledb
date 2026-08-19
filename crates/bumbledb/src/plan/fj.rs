@@ -11,10 +11,7 @@
 use crate::image::ColumnSpan;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
-use crate::ir::normalize::{
-    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
-    SlotWidth,
-};
+use crate::ir::normalize::{AntiProbe, OccId, Role, SlotWidth};
 use bumbledb_theory::schema::FieldId;
 
 mod binary2fj;
@@ -55,10 +52,12 @@ pub struct Subatom {
 }
 
 /// One plan node: a list of subatoms. Executed as: iterate the chosen
-/// cover, probe the rest in order.
+/// cover, probe the rest in order. `estimate` is the planner's per-step
+/// row count — copied through fold-split, sealed onto [`PlanNode`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub subatoms: Vec<Subatom>,
+    pub estimate: u64,
 }
 
 /// A Free Join plan: a list of nodes partitioning the query's positive
@@ -232,7 +231,7 @@ pub struct PlanNode {
     pub covers: Vec<u8>,
     /// Whole-value residual comparisons evaluated at this node (both
     /// sides bound here for the first time).
-    pub residuals: Vec<PlacedComparison>,
+    pub residuals: Vec<FilterPredicate>,
     // REFUSAL, recorded (the representation audit; do not re-litigate):
     // the three per-node rejection lists below — `word_residuals`,
     // `anti_probes`, `point_probes` — look like one `RejectionFilter`
@@ -246,18 +245,18 @@ pub struct PlanNode {
     /// Decomposed point-membership word residuals (cross-atom
     /// `PointIn`/membership) evaluated at this node — same placement
     /// rule as `residuals`.
-    pub word_residuals: Vec<PlacedWordComparison>,
+    pub word_residuals: Vec<FilterPredicate>,
     /// Cross-atom `Allen` residuals evaluated at this node — four
     /// endpoint slots + mask, classify-then-test; same placement rule as
     /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
     /// masks are pure ALU over gathered batch words too).
-    pub allen_residuals: Vec<PlacedAllen>,
+    pub allen_residuals: Vec<FilterPredicate>,
     /// Cross-atom measure residuals evaluated at this node — two-slot
     /// read + ray test + subtraction feeding the ordinary word compare;
     /// same placement rule as `residuals` (a fifth grouped-by-kind list,
     /// per the refusal above: the subtraction is pure ALU over gathered
     /// batch words).
-    pub duration_residuals: Vec<PlacedDuration>,
+    pub duration_residuals: Vec<FilterPredicate>,
     /// Anti-probes evaluated at this node: each negated occurrence
     /// attaches to the earliest node binding its whole variable set —
     /// its probe keys **and** its point-filter variables
@@ -273,6 +272,8 @@ pub struct PlanNode {
     pub new_vars: Vec<VarId>,
     /// Evidence governing whether D2 may cancel past this node.
     pub suffix_skip: SuffixSkip,
+    /// The planner's per-step estimate (introspection's reader).
+    pub estimate: u64,
 }
 
 /// Plan evidence for D2 subtree cancellation. `Licensed` means this node
@@ -303,8 +304,6 @@ pub struct ValidatedPlan {
     /// skip the spanning set (40-execution, elision). Proven vs unproven
     /// is the sum; absence is not a missing witness.
     distinctness: Distinctness,
-    /// The planner's per-step estimates (introspection's reader, the 40-execution doc).
-    estimates: Vec<u64>,
 }
 
 impl ValidatedPlan {
@@ -368,8 +367,8 @@ impl ValidatedPlan {
     /// The planner's per-step estimates — introspection's reader and
     /// the sink-presizing hint (the 40-execution doc).
     #[must_use]
-    pub fn estimates(&self) -> &[u64] {
-        &self.estimates
+    pub fn estimates(&self) -> Vec<u64> {
+        self.nodes.iter().map(|node| node.estimate).collect()
     }
 
     /// The first slot index of a variable (its only slot for scalars; an

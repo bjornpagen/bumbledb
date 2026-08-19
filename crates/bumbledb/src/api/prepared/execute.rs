@@ -1,19 +1,20 @@
-use super::{
-    Answers, BindValue, KeyProbeRule, PreparedPipeline, PreparedQuery, PreparedRule, ValueType,
-};
+use super::{Answers, ParamArg, PreparedPipeline, PreparedQuery, PreparedRule, ValueType};
 
 use crate::error::Result;
 use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
+use crate::image::ImageBind;
+use crate::image::LmdbImages;
 use crate::image::cache::ImageCache;
 use crate::obs;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
+use crate::storage::env::{CatalogIdentity, ReadTxn};
 
 use super::bind::resolve_filters;
 use super::finalize::finalize;
 use super::run_join::run_join;
 
-impl<S> PreparedQuery<'_, S> {
+impl<S> PreparedQuery<S> {
     /// Executes with the given parameters into the caller's buffer.
     ///
     /// # Errors
@@ -25,66 +26,61 @@ impl<S> PreparedQuery<'_, S> {
     ///
     /// Only on programmer-invariant violations (plan/executor pairing,
     /// validated id widths).
-    pub(crate) fn execute(
+    pub(crate) fn execute<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[BindValue<'_>],
+        params: P,
         out: &mut Answers,
     ) -> Result<()> {
-        self.check_snapshot(txn)?;
-        let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
-        out.clear();
-        out.arity = self.signature.columns.len();
+        self.check_identity(txn.identity())?;
+        let mut execute_span = obs::span(obs::names::EXECUTE);
+        out.begin(self.signature.columns.len());
         {
-            let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
-            self.bind_params(txn, params)?;
+            let _s = obs::span(obs::names::BIND_PARAMS);
+            params.bind(self, txn)?;
         }
-        let result = self.run_bound(txn, cache, out);
-        execute_span.set_args(out.len() as u64, 0);
+        let catalog = txn.catalog();
+        let images = LmdbImages::new(txn, cache);
+        let result = self.run_bound(&catalog, &images, out);
+        execute_span.set_count(out.len() as u64);
         result
     }
 
-    /// Executes with mixed scalar/set parameter arguments — the
-    /// [`super::ParamArg`] entry behind [`crate::Snapshot::execute_args`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::execute`], plus the precise per-position bind errors
-    /// (`ParamSetExpected`/`ParamScalarExpected`/
-    /// `ParamElementTypeMismatch`).
-    pub(crate) fn execute_args(
+    /// Owned-instance execute: one [`ParamArg`] entry, catalog identity
+    /// checked before bind.
+    pub(crate) fn execute_on<C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        args: &[super::ParamArg<'_>],
+        identity: &CatalogIdentity,
+        catalog: &C,
+        images: &I,
+        params: &[ParamArg<'_>],
         out: &mut Answers,
     ) -> Result<()> {
-        self.check_snapshot(txn)?;
-        let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
-        out.clear();
-        out.arity = self.signature.columns.len();
+        self.check_identity(identity)?;
+        let mut execute_span = obs::span(obs::names::EXECUTE);
+        out.begin(self.signature.columns.len());
         {
-            let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
-            self.bind_param_args(txn, args)?;
+            let _s = obs::span(obs::names::BIND_PARAMS);
+            self.bind_param_args(catalog, params)?;
         }
-        let result = self.run_bound(txn, cache, out);
-        execute_span.set_args(out.len() as u64, 0);
+        let result = self.run_bound(catalog, images, out);
+        execute_span.set_count(out.len() as u64);
         result
     }
 
     /// The post-bind execution body shared by every bind shape: the rule
     /// loop into the one sink, then finalize.
-    fn run_bound(
+    fn run_bound<C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
+        catalog: &C,
+        images: &I,
         out: &mut Answers,
     ) -> Result<()> {
-        // Direct lane and empty Cq are parsed at build / are the
+        // Direct lane and empty Cq are sealed at build / are the
         // zero-iteration loop — not re-detected per call.
-        if self.pipeline.is_key_probe_direct() {
-            return self.execute_key_probe_direct(txn, out);
+        if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
+            return self.execute_key_probe_direct(catalog, out);
         }
         if self.pipeline.is_empty_cq() {
             return Ok(());
@@ -97,20 +93,20 @@ impl<S> PreparedQuery<'_, S> {
         // once, `#[cfg]`-free (the obs.rs law).
         let ran = if obs::capturing() {
             let mut timers = crate::exec::run::PhaseTimers::new();
-            let ran = self.run_rules(txn, cache, &mut timers)?;
+            let ran = self.run_rules(catalog, images, &mut timers)?;
             timers.flush();
             ran
         } else {
-            self.run_rules(txn, cache, &mut NoopCounters)?
+            self.run_rules(catalog, images, &mut NoopCounters)?
         };
-        self.finish_sink(txn, ran, out)
+        self.finish_sink(catalog, ran, out)
     }
 
     /// Drain the sink into `out` after the shared rule loop. Empty
     /// short-circuit (nothing ran) skips finalize.
-    pub(super) fn finish_sink(
+    pub(super) fn finish_sink<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         ran: bool,
         out: &mut Answers,
     ) -> Result<()> {
@@ -124,12 +120,12 @@ impl<S> PreparedQuery<'_, S> {
         if !ran {
             return Ok(()); // every rule short-circuited: empty result
         }
-        let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
+        let _s = obs::span(obs::names::FINALIZE);
         finalize(
             &mut self.sink,
             &mut self.answer_scratch,
             &mut self.resolve_memo,
-            txn,
+            catalog,
             &self.signature.columns,
             out,
         )
@@ -143,21 +139,17 @@ impl<S> PreparedQuery<'_, S> {
     /// `Ok(false)` = every rule short-circuited on an `Eq`-anchored
     /// dictionary miss (nothing ran, the sink stays reset, and the caller
     /// skips finalize).
-    pub(super) fn run_rules<C: Counters>(
+    pub(super) fn run_rules<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        counters: &mut C,
+        catalog: &C,
+        images: &I,
+        counters: &mut Cnt,
     ) -> Result<bool> {
         // Interiors then rec (if any) then main. Interiors-only never
         // enters the reach driver (`run_derived` is the Cq derived phase
         // and the Reach interiors+rec phase).
-        let has_derived = match &self.pipeline {
-            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
-            PreparedPipeline::Reach { .. } => true,
-        };
-        if has_derived {
-            let derived_ran = self.run_derived(txn, cache, counters)?;
+        if self.pipeline.has_derived() {
+            let derived_ran = self.run_derived(catalog, images, counters)?;
             if self.pipeline.main_rules().is_empty() {
                 return Ok(derived_ran);
             }
@@ -169,10 +161,10 @@ impl<S> PreparedQuery<'_, S> {
         let mut ran = false;
         let rule_count = self.pipeline.main_rules().len();
         for rule_idx in 0..rule_count {
-            ran |= self.run_rule(rule_idx, txn, cache, counters)?;
+            ran |= self.run_rule(rule_idx, catalog, images, counters)?;
         }
         if ran {
-            self.run_ray_probes(txn, cache, counters)?;
+            self.run_ray_probes(catalog, images, counters)?;
         }
         Ok(ran)
     }
@@ -181,19 +173,15 @@ impl<S> PreparedQuery<'_, S> {
     /// protocol as [`Self::run_rules`], with per-main-rule
     /// [`crate::exec::introspection::CountingCounters`] so node stats
     /// land on the counted surface.
-    pub(super) fn run_rules_cq_profile(
+    pub(super) fn run_rules_cq_profile<C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
+        catalog: &C,
+        images: &I,
         rule_stats: &mut Vec<crate::api::stats::RuleStats>,
     ) -> Result<bool> {
         use crate::exec::introspection::CountingCounters;
-        let has_derived = match &self.pipeline {
-            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
-            PreparedPipeline::Reach { .. } => true,
-        };
-        if has_derived {
-            let derived_ran = self.run_derived(txn, cache, &mut NoopCounters)?;
+        if self.pipeline.has_derived() {
+            let derived_ran = self.run_derived(catalog, images, &mut NoopCounters)?;
             if self.pipeline.main_rules().is_empty() {
                 return Ok(derived_ran);
             }
@@ -211,7 +199,7 @@ impl<S> PreparedQuery<'_, S> {
                 PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
                 PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
             };
-            ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
+            ran |= self.run_rule(rule_idx, catalog, images, &mut counters)?;
             let emitted = Counters::emits(&counters);
             let newly_seen = self
                 .sink
@@ -221,24 +209,20 @@ impl<S> PreparedQuery<'_, S> {
             rule_stats.push(match &self.pipeline.main_rules()[rule_idx] {
                 PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
                     &rule.plan,
-                    self.schema,
+                    self.schema.as_ref(),
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats {
+                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats::KeyProbe {
                     distinct_bindings: rule.distinct_witness.is_some(),
-                    nodes: Vec::new(),
-                    eliminated: Vec::new(),
-                    folded: Vec::new(),
-                    pinned: Vec::new(),
                     emitted,
                     absorbed,
-                    key_probe: Some(crate::api::stats::KeyProbeStats { hit: emitted > 0 }),
+                    hit: emitted > 0,
                 },
             });
         }
         if ran {
-            self.run_ray_probes(txn, cache, &mut NoopCounters)?;
+            self.run_ray_probes(catalog, images, &mut NoopCounters)?;
         }
         Ok(ran)
     }
@@ -247,25 +231,25 @@ impl<S> PreparedQuery<'_, S> {
     /// discipline verbatim), run the probe's Free Join into the
     /// [`crate::exec::verdict::RayArbiter`], and raise on the first
     /// Ray verdict.
-    pub(super) fn run_ray_probes<C: Counters>(
+    pub(super) fn run_ray_probes<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        counters: &mut C,
+        catalog: &C,
+        images: &I,
+        counters: &mut Cnt,
     ) -> Result<()> {
         let latched = super::reach::run_ray_probe_sets(
             &mut self.ray_probes,
             None,
-            self.schema,
-            txn,
-            cache,
+            self.schema.as_ref(),
+            catalog,
+            images,
             &self.resolved_params,
             &self.missed_params,
-            self.unresolved_literals == 0 && self.params.is_empty(),
+            self.latch.is_latched() && self.params.is_empty(),
             &mut self.bindings,
             counters,
         )?;
-        self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+        self.latch = self.latch.credit(latched);
         Ok(())
     }
 
@@ -275,18 +259,14 @@ impl<S> PreparedQuery<'_, S> {
     /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
     /// dictionary miss or empty set emptied this conjunctive rule; the
     /// other rules still run — a rule is one disjunct).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the rule loop's one step reads as one protocol: aim, resolve, run, account"
-    )]
-    pub(super) fn run_rule<C: Counters>(
+    pub(super) fn run_rule<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
         rule_idx: usize,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        counters: &mut C,
+        catalog: &C,
+        images: &I,
+        counters: &mut Cnt,
     ) -> Result<bool> {
-        let mut rule_span = obs::span(obs::names::RULE[rule_idx], obs::Category::Execute);
+        let mut rule_span = obs::span(obs::names::RULE[rule_idx]);
         let emits_before = counters.emits();
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
         // Re-aim per rule only where a switch exists: a single-rule sink
@@ -306,15 +286,15 @@ impl<S> PreparedQuery<'_, S> {
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);
-        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
+        let fast_eligible = self.latch.is_latched() && self.params.is_empty();
         let mut latched = 0u32;
         let rules = self.pipeline.main_rules_mut();
         let ran = match &mut rules[rule_idx] {
             PreparedRule::KeyProbe(rule) => {
                 execute_key_probe(
                     &rule.plan,
-                    txn,
-                    self.schema,
+                    catalog,
+                    self.schema.as_ref(),
                     &self.resolved_params,
                     &mut self.determinant_key,
                     &mut self.bindings,
@@ -329,9 +309,9 @@ impl<S> PreparedQuery<'_, S> {
                     if fast_eligible && rule.resolution == super::ResolutionState::Complete {
                         true
                     } else {
-                        let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
+                        let _s = obs::span(obs::names::RESOLVE_FILTERS);
                         let complete = resolve_filters(
-                            txn,
+                            catalog,
                             plan,
                             &self.resolved_params,
                             &self.missed_params,
@@ -362,9 +342,8 @@ impl<S> PreparedQuery<'_, S> {
                     match &mut self.sink {
                         super::EitherSink::Projection(s) => run_join(
                             plan,
-                            self.schema,
-                            txn,
-                            cache,
+                            self.schema.as_ref(),
+                            images,
                             &mut rule.executor,
                             &mut self.bindings,
                             &rule.resolved_filters,
@@ -377,9 +356,8 @@ impl<S> PreparedQuery<'_, S> {
                         )?,
                         super::EitherSink::Aggregate(s) => run_join(
                             plan,
-                            self.schema,
-                            txn,
-                            cache,
+                            self.schema.as_ref(),
+                            images,
                             &mut rule.executor,
                             &mut self.bindings,
                             &rule.resolved_filters,
@@ -407,8 +385,8 @@ impl<S> PreparedQuery<'_, S> {
             .map_or(emitted, |seen| (seen - seen_before) as u64);
         // Saturating: an uncounted path reports emitted = 0 against a
         // real seen-set delta — the honest args there are (0, 0).
-        rule_span.set_args(emitted, emitted.saturating_sub(newly_seen));
-        self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+        rule_span.set_pair(emitted, emitted.saturating_sub(newly_seen));
+        self.latch = self.latch.credit(latched);
         self.derived.occ_images = occ_images;
         self.derived.retired = retired;
         Ok(ran)
@@ -416,42 +394,41 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery. The lane is the
-    /// no-interior single key-probe Cq already on `self.pipeline`.
-    pub(super) fn execute_key_probe_direct(
+    /// [`PreparedPipeline::PointProbe`] arm sealed at build.
+    pub(super) fn execute_key_probe_direct<C: CatalogRead>(
         &mut self,
-        txn: &ReadTxn<'_>,
+        catalog: &C,
         out: &mut Answers,
     ) -> Result<()> {
-        debug_assert!(self.pipeline.is_key_probe_direct());
-        let PreparedRule::KeyProbe(KeyProbeRule {
-            plan: key_probe,
-            key_probe_finds: Some(key_probe_finds),
-            ..
-        }) = &self.pipeline.main_rules()[0]
+        let PreparedPipeline::PointProbe {
+            finds: key_probe_finds,
+            rule,
+        } = &self.pipeline
         else {
-            unreachable!("key_probe_direct parsed at build");
+            unreachable!("PointProbe arm sealed at build");
         };
+        let key_probe = &rule.plan;
         self.resolve_memo.clear();
-        let Some(fact) = crate::exec::dispatch::key_probe_fact(
+        let Some(stored) = crate::exec::dispatch::key_probe_fact(
             key_probe,
-            txn,
-            self.schema,
+            catalog,
+            self.schema.as_ref(),
             &self.resolved_params,
             &mut self.determinant_key,
         )?
         else {
             return Ok(());
         };
+        let fact = self
+            .schema
+            .relation(key_probe.relation)
+            .layout()
+            .encoded(stored.as_ref());
         out.cells.reserve(key_probe_finds.len());
         for (field, ty) in key_probe_finds {
             if let Some(element) = ty.interval_element() {
                 let crate::exec::dispatch::FactOperand::Pair(start, end) =
-                    crate::exec::dispatch::fact_operand(
-                        self.schema,
-                        key_probe.relation,
-                        fact,
-                        *field,
-                    )?
+                    crate::exec::dispatch::fact_operand(fact, *field)?
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
@@ -463,12 +440,7 @@ impl<S> PreparedQuery<'_, S> {
                 // fact — no dictionary, and no temporary heap (the
                 // operand's fixed block slices straight into the
                 // caller's buffer; this is the point fast lane).
-                match crate::exec::dispatch::fact_operand(
-                    self.schema,
-                    key_probe.relation,
-                    fact,
-                    *field,
-                )? {
+                match crate::exec::dispatch::fact_operand(fact, *field)? {
                     crate::exec::dispatch::FactOperand::Word(word) => {
                         out.push_fixed_bytes(*len, &[word]);
                     }
@@ -481,11 +453,10 @@ impl<S> PreparedQuery<'_, S> {
                 }
                 continue;
             }
-            let word =
-                crate::exec::dispatch::fact_word(self.schema, key_probe.relation, fact, *field)?;
+            let word = crate::exec::dispatch::fact_word(fact, *field)?;
             match ty {
                 ValueType::String => {
-                    out.push_word(txn, ty, word, &mut self.resolve_memo)?;
+                    out.push_word(catalog, ty, word, &mut self.resolve_memo)?;
                 }
                 _ => out.cells.push(Answers::word_cell(ty, word)),
             }
@@ -498,30 +469,14 @@ impl<S> PreparedQuery<'_, S> {
     /// # Errors
     ///
     /// As [`Self::execute`].
-    pub(crate) fn execute_collect(
+    pub(crate) fn execute_collect<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[BindValue<'_>],
+        params: P,
     ) -> Result<Answers> {
         let mut out = Answers::new();
         self.execute(txn, cache, params, &mut out)?;
-        Ok(out)
-    }
-
-    /// [`Self::execute_args`]'s fresh-buffer convenience.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::execute_args`].
-    pub(crate) fn execute_collect_args(
-        &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &ImageCache,
-        args: &[super::ParamArg<'_>],
-    ) -> Result<Answers> {
-        let mut out = Answers::new();
-        self.execute_args(txn, cache, args, &mut out)?;
         Ok(out)
     }
 }

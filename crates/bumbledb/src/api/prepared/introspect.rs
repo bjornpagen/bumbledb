@@ -1,13 +1,15 @@
 use super::{Answers, ParamArg, PreparedPipeline, PreparedQuery, PreparedRule};
 
-use crate::api::stats::{ExecutionStats, InteriorStats, KeyProbeStats, RuleStats};
+use crate::api::stats::{ExecutionStats, InteriorStats, RuleStats};
 use crate::error::Result;
-use crate::exec::introspection::{IntrospectionHeader, IntrospectionReport, ReportBody, RulePlan};
+use crate::exec::introspection::{
+    IntrospectionHeader, IntrospectionReport, ReportBody, RulePlan, UnitLabel,
+};
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
 
-impl<S> PreparedQuery<'_, S> {
+impl<S> PreparedQuery<S> {
     /// Plan introspection (docs/architecture/40-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the answers alongside the rendered
     /// report — per-rule plans and node stats under the head-level union
@@ -29,6 +31,9 @@ impl<S> PreparedQuery<'_, S> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let pending = self.pending_literal_note();
         let body = match &self.pipeline {
+            PreparedPipeline::PointProbe { rule, .. } => ReportBody::Cq {
+                plans: vec![RulePlan::KeyProbe(&rule.plan)],
+            },
             PreparedPipeline::Cq { rules, .. } if rules.is_empty() => ReportBody::Cq {
                 plans: vec![RulePlan::Empty],
             },
@@ -58,11 +63,14 @@ impl<S> PreparedQuery<'_, S> {
                         PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
                         PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
                     };
-                    units.push((format!("reach base {rule_idx}"), plan));
+                    units.push((UnitLabel::Base(rule_idx), plan));
                 }
                 for (rule_idx, arm) in driver.rec.iter().enumerate() {
                     units.push((
-                        format!("reach rec {rule_idx} (delta occ {})", arm.delta.0),
+                        UnitLabel::Rec {
+                            idx: rule_idx,
+                            delta: arm.delta,
+                        },
                         RulePlan::FreeJoin(&arm.rule.plan),
                     ));
                 }
@@ -71,7 +79,7 @@ impl<S> PreparedQuery<'_, S> {
                         PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
                         PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
                     };
-                    units.push((format!("main {rule_idx}"), plan));
+                    units.push((UnitLabel::Main(rule_idx), plan));
                 }
                 ReportBody::Reach {
                     rec_id: *rec_id,
@@ -99,7 +107,7 @@ impl<S> PreparedQuery<'_, S> {
     /// templates after execution: a hit has already latched to `Word` and
     /// disappears; a dictionary miss remains owned raw bytes here.
     fn pending_literal_note(&self) -> Option<String> {
-        if self.unresolved_literals == 0 {
+        if self.latch.is_latched() {
             return None;
         }
         let mut literals = Vec::new();
@@ -172,32 +180,28 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, ExecutionStats)> {
-        self.check_snapshot(txn)?;
+        self.check_identity(txn.identity())?;
+        let catalog = txn.catalog();
+        let images = crate::image::LmdbImages::new(txn, cache);
         let mut out = Answers::new();
-        out.arity = self.signature.columns.len();
+        out.begin(self.signature.columns.len());
         {
-            let _s = crate::obs::span(
-                crate::obs::names::BIND_PARAMS,
-                crate::obs::Category::Execute,
-            );
-            self.bind_param_args(txn, params)?;
+            let _s = crate::obs::span(crate::obs::names::BIND_PARAMS);
+            self.bind_param_args(&catalog, params)?;
         }
-        if self.pipeline.is_key_probe_direct() {
-            self.execute_key_probe_direct(txn, &mut out)?;
+        let point_distinct = match &self.pipeline {
+            PreparedPipeline::PointProbe { rule, .. } => Some(rule.distinct_witness.is_some()),
+            _ => None,
+        };
+        if let Some(distinct_bindings) = point_distinct {
+            self.execute_key_probe_direct(&catalog, &mut out)?;
             let emitted = out.len() as u64;
-            let distinct_bindings = self.pipeline.main_rules()[0].distinct_witness().is_some();
             let stats = ExecutionStats::cq(
-                vec![RuleStats {
+                vec![RuleStats::KeyProbe {
                     distinct_bindings,
-                    nodes: Vec::new(),
-                    eliminated: Vec::new(),
-                    folded: Vec::new(),
-                    pinned: Vec::new(),
                     emitted,
                     absorbed: 0,
-                    key_probe: Some(KeyProbeStats {
-                        hit: !out.is_empty(),
-                    }),
+                    hit: emitted > 0,
                 }],
                 Vec::new(),
                 emitted,
@@ -213,8 +217,8 @@ impl<S> PreparedQuery<'_, S> {
         match &self.pipeline {
             PreparedPipeline::Reach { .. } => {
                 let mut counters = crate::exec::introspection::ReachCounters::new();
-                let ran = self.run_rules(txn, cache, &mut counters)?;
-                self.finish_sink(txn, ran, &mut out)?;
+                let ran = self.run_rules(&catalog, &images, &mut counters)?;
+                self.finish_sink(&catalog, ran, &mut out)?;
                 let emits = out.len() as u64;
                 let stats = ExecutionStats::reach_body(
                     self.interior_stats(),
@@ -225,11 +229,11 @@ impl<S> PreparedQuery<'_, S> {
                 );
                 Ok((out, stats))
             }
-            PreparedPipeline::Cq { .. } => {
+            PreparedPipeline::Cq { .. } | PreparedPipeline::PointProbe { .. } => {
                 let mut rule_stats = Vec::new();
-                let ran = self.run_rules_cq_profile(txn, cache, &mut rule_stats)?;
-                self.finish_sink(txn, ran, &mut out)?;
-                let emits = rule_stats.iter().map(|rule| rule.emitted).sum();
+                let ran = self.run_rules_cq_profile(&catalog, &images, &mut rule_stats)?;
+                self.finish_sink(&catalog, ran, &mut out)?;
+                let emits = rule_stats.iter().map(RuleStats::emitted).sum();
                 Ok((
                     out,
                     ExecutionStats::cq(
@@ -278,9 +282,14 @@ impl<S> PreparedQuery<'_, S> {
     /// its spanning head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
-        match self.pipeline.main_rules() {
-            [rule] => rule.distinct_witness().is_some(),
-            _ => false,
+        match &self.pipeline {
+            PreparedPipeline::PointProbe { rule, .. } => rule.distinct_witness.is_some(),
+            PreparedPipeline::Cq { .. } | PreparedPipeline::Reach { .. } => {
+                match self.pipeline.main_rules() {
+                    [rule] => rule.distinct_witness().is_some(),
+                    _ => false,
+                }
+            }
         }
     }
 

@@ -6,7 +6,7 @@ use crate::schema::Schema;
 impl CountingCounters {
     /// Converts one rule's counted execution into the stable stats
     /// surface — the source of truth `Report` renders from and
-    /// `Snapshot::profile` returns (one of these per rule; the rule loop
+    /// `ReadInstance::profile` returns (one of these per rule; the rule loop
     /// assembles the query-level `ExecutionStats`). The schema resolves
     /// relation names and renders each eliminated occurrence's licensing
     /// statement (`schema/render.rs`). `pinned` is the rule's rendered
@@ -54,7 +54,7 @@ impl CountingCounters {
                     entries: self.node_entries[node_idx],
                     batches,
                     batch_entries,
-                    estimate: plan.estimates().get(node_idx).copied().unwrap_or(0),
+                    estimate: plan.nodes()[node_idx].estimate,
                     actual: self.actual_after(node_idx),
                     covers,
                     residual_pass: pass,
@@ -129,7 +129,7 @@ impl CountingCounters {
                 })
             })
             .collect();
-        RuleStats {
+        RuleStats::FreeJoin {
             distinct_bindings: matches!(
                 plan.distinctness(),
                 crate::plan::fj::Distinctness::Proven(_)
@@ -140,7 +140,6 @@ impl CountingCounters {
             pinned,
             emitted: self.emits,
             absorbed,
-            key_probe: None,
         }
     }
 }

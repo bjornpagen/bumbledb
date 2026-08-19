@@ -8,24 +8,23 @@
 
 use crate::error::Result;
 use crate::schema::{Enforcement, StatementView};
+use crate::storage::catalog::CatalogRead;
 use crate::storage::commit::judgment;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep, namespace};
+use super::{StoreFinding, Sweep, for_namespace};
 
 #[expect(
     clippy::too_many_lines,
     reason = "one cursor, one arm per statement form — the sweep is clearer kept together"
 )]
-pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
-    let txn = s.txn;
+pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     let schema = s.schema;
     let mut derived = keys::DeterminantImage::scratch();
-    for entry in namespace(s.data, txn, keys::NS_REVERSE)? {
-        let (key, value) = entry?;
+    for_namespace(s.catalog, keys::Namespace::Reverse, |key, value| {
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(key) else {
             s.malformed(key, "R key shape");
-            continue;
+            return Ok(());
         };
         // The statement id must name a containment or capacity
         // statement whose source is the embedded relation — anything else
@@ -39,12 +38,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             Some(StatementView::Capacity(_, statement)) => (statement.source.relation, None),
             _ => {
                 s.malformed(key, "R key statement");
-                continue;
+                return Ok(());
             }
         };
         if expected_relation != source_rel {
             s.malformed(key, "R key source relation");
-            continue;
+            return Ok(());
         }
         // A closed-TARGET containment never emits `R` traffic — its
         // target side is vacuous by construction (axioms don't delete),
@@ -57,7 +56,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 relation: target,
                 key: key.into(),
             });
-            continue;
+            return Ok(());
         }
         // Closed sources never commit (writes refused), so an R edge
         // naming one is corruption — the F pass's exemption, mirrored.
@@ -66,52 +65,49 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 relation: source_rel,
                 key: key.into(),
             });
-            continue;
+            return Ok(());
         }
         let layout = schema.relation(source_rel).layout();
+        let catalog = s.catalog;
 
         // R→F: the source must be live, re-derive these key bytes, and
         // still sit inside φ. A
         // wrong-width fact was already convicted by the F pass and cannot
         // be sliced, so it passes here.
-        let backs = match s.fact(source_rel, source_row)? {
+        let backs = match catalog.fetch_fact(source_rel, source_row)? {
             None => false,
-            Some(fact) if fact.len() != layout.fact_width() => true,
+            Some(fact) if fact.as_ref().len() != layout.fact_width() => true,
             Some(fact) => match schema.statement_checked(sid) {
                 Some(StatementView::Containment(containment_id, statement)) => {
-                    let key_permutation = match &statement.enforcement {
-                        Enforcement::ScalarProbe {
-                            key_permutation, ..
-                        }
-                        | Enforcement::IntervalCoverage {
-                            key_permutation, ..
-                        } => key_permutation,
+                    let key_projection = match &statement.enforcement {
+                        Enforcement::ScalarProbe { key_projection, .. }
+                        | Enforcement::IntervalCoverage { key_projection, .. } => key_projection,
                         Enforcement::Closed { .. } => {
                             unreachable!("closed-target edges convicted above")
                         }
                     };
+                    let bytes = fact.as_ref();
                     judgment::satisfies(
                         &s.selections.containment(containment_id).source,
                         layout,
-                        fact,
+                        bytes,
                     ) && {
-                        keys::permuted_determinant_image(
-                            layout,
-                            &statement.source.projection,
-                            key_permutation,
-                            fact,
+                        keys::determinant_image(
+                            layout.encoded(bytes),
+                            key_projection,
                             &mut derived,
                         );
                         derived.as_bytes() == key_bytes
                     }
                 }
                 Some(StatementView::Capacity(capacity_id, statement)) => {
+                    let bytes = fact.as_ref();
                     let inside = judgment::satisfies(
                         &s.selections.capacity(capacity_id).source,
                         layout,
-                        fact,
+                        bytes,
                     ) && {
-                        judgment::capacity_child_image(statement, layout, fact, &mut derived);
+                        judgment::capacity_child_image(statement, layout, bytes, &mut derived);
                         derived.as_bytes() == key_bytes
                     };
                     // R→F weight desync, the third conjunct: a live,
@@ -121,7 +117,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     // the weighed field is content — the malformed
                     // finding, never an error.
                     if inside {
-                        match judgment::expected_slot_weight(statement, layout, fact) {
+                        match judgment::expected_slot_weight(statement, layout, bytes) {
                             Ok(expected) => {
                                 let derived_word;
                                 let expected_bytes: &[u8] = match expected {
@@ -154,6 +150,6 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 reverse_key: key.into(),
             });
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }

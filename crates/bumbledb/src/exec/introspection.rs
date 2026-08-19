@@ -23,7 +23,10 @@
 //! its licensing statement through `schema/render.rs`) and the DP, which
 //! sees a smaller problem because eliminated occurrences never enter it.
 
+use std::fmt;
+
 use crate::exec::dispatch::KeyProbePlan;
+use crate::ir::normalize::OccId;
 use crate::plan::fj::ValidatedPlan;
 
 mod counters;
@@ -89,8 +92,28 @@ pub struct IntrospectionReport<'p> {
     pub stats: crate::api::stats::ExecutionStats,
 }
 
+/// Reach unit labels: kind, index, and delta occurrence — structured
+/// until [`Display`] at the report edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitLabel {
+    Base(usize),
+    Rec { idx: usize, delta: OccId },
+    Main(usize),
+}
+
+impl fmt::Display for UnitLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Base(idx) => write!(f, "reach base {idx}"),
+            Self::Rec { idx, delta } => write!(f, "reach rec {idx} (delta occ {})", delta.0),
+            Self::Main(idx) => write!(f, "main {idx}"),
+        }
+    }
+}
+
 /// Plans matching the prepared pipeline. Reach labels are
-/// `reach base {i}`, `reach rec {i} (delta occ {d})`, `main {i}`.
+/// [`UnitLabel`] — rendered at the edge as `reach base {i}`,
+/// `reach rec {i} (delta occ {d})`, `main {i}`.
 #[derive(Debug)]
 pub enum ReportBody<'p> {
     Cq {
@@ -98,7 +121,7 @@ pub enum ReportBody<'p> {
     },
     Reach {
         rec_id: crate::ir::InteriorId,
-        units: Vec<(String, RulePlan<'p>)>,
+        units: Vec<(UnitLabel, RulePlan<'p>)>,
     },
 }
 

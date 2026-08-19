@@ -1,7 +1,8 @@
-//! A minimal bump arena over `Vec<u8>` chunks. Its one consumer is the
-//! write delta (fact bytes accumulate here and free as a whole at commit
-//! or abort); the executor's scratch is retained-capacity `Vec` pools,
-//! not this type. No external crate, no `unsafe`:
+//! A minimal bump arena over `Vec<u8>` chunks. Consumers are the write
+//! delta and the heap construction stage (fact and dictionary bytes
+//! accumulate here and free as a whole); the executor's scratch is
+//! retained-capacity `Vec` pools, not this type. No external crate, no
+//! `unsafe`:
 //! allocations hand out index-based [`ArenaSlice`] handles, never pointers,
 //! so chunk storage may move without invalidating anything.
 
@@ -9,6 +10,11 @@
 const CHUNK_CAPACITY: usize = 64 * 1024;
 
 /// An index-based handle to bytes stored in an [`Arena`].
+///
+/// Provenance: one arena exists per write delta. The handle is meaningful
+/// only against the arena that minted it. A generation tag is required
+/// the day a second arena appears; until then the pairing is structural,
+/// not a field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArenaSlice {
     chunk: u32,

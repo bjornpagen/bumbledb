@@ -121,13 +121,11 @@ pub(super) fn string_cmp(
     } else {
         match rng.range(3) {
             0 => Term::Literal(Value::String(
-                target::string_hit(relation, field, rng).into_bytes().into(),
+                target::string_hit(relation, field, rng).into(),
             )),
             1 => {
                 b.miss = true;
-                Term::Literal(Value::String(
-                    format!("missing-{}", rng.u64()).into_bytes().into(),
-                ))
+                Term::Literal(Value::String(format!("missing-{}", rng.u64()).into()))
             }
             _ => Term::Param(b.fresh_param()),
         }

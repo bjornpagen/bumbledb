@@ -19,7 +19,7 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
         Value::String(raw) => {
             digest.update(&[4]);
             digest.update(&(raw.len() as u64).to_le_bytes());
-            digest.update(raw);
+            digest.update(raw.as_bytes());
         }
         Value::FixedBytes(raw) => {
             digest.update(&[5]);

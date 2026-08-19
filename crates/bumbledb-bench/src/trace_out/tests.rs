@@ -1,35 +1,36 @@
 use super::*;
+use bumbledb::obs::{TraceArgs, TracePoint, names};
 
-fn span(name: &'static str, cat: Category, start_ns: u64, dur_ns: u64, a0: u64) -> TraceEvent {
+fn span(point: TracePoint, start_ns: u64, dur_ns: u64, a0: u64) -> TraceEvent {
     TraceEvent::Span {
-        name,
-        cat,
+        point,
         start_ns,
         dur_ns,
-        a0,
-        a1: 0,
+        args: if a0 == 0 {
+            TraceArgs::None
+        } else {
+            TraceArgs::Count(a0)
+        },
     }
 }
 
-fn point(name: &'static str, cat: Category, start_ns: u64, a0: u64) -> TraceEvent {
+fn point(point: TracePoint, start_ns: u64, a0: u64) -> TraceEvent {
     TraceEvent::Point {
-        name,
-        cat,
+        point,
         start_ns,
-        a0,
-        a1: 0,
+        args: TraceArgs::Count(a0),
     }
 }
 
 #[test]
 fn the_chrome_writer_is_golden_and_structurally_valid() {
     let engine = vec![
-        span("prepare", Category::Prepare, 1000, 2500, 0),
-        span("execute", Category::Execute, 4000, 10000, 7),
-        span("join", Category::Execute, 5000, 8000, 0),
-        point("cache_hit", Category::Cache, 6000, 3),
+        span(names::PREPARE, 1000, 2500, 0),
+        span(names::EXECUTE, 4000, 10000, 7),
+        span(names::JOIN, 5000, 8000, 0),
+        point(names::CACHE_HIT, 6000, 3),
     ];
-    let harness = vec![span("sample", Category::Harness, 900, 15000, 0)];
+    let harness = vec![span(names::SAMPLE, 900, 15000, 0)];
     let mut out = Vec::new();
     write_chrome(&engine, &harness, &mut out).expect("writes");
     let text = String::from_utf8(out).expect("utf-8");
@@ -75,7 +76,7 @@ fn every_registered_name_is_escape_free_ascii() {
     ];
     for name in names {
         assert!(
-            name.is_ascii() && !name.contains('"') && !name.contains('\\'),
+            name.label().is_ascii() && !name.label().contains('"') && !name.label().contains('\\'),
             "{name}"
         );
     }
@@ -85,8 +86,8 @@ fn every_registered_name_is_escape_free_ascii() {
 fn the_flame_summary_computes_exact_self_time() {
     // Outer 100 us containing inner 60 us: outer self = 40 us.
     let events = vec![
-        span("outer", Category::Execute, 0, 100_000, 0),
-        span("inner", Category::Execute, 10_000, 60_000, 0),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::JOIN, 10_000, 60_000, 0),
     ];
     let summary = FlameSummary::compute(&events);
     assert_eq!(summary.wall_ns, 100_000);
@@ -94,21 +95,21 @@ fn the_flame_summary_computes_exact_self_time() {
     let inner = &summary.rows[0];
     assert_eq!(
         (inner.name, inner.total_ns, inner.self_ns),
-        ("inner", 60_000, 60_000),
+        ("join", 60_000, 60_000),
         "inner leads by self time"
     );
     let outer = &summary.rows[1];
     assert_eq!(
         (outer.name, outer.total_ns, outer.self_ns),
-        ("outer", 100_000, 40_000)
+        ("execute", 100_000, 40_000)
     );
 
     // Only DIRECT children are subtracted: grandchildren charge the
     // middle span, not the outer one.
     let nested = vec![
-        span("outer", Category::Execute, 0, 100_000, 0),
-        span("middle", Category::Execute, 10_000, 60_000, 0),
-        span("leaf", Category::Execute, 20_000, 30_000, 0),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::VIEWS, 10_000, 60_000, 0),
+        span(names::FINALIZE, 20_000, 30_000, 0),
     ];
     let summary = FlameSummary::compute(&nested);
     let by_name = |name: &str| {
@@ -119,21 +120,21 @@ fn the_flame_summary_computes_exact_self_time() {
             .expect("row")
             .self_ns
     };
-    assert_eq!(by_name("outer"), 40_000);
-    assert_eq!(by_name("middle"), 30_000);
-    assert_eq!(by_name("leaf"), 30_000);
+    assert_eq!(by_name("execute"), 40_000);
+    assert_eq!(by_name("views"), 30_000);
+    assert_eq!(by_name("finalize"), 30_000);
 }
 
 #[test]
 fn the_table_render_is_golden() {
     let events = vec![
-        span("outer", Category::Execute, 0, 100_000, 0),
-        span("inner", Category::Execute, 10_000, 60_000, 0),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::JOIN, 10_000, 60_000, 0),
     ];
     let summary = FlameSummary::compute(&events);
     let expected = "span                       calls     total_us      self_us       p50_us       max_us\n\
-                    inner                          1       60.000       60.000       60.000       60.000\n\
-                    outer                          1      100.000       40.000      100.000      100.000\n\
+                    join                           1       60.000       60.000       60.000       60.000\n\
+                    execute                        1      100.000       40.000      100.000      100.000\n\
                     total wall 100.000 us\n";
     assert_eq!(summary.render(), expected);
 }
@@ -143,15 +144,15 @@ fn fold_stacks_charges_self_time_by_enclosure_path() {
     // outer(100) ⊃ middle(60) ⊃ leaf(30): each frame's self time is its
     // duration minus its direct child, and the stack path names the chain.
     let nested = vec![
-        span("outer", Category::Execute, 0, 100_000, 0),
-        span("middle", Category::Execute, 10_000, 60_000, 0),
-        span("leaf", Category::Execute, 20_000, 30_000, 0),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::VIEWS, 10_000, 60_000, 0),
+        span(names::FINALIZE, 20_000, 30_000, 0),
     ];
     let folded = fold_stacks(&nested);
     // BTreeMap order: a prefix sorts before its extension.
-    let expected = "outer 40000\n\
-                    outer;middle 30000\n\
-                    outer;middle;leaf 30000\n";
+    let expected = "execute 40000\n\
+                    execute;views 30000\n\
+                    execute;views;finalize 30000\n";
     assert_eq!(folded, expected);
 }
 
@@ -161,10 +162,10 @@ fn fold_stacks_collapses_identical_sibling_stacks() {
     // their self times summed (the collapsed-stack contract). Ordinary
     // point events carry no charge and never appear.
     let events = vec![
-        span("execute", Category::Execute, 0, 100_000, 0),
-        span("join", Category::Execute, 10_000, 20_000, 0),
-        span("join", Category::Execute, 40_000, 30_000, 0),
-        point("cache_hit", Category::Cache, 50_000, 3),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::JOIN, 10_000, 20_000, 0),
+        span(names::JOIN, 40_000, 30_000, 0),
+        point(names::CACHE_HIT, 50_000, 3),
     ];
     let folded = fold_stacks(&events);
     let expected = "execute 50000\n\
@@ -184,10 +185,10 @@ fn fold_stacks_charges_phase_accumulators_under_their_join() {
     // preceding join and makes room in that join's self time — a
     // join-dominated capture stops rendering as one flat bar.
     let events = vec![
-        span("execute", Category::Execute, 0, 100_000, 0),
-        span("join", Category::Execute, 10_000, 50_000, 0),
-        point("jp_probe_n0", Category::Phase, 70_000, 30_000),
-        point("jp_iter_n0", Category::Phase, 70_001, 10_000),
+        span(names::EXECUTE, 0, 100_000, 0),
+        span(names::JOIN, 10_000, 50_000, 0),
+        point(names::JOIN_PHASE[2][0], 70_000, 30_000),
+        point(names::JOIN_PHASE[0][0], 70_001, 10_000),
     ];
     let expected = "execute 50000\n\
                     execute;join 10000\n\
@@ -198,8 +199,8 @@ fn fold_stacks_charges_phase_accumulators_under_their_join() {
     // No join anywhere: the accumulator charges the deepest span
     // containing its stamp — attribution, not identification.
     let joinless = vec![
-        span("execute", Category::Execute, 0, 100_000, 0),
-        point("jp_hash_n1", Category::Phase, 5_000, 20_000),
+        span(names::EXECUTE, 0, 100_000, 0),
+        point(names::JOIN_PHASE[1][1], 5_000, 20_000),
     ];
     let expected = "execute 80000\n\
                     execute;jp_hash_n1 20000\n";
@@ -217,21 +218,20 @@ fn fold_stacks_empty_capture_is_empty() {
 }
 
 #[test]
-fn an_unregistered_phase_event_never_suppresses_the_phase_table() {
-    // An accumulator name the registry table doesn't know (an engine
-    // ahead of the bench's view) drops its own row only — the table
-    // used to vanish whole.
-    let registered = bumbledb::obs::names::JOIN_PHASE[0][0];
+fn a_non_phase_event_never_suppresses_the_phase_table() {
+    // A non-phase point sitting beside a registered accumulator must not
+    // suppress the table — only JoinPhase rows render.
+    let registered = names::JOIN_PHASE[0][0];
     let events = vec![
-        point(registered, Category::Phase, 0, 10_000),
-        point("jp_unregistered_nX", Category::Phase, 0, 5_000),
+        point(registered, 0, 10_000),
+        point(names::CACHE_HIT, 0, 5_000),
     ];
     let table = render_phase_table(&events).expect("the registered row still renders");
-    assert!(table.contains(registered), "{table}");
-    assert!(!table.contains("jp_unregistered_nX"), "{table}");
+    assert!(table.contains(registered.label()), "{table}");
+    assert!(!table.contains("cache_hit"), "{table}");
 
     // Nothing registered at all still means no table.
-    let alien = vec![point("jp_unregistered_nX", Category::Phase, 0, 5_000)];
+    let alien = vec![point(names::CACHE_HIT, 0, 5_000)];
     assert!(render_phase_table(&alien).is_none());
 }
 
@@ -243,12 +243,12 @@ fn equal_tick_nests_resolve_parenthood_by_drop_order() {
     // (a stable (start, -end) sort alone kept the buffer order and
     // inverted the pair, charging the parent to the child).
     let events = vec![
-        span("child", Category::Execute, 1_000, 42, 0),
-        span("parent", Category::Execute, 1_000, 42, 0),
+        span(names::JOIN, 1_000, 42, 0),
+        span(names::EXECUTE, 1_000, 42, 0),
     ];
 
     let folded = fold_stacks(&events);
-    assert_eq!(folded, "parent 0\nparent;child 42\n");
+    assert_eq!(folded, "execute 0\nexecute;join 42\n");
 
     let summary = FlameSummary::compute(&events);
     let self_of = |name: &str| {
@@ -259,16 +259,20 @@ fn equal_tick_nests_resolve_parenthood_by_drop_order() {
             .expect("row")
             .self_ns
     };
-    assert_eq!(self_of("parent"), 0, "the child charge lands on the parent");
-    assert_eq!(self_of("child"), 42);
+    assert_eq!(
+        self_of("execute"),
+        0,
+        "the child charge lands on the parent"
+    );
+    assert_eq!(self_of("join"), 42);
 
     // Distinct-tick nests are untouched: the (start, -end) key alone
     // already orders the parent first, record order notwithstanding.
     let distinct = vec![
-        span("child", Category::Execute, 1_000, 42, 0),
-        span("parent", Category::Execute, 1_000, 84, 0),
+        span(names::JOIN, 1_000, 42, 0),
+        span(names::EXECUTE, 1_000, 84, 0),
     ];
-    assert_eq!(fold_stacks(&distinct), "parent 42\nparent;child 42\n");
+    assert_eq!(fold_stacks(&distinct), "execute 42\nexecute;join 42\n");
 }
 
 /// A real captured S-scale `containment_walk` trace: the expected spans appear
@@ -281,12 +285,13 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
 
     let dir = std::env::temp_dir().join("bumbledb-bench-trace-out");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     let cfg = GenConfig {
         seed: 1,
         scale: Scale::S,
     };
-    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger).expect("create");
+    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger)
+        .expect("create")
+        .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
 
     let family = crate::families::all()
@@ -298,7 +303,7 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
     let mut buffer = bumbledb::Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{e:?}"))?;
         Ok(buffer.len() as u64)
     };

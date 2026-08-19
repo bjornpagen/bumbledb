@@ -26,7 +26,7 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Option<Cursor> {
-        self.probe_child_at(cursor, self.selection_levels + level, key, hash)
+        self.probe_child_at(cursor, self.join_index(level), key, hash)
     }
 
     /// [`Colt::get_prehashed`] over an internal (selection-inclusive)
@@ -69,7 +69,7 @@ impl Colt {
     /// and already-forced nodes): phase 2's loads then hit a ready map.
     pub fn ensure_forced(&mut self, cursor: Cursor, level: usize) {
         if let Cursor::Node(node) = cursor {
-            self.force(node, self.selection_levels + level);
+            self.force(node, self.join_index(level));
         }
     }
 

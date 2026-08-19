@@ -120,6 +120,15 @@ part of the spec.
   `docs/architecture/60-validation.md` § the store sweeper, the
   division of authority).
 
+* `obligation_partition_needs_validation` — the complete roster's
+  load-bearing validation witness (`Txn.obligation_partition`): a
+  closed relation whose sealed axioms collide on a functionality
+  statement has an empty complete roster (closed functionality is
+  skipped) while `holds` fails. Without the closed-constant witness,
+  an empty complete roster does not recover `holds`, which is why
+  L3 (`Txn.completeRosterPasses_iff_holds`) cannot be proved for a
+  roster that skips validation-discharged obligations.
+
 * `stale_but_sound` — the maintenance protocol's freshness gap: a
   committed state (it `holds` its theory) whose derived relation is
   SOUND (its containment backs every derived fact — vacuously, here)
@@ -610,7 +619,7 @@ PRD 06, `Exec/Sweep.lean` module doc):
   premises at all — the frontier only ever advances across points a
   consumed segment holds — so a violated premise can only convict the
   innocent, never acquit the guilty. The checker's failure mode off
-  its witness is spurious `CommitRejected`, never a silently accepted
+  its witness is spurious `Admission::Rejected`, never a silently accepted
   violation.
 * **Violating `Disjoint` alone cannot produce a wrong verdict.**
   Completeness needs only `Ordered` (`Exec.sweep_complete_of_ordered`)
@@ -854,6 +863,68 @@ theorem incremental_verdict_needs_holds :
         fdTheory.den (emptyDelta.applyTo violInstance) ⟨0⟩ :=
       Or.inl ⟨Or.inr rfl, fun hf => hf⟩
     exact rowTrue_ne_rowFalse (hj.2 rowTrue rowFalse hT hF rfl)
+
+/-! ## The complete-roster validation-witness countermodel
+
+`Txn.obligation_partition`'s closed-constant witness is load-bearing.
+A closed relation whose sealed axioms collide on a functionality
+statement has an empty complete roster — closed functionality is
+skipped — while `holds` fails at every instance. An empty complete
+roster without the validation witness does not recover `holds`. -/
+
+/-- Two colliding sealed axioms: the same two-row fixture, now a
+closed extension. -/
+def closedFdExt : GroundExtension := ⟨[rowTrue, rowFalse]⟩
+
+/-- The self-refuting closed theory: `R(field0) -> R` over a closed
+relation whose axioms are not a key. Schema validation refuses this
+(`ClosedStatementRefuted`); Lean can still write it, which is why
+the partition theorem carries the witness as a hypothesis. -/
+def closedFdTheory : Theory where
+  header := fdHeader
+  closed := fun _ => some closedFdExt
+  statements := [.functionality ⟨0⟩ keyProj]
+
+/-- A raw empty instance — ordinary facts are irrelevant; the
+collision is in the sealed extension. -/
+def rawEmpty : Instance := fun _ _ => False
+
+/-- **The countermodel (the complete roster's validation witness).**
+WITHOUT `closedConstantHolds`, an empty complete roster does not
+imply `holds`: every instance-dependent obligation is vacuously
+clear (the only statement is closed-constant), and the sealed
+collision still refutes the theory. This is why L3
+(`Txn.completeRosterPasses_iff_holds`) cannot drop the validation
+witness, and why `obligation_partition` composes two witnesses. -/
+theorem obligation_partition_needs_validation :
+    Txn.completeRosterPasses closedFdTheory rawEmpty ∧
+    ¬ closedConstantHolds closedFdTheory ∧
+    ¬ holds closedFdTheory rawEmpty := by
+  have hsplit : closedFdTheory.header.intervalSplit ⟨0⟩ keyProj = none :=
+    rfl
+  have hcollide {I : Instance} : ¬ holds closedFdTheory I := by
+    intro h
+    have hj := h _ (List.mem_singleton.mpr rfl)
+    simp only [Statement.judgment, hsplit] at hj
+    have hT : rowTrue ∈ closedFdTheory.den I ⟨0⟩ :=
+      List.mem_cons_self ..
+    have hF : rowFalse ∈ closedFdTheory.den I ⟨0⟩ :=
+      List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl)
+    exact rowTrue_ne_rowFalse (hj.2 rowTrue rowFalse hT hF rfl)
+  refine ⟨⟨?_, ?_⟩, ?_, hcollide⟩
+  · intro st hst
+    have hst' := hst.1.1.1
+    cases List.mem_singleton.mp hst'
+    exact nomatch hst.2
+  · intro st hst
+    have hst' := hst.1.1.1
+    cases List.mem_singleton.mp hst'
+    exact nomatch hst.1.2
+  · intro hv
+    exact hcollide fun st hmem =>
+      hv st hmem (by
+        cases List.mem_singleton.mp hmem
+        rfl) rawEmpty
 
 /-! ## The unkeyed double-count countermodel (PRD 07)
 

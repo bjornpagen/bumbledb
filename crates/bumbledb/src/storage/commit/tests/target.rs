@@ -12,11 +12,12 @@
 //! with a changed ψ-relevant non-key field.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result, Violation};
+use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
     FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
@@ -241,29 +242,33 @@ fn base_then_delta(
     base: &[(RelationId, Vec<u8>)],
     deletes: &[(RelationId, Vec<u8>)],
     inserts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
+) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    apply_delta(&env, &schema, &[], base).expect("base commit");
+    apply_delta(&env, &schema, &[], base)
+        .expect("base commit")
+        .expect("admitted");
     let before = committed_data(&env);
     let result = apply_delta(&env, &schema, deletes, inserts);
-    if result.is_err() {
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         assert_eq!(committed_data(&env), before);
     }
     result
 }
 
-fn assert_target_violation(result: Result<()>, statement: StatementId, source_fact: &[u8]) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+fn assert_target_violation(
+    result: Result<Admission<()>>,
+    statement: StatementId,
+    source_fact: &[u8],
+) {
+    let violations = expect_rejected(result);
     let [
         Violation::Containment {
-            statement: named,
+            id: named,
             direction,
             fact,
+            ..
         },
     ] = violations.as_slice()
     else {
@@ -312,7 +317,8 @@ fn cluster_demolition_commits() {
         ],
         &[],
     )
-    .expect("the whole cluster leaves together");
+    .expect("the whole cluster leaves together")
+    .unwrap();
 }
 
 #[test]
@@ -357,7 +363,8 @@ fn delete_and_reestablish_by_a_different_fact_commits() {
         &[(TARGET, target_fact(&schema, 5, 0))],
         &[(TARGET, target_fact(&schema, 5, 1))],
     )
-    .expect("the re-established key tuple satisfies the survivor");
+    .expect("the re-established key tuple satisfies the survivor")
+    .unwrap();
 }
 
 // ---------- interval form ----------
@@ -397,7 +404,8 @@ fn shrink_outside_the_source_commits() {
         &[(SHIFT, span_fact(&schema, SHIFT, 1, 0, 10))],
         &[(SHIFT, span_fact(&schema, SHIFT, 1, 0, 7))],
     )
-    .expect("the shrunk segment still covers the source");
+    .expect("the shrunk segment still covers the source")
+    .unwrap();
 }
 
 #[test]
@@ -433,7 +441,8 @@ fn delete_plus_replacement_covering_the_hole_commits() {
         &[(SHIFT, span_fact(&schema, SHIFT, 1, 5, 10))],
         &[(SHIFT, span_fact(&schema, SHIFT, 1, 5, 9))],
     )
-    .expect("the replacement covers the hole in the same delta");
+    .expect("the replacement covers the hole in the same delta")
+    .unwrap();
 }
 
 #[test]
@@ -458,7 +467,8 @@ fn two_disestablished_segments_of_one_group_walk_the_source_once() {
             (SHIFT, span_fact(&schema, SHIFT, 1, 6, 9)),
         ],
     )
-    .expect("the rebuilt chain covers the source");
+    .expect("the rebuilt chain covers the source")
+    .unwrap();
 }
 
 #[test]
@@ -476,7 +486,8 @@ fn segment_outside_every_source_deletes_freely() {
         &[(SHIFT, span_fact(&schema, SHIFT, 1, 20, 30))],
         &[],
     )
-    .expect("a non-intersecting segment is unreferenced");
+    .expect("a non-intersecting segment is unreferenced")
+    .unwrap();
 }
 
 // ---------- ψ-qualified re-establishment ----------
@@ -519,7 +530,8 @@ fn reestablishment_inside_psi_commits() {
         &[(ACCOUNT, account_fact(&schema, 9, true, 0))],
         &[(ACCOUNT, account_fact(&schema, 9, true, 1))],
     )
-    .expect("an in-ψ establisher re-establishes the tuple");
+    .expect("an in-ψ establisher re-establishes the tuple")
+    .unwrap();
 }
 
 #[test]
@@ -562,7 +574,8 @@ fn parent_and_child_deleted_together_commit() {
         ],
         &[],
     )
-    .expect("the == cluster leaves whole");
+    .expect("the == cluster leaves whole")
+    .unwrap();
 }
 
 #[test]

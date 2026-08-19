@@ -8,11 +8,12 @@
 //! order).
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result, Violation};
+use crate::error::{Admission, Direction, Error, Result, Violation};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
     Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId,
@@ -124,15 +125,17 @@ fn base_then_delta(
     env_base: &[(RelationId, Vec<u8>)],
     deletes: &[(RelationId, Vec<u8>)],
     inserts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
+) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let env = Environment::create(dir.path(), schema).expect("create");
     if !env_base.is_empty() {
-        apply_delta(&env, schema, &[], env_base).expect("base commit");
+        apply_delta(&env, schema, &[], env_base)
+            .expect("base commit")
+            .expect("admitted");
     }
     let before = committed_data(&env);
     let result = apply_delta(&env, schema, deletes, inserts);
-    if result.is_err() {
+    if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
         assert_eq!(committed_data(&env), before, "an abort persists nothing");
     }
     drop(env);
@@ -141,20 +144,18 @@ fn base_then_delta(
 }
 
 fn assert_capacity_violation(
-    result: Result<()>,
+    result: Result<Admission<()>>,
     statement: StatementId,
     parent_fact: &[u8],
     measure: u128,
 ) {
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+    let violations = expect_rejected(result);
     let [
         Violation::Capacity {
-            statement: named,
+            id: named,
             fact,
             measure: observed,
+            ..
         },
     ] = violations.as_slice()
     else {
@@ -192,7 +193,9 @@ fn capacity_within_the_window_commits() {
         &[],
         &[(ACCOUNT, account(&schema, 7, 1, 1))],
     );
-    result.expect("two selected children sit inside 1..2 and 0..3");
+    result
+        .expect("two selected children sit inside 1..2 and 0..3")
+        .unwrap();
 }
 
 /// Ceiling: the third φ-child pushes the unit measure past `hi = 2`; the
@@ -261,7 +264,9 @@ fn capacity_set_selection_misses_do_not_count() {
         // moves, both laws hold.
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
-    result.expect("an out-of-set child is not a member of any group");
+    result
+        .expect("an out-of-set child is not a member of any group")
+        .unwrap();
 }
 
 /// Removal: deleting a φ-child re-measures the touched parent —
@@ -282,10 +287,12 @@ fn capacity_removal_remeasures_the_touched_parent() {
             (ACCOUNT, account(&schema, 7, 1, 1)),
         ],
     )
-    .expect("base");
+    .expect("base")
+    .unwrap();
     // One kind-1 child leaves: the savings law still measures 1.
     apply_delta(&env, &schema, &[(ACCOUNT, account(&schema, 7, 1, 1))], &[])
-        .expect("the floor still holds at measure 1");
+        .expect("the floor still holds at measure 1")
+        .unwrap();
     // The last kind-1 child leaves: measure 0 < lo 1.
     let before = committed_data(&env);
     let result = apply_delta(&env, &schema, &[(ACCOUNT, account(&schema, 7, 1, 0))], &[]);
@@ -313,7 +320,7 @@ fn capacity_parent_deletion_releases_the_group() {
         ],
         &[],
     );
-    result.expect("no parent, no capacity obligation");
+    result.expect("no parent, no capacity obligation").unwrap();
 }
 
 /// Groups are judged per parent: a new childless parent convicts its own
@@ -416,7 +423,9 @@ fn exclusion_window_admits_non_members() {
             (ACCOUNT, account(&schema, 7, 2, 1)),
         ],
     );
-    result.expect("out-of-sigma children never count against the exclusion");
+    result
+        .expect("out-of-sigma children never count against the exclusion")
+        .unwrap();
 }
 
 /// Deleting the parent releases the exclusion: the member lands in the
@@ -434,7 +443,7 @@ fn exclusion_window_releases_with_the_parent() {
         &[(HOLDER, h)],
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
-    result.expect("no parent, no exclusion obligation");
+    result.expect("no parent, no exclusion obligation").unwrap();
 }
 
 // ---------- the weighted family ----------
@@ -519,9 +528,11 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     let [op] = &*plan.inserts else {
         panic!("one insert op");
     };
-    let [edge] = op.capacity_edges() else {
-        panic!("one capacity edge");
-    };
+    let edge = op.capacity_r_keys().next().expect("one capacity edge");
+    assert!(
+        op.capacity_r_keys().nth(1).is_none(),
+        "exactly one capacity edge"
+    );
     assert_eq!(
         edge.weight,
         crate::storage::commit::plan::MarkWeight::Weighted(60),
@@ -530,7 +541,9 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     drop(plan);
     drop(insert_delta);
 
-    apply_delta(&env, &schema, &[], &[(DEVICE, d.clone())]).expect("base commit");
+    apply_delta(&env, &schema, &[], &[(DEVICE, d.clone())])
+        .expect("base commit")
+        .expect("admitted");
     let mut delete_delta = crate::storage::delta::WriteDelta::new(&schema);
     {
         let view = env.read_txn().expect("txn");
@@ -540,12 +553,14 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     let [op] = &*plan.deletes else {
         panic!("one delete op");
     };
-    let crate::storage::commit::plan::FactOp::Delete { capacity_keys, .. } = op else {
-        panic!("delete arm");
-    };
-    let [_] = &**capacity_keys else {
-        panic!("one capacity edge");
-    };
+    assert_eq!(
+        op.r_keys
+            .iter()
+            .filter(|edge| edge.capacity().is_some())
+            .count(),
+        1,
+        "one capacity edge"
+    );
 }
 
 /// Sum within bounds: weights sum, not count — three devices measuring
@@ -564,7 +579,9 @@ fn capacity_sum_within_bounds_commits() {
         &[],
         &[(DEVICE, device(&schema, 1, 10, 2))],
     );
-    result.expect("Σ watts = 100 sits on the inclusive ceiling");
+    result
+        .expect("Σ watts = 100 sits on the inclusive ceiling")
+        .unwrap();
 }
 
 /// Sum ceiling: the third device pushes Σ watts to 180 > 100. The
@@ -640,7 +657,9 @@ fn capacity_zero_weight_children_do_not_lift_the_floor() {
             (DEVICE, device(&schema, 1, 5, 2)),
         ],
     );
-    result.expect("one weighted row lifts the floor; zero-weight rows ride along");
+    result
+        .expect("one weighted row lifts the floor; zero-weight rows ride along")
+        .unwrap();
 }
 
 /// Declared statement order in [`dependent_bound_schema`].
@@ -725,7 +744,8 @@ fn capacity_dependent_bound_reads_the_final_state_holder() {
             (DEVICE, device(&schema, 1, 90, 0)),
         ],
     )
-    .expect("90 watts under supply 100");
+    .expect("90 watts under supply 100")
+    .unwrap();
     // The identity rewrite lowers the supply under the standing load.
     let lowered = pool(&schema, 1, 50);
     let before = committed_data(&env);
@@ -744,7 +764,8 @@ fn capacity_dependent_bound_reads_the_final_state_holder() {
         &[(POOL, pool(&schema, 1, 100))],
         &[(POOL, pool(&schema, 1, 200))],
     )
-    .expect("the raised bound admits the standing load");
+    .expect("the raised bound admits the standing load")
+    .unwrap();
 }
 
 // ---------- the Duration weight (the calendar shape) ----------
@@ -1106,7 +1127,8 @@ fn capacity_weight_on_fresh_keyed_relations_is_seen_by_the_same_commits_walk() {
             (FRESH_DEVICE, fresh_device(&schema, 12, 7, 40)),
         ],
     )
-    .expect("Σ watts = 100 sits on the fresh pool's supply ceiling");
+    .expect("Σ watts = 100 sits on the fresh pool's supply ceiling")
+    .unwrap();
 }
 
 // ---------- the phase laws ----------
@@ -1135,14 +1157,11 @@ fn key_violation_preempts_the_capacity_judgment() {
             ),
         ],
     );
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
-    let [Violation::Functionality(fv)] = violations.as_slice() else {
+    let violations = expect_rejected(result);
+    let [Violation::Functionality { id, .. }] = violations.as_slice() else {
         panic!("expected the lone key citation, got {violations:?}");
     };
-    assert_eq!(fv.statement(), HOLDER_KEY);
+    assert_eq!(*id, HOLDER_KEY);
 }
 
 /// A mixed statement-phase rejection carries containment AND capacity
@@ -1166,20 +1185,19 @@ fn statement_phase_cites_containments_and_capacities_together() {
             (ACCOUNT, orphan.clone()),
         ],
     );
-    let err = result.unwrap_err();
-    let Error::CommitRejected { violations } = &err else {
-        panic!("expected a rejected commit, got {err:?}");
-    };
+    let violations = expect_rejected(result);
     let [
         Violation::Containment {
-            statement: c_stmt,
+            id: c_stmt,
             direction,
             fact: c_fact,
+            ..
         },
         Violation::Capacity {
-            statement: w_stmt,
+            id: w_stmt,
             fact: w_fact,
             measure,
+            ..
         },
     ] = violations.as_slice()
     else {

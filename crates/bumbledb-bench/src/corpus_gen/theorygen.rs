@@ -192,15 +192,7 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
             }
         }
         ValueType::I64 => Value::I64(signed(rng)),
-        ValueType::String => {
-            if rng.chance(1, 8) {
-                // Non-UTF-8 bytes: `SelectionLiteralNotUtf8` and the
-                // extension's value check both see hostile strings.
-                Value::String(Box::from(&[0xFF, 0xFE, 0x00][..]))
-            } else {
-                Value::String(pick(rng, HANDLES).as_bytes().into())
-            }
-        }
+        ValueType::String => Value::String(pick(rng, HANDLES).into()),
         ValueType::FixedBytes { len } => {
             let declared = usize::from(*len);
             // The width is the type: an off-by-one draw is a mismatch.

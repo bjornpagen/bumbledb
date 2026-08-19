@@ -76,8 +76,7 @@ impl WriteDelta<'_> {
                 continue;
             };
             let row_id = u64::from_be_bytes(crate::encoding::field_word_bytes(
-                self.arena.get(*slice),
-                relation.layout(),
+                relation.layout().encoded(self.arena.get(*slice)),
                 usize::from(field.0),
             ));
             match floors.iter_mut().find(|(seen, _)| seen == rel) {
@@ -124,10 +123,11 @@ impl WriteDelta<'_> {
     }
 
     /// Pending intern entries to flush to `_dict` (reader: the 50-storage doc phase 4).
-    pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (&[u8], u64)> + '_ {
-        self.pending_interns
-            .iter()
-            .map(|(raw, id)| (raw.as_ref(), *id))
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pending_interns(
+        &self,
+    ) -> impl Iterator<Item = (&[u8], crate::encoding::InternId)> + '_ {
+        self.interns.iter().flat_map(super::PendingInterns::entries)
     }
 
     /// The recorded disposition for a fact, if any (last one wins).

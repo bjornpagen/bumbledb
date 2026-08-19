@@ -148,7 +148,9 @@ fn ladder_queries() -> Vec<Query> {
 fn fixed_width_ladder_stream_agrees_with_the_engine() {
     let descriptor = ladder_schema();
     let dir = TempDir::new("differential-fixed-ladder");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let mut mirror = NaiveDb::new(&descriptor);
@@ -308,7 +310,9 @@ fn unit_slot(playlist: u64, at: u64, track: u64) -> (RelationId, Vec<Value>) {
 fn exact_partition_subfamily_judges_the_four_violating_deltas() {
     let descriptor = playlist_schema();
     let dir = TempDir::new("differential-exact-partition");
-    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone())
+        .expect("create engine store")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
     let green = Delta {

@@ -39,8 +39,8 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
-    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, Query,
-    StatementKind, Term, Value,
+    AggOp, AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm,
+    Query, StatementKind, Term, Value,
 };
 
 use crate::marshal::OwnedParam;
@@ -315,8 +315,8 @@ wire_tags! {
     /// Query IR kind (`query_in`): CQ carries no rec; Reach carries rec
     /// by value. Exhaustive over engine `Query`.
     mod query for Query {
-        CQ: Query::Cq { .. } => "cq",
-        REACH: Query::Reach { .. } => "reach",
+        CQ: Query { rec: None, .. } => "cq",
+        REACH: Query { .. } => "reach",
     }
 }
 
@@ -337,6 +337,83 @@ wire_tags! {
         SET: OwnedParam::Set(_) => "set",
         SCALAR: OwnedParam::Scalar(_) => "scalar",
     }
+}
+
+wire_tags! {
+    /// `bumbledb::ErrorFamily` — the forced napi kind table. Engine errors
+    /// cross as `{ kind, message }`; a new family arm breaks this crate.
+    mod error_family for unit ErrorFamily {
+        FORMAT_MISMATCH: ErrorFamily::FormatMismatch => "formatMismatch",
+        SCHEMA_MISMATCH: ErrorFamily::SchemaMismatch => "schemaMismatch",
+        ALREADY_INITIALIZED: ErrorFamily::AlreadyInitialized => "alreadyInitialized",
+        DESTINATION_EXISTS: ErrorFamily::DestinationExists => "destinationExists",
+        PUBLISHED_BUT_UNSYNCED: ErrorFamily::PublishedButUnsynced => "publishedButUnsynced",
+        ENVIRONMENT_LOCKED: ErrorFamily::EnvironmentLocked => "environmentLocked",
+        STORE_KIND_MISMATCH: ErrorFamily::StoreKindMismatch => "storeKindMismatch",
+        DESCRIPTOR_MISSING: ErrorFamily::DescriptorMissing => "descriptorMissing",
+        IO: ErrorFamily::Io => "io",
+        LMDB: ErrorFamily::Lmdb => "lmdb",
+        READERS_FULL: ErrorFamily::ReadersFull => "readersFull",
+        SCHEMA: ErrorFamily::Schema => "schema",
+        VALIDATION: ErrorFamily::Validation => "validation",
+        FACT_SHAPE: ErrorFamily::FactShape => "factShape",
+        FRESH_EXHAUSTED: ErrorFamily::FreshExhausted => "freshExhausted",
+        CLOSED_RELATION_WRITE: ErrorFamily::ClosedRelationWrite => "closedRelationWrite",
+        COMMIT_SYNC: ErrorFamily::CommitSync => "commitSync",
+        TRANSACTION_POISONED: ErrorFamily::TransactionPoisoned => "transactionPoisoned",
+        FOREIGN_PREPARED: ErrorFamily::ForeignPreparedQuery => "foreignPrepared",
+        FOREIGN_WITNESS: ErrorFamily::ForeignWitness => "foreignWitness",
+        PARAM: ErrorFamily::Param => "param",
+        MEASURE_OF_RAY: ErrorFamily::MeasureOfRay => "measureOfRay",
+        CAPACITY_RAY_MEASURE: ErrorFamily::CapacityRayMeasure => "capacityRayMeasure",
+        DERIVED_BUDGET_EXCEEDED: ErrorFamily::DerivedBudgetExceeded => "derivedBudgetExceeded",
+        OVERFLOW: ErrorFamily::Overflow => "overflow",
+        RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
+        CORRUPTION: ErrorFamily::Corruption => "corruption",
+    }
+}
+
+/// Admission discriminant (`Db.create`, builder `admit`).
+pub(crate) mod admission_tag {
+    pub(crate) const ACCEPTED: &str = "accepted";
+    pub(crate) const REJECTED: &str = "rejected";
+    #[allow(dead_code)]
+    pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED];
+}
+
+/// Write / writeFrom outcome discriminant.
+pub(crate) mod write_tag {
+    pub(crate) const ACCEPTED: &str = "accepted";
+    pub(crate) const REJECTED: &str = "rejected";
+    pub(crate) const ABANDONED: &str = "abandoned";
+    pub(crate) const MOVED: &str = "moved";
+    #[allow(dead_code)]
+    pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED, ABANDONED, MOVED];
+}
+
+/// `dbCreate`/`dbOpen` declaration-boundary kinds (not theory admission).
+pub(crate) mod open_kind {
+    pub(crate) const SCHEMA_ERROR: &str = "schemaError";
+    pub(crate) const NEWTYPE_MISMATCH: &str = "newtypeMismatch";
+    pub(crate) const FINGERPRINT_MISMATCH: &str = "fingerprintMismatch";
+    #[allow(dead_code)]
+    pub(crate) const TAGS: &[&str] = &[SCHEMA_ERROR, NEWTYPE_MISMATCH, FINGERPRINT_MISMATCH];
+}
+
+/// `dbExhume` refusal kinds.
+pub(crate) mod exhume_kind {
+    pub(crate) const DESCRIPTOR_MISSING: &str = "descriptorMissing";
+    pub(crate) const FORMAT_MISMATCH: &str = "formatMismatch";
+    pub(crate) const CORRUPTION: &str = "corruption";
+    #[allow(dead_code)]
+    pub(crate) const TAGS: &[&str] = &[DESCRIPTOR_MISSING, FORMAT_MISMATCH, CORRUPTION];
+}
+
+/// `dbPrepare` roster-error kind.
+pub(crate) mod prepare_kind {
+    pub(crate) const IR_ERROR: &str = "irError";
+    #[allow(dead_code)]
+    pub(crate) const TAGS: &[&str] = &[IR_ERROR];
 }
 
 /// The golden: `ts/test/fixtures/tags.json` renders every table above, and
@@ -378,6 +455,12 @@ mod golden {
             ("query", super::query::TAGS.to_vec()),
             ("direction", super::direction::TAGS.to_vec()),
             ("param", wire_param),
+            ("errorFamily", super::error_family::TAGS.to_vec()),
+            ("admissionTag", super::admission_tag::TAGS.to_vec()),
+            ("writeTag", super::write_tag::TAGS.to_vec()),
+            ("openKind", super::open_kind::TAGS.to_vec()),
+            ("exhumeKind", super::exhume_kind::TAGS.to_vec()),
+            ("prepareKind", super::prepare_kind::TAGS.to_vec()),
         ]
     }
 

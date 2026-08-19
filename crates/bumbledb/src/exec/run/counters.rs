@@ -44,9 +44,7 @@ impl PhaseTimers {
                 }
                 crate::obs::event(
                     crate::obs::names::JOIN_PHASE[phase][node],
-                    crate::obs::Category::Phase,
-                    crate::obs::fastclock::ticks_to_ns(ticks),
-                    calls,
+                    crate::obs::TraceArgs::Pair(crate::obs::fastclock::ticks_to_ns(ticks), calls),
                 );
             }
         }

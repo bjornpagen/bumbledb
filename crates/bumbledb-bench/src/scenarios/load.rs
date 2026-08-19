@@ -16,7 +16,8 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     let schema = (scenario.schema)();
 
     let db = Db::create(&root.join("db"), (scenario.descriptor)())
-        .map_err(|e| format!("create db: {e:?}"))?;
+        .map_err(|e| format!("create db: {e:?}"))?
+        .expect("accepted");
     let conn = Connection::open(root.join("oracle.sqlite")).map_err(|e| format!("sqlite: {e}"))?;
     corpus::configure_sqlite(&conn).map_err(|e| format!("configure sqlite: {e}"))?;
     for statement in sqlmap::schema_ddl(schema) {
@@ -28,8 +29,12 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     for (rel, rows) in (scenario.rows)(seed) {
         let rows: Vec<Vec<Value>> = rows.collect();
         total += rows.len() as u64;
-        db.write(|tx| tx.insert_dyn(rel, rows.iter().cloned()).map(|r| r.changed))
-            .map_err(|e| format!("{}: insert: {e}", scenario.name))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, rows.iter().cloned())
+                .map(bumbledb::MutationReport::changed)
+        })
+        .map_err(|e| format!("{}: insert: {e}", scenario.name))?
+        .unwrap();
         corpus::insert_rows(&conn, schema.relation(rel), rows.into_iter())
             .map_err(|e| format!("{}: sqlite insert: {e}", scenario.name))?;
     }

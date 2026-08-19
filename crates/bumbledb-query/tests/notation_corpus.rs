@@ -122,7 +122,9 @@ fn unique_tag(tag: &str) -> String {
 /// replayer's `dbPrepare` acceptance).
 fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     let dir = TempDir::new(&unique_tag(tag));
-    let db = Db::create(dir.path(), theory).expect("create the corpus theory's store");
+    let db = Db::create(dir.path(), theory)
+        .expect("create the corpus theory's store")
+        .expect("accepted");
     db.prepare(query)
         .unwrap_or_else(|error| panic!("case {tag}: the corpus query validates: {error:?}"));
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
@@ -166,8 +168,7 @@ fn value_json(value: &Value) -> String {
         Value::Bool(b) => format!("{{\"kind\":\"bool\",\"value\":{b}}}"),
         Value::U64(v) => format!("{{\"kind\":\"u64\",\"value\":\"{v}\"}}"),
         Value::I64(v) => format!("{{\"kind\":\"i64\",\"value\":\"{v}\"}}"),
-        Value::String(bytes) => {
-            let text = std::str::from_utf8(bytes).expect("a query string literal is UTF-8");
+        Value::String(text) => {
             format!("{{\"kind\":\"string\",\"value\":{}}}", json_string(text))
         }
         Value::FixedBytes(_) => {
@@ -375,10 +376,11 @@ fn rec_json(rec: &Rec, rec_id: InteriorId) -> String {
 /// CQ carries no rec key; Reach carries rec by value.
 fn query_json(query: &Query) -> String {
     match query {
-        Query::Cq {
+        Query {
             interiors,
             head,
             rules,
+            rec: None,
         } => {
             let interiors = interiors
                 .iter()
@@ -395,9 +397,9 @@ fn query_json(query: &Query) -> String {
                 "{{\"kind\":\"cq\",\"interiors\":[{interiors}],\"head\":[{head}],\"rules\":[{rules}]}}"
             )
         }
-        Query::Reach {
+        Query {
             interiors,
-            rec,
+            rec: Some(rec),
             head,
             rules,
         } => {

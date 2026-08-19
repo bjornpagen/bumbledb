@@ -9,8 +9,8 @@
 
 use std::path::Path;
 
-use bumbledb::Db;
 use bumbledb::schema::Theory;
+use bumbledb::{Admission, Db};
 
 /// Which constructor the timed lanes build their stores with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -27,11 +27,17 @@ impl StoreMode {
     ///
     /// The engine's error, stringified with the mode named.
     pub fn create<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
-        match self {
+        match match self {
             Self::Durable => Db::create(path, schema),
             Self::Ephemeral => Db::ephemeral(path, schema),
+        } {
+            Err(error) => Err(format!("create ({}): {error:?}", self.label())),
+            Ok(Admission::Accepted(db)) => Ok(db),
+            Ok(Admission::Rejected(violations)) => Err(format!(
+                "create ({}): empty rejected: {violations}",
+                self.label()
+            )),
         }
-        .map_err(|e| format!("create ({}): {e:?}", self.label()))
     }
 
     /// The mode's name, as reports print it.

@@ -131,7 +131,7 @@ fn everything_spec() -> SchemaSpec {
                 name: "Kind".into(),
                 fields: vec![
                     field("mastered", ValueType::Bool),
-                    field("span", interval_u64.clone()),
+                    field("span", interval_u64),
                 ],
                 closed: Some(ClosedSpec {
                     newtype: "KindId".into(),
@@ -258,8 +258,8 @@ fn everything_spec() -> SchemaSpec {
                     selection: vec![(
                         "name".into(),
                         LiteralSetSpec::Many(vec![
-                            LiteralSpec::Value(Value::String(Box::from("alpha".as_bytes()))),
-                            LiteralSpec::Value(Value::String(Box::from("beta".as_bytes()))),
+                            LiteralSpec::Value(Value::String(Box::from("alpha"))),
+                            LiteralSpec::Value(Value::String(Box::from("beta"))),
                         ]),
                     )],
                     ..side("Holder", &["id"])
@@ -501,7 +501,7 @@ fn seam_spec() -> SchemaSpec {
                 "Item",
                 &["id"],
                 "label",
-                Value::String(Box::from("alpha".as_bytes())),
+                Value::String(Box::from("alpha")),
             )),
             contain(side_valued(
                 "Item",
@@ -542,7 +542,7 @@ fn seam_spec() -> SchemaSpec {
                 "Item",
                 &["id"],
                 "label",
-                Value::String(Box::from("a\"b\n\u{1F41D}".as_bytes())),
+                Value::String(Box::from("a\"b\n\u{1F41D}")),
             )),
             contain(side_valued(
                 "Item",

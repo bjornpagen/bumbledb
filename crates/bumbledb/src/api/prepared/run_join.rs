@@ -1,10 +1,10 @@
-use super::{Bindings, Executor, FilterPredicate, Schema, ViewGeneration, ViewMemo};
+use super::{Bindings, Executor, FilterPredicate, Schema, ViewMemo};
 
 use crate::error::Result;
-use crate::image::cache::ImageCache;
+use crate::image::ImageBind;
+use crate::image::ViewEpoch;
 use crate::image::view::apply;
 use crate::obs;
-use crate::storage::env::ReadTxn;
 
 /// Resets the owned COLT sources against this execution's images and
 /// views (buffer ping-pong: old survivor buffers recycle into the new
@@ -18,11 +18,10 @@ use crate::storage::env::ReadTxn;
     reason = "the bind-then-probe-then-join protocol reads as one pass"
 )] // the prepared query's split borrows;
 // bundling them into a struct would only rename the same ten things
-pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>(
+pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+    images: &I,
     executor: &mut Executor,
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
@@ -32,9 +31,13 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     derived_retired: &mut Vec<Vec<u32>>,
     sink: &mut S,
     counters: &mut C,
-) -> Result<()> {
-    let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
-    let txn_generation = txn.generation()?;
+) -> Result<()>
+where
+    S: crate::exec::run::Sink,
+    C: crate::exec::run::Counters,
+    I: ImageBind,
+{
+    let views_span = obs::span(obs::names::VIEWS);
     memo.tick += 1;
     // Lowering routes every positive occurrence's Eq-constant into
     // selections; a leak here would silently resurrect the per-param
@@ -97,9 +100,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             let image = derived_images.image(occ_idx);
             let mut build_span = obs::span_args(
                 obs::names::VIEW_BUILD,
-                obs::Category::Execute,
-                occ_idx as u64,
-                0,
+                obs::TraceArgs::Count(occ_idx as u64),
             );
             let mut buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
             if buffer.capacity() == 0
@@ -111,12 +112,12 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
                 buffer = pooled;
             }
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
-            build_span.set_args(occ_idx as u64, view.len() as u64);
+            build_span.set_pair(occ_idx as u64, view.len() as u64);
             let old = memo.colts[occ_idx].reset(view);
             memo.spare_buffers[occ_idx] = old.recycle();
             debug_assert!(
-                memo.generation[occ_idx].is_none(),
-                "an Interior occurrence never enters the memo's generation table"
+                memo.epoch[occ_idx].is_none(),
+                "an Interior occurrence never enters the memo's epoch table"
             );
             continue;
         }
@@ -126,37 +127,32 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
                 unreachable!("Interior continued above")
             }
         };
-        // A closed relation's view binds to the theory identity rather
-        // than a fabricated storage generation, so no commit can stale it.
-        let generation = if schema.relation(relation).body().closed_rows().is_some() {
-            ViewGeneration::Closed
-        } else {
-            ViewGeneration::Storage(txn_generation)
-        };
+        // Closed → theory identity; frozen → this owned instance;
+        // store → the snapshot generation. Identity is checked before
+        // the memo uses the epoch, so Frozen cannot alias another owner.
+        let epoch = images.epoch(schema, relation)?;
         // Warm fast path: an active or parked binding for this exact
-        // (generation, resolved residual filters) pair — the COLT's view
+        // (epoch, resolved residual filters) pair — the COLT's view
         // is still exactly right, and so are its forced tries (selections
         // live in the trie, not the view, so param churn never lands
         // here). No cache lock, no filter scan, no re-force.
-        if memo.bind(occ_idx, generation, &resolved_filters[occ_idx]) {
+        if memo.bind(occ_idx, epoch, &resolved_filters[occ_idx]) {
             obs::event(
                 obs::names::VIEW_MEMO_HIT,
-                obs::Category::Execute,
-                occ_idx as u64,
-                0,
+                obs::TraceArgs::Count(occ_idx as u64),
             );
             continue;
         }
         // The occurrence dedup (docs/architecture/40-execution.md):
         // another occurrence whose ACTIVE binding is this exact
-        // (generation, resolved residual filters) over the same relation
+        // (epoch, resolved residual filters) over the same relation
         // with the same trie orientation holds a byte-identical view and
         // byte-identical forced state — a cyclic self-join was scanning
         // and re-forcing the same 428k-row view once per occurrence. The
         // canonical root forces eagerly first (the one force the join
         // was about to pay lazily anyway), then the rebuild is a pool
         // copy instead of an image scan plus a per-occurrence re-force.
-        if let Some(canon) = dedup_source(plan, memo, occ_idx, generation, resolved_filters) {
+        if let Some(canon) = dedup_source(plan, memo, occ_idx, epoch, resolved_filters) {
             let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
             let [canon_colt, colt] = memo
                 .colts
@@ -166,28 +162,24 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             let old = colt.clone_bound_from(canon_colt, buffer);
             obs::event(
                 obs::names::VIEW_DEDUP,
-                obs::Category::Execute,
-                occ_idx as u64,
-                canon as u64,
+                obs::TraceArgs::Pair(occ_idx as u64, canon as u64),
             );
             memo.spare_buffers[occ_idx] = old.recycle();
-            memo.generation[occ_idx] = Some(generation);
+            memo.epoch[occ_idx] = Some(epoch);
             memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
             continue;
         }
         let mut build_span = obs::span_args(
             obs::names::VIEW_BUILD,
-            obs::Category::Execute,
-            occ_idx as u64,
-            0,
+            obs::TraceArgs::Count(occ_idx as u64),
         );
-        let image = cache.get_or_build(txn, schema, relation)?;
+        let image = images.image(schema, relation)?;
         let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
-        build_span.set_args(occ_idx as u64, view.len() as u64);
+        build_span.set_pair(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
         memo.spare_buffers[occ_idx] = old.recycle();
-        memo.generation[occ_idx] = Some(generation);
+        memo.epoch[occ_idx] = Some(epoch);
         memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
     views_span.end();
@@ -202,7 +194,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     // cost masqueraded as rule self-time. Zero-cost off, batch
     // granularity — never a span per occurrence, and the per-occurrence
     // probe stays the existing point event.
-    let mut selections_span = obs::span(obs::names::SELECTIONS, obs::Category::Execute);
+    let mut selections_span = obs::span(obs::names::SELECTIONS);
     let mut probed = 0u64;
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
         if plan.occurrences()[occ_idx].role.discharged() {
@@ -216,18 +208,16 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         probed += 1;
         obs::event(
             obs::names::SELECT_PROBE,
-            obs::Category::Execute,
-            occ_idx as u64,
-            u64::from(hit),
+            obs::TraceArgs::Pair(occ_idx as u64, u64::from(hit)),
         );
         if !hit {
-            selections_span.set_args(probed, 0);
+            selections_span.set_count(probed);
             return Ok(());
         }
     }
-    selections_span.set_args(probed, 1);
+    selections_span.set_pair(probed, 1);
     selections_span.end();
-    let _join = obs::span(obs::names::JOIN, obs::Category::Execute);
+    let _join = obs::span(obs::names::JOIN);
     // The executor monomorphizes per concrete sink type — callers match
     // their sink enum once per execution BEFORE this call (`run_rule`'s
     // `EitherSink` match; the reach driver's rec and interior sinks), so
@@ -237,17 +227,17 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
 }
 
 /// The occurrence-dedup scan: an occurrence other than `occ` whose
-/// *active* binding is exactly (`generation`, occ's resolved residual
+/// *active* binding is exactly (`epoch`, occ's resolved residual
 /// filters) over the same relation with the same trie orientation
 /// ([`crate::exec::colt::Colt::same_shape`]). Derived and discharged
-/// occurrences never bind a generation, so the generation check
-/// excludes them for free. O(occurrences) compares, only inside the
-/// sanctioned rebuild window — the warm path never gets here.
+/// occurrences never bind an epoch, so the epoch check excludes them
+/// for free. O(occurrences) compares, only inside the sanctioned
+/// rebuild window — the warm path never gets here.
 fn dedup_source(
     plan: &crate::plan::fj::ValidatedPlan,
     memo: &ViewMemo,
     occ: usize,
-    generation: ViewGeneration,
+    epoch: ViewEpoch,
     resolved_filters: &[Vec<FilterPredicate>],
 ) -> Option<usize> {
     let crate::ir::AtomSource::Edb(relation) = plan.occurrences()[occ].source() else {
@@ -259,7 +249,7 @@ fn dedup_source(
         .position(|(other, occurrence)| {
             other != occ
                 && occurrence.source().edb() == Some(relation)
-                && memo.generation[other] == Some(generation)
+                && memo.epoch[other] == Some(epoch)
                 && memo.filters[other] == resolved_filters[occ]
                 && memo.colts[other].same_shape(&memo.colts[occ])
         })

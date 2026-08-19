@@ -426,8 +426,8 @@ describe("the notation conformance corpus (TS replay)", () => {
 
 	before(function openTheCorpusStore() {
 		const created = native.dbCreate(storeDir, lower(Ledger))
-		if (!created.ok) {
-			assert.fail(`create the corpus store: ${created.message}`)
+		if (created.tag !== "accepted") {
+			assert.fail(`create the corpus store: ${created.tag}`)
 		}
 		db = created.db
 	})

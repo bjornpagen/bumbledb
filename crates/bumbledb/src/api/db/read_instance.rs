@@ -1,11 +1,37 @@
-use super::{Fact, Key, Snapshot};
-use crate::api::prepared::{Answers, BindValue, ParamArg, PreparedQuery};
-use crate::error::{FactShapeError, Result};
-use crate::ir::Value;
+use super::{Fact, Key, Probe, ReadInstance};
+use crate::api::prepared::{Answers, ParamArg, PreparedQuery};
+use crate::error::{DynIdError, Result};
+use crate::ir::{Query, Value};
 use crate::storage::{dict, read};
 use bumbledb_theory::schema::RelationId;
 
-impl<S> Snapshot<'_, S> {
+impl<S> ReadInstance<'_, S> {
+    /// Prepares a query against this lease's catalog and statistics.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::Instance::prepare`].
+    pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
+        crate::api::prepared::prepare(
+            &self.txn,
+            self.cache,
+            std::sync::Arc::clone(&self.schema),
+            query,
+        )
+    }
+
+    /// Exact live row count of `relation`.
+    ///
+    /// # Errors
+    ///
+    /// `UnknownRelation`; `Corruption` on a malformed counter.
+    pub fn row_count(&self, relation: RelationId) -> Result<u64> {
+        let Some(_) = self.schema.relation_checked(relation) else {
+            return Err(DynIdError::UnknownRelation { relation }.into());
+        };
+        crate::plan::selectivity::relation_rows(&self.txn, self.schema.as_ref(), relation)
+    }
+
     /// Executes a prepared query with positional parameters into the
     /// caller's reusable buffer (the zero-alloc path).
     ///
@@ -13,11 +39,11 @@ impl<S> Snapshot<'_, S> {
     ///
     /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time; `Overflow`
     /// from aggregate finalization; `Lmdb`/`Corruption` from storage. A
-    /// query error aborts the query; the snapshot remains usable.
-    pub fn execute(
+    /// query error aborts the query; the instance remains usable.
+    pub fn execute<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
-        prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        prepared: &mut PreparedQuery<S>,
+        params: P,
         out: &mut Answers,
     ) -> Result<()> {
         prepared.execute(&self.txn, self.cache, params, out)
@@ -27,63 +53,29 @@ impl<S> Snapshot<'_, S> {
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute`].
-    pub fn execute_collect(
+    /// As [`ReadInstance::execute`].
+    pub fn execute_collect<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
-        prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        prepared: &mut PreparedQuery<S>,
+        params: P,
     ) -> Result<Answers> {
         prepared.execute_collect(&self.txn, self.cache, params)
-    }
-
-    /// Executes with mixed scalar/set parameter arguments
-    /// (`docs/architecture/70-api.md` § facts and results): one
-    /// [`ParamArg`] per `ParamId` position — scalars as values, param
-    /// sets as slices (deduplicated at bind into the prepared query's
-    /// pooled storage).
-    ///
-    /// # Errors
-    ///
-    /// As [`Snapshot::execute`], plus the precise per-position bind
-    /// errors: `ParamSetExpected` (a scalar where the query binds a
-    /// set), `ParamScalarExpected` (a set where it binds a scalar), and
-    /// `ParamElementTypeMismatch` (a mistyped set element).
-    pub fn execute_args(
-        &self,
-        prepared: &mut PreparedQuery<'_, S>,
-        args: &[ParamArg<'_>],
-        out: &mut Answers,
-    ) -> Result<()> {
-        prepared.execute_args(&self.txn, self.cache, args, out)
-    }
-
-    /// [`Snapshot::execute_args`]'s fresh-buffer convenience.
-    ///
-    /// # Errors
-    ///
-    /// As [`Snapshot::execute_args`].
-    pub fn execute_collect_args(
-        &self,
-        prepared: &mut PreparedQuery<'_, S>,
-        args: &[ParamArg<'_>],
-    ) -> Result<Answers> {
-        prepared.execute_collect_args(&self.txn, self.cache, args)
     }
 
     /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
     /// and returns the answers alongside the rendered report. Takes the
     /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
-    /// [`Snapshot::execute_args`] binds, introspection binds.
+    /// [`ReadInstance::execute_args`] binds, introspection binds.
     ///
     /// Harness-only (not embedding API).
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute_args`].
+    /// As [`ReadInstance::execute_args`].
     #[doc(hidden)]
     pub fn introspect(
         &self,
-        prepared: &mut PreparedQuery<'_, S>,
+        prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
         prepared.introspect(&self.txn, self.cache, params)
@@ -92,17 +84,17 @@ impl<S> Snapshot<'_, S> {
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
     /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
-    /// (R13): whatever [`Snapshot::execute_args`] binds, profiling binds.
+    /// (R13): whatever [`ReadInstance::execute_args`] binds, profiling binds.
     ///
     /// Harness-only (not embedding API).
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute_args`].
+    /// As [`ReadInstance::execute_args`].
     #[doc(hidden)]
     pub fn profile(
         &self,
-        prepared: &mut PreparedQuery<'_, S>,
+        prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
         prepared.profile(&self.txn, self.cache, params)
@@ -118,25 +110,27 @@ impl<S> Snapshot<'_, S> {
     /// `Lmdb` on cursor open; per-item `Corruption` is a hard error — stop
     /// at the first.
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        let Some(relation) = self.schema.relation_checked(rel) else {
-            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+        let Some(_relation) = self.schema.relation_checked(rel) else {
+            return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        let layout = relation.layout();
-        let iter = read::scan(&self.txn, self.schema, rel)?;
+        let iter = read::scan(&self.txn, self.schema.as_ref(), rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
-            crate::encoding::decode_values(bytes, layout, |id| {
-                Ok(Box::from(dict::resolve(&self.txn, id)?))
+            crate::encoding::decode_values(bytes, |id| {
+                Ok(Box::from(super::plumbing::resolve_string(
+                    self,
+                    crate::encoding::InternId::from_raw(id),
+                )?))
             })
         }))
     }
 }
 
-impl<S> Snapshot<'_, S> {
+impl<S> ReadInstance<'_, S> {
     /// Committed-state membership of a typed fact — the snapshot sibling
     /// of [`super::WriteTx::contains`], completing the point-operation
     /// matrix (typed/dyn × write/snapshot, `docs/architecture/70-api.md`
-    /// § point reads): the fact encodes through [`Fact::encode_read`] —
+    /// § point reads): the fact encodes through [`Fact::encode_probe`] —
     /// the committed dictionary, never minting — so a string or bytes
     /// value the dictionary does not know proves the fact absent and the
     /// probe short-circuits to `false`. A **closed** relation answers
@@ -147,7 +141,10 @@ impl<S> Snapshot<'_, S> {
     /// `Lmdb` on the membership probe or dictionary reads.
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.with_scratch(|scratch| {
-            if !fact.encode_read(self, &mut scratch.bytes)? {
+            if matches!(
+                fact.encode_probe(self, &mut scratch.bytes)?,
+                Probe::ProvablyAbsent
+            ) {
                 return Ok(false);
             }
             if let Some(extension) = self.schema.relation(F::RELATION).body().closed_rows() {
@@ -175,7 +172,7 @@ impl<S> Snapshot<'_, S> {
     /// `Lmdb` on the probe or dictionary reads.
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         let Some(relation) = self.schema.relation_checked(rel) else {
-            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+            return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         self.with_scratch(|scratch| {
             let parsed = super::encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
@@ -219,7 +216,7 @@ impl<S> Snapshot<'_, S> {
             .then_some(out))
     }
 
-    /// [`Snapshot::get_dyn`] into a caller-provided buffer — the pooled
+    /// [`ReadInstance::get_dyn`] into a caller-provided buffer — the pooled
     /// point-read lane (docs/architecture/70-api.md § point reads): the
     /// values `Vec` is the caller's, its capacity retained across gets,
     /// so a warm keyed get's allocator traffic shrinks to the
@@ -229,7 +226,7 @@ impl<S> Snapshot<'_, S> {
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::get_dyn`].
+    /// As [`ReadInstance::get_dyn`].
     pub fn get_dyn_into(
         &self,
         relation: RelationId,
@@ -238,14 +235,13 @@ impl<S> Snapshot<'_, S> {
         out: &mut Vec<Value>,
     ) -> Result<bool> {
         out.clear();
-        let mut span =
-            crate::obs::span(crate::obs::names::POINT_READ, crate::obs::Category::Storage);
-        let (_, statement) = super::get::key_statement_of(self.schema, relation, key)?;
+        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
+        let (_, statement) = super::get::key_statement_of(self.schema.as_ref(), relation, key)?;
         let hit = self.with_scratch(|scratch| {
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
             if !super::get::encode_determinant_with(
-                self.schema,
+                self.schema.as_ref(),
                 relation,
                 &statement.projection,
                 key_values,
@@ -261,26 +257,32 @@ impl<S> Snapshot<'_, S> {
                     super::get::closed_fact_by_determinant(rel, statement, determinant)
                 }
                 super::get::PointRead::FreshRow { row_id } => {
-                    read::fact_at(&self.txn, self.schema, relation, row_id)?
+                    read::fact_at(&self.txn, self.schema.as_ref(), relation, row_id)?
+                        .map(crate::encoding::FactView::bytes)
                 }
                 super::get::PointRead::Determinant => {
-                    read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+                    read::fact_for_key(&self.txn, self.schema.as_ref(), relation, key_bytes)?
+                        .map(crate::encoding::FactView::bytes)
                 }
             };
             let Some(fact) = bytes else {
                 return Ok(false);
             };
             crate::encoding::decode_values_keyed_into(
-                fact,
-                rel.layout(),
+                rel.layout().encoded(fact),
                 &statement.projection,
                 key_values,
-                |id| Ok(Box::from(dict::resolve(&self.txn, id)?)),
+                |id| {
+                    Ok(Box::from(super::plumbing::resolve_string(
+                        self,
+                        crate::encoding::InternId::from_raw(id),
+                    )?))
+                },
                 out,
             )?;
             Ok(true)
         })?;
-        span.set_args(u64::from(hit), 0);
+        span.set_flag(hit);
         span.end();
         Ok(hit)
     }
@@ -311,13 +313,16 @@ impl<S> Snapshot<'_, S> {
     )]
     pub fn get<'snap, K: Key<'snap, Schema = S>>(&'snap self, key: K) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'snap>>::RELATION;
-        let mut span =
-            crate::obs::span(crate::obs::names::POINT_READ, crate::obs::Category::Storage);
-        let (_, statement) = super::get::key_statement_of(self.schema, relation, K::STATEMENT)?;
+        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
+        let (_, statement) =
+            super::get::key_statement_of(self.schema.as_ref(), relation, K::STATEMENT)?;
         let result = self.with_scratch(|scratch| {
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
-            if !key.determinant_read(self, key_bytes)? {
+            if matches!(
+                key.encode_determinant(self, key_bytes)?,
+                Probe::ProvablyAbsent
+            ) {
                 return Ok(None);
             }
             let rel = self.schema.relation(relation);
@@ -327,22 +332,24 @@ impl<S> Snapshot<'_, S> {
                     super::get::closed_fact_by_determinant(rel, statement, determinant)
                 }
                 super::get::PointRead::FreshRow { row_id } => {
-                    read::fact_at(&self.txn, self.schema, relation, row_id)?
+                    read::fact_at(&self.txn, self.schema.as_ref(), relation, row_id)?
+                        .map(crate::encoding::FactView::bytes)
                 }
                 super::get::PointRead::Determinant => {
-                    read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+                    read::fact_for_key(&self.txn, self.schema.as_ref(), relation, key_bytes)?
+                        .map(crate::encoding::FactView::bytes)
                 }
             };
             bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
         });
         if let Ok(found) = &result {
-            span.set_args(u64::from(found.is_some()), 0);
+            span.set_flag(found.is_some());
         }
         span.end();
         result
     }
 
-    /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its
+    /// The typed sibling of [`ReadInstance::scan`]: decodes each fact into its
     /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
     /// is the ETL pairing for [`crate::WriteTx::insert_dyn`] under
     /// [`crate::Db::write`]; this one is for hosts that want their own
@@ -352,14 +359,14 @@ impl<S> Snapshot<'_, S> {
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::scan`].
+    /// As [`ReadInstance::scan`].
     pub fn scan_facts<'snap, F: Fact<'snap, Schema = S>>(
         &'snap self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'snap> {
-        let iter = read::scan(&self.txn, self.schema, F::RELATION)?;
+        let iter = read::scan(&self.txn, self.schema.as_ref(), F::RELATION)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
-            F::decode(self, bytes)
+            F::decode(self, bytes.bytes())
         }))
     }
 }

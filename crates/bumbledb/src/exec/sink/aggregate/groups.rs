@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{AggregateSink, GroupTable, SinkSpec};
+use crate::exec::sink::{AggregateSink, GroupState, GroupTable, SinkSpec};
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
 /// variable contributes its full word span — never a bare width-1 read.
@@ -86,31 +86,23 @@ impl AggregateSink {
             }
         };
         if inserted {
-            // Fresh accumulator row, seeded per op (finds copied out —
-            // the value-set allocation below takes `&mut self`).
-            for i in 0..self.finds.len() {
-                let find = self.finds[i];
-                match find {
-                    SinkSpec::Agg(spec) => {
-                        self.accs.push(spec.seed_acc());
+            match &mut self.group_state {
+                GroupState::Folds { accs, .. } => {
+                    for i in 0..self.finds.len() {
+                        if let SinkSpec::Agg(spec) = self.finds[i] {
+                            accs.push(spec.seed_acc());
+                        }
                     }
-                    SinkSpec::Var { .. } | SinkSpec::Pack { .. } => {}
                 }
-            }
-            if self.pack_slot().is_some() {
-                self.init_pack_group(group_idx);
+                GroupState::Pack { claims, .. } => {
+                    if group_idx < claims.len() {
+                        claims[group_idx].clear();
+                    } else {
+                        claims.push(Vec::new());
+                    }
+                }
             }
         }
         group_idx
-    }
-
-    /// Seeds a fresh group's Pack state: an empty claim list, pooled by
-    /// group index (capacity retained across executions).
-    fn init_pack_group(&mut self, group_idx: usize) {
-        if group_idx < self.pack_claims.len() {
-            self.pack_claims[group_idx].clear();
-        } else {
-            self.pack_claims.push(Vec::new());
-        }
     }
 }

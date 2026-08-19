@@ -332,7 +332,9 @@ fn queries() -> Vec<Op> {
 fn identity_bytes_agree_with_the_naive_model() {
     let dir = TempDir::new("differential");
     let descriptor = schema();
-    let db = Db::create(dir.path(), descriptor).expect("create");
+    let db = Db::create(dir.path(), descriptor)
+        .expect("create")
+        .expect("accepted");
     let mut naive = NaiveDb::new(&schema());
 
     let mut rng = Rng(0x1D_B17E5);

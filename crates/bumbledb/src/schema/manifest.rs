@@ -151,7 +151,7 @@ impl ManifestDescriptor for SchemaDescriptor {
                                 id: FieldId(
                                     u16::try_from(field_idx).expect("field count fits u16"),
                                 ),
-                                value_type: slot.value_type().clone(),
+                                value_type: *slot.value_type(),
                             })
                             .collect(),
                         extension,

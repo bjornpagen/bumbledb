@@ -317,8 +317,11 @@ fn resolvable_parser_is_total_over_the_filter_vocabulary() {
     assert_other_refusals();
 }
 
-fn assert_parse(filter: FilterPredicate, expected: Option<ResolvableFilter>) {
-    assert_eq!(parse_resolvable(&[filter]), expected.map(|one| vec![one]));
+fn assert_parse(filter: &FilterPredicate, resolvable: bool) {
+    assert_eq!(
+        crate::image::view::is_prepare_resolvable(filter),
+        resolvable
+    );
 }
 
 fn assert_word_and_field_compares_parse() {
@@ -332,28 +335,20 @@ fn assert_word_and_field_compares_parse() {
         WordCmp::Ge,
     ] {
         assert_parse(
-            FilterPredicate::Compare {
-                field: f,
+            &FilterPredicate::Compare {
+                field: f.into(),
                 op,
                 value: Const::Word(7),
             },
-            Some(ResolvableFilter::WordCompare {
-                field: f,
-                op,
-                word: 7,
-            }),
+            true,
         );
         assert_parse(
-            FilterPredicate::FieldsCompare {
-                left: FieldId(0),
-                right: f,
+            &FilterPredicate::FieldsCompare {
+                left: FieldId(0).into(),
+                right: f.into(),
                 op,
             },
-            Some(ResolvableFilter::FieldsCompare {
-                left: FieldId(0),
-                right: f,
-                op,
-            }),
+            true,
         );
     }
 }
@@ -362,128 +357,79 @@ fn assert_wide_compares_parse() {
     let f = FieldId(1);
     for op in [WordCmp::Eq, WordCmp::Ne] {
         assert_parse(
-            FilterPredicate::Compare {
-                field: f,
+            &FilterPredicate::Compare {
+                field: f.into(),
                 op,
                 value: Const::Byte(1),
             },
-            Some(ResolvableFilter::WordCompare {
-                field: f,
-                op,
-                word: 1,
-            }),
+            true,
         );
         let words = Box::new([3u64, 5]);
-        let bytes: Box<[u8]> = words.iter().flat_map(|word| word.to_be_bytes()).collect();
-        let expected_words = match op {
-            WordCmp::Eq => ResolvableFilter::BytesEq {
-                field: f,
-                bytes: bytes.clone(),
-            },
-            WordCmp::Ne => ResolvableFilter::BytesNe {
-                field: f,
-                bytes: bytes.clone(),
-            },
-            _ => unreachable!(),
-        };
         assert_parse(
-            FilterPredicate::Compare {
-                field: f,
+            &FilterPredicate::Compare {
+                field: f.into(),
                 op,
                 value: Const::Words(words),
             },
-            Some(expected_words),
+            true,
         );
-        let mut interval_bytes = Vec::new();
-        interval_bytes.extend_from_slice(&2u64.to_be_bytes());
-        interval_bytes.extend_from_slice(&9u64.to_be_bytes());
-        let interval = interval_bytes.into_boxed_slice();
-        let expected_interval = match op {
-            WordCmp::Eq => ResolvableFilter::BytesEq {
-                field: f,
-                bytes: interval.clone(),
-            },
-            WordCmp::Ne => ResolvableFilter::BytesNe {
-                field: f,
-                bytes: interval.clone(),
-            },
-            _ => unreachable!(),
-        };
         assert_parse(
-            FilterPredicate::Compare {
-                field: f,
+            &FilterPredicate::Compare {
+                field: f.into(),
                 op,
                 value: Const::Interval { start: 2, end: 9 },
             },
-            Some(expected_interval),
+            true,
         );
     }
     assert_parse(
-        FilterPredicate::Compare {
-            field: f,
+        &FilterPredicate::Compare {
+            field: f.into(),
             op: WordCmp::Eq,
             value: Const::WordSet(vec![1, 2]),
         },
-        Some(ResolvableFilter::WordSetEq {
-            field: f,
-            words: Box::new([1, 2]),
-        }),
+        true,
     );
 }
 
 fn assert_structured_filters_parse() {
     let f = FieldId(1);
     assert_parse(
-        FilterPredicate::PointIn {
-            field: f,
+        &FilterPredicate::PointIn {
+            field: f.into(),
             point: ViewWordSource::Word(4),
         },
-        Some(ResolvableFilter::PointIn { field: f, point: 4 }),
+        true,
     );
     assert_parse(
-        FilterPredicate::FieldsPointIn {
-            interval: f,
-            point: FieldId(2),
+        &FilterPredicate::FieldsPointIn {
+            interval: f.into(),
+            point: FieldId(2).into(),
         },
-        Some(ResolvableFilter::FieldsPointIn {
-            interval: f,
-            point: FieldId(2),
-        }),
+        true,
     );
     assert_parse(
-        FilterPredicate::FieldWithin {
-            field: f,
+        &FilterPredicate::FieldWithin {
+            field: f.into(),
             outer: IntervalConst::Interval { start: 2, end: 9 },
         },
-        Some(ResolvableFilter::Within {
-            field: f,
-            start: 2,
-            end: 9,
-        }),
+        true,
     );
     assert_parse(
-        FilterPredicate::FieldsAllen {
-            left: f,
-            right: FieldId(2),
+        &FilterPredicate::FieldsAllen {
+            left: f.into(),
+            right: FieldId(2).into(),
             mask: AllenMask::BEFORE,
         },
-        Some(ResolvableFilter::FieldsAllen {
-            left: f,
-            right: FieldId(2),
-            mask: AllenMask::BEFORE,
-        }),
+        true,
     );
     assert_parse(
-        FilterPredicate::FieldAllen {
-            field: f,
+        &FilterPredicate::FieldAllen {
+            field: f.into(),
             other: IntervalConst::Interval { start: 2, end: 9 },
             mask: AllenMask::BEFORE,
         },
-        Some(ResolvableFilter::Allen {
-            field: f,
-            other: (2, 9),
-            mask: AllenMask::BEFORE,
-        }),
+        true,
     );
 }
 
@@ -491,44 +437,44 @@ fn assert_compare_refusals() {
     let f = FieldId(1);
     for filter in [
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Ne,
             value: Const::WordSet(vec![1, 2]),
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Lt,
             value: Const::Byte(1),
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Lt,
             value: Const::Words(Box::new([1, 2])),
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Lt,
             value: Const::Interval { start: 2, end: 9 },
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Eq,
             value: Const::Param(crate::ir::ParamId(0)),
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Eq,
             value: Const::ParamSet(crate::ir::ParamId(0)),
         },
         FilterPredicate::Compare {
-            field: f,
+            field: f.into(),
             op: WordCmp::Eq,
             value: Const::PendingIntern {
                 bytes: Box::from(&b"x"[..]),
             },
         },
     ] {
-        assert_parse(filter, None);
+        assert_parse(&filter, false);
     }
 }
 
@@ -536,34 +482,34 @@ fn assert_other_refusals() {
     let f = FieldId(1);
     for filter in [
         FilterPredicate::PointIn {
-            field: f,
+            field: f.into(),
             point: ViewWordSource::Param(crate::ir::ParamId(0)),
         },
         FilterPredicate::AnyPointIn {
-            field: f,
+            field: f.into(),
             set: SetConst::ParamSet(crate::ir::ParamId(0)),
         },
         FilterPredicate::FieldAllen {
-            field: f,
+            field: f.into(),
             other: IntervalConst::Param(crate::ir::ParamId(0)),
             mask: AllenMask::BEFORE,
         },
         FilterPredicate::FieldWithin {
-            field: f,
+            field: f.into(),
             outer: IntervalConst::Param(crate::ir::ParamId(0)),
         },
         FilterPredicate::DurationCompare {
-            field: f,
+            field: f.into(),
             op: OrderCmp::Ge,
             value: WordOrParam::Word(2),
         },
         FilterPredicate::DurationFieldsCompare {
-            interval: f,
+            interval: f.into(),
             op: OrderCmp::Ge,
-            scalar: FieldId(2),
+            scalar: FieldId(2).into(),
         },
     ] {
-        assert_parse(filter, None);
+        assert_parse(&filter, false);
     }
 }
 
@@ -577,7 +523,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         (
             RelationId(KIND),
             vec![FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Eq,
                 value: Const::Word(20),
             }],
@@ -586,7 +532,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         (
             RelationId(KIND),
             vec![FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Ge,
                 value: Const::Word(20),
             }],
@@ -595,7 +541,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         (
             RelationId(KIND),
             vec![FilterPredicate::Compare {
-                field: FieldId(0),
+                field: FieldId(0).into(),
                 op: WordCmp::Eq,
                 value: Const::WordSet(vec![0, 3]),
             }],
@@ -604,7 +550,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         (
             RelationId(CAL),
             vec![FilterPredicate::PointIn {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 point: ViewWordSource::Word(3),
             }],
             vec![0],
@@ -612,7 +558,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         (
             RelationId(CAL),
             vec![FilterPredicate::FieldAllen {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 other: IntervalConst::Interval { start: 6, end: 8 },
                 mask: AllenMask::BEFORE,
             }],
@@ -620,8 +566,15 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         ),
     ];
     for (relation, original, expected) in cases {
-        let parsed = parse_resolvable(&original).expect("fixture filters parse");
-        assert_eq!(surviving_ids(schema.relation(relation), &parsed), expected);
+        assert!(
+            original
+                .iter()
+                .all(crate::image::view::is_prepare_resolvable)
+        );
+        assert_eq!(
+            surviving_ids(schema.relation(relation), &original),
+            expected
+        );
     }
 }
 
@@ -854,10 +807,11 @@ fn multi_rule_queries_fold_per_rule_independently() {
     };
     // Q1 spelling: `Query::single` constructs `Cq` (no rec). Two-rule
     // CQ via the public rules list — engine owns `ir.rs` field vis.
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: fold_rule.head(),
         rules: vec![fold_rule, refusing_rule],
+        rec: None,
     };
     let witness = validate(&schema, &query).expect("valid fixture query");
     let mut rules = normalize_rules(&schema, &[], witness.rules());
@@ -979,7 +933,7 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
     let schema = theory();
     let relation = RelationId(KIND);
     let eq_id = |value: Const| FilterPredicate::Compare {
-        field: FieldId(0),
+        field: FieldId(0).into(),
         op: WordCmp::Eq,
         value,
     };
@@ -1001,7 +955,7 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
             &schema,
             relation,
             &[FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Eq,
                 value: Const::Word(20),
             }]

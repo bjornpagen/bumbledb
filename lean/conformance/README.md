@@ -12,12 +12,15 @@ still names membership-free negation. Aggregate heads run the recorded
 glue over PRD 05's proved computable folds
 (`Bumbledb/Conformance.lean`, module doc).
 
-Three case kinds share the directory, dispatched by FILE NAME
+Four case kinds share the directory, dispatched by FILE NAME
 (which evaluator, not the Query constructor):
-`judgment-*.json` is a **judgment case** (the write-side arm, below);
+`judgment-*.json` is a **judgment case** (the incremental write-side
+arm, below); `complete-*.json` is a **complete-admission case**
+(instance-lifetime L5 — `judgeB` over the candidate, fences lift);
 `reach-*.json` is a **reach case** (interiors / rec evaluator, below);
 everything else is a **query case** (aggregate-head `cq` evaluator).
-A judgment case also carries `"kind":"judgment"` for self-description.
+A judgment case also carries `"kind":"judgment"` for self-description;
+a complete-admission case carries `"kind":"complete"`.
 The Query document is one tagged encoding: `{ "cq": { interiors, head,
 rules } } | { "reach": { interiors, rec, head, rules } }`. CQ does not
 carry rec. Reach carries `rec` by value. Atoms spell `edb` / `interior`.
@@ -260,8 +263,9 @@ cited in both directions appears once. Closed-relation writes are
 outside this lane (a typed refusal before any judgment, not a
 verdict); judgment fixtures carry no strings and no masks — the two
 value tags that would need a per-case context. Closed-SOURCE
-containments (domain quantification) are also outside the lane, and
-deliberately: the engine's verdict is delta-restricted
+containments (domain quantification) are also outside **this
+incremental** lane, and deliberately: the engine's verdict is
+delta-restricted
 (`Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`,
 sound only under its holds-before premise) while `Txn.judgeB` reads
 the whole final state — a store whose targets have not landed accepts
@@ -270,9 +274,36 @@ every untouching commit yet judges reject in full state
 offline sweeper owns the class per
 `docs/architecture/30-dependencies.md` § "Domain quantification,
 worked"), so such a fixture would be a guaranteed mismatch on a
-correct engine verdict. No fixture declares a closed source; the Rust
-half is pinned by
-`domain_quantification_judgments_are_outside_the_lane`.
+correct engine verdict. No incremental fixture declares a closed
+source; the Rust half is pinned by
+`domain_quantification_judgments_are_outside_the_lane`. The
+complete-admission lane (L5, `complete-*.json` below) lifts that
+fence: the complete verdict is not delta-restricted, so closed-source
+containments run through `judgeB` on the candidate.
+
+## Complete-admission cases — instance-lifetime L5
+
+A complete-admission case compares the same two-phase `Txn.judgeB`
+verdict, but `instance` **is the candidate** — no green pre-state,
+no incremental shortcut. The document reuses the judgment shape
+(`kind` is `"complete"`; `delta` is empty). `finalWorld` is the
+candidate, and `completeAdmissionB` is `judgeB` over it
+(`Txn.completeAdmissionB_eq_judgeB`). The incremental lane's
+recorded scope fences exclude fixture classes — closed-source
+containments among them — because a whole-state oracle would
+mismatch a correct delta-restricted engine. Those fences **lift**
+here: generated worlds including closed-source containment fixtures
+run through complete admission against `judgeB`. One of the
+instance-lifetime proposal's four motivating shapes lives in that
+formerly fenced class (`complete-closed-source-missing-target`).
+
+The Rust half (`crates/bumbledb-bench/src/conformance/complete.rs`)
+records the verdict both Rust oracles agreed on:
+`InstanceBuilder` complete admission (packed freeze, complete roster) and the
+naive full-state `judge_complete`. A disagreement is a trophy —
+this builder refuses to check in a disputed case. Replay is
+fixture re-serialization through both oracles; the Lean run is
+`judgeB` / `completeAdmissionB` over the candidate.
 
 The starter roster covers: both classical forms (scalar key;
 containment — scalar, coverage, and the closed member set, plain and
@@ -363,7 +394,13 @@ prefix `reach-` selects the evaluator. Do not name them `query-*.json`.
   bumbledb-bench three_way_conformance -- --ignored --nocapture`
   (needs `lake` on PATH; the CI lean lane runs it).
 * Lean alone: `lake exe conformance conformance/cases` from `lean/`
-  (wired into `scripts/lean.sh`).
+  (wired into `scripts/lean.sh`). Complete-admission cases
+  (`complete-*.json`) ride the same driver — `judgeB` over the
+  candidate.
+* Complete-admission only: `cargo test -p bumbledb-bench
+  regenerate_the_complete_admission_corpus -- --ignored --nocapture`
+  — verdicts from agreed `InstanceBuilder` admission and naive
+  `judge_complete`; Lean compares `judgeB` / `completeAdmissionB`.
 
 A DISAGREEMENT IS A FINDING — engine bug, naive-model bug, or spec bug
 all count; triage it before anything else merges

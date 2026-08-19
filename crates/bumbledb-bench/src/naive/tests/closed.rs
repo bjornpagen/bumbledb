@@ -258,3 +258,24 @@ fn domain_quantification_judges_target_side() {
     })
     .expect("the severity-2 tuple re-lands in the same delta");
 }
+
+/// Complete admission sees the closed source with no incremental
+/// premise: an empty candidate rejects Severity→Handler, and landing
+/// every handler empties the roster.
+#[test]
+fn complete_admission_rejects_unhandled_closed_source() {
+    let mut db = NaiveDb::new(&schema());
+    assert_eq!(
+        db.judge_complete(),
+        vec![Violation::Containment {
+            statement: SEVERITY_HANDLED,
+            direction: Direction::SourceUnsatisfied,
+        }],
+        "closed Low/Med/High have no handlers — L5 lifts the incremental fence"
+    );
+    db.apply(&all_handlers()).expect("the handlers land");
+    assert!(
+        db.judge_complete().is_empty(),
+        "every sealed severity has a handler"
+    );
+}

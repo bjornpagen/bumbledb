@@ -217,8 +217,12 @@ pub fn load<S>(
     rows: fn(Mass, RelationId) -> Box<dyn Iterator<Item = Vec<Value>>>,
 ) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.write(|tx| tx.insert_dyn(rel, rows(mass, rel)).map(|r| r.changed))
-            .map_err(|e| format!("capacity load: {e:?}"))?;
+        db.write(|tx| {
+            tx.insert_dyn(rel, rows(mass, rel))
+                .map(bumbledb::MutationReport::changed)
+        })
+        .map_err(|e| format!("capacity load: {e:?}"))?
+        .unwrap();
     }
     Ok(())
 }

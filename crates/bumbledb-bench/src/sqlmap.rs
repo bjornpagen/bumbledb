@@ -254,10 +254,7 @@ fn sql_literal(value: &Value) -> String {
             )
         }
         Value::I64(v) => format!("{v}"),
-        Value::String(raw) => {
-            let text = std::str::from_utf8(raw).expect("Value::String carries UTF-8");
-            format!("'{}'", text.replace('\'', "''"))
-        }
+        Value::String(text) => format!("'{}'", text.replace('\'', "''")),
         Value::FixedBytes(raw) => {
             let hex = raw.iter().fold(String::new(), |mut acc, byte| {
                 use std::fmt::Write as _;
@@ -364,9 +361,7 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
             Sql::Integer(i64::try_from(*v).expect("the SQLite mapping axiom: u64 < 2^63"))
         }
         Value::I64(v) => Sql::Integer(*v),
-        Value::String(raw) => {
-            Sql::Text(String::from_utf8(raw.to_vec()).expect("Value::String carries UTF-8"))
-        }
+        Value::String(text) => Sql::Text(text.to_string()),
         Value::FixedBytes(raw) => Sql::Blob(raw.to_vec()),
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             panic!("an interval maps to two columns — split through interval_halves")
@@ -442,7 +437,7 @@ pub fn from_sql_value(
             .map(Value::U64)
             .map_err(|_| format!("u64 column holds negative {v}")),
         (Sql::Integer(v), ValueType::I64) => Ok(Value::I64(*v)),
-        (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into_bytes().into())),
+        (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into())),
         (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
         (_, ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
             Err("an interval spans two columns — decode through interval_from_sql".to_owned())
@@ -709,10 +704,7 @@ mod tests {
             (Value::Bool(true), ValueType::Bool),
             (Value::U64((1 << 63) - 1), ValueType::U64),
             (Value::I64(i64::MIN), ValueType::I64),
-            (
-                Value::String("héllo".as_bytes().to_vec().into()),
-                ValueType::String,
-            ),
+            (Value::String("héllo".into()), ValueType::String),
             (
                 Value::FixedBytes(vec![0, 255, 7].into()),
                 ValueType::FixedBytes { len: 3 },

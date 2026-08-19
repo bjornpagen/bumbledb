@@ -214,7 +214,7 @@ diagnostic.
   lifetime). Each key struct implements `Key` with its `STATEMENT` computed at
   expansion from the one materialized order
   (`SchemaDescriptor::materialized_statements` — the macro and the engine read
-  the same rule, so they cannot drift), and `snap.get(..)` / `tx.get(..)`
+  the same rule, so they cannot drift), and `instance.get(..)` / `tx.get(..)`
   return `Option<Fact>` through it: the determinant tuple's columns, their
   newtypes, their order, and the statement they read through are all carried
   by the type — a wrong column, wrong newtype, wrong relation, or ambiguous
@@ -356,7 +356,9 @@ using every construct — both closed tiers, `fresh`, fixed-width intervals,
 all three statement forms, `==`, literal-set selections, every legal capacity
 spelling — unit, weighted, Duration-weighted, dependent-bound — both ways and
 asserts fingerprint equality). The bindings roster
-is reachable from the crate root: `Db`, `Snapshot`/`WriteTx`, `Theory`,
+is reachable from the crate root: `Db`, `ReadInstance`/`WriteTx`,
+`OwnedInstance`/`InstanceBuilder`, `Witness`, `Admission`/`ConditionalWrite`,
+`Theory`,
 `SchemaDescriptor`, `SchemaSpec` + `SchemaSpecError`, `Value`, the `ir`
 module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
 `Violation`/`Violations`, `SchemaFingerprint`, and `exhume`/`Exhumed`
@@ -373,13 +375,14 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   version, then store kind, then schema fingerprint; each mismatch is a typed
   hard failure.
   `Db::create(path, Ledger)`
-  initializes a fresh environment with the schema's fingerprint — and **refuses a
-  directory that already holds any LMDB environment** (`AlreadyInitialized`): a
-  bumbledb one (re-writing `_meta` counters over live data would be silent corruption,
-  so create is exactly as non-destructive as open) or a foreign one (any other named
-  database, or a non-empty unnamed root). The one exception is a half-created bumbledb
-  store — a crash between directory creation and the meta commit leaves an empty root,
-  and create recovers it.
+  initializes a fresh environment with the schema's fingerprint and returns
+  `Result<Admission<Db<S>>>` — an empty store that fails complete admission is
+  `Admission::Rejected` with the sealed violation set, no lease, no panic.
+  Every fresh-store constructor (`create`, new `ephemeral`, `from_instance`,
+  `compact`) **refuses an existing destination, including an empty directory**,
+  as `DestinationExists { path }`: a previous claim on the name is not guessed
+  at. Healing a half-created path is refused — staging plus atomic rename makes
+  a half-created destination unrepresentable.
 - `Db::ephemeral(path, Ledger)` — the ephemeral store KIND's one constructor
   (`50-storage.md` § the ephemeral store kind; never a flag on `create`/`open`).
   A missing or empty directory initializes a fresh ephemeral store — the kind
@@ -404,13 +407,14 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   ephemeral-on-SSD is legitimate.
 - **The cross-open matrix is typed** (`crates/bumbledb/tests/ephemeral.rs`):
   `Db::open` on an ephemeral store and `Db::ephemeral` on a durable store are each
-  `StoreKindMismatch { found, expected }`; `Db::create` on any initialized
-  directory stays `AlreadyInitialized` (create never reads a store, so the kind
-  never gets a say).
+  `StoreKindMismatch { found, expected }`; `Db::create` on an existing path is
+  `DestinationExists` (create never opens a store, so the kind never gets a
+  say). `AlreadyInitialized` is the open-time refusal of a foreign LMDB
+  environment or an unusable empty root.
 - **The two-store staging pattern** (the sighting the surface exists for): build
   an ephemeral store — collection inserts, judged exactly as a durable store judges —
   read/repair until the theory holds, then ETL the survivors into the durable
-  store (`snap.scan` then `insert_dyn` under host-chosen `write`s, § ETL below) and delete the directory. The
+  store (`instance.scan` then `insert_dyn` under host-chosen `write`s, § ETL below) and delete the directory. The
   staging side pays no fullfsync per commit (the small-commit shape measures
   43–70x over durable-on-SSD for the staging pattern and 3.1–3.5x over a
   plain ramdisk store across the `NOSYNC`-only re-earn sessions, device tax
@@ -566,11 +570,11 @@ is the consumer that names its shape.)
   key) and — KG-2 — the generated key structs of declared `R(x, ..) -> R`
   statements; two key FDs over one newtype are two distinct Rust types, so which
   statement a read goes through is never a runtime question, and a cross-schema
-  key is a compile error. The committed-state twins are `snap.get(key)` and
-  `snap.contains(&fact)` on the read scope (`db.read(|snap| snap.get(key))` —
+  key is a compile error. The committed-state twins are `instance.get(key)` and
+  `instance.contains(&fact)` on the read instance (`db.read(|instance, _witness| instance.get(key))` —
   no `Db`-level sugar: the freeze keeps `Db` minimal, TS carries the symmetry
-  sugar); the typed/dyn × write/snapshot point-operation matrix is complete,
-  and `snap.contains` encodes through `Fact::encode_read` (the committed
+  sugar); the typed/dyn × write/committed-read point-operation matrix is complete,
+  and `instance.contains` encodes through `Fact::encode_read` (the committed
   dictionary, never minting — a never-interned value short-circuits to
   `false`). The `_dyn` form takes relation +
   statement id + encoded key for data-supplied statements. The typed get
@@ -601,8 +605,8 @@ is the consumer that names its shape.)
   **Full queries inside write transactions remain forbidden** — point reads are
   determinant gets (allocation-free, no images, no plans); dragging the image cache and
   executor into the write path is the refused half. The allocation contract is
-  symmetric across transaction kinds (ruled 2026-07-23, R15): snapshot point
-  reads (`snap.get`, `snap.get_dyn`) draw their determinant scratch from a
+  symmetric across transaction kinds (ruled 2026-07-23, R15): committed-read point
+  reads (`instance.get`, `instance.get_dyn`) draw their determinant scratch from a
   Db-owned pool exactly as the WriteTx twins take-and-restore theirs — the
   point path allocates nothing per call on either side, and callers see no
   signature change. **Alternative:** keep the pure
@@ -624,8 +628,7 @@ is the consumer that names its shape.)
   order is the blessed mutation idiom — a host-side `replace()` helper is optional
   sugar, not an engine operation (closed decision).
 - **Dependencies are judged at commit against the final state**
-  (`30-dependencies.md`): the `CommitRejected` error surfaces from the commit, not
-  from the offending call site, carrying the failing phase's COMPLETE violation set
+  (`30-dependencies.md`): a rejected commit is [`Admission::Rejected`]
   (`lean/Bumbledb/Txn.lean: rejection_is_complete`) — each citation with the
   statement id (renderable back to the algebra through the schema) and the
   offending fact's bytes, in materialized statement order
@@ -634,27 +637,27 @@ is the consumer that names its shape.)
 ## Conditional writes — the generation witness
 
 The persisted clock is the nominal public `GenerationId`, including the
-`Db::generation` diagnostic accessor and both `GenerationMoved` fields; it is
-never a bare integer in the engine API. The parked-reader cache uses a separate,
-crate-private `CommitSeq` clock that resets at process open. The two clocks have
-different lifetimes and cannot be compared or converted into one another.
+`Db::generation` diagnostic accessor. Conditional writes report movement as
+[`ConditionalWrite::Moved`], never as an error. There is no second process
+clock: `CommitSeq` is deleted; parked readers key on
+`(CatalogIdentity, GenerationId)`.
 
 ### Derived-fact maintenance protocol (normative)
 
 The host protocol is one explicit retry loop:
 
-1. open a snapshot and run the deriving query against that snapshot;
+1. open a read instance and run the deriving query against that instance;
 2. compute the desired derived facts and diff them against the stored derived
-   relation as seen by the same snapshot;
-3. apply that diff with `db.write_from(&snapshot, |tx| ...)`;
-4. on `GenerationMoved`, discard both derivation and diff, open a new snapshot,
-   and start again; every other result ends the attempt.
+   relation as seen by the same instance;
+3. apply that diff with `db.write_from(&witness, |tx| ...)`;
+4. on `ConditionalWrite::Moved`, discard both derivation and diff, open a new
+   read, and start again; every other result ends the attempt.
 
 The public write surface has exactly three epistemic classes:
 
 | class | public path | what makes the premise current |
 |---|---|---|
-| snapshot-derived, generation-witnessed | `Db::write_from` | the snapshot's generation is compared inside the writer critical section before the closure runs |
+| instance-derived, generation-witnessed | `Db::write_from` | the witness's generation is compared inside the writer critical section before the closure runs |
 | final-state point-read inside the write transaction | `Db::write` plus `WriteTx::{contains,get,get_dyn}` | the point read observes base + pending delta while the single-writer lock is held |
 | unconditional | `Db::write` without a point-read premise | there is no read-derived premise to witness |
 
@@ -672,45 +675,39 @@ but it never gains an implicit refresh theorem.
 
 #### Retryability
 
-`Error::is_transient()` answers: could the same operation, retried with
-nothing changed by the caller, plausibly succeed? Transient:
-`GenerationMoved` (rebuild on a fresh snapshot — the protocol above) and
-`ReadersFull` (an LMDB reader slot frees when any reader finishes).
-Every other kind is permanent — notably `CommitSync` and `Io` (the
-post-failure durability state is unknown, so a blind retry is unsafe),
-`Panic` (the store is poisoned), and `EnvironmentLocked` (re-entrant
-write: a programming error, not contention). A host retry loop, if any,
-retries a strict subset — exactly `GenerationMoved` — because rerunning the
-callback cannot free a reader slot.
+A moved generation is [`ConditionalWrite::Moved`], not an `Error` — host
+retry loops match that arm. `ReadersFull` remains a transient error (an
+LMDB reader slot frees when any reader finishes). Every other error kind
+is permanent — notably `CommitSync` and `Io` (the post-failure durability
+state is unknown, so a blind retry is unsafe), `Panic` (the store is
+poisoned), and `EnvironmentLocked` (re-entrant write: a programming error,
+not contention).
 
 The writer mutex serializes write *transactions*, not read-compute-write
 *sequences*: query-driven writes — update-where, insert-select —
-must read on a snapshot first,
-then write, and two host threads interleaving snapshot-read → compute → write can
-clobber each other's premises. The answer is representation, not control flow: a
-snapshot already knows its generation, so *nothing changed since I looked* is a
-proposition the commit checks in one integer compare.
+must read first, mint a [`Witness`], then write. Two host threads
+interleaving read → compute → write can clobber each other's premises. The
+answer is representation, not control flow: a witness already knows its
+generation, so *nothing changed since I looked* is a proposition the commit
+checks in one integer compare.
 
-- `db.write_from(&snap, |tx| ...)` — `db.write`, conditional on a witness:
-  identical in every respect except one compare inside the writer's critical
-  section (`lean/Bumbledb/Txn.lean: writeFrom_unmoved` — the compare is
-  invisible on the success path). If a state-changing commit has landed since
-  the witness snapshot's
-  generation, the transaction aborts **before any page is touched** with the typed
-  `GenerationMoved { witnessed, current }` (ids, never strings); the delta drops
-  exactly as any abort does, and the closure never ran
-  (`lean/Bumbledb/Txn.lean: writeFrom_moved`; a witness conflict is never a
-  dependency failure and vice versa — `witness_conflict_distinct`, the two
-  verdicts distinct by constructor). The environment-identity
-  check runs first, exactly as prepared queries run it at every execution entry —
-  a witness snapshot of another database is the typed `ForeignSnapshot`.
-- **The witness is the snapshot, never an integer** (recorded refusal,
-  recorded): a snapshot is evidence — its generation was read
+- `db.write_from(&witness, |tx| ...)` — `db.write`, conditional on a
+  borrowed [`Witness`]: identical in every respect except one compare inside
+  the writer's critical section (`lean/Bumbledb/Txn.lean: writeFrom_unmoved`
+  — the compare is invisible on the success path). If a state-changing
+  commit has landed since the witness generation, the call returns
+  [`ConditionalWrite::Moved { witnessed, current }`] **before any page is
+  touched**; the closure never ran (`lean/Bumbledb/Txn.lean: writeFrom_moved`;
+  a witness conflict is never a dependency failure and vice versa —
+  `witness_conflict_distinct`). A witness of another database is
+  [`Error::ForeignWitness`].
+- **The witness is the evidence, never an integer** (recorded refusal,
+  recorded): a witness is evidence — its generation was read
   inside its own transaction — where an integer parameter would be a claim a
-  caller could fabricate or stale-cache (parse, don't validate). `Snapshot`
-  exposes no `generation()` accessor (decided: the witness consumes the
-  generation internally; the diagnostics surface is `Db::generation`, and nothing
-  more ships until the stats surface wants it).
+  caller could fabricate or stale-cache (parse, don't validate). `ReadInstance`
+  exposes `generation()` as a diagnostic; the witness consumes the
+  generation internally for the compare, and the store-level diagnostics surface
+  is `Db::generation`.
 - **State-changing generations only:** the compare targets the storage tx id —
   the same generation the image cache keys on — and a counters-only/no-op commit
   never advances it, so no-ops trip no witness. The sloppy alternative (any
@@ -731,11 +728,11 @@ proposition the commit checks in one integer compare.
   model* (`lean/Bumbledb/Txn.lean: writeFrom_unmoved`, `writeFrom_moved`).
 - **The three idioms**, each query → compute → `write_from` → host retry:
   - *Update-where:* query the matching facts on a snapshot, compute their
-    replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
+    replacements, `write_from(&witness)` doing `delete(old); insert(new)` per fact.
   - *Insert-select:* query the source answers, compute the derived facts,
-    `write_from(&snap)` inserting them — premises witnessed instead of locked.
+    `write_from(&witness)` inserting them — premises witnessed instead of locked.
   - *Derived-relation maintenance:* re-run the deriving query, diff against the
-    stored relation's current facts, `write_from(&snap)` applying the diff — the
+    stored relation's current facts, `write_from(&witness)` applying the diff — the
     materialized-view refresh as an ordinary witnessed write
     (`10-data-model.md` § derived relations owns the pattern and its
     statements).
@@ -752,7 +749,7 @@ proposition the commit checks in one integer compare.
   (`str` → `&'a str`; a `str`-carrying relation gains one lifetime — `bytes<N>` is
   `[u8; N]`, owned and `Copy`). Insert takes the struct at any lifetime — the encode path
   reads the fields as borrows into the engine's arena copy. Typed reads
-  (`tx.get`, `snap.scan_facts`) return views at the resolver's lifetime, UTF-8
+  (`tx.get`, `instance.scan_facts`) return views at the resolver's lifetime, UTF-8
   validated at resolve without a copy. There are no owned twins and no modes;
   ownership is an explicit host act (`to_owned()` on the field you keep). The trait
   shape is `impl<'a> Fact<'a> for Account<'a>` (module doc records the
@@ -769,7 +766,7 @@ proposition the commit checks in one integer compare.
   **Reverses if:** a real host profile shows `to_owned()` dominating — hosts
   overwhelmingly keeping every field they read.
 - **Schema typestate:** `Db<S>` carries the schema definition as a phantom
-  parameter, threaded through `WriteTx`/`Snapshot`/`PreparedQuery`; `Fact` carries
+  parameter, threaded through `WriteTx`/`ReadInstance`/`OwnedInstance`/`PreparedQuery`; `Fact` carries
   `type Schema`, and write/read operations bound `F: Fact<'_, Schema = S>`.
   Inserting a schema-A struct into a schema-B database — or executing a prepared
   query against another schema's snapshot — is a **compile error**, closing the
@@ -810,7 +807,7 @@ proposition the commit checks in one integer compare.
 
 - **Open errors:** `FormatMismatch`, `StoreKindMismatch { found, expected }` (the
   kind marker read after the version, before the fingerprint — the cross-open
-  matrix, § environment lifecycle), `SchemaMismatch`, `AlreadyInitialized`,
+  matrix, § environment lifecycle), `SchemaMismatch`, `DestinationExists`, `AlreadyInitialized`,
   `EnvironmentLocked` (writers only — the lock law is a writer law, R17;
   § environment lifecycle), `DescriptorMissing` (exhume only, § exhume — the
   not-yet-adopted store, remedy in the error), `Io`, `Lmdb`.
@@ -841,7 +838,7 @@ proposition the commit checks in one integer compare.
   never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable. `OriginCapacity` and `ResultBytesOverflow` are engine-only
   resource errors Lean `eval_sound` / `rulesAnswers` do not denote.
-- **Write errors:** `CommitRejected` (raised at commit, against the final state,
+- **Write errors:** `Admission::Rejected` (returned at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
   `lean/Bumbledb/Txn.lean: rejection_is_complete` — with each citation's
   offending facts ALSO decoded to owned values at the rejection boundary,
@@ -850,9 +847,7 @@ proposition the commit checks in one integer compare.
   (a Duration-weighted capacity weight or bound whose interval is a ray — the
   measure is undefined, never a violation; C10 at judge time, C20 parent-blind
   at plan time — `30-dependencies.md`, `docs/design/capacity-laws.md` §8b),
-  `GenerationMoved`
-  (the witness compare, § conditional writes — carrying the two generations),
-  `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
+  `ForeignWitness` (a witness of another database), `FreshExhausted`,
   `FactShape` (the dynamic surface's shape roster — including the dyn-boundary
   foreign-`FreshField` refusal at the mint's sequence init, § ETL),
   `TransactionPoisoned { source }` (a later mutation after a failed apply —
@@ -871,17 +866,17 @@ into a new theory either lands already holding it or rejects with the failing
 phase's complete
 violation set — there is no migrate-now-validate-later state (`etl_lands_valid`).
 The **export
-surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
+surface is a full-relation scan**: `instance.scan(relation)` yields *dynamic* facts
 (`Result<Vec<Value>>` — per-item corruption is a hard error and the stream fuses)
 over `F` in row_id order (a storage iteration, not a query — streams, not sets); the
-typed sibling `snap.scan_facts::<F>()` decodes into the generated structs.
+typed sibling `instance.scan_facts::<F>()` decodes into the generated structs.
 
 **Import is collection insert inside `db.write`.** Empty, singleton, and many
 are one collection (`lean/Bumbledb/Txn.lean: insert_is_fold`). Typed:
 `tx.insert(facts)` takes an iterator of **generated fact structs** (the
 relation is `F::RELATION` — no id parameter to mismatch). Dyn:
 `tx.insert_dyn(relation, facts)` takes `Value` rows — the ETL/FFI lane that
-pairs with `snap.scan`'s dynamic export and with foreign hosts speaking the
+pairs with `instance.scan`'s dynamic export and with foreign hosts speaking the
 manifest's ids. Both return `MutationReport { submitted, changed }` —
 **facts that changed state** (idempotent re-inserts are consumed but not
 counted). Empty is lawful (`MutationReport::EMPTY`); singleton is `[&fact]` /
@@ -942,11 +937,11 @@ generated fact structs — drives the FULL write-and-read surface through ids an
   is no second insert-with-omitted-fields spelling (one meaning, one spelling).
 - **Point reads, both transaction kinds:** `tx.contains_dyn` / `tx.get_dyn`
   observe the final-state view the judgment judges (base + pending delta);
-  `snap.contains_dyn` / `snap.get_dyn` observe the snapshot's committed state.
+  `instance.contains_dyn` / `instance.get_dyn` observe the instance's committed state.
   `get_dyn` takes `(relation, key statement id, key values in projection
   order)`; closed relations answer from their sealed extensions (virtual
   storage), and an out-of-roster handle word is an honest miss, not an error.
-- **Scans:** `snap.scan(relation)` (dynamic export, § ETL).
+- **Scans:** `instance.scan(relation)` (dynamic export, § ETL).
 - **Queries:** prepared queries already take parameter values as plain data at
   execute time (`BindValue` scalars / `ParamArg` sets of `ir::Value`) and
   answers come back as owned decoded rows (`Answers`, one-copy) — confirmed
@@ -971,12 +966,12 @@ explicit per-thread capture of nanosecond spans and point events over every prep
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
 introspection — EXPLAIN, colloquially — is an in-workspace bench harness
 surface (`#[doc(hidden)]` on the embedding crate), not a host-facing SDK
-API. `snap.introspect(..)`
+API. `instance.introspect(..)`
 returns an ANALYZE-semantics rendered artifact beginning
 with `introspection v6`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string),
 then `signature:` (`PreparedQuery::signature()` — the buffer-typing authority),
-plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
+plan sections, and diagnostics. `ReadInstance::profile` returns the same execution as
 structured `ExecutionStats`, carrying `introspection_version: 6`, each rule's
 `distinct_bindings` proof status, main-rule / node ordering, and — when
 present — `interiors:` then optional one `reach` then main (`40-execution.md`
@@ -1040,7 +1035,7 @@ borrowed result could not, and the dyn write surface's typed errors are the
 portable half of the API. The keyed point read is part of the shipped
 binding on both the read and write surfaces: `get(relation, keyStatement,
 key)` — the key object typed by the statement's own projection — lives on
-`Db`, `ReadScope`, and `Tx` alike (the symmetry rule; the terminal record
+`Db`, `ReadInstance`, and `Tx` alike (the symmetry rule; the terminal record
 is the OPEN ledger's keyed-get row, below).
 
 The SDK's skin is **completely structural** — hard structural typing
@@ -1190,7 +1185,7 @@ language's own syntax, never a method to remember and never a GC race.
 
 ### Plan diagnostics — WITHDRAWN as embedding API
 
-`explain()` / `snap.introspect` / `prepared.staleness` / public
+`explain()` / `instance.introspect` / `prepared.staleness` / public
 `ExecutionStats` are not host-facing SDK API. The bench harness may still
 introspect via crate-visible / `#[doc(hidden)]` paths. ANALYZE-grade
 profiling stays engine-internal (§ observability).
@@ -1230,11 +1225,11 @@ engine-first change, and nothing re-enters without a new ruling.
   `scan().find(byId)` sites ride along, and `Tx.get` is likewise untouched.
   The shape the evidence names: keyed get must become the obvious spelling on
   both the read scope and the write transaction. **SHIPPED (this wave,
-  2026-07-19).** The final spelling: Rust — `snap.get(key)` / `tx.get(key)`
+  2026-07-19).** The final spelling: Rust — `instance.get(key)` / `tx.get(key)`
   over the generated `Key` values (fresh newtypes; one generated
   `{R}By{Fields}` struct per declared key statement — § the `schema!`
   grammar, § Transactions); TS — `get(relation, keyStatement, key)` on
-  `Db`/`ReadScope`/`Tx`, the key object typed by the statement's own
+  `Db`/`ReadInstance`/`Tx`, the key object typed by the statement's own
   projection (already shipped surface, now pinned on the write transaction
   too). `get_dyn` remains the dyn/FFI lane for data-supplied key statements,
   and the bridge (`snapshotGet`/`txGet`) always carried any key statement —
@@ -1264,14 +1259,14 @@ engine-first change, and nothing re-enters without a new ruling.
 
   ```rust
   loop {
-      let attempt = db.read(|snap| {
-          let premises = snap.execute_collect(&mut deriving_query, &args)?; // read
-          let delta = compute(&premises);                                   // compute
-          db.write_from(snap, |tx| delta.apply(tx))                         // witnessed write
-      });
-      match attempt {
-          Err(bumbledb::Error::GenerationMoved { .. }) => continue, // premises stale: re-derive
-          other => break other,                                     // done, or a real error
+      let (premises, witness) = db.read(|instance| {
+          let premises = instance.execute_collect(&mut deriving_query, &args)?;
+          Ok((premises, instance.witness()?))
+      })?;
+      let delta = compute(&premises);
+      match db.write_from(&witness, |tx| delta.apply(tx))? {
+          bumbledb::ConditionalWrite::Moved { .. } => continue,
+          other => break Ok(other),
       }
   }
   ```

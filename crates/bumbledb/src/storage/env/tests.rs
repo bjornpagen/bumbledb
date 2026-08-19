@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Error;
+use crate::error::{CorruptionError, Error, Mismatch};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::testutil::TempDir;
@@ -46,6 +46,25 @@ fn create_then_open_round_trips() {
         drop(env);
     }
     Environment::open(dir.path(), &schema).expect("open after create");
+}
+
+#[test]
+fn a_fresh_store_is_format_8() {
+    assert_eq!(FORMAT_VERSION, 8, "format ledger v8 is the only window");
+    let dir = TempDir::new("env-format-8-birth");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let rtxn = env.read_txn().expect("read");
+    let found = env
+        .meta
+        .get(rtxn.raw(), META_FORMAT_VERSION)
+        .expect("get")
+        .expect("format version present");
+    assert_eq!(found, 8u32.to_le_bytes());
+    assert_eq!(
+        u32::from_le_bytes(found.try_into().expect("u32")),
+        FORMAT_VERSION
+    );
 }
 
 /// The ephemeral crash contract (R18), clean side: the dirty marker is
@@ -160,8 +179,10 @@ fn a_stale_marker_over_a_durable_store_refuses_and_wipes_nothing() {
         matches!(
             err,
             Error::StoreKindMismatch {
-                found: StoreKind::Durable,
-                expected: StoreKind::Ephemeral,
+                mismatch: Mismatch {
+                    witnessed: StoreKind::Durable,
+                    required: StoreKind::Ephemeral,
+                },
             }
         ),
         "the durable kind shields the store from the wipe, got {err:?}"
@@ -197,19 +218,13 @@ fn durable_constructors_clear_an_orphaned_marker() {
         !dirty_marker_path(dir.path()).try_exists().expect("probe"),
         "a successful durable open clears the orphan"
     );
-    // The create side: a fresh durable store born into a directory
-    // holding only a stale marker (a wiped ephemeral store's residue)
-    // sheds it at birth.
+    // The create side: an existing directory (even one holding only a
+    // stale marker) is a previous claim on the name.
     let dir = TempDir::new("env-orphan-marker-create");
     std::fs::create_dir_all(dir.path()).expect("mkdir");
     std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
-    {
-        Environment::create(dir.path(), &schema).expect("create durable");
-    }
-    assert!(
-        !dirty_marker_path(dir.path()).try_exists().expect("probe"),
-        "a durable birth clears the stale residue"
-    );
+    let err = Environment::create(dir.path(), &schema).unwrap_err();
+    assert!(matches!(err, Error::DestinationExists { .. }), "{err:?}");
 }
 
 /// The R18 lifecycle, archival half: exhume refuses an ephemeral store
@@ -304,7 +319,7 @@ fn create_refuses_an_existing_environment() {
     let schema = schema();
     drop(Environment::create(dir.path(), &schema).expect("create"));
     let err = Environment::create(dir.path(), &schema).unwrap_err();
-    assert!(matches!(err, Error::AlreadyInitialized));
+    assert!(matches!(err, Error::DestinationExists { .. }));
     Environment::open(dir.path(), &schema).expect("open still works");
 }
 
@@ -334,11 +349,14 @@ fn corrupted_stored_fingerprint_names_found_and_expected_images() {
         wtxn.commit().expect("commit");
     }
     let err = Environment::open(dir.path(), &schema).unwrap_err();
-    let Error::SchemaMismatch { found, expected } = err else {
+    let Error::SchemaMismatch { mismatch } = err else {
         panic!("expected fingerprint mismatch, got {err:?}");
     };
-    assert_eq!(found.0, [0xA5; 32]);
-    assert_eq!(expected, crate::schema::fingerprint::fingerprint(&schema));
+    assert_eq!(mismatch.witnessed.0, [0xA5; 32]);
+    assert_eq!(
+        mismatch.required,
+        crate::schema::fingerprint::fingerprint(&schema)
+    );
 }
 
 #[test]
@@ -361,8 +379,10 @@ fn corrupted_format_version_fails_before_fingerprint() {
         matches!(
             err,
             Error::FormatMismatch {
-                found: 99,
-                expected: FORMAT_VERSION
+                mismatch: Mismatch {
+                    witnessed: 99,
+                    required: FORMAT_VERSION,
+                },
             }
         ),
         "{err:?}"
@@ -461,8 +481,10 @@ fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
             matches!(
                 err,
                 Error::FormatMismatch {
-                    found: 4,
-                    expected: FORMAT_VERSION
+                    mismatch: Mismatch {
+                        witnessed: 4,
+                        required: FORMAT_VERSION,
+                    },
                 }
             ),
             "{err:?}"
@@ -480,6 +502,73 @@ fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
 /// fingerprint and weighted `R` entries would decode wrong — ETL
 /// through the SDK is the story.
 #[test]
+fn a_format_7_store_is_a_format_mismatch_on_every_open_surface() {
+    let dir = TempDir::new("env-marker-v7-pre-admission");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_FORMAT_VERSION, &7u32.to_le_bytes())
+            .expect("backdate version to format 7");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+        Environment::exhume(dir.path()).map(|_| ()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::FormatMismatch {
+                    mismatch: Mismatch {
+                        witnessed: 7,
+                        required: FORMAT_VERSION,
+                    },
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+/// A torn format-8 `_meta` with no descriptor is corruption — never
+/// the retired format-7 adoption back-fill.
+#[test]
+fn a_missing_descriptor_is_meta_missing_not_an_adoption() {
+    let dir = TempDir::new("env-missing-descriptor");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .delete(wtxn, META_SCHEMA_DESCRIPTOR)
+            .expect("strip descriptor");
+    });
+    // Kind precedes the descriptor: ephemeral on this durable fixture
+    // is `StoreKindMismatch` and never reaches the missing key.
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::exhume(dir.path()).map(|_| ()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(err, Error::Corruption(CorruptionError::MetaMissing)),
+            "{err:?}"
+        );
+    }
+}
+
+#[test]
+fn a_missing_descriptor_on_an_ephemeral_store_is_meta_missing() {
+    let dir = TempDir::new("env-ephemeral-missing-descriptor");
+    let schema = schema();
+    {
+        let env = Environment::ephemeral(dir.path(), &schema).expect("ephemeral");
+        env.strip_schema_descriptor_for_tests()
+            .expect("strip descriptor");
+    }
+    let err = Environment::ephemeral(dir.path(), &schema).unwrap_err();
+    assert!(
+        matches!(err, Error::Corruption(CorruptionError::MetaMissing)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn a_pre_cutover_v6_store_is_a_format_mismatch_on_both_constructors() {
     let dir = TempDir::new("env-marker-v6-pre-cutover");
     forge_meta(&dir, |env, wtxn| {
@@ -495,8 +584,10 @@ fn a_pre_cutover_v6_store_is_a_format_mismatch_on_both_constructors() {
             matches!(
                 err,
                 Error::FormatMismatch {
-                    found: 6,
-                    expected: FORMAT_VERSION
+                    mismatch: Mismatch {
+                        witnessed: 6,
+                        required: FORMAT_VERSION,
+                    },
                 }
             ),
             "{err:?}"
@@ -592,6 +683,7 @@ fn a_wide_kind_value_is_store_kind_invalid_on_both_constructors() {
 #[test]
 fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_constructors() {
     let dir = TempDir::new("env-marker-v4-no-roster");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
         // A raw LMDB environment holding ONLY a backdated `_meta`: the
         // doubly-faulted shape no bumbledb constructor can produce
@@ -615,8 +707,10 @@ fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_construct
             matches!(
                 err,
                 Error::FormatMismatch {
-                    found: 4,
-                    expected: FORMAT_VERSION
+                    mismatch: Mismatch {
+                        witnessed: 4,
+                        required: FORMAT_VERSION,
+                    },
                 }
             ),
             "{err:?}"
@@ -637,6 +731,7 @@ fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_construct
 )]
 fn ephemeral_refusal_on_a_foreign_env_leaves_the_data_file_byte_identical() {
     let dir = TempDir::new("env-ephemeral-foreign-untouched");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
         let mut options = heed::EnvOpenOptions::new();
         options.map_size(10 << 20).max_dbs(2);
@@ -838,16 +933,15 @@ fn a_mis_sized_meta_value_is_malformed_never_missing() {
         ),
         "{err:?}"
     );
-    // Truncated tx id — open verifies other keys, so the first
-    // generation read raises the diagnosis.
+    // Truncated tx id — `parse_meta` reads the whole block, so open
+    // itself names the key.
     let dir = TempDir::new("env-malformed-txid");
     forge_meta(&dir, |env, wtxn| {
         env.meta
             .put(wtxn, META_TX_ID, &[1u8; 7])
             .expect("truncate tx id");
     });
-    let env = Environment::open(dir.path(), &schema()).expect("open verifies other keys");
-    let err = env.read_txn().expect("txn").generation().unwrap_err();
+    let err = Environment::open(dir.path(), &schema()).unwrap_err();
     assert!(
         matches!(
             err,
@@ -860,11 +954,12 @@ fn a_mis_sized_meta_value_is_malformed_never_missing() {
 /// The half-created store (empty root, no `_meta` — the crash window
 /// between environment creation and the meta commit) is classified ONCE
 /// (`read_meta::classify_meta_block`; ruled 2026-07-23, R18): open
-/// refuses it with the typed `NotInitialized` — never `Corruption` —
-/// and the ephemeral constructor treats the same state as fresh.
+/// refuses it with `AlreadyInitialized` — never `Corruption` — and the
+/// ephemeral constructor treats the same state as fresh.
 #[test]
 fn a_half_created_store_is_not_initialized_on_open_and_fresh_on_ephemeral() {
     let dir = TempDir::new("env-half-created-taxonomy");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
         let env = super::open_env::open_env(
             dir.path(),
@@ -875,8 +970,8 @@ fn a_half_created_store_is_not_initialized_on_open_and_fresh_on_ephemeral() {
         wtxn.commit().expect("commit nothing");
     }
     let err = Environment::open(dir.path(), &schema()).unwrap_err();
-    assert!(matches!(err, Error::NotInitialized), "{err:?}");
+    assert!(matches!(err, Error::AlreadyInitialized), "{err:?}");
     // The same never-born state initializes fresh under the ephemeral
-    // constructor (its create-or-open contract).
+    // constructor (its create-or-open contract over an existing data file).
     drop(Environment::ephemeral(dir.path(), &schema()).expect("fresh init"));
 }

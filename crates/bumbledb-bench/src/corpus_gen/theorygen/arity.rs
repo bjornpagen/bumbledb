@@ -269,7 +269,7 @@ fn relation(name: &str, types: &[ValueType]) -> RelationDescriptor {
         .enumerate()
         .map(|(index, value_type)| FieldDescriptor {
             name: format!("key_{index}").into(),
-            value_type: value_type.clone(),
+            value_type: *value_type,
             generation: Generation::None,
         })
         .collect();
@@ -339,7 +339,7 @@ fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
         ValueType::Bool => Value::Bool(salt & 1 == 0),
         ValueType::U64 => Value::U64(salt),
         ValueType::I64 => Value::I64(i64::try_from(salt).expect("small generated value")),
-        ValueType::String => Value::String(format!("arity-{salt}").into_bytes().into()),
+        ValueType::String => Value::String(format!("arity-{salt}").into()),
         ValueType::FixedBytes { len } => {
             Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
         }
@@ -384,7 +384,7 @@ fn type_counts(types: &[ValueType]) -> [usize; 5] {
 fn projection_width(arity: usize) -> usize {
     projection_types(arity)
         .iter()
-        .map(|value_type| value_type.type_desc().width())
+        .map(|value_type| value_type.width())
         .sum()
 }
 

@@ -39,14 +39,11 @@ import { bridged, native } from "#native.ts"
 import type { ValueTypeSpec } from "#spec.ts"
 
 /**
- * The typed `descriptorMissing` refusal: the store predates self-describing
- * stores and has not been adopted. The remedy is in the message — one
- * fingerprint-matching `Db.open` under the creating schema back-fills the
- * descriptor (engine 50-storage.md § the `_meta` block) and the store is
- * self-describing forever. Match with `errors.is`.
+ * The typed `descriptorMissing` refusal: a format-8 store whose `_meta`
+ * descriptor key is absent. Open never back-fills. Match with `errors.is`.
  */
 const ErrExhumeNoDescriptor = errors.new(
-	"bumbledb exhume: the store carries no schema descriptor (not yet adopted) — open it once under its creating schema (one fingerprint-matching Db.open back-fills the descriptor; engine 50-storage.md)"
+	"bumbledb exhume: the store carries no schema descriptor — format-8 stores are self-describing at birth; open does not adopt or back-fill"
 )
 
 /**

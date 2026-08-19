@@ -163,7 +163,7 @@ fn selective_filtered_occurrence_leads_a_reference_walk() {
     let schema = schema(2, 2);
     let mut occ1 = occurrence(1, 1, vec![(0, 0)]);
     occ1.filters.push(FilterPredicate::Compare {
-        field: FieldId(1),
+        field: FieldId(1).into(),
         op: ViewCmp::Eq,
         value: Const::Word(7),
     });
@@ -234,7 +234,7 @@ fn pointwise_schema() -> Schema {
                     },
                     FieldDescriptor {
                         name: "p".into(),
-                        value_type: interval.clone(),
+                        value_type: interval,
                         generation: Generation::None,
                     },
                 ],
@@ -393,7 +393,7 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
 
     let mut posting = occurrence(1, 1, vec![(0, 0)]);
     posting.filters.push(FilterPredicate::Compare {
-        field: FieldId(1),
+        field: FieldId(1).into(),
         op: ViewCmp::Eq,
         value: Const::Param(crate::ir::ParamId(0)),
     });
@@ -411,7 +411,7 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
     // Control: a set pin covers nothing — the general fanout returns.
     let mut set_pinned = query.occurrences[1].clone();
     set_pinned.filters = vec![FilterPredicate::Compare {
-        field: FieldId(1),
+        field: FieldId(1).into(),
         op: ViewCmp::Eq,
         value: Const::ParamSet(crate::ir::ParamId(0)),
     }];

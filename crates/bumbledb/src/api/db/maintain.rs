@@ -21,12 +21,11 @@ impl<S> Db<S> {
         self.cache.resident()
     }
 
-    /// Writes a compacted copy of the store to `dest` (a directory that
-    /// must not exist): live pages only, freelist dropped, sequential
-    /// layout (docs/architecture/50-storage.md). The source stays open and untouched —
-    /// compaction is a copy, never in-place, so the source remains the
-    /// fallback until the caller swaps directories. The copy is a
-    /// first-class store: open it, read it, write to it.
+    /// Publishes a compacted copy of the store to `dest` (a directory
+    /// that must not exist): one [`crate::storage::env::PublishStep`]
+    /// fold, live `_data` and `_dict` bytes, fresh `_meta` with the
+    /// source kind and generation. The source stays open and untouched.
+    /// The copy is a first-class store: open it, read it, write to it.
     ///
     /// Durability, exactly: on return the copied `data.mdb` is fsynced,
     /// then `dest` itself (the file's directory entry), then `dest`'s
@@ -38,33 +37,20 @@ impl<S> Db<S> {
     ///
     /// # Errors
     ///
-    /// `Io` when `dest` exists or cannot be created (never clobbers), or
-    /// when any sync of the durability chain fails; `Lmdb` from the copy
-    /// itself.
+    /// `DestinationExists` when `dest` exists (never clobbers);
+    /// `PublishedButUnsynced` when the copy is complete but a durability
+    /// sync of the destination failed; `Io` when `dest` cannot be
+    /// created; `Lmdb` from the copy itself.
     pub fn compact(&self, dest: &Path) -> Result<()> {
-        if dest.exists() {
-            return Err(crate::error::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("compact refuses to clobber {}", dest.display()),
-            )));
-        }
-        std::fs::create_dir_all(dest).map_err(crate::error::Error::Io)?;
-        let data = dest.join("data.mdb");
-        let mut file = std::fs::File::create(&data).map_err(crate::error::Error::Io)?;
-        self.env.copy_compacted(&mut file)?;
-        // Durable before the caller swaps directories: the file, its
-        // dirent in `dest`, then `dest`'s own dirent in the parent —
-        // without the parent sync, power loss could keep a durable file
-        // inside a directory entry that was never made durable. The
-        // chain sync is shared with `Environment::create`'s birth
-        // (finding 022 — one mechanism, two sites).
-        file.sync_all().map_err(crate::error::Error::Io)?;
-        crate::storage::env::sync_dirent_chain(dest).map_err(crate::error::Error::Io)?;
+        let catalog = crate::storage::env::PublishCatalog::store(&self.env, self.schema.as_ref())?;
+        drop(crate::storage::env::Environment::publish(
+            dest,
+            self.env.kind(),
+            &catalog,
+        )?);
         crate::obs::event(
             crate::obs::names::COMPACT_DURABLE,
-            crate::obs::Category::Storage,
-            2,
-            0,
+            crate::obs::TraceArgs::Count(2),
         );
         Ok(())
     }

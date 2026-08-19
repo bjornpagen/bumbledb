@@ -3,7 +3,6 @@ use crate::ir::Value;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::{Environment, FORMAT_VERSION, StoreKind};
 use crate::testutil::TempDir;
-use crate::verify_store::StoreFinding;
 use crate::{Db, exhume};
 use bumbledb_theory::Interval;
 use bumbledb_theory::schema::{
@@ -82,7 +81,7 @@ const NOTE: RelationId = RelationId(1);
 fn note(id: u64, title: &str, status: u64) -> Vec<Value> {
     vec![
         Value::U64(id),
-        Value::String(title.as_bytes().into()),
+        Value::String(title.into()),
         Value::FixedBytes(Box::from(&b"abcd"[..])),
         Value::IntervalU64(Interval::<u64>::new(2, 5).expect("interval")),
         Value::U64(status),
@@ -93,11 +92,15 @@ fn note(id: u64, title: &str, status: u64) -> Vec<Value> {
 /// release before exhume re-opens the path). Two commits, one fact each:
 /// row ids follow commit order, so the scan order below is pinned.
 fn build_store(dir: &TempDir) {
-    let db = Db::create(dir.path(), theory()).expect("create");
+    let db = Db::create(dir.path(), theory())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| tx.insert_dyn(NOTE, [&note(1, "alpha", 0)]).map(|_| ()))
-        .expect("write");
+        .expect("write")
+        .unwrap();
     db.write(|tx| tx.insert_dyn(NOTE, [&note(2, "beta", 1)]).map(|_| ()))
-        .expect("write");
+        .expect("write")
+        .unwrap();
 }
 
 #[test]
@@ -153,31 +156,28 @@ fn create_then_exhume_reads_every_relation_field_and_row_with_no_theory() {
 }
 
 #[test]
-fn a_pre_descriptor_store_refuses_exhume_then_one_open_adopts_it() {
-    let dir = TempDir::new("exhume-backfill");
+fn a_missing_descriptor_is_meta_missing_on_every_open_surface() {
+    let dir = TempDir::new("exhume-missing-descriptor");
     build_store(&dir);
-    // The pre-descriptor fixture: strip the persisted descriptor,
-    // reproducing the exact on-disk shape of a store created before
-    // descriptors existed.
     let schema = theory().validate().expect("valid fixture");
     let env = Environment::open(dir.path(), &schema).expect("raw open");
     env.strip_schema_descriptor_for_tests().expect("strip");
     drop(env);
 
-    // Not yet adopted: the typed refusal names the remedy.
-    match exhume(dir.path()).map(|_| ()) {
-        Err(Error::DescriptorMissing) => {}
-        other => panic!("expected DescriptorMissing, got {other:?}"),
+    // Format 8: the descriptor is a required `_meta` key. No adoption
+    // back-fill remains — that was the format-7 decoder.
+    for err in [
+        exhume(dir.path()).map(|_| ()).unwrap_err(),
+        Db::open(dir.path(), theory()).map(|_| ()).unwrap_err(),
+        Environment::open(dir.path(), &schema)
+            .map(|_| ())
+            .unwrap_err(),
+    ] {
+        assert!(
+            matches!(err, Error::Corruption(CorruptionError::MetaMissing)),
+            "{err:?}"
+        );
     }
-
-    // One successful fingerprint-matching open back-fills the
-    // descriptor — the adoption path.
-    drop(Db::open(dir.path(), theory()).expect("adopting open"));
-
-    // Self-describing forever: exhume now succeeds and the descriptor
-    // is the declaration.
-    let exhumed = exhume(dir.path()).expect("exhume after adoption");
-    assert_eq!(*exhumed.descriptor(), theory());
 }
 
 #[test]
@@ -190,25 +190,23 @@ fn a_desynced_descriptor_is_an_exhume_corruption_and_a_verify_store_conviction()
         .expect("overwrite");
     drop(env);
 
-    // Exhume's integrity gate: hash disagreement is typed corruption.
-    match exhume(dir.path()).map(|_| ()) {
-        Err(Error::Corruption(CorruptionError::DescriptorFingerprintDesync { .. })) => {}
-        other => panic!("expected DescriptorFingerprintDesync, got {other:?}"),
+    // Format 8 open reads the descriptor: hash disagreement is typed
+    // corruption on every surface. Open never rewrites the bytes.
+    for err in [
+        exhume(dir.path()).map(|_| ()).unwrap_err(),
+        Db::open(dir.path(), theory()).map(|_| ()).unwrap_err(),
+        Environment::open(dir.path(), &schema)
+            .map(|_| ())
+            .unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::DescriptorFingerprintDesync { .. })
+            ),
+            "{err:?}"
+        );
     }
-
-    // The ordinary open still verifies its fingerprint (untouched) and
-    // must NOT silently repair the present-but-wrong descriptor; the
-    // sweeper convicts it.
-    let db = Db::open(dir.path(), theory()).expect("open under the theory");
-    let report = db.verify_store().expect("sweep");
-    assert!(
-        report
-            .findings
-            .iter()
-            .any(|finding| matches!(finding, StoreFinding::DescriptorFingerprintDesync { .. })),
-        "expected the descriptor conviction, got {:?}",
-        report.findings
-    );
 }
 
 #[test]
@@ -231,9 +229,9 @@ fn exhume_of_a_version_mismatched_store_is_the_format_refusal() {
     drop(env);
 
     match exhume(dir.path()).map(|_| ()) {
-        Err(Error::FormatMismatch { found, expected }) => {
-            assert_eq!(found, FORMAT_VERSION + 1);
-            assert_eq!(expected, FORMAT_VERSION);
+        Err(Error::FormatMismatch { mismatch }) => {
+            assert_eq!(mismatch.witnessed, FORMAT_VERSION + 1);
+            assert_eq!(mismatch.required, FORMAT_VERSION);
         }
         other => panic!("expected FormatMismatch, got {other:?}"),
     }
@@ -243,9 +241,12 @@ fn exhume_of_a_version_mismatched_store_is_the_format_refusal() {
 fn an_ephemeral_store_exhumes_too_and_reports_its_kind() {
     let dir = TempDir::new("exhume-ephemeral");
     {
-        let db = Db::ephemeral(dir.path(), theory()).expect("ephemeral");
+        let db = Db::ephemeral(dir.path(), theory())
+            .expect("ephemeral")
+            .expect("accepted");
         db.write(|tx| tx.insert_dyn(NOTE, [&note(7, "gamma", 0)]).map(|_| ()))
-            .expect("write");
+            .expect("write")
+            .unwrap();
     }
     let exhumed = exhume(dir.path()).expect("exhume");
     assert_eq!(exhumed.kind(), StoreKind::Ephemeral);
@@ -289,8 +290,8 @@ fn a_selection_carrying_theory_survives_the_exhume_round_trip() {
                     (
                         bumbledb_theory::schema::FieldId(1),
                         LiteralSet::Many(Box::new([
-                            Value::String(Box::from(&b"alpha"[..])),
-                            Value::String(Box::from(&b"beta"[..])),
+                            Value::String(Box::from("alpha")),
+                            Value::String(Box::from("beta")),
                         ])),
                     ),
                     (
@@ -309,7 +310,11 @@ fn a_selection_carrying_theory_survives_the_exhume_round_trip() {
         }],
     };
     let dir = TempDir::new("exhume-selections");
-    drop(Db::create(dir.path(), declared.clone()).expect("create"));
+    drop(
+        Db::create(dir.path(), declared.clone())
+            .expect("create")
+            .expect("accepted"),
+    );
     let exhumed = exhume(dir.path()).expect("exhume");
     assert_eq!(*exhumed.descriptor(), declared);
 }

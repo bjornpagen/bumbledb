@@ -37,6 +37,7 @@ import { native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { type AnySchema, schema } from "#schema.ts"
 import { capacity, contained, key, mirrors, renderStatement, type Statement } from "#statements.ts"
+import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-render-golden-"))
@@ -269,8 +270,8 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 
 	test("every materialized slot's manifest spelling equals the SDK render", function golden() {
 		const created = native.dbCreate(storeDir, lower(Golden))
-		if (!created.ok) {
-			assert.fail(`dbCreate refused the golden theory (${created.kind}): ${created.message}`)
+		if (created.tag !== "accepted") {
+			assert.fail(`dbCreate refused the golden theory (${created.tag})`)
 		}
 		db = created.db
 		const manifest: Manifest = native.dbManifest(db)
@@ -298,8 +299,8 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 describe("the ψ-on-closed golden: manifest spelling, engine folding, violation paste-back", function psiSuite() {
 	test("every Mastery slot's manifest spelling equals the SDK render", function psiGolden() {
 		const created = native.dbCreate(psiStoreDir, lower(Mastery))
-		if (!created.ok) {
-			assert.fail(`dbCreate refused the Mastery theory (${created.kind}): ${created.message}`)
+		if (created.tag !== "accepted") {
+			assert.fail(`dbCreate refused the Mastery theory (${created.tag})`)
 		}
 		psiDb = created.db
 		const manifest: Manifest = native.dbManifest(psiDb)
@@ -330,15 +331,17 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 		})
 		assert.ok(certificate, "the manifest names Certificate")
 
-		const passing = native.dbWriteBegin(handle)
-		assert.deepEqual(native.txInsert(passing, certificate.id, [[1n, 1n]]), { submitted: 1n, changed: 1n })
-		const landed = native.txCommit(passing)
-		assert.ok(landed.ok, "a certificate over a ψ-member grade commits")
+		const landed = native.dbWrite(handle, function write(passing) {
+			assert.deepEqual(native.txInsert(passing, certificate.id, [[1n, 1n]]), { submitted: 1n, changed: 1n })
+			return true
+		})
+		assert.equal(landed.tag, "accepted", "a certificate over a ψ-member grade commits")
 
-		const violating = native.dbWriteBegin(handle)
-		assert.deepEqual(native.txInsert(violating, certificate.id, [[2n, 0n]]), { submitted: 1n, changed: 1n })
-		const rejected = native.txCommit(violating)
-		assert.ok(!rejected.ok, "a certificate over a non-member grade is rejected")
+		const rejected = native.dbWrite(handle, function write(violating) {
+			assert.deepEqual(native.txInsert(violating, certificate.id, [[2n, 0n]]), { submitted: 1n, changed: 1n })
+			return true
+		})
+		assert.equal(rejected.tag, "rejected", "a certificate over a non-member grade is rejected")
 		assert.equal(rejected.violations.length, 1, "exactly the ψ containment is violated")
 		const violation = rejected.violations[0]
 		assert.ok(violation, "the violation is present")
@@ -352,11 +355,11 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 	})
 
 	test("Db.create accepts the ψ theory and the violation IS the statement value", async function psiDbRuntime() {
-		const masteryDb = await Db.create(psiDbDir, Mastery)
+		const masteryDb = accepted(await Db.create(psiDbDir, Mastery))
 		const rejected = masteryDb.write(function violate(tx) {
 			put(tx, Certificate, { grade: "Failed" })
 		})
-		assert.ok(!rejected.ok, "the ψ containment rejects the non-member grade")
+		assert.equal(rejected.tag, "rejected", "the ψ containment rejects the non-member grade")
 		assert.equal(rejected.violations.length, 1)
 		const violation = rejected.violations[0]
 		assert.ok(violation, "the violation is present")

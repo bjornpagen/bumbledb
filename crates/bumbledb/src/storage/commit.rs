@@ -24,11 +24,12 @@ use std::collections::BTreeMap;
 use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn};
 
-use crate::error::{CorruptionError, Error, Result};
+use crate::encoding::FactView;
+use crate::error::{Admission, CorruptionError, Error, Result};
 use crate::schema::Schema;
+use crate::storage::catalog::CatalogWrite;
 use crate::storage::env::{GenerationId, WriteTxn};
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
-use crate::storage::read::check_width;
+use crate::storage::keys::{self, KeyBuf};
 use bumbledb_theory::schema::RelationId;
 
 mod applier;
@@ -58,13 +59,64 @@ pub(crate) use crashpoint;
 /// The applied-but-uncommitted state after phases 1-2: the open LMDB
 /// write transaction plus the one thing the executor alone can know —
 /// the row ids it minted. Everything else the later phases consume lives
-/// in the [`plan::CommitPlan`].
+/// in the [`plan::CommitPlan`]. Phase 3 is [`Applied::judge`]; the
+/// committable transaction is [`Judged`].
 pub struct Applied<'env> {
     /// The open, uncommitted LMDB write transaction.
     pub txn: WriteTxn<'env>,
     /// Per-relation next row id after this apply (flushed to `S` by the
     /// 50-storage doc's phase 4).
     pub row_id_next: BTreeMap<RelationId, u64>,
+}
+
+/// Phase 3 has run: the write transaction may flush counters and commit.
+pub struct Judged<'env> {
+    txn: WriteTxn<'env>,
+    row_id_next: BTreeMap<RelationId, u64>,
+}
+
+impl<'env> Applied<'env> {
+    /// Phase 3: containment and capacity judgment against this
+    /// transaction's read-your-writes view. A rejection leaves the
+    /// transaction to drop.
+    pub(crate) fn judge(self, plan: &plan::CommitPlan<'_>) -> Result<Admission<Judged<'env>>> {
+        let schema = plan.selections.schema();
+        let final_state = judgment::FinalStateView::new(&self.txn, schema, plan);
+        Ok(match judgment::judge(&final_state)? {
+            Admission::Rejected(violations) => Admission::Rejected(violations),
+            Admission::Accepted(()) => Admission::Accepted(Judged {
+                txn: self.txn,
+                row_id_next: self.row_id_next,
+            }),
+        })
+    }
+}
+
+impl Judged<'_> {
+    /// Phases 4–5: counter/dictionary flush, generation advance, LMDB commit.
+    pub(crate) fn finish(
+        mut self,
+        delta: &crate::storage::delta::WriteDelta<'_>,
+        env: &crate::storage::env::Environment,
+    ) -> Result<CommitReport> {
+        {
+            let mut span = crate::obs::span(crate::obs::names::COUNTERS_FLUSH);
+            let intern_count = delta
+                .interns()
+                .map_or(0, |interns| interns.entries().count() as u64);
+            write::flush_counters(&mut self.txn, delta, &self.row_id_next, env)?;
+            span.set_count(intern_count);
+        }
+        let new_generation = self.txn.generation()?.next();
+        self.txn.put_generation(new_generation)?;
+        crashpoint!("after-judgment");
+        {
+            let _s = crate::obs::span(crate::obs::names::LMDB_COMMIT);
+            self.txn.commit()?;
+        }
+        crashpoint!("after-commit");
+        Ok(CommitReport::Changed { new_generation })
+    }
 }
 
 /// The commit outcome: whether logical state changed, and the resulting
@@ -96,13 +148,12 @@ impl CommitReport {
     }
 }
 
-/// Working state threaded through phases 1-2: the transaction, the row-id
+/// Working state threaded through phases 1-2: the catalog, the row-id
 /// plumbing, one key scratch — no derivation state; the plan owns it —
 /// and the key-violation collector (recorded conflicts, sealed into the
 /// complete rejection set after phase 2).
-struct Applier<'env, 's> {
-    txn: WriteTxn<'env>,
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+struct Applier<'c, 's, C: CatalogWrite> {
+    catalog: &'c mut C,
     schema: &'s Schema,
     row_id_next: BTreeMap<RelationId, u64>,
     key: KeyBuf,
@@ -120,21 +171,19 @@ fn decode_row_id(bytes: &[u8]) -> Result<u64> {
 /// and the judgment's probe subjects. Every caller resolved the row id
 /// inside this same transaction's view, so a miss is corruption, never a
 /// race. Own scratch: callers' key buffers stay untouched.
-fn fact_by_row<'t>(
+fn fact_by_row<'t, 's>(
     data: Database<Bytes, Bytes>,
     txn: &'t RoTxn<'_, AnyTls>,
-    schema: &Schema,
+    schema: &'s Schema,
     relation: RelationId,
     row_id: u64,
-) -> Result<&'t [u8]> {
-    let mut key: KeyBuf = [0; MAX_KEY];
-    let f_len = keys::fact_key(&mut key, relation, row_id);
-    let bytes =
-        data.get(txn, &key[..f_len])?
-            .ok_or(Error::Corruption(CorruptionError::MissingFact {
-                relation,
-                row_id,
-            }))?;
-    check_width(schema, relation, row_id, bytes)?;
-    Ok(bytes)
+) -> Result<FactView<'t, 's>> {
+    let key = keys::fact_key(relation, row_id);
+    let bytes = data
+        .get(txn, &key)?
+        .ok_or(Error::Corruption(CorruptionError::MissingFact {
+            relation,
+            row_id,
+        }))?;
+    crate::storage::read::check_width(schema, relation, row_id, bytes)
 }

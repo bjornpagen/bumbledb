@@ -37,7 +37,7 @@ pub(crate) fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec
                 op: WordCmp::Eq,
                 value,
             } => Some(Selection {
-                field: *field,
+                field: field.field(),
                 value: value.clone(),
             }),
             _ => None,

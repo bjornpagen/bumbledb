@@ -41,7 +41,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &range).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut got: Vec<u64> = (0..out.len())
         .map(|answer| match out.get(answer, 0) {
@@ -84,7 +84,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &spread).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut got: Vec<(i64, i64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
@@ -177,7 +177,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     let mut got: Vec<(u64, i64)> = (0..out.len())
         .map(|answer| {
@@ -221,13 +221,13 @@ fn ne_against_a_never_interned_string_matches_everything() {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::String(Box::from(&b"ghost"[..]))),
+            rhs: Term::Literal(Value::String(Box::from("ghost"))),
         })],
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[])
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 2, "no stored memo equals a never-interned value");
 

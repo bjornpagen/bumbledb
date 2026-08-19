@@ -11,6 +11,12 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+`0.15.0` is the admitted-instance / ABI-3 / format-8 release over `0.14.0` —
+`OwnedInstance`, `ReadInstance`, `InstanceBuilder`, `WriteTx`, sealed
+`Instance`, and `Admission`; snapshot-named surfaces are gone; C
+`bdb_abi_version()` is 3. Engine crates, `bumbledb-c`, the napi crate, and both
+npm packages share one spelling.
+
 `0.14.0` is the write-algebra / ABI-2 release over `0.12.2` — one collection
 `insert`/`delete`/`reserve` inside `write`; empty, singleton, and many are one
 collection; ETL is a host loop of `write` (`scan` then `insert_dyn`);
@@ -124,7 +130,7 @@ unsupported-platform error everywhere else.
 
 ## Version lockstep
 
-The version lives in ONE place conceptually: `0.14.0` is the identity of the
+The version lives in ONE place conceptually: `0.15.0` is the identity of the
 layout. The build (`assertVersionLockstep` in `scripts/build.ts`) fails if
 any of these diverge:
 
@@ -150,24 +156,24 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.14.0` in this tree; `pnpm run build` asserts the lockstep
+spellings are `0.15.0` in this tree; `pnpm run build` asserts the lockstep
 on every run.
 
-## Runbook (0.14.0, darwin-arm64 host, owner)
+## Runbook (0.15.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.14.0 (the build asserts it — the
+# 1. The lockstep is already set to 0.15.0 (the build asserts it — the
 #    platform pin is NOT a repo field, it injects at pack time):
-#    - ts/package.json                    "version": "0.14.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.14.0"
-#    - ts/crate/Cargo.toml                version = "0.14.0"
-#    - crates/bumbledb/Cargo.toml         version = "0.14.0"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.14.0"
+#    - ts/package.json                    "version": "0.15.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.15.0"
+#    - ts/crate/Cargo.toml                version = "0.15.0"
+#    - crates/bumbledb/Cargo.toml         version = "0.15.0"
+#    - crates/bumbledb-c/Cargo.toml       version = "0.15.0"
 #    - workspace members (bench, macros, query, query-macros, theory)
-#    bdb_abi_version() stays 2 (layout generation).
+#    bdb_abi_version() is 3 (layout generation).
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -189,12 +195,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.14.0 version
-pnpm view @bjornpagen/bumbledb@0.14.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.15.0 version
+pnpm view @bjornpagen/bumbledb@0.15.0 version
 
 # 6. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.14.0 <release-commit> -m "bumbledb 0.14.0" && git push origin v0.14.0
+#    git tag -a v0.15.0 <release-commit> -m "bumbledb 0.15.0" && git push origin v0.15.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,

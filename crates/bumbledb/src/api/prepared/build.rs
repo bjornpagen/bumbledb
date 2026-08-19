@@ -6,10 +6,12 @@ use super::{
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
+use crate::image::ImageBind;
+use crate::image::LmdbImages;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
 use crate::ir::normalize::{NormalizedQuery, normalize_rules};
-use crate::ir::validate::{RuleWitness, ValidatedQuery, validate};
+use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
@@ -17,7 +19,9 @@ use crate::plan::fj::{
     provably_disjoint_rules, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
+use crate::storage::env::{CatalogIdentity, ReadTxn};
+use std::sync::Arc;
 
 /// Prepares a query: the one-time pipeline, allocation-sanctioned.
 /// Validation and normalization see the whole query; everything after —
@@ -34,60 +38,70 @@ use crate::storage::env::ReadTxn;
 ///
 /// Only on programmer-invariant violations (`binary2fj` + `factor` +
 /// `fold_split` + `gj_split` construct valid plans by construction).
-pub(crate) fn prepare<'s, S>(
+pub(crate) fn prepare<S>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
-    schema: &'s Schema,
+    schema: Arc<Schema>,
     query: &Query,
-) -> Result<PreparedQuery<'s, S>> {
-    let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
+) -> Result<PreparedQuery<S>> {
+    let catalog = txn.catalog();
+    let images = LmdbImages::new(txn, cache);
+    prepare_on(txn.identity(), &catalog, &images, schema, query)
+}
+
+pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
+    identity: &CatalogIdentity,
+    catalog: &C,
+    images: &I,
+    schema: Arc<Schema>,
+    query: &Query,
+) -> Result<PreparedQuery<S>> {
+    let _prepare = obs::span(obs::names::PREPARE);
     let witness = {
-        let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
-        validate(schema, query)?
+        let _s = obs::span(obs::names::VALIDATE);
+        validate(&schema, query)?
     };
     let mut signatures: Vec<&crate::ir::validate::Signature> = Vec::new();
     let mut interiors = Vec::with_capacity(witness.interiors().len());
     for i in 0..witness.interiors().len() {
         interiors.push(prepare_interior(
-            txn,
-            cache,
-            schema,
+            catalog,
+            images,
+            &schema,
             &witness,
             i,
             &signatures,
         )?);
         signatures.push(witness.interiors()[i].signature());
     }
-    let reach = match &witness {
-        ValidatedQuery::Cq { .. } => PreparedReach::Cq,
-        ValidatedQuery::Reach {
-            rec,
-            rec_id,
-            derived_count,
-            ..
-        } => {
+    let reach = match witness.rec() {
+        None => PreparedReach::Cq,
+        Some(rec) => {
+            let rec_id = witness.rec_id().expect("Reach has rec_id");
             signatures.push(rec.signature());
             PreparedReach::Reach {
                 driver: Box::new(prepare_reach(
-                    txn,
-                    cache,
-                    schema,
+                    catalog,
+                    images,
+                    &schema,
                     &witness,
                     rec,
-                    *rec_id,
+                    rec_id,
                     &signatures,
                 )?),
-                rec_id: *rec_id,
-                derived_count: *derived_count,
+                rec_id,
+                derived_count: witness.derived_count(),
             }
         }
     };
+    let rendered = crate::ir::render::render(&schema, query);
     prepare_witnessed(
-        txn,
-        cache,
+        identity,
+        catalog,
+        images,
         schema,
         &witness,
-        crate::ir::render::render(schema, query),
+        rendered,
         interiors,
         reach,
         &signatures,
@@ -114,27 +128,28 @@ enum PreparedReach {
     clippy::too_many_arguments,
     reason = "the prepare pipeline reads as one protocol: normalize, ground, per-rule prepare, probes, artifacts"
 )]
-fn prepare_witnessed<'s, S>(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
-    schema: &'s Schema,
+fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
+    identity: &CatalogIdentity,
+    catalog: &C,
+    images: &I,
+    schema: Arc<Schema>,
     witness: &crate::ir::validate::ValidatedQuery,
     rendered: String,
     interiors: Vec<PreparedInterior>,
     reach: PreparedReach,
     signatures: &[&crate::ir::validate::Signature],
-) -> Result<PreparedQuery<'s, S>> {
+) -> Result<PreparedQuery<S>> {
     let normalized = {
-        let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
-        normalize_rules(schema, signatures, witness.rules())
+        let _s = obs::span(obs::names::NORMALIZE);
+        normalize_rules(&schema, signatures, witness.rules())
     };
 
     // The disjointness proof runs pre-grounding (the rewrite never changes
     // the denotation, so the proof stands), and pre-deletion: pairwise
     // over a superset holds over whichever rules survive below.
-    let disjoint_rules = disjointness(witness, &normalized, schema);
+    let disjoint_rules = disjointness(witness, &normalized, &schema);
 
-    let (survivors, subsumed) = ground_main(normalized, witness, schema);
+    let (survivors, subsumed) = ground_main(normalized, witness, &schema);
 
     // The signature the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -163,9 +178,9 @@ fn prepare_witnessed<'s, S>(
         written.push(rule.written());
         first_rule_idx.get_or_insert(rule_idx);
         rules.push(prepare_rule(
-            txn,
-            cache,
-            schema,
+            catalog,
+            images,
+            &schema,
             &rule,
             &normalized_rule,
             &signature.columns,
@@ -231,7 +246,7 @@ fn prepare_witnessed<'s, S>(
     let ray_probes = if rules.is_empty() {
         Vec::new()
     } else {
-        prepare_ray_probes(txn, cache, schema, witness, signatures)?
+        prepare_ray_probes(catalog, images, &schema, witness, signatures)?
     };
 
     let interior_slots = interiors.iter().flat_map(|interior| {
@@ -297,7 +312,7 @@ fn prepare_witnessed<'s, S>(
             }
         };
     let pipeline = match reach {
-        PreparedReach::Cq => PreparedPipeline::Cq { interiors, rules },
+        PreparedReach::Cq => seal_cq_pipeline(interiors, rules, &signature.columns),
         PreparedReach::Reach {
             driver,
             rec_id,
@@ -313,7 +328,7 @@ fn prepare_witnessed<'s, S>(
     };
     Ok(PreparedQuery {
         schema,
-        env_instance: txn.env_instance(),
+        identity: identity.clone(),
         disjoint_rules,
         subsumed,
         dead,
@@ -323,7 +338,7 @@ fn prepare_witnessed<'s, S>(
         signature,
         params,
         resolved_params: Vec::new(),
-        unresolved_literals,
+        latch: super::Latch::from_count(unresolved_literals),
         param_word_memo: Vec::new(),
         missed_params: Vec::new(),
         sink,
@@ -337,9 +352,9 @@ fn prepare_witnessed<'s, S>(
     })
 }
 
-fn prepare_interior(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_interior<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     index: usize,
@@ -364,8 +379,8 @@ fn prepare_interior(
         let rule = witnesses[rule_idx];
         written.push(rule.written());
         rules.push(prepare_rule(
-            txn,
-            cache,
+            catalog,
+            images,
             schema,
             &rule,
             &normalized_rule,
@@ -391,20 +406,20 @@ fn prepare_interior(
     let ray_probes = if rules.is_empty() {
         Vec::new()
     } else {
-        prepare_ray_probes_for(txn, cache, schema, &witnesses, signatures)?
+        prepare_ray_probes_for(catalog, images, schema, &witnesses, signatures)?
     };
     Ok(PreparedInterior {
         rules,
         sink,
-        field_types: columns.iter().map(|c| c.ty().type_desc()).collect(),
+        field_types: columns.iter().map(|c| *c.ty()).collect(),
         units,
         ray_probes,
     })
 }
 
-fn prepare_reach(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_reach<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     rec: &crate::ir::validate::ValidatedRec,
@@ -429,8 +444,8 @@ fn prepare_reach(
             continue;
         }
         base.push(prepare_rule(
-            txn,
-            cache,
+            catalog,
+            images,
             schema,
             &base_w[rule_idx],
             &normalized_rule,
@@ -445,8 +460,8 @@ fn prepare_reach(
         }
         let delta = rec.arm(rule_idx).self_occ();
         rec_rules.push(prepare_rec_arm(
-            txn,
-            cache,
+            catalog,
+            images,
             schema,
             &rec_w[rule_idx],
             &normalized_rule,
@@ -487,7 +502,7 @@ fn prepare_reach(
     Ok(super::reach::ReachDriver {
         base,
         rec: rec_rules,
-        field_types: columns.iter().map(|c| c.ty().type_desc()).collect(),
+        field_types: columns.iter().map(|c| *c.ty()).collect(),
         sink,
         units,
         scratch: super::reach::RecPingPong::default(),
@@ -550,7 +565,7 @@ fn free_join_hint(rule: &super::FreeJoinRule) -> usize {
 }
 
 /// The rule's `str` literals awaiting dictionary words — the latch
-/// counter's initial value ([`PreparedQuery::unresolved_literals`]).
+/// counter's initial value ([`super::Latch`]).
 /// `KeyProbePlan` values resolve their key constants per probe and stay outside
 /// the latch (the templates the latch rewrites are Free Join plan
 /// arrays). Discharged occurrences count nothing: an eliminated one
@@ -603,15 +618,9 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
         let point = witness.point_params().contains(&id);
         let ty = value_types.get(&id).expect("dense param ids");
         let spec = if witness.set_params().contains(&id) {
-            super::ParamSpec::Set {
-                elem: (*ty).clone(),
-                point,
-            }
+            super::ParamSpec::Set { elem: **ty, point }
         } else {
-            super::ParamSpec::Scalar {
-                ty: (*ty).clone(),
-                point,
-            }
+            super::ParamSpec::Scalar { ty: **ty, point }
         };
         params.push(spec);
     }
@@ -679,16 +688,18 @@ fn ground_main(
 /// changes, over one already-grounded rule. Returns the rule's prepared
 /// artifact; result types are the query's signature ([`super::Signature`]),
 /// never re-derived here.
-fn prepare_rule(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_rule<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
-    prepare_rule_variant(txn, cache, schema, rule, normalized, columns, signatures)
+    prepare_rule_variant(
+        catalog, images, schema, rule, normalized, columns, signatures,
+    )
 }
 
 /// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta`
@@ -697,9 +708,9 @@ fn prepare_rule(
     clippy::too_many_arguments,
     reason = "the rec-arm pipeline's inputs are clearer unpacked"
 )]
-fn prepare_rec_arm(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_rec_arm<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
@@ -717,8 +728,15 @@ fn prepare_rec_arm(
             .any(|occ| matches!(occ.bind, crate::ir::normalize::OccBind::RecDelta(_))),
         "self_occ is the rec atom normalize numbered"
     );
-    let prepared =
-        prepare_rule_variant(txn, cache, schema, rule, &normalized, columns, signatures)?;
+    let prepared = prepare_rule_variant(
+        catalog,
+        images,
+        schema,
+        rule,
+        &normalized,
+        columns,
+        signatures,
+    )?;
     let PreparedRule::FreeJoin(fj) = prepared else {
         unreachable!("an Interior-reading rec arm never classifies as a key probe")
     };
@@ -748,28 +766,23 @@ fn stamp_rec_bind(
 /// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
 /// statistics → DP → lowering → plan validation. Rec-arm bind roles
 /// are already stamped on the occurrences.
-#[expect(
-    clippy::too_many_lines,
-    reason = "classify then statistics then DP then lowering is one pipeline"
-)]
-fn prepare_rule_variant(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::SignatureColumn],
+    _columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
     // Classification first: a key probe needs no statistics or planning.
     let classified = {
-        let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
+        let _s = obs::span(obs::names::CLASSIFY);
         classify(normalized, schema)
     };
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
-        let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
         return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
             distinct_witness,
@@ -777,7 +790,6 @@ fn prepare_rule_variant(
             // Written by `seal_dnf_spans` iff the query is a
             // DNF-derived union; empty (and never read) otherwise.
             dedup_spans: Box::default(),
-            key_probe_finds,
         }));
     }
 
@@ -793,7 +805,7 @@ fn prepare_rule_variant(
     // DP state and grounding-eliminated occurrences left planning
     // entirely, so neither earns a statistics read — and, by the
     // same token, neither earns a pin.
-    let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
+    let mut stats_span = obs::span(obs::names::STATS);
     let mut stats = Vec::with_capacity(normalized.occurrences.len());
     for occurrence in normalized
         .occurrences
@@ -808,8 +820,8 @@ fn prepare_rule_variant(
         // knows the shape (negated and grounding-discharged
         // occurrences carry no pin today).
         if occurrence.bind.edb().is_none() {
-            stats.push(crate::plan::selectivity::occurrence_stats(
-                txn, cache, schema, occurrence, 0,
+            stats.push(crate::plan::selectivity::occurrence_stats_on(
+                catalog, images, schema, occurrence, 0,
             )?);
             continue;
         }
@@ -817,9 +829,10 @@ fn prepare_rule_variant(
             .bind
             .edb()
             .expect("EDB bind is a stored relation");
-        let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
-        let occ_stats =
-            crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
+        let rows = crate::plan::selectivity::relation_rows_on(catalog, schema, relation)?;
+        let occ_stats = crate::plan::selectivity::occurrence_stats_on(
+            catalog, images, schema, occurrence, rows,
+        )?;
         pins.push(OccurrencePin {
             occ_id: occurrence.occ_id,
             relation,
@@ -828,16 +841,15 @@ fn prepare_rule_variant(
         });
         stats.push(occ_stats);
     }
-    stats_span.set_args(stats.len() as u64, 0);
+    stats_span.set_count(stats.len() as u64);
     stats_span.end();
     let order = {
-        let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);
+        let _s = obs::span(obs::names::PLAN_DP);
         plan_order(normalized, schema, &stats)
     };
-    let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
+    let lower_span = obs::span(obs::names::LOWER);
     let mut fj = binary2fj(normalized, &order);
     factor(&mut fj);
-    let mut estimates = order.estimates.clone();
     // The fold-aware level split, aggregate heads only (a projection
     // has no fold to push down): group variables form their own prefix
     // levels so leaf scan runs are group-constant and the aggregate
@@ -863,17 +875,16 @@ fn prepare_rule_variant(
                 | FindTerm::AggregateMeasure { .. } => None,
             })
             .collect();
-        fold_split(&mut fj, &group_key, &mut estimates);
+        fold_split(&mut fj, &group_key);
     }
     gj_split(&mut fj);
     // Group key for projections; every variable for aggregates —
     // skip-illegality under a fold is encoded in the bits themselves
     // (`RuleWitness::sink_vars`).
     let sink_vars = rule.sink_vars();
-    let plan = crate::plan::fj::validate_with_signatures(
-        &fj, normalized, schema, signatures, estimates, &sink_vars,
-    )
-    .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
+    let plan =
+        crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
+            .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
     lower_span.end();
 
     let finds = find_specs(rule, &plan);
@@ -884,7 +895,7 @@ fn prepare_rule_variant(
     // views cutover: prepare provably never touches an image (the stats
     // phase peeks, never builds), so a prepared query pins nothing.
     let memo = {
-        let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
+        let _s = obs::span(obs::names::BUILD_COLTS);
         build_view_memo(&plan)
     };
     Ok(PreparedRule::FreeJoin(FreeJoinRule {
@@ -914,20 +925,20 @@ fn prepare_rule_variant(
 /// folds exactly its own disjunct set. Disjuncts of one written rule
 /// share one variable scope — one slot layout serves the group's
 /// probes and its verdict.
-fn prepare_ray_probes(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_ray_probes<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<Vec<super::RayProbeSet>> {
     let members: Vec<_> = witness.rules().collect();
-    prepare_ray_probes_for(txn, cache, schema, &members, signatures)
+    prepare_ray_probes_for(catalog, images, schema, &members, signatures)
 }
 
-fn prepare_ray_probes_for(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_ray_probes_for<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     rules: &[crate::ir::validate::RuleWitness<'_>],
     signatures: &[&crate::ir::validate::Signature],
@@ -968,8 +979,8 @@ fn prepare_ray_probes_for(
                 continue;
             }
             probes.push(prepare_ray_probe(
-                txn,
-                cache,
+                catalog,
+                images,
                 schema,
                 &template,
                 &normalized,
@@ -1002,9 +1013,9 @@ fn prepare_ray_probes_for(
 /// variable sink-relevant: the verdict fold reads arbitrary condition
 /// slots, so no suffix is skippable — exactly the aggregate plan's
 /// relevance rule.
-fn prepare_ray_probe(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
+fn prepare_ray_probe<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
@@ -1020,8 +1031,8 @@ fn prepare_ray_probe(
         let rows = if occurrence.bind.edb().is_none() {
             0
         } else {
-            crate::plan::selectivity::relation_rows(
-                txn,
+            crate::plan::selectivity::relation_rows_on(
+                catalog,
                 schema,
                 occurrence
                     .bind
@@ -1029,21 +1040,19 @@ fn prepare_ray_probe(
                     .expect("EDB bind is a stored relation"),
             )?
         };
-        stats.push(crate::plan::selectivity::occurrence_stats(
-            txn, cache, schema, occurrence, rows,
+        stats.push(crate::plan::selectivity::occurrence_stats_on(
+            catalog, images, schema, occurrence, rows,
         )?);
     }
     let order = plan_order(normalized, schema, &stats);
     let mut fj = binary2fj(normalized, &order);
     factor(&mut fj);
-    let estimates = order.estimates.clone();
     gj_split(&mut fj);
     let sink_vars: std::collections::BTreeSet<crate::ir::VarId> =
         rule.var_types().map(|(var, _)| var).collect();
-    let plan = crate::plan::fj::validate_with_signatures(
-        &fj, normalized, schema, signatures, estimates, &sink_vars,
-    )
-    .expect("binary2fj + factor + gj_split construct valid plans");
+    let plan =
+        crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
+            .expect("binary2fj + factor + gj_split construct valid plans");
     let executor = Executor::new(&plan);
     let occurrence_count = plan.occurrences().len();
     let memo = build_view_memo(&plan);
@@ -1071,7 +1080,7 @@ fn prepare_ray_probe(
 fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     let mut memo = ViewMemo {
         colts: Vec::new(),
-        generation: Vec::new(),
+        epoch: Vec::new(),
         filters: Vec::new(),
         parked: Vec::new(),
         spare_buffers: Vec::new(),
@@ -1132,7 +1141,7 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
             .collect();
         memo.colts
             .push(Colt::new(View::Unbound, &selections, columns));
-        memo.generation.push(None);
+        memo.epoch.push(None);
         memo.filters.push(Vec::new());
         memo.parked.push((0..PARKED_SLOTS).map(|_| None).collect());
         memo.spare_buffers.push(Vec::new());
@@ -1264,6 +1273,29 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
         .collect()
 }
 
+/// Seal a CQ pipeline: a no-interior single key-probe with variable finds
+/// is the [`PreparedPipeline::PointProbe`] arm. Aggregate and measure key
+/// probes stay on Cq and run through the shared sink.
+fn seal_cq_pipeline(
+    interiors: Vec<PreparedInterior>,
+    mut rules: Vec<PreparedRule>,
+    columns: &[crate::ir::validate::SignatureColumn],
+) -> PreparedPipeline {
+    if interiors.is_empty() && rules.len() == 1 {
+        match rules.pop() {
+            Some(PreparedRule::KeyProbe(rule)) => {
+                if let Some(finds) = key_probe_find_table(&rule.plan, &rule.finds, columns) {
+                    return PreparedPipeline::PointProbe { rule, finds };
+                }
+                rules.push(PreparedRule::KeyProbe(rule));
+            }
+            Some(other) => rules.push(other),
+            None => {}
+        }
+    }
+    PreparedPipeline::Cq { interiors, rules }
+}
+
 /// The key-probe fast lane's find table: `Some` for key-probe plans whose finds
 /// are all plain variables. Types come from the signature's columns —
 /// find order IS column order.
@@ -1282,7 +1314,7 @@ fn key_probe_find_table(
                     .iter()
                     .find(|v| v.slot == *slot)
                     .expect("find slots come from the key-probe plan's layout");
-                Some((var.field, column.ty().clone()))
+                Some((var.field, *column.ty()))
             }
             // aggregate and measure key_probes keep the sink path
             FindSpec::Agg(_)

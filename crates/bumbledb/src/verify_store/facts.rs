@@ -8,27 +8,41 @@
 //! no second scan) and collects the referenced intern ids, checking each
 //! against the dictionary next-id counter.
 
-use crate::encoding::{TypeDesc, decode_field, fact_hash, field_word_bytes};
-use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
+use std::ops::Bound;
+
+use crate::encoding::{FieldDecodeError, ValueType, decode_field, fact_hash, field_word_bytes};
+use crate::error::{Check, Direction, Error, Result, Violation};
 use crate::schema::{AxiomIndex, CapacityEnforcement, Enforcement};
+use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, ReadCursor};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 use bumbledb_theory::schema::RelationId;
 
-use super::{StoreFinding, Sweep, namespace};
+use super::{StoreFinding, Sweep, namespace_bounds};
 
 #[expect(
     clippy::too_many_lines,
     reason = "the linear per-fact coherence walk is clearer kept together"
 )] // one namespace cursor, every per-fact check beside it
-pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
-    let txn = s.txn;
+pub(super) fn sweep<C: CatalogRead + Copy>(
+    s: &mut Sweep<'_, C>,
+    checker: &mut judgment::Checker<'_, C>,
+) -> Result<()> {
     let schema = s.schema;
     let mut scratch: KeyBuf = [0; MAX_KEY];
     let mut determinant = DeterminantImage::scratch();
-    let mut checker = judgment::Checker::new(txn.raw(), s.data, schema);
-    for entry in namespace(s.data, txn, keys::NS_FACT)? {
-        let (key, fact) = entry?;
+    let catalog = s.catalog;
+    let (lo, hi) = namespace_bounds(keys::Namespace::Fact);
+    let mut range = catalog.range(
+        CatalogMap::Data,
+        Bounds {
+            start: Bound::Included(&lo),
+            end: Bound::Excluded(&hi),
+        },
+    )?;
+    while let Some(entry) = ReadCursor::next(&mut range)? {
+        let key = entry.key;
+        let fact = entry.value;
         let Some((rel, row_id)) = keys::parse_fact_key(key) else {
             s.malformed(key, "F key length");
             continue;
@@ -65,16 +79,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // the online reader and the offline proof. Keep walking after a
         // finding: namespace parity is independently useful evidence.
         for idx in 0..layout.field_count() {
-            if let Err(error) = decode_field(fact, layout, idx) {
+            if let Err(error) = decode_field(layout.encoded(fact), idx) {
                 let what = match error {
-                    CorruptionError::InvalidBool(_) => "F fact bool",
-                    CorruptionError::NonzeroFixedBytesPad(_) => "F fact fixed bytes padding",
-                    CorruptionError::InvalidInterval(_) => "F fact interval",
-                    // A fixed-width start at or past the Q2 bound — the
-                    // derived end would reach the ceiling (ray territory,
-                    // unconstructible in the fixed family) or overflow.
-                    CorruptionError::InvalidFixedIntervalStart(_) => "F fact fixed interval start",
-                    _ => unreachable!("decode_field has exactly four corruption classes"),
+                    FieldDecodeError::InvalidBool(_) => "F fact bool",
+                    FieldDecodeError::NonzeroFixedBytesPad(_) => "F fact fixed bytes padding",
+                    FieldDecodeError::InvalidInterval(_) => "F fact interval",
+                    FieldDecodeError::InvalidFixedIntervalStart(_) => "F fact fixed interval start",
                 };
                 s.malformed(key, what);
             }
@@ -85,7 +95,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // decode walk, never a second scan.
         for (idx, field) in relation.fields().iter().enumerate() {
             if field.generation == bumbledb_theory::schema::Generation::Fresh {
-                let value = u64::from_be_bytes(field_word_bytes(fact, layout, idx));
+                let value = u64::from_be_bytes(field_word_bytes(layout.encoded(fact), idx));
                 let field_id =
                     bumbledb_theory::schema::FieldId(u16::try_from(idx).expect("field count u16"));
                 let max = s.max_fresh.entry((rel, field_id)).or_insert(0);
@@ -96,8 +106,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // Referenced intern ids, bounded by the dictionary next-id
         // (String only — bytes<N> values are inline, never interned).
         for idx in 0..layout.field_count() {
-            if matches!(layout.field_type(idx), TypeDesc::String) {
-                let id = u64::from_be_bytes(field_word_bytes(fact, layout, idx));
+            if matches!(layout.field_type(idx), ValueType::String) {
+                let id = u64::from_be_bytes(field_word_bytes(layout.encoded(fact), idx));
                 s.referenced_interns.insert(id);
                 if id >= s.dict_next_id {
                     s.push(StoreFinding::InternBeyondNextId {
@@ -111,16 +121,16 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         }
 
         // F→M: the membership entry must exist and point back.
-        let m_len = keys::membership_key(&mut scratch, rel, &fact_hash(fact));
+        let m_key = keys::membership_key(rel, &fact_hash(fact));
         let points_back = s
-            .data
-            .get(txn.raw(), &scratch[..m_len])?
-            .is_some_and(|v| v == row_id.to_le_bytes().as_slice());
+            .catalog
+            .get(CatalogMap::Data, &m_key)?
+            .is_some_and(|v| v.as_ref() == row_id.to_le_bytes().as_slice());
         if !points_back {
             s.push(StoreFinding::FactWithoutMembership {
                 relation: rel,
                 row_id,
-                membership_key: scratch[..m_len].into(),
+                membership_key: Box::from(m_key),
             });
         }
 
@@ -128,7 +138,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // id IS the first fresh field's value — a disagreement is the
         // merged mint's own desync class.
         if let Some(field) = schema.fresh_mint_field(rel) {
-            let fresh = u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)));
+            let fresh =
+                u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)));
             if fresh != row_id {
                 s.push(StoreFinding::FreshRowDesync {
                     relation: rel,
@@ -147,26 +158,30 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             if statement.form().as_fresh_row().is_some() {
                 continue;
             }
-            keys::determinant_image(layout, &statement.projection, fact, &mut determinant);
-            let u_len =
+            keys::determinant_image(
+                layout.encoded(fact),
+                &statement.projection,
+                &mut determinant,
+            );
+            let u_key =
                 keys::determinant_key(&mut scratch, rel, statement.id, determinant.as_bytes());
             let held = s
-                .data
-                .get(txn.raw(), &scratch[..u_len])?
-                .is_some_and(|v| v == row_id.to_le_bytes().as_slice());
+                .catalog
+                .get(CatalogMap::Data, u_key)?
+                .is_some_and(|v| v.as_ref() == row_id.to_le_bytes().as_slice());
             if !held {
                 s.push(StoreFinding::FactWithoutDeterminant {
                     relation: rel,
                     statement: statement.id,
                     row_id,
-                    determinant_key: scratch[..u_len].into(),
+                    determinant_key: u_key.into(),
                 });
             }
         }
 
         check_outgoing(
             s,
-            &mut checker,
+            checker,
             rel,
             row_id,
             fact,
@@ -175,7 +190,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         )?;
         check_marks(
             s,
-            &mut checker,
+            checker,
             rel,
             row_id,
             fact,
@@ -183,7 +198,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             &mut determinant,
         )?;
     }
-    check_extension_sources(s, &mut checker)
+    check_extension_sources(s, checker)
 }
 
 /// F→R for the capacity form, plus the global capacity judgment. Per
@@ -195,16 +210,15 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
 /// fact satisfies, the child group is measured through the commit path's
 /// own walk ([`judgment::Checker::check_capacity`]) — a measure outside
 /// the resolved window is [`StoreFinding::CapacityViolation`].
-fn check_marks(
-    s: &mut Sweep<'_, '_>,
-    checker: &mut judgment::Checker<'_>,
+fn check_marks<C: CatalogRead + Copy>(
+    s: &mut Sweep<'_, C>,
+    checker: &mut judgment::Checker<'_, C>,
     rel: RelationId,
     row_id: u64,
     fact: &[u8],
     scratch: &mut KeyBuf,
     determinant: &mut DeterminantImage,
 ) -> Result<()> {
-    let txn = s.txn;
     let schema = s.schema;
     let relation = schema.relation(rel);
     let layout = relation.layout();
@@ -214,14 +228,15 @@ fn check_marks(
             continue;
         }
         judgment::capacity_child_image(statement, layout, fact, determinant);
-        let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
-        match s.data.get(txn.raw(), &scratch[..r_len])? {
+        let r_key = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
+        let catalog = s.catalog;
+        match catalog.get(CatalogMap::Data, r_key)? {
             None => {
                 s.push(StoreFinding::FactWithoutReverseEdge {
                     statement: statement.id,
                     relation: rel,
                     row_id,
-                    reverse_key: scratch[..r_len].into(),
+                    reverse_key: r_key.into(),
                 });
             }
             Some(stored) => {
@@ -237,15 +252,15 @@ fn check_marks(
                     // path refuses such rows, so a stored one is a
                     // malformed-content finding, never an error.
                     Err(_) => {
-                        s.malformed(&scratch[..r_len], "R capacity weight of a ray");
+                        s.malformed(r_key, "R capacity weight of a ray");
                         continue;
                     }
                 };
-                if stored != derived {
+                if stored.as_ref() != derived {
                     s.push(StoreFinding::ReverseEdgeWeightDesync {
                         statement: statement.id,
-                        reverse_key: scratch[..r_len].into(),
-                        stored: stored.into(),
+                        reverse_key: r_key.into(),
+                        stored: stored.as_ref().into(),
                         derived: derived.into(),
                     });
                 }
@@ -264,26 +279,11 @@ fn check_marks(
             }
         }
         let key_statement = schema.key(*target_key);
-        keys::determinant_image(layout, &key_statement.projection, fact, determinant);
+        keys::determinant_image(layout.encoded(fact), &key_statement.projection, determinant);
         let checks = s.selections.capacity(capacity_id);
         match checker.check_capacity(statement, checks, determinant.as_bytes()) {
-            Err(Error::CommitRejected { violations }) => {
-                for violation in violations {
-                    let Violation::Capacity {
-                        statement,
-                        fact,
-                        measure,
-                    } = violation
-                    else {
-                        unreachable!("the capacity check cites capacity statements only");
-                    };
-                    s.push(StoreFinding::CapacityViolation {
-                        statement,
-                        fact,
-                        measure,
-                    });
-                }
-            }
+            Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
+            Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
             // A ray met at measure time (C10's judge-side refusal) is
             // CONTENT under the sweeper's discipline: report, never
             // error — the commit path refuses such rows, so a committed
@@ -291,7 +291,6 @@ fn check_marks(
             Err(Error::CapacityRayMeasure { .. }) => {
                 s.malformed(determinant.as_bytes(), "capacity measure of a ray");
             }
-            Ok(()) | Err(Error::Corruption(_)) => {}
             Err(other) => return Err(other),
         }
     }
@@ -306,16 +305,15 @@ fn check_marks(
 /// path consumes, over this sweep's read snapshot. A judgment miss is
 /// [`StoreFinding::JudgmentViolation`], directed `TargetRequired`: every
 /// committed source is a standing one.
-fn check_outgoing(
-    s: &mut Sweep<'_, '_>,
-    checker: &mut judgment::Checker<'_>,
+fn check_outgoing<C: CatalogRead + Copy>(
+    s: &mut Sweep<'_, C>,
+    checker: &mut judgment::Checker<'_, C>,
     rel: RelationId,
     row_id: u64,
     fact: &[u8],
     scratch: &mut KeyBuf,
     determinant: &mut DeterminantImage,
 ) -> Result<()> {
-    let txn = s.txn;
     let schema = s.schema;
     let relation = schema.relation(rel);
     let layout = relation.layout();
@@ -326,44 +324,38 @@ fn check_outgoing(
         if !judgment::satisfies(&checks.source, layout, fact) {
             continue;
         }
-        let (target_key, key_permutation) = match &statement.enforcement {
+        let (target_key, key_projection) = match &statement.enforcement {
             Enforcement::ScalarProbe {
                 target_key,
-                key_permutation,
+                key_projection,
             }
             | Enforcement::IntervalCoverage {
                 target_key,
-                key_permutation,
+                key_projection,
                 ..
-            } => (target_key, key_permutation),
+            } => (target_key, key_projection),
             // A closed-target containment has no `R` edge and no determinant to
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
             Enforcement::Closed { members } => {
                 let id = u64::from_be_bytes(field_word_bytes(
-                    fact,
-                    layout,
+                    layout.encoded(fact),
                     usize::from(statement.source.projection[0].0),
                 ));
                 if !AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
-                    s.push(StoreFinding::JudgmentViolation {
-                        statement: sid,
-                        direction: Direction::TargetRequired,
-                        fact: fact.into(),
-                    });
+                    s.push(StoreFinding::Judgment(Violation::containment(
+                        schema.cite(sid),
+                        sid,
+                        Direction::TargetRequired,
+                        fact.into(),
+                    )));
                 }
                 continue;
             }
         };
-        keys::permuted_determinant_image(
-            layout,
-            &statement.source.projection,
-            key_permutation,
-            fact,
-            determinant,
-        );
-        let r_len = keys::reverse_key(scratch, sid, determinant.as_bytes(), rel, row_id);
-        let missing_edge = s.data.get(txn.raw(), &scratch[..r_len])?.is_none();
+        keys::determinant_image(layout.encoded(fact), key_projection, determinant);
+        let r_key = keys::reverse_key(scratch, sid, determinant.as_bytes(), rel, row_id);
+        let missing_edge = s.catalog.get(CatalogMap::Data, r_key)?.is_none();
         let probe = judgment::Probe {
             statement: sid,
             target_relation: statement.target.relation,
@@ -378,8 +370,9 @@ fn check_outgoing(
             Enforcement::IntervalCoverage {
                 disjoint,
                 source_tail,
+                target_tail,
                 ..
-            } => checker.check_coverage(*disjoint, *source_tail, &probe),
+            } => checker.check_coverage(*disjoint, *source_tail, *target_tail, &probe),
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         if missing_edge {
@@ -387,32 +380,16 @@ fn check_outgoing(
                 statement: sid,
                 relation: rel,
                 row_id,
-                reverse_key: scratch[..r_len].into(),
+                reverse_key: r_key.into(),
             });
         }
         match judged {
-            Err(Error::CommitRejected { violations }) => {
-                for violation in violations {
-                    let Violation::Containment {
-                        statement,
-                        direction,
-                        fact,
-                    } = violation
-                    else {
-                        unreachable!("the judgment probes cite containments only");
-                    };
-                    s.push(StoreFinding::JudgmentViolation {
-                        statement,
-                        direction,
-                        fact,
-                    });
-                }
-            }
+            Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
+            Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
             // A corruption inside the probe (a determinant row id resolving to
             // no fact, a malformed key width) is a namespace desync the
             // U pass convicts on its own — the judgment neither
             // double-reports it nor decides through it.
-            Ok(()) | Err(Error::Corruption(_)) => {}
             Err(other) => return Err(other),
         }
     }
@@ -427,9 +404,9 @@ fn check_outgoing(
 /// re-run the compiled membership; validate refuted them at declaration,
 /// so a finding here means the schema witness and the store disagree
 /// about the theory itself.
-fn check_extension_sources(
-    s: &mut Sweep<'_, '_>,
-    checker: &mut judgment::Checker<'_>,
+fn check_extension_sources<C: CatalogRead + Copy>(
+    s: &mut Sweep<'_, C>,
+    checker: &mut judgment::Checker<'_, C>,
 ) -> Result<()> {
     let schema = s.schema;
     let mut determinant = DeterminantImage::scratch();
@@ -449,71 +426,43 @@ fn check_extension_sources(
                     continue;
                 }
                 let judged = match &statement.enforcement {
-                    Enforcement::ScalarProbe {
-                        target_key,
-                        key_permutation,
-                    } => {
-                        // Interval positions on closed containments are
-                        // refused at validate — the coverage walk never
-                        // runs from a constant source.
-                        keys::permuted_determinant_image(
-                            layout,
-                            &statement.source.projection,
-                            key_permutation,
-                            &row.fact,
+                    Enforcement::ScalarProbe { key_projection, .. } => {
+                        keys::determinant_image(
+                            layout.encoded(&row.fact),
+                            key_projection,
                             &mut determinant,
                         );
-                        checker.check_scalar(&judgment::Probe {
-                            statement: sid,
-                            target_relation: statement.target.relation,
-                            target_key: *target_key,
-                            target_check: &checks.target,
-                            key_bytes: determinant.as_bytes(),
-                            fact_bytes: &row.fact,
-                            direction: Direction::TargetRequired,
-                        })
+                        checker.check_scalar(&judgment::Probe::of(
+                            statement,
+                            &checks.target,
+                            determinant.as_bytes(),
+                            &row.fact,
+                            Direction::TargetRequired,
+                        ))
                     }
                     Enforcement::IntervalCoverage { .. } => {
                         unreachable!("closed sources cannot have interval containments")
                     }
                     Enforcement::Closed { members } => {
                         let id = u64::from_be_bytes(field_word_bytes(
-                            &row.fact,
-                            layout,
+                            layout.encoded(&row.fact),
                             usize::from(statement.source.projection[0].0),
                         ));
                         if AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
-                            Ok(())
+                            Ok(Check::Holds)
                         } else {
-                            Err(Error::CommitRejected {
-                                violations: Violations::one(Violation::Containment {
-                                    statement: sid,
-                                    direction: Direction::TargetRequired,
-                                    fact: row.fact.clone(),
-                                }),
-                            })
+                            Ok(Check::Violated(Violation::containment(
+                                schema.cite(sid),
+                                sid,
+                                Direction::TargetRequired,
+                                row.fact.clone(),
+                            )))
                         }
                     }
                 };
                 match judged {
-                    Err(Error::CommitRejected { violations }) => {
-                        for violation in violations {
-                            let Violation::Containment {
-                                statement,
-                                direction,
-                                fact,
-                            } = violation
-                            else {
-                                unreachable!("the judgment probes cite containments only");
-                            };
-                            s.push(StoreFinding::JudgmentViolation {
-                                statement,
-                                direction,
-                                fact,
-                            });
-                        }
-                    }
-                    Ok(()) | Err(Error::Corruption(_)) => {}
+                    Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
+                    Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
                     Err(other) => return Err(other),
                 }
             }

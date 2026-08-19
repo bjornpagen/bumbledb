@@ -9,10 +9,64 @@
 mod convert;
 mod display;
 
+use std::path::PathBuf;
+
 use crate::ir::{InteriorId, ParamId, VarId};
 use crate::schema::KeyId;
+use crate::schema::StatementRef;
 use crate::schema::fingerprint::SchemaFingerprint;
+use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
+
+/// Occurrence index of an atom inside the first failing rule (positive
+/// atoms first, then negated).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AtomIndex(pub usize);
+
+/// Find-term / head-position index inside a rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FindIndex(pub usize);
+
+/// Rule index in the query's rule list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RuleIndex(pub usize);
+
+/// Extension-row index in a closed relation's ground axioms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RowIndex(pub usize);
+
+macro_rules! display_index {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl std::fmt::Display for $ty {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, "{}", self.0)
+                }
+            }
+        )*
+    };
+}
+
+display_index!(AtomIndex, FindIndex, RuleIndex, RowIndex);
+
+/// A witnessed value against the bound it was required to equal.
+/// Operand order is the type: `witnessed` is what was observed,
+/// `required` is the bound — never `(expected, actual)` in one
+/// variant and `(found, expected)` in the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Mismatch<T> {
+    pub witnessed: T,
+    pub required: T,
+}
+
+/// A quantity that crossed its ceiling. Operand order is the type:
+/// `observed` is what was measured, `ceiling` is the bound it must
+/// not exceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Exceeded<T> {
+    pub observed: T,
+    pub ceiling: T,
+}
 
 /// One declared key offered as owned evidence in a target-key rejection.
 /// The diagnostic may outlive the descriptor, so it carries no schema
@@ -47,8 +101,9 @@ pub enum CorruptionError {
     /// torn write), so one error value never encodes both
     /// (`docs/architecture/50-storage.md` § the `_meta` block, ruled
     /// 2026-07-23, R18). A half-created store (no `_meta` over an empty
-    /// root) is [`crate::error::Error::NotInitialized`], never
-    /// corruption.
+    /// root) is unusable at a destination path: constructors refuse
+    /// [`crate::error::Error::DestinationExists`], and `open` refuses
+    /// [`crate::error::Error::AlreadyInitialized`] — never corruption.
     MetaMissing,
     /// The `_meta` store-kind marker is PRESENT but undecodable — a
     /// wrong-width value or a byte no [`crate::StoreKind`] encodes to.
@@ -75,8 +130,7 @@ pub enum CorruptionError {
     WrongFactWidth {
         relation: RelationId,
         row_id: u64,
-        expected: usize,
-        actual: usize,
+        mismatch: Mismatch<usize>,
     },
     /// The `F` scan yielded a different number of rows than the stored `S`
     /// row count — the derived counters have desynced from the facts.
@@ -92,10 +146,7 @@ pub enum CorruptionError {
     /// guarantee).
     CounterDesync {
         relation: RelationId,
-        /// The stored `S` value.
-        claimed: u64,
-        /// The `_data` entry count that bounds it.
-        witness: u64,
+        exceeded: Exceeded<u64>,
     },
     /// A stored value (a counter, row id, or dictionary id) failed to
     /// decode; the static string names which width — a diagnosis, not a
@@ -124,8 +175,8 @@ pub enum CorruptionError {
     /// `docs/architecture/50-storage.md` § the `_meta` block), so a
     /// disagreement means one of them was altered after creation —
     /// corrupt data, exactly as a mis-shaped `F` key is. Distinct from
-    /// [`crate::error::Error::DescriptorMissing`], which is the legal
-    /// not-yet-adopted state.
+    /// a missing descriptor, which is [`CorruptionError::MetaMissing`]
+    /// — a required format-8 `_meta` key, not a legal half-state.
     DescriptorFingerprintDesync {
         /// The stored `_meta` fingerprint.
         fingerprint: [u8; 32],
@@ -223,15 +274,14 @@ pub enum SchemaError {
     /// columns (the handle is not a column; neither is the synthetic id).
     ExtensionArityMismatch {
         relation: RelationId,
-        row: usize,
-        expected: usize,
-        supplied: usize,
+        row: RowIndex,
+        mismatch: Mismatch<usize>,
     },
     /// An extension value does not inhabit its column's structural type —
     /// the one shared value check, as selection literals.
     ExtensionValueTypeMismatch {
         relation: RelationId,
-        row: usize,
+        row: RowIndex,
         field: FieldId,
     },
     /// A ray `[start, ∞)` as a ground axiom: an unbounded end says the
@@ -242,7 +292,7 @@ pub enum SchemaError {
     /// (`docs/architecture/10-data-model.md`, the refusal).
     ExtensionIntervalRay {
         relation: RelationId,
-        row: usize,
+        row: RowIndex,
         field: FieldId,
     },
     /// `str` on a closed relation: the handle IS the label, and interned
@@ -414,7 +464,7 @@ pub enum StatementErrorKind {
     /// never discovered at write time.
     DeterminantKeyTooWide { width: usize },
     /// Roster "arity mismatch between sides": |X| ≠ |Y|.
-    ContainmentArityMismatch { source: usize, target: usize },
+    ContainmentArityMismatch { mismatch: Mismatch<usize> },
     /// Roster "positional structural-type mismatch" — including its
     /// called-out instance, an interval position against a scalar one.
     ContainmentTypeMismatch { position: usize },
@@ -427,12 +477,6 @@ pub enum StatementErrorKind {
     /// Roster "selection literal type mismatch": the literal's variant is
     /// not the field's structural type.
     SelectionLiteralTypeMismatch {
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// Roster "selection literal type mismatch (… non-UTF-8 string
-    /// literals)".
-    SelectionLiteralNotUtf8 {
         relation: RelationId,
         field: FieldId,
     },
@@ -479,7 +523,7 @@ pub enum StatementErrorKind {
     /// "a committed database is a model of its theory, always"). For a
     /// containment, `row` is the source axiom outside the compiled member
     /// set; for a functionality, the second axiom of the colliding pair.
-    ClosedStatementRefuted { relation: RelationId, row: usize },
+    ClosedStatementRefuted { relation: RelationId, row: RowIndex },
     /// Roster "duplicate statements (identical normalized sides and form —
     /// write it once)": selections compare sorted by field id.
     DuplicateStatement { earlier: StatementId },
@@ -497,18 +541,17 @@ impl StatementErrorKind {
     }
 }
 
-/// A mis-shaped dynamic fact on the untyped write surface
-/// (`insert_dyn`/`delete_dyn`): ETL input is data, so shape
-/// problems are typed errors, not panics (`docs/architecture/70-api.md`).
+/// A dynamic-surface id that does not resolve: relation, field, fresh
+/// field, or key statement. These are not fact shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FactShapeError {
+pub enum DynIdError {
     /// The relation id is outside the schema — ETL input is data, so an
     /// out-of-range id at the dynamic surface (`insert_dyn`/`delete_dyn`/
     /// `scan`/`fresh_field`) is a typed error, never an index
     /// panic.
     UnknownRelation { relation: RelationId },
     /// The field id is outside its relation — the field sibling of
-    /// [`FactShapeError::UnknownRelation`], raised by the id-addressed
+    /// [`DynIdError::UnknownRelation`], raised by the id-addressed
     /// dynamic surface ([`crate::Db::fresh_field`]).
     UnknownField {
         relation: RelationId,
@@ -524,20 +567,6 @@ pub enum FactShapeError {
         relation: RelationId,
         field: FieldId,
     },
-    ArityMismatch {
-        relation: RelationId,
-        expected: usize,
-        supplied: usize,
-    },
-    TypeMismatch {
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// `Value::String` bytes are not UTF-8.
-    InvalidUtf8 {
-        relation: RelationId,
-        field: FieldId,
-    },
     /// [`crate::WriteTx::get_dyn`]'s statement id is not a `Functionality`
     /// on the queried relation (out of range, a containment, or another
     /// relation's key) — the dynamic point-read surface is data, so the
@@ -546,6 +575,30 @@ pub enum FactShapeError {
         relation: RelationId,
         statement: StatementId,
     },
+}
+
+/// A mis-shaped dynamic fact on the untyped write surface
+/// (`insert_dyn`/`delete_dyn`): ETL input is data, so shape
+/// problems are typed errors, not panics (`docs/architecture/70-api.md`).
+/// Id-resolution failures are [`DynIdError`], nested as [`Self::Id`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactShapeError {
+    /// A dynamic-surface id that does not resolve.
+    Id(DynIdError),
+    ArityMismatch {
+        relation: RelationId,
+        mismatch: Mismatch<usize>,
+    },
+    TypeMismatch {
+        relation: RelationId,
+        field: FieldId,
+    },
+}
+
+impl From<DynIdError> for FactShapeError {
+    fn from(err: DynIdError) -> Self {
+        Self::Id(err)
+    }
 }
 
 /// A query validation error (the IR boundary): one variant per roster item
@@ -575,8 +628,7 @@ pub enum ValidationError {
     /// across all rules, judged before a single disjunct is materialized
     /// (so before duplicate collapse).
     DnfExceedsRules {
-        produced: usize,
-        cap: usize,
+        exceeded: Exceeded<usize>,
     },
     /// A rule's condition trees nest deeper than
     /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary check for every
@@ -584,30 +636,28 @@ pub enum ValidationError {
     /// be a typed rejection, never a stack exhaustion). Judged
     /// iteratively, before any recursion sees the tree.
     ConditionNestingTooDeep {
-        rule: usize,
-        depth: usize,
-        cap: usize,
+        rule: RuleIndex,
+        exceeded: Exceeded<usize>,
     },
     /// A rule's find-term count differs from the head's arity — rules
     /// align against the head position by position.
     HeadArityMismatch {
-        rule: usize,
-        expected: usize,
-        found: usize,
+        rule: RuleIndex,
+        mismatch: Mismatch<usize>,
     },
     /// A rule's find term at `position` resolves to a different
     /// structural type than the head's pinned positional type row (rule
     /// 0's row pins it; every later rule must agree).
     HeadTypeMismatch {
-        rule: usize,
-        position: usize,
+        rule: RuleIndex,
+        position: FindIndex,
     },
     /// A rule's find term at `position` has the wrong *shape* against the
     /// head: a variable where the head names an aggregate, an aggregate
     /// where it names a variable, or a different aggregate-op kind.
     HeadAggregateMismatch {
-        rule: usize,
-        position: usize,
+        rule: RuleIndex,
+        position: FindIndex,
     },
     /// A nullary `Count` in a fold-free head of a hand-written 2+-rule
     /// query (ruled 2026-07-23, R1): under the head-projection law a
@@ -622,22 +672,22 @@ pub enum ValidationError {
         rules: usize,
     },
     UnknownRelation {
-        atom: usize,
+        atom: AtomIndex,
         relation: RelationId,
     },
     UnknownField {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     DuplicateFieldBinding {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     VariableTypeConflict {
         var: VarId,
     },
     LiteralTypeMismatch {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     /// The point-domain law (`docs/architecture/10-data-model.md`): points
@@ -647,7 +697,7 @@ pub enum ValidationError {
     /// silently unmatchable (comparison sites report
     /// [`ValidationError::ComparisonPointLiteralAtCeiling`]).
     PointLiteralAtCeiling {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     /// Param ids must be dense (0..n) across scalars and sets jointly: a
@@ -768,7 +818,7 @@ pub enum ValidationError {
     /// U64/I64; Min/Max take the orderable types, bool included (`Max`
     /// over bool is Any, `Min` is All — ruled 2026-07-23, R3).
     AggregateInputType {
-        find: usize,
+        find: FindIndex,
     },
     /// A `Sum`/`Min`/`Max` fold over a closed-bound
     /// variable (ruled 2026-07-23, R4): its words are declaration
@@ -776,25 +826,25 @@ pub enum ValidationError {
     /// accident — refused exactly as the order comparison is
     /// ([`Self::OrderComparisonOnClosedReference`]).
     AggregateOverClosedReference {
-        find: usize,
+        find: FindIndex,
     },
     /// Count is nullary; it carries no variable.
     CountWithVariable {
-        find: usize,
+        find: FindIndex,
     },
     /// Sum/Min/Max require a variable.
     AggregateWithoutVariable {
-        find: usize,
+        find: FindIndex,
     },
     AggregateOverGroupKey {
-        find: usize,
+        find: FindIndex,
     },
     /// A second `Pack` term in one head: the multi-`Pack` product has no
     /// sighting and is refused. *Trigger* for admitting it: a real query
     /// needing two coalesced columns in one row
     /// (`docs/architecture/20-query-ir.md` § aggregation).
     MultiplePackTerms {
-        find: usize,
+        find: FindIndex,
     },
     /// `Pack` beside a fold aggregate (Sum/Min/Max/Count):
     /// `Pack` is relation-shaped — a fold column repeated per segment row
@@ -803,12 +853,12 @@ pub enum ValidationError {
     /// packed answers; *trigger* for a composed form: a measured two-pass
     /// budget violation.
     MixedPackAndFold {
-        find: usize,
+        find: FindIndex,
     },
     /// `Pack` over a non-interval variable: the coalesce is defined by
     /// the interval point-set denotation and by nothing else.
     PackInputType {
-        find: usize,
+        find: FindIndex,
     },
     /// A `Term::Measure` in an atom binding: the measure is a
     /// computation over a bound interval variable, not a bindable value
@@ -816,7 +866,7 @@ pub enum ValidationError {
     /// `Sum`/`Min`/`Max`, and one side of an order comparison
     /// (`docs/architecture/20-query-ir.md`, § the measure).
     DurationInBinding {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     /// `Duration(v)` over a variable that did not resolve to an interval
@@ -828,7 +878,7 @@ pub enum ValidationError {
     /// A `FindTerm::AggregateMeasure` whose op is not `Sum`/`Min`/`Max`
     /// — `Count` is nullary and Pack coalesces intervals, not measures.
     DurationAggregateOp {
-        find: usize,
+        find: FindIndex,
     },
     /// A `Term::Measure` under any operator but the order comparisons
     /// (`Lt`/`Le`/`Gt`/`Ge`) — the measure's one comparison position
@@ -882,13 +932,13 @@ pub enum ValidationError {
     NegationInRec,
     /// An `Interior` atom names a derived table outside the query.
     UnknownInterior {
-        atom: usize,
+        atom: AtomIndex,
         interior: InteriorId,
     },
     /// An `Interior` binding's `FieldId` sits at or beyond the target
     /// derived head's arity.
     InteriorColumnOutOfRange {
-        atom: usize,
+        atom: AtomIndex,
         field: FieldId,
     },
     /// Interior `at` reads `interior` where `interior ≥ at`, or any
@@ -924,28 +974,167 @@ pub enum Direction {
     TargetRequired,
 }
 
-/// One violated statement of a rejected commit — the element of
-/// [`Violations`]. Payloads carry the statement id and canonical fact
-/// bytes, never storage row ids (`docs/architecture/10-data-model.md`).
+/// Theory rejection inside a successful outer [`Result`]: the candidate
+/// formed correctly and either holds or fails the declared theory.
+/// Infrastructure failure stays `Err(Error)`; an unadmitted value cannot
+/// occupy an admitted slot.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission<T> {
+    Accepted(T),
+    Rejected(Violations),
+}
+
+impl<T> Admission<T> {
+    /// Unwraps an accepted admission. Panics on rejection — hosts that
+    /// have already proved the theory, and tests.
+    ///
+    /// # Panics
+    ///
+    /// When `self` is [`Admission::Rejected`].
+    #[track_caller]
+    pub fn unwrap(self) -> T {
+        match self {
+            Self::Accepted(value) => value,
+            Self::Rejected(violations) => panic!("admission rejected: {violations}"),
+        }
+    }
+
+    /// [`Self::unwrap`] with a caller message.
+    ///
+    /// # Panics
+    ///
+    /// When `self` is [`Admission::Rejected`].
+    #[track_caller]
+    pub fn expect(self, msg: &str) -> T {
+        match self {
+            Self::Accepted(value) => value,
+            Self::Rejected(violations) => {
+                panic!("{msg}: admission rejected: {violations}")
+            }
+        }
+    }
+
+    /// Maps the accepted payload. Rejection is unchanged.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Admission<U> {
+        match self {
+            Self::Accepted(value) => Admission::Accepted(f(value)),
+            Self::Rejected(violations) => Admission::Rejected(violations),
+        }
+    }
+}
+
+/// One probe's witnessed judgment: either the obligation holds or it
+/// cites exactly one violation. Checkers return this; they never mint
+/// an error as a semantic verdict.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Check {
+    Holds,
+    Violated(Violation),
+}
+
+/// A durable write that admitted: the callback value and the generation
+/// after the commit. Rejection carries no callback value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committed<R> {
+    pub value: R,
+    pub generation: GenerationId,
+}
+
+/// [`crate::Db::write_from`]'s proved outcomes: admission plus the
+/// compare-and-swap miss. A moved generation is an answer, not an
+/// error — the caller proceeds on the two generations in the arm.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConditionalWrite<R> {
+    Accepted(Committed<R>),
+    Rejected(Violations),
+    Moved {
+        witnessed: GenerationId,
+        current: GenerationId,
+    },
+}
+
+impl<R> ConditionalWrite<R> {
+    /// Unwraps an accepted conditional write. Panics on rejection or a
+    /// moved generation.
+    ///
+    /// # Panics
+    ///
+    /// When `self` is not [`ConditionalWrite::Accepted`].
+    #[track_caller]
+    pub fn unwrap(self) -> Committed<R> {
+        match self {
+            Self::Accepted(committed) => committed,
+            Self::Rejected(violations) => {
+                panic!("conditional write rejected: {violations}")
+            }
+            Self::Moved { witnessed, current } => {
+                panic!("conditional write moved ({witnessed} → {current})")
+            }
+        }
+    }
+
+    /// [`Self::unwrap`] with a caller message.
+    ///
+    /// # Panics
+    ///
+    /// When `self` is not [`ConditionalWrite::Accepted`].
+    #[track_caller]
+    pub fn expect(self, msg: &str) -> Committed<R> {
+        match self {
+            Self::Accepted(committed) => committed,
+            Self::Rejected(violations) => {
+                panic!("{msg}: conditional write rejected: {violations}")
+            }
+            Self::Moved { witnessed, current } => {
+                panic!("{msg}: conditional write moved ({witnessed} → {current})")
+            }
+        }
+    }
+}
+
+/// Scalar put-conflict vs pointwise neighbor probe — two conviction
+/// shapes, not an optional incumbent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conflict {
+    /// The determinant bytes inside the cited fact already identify the
+    /// collision.
+    Scalar,
+    /// The probe names both parties.
+    Pointwise { incumbent: Box<[u8]> },
+}
+
+/// One violated statement of a rejected admission — the element of
+/// [`Violations`]. One body: the typed spine slot, the convicting fact
+/// bytes, and a per-law detail. Storage row ids never appear
+/// (`docs/architecture/10-data-model.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
     /// A `Functionality` statement violated by the final state: two live
     /// facts claim one key — the same determinant bytes (scalar put-conflict),
     /// or overlapping intervals within one scalar-prefix group (the
     /// pointwise neighbor probe).
-    Functionality(FunctionalityViolation),
+    Functionality {
+        statement: StatementRef,
+        fact: Box<[u8]>,
+        conflict: Conflict,
+        id: StatementId,
+    },
     /// A `Containment` statement violated by the final state
     /// (`docs/architecture/30-dependencies.md` § judged on final states).
     /// `fact` is canonical source-fact bytes on either side: the judgment
     /// speaks about sources — a missing target is named by the source
     /// that requires it.
     Containment {
-        statement: StatementId,
+        statement: StatementRef,
         direction: Direction,
         /// The source fact: the inserted fact whose target is missing
         /// (`SourceUnsatisfied`), or the surviving fact still requiring a
         /// deleted target key (`TargetRequired`).
         fact: Box<[u8]>,
+        id: StatementId,
     },
     /// A `Capacity` statement violated by the final state: a selected
     /// parent fact whose child-group MEASURE (Σ weight over the
@@ -953,7 +1142,7 @@ pub enum Violation {
     /// window — below the floor or above the resolved ceiling
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`).
     Capacity {
-        statement: StatementId,
+        statement: StatementRef,
         /// The convicting parent fact: the ψ-selected holder of the
         /// touched key tuple whose group measure is out of window.
         fact: Box<[u8]>,
@@ -964,57 +1153,99 @@ pub enum Violation {
         /// 2026-07-24, C14: the clip serves the verdict, the full sum
         /// serves the witness).
         measure: u128,
+        id: StatementId,
     },
-}
-
-/// Scalar put-conflict vs pointwise neighbor probe — two conviction
-/// shapes, not an optional incumbent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FunctionalityViolation {
-    /// The determinant bytes inside `fact` already identify the collision.
-    Scalar {
-        statement: StatementId,
-        fact: Box<[u8]>,
-    },
-    /// The probe names both parties.
-    Pointwise {
-        statement: StatementId,
-        fact: Box<[u8]>,
-        incumbent: Box<[u8]>,
-    },
-}
-
-impl FunctionalityViolation {
-    #[must_use]
-    pub fn statement(&self) -> StatementId {
-        match *self {
-            Self::Scalar { statement, .. } | Self::Pointwise { statement, .. } => statement,
-        }
-    }
-
-    #[must_use]
-    pub fn fact(&self) -> &[u8] {
-        match self {
-            Self::Scalar { fact, .. } | Self::Pointwise { fact, .. } => fact,
-        }
-    }
-
-    #[must_use]
-    pub fn incumbent(&self) -> Option<&[u8]> {
-        match self {
-            Self::Scalar { .. } => None,
-            Self::Pointwise { incumbent, .. } => Some(incumbent),
-        }
-    }
 }
 
 impl Violation {
-    /// The violated statement.
+    pub(crate) fn functionality(
+        statement: StatementRef,
+        id: StatementId,
+        fact: Box<[u8]>,
+        conflict: Conflict,
+    ) -> Self {
+        Self::Functionality {
+            statement,
+            fact,
+            conflict,
+            id,
+        }
+    }
+
+    pub(crate) fn containment(
+        statement: StatementRef,
+        id: StatementId,
+        direction: Direction,
+        fact: Box<[u8]>,
+    ) -> Self {
+        Self::Containment {
+            statement,
+            direction,
+            fact,
+            id,
+        }
+    }
+
+    pub(crate) fn capacity(
+        statement: StatementRef,
+        id: StatementId,
+        fact: Box<[u8]>,
+        measure: u128,
+    ) -> Self {
+        Self::Capacity {
+            statement,
+            fact,
+            measure,
+            id,
+        }
+    }
+
+    /// The typed spine slot of the violated statement.
     #[must_use]
-    pub fn statement(&self) -> StatementId {
+    pub const fn statement(&self) -> StatementRef {
+        match *self {
+            Self::Functionality { statement, .. }
+            | Self::Containment { statement, .. }
+            | Self::Capacity { statement, .. } => statement,
+        }
+    }
+
+    /// The materialized-order ordinal — host citation, fingerprints, and
+    /// [`Violations`]' sort key. The stored identity is [`Self::statement`].
+    #[must_use]
+    pub const fn statement_id(&self) -> StatementId {
+        match *self {
+            Self::Functionality { id, .. }
+            | Self::Containment { id, .. }
+            | Self::Capacity { id, .. } => id,
+        }
+    }
+
+    /// Canonical bytes of the convicting fact.
+    #[must_use]
+    pub fn fact(&self) -> &[u8] {
         match self {
-            Self::Functionality(functionality) => functionality.statement(),
-            Self::Containment { statement, .. } | Self::Capacity { statement, .. } => *statement,
+            Self::Functionality { fact, .. }
+            | Self::Containment { fact, .. }
+            | Self::Capacity { fact, .. } => fact,
+        }
+    }
+
+    /// The incumbent fact of a pointwise key collision, if this citation
+    /// names one.
+    #[must_use]
+    pub fn incumbent(&self) -> Option<&[u8]> {
+        match self {
+            Self::Functionality {
+                conflict: Conflict::Pointwise { incumbent },
+                ..
+            } => Some(incumbent),
+            Self::Functionality {
+                conflict: Conflict::Scalar,
+                ..
+            }
+            | Self::Containment { .. }
+            | Self::Capacity { .. } => None,
         }
     }
 
@@ -1026,13 +1257,8 @@ impl Violation {
     /// count of facts convicting it.
     fn citation(&self) -> (StatementId, Option<Direction>) {
         match self {
-            Self::Functionality(functionality) => (functionality.statement(), None),
-            Self::Capacity { statement, .. } => (*statement, None),
-            Self::Containment {
-                statement,
-                direction,
-                ..
-            } => (*statement, Some(*direction)),
+            Self::Functionality { id, .. } | Self::Capacity { id, .. } => (*id, None),
+            Self::Containment { id, direction, .. } => (*id, Some(*direction)),
         }
     }
 }
@@ -1051,16 +1277,47 @@ impl Violation {
 /// rejection IS the repair diagnostic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitedFact {
+    relation: RelationId,
+    values: Box<[bumbledb_theory::Value]>,
+}
+
+impl CitedFact {
+    /// Sealed constructor: `values` is one decoded field per sealed
+    /// position of `relation`. The caller supplies the relation's field
+    /// count as the layout proof — a length mismatch is a programmer
+    /// error, never a host-constructible cited fact.
+    pub(crate) fn new(
+        relation: RelationId,
+        field_count: usize,
+        values: Box<[bumbledb_theory::Value]>,
+    ) -> Self {
+        debug_assert_eq!(
+            values.len(),
+            field_count,
+            "cited-fact values are one per sealed field"
+        );
+        let _ = field_count;
+        Self { relation, values }
+    }
+
     /// The cited fact's relation: the statement's own relation for a
     /// key, the SOURCE relation for a containment (the judgment speaks
     /// about sources), the TARGET (parent) relation for a capacity
     /// statement.
-    pub relation: RelationId,
-    /// One decoded [`Value`] per sealed field, in declaration order.
-    pub values: Box<[bumbledb_theory::Value]>,
+    #[must_use]
+    pub const fn relation(&self) -> RelationId {
+        self.relation
+    }
+
+    /// One decoded [`bumbledb_theory::Value`] per sealed field, in
+    /// declaration order.
+    #[must_use]
+    pub fn values(&self) -> &[bumbledb_theory::Value] {
+        &self.values
+    }
 }
 
-/// The complete violation set of one rejected commit — sealed: nonempty,
+/// The complete violation set of one rejected admission — sealed: nonempty,
 /// one citation per statement (per direction for a containment), sorted
 /// by materialized statement order. The only constructors sort and dedup
 /// and refuse emptiness, so an empty, unsorted, or duplicated set is
@@ -1075,36 +1332,38 @@ pub struct CitedFact {
 /// are still resolvable — so a bindings layer renders the whole
 /// rejection from plain data without the typed fact structs
 /// (`docs/architecture/30-dependencies.md` § rendering the rejection).
+/// Decoration is best-effort: a decode failure degrades the citation
+/// and never converts a `Rejected` into an `Err`.
+///
+/// Complete admission cites containments source-to-target (the sweeper's
+/// convention: a candidate, like a committed store, has no just-inserted
+/// side). The incremental checker keeps its two-direction citations.
+/// The dedup key remains `(StatementId, Option<Direction>)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Violations {
-    /// Collectors, sweeper, and decorate-failure: citations without decoded facts.
-    Citations(Box<[Violation]>),
-    /// The commit-boundary decode pass attached cited facts; lengths equal.
-    Decorated {
-        citations: Box<[Violation]>,
-        cited: Box<[Box<[CitedFact]>]>,
-    },
+pub struct Violations {
+    /// Sealed citations — nonempty, sorted, unique by citation key.
+    citations: Box<[Violation]>,
+    /// Parallel decoration; empty inner slices when undecorated. Length
+    /// equals `citations` by construction (one pair, two private boxes).
+    cited: Box<[Box<[CitedFact]>]>,
 }
 
 impl Violations {
     /// Seals a collector's raw finds: stable-sorts by citation (so the
     /// first-discovered witness of each citation survives), dedups by
-    /// citation, and returns `None` for the empty collection — the
-    /// accept path, never an empty rejection.
-    pub(crate) fn seal(mut found: Vec<Violation>) -> Option<Self> {
+    /// citation, and returns [`Admission::Accepted`] for the empty
+    /// collection — the accept path, never an empty rejection.
+    pub(crate) fn seal(mut found: Vec<Violation>) -> Admission<()> {
         if found.is_empty() {
-            return None;
+            return Admission::Accepted(());
         }
         found.sort_by_key(Violation::citation);
         found.dedup_by_key(|violation| violation.citation());
-        Some(Self::Citations(found.into_boxed_slice()))
-    }
-
-    /// The singleton set — a lone violation is trivially sealed. The
-    /// judgment probes convict through this shape and the collectors
-    /// flatten it ([`Violations::seal`] re-sorts the union).
-    pub(crate) fn one(violation: Violation) -> Self {
-        Self::Citations(Box::new([violation]))
+        let cited = vec![Box::<[CitedFact]>::from([]); found.len()];
+        Admission::Rejected(Self {
+            citations: found.into_boxed_slice(),
+            cited: cited.into_boxed_slice(),
+        })
     }
 
     /// Attaches the decode pass's cited facts, one list per citation —
@@ -1117,34 +1376,44 @@ impl Violations {
     /// walks [`Violations::as_slice`], so a mismatch is a programmer
     /// error, never data.
     pub(crate) fn attach_cited(self, cited: Vec<Box<[CitedFact]>>) -> Self {
-        let citations = self.into_citations();
         assert_eq!(
             cited.len(),
-            citations.len(),
+            self.citations.len(),
             "cited-fact lists are parallel to citations"
         );
-        Self::Decorated {
-            citations,
+        Self {
+            citations: self.citations,
             cited: cited.into_boxed_slice(),
         }
     }
 
-    fn into_citations(self) -> Box<[Violation]> {
-        match self {
-            Self::Citations(citations) | Self::Decorated { citations, .. } => citations,
-        }
+    /// Number of citations in sealed order.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.citations.len()
     }
 
-    fn citations_slice(&self) -> &[Violation] {
-        match self {
-            Self::Citations(citations) | Self::Decorated { citations, .. } => citations,
-        }
+    /// Always false: a sealed rejection is nonempty by construction.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.citations.is_empty()
+    }
+
+    /// The citation at `index`.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&Violation> {
+        self.citations.get(index)
     }
 
     /// Every violation, in citation order.
     #[must_use]
     pub fn as_slice(&self) -> &[Violation] {
-        self.citations_slice()
+        &self.citations
+    }
+
+    /// Every violation, in citation order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
+        self.citations.iter()
     }
 
     /// The decoded cited facts of the citation at `index` — the
@@ -1153,23 +1422,15 @@ impl Violations {
     /// findings) and for an out-of-range index.
     #[must_use]
     pub fn cited_facts(&self, index: usize) -> &[CitedFact] {
-        match self {
-            Self::Citations(_) => &[],
-            Self::Decorated { cited, .. } => cited.get(index).map_or(&[], AsRef::as_ref),
-        }
+        self.cited.get(index).map_or(&[], AsRef::as_ref)
     }
 
     /// Iterates citations paired with their decoded cited facts.
     pub fn citations(&self) -> impl Iterator<Item = (&Violation, &[CitedFact])> {
-        self.citations_slice()
+        self.citations
             .iter()
-            .enumerate()
-            .map(|(index, violation)| (violation, self.cited_facts(index)))
-    }
-
-    /// Iterates the violations, in citation order.
-    pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
-        self.citations_slice().iter()
+            .zip(self.cited.iter())
+            .map(|(violation, cited)| (violation, cited.as_ref()))
     }
 }
 
@@ -1178,7 +1439,7 @@ impl IntoIterator for Violations {
     type IntoIter = std::vec::IntoIter<Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.into_citations().into_vec().into_iter()
+        self.citations.into_vec().into_iter()
     }
 }
 
@@ -1187,7 +1448,7 @@ impl<'a> IntoIterator for &'a Violations {
     type IntoIter = std::slice::Iter<'a, Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.citations_slice().iter()
+        self.citations.iter()
     }
 }
 
@@ -1198,7 +1459,7 @@ pub enum OverflowKind {
     /// An aggregate's final value exceeds its result type (the once-at-
     /// finalization range check; deterministic under any fold order).
     /// Carries the find-position index.
-    Aggregate { find: usize },
+    Aggregate { find: FindIndex },
     /// The executor's D2 origin counter would cross u32 — more than 2³²
     /// absorb-node survivors in one execution. Beyond any validated
     /// workload — and survivors are per-execution and can exceed live
@@ -1207,6 +1468,64 @@ pub enum OverflowKind {
     /// is a typed error, never a panic; checked at batch granularity
     /// (`exec/run/probe_pass.rs`).
     OriginCapacity,
+}
+
+/// An OS I/O failure owned by [`Error`]: kind plus raw errno, never a
+/// foreign `std::io::Error` whose clone is lossy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IoFailure {
+    pub kind: std::io::ErrorKind,
+    pub raw_os: Option<i32>,
+}
+
+impl IoFailure {
+    #[must_use]
+    pub fn from_io(err: &std::io::Error) -> Self {
+        Self {
+            kind: err.kind(),
+            raw_os: err.raw_os_error(),
+        }
+    }
+
+    #[must_use]
+    pub fn raw_os_error(&self) -> Option<i32> {
+        self.raw_os
+    }
+}
+
+impl From<&std::io::Error> for IoFailure {
+    fn from(err: &std::io::Error) -> Self {
+        Self::from_io(err)
+    }
+}
+
+impl From<std::io::Error> for IoFailure {
+    fn from(err: std::io::Error) -> Self {
+        Self::from_io(&err)
+    }
+}
+
+/// An LMDB/heed failure owned by [`Error`]. Encoding/decoding drop the
+/// inner boxed payload (it was never clone-faithful); the variant remains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LmdbFailure {
+    Io(IoFailure),
+    Mdb(heed::MdbError),
+    Encoding,
+    Decoding,
+    EnvAlreadyOpened,
+}
+
+impl From<heed::Error> for LmdbFailure {
+    fn from(err: heed::Error) -> Self {
+        match err {
+            heed::Error::Io(io) => Self::Io(IoFailure::from_io(&io)),
+            heed::Error::Mdb(mdb) => Self::Mdb(mdb),
+            heed::Error::Encoding(_) => Self::Encoding,
+            heed::Error::Decoding(_) => Self::Decoding,
+            heed::Error::EnvAlreadyOpened => Self::EnvAlreadyOpened,
+        }
+    }
 }
 
 /// The one workspace error type, categorized per
@@ -1218,31 +1537,41 @@ pub enum OverflowKind {
 /// data payloads, not nested errors — a decision, not an omission:
 /// chain-walkers see exactly the real causes, and the structured detail
 /// renders through `Display`.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     // --- Open errors ---
     /// Storage format version mismatch — checked before the fingerprint.
     FormatMismatch {
-        found: u32,
-        expected: u32,
+        mismatch: Mismatch<u32>,
     },
     /// Schema fingerprint mismatch: the compiled schema is not the stored one.
     SchemaMismatch {
-        found: SchemaFingerprint,
-        expected: SchemaFingerprint,
+        mismatch: Mismatch<SchemaFingerprint>,
     },
     /// `create` refused a directory that already holds an LMDB
     /// environment — a bumbledb one (re-initializing `_meta` over live
     /// data would be silent corruption; open it instead) or anyone
     /// else's (a non-`_meta` environment is not ours to move into).
+    /// Open-time: a foreign LMDB environment, or a half-created empty
+    /// root that is not a usable store.
     AlreadyInitialized,
-    /// `open` reached a half-created store: the crash window between
-    /// environment creation and the meta commit left an empty root and
-    /// no `_meta` — a store never born, holding zero data. `Db::create`
-    /// is the remedy (creation heals it); corruption it is not
-    /// (`docs/architecture/50-storage.md` § open-time taxonomy, ruled
-    /// 2026-07-23, R18).
-    NotInitialized,
+    /// A fresh-store constructor (`create`, new `ephemeral`,
+    /// `from_instance`, `ephemeral_from_instance`, `compact`) was asked
+    /// to claim a path that already exists — including as an empty
+    /// directory. An existing path is a previous claim on the name; the
+    /// engine does not guess. Payloads carry the path, not formatted
+    /// prose.
+    DestinationExists {
+        path: PathBuf,
+    },
+    /// Publication finished (the destination contains a complete store)
+    /// but the directory-entry durability witness did not. The
+    /// implementation does not rename back or delete. A caller may open
+    /// the visible destination or repair the directory sync.
+    PublishedButUnsynced {
+        path: PathBuf,
+        source: IoFailure,
+    },
     /// Another live handle — a second process, or a second `Db` in this
     /// one — holds the environment's advisory lock. One writer, many
     /// reader threads, one handle, one process (`00-product.md`).
@@ -1257,18 +1586,15 @@ pub enum Error {
     /// store's guarantee. Checked after the format version, before the
     /// fingerprint.
     StoreKindMismatch {
-        found: crate::storage::env::StoreKind,
-        expected: crate::storage::env::StoreKind,
+        mismatch: Mismatch<crate::storage::env::StoreKind>,
     },
-    /// `exhume` found no persisted schema descriptor: the store predates
-    /// self-describing stores and has not been adopted. Absence is a
-    /// legal, typed state — never corruption — and the remedy is one
-    /// successful `Db::open` under the creating schema, whose
-    /// fingerprint-verified back-fill makes the store self-describing
-    /// forever (`docs/architecture/50-storage.md` § the `_meta` block).
+    /// Retired format-7 adoption refusal. Format 8 stores always persist
+    /// the descriptor; a missing key is
+    /// [`CorruptionError::MetaMissing`]. The variant remains for the
+    /// host kind table until ABI 3.
     DescriptorMissing,
-    Io(std::io::Error),
-    Lmdb(heed::Error),
+    Io(IoFailure),
+    Lmdb(LmdbFailure),
 
     // --- Runtime resource errors ---
     /// Every reader slot holds an open snapshot. The environment opens
@@ -1290,20 +1616,6 @@ pub enum Error {
     FactShape(FactShapeError),
 
     // --- Write errors ---
-    /// A commit rejected by the dependency judgment: the payload is the
-    /// COMPLETE violation set — every violated statement, cited once
-    /// (per direction for a containment), in materialized statement
-    /// order — never an arbitrary representative among simultaneous
-    /// violations (`docs/architecture/30-dependencies.md` § judged on
-    /// final states). Key (`Functionality`) violations preempt the
-    /// containment/capacity judgment: those probes are defined over the
-    /// keyed final state, which exists only when every key statement
-    /// holds — so one rejection is all-key or all-statement (containment
-    /// and capacity together in materialized order), complete within its
-    /// phase.
-    CommitRejected {
-        violations: Violations,
-    },
     /// A fresh sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.
     FreshExhausted {
@@ -1316,21 +1628,6 @@ pub enum Error {
     /// runs (`docs/architecture/10-data-model.md` § closed relations).
     ClosedRelationWrite {
         relation: RelationId,
-    },
-    /// [`crate::Db::write_from`]'s witness compare failed: a
-    /// state-changing commit landed after the witness snapshot was taken,
-    /// so the premises the host computed from are stale. Raised before
-    /// any page is touched; the delta drops exactly as any abort does.
-    /// Payload is the two generations (ids, never strings) — the same
-    /// generation the image cache keys on, so a counters-only/no-op
-    /// commit never raises this. Retry is host policy: re-run the query,
-    /// re-compute, `write_from` again (`docs/architecture/70-api.md`
-    /// § conditional writes).
-    GenerationMoved {
-        /// The witness snapshot's generation.
-        witnessed: crate::storage::env::GenerationId,
-        /// The current committed generation.
-        current: crate::storage::env::GenerationId,
     },
     /// The commit's durability boundary failed: `mdb_txn_commit` surfaced
     /// a raw OS errno from its write/sync path — on macOS the data-page
@@ -1346,7 +1643,7 @@ pub enum Error {
     CommitSync {
         /// Bounded retries consumed before the error escaped.
         retries: u32,
-        error: std::io::Error,
+        error: IoFailure,
     },
     /// A write transaction's apply phase recorded a prefix of facts then
     /// failed. The first failing call returns the original error; later
@@ -1363,16 +1660,15 @@ pub enum Error {
     /// statistics, and view memo all belong to one environment — it
     /// executes only against snapshots of the database that prepared it.
     ForeignPreparedQuery,
-    /// A witness snapshot of a different database than the one being
-    /// written ([`crate::Db::write_from`]) — the same environment-identity
+    /// A witness of a different database than the one being written
+    /// ([`crate::Db::write_from`]) — the same environment-identity
     /// key-probe prepared queries run at every execution entry, on the write
     /// side: another database's generation clock proves nothing about
     /// this one.
-    ForeignSnapshot,
+    ForeignWitness,
     /// Bind-time: the supplied parameter count does not match the query's.
     ParamCountMismatch {
-        expected: usize,
-        supplied: usize,
+        mismatch: Mismatch<usize>,
     },
     /// Bind-time: a supplied parameter's structural type does not match
     /// the anchor-inferred one.
@@ -1482,3 +1778,112 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Per-variant taxonomy: the one exhaustive table [`Error::descriptor`]
+/// walks. `source()`, the C kind map, and any future Clone-like fold
+/// read this — adding a variant is one arm here plus its `Display`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorFamily {
+    FormatMismatch,
+    SchemaMismatch,
+    AlreadyInitialized,
+    DestinationExists,
+    PublishedButUnsynced,
+    EnvironmentLocked,
+    StoreKindMismatch,
+    DescriptorMissing,
+    Io,
+    Lmdb,
+    ReadersFull,
+    Schema,
+    Validation,
+    FactShape,
+    FreshExhausted,
+    ClosedRelationWrite,
+    CommitSync,
+    TransactionPoisoned,
+    ForeignPreparedQuery,
+    ForeignWitness,
+    Param,
+    MeasureOfRay,
+    CapacityRayMeasure,
+    DerivedBudgetExceeded,
+    Overflow,
+    ResultBytesOverflow,
+    Corruption,
+}
+
+/// Shared per-variant facts produced by the one exhaustive [`Error`] match.
+pub(crate) struct ErrorDescriptor<'a> {
+    pub family: ErrorFamily,
+    pub source: Option<&'a (dyn std::error::Error + 'static)>,
+}
+
+fn family_only<'a>(family: ErrorFamily) -> ErrorDescriptor<'a> {
+    ErrorDescriptor {
+        family,
+        source: None,
+    }
+}
+
+fn family_source<'a>(
+    family: ErrorFamily,
+    source: &'a (dyn std::error::Error + 'static),
+) -> ErrorDescriptor<'a> {
+    ErrorDescriptor {
+        family,
+        source: Some(source),
+    }
+}
+
+impl Error {
+    /// The one per-variant descriptor. Display still formats payloads;
+    /// every other taxonomy fold reads this.
+    #[must_use]
+    pub(crate) fn descriptor(&self) -> ErrorDescriptor<'_> {
+        match self {
+            Self::FormatMismatch { .. } => family_only(ErrorFamily::FormatMismatch),
+            Self::SchemaMismatch { .. } => family_only(ErrorFamily::SchemaMismatch),
+            Self::AlreadyInitialized => family_only(ErrorFamily::AlreadyInitialized),
+            Self::DestinationExists { .. } => family_only(ErrorFamily::DestinationExists),
+            Self::PublishedButUnsynced { source, .. } => {
+                family_source(ErrorFamily::PublishedButUnsynced, source)
+            }
+            Self::EnvironmentLocked => family_only(ErrorFamily::EnvironmentLocked),
+            Self::StoreKindMismatch { .. } => family_only(ErrorFamily::StoreKindMismatch),
+            Self::DescriptorMissing => family_only(ErrorFamily::DescriptorMissing),
+            Self::Io(err) => family_source(ErrorFamily::Io, err),
+            Self::Lmdb(err) => family_source(ErrorFamily::Lmdb, err),
+            Self::ReadersFull { .. } => family_only(ErrorFamily::ReadersFull),
+            Self::Schema(_) => family_only(ErrorFamily::Schema),
+            Self::Validation(_) => family_only(ErrorFamily::Validation),
+            Self::FactShape(_) => family_only(ErrorFamily::FactShape),
+            Self::FreshExhausted { .. } => family_only(ErrorFamily::FreshExhausted),
+            Self::ClosedRelationWrite { .. } => family_only(ErrorFamily::ClosedRelationWrite),
+            Self::CommitSync { error, .. } => family_source(ErrorFamily::CommitSync, error),
+            Self::TransactionPoisoned { source } => {
+                family_source(ErrorFamily::TransactionPoisoned, source.as_ref())
+            }
+            Self::ForeignPreparedQuery => family_only(ErrorFamily::ForeignPreparedQuery),
+            Self::ForeignWitness => family_only(ErrorFamily::ForeignWitness),
+            Self::ParamCountMismatch { .. }
+            | Self::ParamTypeMismatch { .. }
+            | Self::ParamSetExpected { .. }
+            | Self::ParamScalarExpected { .. }
+            | Self::ParamElementTypeMismatch { .. }
+            | Self::PointParamAtCeiling { .. } => family_only(ErrorFamily::Param),
+            Self::MeasureOfRay { .. } => family_only(ErrorFamily::MeasureOfRay),
+            Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
+            Self::DerivedBudgetExceeded { .. } => family_only(ErrorFamily::DerivedBudgetExceeded),
+            Self::Overflow(_) => family_only(ErrorFamily::Overflow),
+            Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
+            Self::Corruption(_) => family_only(ErrorFamily::Corruption),
+        }
+    }
+
+    /// The C/TS kind tag — derived from [`Error::descriptor`].
+    #[must_use]
+    pub fn family(&self) -> ErrorFamily {
+        self.descriptor().family
+    }
+}

@@ -20,39 +20,44 @@
 //!   written to the out-param (when it is non-null) and the caller owns it
 //!   (`bdb_error_destroy`).
 //! - `BDB_STATUS_MISUSE`: a contract violation the bridge could detect —
-//!   a null required pointer, a stale snapshot/tx ref used after its
+//!   a null required pointer, a stale instance/tx ref used after its
 //!   callback returned, an out-of-range answers index, an unknown enum tag.
 //!   No error is allocated: misuse is a programming error, not data.
 //!
 //! # The lexical model
 //!
-//! Snapshots and write transactions are LEXICAL borrowed capabilities:
-//! [`db::bdb_snapshot_ref`] / [`db::bdb_tx_ref`] live in a stable heap
-//! slot inside the owning [`db::bdb_db`] (the `Box` until destroy). The
-//! callback receives a pointer into that slot; when the callback returns
-//! the slot is invalidated (`alive = false`, engine pointers nulled). A
-//! stashed pointer still names the db's slot and answers
-//! `BDB_STATUS_MISUSE` rather than use-after-free. They are never owned
-//! by C, never destroyed by C. `bdb_db_write_from` may be called from
-//! inside a read callback with that callback's still-live snapshot ref —
-//! the one sanctioned nesting (§18). One live read callback per handle
-//! (the single snapshot slot); nested or concurrent reads, and destroy
-//! during a live callback, are refused.
+//! Read instances and write transactions are LEXICAL borrowed
+//! capabilities. Each callback mints its own heap [`db::bdb_instance_ref`]
+//! (and, for store reads, a borrowed [`db::bdb_witness`]). When the
+//! callback returns the slot is invalidated (`alive = false`, engine
+//! pointers nulled). A stashed pointer still names that heap slot and
+//! answers `BDB_STATUS_MISUSE` rather than use-after-free. Instance refs
+//! are never owned or destroyed by C. A caller retains a witness with
+//! `bdb_witness_retain` (a clone of the engine [`bumbledb::Witness`])
+//! and destroys the retained handle with `bdb_witness_destroy`.
+//! `bdb_db_write_from` takes a witness — borrowed or retained — and may
+//! be called from inside a read callback. Concurrent MVCC reads on one
+//! handle are allowed; a nested write, a write during a write, and
+//! destroy during a live callback are refused.
+//!
+//! Theory rejection and a moved generation are proved outcomes: they
+//! fill an admission union under `BDB_STATUS_OK`. They are not
+//! `bdb_error` kinds.
 //!
 //! # Panic policy
 //!
 //! A Rust panic unwinding across the C boundary is undefined behavior, so
-//! EVERY extern entry point routes through [`guard`]:
+//! EVERY extern entry point routes through [`guard`] (or
+//! [`guard_statusless`] when there is no error out-param):
 //! `std::panic::catch_unwind` maps a caught panic to `BDB_ERROR_KIND_PANIC`
 //! (the caller treats the store as poisoned). Unwinding stays inside Rust,
 //! so the engine's own drop guards (the escaped-fresh-id burn on write
-//! failure) run as designed. Re-entrant `write`/`write_from` and
-//! nested/concurrent reads on the same handle are refused bridge-side with
-//! a typed `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` error BEFORE the engine's
+//! failure) run as designed. Re-entrant writes are refused bridge-side
+//! with a typed `BDB_ERROR_KIND_BUSY_HANDLE` error BEFORE the engine's
 //! non-reentrancy assertion can fire. Destroy of a db or prepared handle
-//! while it is in a callback/execute is `BDB_STATUS_MISUSE` (those destroy
-//! entries have no error out-param). A C++ exception thrown through a
-//! read/write callback is unsupported — it would unwind through Rust.
+//! while it is in a callback/execute is `BDB_STATUS_MISUSE`. A C++
+//! exception thrown through a read/write callback is unsupported — it
+//! would unwind through Rust.
 //!
 //! # Safety shape
 //!
@@ -98,15 +103,16 @@ pub extern "C" fn bdb_version() -> *const c_char {
         .cast::<c_char>()
 }
 
-/// C ABI generation. `2` is collection-valued insert/delete and `reserve`.
-/// Bump on a layout-visible change.
+/// C ABI generation. `3` is instance-lifetime: admission unions, the
+/// builder/owned/witness handles, and the retirement of snapshot-named
+/// functions.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_abi_version() -> u32 {
-    2
+    3
 }
 
 /// TryFrom/From for a C ABI enum whose struct field is stored as `u32`.
@@ -166,13 +172,21 @@ pub(crate) type BridgeResult<T> = Result<T, Fail>;
 
 /// The one panic wall (module doc: panic policy): every extern entry's
 /// body runs under `catch_unwind`; a caught panic becomes
-/// `BDB_ERROR_KIND_PANIC`.
+/// `BDB_ERROR_KIND_PANIC`. A body cannot return `BDB_STATUS_ERROR`
+/// without an error written: `Fail::Error` always stores through
+/// `out_error`.
 pub(crate) fn guard(
     out_error: *mut *mut bdb_error,
     body: impl FnOnce() -> BridgeResult<bdb_status>,
 ) -> bdb_status {
     match std::panic::catch_unwind(AssertUnwindSafe(body)) {
-        Ok(Ok(status)) => status,
+        Ok(Ok(status)) => {
+            debug_assert!(
+                status != bdb_status::Error,
+                "guard body returned Error without Fail::Error"
+            );
+            status
+        }
         Ok(Err(Fail::Misuse)) => bdb_status::Misuse,
         Ok(Err(Fail::Error(error))) => {
             store_error(out_error, error);
@@ -182,6 +196,23 @@ pub(crate) fn guard(
             store_error(out_error, Box::new(bdb_error::from_panic(&payload)));
             bdb_status::Error
         }
+    }
+}
+
+/// Panic wall for entries with no error out-param (destroy). `Fail::Error`
+/// is unrepresentable here and becomes `Misuse`; a panic becomes `Error`
+/// with no payload (the only statusless panic path).
+pub(crate) fn guard_statusless(body: impl FnOnce() -> BridgeResult<bdb_status>) -> bdb_status {
+    match std::panic::catch_unwind(AssertUnwindSafe(body)) {
+        Ok(Ok(status)) => {
+            debug_assert!(
+                status != bdb_status::Error,
+                "statusless body returned Error"
+            );
+            status
+        }
+        Ok(Err(Fail::Misuse | Fail::Error(_))) => bdb_status::Misuse,
+        Err(_) => bdb_status::Error,
     }
 }
 

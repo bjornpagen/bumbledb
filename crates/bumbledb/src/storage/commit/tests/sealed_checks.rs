@@ -5,13 +5,14 @@
 //! behavior-preserving by test, not by hope.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result, Violation};
+use crate::error::{Direction, Result, Violation};
 use crate::schema::ValidateDescriptor as _;
 use crate::schema::{CompiledCheck, ContainmentId, KeyId, Schema};
 use crate::storage::commit::judgment::{SelectionCheck, Selections};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use crate::testutil::expect_rejected;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
     FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
@@ -68,11 +69,7 @@ fn schema() -> Schema {
                 target: side(ACCOUNT, &[0]),
             },
             StatementDescriptor::Containment {
-                source: selected(
-                    REPORT,
-                    &[0],
-                    &[(1, Value::String("urgent".as_bytes().into()))],
-                ),
+                source: selected(REPORT, &[0], &[(1, Value::String("urgent".into()))]),
                 target: side(ACCOUNT, &[0]),
             },
         ],
@@ -102,20 +99,24 @@ fn sigma_literals_seal_at_validate() {
     let schema = schema();
     let bool_sigma = &schema.containment(TRANSFER_ACCOUNT_ID).checks;
     assert_eq!(
-        bool_sigma.source.as_ref(),
-        &[CompiledCheck::Encoded {
-            field: FieldId(1),
-            bytes: Box::new([1]),
-        }]
+        bool_sigma.source.ordinary(),
+        Some(
+            &[CompiledCheck::Encoded {
+                field: FieldId(1),
+                bytes: Box::new([1]),
+            }][..]
+        )
     );
     assert!(bool_sigma.target.is_empty());
     let str_sigma = &schema.containment(REPORT_ACCOUNT_ID).checks;
     assert_eq!(
-        str_sigma.source.as_ref(),
-        &[CompiledCheck::Interned {
-            field: FieldId(1),
-            text: "urgent".into(),
-        }]
+        str_sigma.source.ordinary(),
+        Some(
+            &[CompiledCheck::Interned {
+                field: FieldId(1),
+                text: "urgent".into(),
+            }][..]
+        )
     );
     assert_eq!(schema.key(KeyId(0)).id, ACCOUNT_KEY);
 }
@@ -157,14 +158,13 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     // In-σ source without its target: the violation names the statement.
     let flagged = transfer(&schema, 9, true);
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, flagged.clone())]);
-    let Err(Error::CommitRejected { violations }) = result else {
-        panic!("expected a rejected commit");
-    };
+    let violations = expect_rejected(result);
     let [
         Violation::Containment {
-            statement,
+            id: statement,
             direction,
             fact: violating,
+            ..
         },
     ] = violations.as_slice()
     else {
@@ -181,7 +181,8 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
         &[],
         &[(TRANSFER, transfer(&schema, 9, false))],
     )
-    .expect("a fact outside σ has no edge");
+    .expect("a fact outside σ has no edge")
+    .expect("admitted");
 
     // Target and in-σ source land together: the final state satisfies.
     apply_delta(
@@ -190,7 +191,8 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
         &[],
         &[(ACCOUNT, account(&schema, 9)), (TRANSFER, flagged)],
     )
-    .expect("target and source in one delta");
+    .expect("target and source in one delta")
+    .expect("admitted");
 
     // The Never σ: "urgent" was never interned, so no Report fact can
     // satisfy the selection — an insert with a different interned note
@@ -206,7 +208,7 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
         );
         delta.insert(&view, REPORT, &bytes)?;
         drop(view);
-        crate::storage::commit::commit(delta, &env)?;
+        crate::storage::commit::commit(delta, &env)?.expect("admitted");
         bytes
     };
     noted.expect("no fact can satisfy an uninterned σ — the edge never derives");
@@ -261,14 +263,20 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
 
     // Sealed shape: the alternatives in canonical (sorted) order.
     assert_eq!(
-        schema.containment(ContainmentId(0)).checks.source.as_ref(),
-        &[CompiledCheck::EncodedSet {
-            field: FieldId(1),
-            alternatives: Box::new([
-                Box::new(1u64.to_be_bytes()) as Box<[u8]>,
-                Box::new(3u64.to_be_bytes()) as Box<[u8]>,
-            ]),
-        }]
+        schema
+            .containment(ContainmentId(0))
+            .checks
+            .source
+            .ordinary(),
+        Some(
+            &[CompiledCheck::EncodedSet {
+                field: FieldId(1),
+                alternatives: Box::new([
+                    Box::new(1u64.to_be_bytes()) as Box<[u8]>,
+                    Box::new(3u64.to_be_bytes()) as Box<[u8]>,
+                ]),
+            }][..]
+        )
     );
 
     let dir = TempDir::new("sealed-set");
@@ -283,13 +291,11 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
 
     // A member of the set without its target: rejected, source side.
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(3))]);
-    let Err(Error::CommitRejected { violations }) = result else {
-        panic!("expected a rejected commit");
-    };
+    let violations = expect_rejected(result);
     assert!(matches!(
         violations.as_slice(),
         [Violation::Containment {
-            statement: StatementId(1),
+            id: StatementId(1),
             direction: Direction::SourceUnsatisfied,
             ..
         }]
@@ -298,7 +304,8 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
     // Outside the set: no edge, no probe — commits against the empty
     // store.
     apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(2))])
-        .expect("a fact outside the set has no edge");
+        .expect("a fact outside the set has no edge")
+        .expect("admitted");
 
     // The other member, landing with its target: the final state
     // satisfies.
@@ -311,5 +318,6 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
             (TRANSFER, status_transfer(1)),
         ],
     )
-    .expect("target and in-set source in one delta");
+    .expect("target and in-set source in one delta")
+    .expect("admitted");
 }

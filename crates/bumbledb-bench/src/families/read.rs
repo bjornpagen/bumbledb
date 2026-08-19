@@ -354,16 +354,12 @@ fn string_params(cfg: &GenConfig) -> Vec<Draw> {
     let mut sets: Vec<Draw> = (0..3)
         .map(|_| {
             scalar_draw(vec![Value::String(
-                format!("SYM{:04}", rng.range(sizes.instruments))
-                    .into_bytes()
-                    .into(),
+                format!("SYM{:04}", rng.range(sizes.instruments)).into(),
             )])
         })
         .collect();
     // The never-interned miss: no corpus vocabulary starts with this.
-    sets.push(scalar_draw(vec![Value::String(
-        b"missing-family".to_vec().into(),
-    )]));
+    sets.push(scalar_draw(vec![Value::String("missing-family".into())]));
     sets
 }
 

@@ -21,12 +21,16 @@
 //!
 //! [`CorruptionError::MalformedValue`]: crate::error::CorruptionError::MalformedValue
 
-use crate::encoding::{FactLayout, TypeDesc, ValueRef, decode_field};
+use crate::encoding::{FactLayout, ValueRef, decode_field};
 use bumbledb_theory::{Interval, Value};
 
 use super::fingerprint::FORMAT_VERSION_LABEL;
+use super::wire::{
+    BoundKind, ClosednessTag, EncodedHi, GenerationTag, HiPresence, IntervalElementTag,
+    StatementFormTag, ValueTypeTag, WeightTag,
+};
 use super::{
-    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
+    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
     RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 
@@ -97,10 +101,10 @@ fn relation(cur: &mut Cursor<'_>) -> Result<DecodedRelation, &'static str> {
     for _ in 0..field_count {
         let field_name = utf8(cur.bytes()?, "descriptor field name")?;
         let value_type = value_type(cur)?;
-        let generation = match cur.byte()? {
-            0 => Generation::None,
-            1 => Generation::Fresh,
-            _ => return Err("descriptor generation tag"),
+        let generation = match GenerationTag::from_byte(cur.byte()?) {
+            Some(GenerationTag::None) => Generation::None,
+            Some(GenerationTag::Fresh) => Generation::Fresh,
+            None => return Err("descriptor generation tag"),
         };
         sealed_fields.push(FieldDescriptor {
             name: field_name.into(),
@@ -108,8 +112,8 @@ fn relation(cur: &mut Cursor<'_>) -> Result<DecodedRelation, &'static str> {
             generation,
         });
     }
-    match cur.byte()? {
-        0 => Ok(DecodedRelation {
+    match ClosednessTag::from_byte(cur.byte()?) {
+        Some(ClosednessTag::Ordinary) => Ok(DecodedRelation {
             declared: RelationDescriptor {
                 name: name.into(),
                 fields: sealed_fields.clone(),
@@ -117,7 +121,7 @@ fn relation(cur: &mut Cursor<'_>) -> Result<DecodedRelation, &'static str> {
             },
             sealed_fields,
         }),
-        1 => {
+        Some(ClosednessTag::Closed) => {
             // The sealed field list of a closed relation opens with the
             // synthetic (`id`, u64) field validation prepends; the
             // declared descriptor never carries it.
@@ -133,7 +137,7 @@ fn relation(cur: &mut Cursor<'_>) -> Result<DecodedRelation, &'static str> {
             let layout = FactLayout::new(
                 &sealed_fields
                     .iter()
-                    .map(|field| field.value_type.type_desc())
+                    .map(|field| field.value_type)
                     .collect::<Vec<_>>(),
             );
             let row_count = cur.len()?;
@@ -152,7 +156,7 @@ fn relation(cur: &mut Cursor<'_>) -> Result<DecodedRelation, &'static str> {
                 sealed_fields,
             })
         }
-        _ => Err("descriptor closedness tag"),
+        None => Err("descriptor closedness tag"),
     }
 }
 
@@ -173,8 +177,8 @@ fn extension_row(
     }
     let mut values = Vec::with_capacity(layout.field_count().saturating_sub(1));
     for idx in 0..layout.field_count() {
-        let decoded =
-            decode_field(fact, layout, idx).map_err(|_| "descriptor extension row value")?;
+        let decoded = decode_field(layout.encoded(fact), idx)
+            .map_err(|_| "descriptor extension row value")?;
         if idx == 0 {
             if decoded != ValueRef::U64(row_id as u64) {
                 return Err("descriptor extension row id");
@@ -187,12 +191,8 @@ fn extension_row(
             ValueRef::I64(v) => Value::I64(v),
             ValueRef::String(_) => return Err("descriptor extension row str column"),
             ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-            ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
-                Value::IntervalU64(interval)
-            }
-            ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
-                Value::IntervalI64(interval)
-            }
+            ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
+            ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
         });
     }
     Ok(Row {
@@ -205,28 +205,29 @@ fn extension_row(
 /// `put_value_type` tag table (tag 1 is the deleted enum tombstone and
 /// never decodes).
 fn value_type(cur: &mut Cursor<'_>) -> Result<ValueType, &'static str> {
-    Ok(match cur.byte()? {
-        0 => ValueType::Bool,
-        2 => ValueType::U64,
-        3 => ValueType::I64,
-        4 => ValueType::String,
-        5 => ValueType::FixedBytes { len: cur.u16()? },
-        6 => ValueType::Interval {
-            element: element(cur)?,
+    Ok(
+        match ValueTypeTag::from_byte(cur.byte()?).ok_or("descriptor value-type tag")? {
+            ValueTypeTag::Bool => ValueType::Bool,
+            ValueTypeTag::U64 => ValueType::U64,
+            ValueTypeTag::I64 => ValueType::I64,
+            ValueTypeTag::String => ValueType::String,
+            ValueTypeTag::FixedBytes => ValueType::FixedBytes { len: cur.u16()? },
+            ValueTypeTag::Interval => ValueType::Interval {
+                element: element(cur)?,
+            },
+            ValueTypeTag::FixedInterval => ValueType::FixedInterval {
+                element: element(cur)?,
+                width: cur.u64()?,
+            },
         },
-        7 => ValueType::FixedInterval {
-            element: element(cur)?,
-            width: cur.u64()?,
-        },
-        _ => return Err("descriptor value-type tag"),
-    })
+    )
 }
 
 fn element(cur: &mut Cursor<'_>) -> Result<IntervalElement, &'static str> {
-    match cur.byte()? {
-        0 => Ok(IntervalElement::U64),
-        1 => Ok(IntervalElement::I64),
-        _ => Err("descriptor interval element tag"),
+    match IntervalElementTag::from_byte(cur.byte()?) {
+        Some(IntervalElementTag::U64) => Ok(IntervalElement::U64),
+        Some(IntervalElementTag::I64) => Ok(IntervalElement::I64),
+        None => Err("descriptor interval element tag"),
     }
 }
 
@@ -238,65 +239,70 @@ fn statement(
     cur: &mut Cursor<'_>,
     relations: &[DecodedRelation],
 ) -> Result<StatementDescriptor, &'static str> {
-    Ok(match cur.byte()? {
-        0 => {
-            let relation = relation_id(cur, relations)?;
-            let projection_len = cur.len()?;
-            let mut projection = Vec::with_capacity(projection_len);
-            for _ in 0..projection_len {
-                projection.push(FieldId(cur.u16()?));
+    Ok(
+        match StatementFormTag::from_byte(cur.byte()?).ok_or("descriptor statement form tag")? {
+            StatementFormTag::Functionality => {
+                let relation = relation_id(cur, relations)?;
+                let projection_len = cur.len()?;
+                let mut projection = Vec::with_capacity(projection_len);
+                for _ in 0..projection_len {
+                    projection.push(FieldId(cur.u16()?));
+                }
+                StatementDescriptor::Functionality {
+                    relation,
+                    projection: projection.into_boxed_slice(),
+                }
             }
-            StatementDescriptor::Functionality {
-                relation,
-                projection: projection.into_boxed_slice(),
+            StatementFormTag::Containment => StatementDescriptor::Containment {
+                source: side(cur, relations)?,
+                target: side(cur, relations)?,
+            },
+            // Capacity is tag 4 in the operator's read order (C2). Tags 2
+            // (retired count-only) and 3 (retired order mark) never decode
+            // — a retired tag is never reissued (C5).
+            StatementFormTag::Capacity => {
+                let target = side(cur, relations)?;
+                let weight = match WeightTag::from_byte(cur.byte()?)
+                    .ok_or("descriptor capacity weight tag")?
+                {
+                    WeightTag::Unit => Weight::Unit,
+                    WeightTag::Field => Weight::Field(FieldId(cur.u16()?)),
+                    WeightTag::DurationOf => Weight::DurationOf(FieldId(cur.u16()?)),
+                };
+                let lo = cur.u64()?;
+                let hi = match HiPresence::from_byte(cur.byte()?)
+                    .ok_or("descriptor capacity hi tag")?
+                {
+                    HiPresence::Absent => EncodedHi::Unbounded,
+                    HiPresence::Present => {
+                        match BoundKind::from_byte(cur.byte()?)
+                            .ok_or("descriptor capacity bound tag")?
+                        {
+                            BoundKind::Lit => EncodedHi::Lit(cur.u64()?),
+                            BoundKind::TargetField => EncodedHi::TargetField(FieldId(cur.u16()?)),
+                            BoundKind::TargetDuration => {
+                                EncodedHi::TargetDuration(FieldId(cur.u16()?))
+                            }
+                        }
+                    }
+                }
+                .to_bound();
+                let source = side(cur, relations)?;
+                StatementDescriptor::Capacity {
+                    target,
+                    weight,
+                    lo,
+                    hi,
+                    source,
+                }
             }
-        }
-        1 => StatementDescriptor::Containment {
-            source: side(cur, relations)?,
-            target: side(cur, relations)?,
         },
-        // Tag 4 — the capacity statement, in the operator's read order
-        // (C2): target, weight descriptor, window (lo literal, hi
-        // presence + kind), source. Tags 2 (the retired count-only
-        // encoding) and 3 (the retired order mark) never decode — a
-        // retired tag is never reissued (C5), and a pre-cutover stream
-        // never reaches this decoder (the storage format gate runs
-        // first).
-        4 => {
-            let target = side(cur, relations)?;
-            let weight = match cur.byte()? {
-                0 => Weight::Unit,
-                1 => Weight::Field(FieldId(cur.u16()?)),
-                2 => Weight::DurationOf(FieldId(cur.u16()?)),
-                _ => return Err("descriptor capacity weight tag"),
-            };
-            let lo = cur.u64()?;
-            let hi = match cur.byte()? {
-                0 => None,
-                1 => Some(match cur.byte()? {
-                    0 => Bound::Lit(cur.u64()?),
-                    1 => Bound::TargetField(FieldId(cur.u16()?)),
-                    2 => Bound::TargetDuration(FieldId(cur.u16()?)),
-                    _ => return Err("descriptor capacity bound tag"),
-                }),
-                _ => return Err("descriptor capacity hi tag"),
-            };
-            let source = side(cur, relations)?;
-            StatementDescriptor::Capacity {
-                target,
-                weight,
-                lo,
-                hi,
-                source,
-            }
-        }
-        _ => return Err("descriptor statement form tag"),
-    })
+    )
 }
 
 /// One side: relation, projection, and the selection bindings — each
 /// literal decoded at its selected field's encoding, exactly where the
-/// encoder's `put_side` resolved the same [`TypeDesc`].
+/// encoder's `put_side` resolved the same [`ValueType`].
 fn side(cur: &mut Cursor<'_>, relations: &[DecodedRelation]) -> Result<Side, &'static str> {
     let relation = relation_id(cur, relations)?;
     let sealed_fields = &relations[relation.0 as usize].sealed_fields;
@@ -312,8 +318,7 @@ fn side(cur: &mut Cursor<'_>, relations: &[DecodedRelation]) -> Result<Side, &'s
         let desc = sealed_fields
             .get(usize::from(field.0))
             .ok_or("descriptor selection field id")?
-            .value_type
-            .type_desc();
+            .value_type;
         let count = cur.len()?;
         let literals = match count {
             0 => return Err("descriptor empty literal set"),
@@ -350,16 +355,23 @@ fn relation_id(
 /// One selection literal at its field's encoding — the inverse of
 /// `put_literal`: `str` literals are length-prefixed raw bytes (the one
 /// per-database-free string form); everything else is the shared
-/// [`crate::encoding::encode_literal`] shape at the field's [`TypeDesc`].
-fn literal(cur: &mut Cursor<'_>, desc: TypeDesc) -> Result<Value, &'static str> {
+/// [`crate::encoding::encode_literal`] shape at the field's [`ValueType`].
+fn literal(cur: &mut Cursor<'_>, desc: ValueType) -> Result<Value, &'static str> {
     Ok(match desc {
-        TypeDesc::String => Value::String(cur.bytes()?.into()),
-        TypeDesc::Bool => Value::Bool(
+        ValueType::String => {
+            let raw = cur.bytes()?;
+            Value::String(
+                std::str::from_utf8(raw)
+                    .map_err(|_| "descriptor string utf8")?
+                    .into(),
+            )
+        }
+        ValueType::Bool => Value::Bool(
             crate::encoding::decode_bool(cur.byte()?).map_err(|_| "descriptor bool literal")?,
         ),
-        TypeDesc::U64 => Value::U64(crate::encoding::decode_u64(cur.word()?)),
-        TypeDesc::I64 => Value::I64(crate::encoding::decode_i64(cur.word()?)),
-        TypeDesc::FixedBytes { len } => {
+        ValueType::U64 => Value::U64(crate::encoding::decode_u64(cur.word()?)),
+        ValueType::I64 => Value::I64(crate::encoding::decode_i64(cur.word()?)),
+        ValueType::FixedBytes { len } => {
             let padded = cur.take(crate::encoding::fixed_bytes_words(len) * 8)?;
             let raw = padded
                 .get(..usize::from(len))
@@ -369,7 +381,7 @@ fn literal(cur: &mut Cursor<'_>, desc: TypeDesc) -> Result<Value, &'static str> 
             }
             Value::FixedBytes(raw.into())
         }
-        TypeDesc::Interval { element } => {
+        ValueType::Interval { element } => {
             let (start, end) = (cur.word()?, cur.word()?);
             match element {
                 IntervalElement::U64 => Value::IntervalU64(
@@ -388,7 +400,7 @@ fn literal(cur: &mut Cursor<'_>, desc: TypeDesc) -> Result<Value, &'static str> 
                 ),
             }
         }
-        TypeDesc::FixedInterval { element, width } => {
+        ValueType::FixedInterval { element, width } => {
             let (start_word, end_word) =
                 crate::encoding::decode_fixed_interval_start(cur.word()?, width)
                     .map_err(|_| "descriptor fixed interval literal start")?;
@@ -468,6 +480,7 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Bound;
     use super::super::ValidateDescriptor as _;
     use super::super::fingerprint::{canonical_descriptor, fingerprint};
     use super::super::tests::{
@@ -580,8 +593,8 @@ mod tests {
                             (
                                 FieldId(1),
                                 LiteralSet::Many(Box::new([
-                                    Value::String(Box::from(&b"alpha"[..])),
-                                    Value::String(Box::from(&b"beta"[..])),
+                                    Value::String(Box::from("alpha")),
+                                    Value::String(Box::from("beta")),
                                 ])),
                             ),
                             (

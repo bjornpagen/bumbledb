@@ -8,8 +8,8 @@ use std::sync::{Arc, OnceLock};
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::{RelationImage, append, build, synthesize_closed};
 use crate::schema::{RelationBody, Schema};
+use crate::storage::catalog::CatalogRead;
 use crate::storage::env::ReadTxn;
-use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 use super::{Cached, ImageCache};
@@ -92,9 +92,7 @@ impl ImageCache {
                 self.counters.hit();
                 crate::obs::event(
                     crate::obs::names::CACHE_HIT,
-                    crate::obs::Category::Cache,
-                    u64::from(rel.0),
-                    0,
+                    crate::obs::TraceArgs::Count(u64::from(rel.0)),
                 );
                 return Ok(Arc::clone(&cached.image));
             }
@@ -130,9 +128,7 @@ impl ImageCache {
         if generation < newest {
             crate::obs::event(
                 crate::obs::names::CACHE_QUERY_LOCAL,
-                crate::obs::Category::Cache,
-                u64::from(rel.0),
-                0,
+                crate::obs::TraceArgs::Count(u64::from(rel.0)),
             );
             return Ok(image);
         }
@@ -146,7 +142,7 @@ impl ImageCache {
         // evicts on), a fresh-less relation's the `S` high-water.
         let row_id_next = match schema.fresh_mint_field(rel) {
             Some(field) => crate::storage::delta::read_fresh_next(txn, rel, field)?,
-            None => read::row_id_high_water(txn, rel)?,
+            None => txn.catalog().row_id_high_water(rel)?,
         };
 
         let mut inner = self.inner.lock().expect("cache mutex");
@@ -163,9 +159,7 @@ impl ImageCache {
             std::collections::hash_map::Entry::Occupied(winner) => {
                 crate::obs::event(
                     crate::obs::names::CACHE_ADOPT,
-                    crate::obs::Category::Cache,
-                    u64::from(rel.0),
-                    0,
+                    crate::obs::TraceArgs::Count(u64::from(rel.0)),
                 );
                 // The winner already replaced the base in its own
                 // critical section — nothing to remove.
@@ -201,13 +195,11 @@ impl ImageCache {
     ) -> Result<Arc<RelationImage>> {
         let mut span = crate::obs::span_args(
             crate::obs::names::IMAGE_BUILD,
-            crate::obs::Category::Image,
-            u64::from(rel.0),
-            0,
+            crate::obs::TraceArgs::Count(u64::from(rel.0)),
         );
         self.counters.build();
-        let image = build(txn, schema, rel)?;
-        span.set_args(u64::from(rel.0), image.byte_size() as u64);
+        let image = build(&txn.catalog(), schema, rel)?;
+        span.set_pair(u64::from(rel.0), image.byte_size() as u64);
         Ok(image)
     }
 
@@ -221,7 +213,8 @@ impl ImageCache {
         rel: RelationId,
         base: &Base,
     ) -> Result<Arc<RelationImage>> {
-        let claimed = read::row_count(txn, rel)?;
+        let catalog = txn.catalog();
+        let claimed = catalog.row_count(rel)?;
         let base_rows = base.image.row_count() as u64;
         let image = match claimed.cmp(&base_rows) {
             // Only corruption shrinks a delete-free relation's count —
@@ -240,9 +233,7 @@ impl ImageCache {
                 self.counters.carry();
                 crate::obs::event(
                     crate::obs::names::CACHE_CARRY,
-                    crate::obs::Category::Cache,
-                    u64::from(rel.0),
-                    0,
+                    crate::obs::TraceArgs::Count(u64::from(rel.0)),
                 );
                 Arc::clone(&base.image)
             }
@@ -251,13 +242,11 @@ impl ImageCache {
             std::cmp::Ordering::Greater => {
                 let mut span = crate::obs::span_args(
                     crate::obs::names::IMAGE_APPEND,
-                    crate::obs::Category::Image,
-                    u64::from(rel.0),
-                    0,
+                    crate::obs::TraceArgs::Count(u64::from(rel.0)),
                 );
                 self.counters.append();
-                let image = append(txn, schema, rel, &base.image, base.row_id_next)?;
-                span.set_args(u64::from(rel.0), image.byte_size() as u64);
+                let image = append(&catalog, schema, rel, &base.image, base.row_id_next)?;
+                span.set_pair(u64::from(rel.0), image.byte_size() as u64);
                 image
             }
         };
@@ -278,9 +267,7 @@ impl ImageCache {
             self.counters.hit();
             crate::obs::event(
                 crate::obs::names::CACHE_HIT,
-                crate::obs::Category::Cache,
-                u64::from(rel.0),
-                0,
+                crate::obs::TraceArgs::Count(u64::from(rel.0)),
             );
             return Arc::clone(image);
         }
@@ -288,13 +275,11 @@ impl ImageCache {
         let image = slot.get_or_init(|| {
             let mut span = crate::obs::span_args(
                 crate::obs::names::IMAGE_BUILD,
-                crate::obs::Category::Image,
-                u64::from(rel.0),
-                0,
+                crate::obs::TraceArgs::Count(u64::from(rel.0)),
             );
             self.counters.build();
             let image = synthesize_closed(rel, schema.relation(rel));
-            span.set_args(u64::from(rel.0), image.byte_size() as u64);
+            span.set_pair(u64::from(rel.0), image.byte_size() as u64);
             image
         });
         Arc::clone(image)

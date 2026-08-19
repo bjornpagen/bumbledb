@@ -29,7 +29,7 @@ fn member_set(words: &[u64; 4]) -> MemberSet {
     for index in 0..256u16 {
         let word = usize::from(index / 64);
         if words[word] & (1 << (index % 64)) != 0 {
-            members.insert(AxiomIndex(index));
+            members.insert(AxiomIndex(u8::try_from(index).expect("index < 256")));
         }
     }
     members

@@ -64,7 +64,7 @@ quickstart_fence!(
         Account(status) <= Status(id);
     }
     body {
-        let db = bumbledb::Db::create(path, Ledger)?;
+        let db = bumbledb::Db::create(path, Ledger)?.expect("accepted");
 
         db.write(|tx| {
             let ids = tx.reserve::<HolderId>(1)?;
@@ -73,7 +73,7 @@ quickstart_fence!(
             let account = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
             tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
             Ok(())
-        })?;
+        })?.unwrap();
 
         let q = bumbledb_query::query!(Ledger {
             (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);

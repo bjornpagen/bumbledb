@@ -245,19 +245,17 @@ facts, never interned, so the key hash carries no type tag: forward
   and the `R` namespace gained the weighted value slot (the C17 measured
   law: a weighted statement's edges carry the child's u64 weight), so every
   v6 fingerprint decodes wrong and a weighted-statement `R` entry has no v6
-  reading at all — one bump covers both, and every pre-cutover store refuses
-  to open on every lane.
-- **A half-created store is not corruption** (ruled 2026-07-23, R18). Before
-  those checks can run, open classifies the meta block itself — one
-  classification, shared by every constructor, never the same branch
-  hand-written three ways. No `_meta` over an empty root is the half-created
-  store (the crash window between environment creation and the meta commit): a
-  never-born store holding zero data. `Db::create` proceeds — creation heals
-  it; the ephemeral open treats it as fresh; `Db::open` refuses it with a typed
-  not-initialized error naming `Db::create` as the remedy — never `Corruption`.
-  No `_meta` over a non-empty root is the foreign-environment refusal,
-  `AlreadyInitialized`. `MetaMissing` convicts only a genuinely absent key
-  inside an initialized store.
+  reading at all — one bump covers both,   and every pre-cutover store refuses
+  to open on every lane. Version 8 is the admitted-instance cutover: create
+  complete-admits empty, open requires the persisted descriptor, format-7
+  decoding is deleted, and every earlier format refuses on every open surface.
+- **A destination path is either absent or a complete store** (format 8).
+  Fresh-store constructors refuse an existing path — including an empty
+  directory — as `DestinationExists`. Open of a foreign LMDB environment or an
+  unusable empty root is `AlreadyInitialized`. Healing a half-created
+  destination is refused: publication is staging plus atomic rename, so a
+  half-created store cannot occupy the destination path. `MetaMissing` convicts
+  only a genuinely absent key inside an initialized store.
 - **Malformed and missing are distinct meta states** (ruled 2026-07-23, R18).
   One decode discipline for every `_meta` value — the split the store-kind
   reader pins: an absent key is `MetaMissing`; a present value that fails to
@@ -774,7 +772,7 @@ the theory itself.
   construction, as does its test-gated retain-newest twin `evict_older_than`;
   it is not in the generation-keyed map at all). `peek` answers it once
   resident, with no generation read.
-- **Read surfaces:** `Snapshot::scan`/`scan_facts` yield the extension's
+- **Read surfaces:** `ReadInstance::scan`/`scan_facts` yield the extension's
   canonical fact bytes directly (row id = declaration index); `WriteTx`
   point reads (`get_dyn`) resolve against the extension by re-deriving determinant
   bytes per row — ≤256 rows, L1-resident, an honest linear scan. There are no

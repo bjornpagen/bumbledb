@@ -12,11 +12,16 @@ use crate::families::bind_values;
 fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(name);
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = Db::create(&dir, bumbledb::Theory::descriptor(super::Rings)).expect("create");
+    let db = Db::create(&dir, bumbledb::Theory::descriptor(super::Rings))
+        .expect("create")
+        .expect("accepted");
     for (rel, rows) in super::corpus::rows_smoke(7) {
-        db.write(|tx| tx.insert_dyn(rel, rows).map(|r| r.changed))
-            .expect("insert");
+        db.write(|tx| {
+            tx.insert_dyn(rel, rows)
+                .map(bumbledb::MutationReport::changed)
+        })
+        .expect("insert")
+        .unwrap();
     }
     (db, dir)
 }
@@ -47,7 +52,6 @@ fn run_count(db: &Db<SchemaDescriptor>, query: &Query, params: &[Value]) -> Opti
 fn rings_smoke_gate_agrees_on_every_family() {
     let dir = std::env::temp_dir().join("bumbledb-rings-smoke-gate");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     crate::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every rings family agrees with SQLite at smoke scale");
     let _ = std::fs::remove_dir_all(&dir);

@@ -21,14 +21,12 @@ impl ProjectionSink {
     fn with_capacity_hint_sources(sources: ProjectionSources, hint: usize) -> Self {
         let arity = match &sources {
             ProjectionSources::Plain(slots) => slots.len(),
-            ProjectionSources::Measured(sources) => sources.len(),
+            ProjectionSources::Measured { sources, .. } => sources.len(),
         };
         Self {
             finds: Vec::new(),
-            measures: Vec::new(),
             sources,
             ray: crate::exec::sink::RayPoison::Clear,
-            measured_sources: Vec::new(),
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
             batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
@@ -45,7 +43,6 @@ impl ProjectionSink {
         let sources = sources_of(&parsed, &measures);
         let mut sink = Self::with_capacity_hint_sources(sources, hint);
         sink.finds = parsed;
-        sink.measures = measures;
         sink
     }
 
@@ -57,9 +54,11 @@ impl ProjectionSink {
     /// and its spanning rules IS the union. Single-rule sinks are built
     /// aimed and never call this.
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
-        parse_finds_into(finds, slot_count, &mut self.finds, &mut self.measures);
-        match (&mut self.sources, self.measures.is_empty()) {
-            (ProjectionSources::Plain(slots), true) => {
+        let mut measures = Vec::new();
+        parse_finds_into(finds, slot_count, &mut self.finds, &mut measures);
+        match &mut self.sources {
+            ProjectionSources::Plain(slots) => {
+                debug_assert!(measures.is_empty(), "plain heads have no measures");
                 slots.clear();
                 for find in &self.finds {
                     if let SinkSpec::Var { slot, width } = find {
@@ -67,18 +66,20 @@ impl ProjectionSink {
                     }
                 }
             }
-            (ProjectionSources::Measured(sources), false) => {
-                extend_sources(&self.finds, &self.measures, sources);
+            ProjectionSources::Measured {
+                sources,
+                measures: dest,
+                ..
+            } => {
+                debug_assert!(!measures.is_empty(), "measured heads keep measures");
+                *dest = measures;
+                extend_sources(&self.finds, dest, sources);
             }
-            // Head alignment makes a regime change impossible in valid
-            // multi-rule queries. Stay total defensively; this cold
-            // replacement may allocate only for malformed internal data.
-            (sources, _) => *sources = sources_of(&self.finds, &self.measures),
         }
         debug_assert_eq!(
             match &self.sources {
                 ProjectionSources::Plain(slots) => slots.len(),
-                ProjectionSources::Measured(sources) => sources.len(),
+                ProjectionSources::Measured { sources, .. } => sources.len(),
             },
             self.scratch.len(),
             "one head, fixed word arity"

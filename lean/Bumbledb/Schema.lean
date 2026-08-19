@@ -615,4 +615,55 @@ theorem den_closed_finite {T : Theory} {R : RelId}
   rw [h]
   exact Iff.rfl
 
+/-- The `isSome` form of `den_closed_constant`: a closed relation's
+denotation is independent of the instance. -/
+theorem den_closed_independent {T : Theory} {R : RelId}
+    (h : (T.closed R).isSome = true) (I J : Instance) :
+    T.den I R = T.den J R := by
+  cases hc : T.closed R with
+  | none =>
+    rw [hc] at h
+    exact nomatch h
+  | some ext =>
+    exact den_closed_constant hc I J
+
+/-- A statement is closed-constant when every relation it consults is
+closed: the judgment cannot depend on ordinary facts. Exhaustive on
+`Statement`, so a new form is a compile error here rather than a
+silent hole in the complete roster. Schema validation discharges
+these by refuting self-refuting theories (`ClosedStatementRefuted`);
+the instance-dependent complete roster (`Txn.completeKeyViolations`,
+`Txn.completeStatementViolations`) skips them, and
+`Txn.obligation_partition` composes the two witnesses back into
+`holds`. On a validated schema that composition is the roster
+bridge (`Txn.completeRosterPasses_iff_holds`). -/
+def Statement.closedConstant (T : Theory) : Statement → Bool
+  | .functionality R _ => (T.closed R).isSome
+  | .containment src tgt =>
+    (T.closed src.relation).isSome && (T.closed tgt.relation).isSome
+  | .capacity tgt _ _ src =>
+    (T.closed tgt.relation).isSome && (T.closed src.relation).isSome
+
+/-- **L5.** A containment whose source is sealed and whose target is
+ordinary is instance-dependent: the complete roster keeps it, and
+the incremental lane's closed-source fence does not apply to
+complete admission. -/
+theorem closed_source_ordinary_not_closedConstant
+    {T : Theory} {src tgt : Atom}
+    (hs : (T.closed src.relation).isSome = true)
+    (ht : (T.closed tgt.relation).isSome = false) :
+    (Statement.containment src tgt).closedConstant T = false := by
+  simp [Statement.closedConstant, hs, ht]
+
+/-- **L5.** A capacity whose parent is sealed and whose children are
+ordinary is instance-dependent — a positive floor on a closed
+parent with no children is a complete-admission rejection, not a
+validation discharge. -/
+theorem closed_capacity_ordinary_children_not_closedConstant
+    {T : Theory} {tgt src : Atom} {wt : Weight} {w : CapWindow}
+    (ht : (T.closed tgt.relation).isSome = true)
+    (hs : (T.closed src.relation).isSome = false) :
+    (Statement.capacity tgt wt w src).closedConstant T = false := by
+  simp [Statement.closedConstant, ht, hs]
+
 end Bumbledb

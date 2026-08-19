@@ -2,6 +2,7 @@
 //! no interior-count cap.
 
 use super::*;
+use crate::error::AtomIndex;
 use crate::ir::{AtomSource, HeadTerm, Interior, InteriorId, ProjectionRule};
 
 fn interior_atom(id: u32, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
@@ -30,10 +31,11 @@ fn rule(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Rule {
 }
 
 fn query_with_interior(interior: Interior, main: Rule) -> Query {
-    Query::Cq {
+    Query {
         interiors: vec![interior],
         head: main.head(),
         rules: vec![main],
+        rec: None,
     }
 }
 
@@ -44,13 +46,14 @@ fn more_than_sixteen_interiors_still_validate() {
             rules: vec![proj(vec![VarId(0)], vec![atom(ACCOUNT, vec![(0, var(0))])])],
         })
         .collect();
-    let query = Query::Cq {
+    let query = Query {
         interiors,
         head: vec![HeadTerm::Var],
         rules: vec![rule(
             vec![FindTerm::Var(VarId(0))],
             vec![interior_atom(16, vec![(0, var(0))])],
         )],
+        rec: None,
     };
     validate(&schema(), &query).expect("interior count is uncapped");
 }
@@ -81,7 +84,7 @@ fn rejects_unknown_interior() {
     assert_eq!(
         expect_err(&query),
         ValidationError::UnknownInterior {
-            atom: 0,
+            atom: AtomIndex(0),
             interior: InteriorId(0)
         }
     );
@@ -89,7 +92,7 @@ fn rejects_unknown_interior() {
 
 #[test]
 fn rejects_a_negated_phantom_read() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -98,11 +101,12 @@ fn rejects_a_negated_phantom_read() {
             negated: vec![interior_atom(9, vec![(0, var(0))])],
             conditions: vec![],
         }],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
         ValidationError::UnknownInterior {
-            atom: 1,
+            atom: AtomIndex(1),
             interior: InteriorId(9)
         }
     );
@@ -122,7 +126,7 @@ fn rejects_interior_column_out_of_range() {
     assert_eq!(
         expect_err(&query),
         ValidationError::InteriorColumnOutOfRange {
-            atom: 0,
+            atom: AtomIndex(0),
             field: FieldId(4)
         }
     );
@@ -130,7 +134,7 @@ fn rejects_interior_column_out_of_range() {
 
 #[test]
 fn rejects_interior_not_prior() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(
                 vec![VarId(0)],
@@ -142,6 +146,7 @@ fn rejects_interior_not_prior() {
             vec![FindTerm::Var(VarId(0))],
             vec![atom(ACCOUNT, vec![(0, var(0))])],
         )],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
@@ -154,7 +159,7 @@ fn rejects_interior_not_prior() {
 
 #[test]
 fn rejects_an_interior_reading_a_later_interior() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![
             Interior {
                 rules: vec![proj(
@@ -171,6 +176,7 @@ fn rejects_an_interior_reading_a_later_interior() {
             vec![FindTerm::Var(VarId(0))],
             vec![interior_atom(1, vec![(0, var(0))])],
         )],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
@@ -183,7 +189,7 @@ fn rejects_an_interior_reading_a_later_interior() {
 
 #[test]
 fn interior_anchors_resolve_against_sealed_columns() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(vec![VarId(0)], vec![atom(ACCOUNT, vec![(0, var(0))])])],
         }],
@@ -195,6 +201,7 @@ fn interior_anchors_resolve_against_sealed_columns() {
                 atom(POSTING, vec![(2, var(0))]),
             ],
         )],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
@@ -204,7 +211,7 @@ fn interior_anchors_resolve_against_sealed_columns() {
 
 #[test]
 fn an_interval_interior_column_reads_bivalently() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(
                 vec![VarId(0)],
@@ -219,13 +226,14 @@ fn an_interval_interior_column_reads_bivalently() {
                 interior_atom(0, vec![(0, var(0))]),
             ],
         )],
+        rec: None,
     };
     validate(&schema(), &query).expect("legal: the membership typing rule");
 }
 
 #[test]
 fn negation_of_an_interior_in_main_is_legal() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(vec![VarId(0)], vec![atom(ACCOUNT, vec![(0, var(0))])])],
         }],
@@ -236,13 +244,14 @@ fn negation_of_an_interior_in_main_is_legal() {
             negated: vec![interior_atom(0, vec![(0, var(0))])],
             conditions: vec![],
         }],
+        rec: None,
     };
     validate(&schema(), &query).expect("main may anti-join a finished interior");
 }
 
 #[test]
 fn query_global_params_unify_across_interiors() {
-    let query = Query::Cq {
+    let query = Query {
         interiors: vec![Interior {
             rules: vec![proj(
                 vec![VarId(0)],
@@ -260,6 +269,7 @@ fn query_global_params_unify_across_interiors() {
                 atom(POSTING, vec![(2, Term::Param(ParamId(0))), (1, var(1))]),
             ],
         )],
+        rec: None,
     };
     assert_eq!(
         expect_err(&query),
@@ -274,6 +284,6 @@ fn a_plain_query_still_validates() {
         vec![atom(ACCOUNT, vec![(0, var(0))])],
     );
     assert!(query.interiors().is_empty());
-    assert!(matches!(query, Query::Cq { .. }));
+    assert!(matches!(query, Query { rec: None, .. }));
     validate(&schema(), &query).expect("plain query validates");
 }

@@ -126,10 +126,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
             deletes: vec![],
             inserts: vec![(
                 ids::HOLDER,
-                vec![
-                    Value::U64(0),
-                    Value::String(b"holder-duplicate".to_vec().into()),
-                ],
+                vec![Value::U64(0), Value::String("holder-duplicate".into())],
             )],
         }),
         // Deleting account 0 strands its postings and mandates: the
@@ -199,7 +196,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
         // orgs and holders both have >1 unit-scale id 1.
         "balance" | "mandate_overlap" => scalar_draw(vec![Value::U64(1)]),
         "stats" | "spread" | "latest_posting_per_account" => scalar_draw(vec![]),
-        "string" => scalar_draw(vec![Value::String(b"SYM0003".to_vec().into())]),
+        "string" => scalar_draw(vec![Value::String("SYM0003".into())]),
         "triangle" => scalar_draw(vec![Value::U64(0), Value::U64(sizes.accounts)]),
         "entries_for_account_set" => vec![ParamValue::Set(vec![
             Value::U64(0),
@@ -263,7 +260,9 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
 
     let naive_dir = cfg.out_dir.join("naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
-    let db = Db::create(&naive_dir, Ledger).expect("create naive-slice store");
+    let db = Db::create(&naive_dir, Ledger)
+        .expect("create naive-slice store")
+        .expect("accepted");
     // The declared descriptor, extensions included — the model seeds the
     // closed vocabularies from the ground axioms at construction.
     let mut naive = NaiveDb::new(&bumbledb::Theory::descriptor(Ledger));

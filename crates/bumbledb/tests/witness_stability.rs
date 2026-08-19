@@ -32,7 +32,7 @@
 //!   sort, as a deliberate commit. Any further re-order must again flip
 //!   only that assertion, never the citation-list ones.
 
-use bumbledb::{Db, Direction, Error, Violation, Violations};
+use bumbledb::{Db, Direction, Violation, Violations};
 
 mod common;
 
@@ -79,7 +79,8 @@ fn insert_parent(db: &Db<WitnessWorld>, id: u64) {
             kind: 0,
         }])
     })
-    .expect("seed parent");
+    .expect("seed parent")
+    .unwrap();
 }
 
 fn insert_child(db: &Db<WitnessWorld>, id: u64, parent: u64) {
@@ -90,14 +91,12 @@ fn insert_child(db: &Db<WitnessWorld>, id: u64, parent: u64) {
             flag: 0,
         }])
     })
-    .expect("seed child");
+    .expect("seed child")
+    .unwrap();
 }
 
-fn rejection<T: std::fmt::Debug>(outcome: Result<T, Error>) -> Violations {
-    let Err(Error::CommitRejected { violations }) = outcome else {
-        panic!("expected CommitRejected, got {outcome:?}");
-    };
-    violations
+fn rejection<T: std::fmt::Debug>(outcome: bumbledb::Result<bumbledb::Admission<T>>) -> Violations {
+    common::expect_rejected(outcome)
 }
 
 /// One identically-seeded world per call: parents 1, 2, 3; children
@@ -106,7 +105,9 @@ fn rejection<T: std::fmt::Debug>(outcome: Result<T, Error>) -> Violations {
 /// scan does).
 fn seeded_world(tag: &str) -> (common::TempDir, Db<WitnessWorld>) {
     let dir = common::TempDir::new(tag);
-    let db = Db::ephemeral(dir.path(), WitnessWorld).expect("create");
+    let db = Db::ephemeral(dir.path(), WitnessWorld)
+        .expect("create")
+        .expect("accepted");
     for id in [1, 2, 3] {
         insert_parent(&db, id);
     }
@@ -179,17 +180,17 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     // capacity law cited once — whatever the count of convicting facts.
     let [
         Violation::Containment {
-            statement: src_stmt,
+            id: src_stmt,
             direction: Direction::SourceUnsatisfied,
             ..
         },
         Violation::Containment {
-            statement: tgt_stmt,
+            id: tgt_stmt,
             direction: Direction::TargetRequired,
             ..
         },
         Violation::Capacity {
-            statement: cap_stmt,
+            id: cap_stmt,
             measure: 3,
             ..
         },
@@ -256,7 +257,9 @@ fn the_source_witness_is_the_key_least_violator() {
 
     let run = |tag: &str, reverse: bool| -> Violations {
         let dir = common::TempDir::new(tag);
-        let db = Db::ephemeral(dir.path(), WitnessWorld).expect("create");
+        let db = Db::ephemeral(dir.path(), WitnessWorld)
+            .expect("create")
+            .expect("accepted");
         rejection(db.write(|tx| {
             let mut order: Vec<(u64, u64)> = kids.to_vec();
             if reverse {
@@ -299,7 +302,9 @@ fn the_source_witness_is_the_key_least_violator() {
 #[test]
 fn the_capacity_witness_is_the_key_least_violating_parent() {
     let dir = common::TempDir::new("witness-capacity");
-    let db = Db::ephemeral(dir.path(), WitnessWorld).expect("create");
+    let db = Db::ephemeral(dir.path(), WitnessWorld)
+        .expect("create")
+        .expect("accepted");
     insert_parent(&db, 10);
     insert_parent(&db, 20);
     let violations = rejection(db.write(|tx| {
@@ -342,7 +347,9 @@ fn the_capacity_witness_is_the_key_least_violating_parent() {
 #[test]
 fn the_target_witness_is_the_first_committed_survivor() {
     let dir = common::TempDir::new("witness-target");
-    let db = Db::ephemeral(dir.path(), WitnessWorld).expect("create");
+    let db = Db::ephemeral(dir.path(), WitnessWorld)
+        .expect("create")
+        .expect("accepted");
     insert_parent(&db, 30);
     insert_child(&db, 600, 30);
     insert_child(&db, 601, 30);

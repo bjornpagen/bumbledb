@@ -96,10 +96,11 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         negated: vec![],
         conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
     };
-    let assemble = |rules: Vec<Rule>| Query::Cq {
+    let assemble = |rules: Vec<Rule>| Query {
         interiors: vec![],
         head: rules[0].head(),
         rules,
+        rec: None,
     };
     vec![
         // Disjoint arms (distinct vocabulary selections),
@@ -413,10 +414,11 @@ fn order_op(rng: &mut Rng) -> CmpOp {
 /// Returns the ops and the count of `SQLite`-inexpressible cases, each
 /// one asserted to be exactly the enumerated `PackAggregate` routing.
 fn pack_and_measure_ops() -> (Vec<Op>, u64) {
-    let pack = |rules: Vec<Rule>| Query::Cq {
+    let pack = |rules: Vec<Rule>| Query {
         interiors: vec![],
         head: rules[0].head(),
         rules,
+        rec: None,
     };
     let grouped = pack(vec![Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
@@ -604,10 +606,11 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
                 negated: vec![],
                 conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
             };
-            let q = Query::Cq {
+            let q = Query {
                 interiors: vec![],
                 head: arm(0).head(),
                 rules: vec![arm(0), arm(1)],
+                rec: None,
             };
             let rules = q.rules().len();
             (
@@ -642,8 +645,8 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
         let agree = match expected {
             Expected::DnfCap { naive_width } => matches!(
                 verdict,
-                bumbledb::error::ValidationError::DnfExceedsRules { produced, cap }
-                    if produced == naive_width && naive_width > cap
+                bumbledb::error::ValidationError::DnfExceedsRules { exceeded }
+                    if exceeded.observed == naive_width && naive_width > exceeded.ceiling
             ),
             // The vanished query surfaces as the empty union.
             Expected::Vanished => {

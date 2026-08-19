@@ -37,9 +37,9 @@ impl ReadTxn<'_> {
     }
 
     /// The persisted canonical schema-descriptor bytes as of this
-    /// snapshot, `None` on a store not yet adopted (reader:
-    /// `Db::verify_store`'s descriptor pass;
-    /// `docs/architecture/50-storage.md` § the `_meta` block).
+    /// snapshot, `None` if the key is absent (reader:
+    /// `Db::verify_store`'s descriptor pass — format 8 open already
+    /// required the key).
     pub(crate) fn schema_descriptor(&self) -> Result<Option<&[u8]>> {
         Ok(self.env.meta.get(&self.txn, META_SCHEMA_DESCRIPTOR)?)
     }

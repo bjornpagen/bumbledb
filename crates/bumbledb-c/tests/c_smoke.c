@@ -24,5 +24,7 @@ int bdb_c_smoke(void) {
 	(void)view;
 	(void)BDB_STATUS_OK;
 	(void)BDB_CALLBACK_CONTROL_OK;
+	(void)BDB_ADMISSION_TAG_ACCEPTED;
+	(void)BDB_ERROR_KIND_BUSY_HANDLE;
 	return 0;
 }

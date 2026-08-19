@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash};
-use crate::error::Direction;
+use crate::error::{Direction, Violation};
+use crate::schema::Schema;
 use crate::storage::keys::{StatKind, key};
 use crate::testutil::TempDir;
 use bumbledb_theory::Value;
@@ -25,6 +26,29 @@ const HOLDER_KEY: StatementId = StatementId(0);
 const BOOKING_KEY: StatementId = StatementId(1);
 const ACCOUNT_HOLDER: StatementId = StatementId(2);
 const CLAIM_BOOKING: StatementId = StatementId(3);
+
+fn judgment_containment(schema: &Schema, statement: StatementId, fact: Box<[u8]>) -> StoreFinding {
+    StoreFinding::Judgment(Violation::containment(
+        schema.cite(statement),
+        statement,
+        Direction::TargetRequired,
+        fact,
+    ))
+}
+
+fn judgment_capacity(
+    schema: &Schema,
+    statement: StatementId,
+    fact: Box<[u8]>,
+    measure: u128,
+) -> StoreFinding {
+    StoreFinding::Judgment(Violation::capacity(
+        schema.cite(statement),
+        statement,
+        fact,
+        measure,
+    ))
+}
 
 /// Holder(id fresh, name str) — scalar key, string field for the
 /// dictionary statistic; Booking(room, during) with a pointwise key;
@@ -152,16 +176,12 @@ fn schema() -> SchemaDescriptor {
 /// One insert per commit pins the fresh-less row ids.
 fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), schema())
+        .expect("create")
+        .expect("accepted");
     let facts: &[(RelationId, Vec<Value>)] = &[
-        (
-            HOLDER,
-            vec![Value::U64(1), Value::String("alice".as_bytes().into())],
-        ),
-        (
-            HOLDER,
-            vec![Value::U64(2), Value::String("bob".as_bytes().into())],
-        ),
+        (HOLDER, vec![Value::U64(1), Value::String("alice".into())]),
+        (HOLDER, vec![Value::U64(2), Value::String("bob".into())]),
         (
             BOOKING,
             vec![
@@ -194,16 +214,15 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     ];
     for (rel, values) in facts {
         db.write(|tx| tx.insert_dyn(*rel, [values]).map(|_| ()))
-            .expect("insert");
+            .expect("insert")
+            .unwrap();
     }
     db.write(|tx| {
-        tx.delete_dyn(
-            HOLDER,
-            [&[Value::U64(2), Value::String("bob".as_bytes().into())]],
-        )
-        .map(|_| ())
+        tx.delete_dyn(HOLDER, [&[Value::U64(2), Value::String("bob".into())]])
+            .map(|_| ())
     })
-    .expect("delete");
+    .expect("delete")
+    .unwrap();
     (dir, db)
 }
 
@@ -218,7 +237,8 @@ fn fixture_with_healthy_sibling(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         control
             .verify_store()
             .expect("verify healthy sibling")
-            .findings,
+            .findings()
+            .to_vec(),
         vec![]
     );
     fixture(tag)
@@ -255,7 +275,9 @@ fn canonical_field_schema() -> SchemaDescriptor {
 
 fn canonical_field_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), canonical_field_schema()).expect("create canonical store");
+    let db = Db::create(dir.path(), canonical_field_schema())
+        .expect("create canonical store")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(
             RelationId(0),
@@ -269,7 +291,8 @@ fn canonical_field_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         )
         .map(|_| ())
     })
-    .expect("insert canonical fact");
+    .expect("insert canonical fact")
+    .unwrap();
     (dir, db)
 }
 
@@ -280,7 +303,8 @@ fn canonical_field_fixture_with_healthy_sibling(tag: &str) -> (TempDir, Db<Schem
         control
             .verify_store()
             .expect("verify healthy sibling")
-            .findings,
+            .findings()
+            .to_vec(),
         vec![]
     );
     canonical_field_fixture(tag)
@@ -305,15 +329,15 @@ fn replace_fact_bytes(
 ) {
     raw_write(db, |txn| {
         let data = txn.env().data();
-        let f = key(|b| keys::fact_key(b, rel, row_id));
+        let f = keys::fact_key(rel, row_id).to_vec();
         let mut fact = data
             .get(txn.raw(), &f)
             .expect("raw get")
             .expect("live fact")
             .to_vec();
-        let old_m = key(|b| keys::membership_key(b, rel, &fact_hash(&fact)));
+        let old_m = keys::membership_key(rel, &fact_hash(&fact)).to_vec();
         mutate(&mut fact);
-        let new_m = key(|b| keys::membership_key(b, rel, &fact_hash(&fact)));
+        let new_m = keys::membership_key(rel, &fact_hash(&fact)).to_vec();
         assert!(data.delete(txn.raw_mut(), &old_m).expect("delete old M"));
         data.put(txn.raw_mut(), &f, &fact).expect("replace F");
         data.put(txn.raw_mut(), &new_m, row_id.to_le_bytes().as_slice())
@@ -387,20 +411,20 @@ fn delete_target_rows(
 ) {
     raw_write(db, |txn| {
         let data = txn.env().data();
-        let f = key(|b| keys::fact_key(b, rel, row_id));
+        let f = keys::fact_key(rel, row_id).to_vec();
         let fact = data
             .get(txn.raw(), &f)
             .expect("raw get")
             .expect("live fact")
             .to_vec();
-        let m = key(|b| keys::membership_key(b, rel, &fact_hash(&fact)));
+        let m = keys::membership_key(rel, &fact_hash(&fact)).to_vec();
         assert!(data.delete(txn.raw_mut(), &f).expect("raw delete"));
         assert!(data.delete(txn.raw_mut(), &m).expect("raw delete"));
         for (sid, determinant) in determinants {
             let u = key(|b| keys::determinant_key(b, rel, *sid, determinant));
             assert!(data.delete(txn.raw_mut(), &u).expect("raw delete"));
         }
-        let count = key(|b| keys::stat_key(b, rel, StatKind::RowCount));
+        let count = keys::stat_key(rel, StatKind::RowCount).to_vec();
         data.put(
             txn.raw_mut(),
             &count,
@@ -414,22 +438,22 @@ fn delete_target_rows(
 fn clean_store_reports_nothing_and_counts_the_leak() {
     let (_dir, db) = fixture("verify-clean");
     let report = db.verify_store().expect("verify");
-    assert_eq!(report.findings, Vec::new());
+    assert_eq!(report.findings().to_vec(), Vec::new());
     // "bob" was interned, then its one referencing fact deleted: the
     // accepted leak, counted, never a finding.
-    assert_eq!(report.dangling_intern_ids, 1);
+    assert_eq!(report.dangling_intern_ids(), 1);
 }
 
 #[test]
 fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-malformed-namespaces");
     let keys = [
-        vec![keys::NS_FACT],
-        vec![keys::NS_MEMBERSHIP],
-        vec![keys::NS_DETERMINANT],
-        vec![keys::NS_REVERSE],
-        vec![keys::NS_STAT],
-        vec![keys::NS_FRESH],
+        vec![keys::Namespace::Fact.tag()],
+        vec![keys::Namespace::Membership.tag()],
+        vec![keys::Namespace::Determinant.tag()],
+        vec![keys::Namespace::Reverse.tag()],
+        vec![keys::Namespace::Stat.tag()],
+        vec![keys::Namespace::Fresh.tag()],
     ];
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -439,7 +463,7 @@ fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
         }
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: keys[0].clone().into(),
@@ -474,14 +498,14 @@ fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
 fn namespace_schema_ownership_is_rechecked() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-namespace-ownership");
     let unknown = RelationId(99);
-    let f = key(|b| keys::fact_key(b, unknown, 0));
-    let m = key(|b| keys::membership_key(b, unknown, &[0x11; 32]));
+    let f = keys::fact_key(unknown, 0).to_vec();
+    let m = keys::membership_key(unknown, &[0x11; 32]).to_vec();
     let u_wrong_statement = key(|b| keys::determinant_key(b, HOLDER, BOOKING_KEY, &encode_u64(1)));
     let u_unknown_relation = key(|b| keys::determinant_key(b, unknown, HOLDER_KEY, &encode_u64(1)));
     let r_wrong_source = key(|b| keys::reverse_key(b, ACCOUNT_HOLDER, &encode_u64(1), HOLDER, 0));
     let r_unknown_statement =
         key(|b| keys::reverse_key(b, StatementId(99), &encode_u64(1), ACCOUNT, 0));
-    let s = key(|b| keys::stat_key(b, unknown, StatKind::RowCount));
+    let s = keys::stat_key(unknown, StatKind::RowCount).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         for key in [
@@ -498,7 +522,7 @@ fn namespace_schema_ownership_is_rechecked() {
         }
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: f.into(),
@@ -535,7 +559,7 @@ fn namespace_schema_ownership_is_rechecked() {
 #[test]
 fn namespace_row_images_are_width_checked() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-namespace-values");
-    let m = key(|b| keys::membership_key(b, BOOKING, &[0x22; 32]));
+    let m = keys::membership_key(BOOKING, &[0x22; 32]).to_vec();
     let u =
         key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10)));
     raw_write(&db, |txn| {
@@ -546,7 +570,7 @@ fn namespace_row_images_are_width_checked() {
             .expect("plant malformed U value");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: m.into(),
@@ -571,18 +595,23 @@ fn counter_value_and_stat_kind_are_width_and_domain_checked() {
         statements: vec![],
     };
     let control_dir = TempDir::new("verify-s-shape-control");
-    let control = Db::create(control_dir.path(), decl.clone()).expect("create control");
+    let control = Db::create(control_dir.path(), decl.clone())
+        .expect("create control")
+        .expect("accepted");
     assert_eq!(
         control
             .verify_store()
             .expect("verify healthy sibling")
-            .findings,
+            .findings()
+            .to_vec(),
         vec![]
     );
     let dir = TempDir::new("verify-s-shape");
-    let db = Db::create(dir.path(), decl).expect("create");
-    let malformed_value = key(|b| keys::stat_key(b, RelationId(0), StatKind::RowCount));
-    let mut unknown_kind = key(|b| keys::stat_key(b, RelationId(0), StatKind::RowIdHighWater));
+    let db = Db::create(dir.path(), decl)
+        .expect("create")
+        .expect("accepted");
+    let malformed_value = keys::stat_key(RelationId(0), StatKind::RowCount).to_vec();
+    let mut unknown_kind = keys::stat_key(RelationId(0), StatKind::RowIdHighWater).to_vec();
     *unknown_kind.last_mut().expect("stat kind") = 9;
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -592,7 +621,7 @@ fn counter_value_and_stat_kind_are_width_and_domain_checked() {
             .expect("plant unknown stat");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: malformed_value.into(),
@@ -612,9 +641,9 @@ fn wrong_fact_width_is_a_contextual_finding() {
     replace_fact_bytes(&db, RelationId(0), 0, |fact| {
         fact.pop();
     });
-    let f = key(|b| keys::fact_key(b, RelationId(0), 0));
+    let f = keys::fact_key(RelationId(0), 0).to_vec();
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::Malformed {
             key: f.into(),
             what: "F fact width",
@@ -632,9 +661,9 @@ fn noncanonical_field_encodings_are_each_found() {
         fact[9..17].copy_from_slice(&10u64.to_be_bytes());
         fact[17..25].copy_from_slice(&10u64.to_be_bytes());
     });
-    let f = key(|b| keys::fact_key(b, RelationId(0), 0));
+    let f = keys::fact_key(RelationId(0), 0).to_vec();
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: f.clone().into(),
@@ -659,7 +688,7 @@ fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
         fact[8..16].copy_from_slice(&99u64.to_be_bytes());
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::InternBeyondNextId {
                 relation: HOLDER,
@@ -685,7 +714,7 @@ fn malformed_dictionary_reverse_key_is_a_finding() {
             .expect("plant malformed reverse key");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::Malformed {
             key: malformed.into(),
             what: "dict reverse id",
@@ -728,7 +757,7 @@ fn a_referenced_id_without_a_reverse_entry_is_the_finding() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::DanglingInternId { intern_id: 0 }]
     );
 }
@@ -751,7 +780,7 @@ fn a_rebound_forward_entry_is_the_finding() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::DictForwardDesync {
             intern_id: 0,
             forward: Some(1),
@@ -770,7 +799,7 @@ fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::DictNextIdLow {
             stored: 1,
             reverse_id: 1,
@@ -784,7 +813,7 @@ fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
 #[test]
 fn a_regressed_fresh_next_value_is_the_finding() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-q-low");
-    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    let q = keys::fresh_key(HOLDER, FieldId(0)).to_vec();
     raw_write(&db, |txn| {
         txn.env()
             .data()
@@ -792,7 +821,7 @@ fn a_regressed_fresh_next_value_is_the_finding() {
             .expect("regress Q");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
@@ -808,7 +837,7 @@ fn a_regressed_fresh_next_value_is_the_finding() {
 #[test]
 fn an_absent_fresh_sequence_is_found_against_the_tally() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-q-absent");
-    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    let q = keys::fresh_key(HOLDER, FieldId(0)).to_vec();
     raw_write(&db, |txn| {
         assert!(
             txn.env().data().delete(txn.raw_mut(), &q).expect("delete"),
@@ -816,7 +845,7 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
         );
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
@@ -837,17 +866,18 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
     db.write(|tx| {
         tx.insert_dyn(
             HOLDER,
-            [&[
-                Value::U64(u64::MAX),
-                Value::String("mallory".as_bytes().into()),
-            ]],
+            [&[Value::U64(u64::MAX), Value::String("mallory".into())]],
         )
         .map(|_| ())
     })
-    .expect("insert the exhausting row");
+    .expect("insert the exhausting row")
+    .unwrap();
     // The legal exhausted shape first: stored == tally == MAX is exempt.
-    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
-    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    assert_eq!(
+        db.verify_store().expect("verify").findings().to_vec(),
+        vec![]
+    );
+    let q = keys::fresh_key(HOLDER, FieldId(0)).to_vec();
     raw_write(&db, |txn| {
         txn.env()
             .data()
@@ -855,7 +885,7 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
             .expect("regress Q");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::FreshNextValueLow {
             relation: HOLDER,
             field: FieldId(0),
@@ -869,14 +899,14 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
 fn missing_membership_is_found_from_the_fact_side() {
     let (_dir, db) = fixture("verify-missing-m");
     let fact = booking_bytes(&db, 7, 0, 10);
-    let m = key(|b| keys::membership_key(b, BOOKING, &fact_hash(&fact)));
+    let m = keys::membership_key(BOOKING, &fact_hash(&fact)).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         assert!(data.delete(txn.raw_mut(), &m).expect("raw delete"));
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::FactWithoutMembership {
             relation: BOOKING,
             row_id: 0,
@@ -888,7 +918,7 @@ fn missing_membership_is_found_from_the_fact_side() {
 #[test]
 fn orphan_membership_is_found_from_the_entry_side() {
     let (_dir, db) = fixture("verify-orphan-m");
-    let m = key(|b| keys::membership_key(b, BOOKING, &[0xAB; 32]));
+    let m = keys::membership_key(BOOKING, &[0xAB; 32]).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &m, 99u64.to_le_bytes().as_slice())
@@ -896,7 +926,7 @@ fn orphan_membership_is_found_from_the_entry_side() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::MembershipWithoutFact {
             relation: BOOKING,
             row_id: 99,
@@ -915,7 +945,7 @@ fn missing_determinant_is_found_from_the_fact_side() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![
             StoreFinding::FactWithoutDeterminant {
                 relation: BOOKING,
@@ -926,11 +956,7 @@ fn missing_determinant_is_found_from_the_fact_side() {
             // The deleted determinant entry is also the segment covering claim
             // (7, [2,8)) — the coverage walk judges the `U` state, so the
             // desync convicts twice, once per broken invariant.
-            StoreFinding::JudgmentViolation {
-                statement: CLAIM_BOOKING,
-                direction: Direction::TargetRequired,
-                fact: claim_bytes(&db, 7, 2, 8).into(),
-            },
+            judgment_containment(db.schema(), CLAIM_BOOKING, claim_bytes(&db, 7, 2, 8).into()),
         ]
     );
 }
@@ -949,7 +975,7 @@ fn orphan_determinant_is_found_from_the_entry_side() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::DeterminantWithoutFact {
             relation: BOOKING,
             statement: BOOKING_KEY,
@@ -973,7 +999,7 @@ fn determinant_key_byte_flip_is_found_against_the_live_fact() {
             .expect("plant perturbed U key");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::DeterminantWithoutFact {
             relation: BOOKING,
             statement: BOOKING_KEY,
@@ -996,7 +1022,7 @@ fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
             .expect("plant fresh-row U entry");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::FreshRowDeterminantEntry {
             relation: HOLDER,
             statement: HOLDER_KEY,
@@ -1014,7 +1040,7 @@ fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
         fact[..8].copy_from_slice(&0u64.to_be_bytes());
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::FreshRowDesync {
             relation: HOLDER,
             row_id: 1,
@@ -1028,7 +1054,7 @@ fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
     // The S high-water exists only where no fresh field does (R16): a
     // fresh-keyed relation's mint is Q, so the entry itself convicts.
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-high-water");
-    let water = key(|b| keys::stat_key(b, HOLDER, StatKind::RowIdHighWater));
+    let water = keys::stat_key(HOLDER, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
         txn.env()
             .data()
@@ -1036,7 +1062,7 @@ fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
             .expect("plant fresh-keyed high-water");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::Malformed {
             key: water.into(),
             what: "S high-water on a fresh-keyed relation",
@@ -1053,11 +1079,11 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
     // only the ordered walk.
     let fact = booking_bytes(&db, 7, 5, 15);
     let row_id = 2u64;
-    let f = key(|b| keys::fact_key(b, BOOKING, row_id));
-    let m = key(|b| keys::membership_key(b, BOOKING, &fact_hash(&fact)));
+    let f = keys::fact_key(BOOKING, row_id).to_vec();
+    let m = keys::membership_key(BOOKING, &fact_hash(&fact)).to_vec();
     let u = key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(7, 5, 15)));
-    let count = key(|b| keys::stat_key(b, BOOKING, StatKind::RowCount));
-    let water = key(|b| keys::stat_key(b, BOOKING, StatKind::RowIdHighWater));
+    let count = keys::stat_key(BOOKING, StatKind::RowCount).to_vec();
+    let water = keys::stat_key(BOOKING, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &f, &fact).expect("raw put");
@@ -1072,7 +1098,7 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::PointwiseOverlap {
             relation: BOOKING,
             statement: BOOKING_KEY,
@@ -1099,12 +1125,12 @@ fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
     delete_target_rows(&db, HOLDER, 1, &[], 0);
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
-        vec![StoreFinding::JudgmentViolation {
-            statement: ACCOUNT_HOLDER,
-            direction: Direction::TargetRequired,
-            fact: account_bytes(&db, 1, 0).into(),
-        }]
+        report.findings().to_vec(),
+        vec![judgment_containment(
+            db.schema(),
+            ACCOUNT_HOLDER,
+            account_bytes(&db, 1, 0).into(),
+        )]
     );
 }
 
@@ -1123,12 +1149,12 @@ fn a_coherently_deleted_coverage_segment_is_a_judgment_violation() {
     );
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
-        vec![StoreFinding::JudgmentViolation {
-            statement: CLAIM_BOOKING,
-            direction: Direction::TargetRequired,
-            fact: claim_bytes(&db, 7, 2, 8).into(),
-        }]
+        report.findings().to_vec(),
+        vec![judgment_containment(
+            db.schema(),
+            CLAIM_BOOKING,
+            claim_bytes(&db, 7, 2, 8).into(),
+        )]
     );
 }
 
@@ -1142,7 +1168,7 @@ fn missing_reverse_edge_is_found_from_the_fact_side() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::FactWithoutReverseEdge {
             statement: ACCOUNT_HOLDER,
             relation: ACCOUNT,
@@ -1162,7 +1188,7 @@ fn orphan_reverse_edge_is_found_from_the_edge_side() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
@@ -1183,7 +1209,7 @@ fn edge_whose_source_left_its_selection_is_an_orphan() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
@@ -1204,7 +1230,7 @@ fn reverse_key_byte_flip_is_found_against_the_live_source() {
             .expect("plant perturbed R key");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::ReverseEdgeWithoutFact {
             statement: ACCOUNT_HOLDER,
             reverse_key: r.into(),
@@ -1215,7 +1241,7 @@ fn reverse_key_byte_flip_is_found_against_the_live_source() {
 #[test]
 fn wrong_row_count_is_found_against_the_scan() {
     let (_dir, db) = fixture("verify-wrong-s");
-    let count = key(|b| keys::stat_key(b, BOOKING, StatKind::RowCount));
+    let count = keys::stat_key(BOOKING, StatKind::RowCount).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &count, 99u64.to_le_bytes().as_slice())
@@ -1223,7 +1249,7 @@ fn wrong_row_count_is_found_against_the_scan() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::RowCountDesync {
             relation: BOOKING,
             stored: 99,
@@ -1235,7 +1261,7 @@ fn wrong_row_count_is_found_against_the_scan() {
 #[test]
 fn low_high_water_is_found_against_the_max_row_id() {
     let (_dir, db) = fixture("verify-low-water");
-    let water = key(|b| keys::stat_key(b, BOOKING, StatKind::RowIdHighWater));
+    let water = keys::stat_key(BOOKING, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &water, 0u64.to_le_bytes().as_slice())
@@ -1243,7 +1269,7 @@ fn low_high_water_is_found_against_the_max_row_id() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::RowIdHighWaterLow {
             relation: BOOKING,
             stored: 0,
@@ -1255,8 +1281,8 @@ fn low_high_water_is_found_against_the_max_row_id() {
 #[test]
 fn absent_counters_are_found_against_the_fact_tally() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-absent-counters");
-    let count = key(|b| keys::stat_key(b, CLAIM, StatKind::RowCount));
-    let water = key(|b| keys::stat_key(b, CLAIM, StatKind::RowIdHighWater));
+    let count = keys::stat_key(CLAIM, StatKind::RowCount).to_vec();
+    let water = keys::stat_key(CLAIM, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         assert!(
@@ -1269,7 +1295,7 @@ fn absent_counters_are_found_against_the_fact_tally() {
         );
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::RowCountDesync {
                 relation: CLAIM,
@@ -1307,7 +1333,9 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
         }],
         statements: vec![],
     };
-    let db = Db::create(dir.path(), decl).expect("create");
+    let db = Db::create(dir.path(), decl)
+        .expect("create")
+        .expect("accepted");
     let currency = RelationId(0);
     let fact = db
         .schema()
@@ -1317,14 +1345,14 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
         .expect("closed")[0]
         .fact
         .to_vec();
-    let f = key(|b| keys::fact_key(b, currency, 0));
+    let f = keys::fact_key(currency, 0).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &f, &fact).expect("raw put");
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::ClosedRelationEntry {
             relation: currency,
             key: f.into(),
@@ -1350,17 +1378,22 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
         statements: vec![],
     };
     let control_dir = TempDir::new("verify-closed-m-u-control");
-    let control = Db::create(control_dir.path(), decl.clone()).expect("create control");
+    let control = Db::create(control_dir.path(), decl.clone())
+        .expect("create control")
+        .expect("accepted");
     assert_eq!(
         control
             .verify_store()
             .expect("verify healthy sibling")
-            .findings,
+            .findings()
+            .to_vec(),
         vec![]
     );
 
     let dir = TempDir::new("verify-closed-m-u");
-    let db = Db::create(dir.path(), decl).expect("create");
+    let db = Db::create(dir.path(), decl)
+        .expect("create")
+        .expect("accepted");
     let currency = RelationId(0);
     let fact = &db
         .schema()
@@ -1369,7 +1402,7 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
         .closed_rows()
         .expect("closed")[0]
         .fact;
-    let m = key(|b| keys::membership_key(b, currency, &fact_hash(fact)));
+    let m = keys::membership_key(currency, &fact_hash(fact)).to_vec();
     let u = key(|b| keys::determinant_key(b, currency, StatementId(0), &encode_u64(0)));
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -1379,7 +1412,7 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
             .expect("plant U");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::ClosedRelationEntry {
                 relation: currency,
@@ -1454,9 +1487,12 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
     // Closed-target statements never emit R traffic: a stored edge's very
     // existence is the finding, attributed to the closed target.
     let dir = TempDir::new("verify-closed-r");
-    let db = Db::create(dir.path(), closed_subset_schema()).expect("create");
+    let db = Db::create(dir.path(), closed_subset_schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| tx.insert_dyn(RelationId(1), [&[Value::U64(1)]]).map(|_| ()))
-        .expect("a legal closed reference commits");
+        .expect("a legal closed reference commits")
+        .unwrap();
     let r = key(|b| keys::reverse_key(b, StatementId(1), &encode_u64(1), RelationId(1), 0));
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -1464,7 +1500,7 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
+        report.findings().to_vec(),
         vec![StoreFinding::ClosedRelationEntry {
             relation: RelationId(0),
             key: r.into(),
@@ -1477,7 +1513,9 @@ fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
     // The corruption class only the global judgment sees: a coherent
     // F/M/S triple whose closed reference no commit could have admitted.
     let dir = TempDir::new("verify-closed-member");
-    let db = Db::create(dir.path(), closed_subset_schema()).expect("create");
+    let db = Db::create(dir.path(), closed_subset_schema())
+        .expect("create")
+        .expect("accepted");
     let alert = RelationId(1);
     let mut fact = Vec::new();
     encode_fact(
@@ -1485,10 +1523,10 @@ fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
         db.schema().relation(alert).layout(),
         &mut fact,
     );
-    let f = key(|b| keys::fact_key(b, alert, 0));
-    let m = key(|b| keys::membership_key(b, alert, &fact_hash(&fact)));
-    let count = key(|b| keys::stat_key(b, alert, StatKind::RowCount));
-    let water = key(|b| keys::stat_key(b, alert, StatKind::RowIdHighWater));
+    let f = keys::fact_key(alert, 0).to_vec();
+    let m = keys::membership_key(alert, &fact_hash(&fact)).to_vec();
+    let count = keys::stat_key(alert, StatKind::RowCount).to_vec();
+    let water = keys::stat_key(alert, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &f, &fact).expect("raw put");
@@ -1501,12 +1539,12 @@ fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
     });
     let report = db.verify_store().expect("verify");
     assert_eq!(
-        report.findings,
-        vec![StoreFinding::JudgmentViolation {
-            statement: StatementId(1),
-            direction: Direction::TargetRequired,
-            fact: fact.into(),
-        }]
+        report.findings().to_vec(),
+        vec![judgment_containment(
+            db.schema(),
+            StatementId(1),
+            fact.into(),
+        )]
     );
 }
 
@@ -1556,8 +1594,10 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
         },
     });
     // Materialized: closed auto-key (0), Handler key (1), Alert
-    // containment (2), the domain statement (3).
-    let db = Db::create(dir.path(), decl).expect("create");
+    // containment (2), the domain statement (3). Public create
+    // complete-admits empty and refuses this theory; the sweeper
+    // fixture is format-8 surgery, not an admission path.
+    let db = Db::create_store_without_admission(dir.path(), decl).expect("fixture");
     let severities = db
         .schema()
         .relation(RelationId(0))
@@ -1566,21 +1606,24 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
         .expect("closed");
     let expected: Vec<StoreFinding> = severities
         .iter()
-        .map(|row| StoreFinding::JudgmentViolation {
-            statement: StatementId(3),
-            direction: Direction::TargetRequired,
-            fact: row.fact.clone(),
-        })
+        .map(|row| judgment_containment(db.schema(), StatementId(3), row.fact.clone()))
         .collect();
-    assert_eq!(db.verify_store().expect("verify").findings, expected);
+    assert_eq!(
+        db.verify_store().expect("verify").findings().to_vec(),
+        expected
+    );
     for severity in 0..3u64 {
         db.write(|tx| {
             tx.insert_dyn(RelationId(2), [&[Value::U64(severity), Value::U64(10)]])
                 .map(|_| ())
         })
-        .expect("handlers commit");
+        .expect("handlers commit")
+        .unwrap();
     }
-    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+    assert_eq!(
+        db.verify_store().expect("verify").findings().to_vec(),
+        vec![]
+    );
 }
 
 // ---------- the extension form (capacity) ----------
@@ -1642,20 +1685,26 @@ fn marks_schema() -> SchemaDescriptor {
 /// One committed, green store: holder 1 with one kind-1 account.
 fn marks_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), marks_schema()).expect("create");
+    let db = Db::create(dir.path(), marks_schema())
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(M_HOLDER, [&[Value::U64(1), Value::U64(0)]])?;
         tx.insert_dyn(M_ACCOUNT, [&[Value::U64(1), Value::U64(1), Value::U64(0)]])
             .map(|_| ())
     })
-    .expect("green base commit");
+    .expect("green base commit")
+    .unwrap();
     (dir, db)
 }
 
 #[test]
 fn a_marked_store_verifies_clean() {
     let (_dir, db) = marks_fixture("verify-marks-clean");
-    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+    assert_eq!(
+        db.verify_store().expect("verify").findings().to_vec(),
+        vec![]
+    );
 }
 
 /// The CLOSED-parent arm — `verify_store/marks.rs`'s own pass, distinct
@@ -1709,14 +1758,17 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
         }],
     };
     let dir = TempDir::new("verify-marks-closed-parent");
-    let db = Db::create(dir.path(), decl).expect("create");
+    // Empty does not hold (closed parent, floor 1). Public create
+    // refuses; this is sweeper surgery so the marks pass can run.
+    let db = Db::create_store_without_admission(dir.path(), decl).expect("fixture");
     db.write(|tx| {
         tx.insert_dyn(device, [&[Value::U64(0), Value::U64(0)]])
             .map(|_| ())
     })
-    .expect("one device inside the window");
+    .expect("one device inside the window")
+    .unwrap();
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![],
         "the green closed-parent store sweeps clean"
     );
@@ -1738,13 +1790,10 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
         .expect("closed")[0]
         .fact
         .clone();
-    let findings = db.verify_store().expect("verify").findings;
+    let report = db.verify_store().expect("verify");
+    let findings = report.findings();
     assert!(
-        findings.contains(&StoreFinding::CapacityViolation {
-            statement: capacity,
-            fact: parent_fact,
-            measure: 0,
-        }),
+        findings.contains(&judgment_capacity(db.schema(), capacity, parent_fact, 0)),
         "the marks pass re-measures the sealed axiom's group, got {findings:?}"
     );
     assert!(
@@ -1781,13 +1830,9 @@ fn a_missing_capacity_edge_is_found_and_the_group_remeasured() {
         bytes
     };
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
-            StoreFinding::CapacityViolation {
-                statement: M_CAPACITY,
-                fact: holder_fact.into(),
-                measure: 0,
-            },
+            judgment_capacity(db.schema(), M_CAPACITY, holder_fact.into(), 0),
             StoreFinding::FactWithoutReverseEdge {
                 statement: M_CAPACITY,
                 relation: M_ACCOUNT,
@@ -1810,7 +1855,7 @@ fn a_stray_capacity_edge_is_convicted() {
         data.put(txn.raw_mut(), &r, &[]).expect("plant stray edge");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::ReverseEdgeWithoutFact {
             statement: M_CAPACITY,
             reverse_key: r.into(),
@@ -1871,20 +1916,26 @@ fn weighted_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         ],
     };
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), schema).expect("create");
+    let db = Db::create(dir.path(), schema)
+        .expect("create")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(W_POOL, [&[Value::U64(1), Value::U64(100)]])?;
         tx.insert_dyn(W_DEVICE, [&[Value::U64(1), Value::U64(60), Value::U64(0)]])
             .map(|_| ())
     })
-    .expect("green weighted base commit");
+    .expect("green weighted base commit")
+    .unwrap();
     (dir, db)
 }
 
 #[test]
 fn a_weighted_store_verifies_clean() {
     let (_dir, db) = weighted_fixture("verify-weight-clean");
-    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+    assert_eq!(
+        db.verify_store().expect("verify").findings().to_vec(),
+        vec![]
+    );
 }
 
 /// The weight-desync sweep (ruled 2026-07-24; `60-validation.md` § the
@@ -1909,12 +1960,13 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
         data.put(txn.raw_mut(), &r, &planted)
             .expect("corrupt the weight slot");
     });
-    let findings = db.verify_store().expect("verify").findings;
+    let report = db.verify_store().expect("verify");
+    let findings = report.findings();
     assert!(
         !findings.is_empty(),
         "a diverged weight slot must be convicted"
     );
-    for finding in &findings {
+    for finding in findings {
         assert!(
             matches!(
                 finding,
@@ -1948,7 +2000,7 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
             .expect("plant foreign-relation edge");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![StoreFinding::Malformed {
             key: r.into(),
             what: "R key source relation",
@@ -1968,7 +2020,7 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
 fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
     let (_dir, db) = weighted_fixture("verify-weight-wrong-width-child");
     let child_key = encode_u64(1);
-    let f = key(|b| keys::fact_key(b, W_DEVICE, 77));
+    let f = keys::fact_key(W_DEVICE, 77).to_vec();
     let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_DEVICE, 77));
     // Pool-shaped bytes (16) where Device's layout says 24.
     let planted: Vec<u8> = [encode_u64(1), encode_u64(60)].concat();
@@ -1980,7 +2032,7 @@ fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
             .expect("plant its capacity edge");
     });
     assert_eq!(
-        db.verify_store().expect("verify").findings,
+        db.verify_store().expect("verify").findings().to_vec(),
         vec![
             StoreFinding::Malformed {
                 key: f.into(),
@@ -2028,7 +2080,9 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         statements: vec![],
     };
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), schema).expect("create fixed-lane store");
+    let db = Db::create(dir.path(), schema)
+        .expect("create fixed-lane store")
+        .expect("accepted");
     db.write(|tx| {
         tx.insert_dyn(
             RelationId(0),
@@ -2039,7 +2093,8 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         )
         .map(|_| ())
     })
-    .expect("insert fixed-lane fact");
+    .expect("insert fixed-lane fact")
+    .unwrap();
     (dir, db)
 }
 
@@ -2055,7 +2110,13 @@ fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
     ] {
         let (_dir, db) = fixed_lane_fixture(tag);
         // Healthy first: the untouched store verifies clean.
-        assert_eq!(db.verify_store().expect("verify healthy").findings, vec![]);
+        assert_eq!(
+            db.verify_store()
+                .expect("verify healthy")
+                .findings()
+                .to_vec(),
+            vec![]
+        );
         replace_fact_bytes(&db, RelationId(0), 0, |fact| {
             // The lane field's one stored word sits after the bool byte's
             // padded... no: layout-derived — bool is 1 byte, the fixed
@@ -2063,9 +2124,9 @@ fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
             let len = fact.len();
             fact[len - 8..].copy_from_slice(&corrupt_start.to_be_bytes());
         });
-        let f = key(|b| keys::fact_key(b, RelationId(0), 0));
+        let f = keys::fact_key(RelationId(0), 0).to_vec();
         assert_eq!(
-            db.verify_store().expect("verify").findings,
+            db.verify_store().expect("verify").findings().to_vec(),
             vec![StoreFinding::Malformed {
                 key: f.into(),
                 what: "F fact fixed interval start",

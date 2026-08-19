@@ -107,9 +107,9 @@ fn field_id(rng: &mut Rng) -> FieldId {
 }
 
 /// A literal over every `Value` variant, boundary shapes included:
-/// domain ceilings, empty and ray intervals, non-UTF-8 strings,
-/// wrong-width digests, row-id-shaped smalls straddling the closed
-/// roster, never a mask (masks are comparison literals, not values).
+/// domain ceilings, empty and ray intervals, wrong-width digests,
+/// row-id-shaped smalls straddling the closed roster, never a mask
+/// (masks are comparison literals, not values).
 fn value(rng: &mut Rng) -> Value {
     match rng.below(13) {
         0 => Value::Bool(rng.chance(2)),
@@ -119,8 +119,8 @@ fn value(rng: &mut Rng) -> Value {
         4 => Value::I64(i64::MAX),
         5 => Value::I64(-1),
         6 => Value::U64(rng.below(6)),
-        7 => Value::String(Box::from(&b"note"[..])),
-        8 => Value::String(Box::from(&[0xFF, 0xFE, 0x00][..])),
+        7 => Value::String(Box::from("note")),
+        8 => Value::String(Box::from("ghost")),
         9 => {
             let len = usize::try_from(rng.below(4) * 8 + rng.below(2)).expect("small");
             Value::FixedBytes(vec![0xAB; len].into_boxed_slice())
@@ -278,17 +278,18 @@ fn random_query(rng: &mut Rng) -> Query {
         vec![]
     };
     if rng.chance(5) {
-        Query::Reach {
+        Query {
             interiors,
-            rec: random_rec(rng),
+            rec: Some(random_rec(rng)),
             head,
             rules,
         }
     } else {
-        Query::Cq {
+        Query {
             interiors,
             head,
             rules,
+            rec: None,
         }
     }
 }
@@ -387,10 +388,11 @@ fn plausible_query(rng: &mut Rng) -> Query {
         1 => {
             let busy = projection(BUSY, Gauntlet::BUSY_PERSON, Gauntlet::BUSY_DURING);
             let ooo = projection(OOO, Gauntlet::OOO_PERSON, Gauntlet::OOO_DURING);
-            Query::Cq {
+            Query {
                 interiors: vec![],
                 head: busy.head(),
                 rules: vec![busy, ooo],
+                rec: None,
             }
         }
         // Aggregate: balance-by-person over the i64 offset.
@@ -653,7 +655,9 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
 #[test]
 fn adversarial_ir_never_panics() {
     let dir = common::TempDir::new("adversarial-ir");
-    let db = Db::create(dir.path(), Gauntlet).expect("create");
+    let db = Db::create(dir.path(), Gauntlet)
+        .expect("create")
+        .expect("accepted");
 
     let mut ok = 0u64;
     let mut rejected = 0u64;
@@ -706,7 +710,9 @@ fn adversarial_ir_never_panics() {
 #[test]
 fn adversarial_query_with_interiors_never_panics() {
     let dir = common::TempDir::new("adversarial-interiors");
-    let db = Db::create(dir.path(), Gauntlet).expect("create");
+    let db = Db::create(dir.path(), Gauntlet)
+        .expect("create")
+        .expect("accepted");
 
     let mut ok = 0u64;
     let mut rejected = 0u64;
@@ -741,25 +747,7 @@ fn adversarial_query_with_interiors_never_panics() {
                 query.interiors_mut().push(random_interior(&mut rng));
             }
             if rng.chance(4) {
-                let rec = random_rec(&mut rng);
-                query = match query {
-                    Query::Cq {
-                        interiors,
-                        head,
-                        rules,
-                    }
-                    | Query::Reach {
-                        interiors,
-                        head,
-                        rules,
-                        rec: _,
-                    } => Query::Reach {
-                        interiors,
-                        rec,
-                        head,
-                        rules,
-                    },
-                };
+                query.rec = Some(random_rec(&mut rng));
             }
             query
         };
@@ -822,7 +810,7 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
             }],
         })
         .collect();
-    let query = Query::Cq {
+    let query = Query {
         interiors,
         head: vec![HeadTerm::Var],
         rules: vec![Rule {
@@ -834,6 +822,7 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
             negated: vec![],
             conditions: vec![],
         }],
+        rec: None,
     };
     let result = catch_unwind(AssertUnwindSafe(|| {
         bumbledb::ir::validate::validate(&schema, &query).map(|_| ())
@@ -859,7 +848,9 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
 #[test]
 fn deep_predicate_nesting_is_a_typed_rejection() {
     let dir = common::TempDir::new("adversarial-ir-nesting");
-    let db = Db::create(dir.path(), Gauntlet).expect("create");
+    let db = Db::create(dir.path(), Gauntlet)
+        .expect("create")
+        .expect("accepted");
     let leaf = || {
         ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
@@ -899,8 +890,10 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
             err,
             bumbledb::Error::Validation(
                 bumbledb::error::ValidationError::ConditionNestingTooDeep {
-                    depth: 3_000,
-                    cap: MAX_CONDITION_DEPTH,
+                    exceeded: bumbledb::Exceeded {
+                        observed: 3_000,
+                        ceiling: MAX_CONDITION_DEPTH,
+                    },
                     ..
                 }
             )

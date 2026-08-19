@@ -23,8 +23,7 @@ mod tests {
     fn corpus_db(tag: &str) -> (std::path::PathBuf, Db<Ledger>) {
         let dir = std::env::temp_dir().join(format!("bumbledb-tripwires-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, Ledger).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
         corpus::load_bumbledb(&db, CFG).expect("load");
         (dir, db)
     }
@@ -40,7 +39,7 @@ mod tests {
         use bumbledb::obs;
 
         let (dir, db) = corpus_db("selections");
-        let events_of = |name: &str, event: &str| -> usize {
+        let events_of = |name: &str, point: obs::TracePoint| -> usize {
             let family = families::all()
                 .iter()
                 .find(|f| f.name == name)
@@ -49,16 +48,16 @@ mod tests {
             let sets = (family.params)(&CFG);
             for params in &sets {
                 let args = param_args(params);
-                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
             obs::start_capture();
             let args = param_args(&sets[0]);
-            db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+            db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                 .expect("execute");
             obs::finish_capture()
                 .iter()
-                .filter(|e| e.name() == event)
+                .filter(|e| e.point() == point)
                 .count()
         };
         assert!(
@@ -86,8 +85,9 @@ mod tests {
         use crate::calendar::{Scheduling, families as cal};
         let dir = std::env::temp_dir().join("bumbledb-tripwires-calendar");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = bumbledb::Db::create(&dir, Scheduling).expect("create");
+        let db = bumbledb::Db::create(&dir, Scheduling)
+            .expect("create")
+            .expect("accepted");
         let prepared = |name: &str| {
             let family = cal::all()
                 .iter()
@@ -114,8 +114,7 @@ mod tests {
     fn aggregate_family_fold_regimes_are_pinned() {
         let dir = std::env::temp_dir().join("bumbledb-tripwires-elide");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, Ledger).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
         let regime = |name: &str| {
             let family = families::all()
                 .iter()
@@ -151,7 +150,7 @@ mod tests {
             // One full warm rotation: every binding built once.
             for params in &sets {
                 let args = param_args(params);
-                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
             // Two further rotations: zero view builds, ever.
@@ -159,12 +158,12 @@ mod tests {
                 for (set_idx, params) in sets.iter().enumerate() {
                     let args = param_args(params);
                     obs::start_capture();
-                    db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                    db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                         .expect("execute");
                     let events = obs::finish_capture();
                     let builds = events
                         .iter()
-                        .filter(|e| e.name() == obs::names::VIEW_BUILD)
+                        .filter(|e| e.point() == obs::names::VIEW_BUILD)
                         .count();
                     assert_eq!(
                         builds, 0,
@@ -199,29 +198,26 @@ mod tests {
         let args = param_args(&sets[0]);
         obs::start_capture();
         let out = db
-            .read(|snap| snap.execute_collect_args(&mut prepared, &args))
+            .read(|snap| snap.execute_collect(&mut prepared, &args))
             .expect("first execute");
         let cold = obs::finish_capture()
             .iter()
-            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
+            .filter(|e| e.point() == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
         assert_eq!(cold, 1, "one distinct name, one descent on first touch");
         for params in &sets {
             let warm_args = param_args(params);
-            db.read(|snap| {
-                snap.execute_collect_args(&mut prepared, &warm_args)
-                    .map(|_| ())
-            })
-            .expect("warm");
+            db.read(|snap| snap.execute_collect(&mut prepared, &warm_args).map(|_| ()))
+                .expect("warm");
         }
         obs::start_capture();
         let out = db
-            .read(|snap| snap.execute_collect_args(&mut prepared, &args))
+            .read(|snap| snap.execute_collect(&mut prepared, &args))
             .expect("re-execute");
         let warm = obs::finish_capture()
             .iter()
-            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
+            .filter(|e| e.point() == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
         assert_eq!(warm, 0, "the persistent tier holds: zero descents warm");
@@ -255,13 +251,17 @@ mod tests {
             let mut prepared = db.prepare(&query).expect("prepare");
             for params in &sets {
                 let args = param_args(params);
-                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
             let (out, stats) = db
                 .read(|snap| snap.profile(&mut prepared, &param_args(&sets[typical(family.name)])))
                 .expect("profile");
-            let drawn: u64 = stats.rules()[0].nodes.iter().map(|n| n.batch_entries).sum();
+            let drawn: u64 = stats.rules()[0]
+                .nodes()
+                .iter()
+                .map(|n| n.batch_entries)
+                .sum();
             // Derivations over the pinned corpus (postings = 100_000,
             // entries = 50_000, accounts = 500, holders = 125,
             // instruments = 512, orgs = 64, mandates = 2_000):

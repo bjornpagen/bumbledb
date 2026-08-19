@@ -19,8 +19,7 @@ impl<'s> WriteDelta<'s> {
             determinant_scratch_clones: 0,
             marks: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
-            pending_interns: BTreeMap::new(),
-            dict_next: None,
+            interns: None,
         }
     }
 }

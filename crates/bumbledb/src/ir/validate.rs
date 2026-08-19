@@ -23,7 +23,7 @@
 //! distribution** ([`crate::ir::distribute`]): each rule's condition
 //! trees distribute to disjunctive normal form and each disjunct becomes
 //! a rule — the structural term count past [`crate::ir::MAX_RULES`] is
-//! the typed `DnfExceedsRules { produced, cap }` (judged before
+//! the typed `DnfExceedsRules` (judged before
 //! materializing), duplicate rules collapse by normalized-form equality,
 //! and a query whose every disjunction is empty is the empty union
 //! (`EmptyRuleSet`). Everything below — and everything downstream —
@@ -39,9 +39,8 @@
 //!  3. duplicate `FieldId` in one atom's bindings
 //!  4. variable type conflicts (structural — interval-field bindings
 //!     anchor *bivalently*; see [`Context::resolve_bivalents`])
-//!  5. literal-vs-field and param-anchor type mismatches (non-UTF-8
-//!     String literals and `start >= end` interval literals included),
-//!     and element-typed point literals at the domain ceiling wherever
+//!  5. literal-vs-field and param-anchor type mismatches, and
+//!     element-typed point literals at the domain ceiling wherever
 //!     they meet an interval position — membership bindings and
 //!     `PointIn` operands (the point-domain law: points are
 //!     `MIN ..= MAX−1`; `MAX` is the ray's ∞ — point *params* get the
@@ -82,7 +81,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::allen::AllenMask;
-use crate::error::ValidationError;
+use crate::error::{AtomIndex, ValidationError};
 use crate::image::view::MaskConst;
 use crate::ir::normalize::{LoweredRule, OccId};
 use crate::ir::{FindTerm, InteriorId, ParamId, Value, VarId};
@@ -221,8 +220,7 @@ impl std::fmt::Display for AggKind {
 /// normalization's placement (`ir/normalize/place_comparisons.rs`) with
 /// a **total** match — no shape is re-derived downstream, so no
 /// defensive arm exists. The fifth sealed finding, alongside the
-/// witness's typing tables, `ResolvableFilter`, `SinkSpec`, and
-/// `ParamSpec`.
+/// witness's typing tables, `SinkSpec`, and `ParamSpec`.
 ///
 /// The variants are exactly the comparison language validation accepts —
 /// nothing aspirational — and each carries the RESOLVED facts placement
@@ -300,65 +298,82 @@ pub(crate) enum DurationOperand {
 }
 
 /// The interior typing surface handed to the per-rule roster: sealed
-/// column types, indexed by [`InteriorId`]. CQ typing never has a rec
+/// column types, indexed by [`InteriorId`]. Shared fields live on the
+/// struct; the phase sum is only what varies. CQ typing never has a rec
 /// slot. Reach typing is a phase sum: interiors / rec-base (rec not yet
 /// sealed — looking up the rec signature is unrepresentable) vs rec-arms
 /// and main (rec signature by value). An `Interior` anchor resolves
 /// against the target's sealed column exactly as an `Edb` anchor
 /// resolves against its stored field ([`Context::check_atoms`]).
-pub(super) enum InteriorSignatures<'a> {
+pub(super) struct InteriorSignatures<'a> {
+    /// Already-sealed interiors in declaration order. Interior *i*
+    /// types against `&sealed[..i]`.
+    interiors: &'a [Signature],
+    /// The well-formedness screen's address space.
+    derived_count: usize,
+    phase: InteriorPhase<'a>,
+}
+
+/// What varies across interior-typing phases.
+enum InteriorPhase<'a> {
     /// CQ: interiors only. Rec lookup is unrepresentable.
     Cq {
-        /// Already-sealed interiors in declaration order. Interior *i*
-        /// types against `&sealed[..i]`.
-        interiors: &'a [Signature],
         /// The reading interior's id, if this rule-list is an interior
         /// ([`ValidationError::InteriorNotPrior`]); `None` for main
         /// (out-of-range is [`ValidationError::UnknownInterior`]).
         reader: Option<InteriorId>,
-        /// `interiors.len()` on a CQ — the well-formedness screen's
-        /// address space.
-        derived_count: usize,
     },
     /// Reach interiors and rec-base: rec occupies
     /// `InteriorId(interiors.len())` in the address space but its
     /// signature is not yet sealed.
-    ReachOpen {
+    ReachOpen { reader: Option<InteriorId> },
+    /// Reach rec-arms and main: rec signature sealed by value.
+    ReachSealed { rec: &'a Signature },
+}
+
+impl<'a> InteriorSignatures<'a> {
+    fn cq(interiors: &'a [Signature], reader: Option<InteriorId>, derived_count: usize) -> Self {
+        Self {
+            interiors,
+            derived_count,
+            phase: InteriorPhase::Cq { reader },
+        }
+    }
+
+    fn reach_open(
         interiors: &'a [Signature],
         reader: Option<InteriorId>,
-        /// `interiors.len() + 1` on a Reach query.
         derived_count: usize,
-    },
-    /// Reach rec-arms and main: rec signature sealed by value.
-    ReachSealed {
-        interiors: &'a [Signature],
-        rec: &'a Signature,
-        /// `interiors.len() + 1` on a Reach query.
-        derived_count: usize,
-    },
+    ) -> Self {
+        Self {
+            interiors,
+            derived_count,
+            phase: InteriorPhase::ReachOpen { reader },
+        }
+    }
+
+    fn reach_sealed(interiors: &'a [Signature], rec: &'a Signature, derived_count: usize) -> Self {
+        Self {
+            interiors,
+            derived_count,
+            phase: InteriorPhase::ReachSealed { rec },
+        }
+    }
 }
 
 impl InteriorSignatures<'_> {
     fn interiors(&self) -> &[Signature] {
-        match self {
-            Self::Cq { interiors, .. }
-            | Self::ReachOpen { interiors, .. }
-            | Self::ReachSealed { interiors, .. } => interiors,
-        }
+        self.interiors
     }
 
     fn derived_count(&self) -> usize {
-        match self {
-            Self::Cq { derived_count, .. }
-            | Self::ReachOpen { derived_count, .. }
-            | Self::ReachSealed { derived_count, .. } => *derived_count,
-        }
+        self.derived_count
     }
 
     fn reader(&self) -> Option<InteriorId> {
-        match self {
-            Self::Cq { reader, .. } | Self::ReachOpen { reader, .. } => *reader,
-            Self::ReachSealed { .. } => None,
+        match self.phase {
+            InteriorPhase::Cq { reader } | InteriorPhase::ReachOpen { reader } => reader,
+            InteriorPhase::ReachSealed { .. } => None,
         }
     }
 
@@ -373,7 +388,10 @@ impl InteriorSignatures<'_> {
     pub(super) fn screen(&self, atom: usize, interior: InteriorId) -> Result<(), ValidationError> {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         if index >= self.derived_count() {
-            return Err(ValidationError::UnknownInterior { atom, interior });
+            return Err(ValidationError::UnknownInterior {
+                atom: AtomIndex(atom),
+                interior,
+            });
         }
         if let Some(at) = self.reader() {
             let at_idx = usize::try_from(at.0).expect("64-bit usize");
@@ -394,9 +412,9 @@ impl InteriorSignatures<'_> {
         if index < interiors.len() {
             &interiors[index]
         } else {
-            match self {
-                Self::ReachSealed { rec, .. } => rec,
-                Self::Cq { .. } | Self::ReachOpen { .. } => {
+            match &self.phase {
+                InteriorPhase::ReachSealed { rec } => rec,
+                InteriorPhase::Cq { .. } | InteriorPhase::ReachOpen { .. } => {
                     unreachable!("screen admitted this id; rec lookup only after the rec is sealed")
                 }
             }
@@ -420,7 +438,10 @@ impl InteriorSignatures<'_> {
             .columns
             .get(usize::from(field.0))
             .map(SignatureColumn::ty)
-            .ok_or(ValidationError::InteriorColumnOutOfRange { atom, field })
+            .ok_or(ValidationError::InteriorColumnOutOfRange {
+                atom: AtomIndex(atom),
+                field,
+            })
     }
 }
 
@@ -590,41 +611,23 @@ impl ValidatedMain {
 /// Variables are rule-scoped, so their typing lives per rule
 /// ([`RuleTyping`]); params are query-global, so their tables live here
 /// once — unified across every interior, rec arm, and main rule.
-/// Rec-absence is [`Self::Cq`]; rec-presence is [`Self::Reach`]. Cq
-/// callers never see rec accessors.
+/// Rec-absence is `rec: None`; rec-presence is `rec: Some`. Shared
+/// fields live on the struct. `rec_id` and `derived_count` are methods
+/// — they are determined by interiors and whether rec is present.
 #[derive(Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Reach carries the rec witness inline; Cq is the empty-rec arm, not a box"
-)]
-pub enum ValidatedQuery {
-    /// No rec: interiors (possibly empty) and main.
-    Cq {
-        interiors: Vec<ValidatedInterior>,
-        main: ValidatedMain,
-        param_types: BTreeMap<ParamId, ValueType>,
-        /// Param ids bound as sets (`Term::ParamSet`); their entry in
-        /// `param_types` is the *element* type.
-        set_params: BTreeSet<ParamId>,
-        /// Element-typed params meeting an interval position (membership
-        /// bindings and `PointIn` operands): their values are points, so the
-        /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
-        /// domain ceiling — enforced at bind, where the value exists.
-        point_params: BTreeSet<ParamId>,
-    },
-    /// Rec present: interiors, the rec SCC, and main. `rec_id` and
-    /// `derived_count` are stored once at validate (engine-003's accepted
-    /// half / engine-028).
-    Reach {
-        interiors: Vec<ValidatedInterior>,
-        rec: ValidatedRec,
-        main: ValidatedMain,
-        rec_id: InteriorId,
-        derived_count: u32,
-        param_types: BTreeMap<ParamId, ValueType>,
-        set_params: BTreeSet<ParamId>,
-        point_params: BTreeSet<ParamId>,
-    },
+pub struct ValidatedQuery {
+    interiors: Vec<ValidatedInterior>,
+    main: ValidatedMain,
+    param_types: BTreeMap<ParamId, ValueType>,
+    /// Param ids bound as sets (`Term::ParamSet`); their entry in
+    /// `param_types` is the *element* type.
+    set_params: BTreeSet<ParamId>,
+    /// Element-typed params meeting an interval position (membership
+    /// bindings and `PointIn` operands): their values are points, so the
+    /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
+    /// domain ceiling — enforced at bind, where the value exists.
+    point_params: BTreeSet<ParamId>,
+    rec: Option<ValidatedRec>,
 }
 
 /// One rule's derived typing tables — rule-scoped by definition.
@@ -645,17 +648,44 @@ impl ValidatedQuery {
     /// Named interiors in declaration order.
     #[must_use]
     pub fn interiors(&self) -> &[ValidatedInterior] {
-        match self {
-            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
-        }
+        &self.interiors
     }
 
     /// The main/answer witness.
     #[must_use]
     pub fn main(&self) -> &ValidatedMain {
-        match self {
-            Self::Cq { main, .. } | Self::Reach { main, .. } => main,
-        }
+        &self.main
+    }
+
+    /// The rec SCC, present exactly on Reach.
+    #[must_use]
+    pub fn rec(&self) -> Option<&ValidatedRec> {
+        self.rec.as_ref()
+    }
+
+    /// Rec's interior id: `interiors.len()`. Present exactly on Reach.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: the interior count overflowed
+    /// `u32` (validation already refused that).
+    #[must_use]
+    pub fn rec_id(&self) -> Option<InteriorId> {
+        self.rec.as_ref().map(|_| {
+            InteriorId(u32::try_from(self.interiors.len()).expect("derived count fits u32"))
+        })
+    }
+
+    /// The derived-table address space: interiors, plus one iff rec is present.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: the derived count overflowed
+    /// `u32` (validation already refused that).
+    #[must_use]
+    pub fn derived_count(&self) -> u32 {
+        u32::try_from(self.interiors.len() + usize::from(self.rec.is_some()))
+            .expect("derived count fits u32")
     }
 
     /// The answer head's sealed signature — [`ValidatedMain`]'s
@@ -714,21 +744,15 @@ impl ValidatedQuery {
     }
 
     fn param_types_map(&self) -> &BTreeMap<ParamId, ValueType> {
-        match self {
-            Self::Cq { param_types, .. } | Self::Reach { param_types, .. } => param_types,
-        }
+        &self.param_types
     }
 
     fn set_params_set(&self) -> &BTreeSet<ParamId> {
-        match self {
-            Self::Cq { set_params, .. } | Self::Reach { set_params, .. } => set_params,
-        }
+        &self.set_params
     }
 
     fn point_params_set(&self) -> &BTreeSet<ParamId> {
-        match self {
-            Self::Cq { point_params, .. } | Self::Reach { point_params, .. } => point_params,
-        }
+        &self.point_params
     }
 
     /// The resolved type of a scalar param (for a set param this is the

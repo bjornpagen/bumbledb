@@ -52,9 +52,10 @@ pub fn load_stores(
     for rel in order {
         db.write(|tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("load: {e:?}"))?;
+        .map_err(|e| format!("load: {e:?}"))?
+        .unwrap();
     }
     let conn = Connection::open(dir.join("oracle.sqlite")).map_err(|e| format!("oracle: {e}"))?;
     lane.configure(&conn)?;

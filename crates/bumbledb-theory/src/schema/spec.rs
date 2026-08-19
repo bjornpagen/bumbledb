@@ -1074,7 +1074,7 @@ impl SchemaSpec {
                     .iter()
                     .map(|field| FieldDescriptor {
                         name: field.name.clone(),
-                        value_type: field.value_type.clone(),
+                        value_type: field.value_type,
                         generation: if field.fresh {
                             Generation::Fresh
                         } else {

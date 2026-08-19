@@ -727,7 +727,7 @@ maintenance is the generation-witness idiom verbatim (`70-api.md`
 § conditional writes, the third idiom): query the sources on a snapshot →
 recompute (`Pack` is the coalesce) → diff → `write_from` with that snapshot as
 the witness — the derived relation cannot commit against sources it didn't
-actually read (`GenerationMoved` otherwise).
+actually read (`ConditionalWrite::Moved` otherwise).
 
 **The honest limit: statements prove presence and topology, never arithmetic
 agreement.** Containment proves every derived fact justified and — reversed —

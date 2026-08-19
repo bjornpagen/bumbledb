@@ -19,8 +19,10 @@
 //! correctness-free). The paper's "cross-node-entry accumulation is
 //! future work" caveat is retired: deep nodes see full batches.
 
+use std::num::NonZeroUsize;
+
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::ir::normalize::{PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison};
+use crate::image::view::FilterPredicate;
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
@@ -593,6 +595,28 @@ struct NodeScratch {
     pending_origins: Vec<u32>,
 }
 
+/// Per-node executor precompute: residual slot layouts, resolved Allen
+/// masks, and probe specs for the node they describe. Construction
+/// derives each field from that node's plan lists; nothing here is a
+/// parallel vector on [`Executor`].
+struct NodePrecompute {
+    /// Whole-value residuals: (predicate, lhs slot, rhs slot, width).
+    residual_slots: Vec<(FilterPredicate, usize, usize, usize)>,
+    /// Word residuals: (predicate, lhs slot, rhs slot), slots already
+    /// offset to the compared word.
+    word_residual_slots: Vec<(FilterPredicate, usize, usize)>,
+    /// Allen residuals: (predicate, lhs base slot, rhs base slot).
+    allen_residual_slots: Vec<(FilterPredicate, usize, usize)>,
+    /// This execution's resolved Allen masks — literal masks are fixed
+    /// at construction; param masks are rewritten in place by
+    /// [`Executor::bind_allen_masks`] before every execution.
+    allen_masks: Vec<crate::allen::AllenMask>,
+    /// Measure residuals: (predicate, interval base slot, scalar slot).
+    duration_residual_slots: Vec<(FilterPredicate, usize, usize)>,
+    point_probes: Vec<PointProbeSpec>,
+    anti_probes: Vec<AntiProbeSpec>,
+}
+
 /// The executor scratch for one plan shape: per-execution cursor state and
 /// per-node buffers, sized once at construction. It does not borrow the
 /// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
@@ -604,29 +628,8 @@ pub struct Executor {
     /// Per subatom slot maps, precomputed: `slot_map[node][subatom][i]` is
     /// the binding slot of that subatom's i-th variable.
     slot_map: Vec<Vec<Vec<usize>>>,
-    /// Per residual: (lhs slot, rhs slot, slot width), aligned with each
-    /// node's list. Width 2 is an interval pair — `Eq`/`Ne` compare
-    /// pairwise over the two slot words (the only operators validation
-    /// admits for intervals).
-    residual_slots: Vec<Vec<(PlacedComparison, usize, usize, usize)>>,
-    /// Per word residual: (lhs slot, rhs slot), aligned with each node's
-    /// `word_residuals` — slots already offset to the compared word.
-    word_residual_slots: Vec<Vec<(PlacedWordComparison, usize, usize)>>,
-    /// Per Allen residual: (residual, lhs base slot, rhs base slot),
-    /// aligned with each node's `allen_residuals`.
-    allen_residual_slots: Vec<Vec<(PlacedAllen, usize, usize)>>,
-    /// Per Allen residual: this execution's resolved mask, aligned with
-    /// `allen_residual_slots` — literal masks are fixed at construction;
-    /// param masks are rewritten in place by [`Executor::bind_allen_masks`]
-    /// before every execution (the executor never sees the param slice
-    /// on the hot path).
-    allen_masks: Vec<Vec<crate::allen::AllenMask>>,
-    /// Per measure residual: (residual, interval base slot, scalar slot),
-    /// aligned with each node's `duration_residuals`.
-    duration_residual_slots: Vec<Vec<(PlacedDuration, usize, usize)>>,
-    /// Per membership probe, aligned with each node's `point_probes`
-    /// list ([`PointProbeSpec`]).
-    point_probe_slots: Vec<Vec<PointProbeSpec>>,
+    /// Per-node residual layouts and probe specs.
+    precompute: Vec<NodePrecompute>,
     /// Per occurrence: some node's membership probe reads this
     /// occurrence's advanced cursor (`PointProbe::occ`), so its
     /// per-position children are semantically live and the zero-arity
@@ -636,10 +639,6 @@ pub struct Executor {
     /// Every variable's slot width in words — the word-level source
     /// resolution's lookup (tiny; linear scan).
     var_widths: Vec<(crate::ir::VarId, usize)>,
-    /// Per anti-probe, aligned with each node's `anti_probes` list: the
-    /// negated occurrence and its probe-key layout, precomputed like
-    /// `residual_slots`.
-    anti_probe_slots: Vec<Vec<AntiProbeSpec>>,
     scratch: Vec<NodeScratch>,
     /// The leaf fast paths apply when the last node is classified
     /// [`LeafPrecompute::Fast`] — its cover is fixed, so the per-entry
@@ -722,18 +721,22 @@ enum SkipAbsorb {
     Node(usize),
 }
 
+/// Three anti-probe forms: emptiness gate, keyed trie probe.
+enum AntiProbeForm {
+    /// Zero key words — emptiness or keyless membership.
+    Gate,
+    Keyed {
+        parts: Vec<(crate::ir::VarId, usize, usize)>,
+        key_words: NonZeroUsize,
+    },
+}
+
 /// One anti-probe resolved for execution (docs/architecture/
 /// 40-execution.md, § anti-probe filters): the negated occurrence's
-/// index and its probe-key parts — the occurrence's single trie level in
-/// binding order, each variable with its first binding slot and its
-/// [`crate::ir::normalize::SlotWidth`] word count.
+/// index and its probe form — gate vs keyed trie.
 struct AntiProbeSpec {
     occ: usize,
-    /// Per key variable: (variable, first binding slot, width in words).
-    parts: Vec<(crate::ir::VarId, usize, usize)>,
-    /// Total probe-key words (the occurrence's `key_widths[0]`); zero for
-    /// the emptiness-gate form.
-    key_words: usize,
+    form: AntiProbeForm,
     /// The negated occurrence's var-sourced membership filters, per
     /// filter: (start column, end column, point variable, point slot).
     /// Evaluated inside the probe: a binding is rejected only if a fact
@@ -741,6 +744,15 @@ struct AntiProbeSpec {
     /// existential reading over the negated occurrence's facts
     /// (docs/architecture/20-query-ir.md, § param sets / membership).
     point_parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
+}
+
+impl AntiProbeSpec {
+    fn key_words(&self) -> usize {
+        match &self.form {
+            AntiProbeForm::Gate => 0,
+            AntiProbeForm::Keyed { key_words, .. } => key_words.get(),
+        }
+    }
 }
 
 /// One membership probe resolved for execution ([`crate::plan::fj::
@@ -759,7 +771,6 @@ struct PointProbeSpec {
 enum LeafPrecompute {
     Generic,
     Fast {
-        residual_sources: Vec<(Source, Source)>,
         scan_residuals: Vec<(crate::ir::WordCmp, Source, Source)>,
         const_residuals: Vec<(crate::ir::WordCmp, usize, usize)>,
         row: Vec<u64>,

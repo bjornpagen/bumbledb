@@ -30,9 +30,10 @@
 //! field you keep).
 
 use std::marker::PhantomData;
-use std::sync::Mutex;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use crate::encoding::ValueRef;
+use crate::encoding::{InternId, ValueRef};
 use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::Schema;
@@ -41,6 +42,7 @@ use crate::storage::env::{Environment, ReadTxn};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 mod apply;
+mod builder;
 mod delete;
 mod delete_dyn;
 mod encode_dyn;
@@ -48,48 +50,132 @@ mod exhume;
 mod get;
 mod insert;
 mod insert_dyn;
+mod instance;
 mod maintain;
 mod mutation;
+mod mutation_core;
 mod open;
+mod owned;
 mod prepare;
 mod read;
+mod read_instance;
 mod reserve;
-mod snapshot;
 mod write;
 
 use apply::WritePhase;
 
+pub use builder::InstanceBuilder;
 pub use exhume::{Exhumed, exhume};
+pub use instance::Instance;
 pub use mutation::{FreshRange, FreshRangeIter, MutationReport};
+pub use owned::OwnedInstance;
 pub use write::Witness;
 
-/// The process-local commit sequence protecting parked-reader reuse. It
-/// resets when the database is opened and is deliberately not comparable
-/// with the persisted [`crate::GenerationId`] clock.
+/// House `PutOutcome` applied to the codec: a dictionary miss proves the
+/// fact (or determinant) absent rather than a Boolean whose polarity
+/// callers must remember.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub(crate) struct CommitSeq(u64);
+pub enum Probe {
+    Encoded,
+    ProvablyAbsent,
+}
 
-impl CommitSeq {
-    const INITIAL: Self = Self(0);
+mod codec_seal {
+    pub trait Sealed {}
+}
 
-    const fn atomic_word(self) -> u64 {
-        self.0
+/// Codec dependencies for encode-probe and decode. Names are
+/// dependencies, not backends — a codec generic over this cannot branch
+/// on the concrete catalog.
+#[doc(hidden)]
+pub trait CodecRead<S>: codec_seal::Sealed {
+    fn schema(&self) -> &Schema;
+    fn lookup_str(&self, value: &str) -> Result<Option<InternId>>;
+    fn resolve_str(&self, id: InternId) -> Result<&str>;
+
+    fn decode_bool_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<bool> {
+        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
+            crate::encoding::ValueRef::Bool(v) => Ok(v),
+            _ => unreachable!("schema-typed"),
+        }
     }
 
-    fn load(cell: &std::sync::atomic::AtomicU64, order: std::sync::atomic::Ordering) -> Self {
-        Self(cell.load(order))
+    fn decode_u64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<u64> {
+        Ok(crate::encoding::decode_u64(
+            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
+        ))
     }
 
-    fn advance(cell: &std::sync::atomic::AtomicU64, order: std::sync::atomic::Ordering) {
-        cell.fetch_add(1, order);
+    fn decode_i64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<i64> {
+        Ok(crate::encoding::decode_i64(
+            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
+        ))
+    }
+
+    fn decode_str_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<&str> {
+        let id = InternId::from_raw(crate::encoding::decode_u64(
+            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
+        ));
+        self.resolve_str(id)
+    }
+
+    fn decode_fixed_bytes_field<'f>(
+        &self,
+        relation: RelationId,
+        fact: &'f [u8],
+        idx: usize,
+    ) -> Result<&'f [u8]> {
+        let layout = self.schema().relation(relation).layout();
+        let crate::encoding::ValueType::FixedBytes { len } = layout.field_type(idx) else {
+            unreachable!("schema-typed");
+        };
+        Ok(&crate::encoding::field_bytes(layout.encoded(fact), idx)[..usize::from(len)])
+    }
+
+    fn decode_interval_u64_field(
+        &self,
+        relation: RelationId,
+        fact: &[u8],
+        idx: usize,
+    ) -> Result<crate::Interval<u64>> {
+        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
+            crate::encoding::ValueRef::IntervalU64(interval) => Ok(interval),
+            _ => unreachable!("schema-typed"),
+        }
+    }
+
+    fn decode_interval_i64_field(
+        &self,
+        relation: RelationId,
+        fact: &[u8],
+        idx: usize,
+    ) -> Result<crate::Interval<i64>> {
+        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
+            crate::encoding::ValueRef::IntervalI64(interval) => Ok(interval),
+            _ => unreachable!("schema-typed"),
+        }
     }
 }
 
+/// Codec write dependency: mint intern ids. Extends [`CodecRead`] so
+/// insert encoding cannot branch on a backend the type does not name.
+#[doc(hidden)]
+pub trait CodecWrite<S>: CodecRead<S> {
+    fn intern_str(&mut self, value: &str) -> Result<InternId>;
+}
+
+fn view<'s, 'f>(
+    schema: &'s Schema,
+    relation: RelationId,
+    fact: &'f [u8],
+) -> crate::encoding::FactView<'f, 's> {
+    schema.relation(relation).layout().encoded(fact)
+}
+
 /// One typed fact struct, as generated by the `schema!` macro. The write
-/// side encodes against the delta (interning novel strings/bytes); the
-/// read side encodes against the committed dictionary and reports a
-/// never-interned value as "this fact cannot exist".
+/// side encodes against a [`CodecWrite`] (interning novel strings); the
+/// probe side encodes against a [`CodecRead`] and reports a never-interned
+/// value as [`Probe::ProvablyAbsent`].
 ///
 /// `'a` is the decode lifetime: variable-width fields (`&'a str` /
 /// `&'a [u8]`) borrow from the resolver — the snapshot's committed
@@ -108,54 +194,38 @@ pub trait Fact<'a>: Sized {
     const RELATION: RelationId;
 
     /// Encodes the canonical fact bytes against a write context, interning
-    /// novel strings and bytes through the delta. Appends to `out`.
+    /// novel strings through the codec. Appends to `out`.
     ///
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn encode_write(&self, tx: &mut WriteTx<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<()>;
+    fn encode_insert<C>(&self, context: &mut C, out: &mut Vec<u8>) -> Result<()>
+    where
+        C: CodecWrite<Self::Schema>;
 
-    /// Encodes for the delete path: pending intern ids first (so an
-    /// insert-then-delete within one transaction cancels byte-exactly),
-    /// then the committed dictionary — never minting. `Ok(false)` means a
-    /// string or bytes value is known to neither: the fact provably
-    /// cannot exist in base or delta, the delete is a no-op, and the
-    /// dictionary stays untouched (`out` is left unusable in that case).
+    /// Encodes against a read context. [`Probe::ProvablyAbsent`] means a
+    /// string value was never interned — the fact cannot exist (`out` is
+    /// left unusable in that case).
     ///
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn encode_delete(&self, tx: &WriteTx<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<bool>;
-
-    /// Encodes against a read context. `Ok(false)` means a string or bytes
-    /// value was never interned — the fact cannot exist in the database
-    /// (`out` is left untouched in that case; otherwise appended).
-    ///
-    /// # Errors
-    ///
-    /// Storage errors from the dictionary reads.
-    fn encode_read(&self, snap: &Snapshot<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<bool>;
+    fn encode_probe<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
+    where
+        C: CodecRead<Self::Schema>;
 
     /// Decodes canonical fact bytes back into the typed struct.
-    /// Variable-width fields borrow from the snapshot's dictionary at
-    /// `'a`; UTF-8 is validated at resolve (parse, don't validate) —
-    /// without a copy.
+    /// Variable-width fields borrow from the codec's dictionary at `'a`;
+    /// UTF-8 is validated at resolve (parse, don't validate) — without a
+    /// copy. Pending-first vs committed-only resolution is carried by
+    /// `C`, not by a second method.
     ///
     /// # Errors
     ///
     /// `Corruption` on undecodable bytes or dangling intern ids.
-    fn decode(snap: &'a Snapshot<'_, Self::Schema>, fact: &[u8]) -> Result<Self>;
-
-    /// Decodes canonical fact bytes inside a write transaction — the
-    /// point-read sibling of [`Fact::decode`], resolving intern ids
-    /// pending-first (a fact inserted this transaction carries provisional
-    /// ids, borrowed from the delta arena) and through the committed
-    /// dictionary otherwise.
-    ///
-    /// # Errors
-    ///
-    /// `Corruption` on undecodable bytes or dangling intern ids.
-    fn decode_write(tx: &'a WriteTx<'_, Self::Schema>, fact: &[u8]) -> Result<Self>;
+    fn decode<C>(context: &'a C, fact: &[u8]) -> Result<Self>
+    where
+        C: CodecRead<Self::Schema>;
 }
 
 /// A typed key value: one key FD's determinant, carrying the relation's
@@ -220,25 +290,15 @@ pub trait Key<'a>: Sized {
 
     /// Appends the determinant bytes (canonical field encodings in
     /// statement projection order), resolving interned values through the
-    /// snapshot's committed dictionary. `Ok(false)` = a string value was
-    /// never interned: no fact can carry it.
+    /// codec. [`Probe::ProvablyAbsent`] = a string value was never interned:
+    /// no fact can carry it.
     ///
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn determinant_read(
-        &self,
-        snap: &Snapshot<'_, Self::Schema>,
-        out: &mut Vec<u8>,
-    ) -> Result<bool>;
-
-    /// The write-context sibling: pending interns first, then the
-    /// committed dictionary, NEVER minting.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors from the dictionary reads.
-    fn determinant_write(&self, tx: &WriteTx<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<bool>;
+    fn encode_determinant<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
+    where
+        C: CodecRead<Self::Schema>;
 }
 
 /// A fresh-minted newtype, as generated by the `schema!` macro for a
@@ -268,7 +328,7 @@ pub trait Fresh: Sized + Copy {
 ///
 /// `S` is the schema definition ([`crate::Theory`]) the database was
 /// created or opened with — a phantom typestate threaded through
-/// [`WriteTx`], [`Snapshot`], and [`crate::PreparedQuery`], so a fact or
+/// [`WriteTx`], [`ReadInstance`], and [`crate::PreparedQuery`], so a fact or
 /// prepared query of one schema cannot reach a database of another
 /// (compile error, not a runtime width check). The validated
 /// [`Schema`] itself is owned by the handle: `create`/`open` validate the
@@ -284,7 +344,7 @@ pub struct Db<S> {
     /// The reader cache: one parked LMDB read
     /// transaction, reused while no commit has intervened. Sound because
     /// this handle is the environment's ONLY writer (exclusive lock at
-    /// open): if [`Db::commit_seq`] is unchanged since the parked
+    /// open): if [`Db::generation`] is unchanged since the parked
     /// snapshot began, the parked snapshot is bit-identical to a fresh
     /// one — and the per-read `mdb_txn_begin` (the point path's last
     /// fixed cost) is skipped entirely. Readers
@@ -302,16 +362,18 @@ pub struct Db<S> {
     env: Environment,
     cache: ImageCache,
     writer: Mutex<()>,
-    /// The thread currently inside [`Db::write`] (0 = none): a nested
-    /// `write` on the same thread would self-deadlock on the writer
-    /// mutex forever, so it panics loudly instead.
+    /// The thread currently inside [`Db::write`]: a nested `write` on the
+    /// same thread would self-deadlock on the writer mutex forever, so it
+    /// panics loudly instead. [`ThreadKey`] stored as `AtomicU64`; `0` is
+    /// the cell's empty encoding, never a legal key.
     writer_thread: std::sync::atomic::AtomicU64,
-    /// Commits since open (monotone; bumped only when a commit changed
-    /// state). The parked reader's validity token.
-    commit_seq: std::sync::atomic::AtomicU64,
+    /// Last state-changing [`crate::GenerationId`] this handle has
+    /// observed. The parked reader keys on it — the same clock the
+    /// store advances, not a second process counter.
+    generation: std::sync::atomic::AtomicU64,
     /// The snapshot point-read scratch pool (R15) — see [`ScratchPool`].
     read_scratch: ScratchPool,
-    schema: Schema,
+    schema: Arc<Schema>,
     /// The typestate marker (`fn() -> S` keeps `Send + Sync` independent
     /// of `S` — the definition value itself is consumed at open).
     marker: PhantomData<fn() -> S>,
@@ -327,7 +389,7 @@ impl<S> Db<S> {
 
     /// The validated schema (reader: `crate::verify_store`).
     pub(crate) fn schema(&self) -> &Schema {
-        &self.schema
+        self.schema.as_ref()
     }
 
     /// The non-fatal declaration diagnostics validation sealed into this
@@ -354,10 +416,10 @@ impl<S> Db<S> {
     }
 }
 
-/// One parked read transaction and the commit sequence it saw.
+/// One parked read transaction and the generation it saw.
 struct ParkedReader {
     txn: heed::RoTxn<'static, heed::WithoutTls>,
-    commit_seq: CommitSeq,
+    generation: crate::GenerationId,
 }
 
 /// One snapshot point read's reusable buffers: the composed `U` key /
@@ -400,27 +462,79 @@ impl ScratchPool {
     }
 }
 
+/// Process-wide thread identity for the nested-write detector. Never zero;
+/// absence of a writer is `None`, not a sentinel in the atomic cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ThreadKey(std::num::NonZeroU64);
+
+impl ThreadKey {
+    fn mint() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        thread_local! {
+            static KEY: ThreadKey = {
+                let raw = NEXT.fetch_add(1, Ordering::Relaxed);
+                ThreadKey(std::num::NonZeroU64::new(raw).expect("thread-key mint starts at 1"))
+            };
+        }
+        KEY.with(|key| *key)
+    }
+
+    fn load(
+        cell: &std::sync::atomic::AtomicU64,
+        order: std::sync::atomic::Ordering,
+    ) -> Option<Self> {
+        std::num::NonZeroU64::new(cell.load(order)).map(Self)
+    }
+
+    fn store(
+        cell: &std::sync::atomic::AtomicU64,
+        key: Option<Self>,
+        order: std::sync::atomic::Ordering,
+    ) {
+        cell.store(key.map_or(0, |ThreadKey(n)| n.get()), order);
+    }
+}
+
 /// Clears the owner mark when the write closure exits — normally, by
 /// error, or by unwind — so the next `write` on this thread proceeds.
 struct WriterThreadReset<'a>(&'a std::sync::atomic::AtomicU64);
 
-/// One consistent read snapshot: executes prepared queries and exports
-/// relations. Handed to [`Db::read`] closures. Carries the handle's
-/// schema typestate `S`, so a prepared query executes only against
-/// snapshots of a same-schema database by construction.
-pub struct Snapshot<'db, S> {
-    txn: ReadTxn<'db>,
-    cache: &'db ImageCache,
-    schema: &'db Schema,
-    scratch: &'db ScratchPool,
+/// One admitted LMDB read lease: executes prepared queries and exports
+/// relations. Handed to [`Db::read`] closures. The transaction borrows
+/// the environment; the lease is invalidated by Rust lifetime when the
+/// callback returns. `!Send + !Sync` — a read lease does not cross
+/// threads.
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<bumbledb::ReadInstance<'static, ()>>();
+/// ```
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<bumbledb::ReadInstance<'static, ()>>();
+/// ```
+///
+/// ```compile_fail
+/// fn require_insert(instance: &mut bumbledb::ReadInstance<'_, ()>) {
+///     let _ = instance.insert;
+/// }
+/// ```
+pub struct ReadInstance<'txn, S> {
+    txn: ReadTxn<'txn>,
+    cache: &'txn ImageCache,
+    schema: Arc<Schema>,
+    scratch: &'txn ScratchPool,
+    thread_bound: PhantomData<Rc<()>>,
     marker: PhantomData<fn() -> S>,
 }
 
-impl<'db, S> Snapshot<'db, S> {
-    /// The snapshot's read transaction (reader: the staleness signal —
-    /// [`crate::PreparedQuery::staleness`] takes the snapshot directly
-    /// rather than routing through a `Snapshot` wrapper method).
-    pub(crate) fn txn(&self) -> &ReadTxn<'db> {
+impl<'txn, S> ReadInstance<'txn, S> {
+    /// The lease's read transaction (reader: the staleness signal —
+    /// [`crate::PreparedQuery::staleness`] takes the instance directly
+    /// rather than routing through a wrapper method).
+    pub(crate) fn txn(&self) -> &ReadTxn<'txn> {
         &self.txn
     }
 
@@ -511,6 +625,43 @@ impl<S> WriteTx<'_, S> {
 /// documented surface.
 #[doc(hidden)]
 pub mod plumbing;
+
+impl<S> codec_seal::Sealed for ReadInstance<'_, S> {}
+impl<S> codec_seal::Sealed for WriteTx<'_, S> {}
+
+impl<S> CodecRead<S> for ReadInstance<'_, S> {
+    fn schema(&self) -> &Schema {
+        self.schema.as_ref()
+    }
+
+    fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
+        crate::storage::dict::lookup_str(&self.txn, value)
+    }
+
+    fn resolve_str(&self, id: InternId) -> Result<&str> {
+        plumbing::resolve_string(self, id)
+    }
+}
+
+impl<S> CodecRead<S> for WriteTx<'_, S> {
+    fn schema(&self) -> &Schema {
+        self.schema
+    }
+
+    fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
+        self.delta.resolve_str(&self.view, value)
+    }
+
+    fn resolve_str(&self, id: InternId) -> Result<&str> {
+        plumbing::resolve_string_write(self, id)
+    }
+}
+
+impl<S> CodecWrite<S> for WriteTx<'_, S> {
+    fn intern_str(&mut self, value: &str) -> Result<InternId> {
+        self.delta.intern_str(&self.view, value)
+    }
+}
 
 #[cfg(test)]
 mod tests;

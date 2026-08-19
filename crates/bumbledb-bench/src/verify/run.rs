@@ -58,13 +58,16 @@ pub fn run_with_sql_override(
         cfg.corpus_gen.seed,
         cfg.corpus_gen.scale.label()
     );
-    let db = Db::create(&cfg.out_dir.join("db"), Ledger).expect("create store");
+    let db = Db::create(&cfg.out_dir.join("db"), Ledger)
+        .expect("create store")
+        .expect("accepted");
     corpus::load_bumbledb(&db, cfg.corpus_gen).expect("load bumbledb");
     let (conn, _) = corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.corpus_gen)
         .expect("load oracle");
     eprintln!("verify: loading the calendar corpus");
     let cal_db = Db::create(&cfg.out_dir.join("cal-db"), crate::calendar::Scheduling)
-        .expect("create calendar store");
+        .expect("create calendar store")
+        .expect("accepted");
     crate::calendar::corpus::load_bumbledb(&cal_db, cfg.corpus_gen).expect("load calendar");
     let (cal_conn, _) = crate::calendar::corpus::load_sqlite(
         &cfg.out_dir.join("cal-oracle.sqlite"),
@@ -239,7 +242,7 @@ pub(super) fn load_target_stores(
     cfg: crate::corpus_gen::GenConfig,
 ) -> (Db<target::Target>, rusqlite::Connection) {
     let _ = std::fs::remove_dir_all(dir);
-    let db = Db::create(dir, target::Target).expect("create target store");
+    let db = target::publish_admitted(dir);
     let conn = rusqlite::Connection::open_in_memory().expect("target oracle");
     for statement in sqlmap::schema_ddl(target::schema()) {
         conn.execute(&statement, []).expect("target ddl");
@@ -283,9 +286,10 @@ pub(super) fn load_target_stores(
             _ => {
                 db.write(|tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
-                        .map(|r| r.changed)
+                        .map(bumbledb::MutationReport::changed)
                 })
-                .expect("target insert");
+                .expect("target insert")
+                .unwrap();
             }
         }
         corpus::insert_rows(
@@ -325,7 +329,8 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: crate::corpus_gen::GenConfig) {
             }
             Ok(())
         })
-        .expect("target DU cluster load");
+        .expect("target DU cluster load")
+        .unwrap();
         start = end;
     }
 }

@@ -14,9 +14,10 @@ fn every_scenario_query_prepares_and_translates() {
     for scenario in all() {
         let dir = std::env::temp_dir().join(format!("bumbledb-scenario-check-{}", scenario.name));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
         let schema = (scenario.schema)();
-        let db = Db::create(&dir, (scenario.descriptor)()).expect("create");
+        let db = Db::create(&dir, (scenario.descriptor)())
+            .expect("create")
+            .expect("accepted");
         for sq in (scenario.queries)() {
             match &sq.surface {
                 Surface::Query(query) => check_query(scenario.name, &sq, *query, schema, &db),
@@ -214,7 +215,6 @@ fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
     let scenario = super::rings::scenario_smoke();
     let dir = std::env::temp_dir().join("bumbledb-scenario-trace-drain");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
     let stores = super::load::load(&dir, &scenario, 7).expect("load smoke stores");
     let sq = ScenarioQuery {
         name: "bogus",

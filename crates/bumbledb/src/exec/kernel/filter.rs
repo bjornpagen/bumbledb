@@ -158,9 +158,7 @@ pub fn filter_duration_range_u64(
     unsafe { out.set_len(write) };
     crate::obs::event(
         crate::obs::names::KERNEL_FILTER,
-        crate::obs::Category::Execute,
-        starts.len() as u64,
-        (write - start) as u64,
+        crate::obs::TraceArgs::Pair(starts.len() as u64, (write - start) as u64),
     );
 }
 
@@ -205,9 +203,7 @@ fn push_matching<T, const N: usize>(
     unsafe { out.set_len(write) };
     crate::obs::event(
         crate::obs::names::KERNEL_FILTER,
-        crate::obs::Category::Execute,
-        col.len() as u64,
-        (write - start) as u64,
+        crate::obs::TraceArgs::Pair(col.len() as u64, (write - start) as u64),
     );
 }
 
@@ -249,9 +245,7 @@ fn push_matching_pair(
     unsafe { out.set_len(write) };
     crate::obs::event(
         crate::obs::names::KERNEL_FILTER,
-        crate::obs::Category::Execute,
-        starts.len() as u64,
-        (write - start) as u64,
+        crate::obs::TraceArgs::Pair(starts.len() as u64, (write - start) as u64),
     );
 }
 

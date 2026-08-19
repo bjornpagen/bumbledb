@@ -32,9 +32,9 @@ use bumbledb::{
     Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
-    i64n, Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array,
+    Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
 };
-use napi::{sys, Unknown, ValueType as JsType};
+use napi::{Unknown, ValueType as JsType, sys};
 
 use crate::tags;
 
@@ -209,7 +209,7 @@ fn schema_value(
                 return Err(mismatch("string"));
             }
             let text = unsafe { value.cast::<String>()? };
-            Ok(Value::String(text.into_bytes().into_boxed_slice()))
+            Ok(Value::String(text.into()))
         }
         ValueType::FixedBytes { len } => {
             if got != JsType::Object {
@@ -224,8 +224,7 @@ fn schema_value(
             }
             Ok(Value::FixedBytes(bytes.to_vec().into_boxed_slice()))
         }
-        ValueType::Interval { element }
-        | ValueType::FixedInterval { element, .. } => {
+        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
             if got != JsType::Object {
                 return Err(mismatch("{ start, end } bigint pair"));
             }
@@ -386,9 +385,7 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
             "i64 value",
         )?)),
         tags::value::STRING => Ok(Value::String(
-            req::<String>(obj, "value", "string value")?
-                .into_bytes()
-                .into_boxed_slice(),
+            req::<String>(obj, "value", "string value")?.into(),
         )),
         tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
             req::<Uint8Array>(obj, "value", "fixedBytes value")?
@@ -977,7 +974,7 @@ fn rec_rule_in(obj: &Object) -> napi::Result<RecRule> {
     let rule = rule_in(obj)?;
     if !rule.negated.is_empty() {
         return Err(err(
-            "bumbledb marshal: negation is unrepresentable in rec".to_string(),
+            "bumbledb marshal: negation is unrepresentable in rec".to_string()
         ));
     }
     Ok(RecRule {
@@ -991,7 +988,7 @@ fn rec_step_in(obj: &Object, rec_id: InteriorId) -> napi::Result<RecStep> {
     let rule = rule_in(obj)?;
     if !rule.negated.is_empty() {
         return Err(err(
-            "bumbledb marshal: negation is unrepresentable in rec".to_string(),
+            "bumbledb marshal: negation is unrepresentable in rec".to_string()
         ));
     }
     let mut self_bindings = None;
@@ -1000,7 +997,7 @@ fn rec_step_in(obj: &Object, rec_id: InteriorId) -> napi::Result<RecStep> {
         if atom.source.interior() == Some(rec_id) {
             if self_bindings.is_some() {
                 return Err(err(
-                    "bumbledb marshal: rec step has two self-atoms".to_string(),
+                    "bumbledb marshal: rec step has two self-atoms".to_string()
                 ));
             }
             self_bindings = Some(atom.bindings);
@@ -1010,9 +1007,8 @@ fn rec_step_in(obj: &Object, rec_id: InteriorId) -> napi::Result<RecStep> {
     }
     Ok(RecStep {
         finds: vars_only(&rule.finds)?,
-        self_bindings: self_bindings.ok_or_else(|| {
-            err("bumbledb marshal: rec step missing self-atom".to_string())
-        })?,
+        self_bindings: self_bindings
+            .ok_or_else(|| err("bumbledb marshal: rec step missing self-atom".to_string()))?,
         atoms,
         conditions: rule.conditions,
     })
@@ -1067,19 +1063,21 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
     let kind: String = req(obj, "kind", "query")?;
     let interiors = interiors_in(obj)?;
     match kind.as_str() {
-        tags::query::CQ => Ok(Query::Cq {
+        tags::query::CQ => Ok(Query {
             interiors,
             head: head_in(obj, "query head")?,
             rules: rules_in(obj, "rules", "query rules")?,
+            rec: None,
         }),
         tags::query::REACH => {
             let rec_obj: Object = req(obj, "rec", "reach query")?;
-            let rec_id = InteriorId(u32::try_from(interiors.len()).map_err(|_| {
-                err("bumbledb marshal: interior count".to_string())
-            })?);
-            Ok(Query::Reach {
+            let rec_id = InteriorId(
+                u32::try_from(interiors.len())
+                    .map_err(|_| err("bumbledb marshal: interior count".to_string()))?,
+            );
+            Ok(Query {
                 interiors,
-                rec: rec_in(&rec_obj, rec_id)?,
+                rec: Some(rec_in(&rec_obj, rec_id)?),
                 head: head_in(obj, "query head")?,
                 rules: rules_in(obj, "rules", "query rules")?,
             })
@@ -1119,11 +1117,7 @@ impl ValueOut {
             Value::Bool(v) => Self::Bool(v),
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
-            Value::String(bytes) => {
-                Self::Text(String::from_utf8(bytes.into_vec()).map_err(|_| {
-                    err("bumbledb: non-UTF-8 stored string bytes (corruption at rest)".into())
-                })?)
-            }
+            Value::String(text) => Self::Text(text.into()),
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
                 start: interval.start(),
@@ -1509,45 +1503,45 @@ impl ToNapiValue for ExplainWire {
 /// One rule's stats object ([`ExplainWire`]'s per-rule section).
 fn explain_rule_out(env: &Env, rule: bumbledb::RuleStats) -> napi::Result<Object<'_>> {
     let mut rule_obj = Object::new(env)?;
-    rule_obj.set("distinctBindings", rule.distinct_bindings)?;
-    rule_obj.set("emitted", rule.emitted)?;
-    rule_obj.set("absorbed", rule.absorbed)?;
-    if let Some(probe) = rule.key_probe {
+    rule_obj.set("distinctBindings", rule.distinct_bindings())?;
+    rule_obj.set("emitted", rule.emitted())?;
+    rule_obj.set("absorbed", rule.absorbed())?;
+    if let Some(probe) = rule.key_probe() {
         let mut obj = Object::new(env)?;
         obj.set("hit", probe.hit)?;
         rule_obj.set("keyProbe", obj)?;
     }
-    let mut nodes = Vec::with_capacity(rule.nodes.len());
-    for node in rule.nodes {
-        nodes.push(explain_node_out(env, node)?);
+    let mut nodes = Vec::with_capacity(rule.nodes().len());
+    for node in rule.nodes() {
+        nodes.push(explain_node_out(env, node.clone())?);
     }
     rule_obj.set("nodes", nodes)?;
-    let mut eliminated = Vec::with_capacity(rule.eliminated.len());
-    for entry in rule.eliminated {
+    let mut eliminated = Vec::with_capacity(rule.eliminated().len());
+    for entry in rule.eliminated() {
         let mut obj = Object::new(env)?;
         obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation)?;
+        obj.set("relation", entry.relation.clone())?;
         obj.set("statementId", u32::from(entry.statement.0))?;
-        obj.set("rendered", entry.rendered)?;
+        obj.set("rendered", entry.rendered.clone())?;
         eliminated.push(obj);
     }
     rule_obj.set("eliminated", eliminated)?;
-    let mut folded = Vec::with_capacity(rule.folded.len());
-    for entry in rule.folded {
+    let mut folded = Vec::with_capacity(rule.folded().len());
+    for entry in rule.folded() {
         let mut obj = Object::new(env)?;
         obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation)?;
-        obj.set("rendered", entry.rendered)?;
-        obj.set("handles", entry.handles)?;
+        obj.set("relation", entry.relation.clone())?;
+        obj.set("rendered", entry.rendered.clone())?;
+        obj.set("handles", entry.handles.clone())?;
         obj.set("negated", entry.negated)?;
         folded.push(obj);
     }
     rule_obj.set("folded", folded)?;
-    let mut pinned = Vec::with_capacity(rule.pinned.len());
-    for entry in rule.pinned {
+    let mut pinned = Vec::with_capacity(rule.pinned().len());
+    for entry in rule.pinned() {
         let mut obj = Object::new(env)?;
         obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation)?;
+        obj.set("relation", entry.relation.clone())?;
         obj.set("rows", entry.rows)?;
         if let Some(survivors) = entry.survivors {
             obj.set("survivors", survivors)?;

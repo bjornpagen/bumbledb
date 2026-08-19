@@ -1,5 +1,5 @@
-use crate::error::{Error, OverflowKind, Result};
-use crate::exec::sink::{Acc, AggregateSink, SinkSpec, i64_to_word};
+use crate::error::{Error, FindIndex, OverflowKind, Result};
+use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
@@ -36,9 +36,9 @@ impl AggregateSink {
         // pooled radix over the start words stays unearned until a
         // bench shows this pass dominating a profile (t5_pack_key's
         // 35µs/44% warm-finalize share is the standing candidate).
-        if self.pack_slot().is_some() {
-            let live = self.group_count();
-            for claims in &mut self.pack_claims[..live] {
+        let live = self.group_count();
+        if let GroupState::Pack { claims, .. } = &mut self.group_state {
+            for claims in &mut claims[..live] {
                 claims.sort_unstable_by_key(|&[start, _]| start);
             }
         }
@@ -78,29 +78,31 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        if self.pack_slot().is_some() {
-            return self.emit_pack_group(key, group_idx, answer_scratch, emit);
-        }
-        let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
-        answer_scratch.clear();
-        let mut key_cursor = 0;
-        let mut acc_cursor = 0;
-        for (find_idx, find) in self.finds.iter().enumerate() {
-            match find {
-                SinkSpec::Var { width, .. } => {
-                    answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
-                    key_cursor += width;
+        match &self.group_state {
+            GroupState::Pack { .. } => self.emit_pack_group(key, group_idx, answer_scratch, emit),
+            GroupState::Folds { accs, n_aggs } => {
+                let accs = &accs[group_idx * n_aggs..(group_idx + 1) * n_aggs];
+                answer_scratch.clear();
+                let mut key_cursor = 0;
+                let mut acc_cursor = 0;
+                for (find_idx, find) in self.finds.iter().enumerate() {
+                    match find {
+                        SinkSpec::Var { width, .. } => {
+                            answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
+                            key_cursor += width;
+                        }
+                        SinkSpec::Agg(_) => {
+                            answer_scratch.push(Self::finalize_acc(accs[acc_cursor], find_idx)?);
+                            acc_cursor += 1;
+                        }
+                        SinkSpec::Pack { .. } => {
+                            unreachable!("validated: relation-shaped terms and folds never mix")
+                        }
+                    }
                 }
-                SinkSpec::Agg(_) => {
-                    answer_scratch.push(Self::finalize_acc(accs[acc_cursor], find_idx)?);
-                    acc_cursor += 1;
-                }
-                SinkSpec::Pack { .. } => {
-                    unreachable!("validated: relation-shaped terms and folds never mix")
-                }
+                emit(answer_scratch)
             }
         }
-        emit(answer_scratch)
     }
 
     /// One Pack group's emission: the sweep's maximal-run continuation
@@ -157,7 +159,10 @@ impl AggregateSink {
             }
         }
 
-        let claims = self.pack_claims[group_idx]
+        let GroupState::Pack { claims, .. } = &self.group_state else {
+            unreachable!("emit_pack_group is the Pack arm");
+        };
+        let claims = claims[group_idx]
             .iter()
             .map(|&[start, end]| Ok((start, end, ())));
         sweep(
@@ -175,11 +180,16 @@ impl AggregateSink {
     /// Range-checks and word-encodes one accumulator.
     fn finalize_acc(acc: Acc, find_idx: usize) -> Result<u64> {
         match acc {
-            Acc::SumSigned(total) => i64::try_from(total)
-                .map(i64_to_word)
-                .map_err(|_| Error::Overflow(OverflowKind::Aggregate { find: find_idx })),
-            Acc::SumUnsigned(total) => u64::try_from(total)
-                .map_err(|_| Error::Overflow(OverflowKind::Aggregate { find: find_idx })),
+            Acc::SumSigned(total) => i64::try_from(total).map(i64_to_word).map_err(|_| {
+                Error::Overflow(OverflowKind::Aggregate {
+                    find: FindIndex(find_idx),
+                })
+            }),
+            Acc::SumUnsigned(total) => u64::try_from(total).map_err(|_| {
+                Error::Overflow(OverflowKind::Aggregate {
+                    find: FindIndex(find_idx),
+                })
+            }),
             Acc::Min(word) | Acc::Max(word) | Acc::Count(word) => Ok(word),
         }
     }

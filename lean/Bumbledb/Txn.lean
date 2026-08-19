@@ -31,9 +31,9 @@ world moved after the snapshot) as distinct constructors — the type IS
 the theorem "generation conflict ≠ dependency failure"
 (`witness_conflict_distinct` states the never-converts contract
 anyway; it is the API's contract sentence). Bridge:
-`crate::error::Error::CommitRejected` vs `Error::GenerationMoved`;
+`crate::error::Admission::Rejected` vs `ConditionalWrite::Moved`;
 `api/db/write.rs::write_witnessed`'s one integer compare inside the
-critical section (the `api/db/write.rs::GenerationMoved` return) is
+critical section (the `ConditionalWrite::Moved` return) is
 `writeWitnessed`'s one `if`.
 
 ## Bridges
@@ -53,12 +53,30 @@ critical section (the `api/db/write.rs::GenerationMoved` return) is
   statement order — the 2026-07-14 vocabulary campaign's enforcement
   stage, discharged (the delta-restriction ledger rows,
   `Bridge.lean`).
+* `completeKeyViolations` / `completeStatementViolations` — the
+  instance-dependent complete roster over a raw `Instance` (L1): the
+  citation sets restricted to statements that still depend on
+  ordinary facts. Closed functionality, closed-to-closed containment,
+  and closed-constant capacity are `Statement.closedConstant` and
+  are skipped. On a theory whose validation witness holds, the roster
+  agrees with the citation sets phase for phase (L2,
+  `completeKeyViolations_eq`, `completeStatementViolations_eq`).
+  `obligation_partition` (L4) composes that witness with an empty
+  complete roster into `holds`. On a theory whose validation witness
+  holds, that composition is the roster bridge (L3):
+  `completeRosterPasses T I ↔ holds T I`
+  (`completeRosterPasses_iff_holds`). Complete admission of a raw
+  instance is the two-phase judge over that instance
+  (`completeAdmission`, `completeAdmissionB`): the incremental
+  lane's closed-source fence is a delta-restriction artifact and
+  does not apply — generated worlds including closed-source
+  containments run through `judgeB` on the candidate (L5).
 * `writeFrom` / `writeWitnessed` — `api/db/write.rs`'s `Db::write_from`
-  / `Db::write` sharing one body; the witness is the `Snapshot` the
+  / `Db::write` sharing one body; the witness is the `ReadInstance` the
   host read its premises on, consumed for its generation alone.
-* `Snapshot.read` — `api/db/snapshot.rs`: every read runs against one
+* `Snapshot.read` — `api/db/read_instance.rs`: every read runs against one
   parked read transaction, one generation.
-* `scanLoad` — cookbook recipe 28 (migration is ETL): `Snapshot::scan`
+* `scanLoad` — cookbook recipe 28 (migration is ETL): `ReadInstance::scan`
   exports under one generation, the host transforms, `Db::write` +
   `insert` imports under the new theory's ordinary final-state judgment.
 
@@ -292,6 +310,115 @@ theorem statement_phase_all {T : Theory} {I : Instance}
   | true => exact absurd ⟨st, hv, hkey⟩ hk
   | false => exact ⟨hv, hkey⟩
 
+/-! ## The complete roster (instance-lifetime L1, L2, L3, L4, L5) -/
+
+/-- **L1.** The complete key roster over a raw instance: violated KEY
+statements whose truth still depends on ordinary facts. Closed
+functionality is validation-discharged (`Statement.closedConstant`)
+and is not a member. Bridge: the engine's complete key phase walks
+ordinary facts only — sealed collisions never reach this set. -/
+def completeKeyViolations (T : Theory) (I : Instance) : Set Statement :=
+  fun st => st ∈ keyViolationSet T I ∧ st.closedConstant T = false
+
+/-- **L1.** The complete statement roster over a raw instance: violated
+non-key statements that still depend on ordinary facts. Closed-to-closed
+containment and closed-constant capacity are skipped. A closed source
+against an ordinary target stays in — that obligation is
+instance-dependent. -/
+def completeStatementViolations (T : Theory) (I : Instance) :
+    Set Statement :=
+  fun st => st ∈ statementViolationSet T I ∧ st.closedConstant T = false
+
+/-- **L2.** On a theory whose closed-constant obligations hold, the
+complete key roster IS the key-phase citation set — validation has
+already emptied the closed-functionality slice the roster skips. -/
+theorem completeKeyViolations_eq {T : Theory} (I : Instance)
+    (hv : closedConstantHolds T) :
+    completeKeyViolations T I = keyViolationSet T I := by
+  funext st
+  apply propext
+  constructor
+  · intro h
+    exact h.1
+  · intro h
+    refine ⟨h, ?_⟩
+    cases hc : st.closedConstant T with
+    | false => rfl
+    | true => exact absurd (hv st h.1.1 hc I) h.1.2
+
+/-- **L2.** On a theory whose closed-constant obligations hold, the
+complete statement roster IS the statement-phase citation set. -/
+theorem completeStatementViolations_eq {T : Theory} (I : Instance)
+    (hv : closedConstantHolds T) :
+    completeStatementViolations T I = statementViolationSet T I := by
+  funext st
+  apply propext
+  constructor
+  · intro h
+    exact h.1
+  · intro h
+    refine ⟨h, ?_⟩
+    cases hc : st.closedConstant T with
+    | false => rfl
+    | true => exact absurd (hv st h.1.1 hc I) h.1.2
+
+/-- **L4. Obligation partition.** Schema validation's closed-constant
+refutations plus the instance-dependent complete roster compose to
+`holds`. Without this, a roster that skips validation-discharged
+obligations cannot recover `holds` — and the roster bridge
+(`completeRosterPasses_iff_holds`) cannot be proved. -/
+theorem obligation_partition (T : Theory) (I : Instance) :
+    holds T I ↔
+      closedConstantHolds T ∧
+      (∀ st, st ∉ completeKeyViolations T I) ∧
+      (∀ st, st ∉ completeStatementViolations T I) := by
+  constructor
+  · intro hh
+    refine ⟨closedConstantHolds_of_holds hh, ?_, ?_⟩
+    · intro st hst
+      exact (holds_iff_no_violation T I).mp hh st hst.1.1
+    · intro st hst
+      exact (holds_iff_no_violation T I).mp hh st hst.1.1
+  · intro ⟨hv, hk, hs⟩ st hmem
+    by_cases hc : st.closedConstant T = true
+    · exact hv st hmem hc I
+    · have hcf : st.closedConstant T = false := by
+        cases hcc : st.closedConstant T with
+        | false => rfl
+        | true => exact absurd hcc hc
+      cases hk' : st.isKey with
+      | true =>
+        exact Classical.byContradiction fun hj =>
+          hk st ⟨⟨⟨hmem, hj⟩, hk'⟩, hcf⟩
+      | false =>
+        exact Classical.byContradiction fun hj =>
+          hs st ⟨⟨⟨hmem, hj⟩, hk'⟩, hcf⟩
+
+/-- **L3.** The complete roster passes when every instance-dependent
+obligation holds: both complete-roster citation sets are empty.
+Closed-constant statements are not members — validation discharges
+them. Bridge: `schema.rs::CompleteObligations` over a sealed
+`Schema`. -/
+def completeRosterPasses (T : Theory) (I : Instance) : Prop :=
+  (∀ st, st ∉ completeKeyViolations T I) ∧
+  (∀ st, st ∉ completeStatementViolations T I)
+
+/-- **L3. The roster bridge.** On a validated schema — a theory whose
+closed-constant obligations hold — the complete roster passing is
+exactly `holds`. This is `obligation_partition` with the validation
+witness spent as a hypothesis; the countermodel
+`obligation_partition_needs_validation` shows the hypothesis cannot
+be dropped. -/
+theorem completeRosterPasses_iff_holds {T : Theory} (I : Instance)
+    (hv : closedConstantHolds T) :
+    completeRosterPasses T I ↔ holds T I := by
+  have hpart := obligation_partition T I
+  constructor
+  · intro hp
+    exact hpart.mpr ⟨hv, hp⟩
+  · intro hh
+    exact (hpart.mp hh).2
+
 /-! ## Judgment — the two-constructor sum -/
 
 /-- The commit verdict: a two-constructor sum, accepted state or
@@ -322,7 +449,16 @@ noncomputable def judge (T : Theory) (I : Instance) :
   if h : holds T I then .ok ⟨I, h⟩
   else if (keyViolationSet T I).Nonempty then
     .reject (keyViolationSet T I)
-  else .reject (statementViolationSet T I)
+  else     .reject (statementViolationSet T I)
+
+/-- **L5.** Complete initial admission of a raw instance is the
+two-phase judge over that instance — no pre-state, no delta. The
+incremental lane fences closed-source containments because its
+engine verdict is delta-restricted; the complete verdict is not,
+so those fences lift. `judgeB` stays the differential oracle.
+Bridge: the complete-admission conformance lane
+(`lean/conformance/cases/complete-*.json`). -/
+noncomputable abbrev completeAdmission := judge
 
 /-- `judge` on a modeling instance: accept, and the accepted state IS
 the judged instance. -/
@@ -363,7 +499,7 @@ accept iff `holds`, else the failing phase's complete violation set.
 Bridge: `Db::write`'s commit phase (`storage/commit`): phases 1–2
 apply the plan (and seal any key violations — the key phase), phase 3
 is `judge` over the `FinalStateView` (the statement phase), and a
-rejection aborts the whole transaction (`Error::CommitRejected`). -/
+rejection aborts the whole transaction (`Admission::Rejected`). -/
 noncomputable def commit {T : Theory} (s : State T) (d : Delta) :
     Result (State T) (Set Statement) :=
   judge T (apply s d)
@@ -513,7 +649,7 @@ deriving DecidableEq
 /-- A snapshot: one committed state plus the generation it was taken
 at. Every read runs against exactly this pair — and `Snapshot.read`
 consults only the state, never the tag (`read_ignores_generation`).
-Bridge: `api/db/snapshot.rs::Snapshot` (one parked read transaction);
+Bridge: `api/db.rs::ReadInstance` (one parked read transaction);
 the generation is consumed internally by `write_from`, never exposed. -/
 structure Snapshot (T : Theory) where
   /-- The state the snapshot observes. -/
@@ -525,7 +661,7 @@ structure Snapshot (T : Theory) where
 are DISTINCT constructors — the two failure kinds cannot be confused
 by type, which IS the theorem "generation conflict ≠ dependency
 failure" (`witness_conflict_distinct` states the contract sentence
-anyway). Bridge: `Error::CommitRejected` vs `Error::GenerationMoved`
+anyway). Bridge: `Admission::Rejected` vs `ConditionalWrite::Moved`
 in `api/db/write.rs`. -/
 inductive WriteResult (T : Theory) where
   /-- The transaction committed. -/
@@ -548,7 +684,7 @@ def liftCommit {T : Theory} :
 /-- **The one write body** (`api/db/write.rs::write_witnessed`): an
 optional witnessed generation is the only difference between `write`
 and `writeFrom` — one compare against the head's generation, before
-anything is judged (the `api/db/write.rs::GenerationMoved` arm:
+anything is judged (the `api/db/write.rs::ConditionalWrite::Moved` arm:
 "Mismatch aborts before any page is touched"). `head` is the current
 committed state and its
 generation; the delta is whatever the host derived from its witness
@@ -606,8 +742,8 @@ stated anyway because it is the API's contract sentence: a
 `violations` verdict proves the generation matched AND the delta's
 final state was judged wanting; a `generationMoved` verdict proves the
 generation moved and carries exactly the two tags — nothing was
-judged. Bridge: `Error::GenerationMoved { witnessed, current }` vs
-`Error::CommitRejected`; the one-compare in `write_witnessed`. -/
+judged. Bridge: `ConditionalWrite::Moved { witnessed, current }` vs
+`Admission::Rejected`; the one-compare in `write_witnessed`. -/
 theorem witness_conflict_distinct {T : Theory}
     (head witness : Snapshot T) (d : Delta) :
     (∀ V, writeFrom head witness d = .violations V →
@@ -657,7 +793,7 @@ def Snapshot.read {T : Theory} (snap : Snapshot T)
 signature-level fact: `Snapshot.read` factors through `state.inst`
 and nothing else, so two snapshots of one state answer identically,
 whatever else the database has done since. Bridge:
-`api/db/snapshot.rs` (one parked read transaction, one generation);
+`api/db/read_instance.rs` (one parked read transaction, one generation);
 `70-api.md`'s snapshot isolation. -/
 theorem snapshot_reads_one_state {T : Theory}
     (snap₁ snap₂ : Snapshot T) (h : snap₁.state = snap₂.state)
@@ -733,7 +869,7 @@ theorem transform_id (I : Instance) : transform some I = I := by
 
 /-- The ETL loop, abstractly (`scanLoad`): export every fact of the
 source state, transform, bulk-judge the whole load under the TARGET
-theory — one final-state judgment. Bridge: recipe 28 — `Snapshot::scan`
+theory — one final-state judgment. Bridge: recipe 28 — `ReadInstance::scan`
 under one generation, the host transform, `Db::write` + `insert` into
 the new store; the fingerprint refusal (`SchemaMismatch`) is what
 forces this loop to be the only migration. -/

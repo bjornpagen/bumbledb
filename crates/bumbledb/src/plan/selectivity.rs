@@ -8,6 +8,10 @@
 //! decisions either way.
 
 use crate::image::ColumnWidth;
+use crate::image::ImageBind;
+#[cfg(test)]
+use crate::image::LmdbImages;
+#[cfg(test)]
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;
@@ -16,8 +20,8 @@ use crate::plan::fj::OccBind;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::Schema;
+use crate::storage::catalog::CatalogRead;
 use crate::storage::env::ReadTxn;
-use crate::storage::read;
 use bumbledb_theory::schema::FieldId;
 
 /// A relation's row count for planning. A closed relation's rows ARE
@@ -35,15 +39,21 @@ pub(crate) fn relation_rows(
     schema: &Schema,
     relation: bumbledb_theory::schema::RelationId,
 ) -> crate::error::Result<u64> {
+    relation_rows_on(&txn.catalog(), schema, relation)
+}
+
+pub(crate) fn relation_rows_on<C: CatalogRead>(
+    catalog: &C,
+    schema: &Schema,
+    relation: bumbledb_theory::schema::RelationId,
+) -> crate::error::Result<u64> {
     let rows = match schema.relation(relation).body().closed_rows() {
         Some(rows) => u64::try_from(rows.len()).expect("bounded extension"),
-        None => read::row_count(txn, relation)?,
+        None => catalog.row_count(relation)?,
     };
     crate::obs::event(
         crate::obs::names::RELATION_ROWS,
-        crate::obs::Category::Storage,
-        u64::from(relation.0),
-        rows,
+        crate::obs::TraceArgs::Pair(u64::from(relation.0), rows),
     );
     Ok(rows)
 }
@@ -116,9 +126,26 @@ pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
 ///
 /// `Lmdb` from counter reads (containment target row counts, the cache
 /// peek).
+#[cfg(test)]
 pub(crate) fn occurrence_stats(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
+    schema: &Schema,
+    occurrence: &Occurrence,
+    rows: u64,
+) -> crate::error::Result<OccStats> {
+    occurrence_stats_on(
+        &txn.catalog(),
+        &LmdbImages::new(txn, cache),
+        schema,
+        occurrence,
+        rows,
+    )
+}
+
+pub(crate) fn occurrence_stats_on<C: CatalogRead, I: ImageBind>(
+    catalog: &C,
+    images: &I,
     schema: &Schema,
     occurrence: &Occurrence,
     rows: u64,
@@ -158,14 +185,21 @@ pub(crate) fn occurrence_stats(
             })
         }
         OccBind::Edb(relation) => {
-            let image = cache.peek(txn, schema, relation)?;
+            let image = images.peek(schema, relation)?;
             let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
             for (field, var) in &occurrence.vars {
-                let distinct = distinct_of(txn, schema, relation, *field, image.as_deref(), rows)?;
+                let distinct =
+                    distinct_of(catalog, schema, relation, *field, image.as_deref(), rows)?;
                 var_distincts.push((*var, distinct));
             }
-            let estimate =
-                occurrence_estimate(txn, schema, occurrence, relation, image.as_deref(), rows)?;
+            let estimate = occurrence_estimate(
+                catalog,
+                schema,
+                occurrence,
+                relation,
+                image.as_deref(),
+                rows,
+            )?;
             Ok(OccStats {
                 occ_id: occurrence.occ_id,
                 rows: estimate,
@@ -187,8 +221,8 @@ fn selection_matches(value: &Const) -> u64 {
 }
 
 /// The estimate half of [`occurrence_stats`].
-fn occurrence_estimate(
-    txn: &ReadTxn<'_>,
+fn occurrence_estimate<C: CatalogRead>(
+    catalog: &C,
     schema: &Schema,
     occurrence: &Occurrence,
     relation: bumbledb_theory::schema::RelationId,
@@ -198,7 +232,7 @@ fn occurrence_estimate(
     let (selections, residuals) = split_filters(&occurrence.filters);
     let mut estimate = rows;
     for selection in &selections {
-        let distinct = distinct_of(txn, schema, relation, selection.field, image, rows)?;
+        let distinct = distinct_of(catalog, schema, relation, selection.field, image, rows)?;
         estimate =
             (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
@@ -231,7 +265,7 @@ fn occurrence_estimate(
             value,
         } = residual
         {
-            let distinct = distinct_of(txn, schema, relation, *field, image, rows)?;
+            let distinct = distinct_of(catalog, schema, relation, field.field(), image, rows)?;
             estimate = (estimate.saturating_mul(selection_matches(value)) / distinct.max(1)).max(1);
             continue;
         }
@@ -241,10 +275,10 @@ fn occurrence_estimate(
             value: Const::Word(_),
         } = residual
         {
-            if folded_range_fields.contains(field) {
+            if folded_range_fields.contains(&field.field()) {
                 continue;
             }
-            folded_range_fields.push(*field);
+            folded_range_fields.push(field.field());
             estimate = (estimate / RANGE_KEEP_DEN).max(1);
             continue;
         }
@@ -300,8 +334,8 @@ fn occurrence_estimate(
 ///    count (the containment domain), an enum by its variant list, a
 ///    bool by 2;
 /// 4. the documented floor.
-fn distinct_of(
-    txn: &ReadTxn<'_>,
+fn distinct_of<C: CatalogRead>(
+    catalog: &C,
     schema: &Schema,
     relation: bumbledb_theory::schema::RelationId,
     field: FieldId,
@@ -345,7 +379,7 @@ fn distinct_of(
         let statement = schema.containment(*id);
         if statement.source.projection.as_ref() == [field] && statement.source.selection.is_empty()
         {
-            let target_rows = relation_rows(txn, schema, statement.target.relation)?;
+            let target_rows = relation_rows_on(catalog, schema, statement.target.relation)?;
             containment_bound =
                 Some(containment_bound.map_or(target_rows, |bound| bound.min(target_rows)));
         }
@@ -371,9 +405,7 @@ fn distinct_of(
 fn ladder_event(rung: u64, distinct: u64) {
     crate::obs::event(
         crate::obs::names::DISTINCT_LADDER,
-        crate::obs::Category::Prepare,
-        rung,
-        distinct,
+        crate::obs::TraceArgs::Pair(rung, distinct),
     );
 }
 
@@ -485,7 +517,7 @@ mod tests {
             delta.insert(&view, S, &bytes).expect("insert");
         }
         drop(view);
-        commit(delta, env).expect("commit");
+        commit(delta, env).expect("commit").expect("admitted");
     }
 
     fn eq_on(field: u16, occ_relation: RelationId) -> Occurrence {
@@ -495,7 +527,7 @@ mod tests {
             role: Role::Positive,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
-                field: FieldId(field),
+                field: FieldId(field).into(),
                 op: WordCmp::Eq,
                 value: Const::Param(crate::ir::ParamId(0)),
             }],
@@ -571,17 +603,17 @@ mod tests {
         let mut occ = eq_on(0, R);
         occ.filters = vec![
             FilterPredicate::Compare {
-                field: FieldId(0),
+                field: FieldId(0).into(),
                 op: WordCmp::Ge,
                 value: Const::Param(crate::ir::ParamId(0)),
             },
             FilterPredicate::Compare {
-                field: FieldId(0),
+                field: FieldId(0).into(),
                 op: WordCmp::Lt,
                 value: Const::Param(crate::ir::ParamId(1)),
             },
             FilterPredicate::Compare {
-                field: FieldId(1),
+                field: FieldId(1).into(),
                 op: WordCmp::Ne,
                 value: Const::Param(crate::ir::ParamId(2)),
             },
@@ -592,8 +624,8 @@ mod tests {
         assert_eq!(est, 100, "two ranges keep 1/16; Ne keeps everything");
 
         occ.filters = vec![FilterPredicate::FieldsCompare {
-            left: FieldId(0),
-            right: FieldId(1),
+            left: FieldId(0).into(),
+            right: FieldId(1).into(),
             op: WordCmp::Eq,
         }];
         let est = occurrence_stats(&txn, &cache, &schema, &occ, 128)
@@ -627,12 +659,12 @@ mod tests {
         let mut occ = eq_on(0, R);
         occ.filters = vec![
             FilterPredicate::Compare {
-                field: FieldId(0),
+                field: FieldId(0).into(),
                 op: WordCmp::Ge,
                 value: Const::Word(8),
             },
             FilterPredicate::Compare {
-                field: FieldId(0),
+                field: FieldId(0).into(),
                 op: WordCmp::Le,
                 value: Const::Word(19),
             },
@@ -644,7 +676,7 @@ mod tests {
 
         // Distinct fields are distinct summaries and still compose.
         occ.filters.push(FilterPredicate::Compare {
-            field: FieldId(2),
+            field: FieldId(2).into(),
             op: WordCmp::Lt,
             value: Const::Word(3),
         });
@@ -731,7 +763,7 @@ mod tests {
             put(SRC, &[ValueRef::U64(i), ValueRef::U64(i)]);
         }
         drop(view);
-        commit(delta, &env).expect("commit");
+        commit(delta, &env).expect("commit").expect("admitted");
 
         let txn = env.read_txn().expect("txn");
         let cache = ImageCache::new(&schema);
@@ -781,7 +813,7 @@ mod tests {
 
         let mut occ = eq_on(0, R);
         occ.filters = vec![FilterPredicate::Compare {
-            field: FieldId(0),
+            field: FieldId(0).into(),
             op: WordCmp::Eq,
             value: Const::ParamSet(crate::ir::ParamId(0)),
         }];
@@ -896,7 +928,7 @@ mod tests {
             }
         }
         drop(view);
-        commit(delta, env).expect("commit");
+        commit(delta, env).expect("commit").expect("admitted");
     }
 
     fn cyclic_query(finds: Vec<crate::ir::FindTerm>) -> crate::ir::Query {
@@ -940,8 +972,13 @@ mod tests {
     ) -> crate::api::stats::ExecutionStats {
         use crate::api::prepared::{PreparedQuery, prepare};
 
-        let mut prepared: PreparedQuery<'_, ()> =
-            prepare(txn, cache, schema, &cyclic_query(finds)).expect("prepare cycle");
+        let mut prepared: PreparedQuery<()> = prepare(
+            txn,
+            cache,
+            std::sync::Arc::new(schema.clone()),
+            &cyclic_query(finds),
+        )
+        .expect("prepare cycle");
         prepared.profile(txn, cache, &[]).expect("profile cycle").1
     }
 
@@ -979,7 +1016,7 @@ mod tests {
             ],
         );
         let full_pairs: Vec<_> = full_stats.rules()[0]
-            .nodes
+            .nodes()
             .iter()
             .map(|node| (node.estimate, node.actual))
             .collect();
@@ -991,7 +1028,7 @@ mod tests {
 
         let narrow_stats = cyclic_profile(&txn, &cache, &schema, vec![FindTerm::Var(VarId(0))]);
         let narrow_pairs: Vec<_> = narrow_stats.rules()[0]
-            .nodes
+            .nodes()
             .iter()
             .map(|node| (node.estimate, node.actual))
             .collect();
@@ -1001,7 +1038,7 @@ mod tests {
             "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a count-accuracy bound"
         );
         assert_eq!(
-            narrow_stats.rules()[0].absorbed,
+            narrow_stats.rules()[0].absorbed(),
             21,
             "24 emits collapse to 3 x rows"
         );

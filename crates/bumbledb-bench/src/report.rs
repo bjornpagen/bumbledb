@@ -94,10 +94,10 @@ pub struct AllocReport {
 impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
     fn from(s: bumbledb::alloc_counter::AllocSnapshot) -> Self {
         Self {
-            allocs: s.allocs,
-            deallocs: s.deallocs,
-            alloc_bytes: s.alloc_bytes,
-            dealloc_bytes: s.dealloc_bytes,
+            allocs: s.window.allocs,
+            deallocs: s.window.deallocs,
+            alloc_bytes: s.window.alloc_bytes,
+            dealloc_bytes: s.window.dealloc_bytes,
         }
     }
 }

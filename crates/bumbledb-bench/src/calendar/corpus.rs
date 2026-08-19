@@ -67,10 +67,13 @@ pub fn load_bumbledb_sized(
     let start = Instant::now();
     let mut facts = 0u64;
     for rel in ORDER {
-        facts += db.write(|tx| {
-            tx.insert_dyn(rel, relation_rows_sized(cfg, sizes, rel))
-                .map(|r| r.changed)
-        })?;
+        facts += db
+            .write(|tx| {
+                tx.insert_dyn(rel, relation_rows_sized(cfg, sizes, rel))
+                    .map(bumbledb::MutationReport::changed)
+            })?
+            .unwrap()
+            .value;
     }
     let mut pending: Vec<(RelationId, Vec<Value>)> = Vec::with_capacity(CHUNK + 4);
     for (attendances, claim) in du_cluster_rows(cfg, sizes) {
@@ -99,7 +102,8 @@ fn flush(
             tx.insert_dyn(*rel, [row])?;
         }
         Ok(())
-    })?;
+    })?
+    .unwrap();
     let facts = pending.len() as u64;
     pending.clear();
     Ok(facts)

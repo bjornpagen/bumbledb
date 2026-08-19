@@ -158,9 +158,10 @@ pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
         db.write(|tx| {
             tx.insert_dyn(rel, relation_rows(mass, rel))
-                .map(|r| r.changed)
+                .map(bumbledb::MutationReport::changed)
         })
-        .map_err(|e| format!("windowed load: {e:?}"))?;
+        .map_err(|e| format!("windowed load: {e:?}"))?
+        .unwrap();
     }
     Ok(())
 }

@@ -181,7 +181,7 @@ fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
     let derived = (0..DEFAULT_RANDOM_CASES)
         .filter(|_| {
             let query = crate::querygen::random_query(&mut rng, cfg);
-            !query.interiors().is_empty() || matches!(query, bumbledb::Query::Reach { .. })
+            !query.interiors().is_empty() || matches!(query, bumbledb::Query { .. })
         })
         .count();
     assert!(

@@ -21,7 +21,9 @@ use crate::corpus_gen::Rng;
 #[test]
 fn the_hash_model_matches_the_engine() {
     let dir = TempDir::new("sweep-pin");
-    let db = Db::ephemeral(dir.path(), world::WindowedWorld).expect("ephemeral");
+    let db = Db::ephemeral(dir.path(), world::WindowedWorld)
+        .expect("ephemeral")
+        .expect("accepted");
     load(&db, Mass::unit()).expect("load the unit mass");
     pin_hash_model(&db).expect("the sweep's hash model matches the engine");
 }

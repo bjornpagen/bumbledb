@@ -97,9 +97,7 @@ impl Colt {
 
         crate::obs::event(
             crate::obs::names::COLT_FORCE,
-            crate::obs::Category::Execute,
-            count,
-            u64::from(m.len),
+            crate::obs::TraceArgs::Pair(count, u64::from(m.len)),
         );
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
@@ -125,9 +123,7 @@ impl Colt {
     /// interchangeable forced state: the occurrence-dedup precondition.
     #[must_use]
     pub fn same_shape(&self, other: &Colt) -> bool {
-        self.selection_levels == other.selection_levels
-            && self.selection_kinds == other.selection_kinds
-            && self.schema_columns == other.schema_columns
+        self.selection_kinds == other.selection_kinds && self.schema_columns == other.schema_columns
     }
 
     /// Clones `other`'s bound state — view and every pool, forced maps
@@ -154,7 +150,6 @@ impl Colt {
         self.dense.clone_from(&other.dense);
         self.union_mark = other.union_mark;
         self.start = other.start;
-        self.select_state = other.select_state;
         self.epoch = (self.epoch + 1) % 128;
         old
     }

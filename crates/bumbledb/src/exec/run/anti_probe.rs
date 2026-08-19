@@ -17,7 +17,8 @@
 //! the semantic and the compaction machinery, not a common function.
 
 use super::{
-    AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source, grow_scratch, word_base,
+    AntiProbeForm, AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source,
+    grow_scratch, word_base,
 };
 
 /// Evaluates one node's anti-probes over the current survivor set,
@@ -88,147 +89,149 @@ pub(super) fn anti_probe_pass<C: Counters>(
         // fact — one batch-constant answer, no per-element work. A
         // membership-carrying gate reads its point variables per
         // element, so it takes the per-element scan below instead.
-        if spec.key_words == 0 && spec.point_parts.is_empty() {
-            let start = colts[spec.occ].start();
-            let hit = colts[spec.occ].key_count(start).magnitude() > 0;
-            for _ in 0..n {
-                counters.anti_probe(node_idx, hit);
-            }
-            if hit {
-                survivors.clear();
-            }
-            continue;
-        }
-        if spec.key_words == 0 {
-            // Keyless membership gate: per element, "some fact's interval
-            // holds the bound point" rejects — the existential reading
-            // over the negated occurrence (docs/architecture/
-            // 20-query-ir.md: a binding position matches iff the value
-            // satisfies it for SOME fact / ANY element).
-            let start = colts[spec.occ].start();
-            grow_scratch(mask, n);
-            for k in 0..n {
-                let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                point_checks.clear();
-                for &(start_col, end_col, src) in point_sources.iter() {
-                    let point = match src {
-                        Source::Batch(base) => entry_keys[element * arity + base],
-                        Source::Slot(slot) => read_slot(element, slot),
-                    };
-                    point_checks.push((start_col, end_col, point));
+        match &spec.form {
+            AntiProbeForm::Gate if spec.point_parts.is_empty() => {
+                let start = colts[spec.occ].start();
+                let hit = colts[spec.occ].key_count(start).magnitude() > 0;
+                for _ in 0..n {
+                    counters.anti_probe(node_idx, hit);
                 }
-                let hit = colts[spec.occ].any_position_matches(start, point_checks);
-                counters.anti_probe(node_idx, hit);
-                mask[k] = u8::from(!hit);
+                if hit {
+                    survivors.clear();
+                }
             }
-            crate::exec::kernel::compact_u32_by_mask(survivors, mask);
-            continue;
-        }
-
-        // Resolve key sources against the runtime cover choice, one per
-        // key word: a variable bound by this node's cover reads the
-        // batch key words at its word base; everything else reads its
-        // (already bound) outer slots.
-        let sources = &mut anti_sources[a_idx];
-        sources.clear();
-        for (var, slot, width) in &spec.parts {
-            match word_base(cover_vars, *var, width_of) {
-                Some(base) => {
-                    for offset in 0..*width {
-                        sources.push(Source::Batch(base + offset));
+            AntiProbeForm::Gate => {
+                // Keyless membership gate: per element, "some fact's interval
+                // holds the bound point" rejects — the existential reading
+                // over the negated occurrence (docs/architecture/
+                // 20-query-ir.md: a binding position matches iff the value
+                // satisfies it for SOME fact / ANY element).
+                let start = colts[spec.occ].start();
+                grow_scratch(mask, n);
+                for k in 0..n {
+                    let element = usize::try_from(survivors[k]).expect("batch fits usize");
+                    point_checks.clear();
+                    for &(start_col, end_col, src) in point_sources.iter() {
+                        let point = match src {
+                            Source::Batch(base) => entry_keys[element * arity + base],
+                            Source::Slot(slot) => read_slot(element, slot),
+                        };
+                        point_checks.push((start_col, end_col, point));
+                    }
+                    let hit = colts[spec.occ].any_position_matches(start, point_checks);
+                    counters.anti_probe(node_idx, hit);
+                    mask[k] = u8::from(!hit);
+                }
+                crate::exec::kernel::compact_u32_by_mask(survivors, mask);
+            }
+            AntiProbeForm::Keyed { parts, key_words } => {
+                // Resolve key sources against the runtime cover choice, one per
+                // key word: a variable bound by this node's cover reads the
+                // batch key words at its word base; everything else reads its
+                // (already bound) outer slots.
+                let sources = &mut anti_sources[a_idx];
+                sources.clear();
+                for (var, slot, width) in parts {
+                    match word_base(cover_vars, *var, width_of) {
+                        Some(base) => {
+                            for offset in 0..*width {
+                                sources.push(Source::Batch(base + offset));
+                            }
+                        }
+                        None => {
+                            for offset in 0..*width {
+                                sources.push(Source::Slot(slot + offset));
+                            }
+                        }
                     }
                 }
-                None => {
-                    for offset in 0..*width {
-                        sources.push(Source::Slot(slot + offset));
-                    }
-                }
-            }
-        }
-        debug_assert_eq!(sources.len(), spec.key_words, "key widths add up");
+                debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");
 
-        counters.phase_start(node_idx, JoinPhase::Force);
-        let start = colts[spec.occ].start();
-        colts[spec.occ].ensure_forced(start, 0);
-        counters.phase_end(node_idx, JoinPhase::Force);
+                counters.phase_start(node_idx, JoinPhase::Force);
+                let start = colts[spec.occ].start();
+                colts[spec.occ].ensure_forced(start, 0);
+                counters.phase_end(node_idx, JoinPhase::Force);
 
-        // Phase 1: gather every probe key and compute every hash — pure
-        // ALU, no bucket loads.
-        counters.phase_start(node_idx, JoinPhase::Hash);
-        let kw = spec.key_words;
-        grow_scratch(hashes, n);
-        {
-            let probe_keys = &mut probe_keys[..n * kw];
-            let hashes = &mut hashes[..n];
-            for (k, &e) in survivors.iter().enumerate() {
-                let element = usize::try_from(e).expect("batch fits usize");
-                for (word, source) in sources.iter().enumerate() {
-                    probe_keys[k * kw + word] = match *source {
-                        Source::Batch(col) => entry_keys[element * arity + col],
-                        Source::Slot(slot) => read_slot(element, slot),
-                    };
-                }
-                hashes[k] = crate::exec::colt::hash_key(&probe_keys[k * kw..(k + 1) * kw]);
-            }
-        }
-        counters.phase_end(node_idx, JoinPhase::Hash);
-
-        // Phase 1.5: the prefetch pass, width-floor gated — see run_node.
-        if n >= PREFETCH_WIDTH_FLOOR {
-            crate::obs::event(
-                crate::obs::names::PREFETCH_PASS,
-                crate::obs::Category::Execute,
-                n as u64,
-                colts[spec.occ].probe_footprint_bytes() as u64,
-            );
-            for &hash in &hashes[..n] {
-                colts[spec.occ].prefetch_bucket(start, hash);
-            }
-        }
-
-        // Phase 2: bucket loads, then kernel compaction with the
-        // inverted keep condition — an anti-probe HIT is rejection. The
-        // `get` confirms existence at the single probe level; the child
-        // cursor is consumed only by a membership-carrying probe, whose
-        // rejection needs a fact matching keys AND every membership —
-        // the existential reading over the negated occurrence's facts
-        // (docs/architecture/20-query-ir.md: the term matches iff SOME
-        // fact / ANY element satisfies it).
-        counters.phase_start(node_idx, JoinPhase::Probe);
-        grow_scratch(mask, n);
-        {
-            let probe_keys = &probe_keys[..n * kw];
-            let hashes = &hashes[..n];
-            let mask = &mut mask[..n];
-            for k in 0..n {
-                let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                let child = colts[spec.occ].get_prehashed(
-                    start,
-                    0,
-                    &probe_keys[k * kw..(k + 1) * kw],
-                    hashes[k],
-                );
-                let hit = match child {
-                    None => false,
-                    Some(_) if spec.point_parts.is_empty() => true,
-                    Some(child) => {
-                        point_checks.clear();
-                        for &(start_col, end_col, src) in point_sources.iter() {
-                            let point = match src {
-                                Source::Batch(base) => entry_keys[element * arity + base],
+                // Phase 1: gather every probe key and compute every hash — pure
+                // ALU, no bucket loads.
+                counters.phase_start(node_idx, JoinPhase::Hash);
+                let kw = key_words.get();
+                grow_scratch(hashes, n);
+                {
+                    let probe_keys = &mut probe_keys[..n * kw];
+                    let hashes = &mut hashes[..n];
+                    for (k, &e) in survivors.iter().enumerate() {
+                        let element = usize::try_from(e).expect("batch fits usize");
+                        for (word, source) in sources.iter().enumerate() {
+                            probe_keys[k * kw + word] = match *source {
+                                Source::Batch(col) => entry_keys[element * arity + col],
                                 Source::Slot(slot) => read_slot(element, slot),
                             };
-                            point_checks.push((start_col, end_col, point));
                         }
-                        colts[spec.occ].any_position_matches(child, point_checks)
+                        hashes[k] = crate::exec::colt::hash_key(&probe_keys[k * kw..(k + 1) * kw]);
                     }
-                };
-                counters.anti_probe(node_idx, hit);
-                mask[k] = u8::from(!hit);
+                }
+                counters.phase_end(node_idx, JoinPhase::Hash);
+
+                // Phase 1.5: the prefetch pass, width-floor gated — see run_node.
+                if n >= PREFETCH_WIDTH_FLOOR {
+                    crate::obs::event(
+                        crate::obs::names::PREFETCH_PASS,
+                        crate::obs::TraceArgs::Pair(
+                            n as u64,
+                            colts[spec.occ].probe_footprint_bytes() as u64,
+                        ),
+                    );
+                    for &hash in &hashes[..n] {
+                        colts[spec.occ].prefetch_bucket(start, hash);
+                    }
+                }
+
+                // Phase 2: bucket loads, then kernel compaction with the
+                // inverted keep condition — an anti-probe HIT is rejection. The
+                // `get` confirms existence at the single probe level; the child
+                // cursor is consumed only by a membership-carrying probe, whose
+                // rejection needs a fact matching keys AND every membership —
+                // the existential reading over the negated occurrence's facts
+                // (docs/architecture/20-query-ir.md: the term matches iff SOME
+                // fact / ANY element satisfies it).
+                counters.phase_start(node_idx, JoinPhase::Probe);
+                grow_scratch(mask, n);
+                {
+                    let probe_keys = &probe_keys[..n * kw];
+                    let hashes = &hashes[..n];
+                    let mask = &mut mask[..n];
+                    for k in 0..n {
+                        let element = usize::try_from(survivors[k]).expect("batch fits usize");
+                        let child = colts[spec.occ].get_prehashed(
+                            start,
+                            0,
+                            &probe_keys[k * kw..(k + 1) * kw],
+                            hashes[k],
+                        );
+                        let hit = match child {
+                            None => false,
+                            Some(_) if spec.point_parts.is_empty() => true,
+                            Some(child) => {
+                                point_checks.clear();
+                                for &(start_col, end_col, src) in point_sources.iter() {
+                                    let point = match src {
+                                        Source::Batch(base) => entry_keys[element * arity + base],
+                                        Source::Slot(slot) => read_slot(element, slot),
+                                    };
+                                    point_checks.push((start_col, end_col, point));
+                                }
+                                colts[spec.occ].any_position_matches(child, point_checks)
+                            }
+                        };
+                        counters.anti_probe(node_idx, hit);
+                        mask[k] = u8::from(!hit);
+                    }
+                }
+                crate::exec::kernel::compact_u32_by_mask(survivors, mask);
+                counters.phase_end(node_idx, JoinPhase::Probe);
             }
         }
-        crate::exec::kernel::compact_u32_by_mask(survivors, mask);
-        counters.phase_end(node_idx, JoinPhase::Probe);
         // No trailing `hashes.clear()`: the length IS the high-water
         // mark — clearing it here would make the caller's next
         // `grow_scratch` re-memset from zero, defeating the contract.

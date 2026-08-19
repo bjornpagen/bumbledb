@@ -21,10 +21,9 @@ compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-pro
 pub mod allen;
 pub mod interval;
 pub mod schema;
-pub mod type_desc;
 pub mod value;
 
 pub use allen::{AllenMask, Basic};
 pub use interval::Interval;
-pub use type_desc::TypeDesc;
+pub use schema::ValueType;
 pub use value::Value;
