@@ -30,13 +30,13 @@ impl ImageCache {
     /// generation extends it ([`crate::image::append`]) or carries it
     /// forward untouched, per [`ImageCache::get_or_build`]'s arms. The
     /// map drop only releases the map's reference — pinned readers keep
-    /// their images alive. Synthesized closed-relation images live in the
-    /// `closed` slot array, never in this generation-keyed map, and are
-    /// untouched by construction.
+    /// their images alive. Closed (and frozen) slots are
+    /// `RelationSlot::Closed` / `RelationSlot::Frozen` and are
+    /// untouched by matching `RelationSlot::Ordinary` only.
     ///
-    /// This maintains the lineage law (`CacheInner::map`): a surviving
-    /// below-newest entry has seen only delete-free, tail-only commits
-    /// since its generation.
+    /// This maintains the lineage law ([`super::GenerationCache`]): a
+    /// surviving below-newest entry has seen only delete-free, tail-only
+    /// commits since its generation.
     ///
     /// # Panics
     ///
@@ -52,18 +52,21 @@ impl ImageCache {
             floors.is_sorted_by_key(|&(rel, _)| rel),
             "the delta's ordered pass sorts floors"
         );
-        let keep = |key: &(RelationId, GenerationId), cached: &Cached| {
-            let (rel, entry_gen) = *key;
+        let keep = |rel: RelationId, entry_gen: GenerationId, cached: &Cached| {
             entry_gen >= generation
                 || (dirty.binary_search(&rel).is_err()
                     && floors
                         .binary_search_by_key(&rel, |&(r, _)| r)
                         .map_or(true, |idx| floors[idx].1 >= cached.row_id_next))
         };
-        let mut inner = self.inner.lock().expect("cache mutex");
-        let before = inner.map.len();
-        inner.map.retain(|key, cached| keep(key, cached));
-        self.counters.evicted((before - inner.map.len()) as u64);
-        inner.newest = inner.newest.max(generation);
+        for (rel, cache) in self.ordinary_slots() {
+            let mut inner = cache.lock();
+            let before = inner.map.len();
+            inner
+                .map
+                .retain(|&entry_gen, cached| keep(rel, entry_gen, cached));
+            self.counters.evicted((before - inner.map.len()) as u64);
+            inner.newest = inner.newest.max(generation);
+        }
     }
 }

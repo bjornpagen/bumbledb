@@ -1,25 +1,34 @@
 //! Resident-image observability (feature `trace`).
 
-use super::ImageCache;
+use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
     /// Resident images and their total slab bytes, right now (feature
-    /// `trace`; computed under the map lock). Synthesized closed-relation
-    /// images count once each from first touch — they live outside the
-    /// generation map and never leave.
+    /// `trace`; computed under each ordinary slot's lock). Synthesized
+    /// closed-relation images count once each from first touch — they
+    /// live in [`RelationSlot::Closed`] and never leave.
     #[must_use]
     pub fn resident(&self) -> (u64, u64) {
-        let inner = self.inner.lock().expect("cache mutex");
-        let mut images = inner.map.len() as u64;
-        let mut bytes: u64 = inner
-            .map
-            .values()
-            .map(|cached| cached.image.byte_size() as u64)
-            .sum();
-        drop(inner);
-        for image in self.closed.values().filter_map(std::sync::OnceLock::get) {
-            images += 1;
-            bytes += image.byte_size() as u64;
+        let mut images = 0;
+        let mut bytes = 0;
+        for slot in self.slots.iter() {
+            match slot {
+                RelationSlot::Closed(slot) | RelationSlot::Frozen(slot) => {
+                    if let Some(image) = slot.get() {
+                        images += 1;
+                        bytes += image.byte_size() as u64;
+                    }
+                }
+                RelationSlot::Ordinary(cache) => {
+                    let inner = cache.lock();
+                    images += inner.map.len() as u64;
+                    bytes += inner
+                        .map
+                        .values()
+                        .map(|cached| cached.image.byte_size() as u64)
+                        .sum::<u64>();
+                }
+            }
         }
         (images, bytes)
     }

@@ -1,37 +1,22 @@
 //! Construction of an empty [`ImageCache`], shaped by its schema.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use crate::schema::Schema;
 
-use crate::schema::{RelationBody, Schema};
-use crate::storage::env::GenerationId;
-use bumbledb_theory::schema::RelationId;
-
-use super::{CacheInner, ImageCache, stats};
+use super::{ImageCache, RelationSlot, stats};
 
 impl ImageCache {
-    /// An empty cache for one schema: the generation map starts bare, and
-    /// closed relations get a `OnceLock` slot keyed by [`RelationId`].
+    /// An empty cache for one schema: one [`RelationSlot`] per relation,
+    /// parsed from the schema body once. Closed relations get a
+    /// generation-free `OnceLock`; ordinary relations get a
+    /// [`super::GenerationCache`].
     #[must_use]
     pub fn new(schema: &Schema) -> Self {
-        let closed = schema
-            .relations()
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, relation)| match relation.body() {
-                RelationBody::Closed { .. } => Some((
-                    RelationId(u32::try_from(idx).expect("relation count fits u32")),
-                    OnceLock::new(),
-                )),
-                RelationBody::Ordinary { .. } => None,
-            })
-            .collect();
         Self {
-            inner: Mutex::new(CacheInner {
-                map: HashMap::new(),
-                newest: GenerationId::initial(),
-            }),
-            closed,
+            slots: schema
+                .relations()
+                .iter()
+                .map(|relation| RelationSlot::for_store(relation.body()))
+                .collect(),
             counters: stats::CacheCounters::new(),
         }
     }

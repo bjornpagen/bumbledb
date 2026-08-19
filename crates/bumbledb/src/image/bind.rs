@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::RelationImage;
 use super::epoch::ViewEpoch;
 use crate::error::Result;
-use crate::image::cache::ImageCache;
+use crate::image::cache::{ImageCache, RelationSlot};
 use crate::schema::Schema;
 use crate::storage::catalog::LmdbReadCatalog;
 use crate::storage::env::ReadTxn;
@@ -76,19 +76,24 @@ impl<'txn, T: AsReadTxn> LmdbSource<'txn, T> {
 }
 
 impl<T: AsReadTxn> ImageBind for LmdbSource<'_, T> {
-    fn epoch(&self, schema: &Schema, relation: RelationId) -> Result<ViewEpoch> {
-        if schema.relation(relation).body().closed_rows().is_some() {
-            Ok(ViewEpoch::Closed)
-        } else {
-            Ok(ViewEpoch::Store(self.txn().generation()?))
+    fn epoch(&self, _schema: &Schema, relation: RelationId) -> Result<ViewEpoch> {
+        match self.cache.slot(relation) {
+            RelationSlot::Closed(_) => Ok(ViewEpoch::Closed),
+            RelationSlot::Ordinary(_) => Ok(ViewEpoch::Store(self.txn().generation()?)),
+            RelationSlot::Frozen(_) => {
+                unreachable!("store ImageCache never constructs Frozen slots")
+            }
         }
     }
 
     fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>> {
-        self.cache.get_or_build(self.txn(), schema, relation)
+        let epoch = self.epoch(schema, relation)?;
+        self.cache
+            .get_or_build_at(self.txn(), schema, relation, epoch)
     }
 
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>> {
-        self.cache.peek(self.txn(), schema, relation)
+        let epoch = self.epoch(schema, relation)?;
+        Ok(self.cache.peek_at(relation, epoch))
     }
 }

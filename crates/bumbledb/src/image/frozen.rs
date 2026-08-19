@@ -1,26 +1,23 @@
 //! Lazy frozen image slots: one [`OnceLock`] per relation, armed on first
 //! query that needs the image. Admission does not build images.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use super::bind::ImageBind;
+use super::cache::RelationSlot;
 use super::epoch::ViewEpoch;
 use super::{RelationImage, synthesize_closed};
 use crate::error::Result;
-use crate::schema::{RelationBody, Schema};
+use crate::schema::Schema;
 use crate::storage::catalog::FrozenCatalog;
 use bumbledb_theory::schema::RelationId;
 
-/// One relation's frozen image slot. Arms mirror [`ViewEpoch`] on a
-/// heap instance: store generations are unrepresentable here.
-enum FrozenSlot {
-    Closed(OnceLock<Arc<RelationImage>>),
-    Ordinary(OnceLock<Arc<RelationImage>>),
-}
-
-/// Per-relation slots for an admitted heap catalog.
+/// Per-relation slots for an admitted heap catalog. Same
+/// [`RelationSlot`] vocabulary as the store cache;
+/// [`RelationSlot::Ordinary`] is unrepresentable here — construction
+/// never builds that arm.
 pub(crate) struct FrozenImages {
-    slots: Box<[FrozenSlot]>,
+    slots: Box<[RelationSlot]>,
 }
 
 impl FrozenImages {
@@ -29,28 +26,31 @@ impl FrozenImages {
             slots: schema
                 .relations()
                 .iter()
-                .map(|relation| match relation.body() {
-                    RelationBody::Closed { .. } => FrozenSlot::Closed(OnceLock::new()),
-                    RelationBody::Ordinary { .. } => FrozenSlot::Ordinary(OnceLock::new()),
-                })
+                .map(|relation| RelationSlot::for_frozen(relation.body()))
                 .collect(),
         }
     }
 
-    fn slot(&self, relation: RelationId) -> &FrozenSlot {
+    fn slot(&self, relation: RelationId) -> &RelationSlot {
         &self.slots[relation.0 as usize]
     }
 
     pub(crate) fn epoch(&self, relation: RelationId) -> ViewEpoch {
         match self.slot(relation) {
-            FrozenSlot::Closed(_) => ViewEpoch::Closed,
-            FrozenSlot::Ordinary(_) => ViewEpoch::Frozen,
+            RelationSlot::Closed(_) => ViewEpoch::Closed,
+            RelationSlot::Frozen(_) => ViewEpoch::Frozen,
+            RelationSlot::Ordinary(_) => {
+                unreachable!("frozen source does not hold Ordinary(GenerationCache)")
+            }
         }
     }
 
     pub(crate) fn peek(&self, relation: RelationId) -> Option<Arc<RelationImage>> {
         match self.slot(relation) {
-            FrozenSlot::Closed(slot) | FrozenSlot::Ordinary(slot) => slot.get().map(Arc::clone),
+            RelationSlot::Closed(slot) | RelationSlot::Frozen(slot) => slot.get().map(Arc::clone),
+            RelationSlot::Ordinary(_) => {
+                unreachable!("frozen source does not hold Ordinary(GenerationCache)")
+            }
         }
     }
 
@@ -61,17 +61,20 @@ impl FrozenImages {
         relation: RelationId,
     ) -> Result<Arc<RelationImage>> {
         match self.slot(relation) {
-            FrozenSlot::Closed(slot) => {
+            RelationSlot::Closed(slot) => {
                 Ok(Arc::clone(slot.get_or_init(|| {
                     synthesize_closed(relation, schema.relation(relation))
                 })))
             }
-            FrozenSlot::Ordinary(slot) => {
+            RelationSlot::Frozen(slot) => {
                 if let Some(image) = slot.get() {
                     return Ok(Arc::clone(image));
                 }
                 let built = super::build(catalog, schema, relation)?;
                 Ok(Arc::clone(slot.get_or_init(|| built)))
+            }
+            RelationSlot::Ordinary(_) => {
+                unreachable!("frozen source does not hold Ordinary(GenerationCache)")
             }
         }
     }

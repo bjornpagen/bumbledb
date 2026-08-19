@@ -6,13 +6,17 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::error::{CorruptionError, Error, Result};
+use crate::image::ViewEpoch;
+#[cfg(test)]
+use crate::image::bind::{ImageBind, LmdbSource};
 use crate::image::{RelationImage, append, build, synthesize_closed};
-use crate::schema::{RelationBody, Schema};
+use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
+use crate::storage::env::GenerationId;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
 
-use super::{Cached, ImageCache};
+use super::{Cached, GenerationCache, ImageCache, RelationSlot};
 
 /// The relation's surviving append base, cloned out of the map under the
 /// probe lock: the immutable image and the append boundary
@@ -29,10 +33,14 @@ impl ImageCache {
     /// build may both build; insert-if-absent means the loser adopts the
     /// winner's `Arc` and drops its own (accepted waste, no latch).
     ///
+    /// The 3-argument form is the bind entry: [`LmdbSource`] mints the
+    /// [`ViewEpoch`] (SPINE-16) and [`Self::get_or_build_at`] matches the
+    /// slot. There is no schema-body match here.
+    ///
     /// A newest-generation miss consults the relation's **append base**
     /// first — the below-newest entry the last commits retained because
     /// they were delete-free for this relation (the lineage law,
-    /// `CacheInner::map`). Three arms, decided by the snapshot's row
+    /// [`GenerationCache`]). Three arms, decided by the snapshot's row
     /// count against the base's:
     /// - equal ⇒ **carry-forward**: the same immutable `Arc`, re-keyed at
     ///   the reader's generation (delete-free lineage + equal counts ⇒
@@ -45,7 +53,7 @@ impl ImageCache {
     ///
     /// EVERY insert — successor or full build — sweeps the relation's
     /// entries below its own generation in the same critical section
-    /// (the lineage law's corollary, `CacheInner::map`: no entry
+    /// (the lineage law's corollary, [`GenerationCache`]: no entry
     /// outlives the next insert above it, so a full build whose
     /// snapshot raced ahead of the commit epilogue's `advance`
     /// supersedes the base it never probed instead of stranding it
@@ -54,11 +62,10 @@ impl ImageCache {
     /// and never insert, though they may now hit a retained base at
     /// exactly their generation).
     ///
-    /// A **closed** relation branches before the generation map is ever
-    /// touched: its image is synthesized from the sealed extension — the
+    /// A **closed** slot synthesizes from the sealed extension — the
     /// theory is the storage, so there is no generation to key on, no
     /// LMDB read, no eviction. First touch builds into the relation's
-    /// `OnceLock` slot; every later reader clones the same `Arc` forever.
+    /// `OnceLock`; every later reader clones the same `Arc` forever.
     ///
     /// # Errors
     ///
@@ -68,27 +75,55 @@ impl ImageCache {
     /// # Panics
     ///
     /// Only on a poisoned cache mutex (a prior panic while holding it).
+    #[cfg(test)]
     pub fn get_or_build(
         &self,
         txn: &ReadTxn<'_>,
         schema: &Schema,
         rel: RelationId,
     ) -> Result<Arc<RelationImage>> {
-        match schema.relation(rel).body() {
-            RelationBody::Closed { .. } => {
-                let slot = self
-                    .closed
-                    .get(&rel)
-                    .expect("Closed body implies a closed cache slot");
-                return Ok(self.get_or_synthesize(schema, rel, slot));
+        LmdbSource::bind(txn, self).image(schema, rel)
+    }
+
+    /// Slot-dispatched read/build. Epochs arrive from [`LmdbSource`]
+    /// (ImageBind) — never re-derived from a raw txn.
+    pub(crate) fn get_or_build_at(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &Schema,
+        rel: RelationId,
+        epoch: ViewEpoch,
+    ) -> Result<Arc<RelationImage>> {
+        match (self.slot(rel), epoch) {
+            (RelationSlot::Closed(slot), ViewEpoch::Closed) => {
+                Ok(self.get_or_synthesize(schema, rel, slot))
             }
-            RelationBody::Ordinary { .. } => {}
+            (RelationSlot::Ordinary(cache), ViewEpoch::Store(generation)) => {
+                self.get_or_build_ordinary(txn, schema, rel, cache, generation)
+            }
+            (RelationSlot::Closed(_), _) => {
+                unreachable!("Closed slot carries no generation")
+            }
+            (RelationSlot::Frozen(_), _) => {
+                unreachable!("store ImageCache never constructs Frozen slots")
+            }
+            (RelationSlot::Ordinary(_), _) => {
+                unreachable!("store generation on a closed image is unrepresentable")
+            }
         }
-        let generation = txn.generation()?;
-        let key = (rel, generation);
+    }
+
+    fn get_or_build_ordinary(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &Schema,
+        rel: RelationId,
+        cache: &GenerationCache,
+        generation: GenerationId,
+    ) -> Result<Arc<RelationImage>> {
         let (newest, base) = {
-            let inner = self.inner.lock().expect("cache mutex");
-            if let Some(cached) = inner.map.get(&key) {
+            let inner = cache.lock();
+            if let Some(cached) = inner.map.get(&generation) {
                 self.counters.hit();
                 crate::obs::event(
                     crate::obs::names::CACHE_HIT,
@@ -98,15 +133,15 @@ impl ImageCache {
             }
             // The append-base probe (newest readers only — a stale reader
             // stays query-local and never inserts, so it never appends).
-            // A linear map walk, but the map is O(relations) by the
-            // lineage law's corollary, and this is still a panic-free
-            // map operation under the lock.
+            // A linear map walk, but the map is O(1) by the lineage law's
+            // corollary, and this is still a panic-free map operation
+            // under the lock.
             let base = (generation == inner.newest)
                 .then(|| {
                     inner
                         .map
                         .iter()
-                        .find(|((r, g), _)| *r == rel && *g < generation)
+                        .find(|&(&g, _)| g < generation)
                         .map(|(_, cached)| Base {
                             image: Arc::clone(&cached.image),
                             row_id_next: cached.row_id_next,
@@ -145,7 +180,7 @@ impl ImageCache {
             None => txn.catalog().row_id_high_water(rel)?,
         };
 
-        let mut inner = self.inner.lock().expect("cache mutex");
+        let mut inner = cache.lock();
         // Re-check under the insert lock: a commit may have advanced past
         // this generation between the first lock and here — inserting
         // against the stale `newest` would undo the advance one entry at
@@ -155,7 +190,7 @@ impl ImageCache {
         if generation < inner.newest {
             return Ok(image);
         }
-        match inner.map.entry(key) {
+        match inner.map.entry(generation) {
             std::collections::hash_map::Entry::Occupied(winner) => {
                 crate::obs::event(
                     crate::obs::names::CACHE_ADOPT,
@@ -179,7 +214,7 @@ impl ImageCache {
                 // monotone forever on a never-deleted relation; sweeping
                 // is always sound — map entries are pure caches, and
                 // pinned readers keep their `Arc`s.
-                inner.map.retain(|&(r, g), _| r != rel || g >= generation);
+                inner.map.retain(|&g, _| g >= generation);
                 Ok(image)
             }
         }

@@ -1,9 +1,16 @@
 # 08 — `ImageCache`: closed relations in a second map; the cache API keyed off raw txn generations
 
-- **Status:** **keep** — closed vs generation-keyed maps are
-  `ViewEpoch` arms. One `RelationSlot` would make store generations
-  representable on a closed image. Brooks: two maps are the coordinate
-  change, not a dual cache.
+- **Status:** **fixed this pass** — one `Box<[RelationSlot]>`
+  (`Closed(OnceLock)` | `Frozen(OnceLock)` | `Ordinary(GenerationCache)`),
+  indexed by `RelationId`. Schema-body match only at construction
+  (`RelationSlot::for_store` / `for_frozen`). `get_or_build_at` /
+  `peek_at` take `ViewEpoch` from `ImageBind`; `grep "txn.generation()"`
+  under `crates/bumbledb/src/image/` is empty. Lineage tests unchanged:
+  `closed_images_synthesize_once_and_survive_eviction`,
+  `advance_drops_dirty_relations_and_retains_the_rest`,
+  `an_untouched_relation_carries_the_same_arc_forward`,
+  `chained_insert_only_commits_append_once_and_match_a_full_rebuild`,
+  `an_epilogue_racing_full_build_supersedes_the_surviving_base`.
 - **Severity:** should-fix.
 - **Supersedes:** PROP-007, REP-09, SPINE-14, SPINE-15, SPINE-16.
 - **Adjudication (third pass): keep CONTESTED — owner ruling required.**
@@ -18,6 +25,10 @@
   partition stated twice. SPINE-16 (the cache API inventing epochs from a
   raw txn instead of receiving them from `ImageBind`) is untouched by the
   ruling either way and remains open.
+- **Owner ruling (this pass):** the filed fix proceeds; the keep-ruling
+  is overturned. A store generation on a closed image is unrepresentable
+  by the `Closed` arm. SPINE-16 lands with the slot table: `LmdbSource`
+  mints `ViewEpoch` from the slot and passes it in.
 
 ## Principle
 
