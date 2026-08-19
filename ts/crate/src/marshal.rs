@@ -327,6 +327,63 @@ pub(crate) fn fact_rows(
     Ok((rel, out))
 }
 
+/// A collection of dynamic fact rows in column-major order: one JS array
+/// per sealed field, every column the same length. Relation lookup and
+/// the field roster run once. Empty (every column length 0) is lawful.
+/// Ragged lengths and arity drift are refused before any row is built —
+/// the same parse-all-first contract as [`fact_rows`].
+pub(crate) fn fact_columns(
+    descriptor: &SchemaDescriptor,
+    relation: u32,
+    columns: &Array,
+) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
+    let rel = RelationId(relation);
+    let fields = sealed_fields(descriptor, rel)?;
+    let name = relation_name(descriptor, rel);
+    if columns.len() as usize != fields.len() {
+        return Err(err(format!(
+            "bumbledb marshal: relation `{name}`: expected {} columns, got {}",
+            fields.len(),
+            columns.len()
+        )));
+    }
+    if fields.is_empty() {
+        return Ok((rel, Vec::new()));
+    }
+    let mut cols = Vec::with_capacity(fields.len());
+    let mut row_count: Option<u32> = None;
+    for index in 0..columns.len() {
+        let column: Array = req_at(columns, index, &format!("relation `{name}` columns"))?;
+        match row_count {
+            None => row_count = Some(column.len()),
+            Some(expected) if column.len() != expected => {
+                let (field, _) = &fields[index as usize];
+                return Err(err(format!(
+                    "bumbledb marshal: relation `{name}`: column `{field}` has length {}, expected {expected}",
+                    column.len()
+                )));
+            }
+            Some(_) => {}
+        }
+        cols.push(column);
+    }
+    let n = row_count.unwrap_or(0);
+    let mut out = Vec::with_capacity(n as usize);
+    for row in 0..n {
+        let mut values = Vec::with_capacity(fields.len());
+        for (col_index, (field, expected)) in fields.iter().enumerate() {
+            let value = req_at::<Unknown>(
+                &cols[col_index],
+                row,
+                &format!("relation `{name}` column `{field}`"),
+            )?;
+            values.push(schema_value(expected, &value, &name, field.as_ref())?);
+        }
+        out.push(values);
+    }
+    Ok((rel, out))
+}
+
 fn one_fact_row(
     name: &str,
     fields: &[(Box<str>, ValueType)],

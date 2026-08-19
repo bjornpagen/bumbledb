@@ -176,12 +176,15 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 	test("the exclusive lock refuses a second process's open while held, and SIGKILL loses nothing committed", async function lockAndKill() {
 		const dir = path.join(tmpRoot, "held")
 		const { report, child } = await spawnChild("hold", dir)
-		/** The peekRunStore premise: a live worker in another process refuses this open. */
-		await assert.rejects(async function openHeld() {
-			await Db.open(dir, runStoreSchema)
-		}, "a store locked by a live worker in another process must refuse a second open")
-		child.kill("SIGKILL")
-		await waitExit(child)
+		try {
+			/** The peekRunStore premise: a live worker in another process refuses this open. */
+			await assert.rejects(async function openHeld() {
+				await Db.open(dir, runStoreSchema)
+			}, /another live handle holds this environment's lock/)
+		} finally {
+			child.kill("SIGKILL")
+			await waitExit(child)
+		}
 		/** Resume after a kill: everything committed survives, per-commit fsync. */
 		const db = await Db.open(dir, runStoreSchema)
 		assert.equal(db.scan(grp).length, report.grpRows)

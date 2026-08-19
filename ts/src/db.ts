@@ -36,7 +36,7 @@ import type { Exhumed } from "#exhume.ts"
 import { exhumeStore } from "#exhume.ts"
 import { rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
-import { factOf, handleOf, isFreshField, type KeyFact, keyRowOf, recordOf, rowOf } from "#marshal.ts"
+import { cellOf, factOf, handleOf, isFreshField, type KeyFact, keyRowOf, recordOf, rowOf } from "#marshal.ts"
 
 import type {
 	AdmitResult,
@@ -52,6 +52,7 @@ import type {
 	WireFreshRange,
 	Violation as WireViolation,
 	ViolationFact as WireViolationFact,
+	WireMutationReport,
 	WitnessHandle
 } from "#native.ts"
 import { bridged, bridgedAsync, errorFromThrow, native } from "#native.ts"
@@ -78,6 +79,66 @@ type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], An
 interface MutationReport {
 	readonly submitted: bigint
 	readonly changed: bigint
+}
+
+/**
+ * Column-major collection write: one array per declared field, every
+ * column the same length. The second transport of `load` / `insert` —
+ * objects and columns are two ways to spell the same batch.
+ */
+type ColumnBatch<R extends AnyRelation> = {
+	readonly [K in keyof Fact<R> & string]: readonly Fact<R>[K][]
+}
+
+type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>> | ColumnBatch<R>
+
+function isColumnBatch(value: object): boolean {
+	return !(Symbol.iterator in value)
+}
+
+function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FactValue[][] {
+	const rows: FactValue[][] = []
+	for (const fact of facts) {
+		rows.push(rowOf(relation.data, recordOf(fact)))
+	}
+	return rows
+}
+
+/**
+ * Lowers a column batch to per-field wire arrays in sealed field order.
+ * Allocates one array per field — never a JS array per row.
+ */
+function columnsOf(relation: AnyRelation, batch: object): FactValue[][] {
+	const record = recordOf(batch)
+	let count: number | undefined
+	return relation.data.fields.map(function marshalColumn(declared) {
+		const raw = record[declared.name]
+		if (!Array.isArray(raw)) {
+			throw errors.new(`relation ${relation.name}: column ${declared.name} is not an array`)
+		}
+		if (count === undefined) {
+			count = raw.length
+		} else if (raw.length !== count) {
+			throw errors.new(
+				`relation ${relation.name}: column ${declared.name} has length ${raw.length}, expected ${count}`
+			)
+		}
+		return raw.map(function marshalCell(value: unknown) {
+			return cellOf(`relation ${relation.name} field ${declared.name}`, declared.field, value)
+		})
+	})
+}
+
+function mutateCollection<R extends AnyRelation>(
+	relation: R,
+	facts: CollectionWrite<R>,
+	applyRows: (rows: readonly FactValue[][]) => WireMutationReport,
+	applyColumns: (columns: readonly FactValue[][]) => WireMutationReport
+): MutationReport {
+	const report = isColumnBatch(facts)
+		? applyColumns(columnsOf(relation, facts))
+		: applyRows(rowsOf(relation, facts as Iterable<Fact<R>>))
+	return Object.freeze({ submitted: report.submitted, changed: report.changed })
 }
 
 /**
@@ -372,7 +433,7 @@ interface WriteTx<Rels extends SchemaRelations> {
 	 * the in-memory final-state view. Every fact is complete — omitted
 	 * fresh cells are a type error; mint first with {@link WriteTx.reserve}.
 	 */
-	insert<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
+	insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
 	/**
 	 * Records a collection of deletes. Singleton is `[fact]`. Returns
 	 * how many facts were consumed and how many changed the view.
@@ -1046,6 +1107,95 @@ function catalogMethods<Rels extends SchemaRelations>(
 	return { scan, get, contains, execute, prepare }
 }
 
+function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation): RelationEntry {
+	const entry = tables.relations.get(relation.name)
+	if (entry === undefined || entry.member !== relation) {
+		throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
+	}
+	if (isClosedMember(relation)) {
+		throw errors.new(
+			`relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
+		)
+	}
+	return entry
+}
+
+function overlayMethods<Rels extends SchemaRelations>(
+	theory: Schema<Rels>,
+	tables: Tables,
+	assertLive: () => void,
+	reads: PointReads
+): Pick<WriteTx<Rels>, "contains" | "get"> {
+	function declaredKeyOf(relation: AnyRelation, statement: Statement): PrimaryKey {
+		const statementId = tables.statements.findIndex(function byIdentity(candidate) {
+			return "statement" in candidate && candidate.statement === statement
+		})
+		const entry = tables.statements[statementId]
+		if (entry === undefined) {
+			throw errors.new(
+				`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
+			)
+		}
+		if (entry.kind !== "functionality") {
+			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
+		}
+		if (entry.owner !== relation.name) {
+			throw errors.new(
+				`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
+			)
+		}
+		return Object.freeze({ statementId, projection: entry.projection })
+	}
+	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
+		assertLive()
+		const entry = ordinaryEntry(tables, theory, relation)
+		return reads.contains(entry.id, rowOf(relation.data, recordOf(fact)))
+	}
+	function readThroughKey<R extends MemberRelation<Rels>>(
+		relation: R,
+		entry: RelationEntry,
+		selected: PrimaryKey,
+		key: Readonly<Record<string, unknown>>
+	): Fact<R> | undefined {
+		const row = reads.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, key))
+		if (row === null) {
+			return undefined
+		}
+		return factOf(relation, row)
+	}
+	function get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
+	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
+		relation: R,
+		keyStatement: KeyStatement<R, P>,
+		key: DeclaredKeyFact<R, P>
+	): Fact<R> | undefined
+	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
+		relation: R,
+		keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
+		declaredKey?: DeclaredKeyFact<R, P>
+	): Fact<R> | undefined {
+		assertLive()
+		const entry = ordinaryEntry(tables, theory, relation)
+		return selectKeyRead(
+			keyOrStatement,
+			declaredKey,
+			function byStatement(statement, key) {
+				return readThroughKey(relation, entry, declaredKeyOf(relation, statement), recordOf(key))
+			},
+			function byPrimary(key) {
+				const primaryKey = entry.primaryKey
+				if (primaryKey === undefined) {
+					throw errors.new(
+						`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+					)
+				}
+				return readThroughKey(relation, entry, primaryKey, recordOf(key))
+			}
+		)
+	}
+	return { contains, get }
+}
+
 function createReadInstance<Rels extends SchemaRelations>(
 	nativeHandle: InstanceHandle,
 	theory: Schema<Rels>,
@@ -1393,29 +1543,31 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				})
 			}
 		})
-		function insert<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
+		function insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
 			assertLive()
-			const rows: FactValue[][] = []
-			for (const fact of facts) {
-				rows.push(rowOf(relation.data, recordOf(fact)))
-			}
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
-			const report = bridged("bumbledb tx insert", function record() {
-				return native.txInsert(txHandle, entry.id, rows)
-			})
-			return Object.freeze({ submitted: report.submitted, changed: report.changed })
+			return mutateCollection(
+				relation,
+				facts,
+				function applyRows(rows) {
+					return bridged("bumbledb tx insert", function record() {
+						return native.txInsert(txHandle, entry.id, rows)
+					})
+				},
+				function applyColumns(columns) {
+					return bridged("bumbledb tx insert", function recordColumns() {
+						return native.txInsertColumns(txHandle, entry.id, columns)
+					})
+				}
+			)
 		}
 		function remove<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
-			const rows: FactValue[][] = []
-			for (const fact of facts) {
-				rows.push(rowOf(relation.data, recordOf(fact)))
-			}
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
 			const report = bridged("bumbledb tx delete", function record() {
-				return native.txDelete(txHandle, entry.id, rows)
+				return native.txDelete(txHandle, entry.id, rowsOf(relation, facts))
 			})
 			return Object.freeze({ submitted: report.submitted, changed: report.changed })
 		}
@@ -1742,7 +1894,16 @@ interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
 }
 
 interface InstanceBuilder<Rels extends SchemaRelations> extends Disposable {
-	load<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
+	load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
+	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
+	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
+	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
+	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
+	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
+		relation: R,
+		keyStatement: KeyStatement<R, P>,
+		key: DeclaredKeyFact<R, P>
+	): Fact<R> | undefined
 	admit(): Promise<Admission<Rels, OwnedInstance<Rels>>>
 }
 
@@ -1823,24 +1984,74 @@ function wrapBuilder<Rels extends SchemaRelations>(
 ): InstanceBuilder<Rels> {
 	const rec = { handle: nativeHandle, theory, spent: false }
 	const tables = tablesFromTheory(theory)
+	function assertLive(): void {
+		if (rec.spent) {
+			throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
+		}
+	}
+	const overlay = overlayMethods(theory, tables, assertLive, {
+		contains(relationId, row) {
+			return bridged("bumbledb builder contains", function readContains() {
+				return native.instanceBuilderContains(nativeHandle, relationId, row)
+			})
+		},
+		get(relationId, statementId, key) {
+			return bridged("bumbledb builder get", function readGet() {
+				return native.instanceBuilderGet(nativeHandle, relationId, statementId, key)
+			})
+		}
+	})
 	const builder: InstanceBuilder<Rels> = Object.freeze({
-		load<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
-			if (rec.spent) {
-				throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
-			}
-			const entry = tables.relations.get(relation.name)
-			if (entry === undefined || entry.member !== relation) {
-				throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
-			}
-			const rows: FactValue[][] = []
-			for (const fact of facts) {
-				rows.push(rowOf(relation.data, recordOf(fact)))
-			}
-			const report = bridged("bumbledb builder load", function load() {
-				return native.instanceBuilderLoad(nativeHandle, entry.id, rows)
+		load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
+			assertLive()
+			const entry = ordinaryEntry(tables, theory, relation)
+			return mutateCollection(
+				relation,
+				facts,
+				function applyRows(rows) {
+					return bridged("bumbledb builder load", function loadRows() {
+						return native.instanceBuilderLoad(nativeHandle, entry.id, rows)
+					})
+				},
+				function applyColumns(columns) {
+					return bridged("bumbledb builder load", function loadColumns() {
+						return native.instanceBuilderLoadColumns(nativeHandle, entry.id, columns)
+					})
+				}
+			)
+		},
+		delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
+			assertLive()
+			const entry = ordinaryEntry(tables, theory, relation)
+			const report = bridged("bumbledb builder delete", function remove() {
+				return native.instanceBuilderDelete(nativeHandle, entry.id, rowsOf(relation, facts))
 			})
 			return Object.freeze({ submitted: report.submitted, changed: report.changed })
 		},
+		reserve<R extends MemberRelation<Rels>>(
+			relation: R,
+			field: FreshKeys<R> & string,
+			count: bigint
+		): FreshRange {
+			assertLive()
+			const entry = ordinaryEntry(tables, theory, relation)
+			const declared = relation.data.fields.find(function byName(candidate) {
+				return candidate.name === field
+			})
+			if (declared === undefined || !isFreshField(declared.field)) {
+				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
+			}
+			const fieldId = entry.fieldIds.get(field)
+			if (fieldId === undefined) {
+				throw errors.new(`bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`)
+			}
+			const range = bridged("bumbledb builder reserve", function mint() {
+				return native.instanceBuilderReserve(nativeHandle, entry.id, fieldId, count)
+			})
+			return freshRangeOf(range)
+		},
+		contains: overlay.contains,
+		get: overlay.get,
 		async admit(): Promise<Admission<Rels, OwnedInstance<Rels>>> {
 			if (rec.spent) {
 				throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
@@ -1958,6 +2169,7 @@ export type {
 	AbandonedArm,
 	Admission,
 	CapacityViolation,
+	ColumnBatch,
 	Committed,
 	ContainmentViolation,
 	DeclaredKeyFact,

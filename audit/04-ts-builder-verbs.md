@@ -1,6 +1,6 @@
 # 04 — The TS builder is load + admit only; the engine has the full verb set
 
-- **Status:** OPEN (verified 2026-08-19 ~17:00 EDT; the tree is hot).
+- **Status:** **fixed this pass** — `instanceBuilderDelete`/`Reserve`/`Contains`/`Get` plus column `load`/`txInsert`; spent-builder refusal before every native call; tests: `the surface is load, delete, reserve, contains, get, admit, dispose`, `a staged fact can be retracted before admit`, `a fresh range can be minted from TypeScript before admit`, `bulk load via columns allocates no per-row JS array`, `WriteTx.insert accepts the same column transport`, `a spent builder refuses every verb before the native call`
 - **Severity:** should-fix.
 - **Supersedes:** VER-07.
 

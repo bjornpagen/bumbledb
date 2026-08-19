@@ -549,6 +549,16 @@ interface Native {
 	 * is observed). Nothing is judged until commit; shape violations throw typed.
 	 */
 	txInsert(tx: TxHandle, relationId: number, rows: readonly (readonly FactValue[])[]): WireMutationReport
+	/**
+	 * Records a collection of inserts from per-column arrays in sealed
+	 * field order — the column transport, same parse-all-first batch as
+	 * {@link Native.txInsert}.
+	 */
+	txInsertColumns(
+		tx: TxHandle,
+		relationId: number,
+		columns: readonly (readonly FactValue[])[]
+	): WireMutationReport
 	/** Records a collection of deletes; returns the engine `{ submitted, changed }` report. */
 	txDelete(tx: TxHandle, relationId: number, rows: readonly (readonly FactValue[])[]): WireMutationReport
 	/**
@@ -592,6 +602,29 @@ interface Native {
 		relationId: number,
 		rows: readonly (readonly FactValue[])[]
 	): WireMutationReport
+	instanceBuilderLoadColumns(
+		builder: BuilderHandle,
+		relationId: number,
+		columns: readonly (readonly FactValue[])[]
+	): WireMutationReport
+	instanceBuilderDelete(
+		builder: BuilderHandle,
+		relationId: number,
+		rows: readonly (readonly FactValue[])[]
+	): WireMutationReport
+	instanceBuilderReserve(
+		builder: BuilderHandle,
+		relationId: number,
+		fieldId: number,
+		count: bigint
+	): WireFreshRange
+	instanceBuilderContains(builder: BuilderHandle, relationId: number, values: readonly FactValue[]): boolean
+	instanceBuilderGet(
+		builder: BuilderHandle,
+		relationId: number,
+		keyStatementId: number,
+		keyValues: readonly FactValue[]
+	): FactValue[] | null
 	instanceBuilderClose(builder: BuilderHandle): void
 	instanceBuilderAdmit(builder: BuilderHandle): Promise<AdmitResult>
 	ownedInstanceClose(instance: OwnedHandle): void
@@ -715,7 +748,8 @@ function bridged<T>(context: string, run: () => T): T {
 	try {
 		return run()
 	} catch (caught) {
-		throw errors.wrap(errorFromThrow(caught), context)
+		const inner = errorFromThrow(caught)
+		throw errors.wrap(inner, `${context}: ${inner.message}`)
 	}
 }
 
@@ -727,7 +761,8 @@ async function bridgedAsync<T>(context: string, run: () => Promise<T>): Promise<
 	try {
 		return await run()
 	} catch (caught) {
-		throw errors.wrap(errorFromThrow(caught), context)
+		const inner = errorFromThrow(caught)
+		throw errors.wrap(inner, `${context}: ${inner.message}`)
 	}
 }
 
