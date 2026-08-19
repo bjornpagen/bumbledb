@@ -187,14 +187,14 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		assert.equal(row.id, program)
 	})
 
-	test("the engine point-reads through the declared key statement underneath", function engineSide() {
+	test("the engine point-reads through the declared key statement underneath", async function engineSide() {
 		/**
 		 * Same theory, raw native store: the bridge's snapshotGet takes ANY
 		 * key statement id — the declared secondary key included — and the
 		 * SDK's typed keyed form rides exactly this read.
 		 */
 		const spec = lower(Theory)
-		const created = native.dbCreate(path.join(tmpRoot, "native"), spec)
+		const created = await native.dbCreate(path.join(tmpRoot, "native"), spec)
 		assert.equal(created.tag, "accepted", "native create succeeds")
 		const handle = created.db
 		const manifest = native.dbManifest(handle)

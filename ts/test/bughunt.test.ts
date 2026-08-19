@@ -482,8 +482,8 @@ describe("native handle lifecycle probes", function nativeSuite() {
 	const NativeKind = relation("NKind", { id: u64.fresh, note: str })
 	const NativeTheory = schema("NativeHunt", { NKind: NativeKind }, [])
 
-	test("nested write and spent-handle refusals are typed", function lifecycle() {
-		const opened = native.dbCreate(path.join(tmpRoot, "native"), lower(NativeTheory))
+	test("nested write and spent-handle refusals are typed", async function lifecycle() {
+		const opened = await native.dbCreate(path.join(tmpRoot, "native"), lower(NativeTheory))
 		assert.equal(opened.tag, "accepted")
 		const handle = opened.db
 		let captured: TxHandle | undefined
@@ -509,8 +509,8 @@ describe("native handle lifecycle probes", function nativeSuite() {
 		}, /closed db/)
 	})
 
-	test("an instance handle is invalid after its callback returns", function instanceLifecycle() {
-		const opened = native.dbCreate(path.join(tmpRoot, "native-snap"), lower(NativeTheory))
+	test("an instance handle is invalid after its callback returns", async function instanceLifecycle() {
+		const opened = await native.dbCreate(path.join(tmpRoot, "native-snap"), lower(NativeTheory))
 		assert.equal(opened.tag, "accepted")
 		const handle = opened.db
 		let leaked: InstanceHandle | undefined

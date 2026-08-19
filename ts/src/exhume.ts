@@ -35,7 +35,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { FactValue, Manifest } from "#native.ts"
-import { bridged, native } from "#native.ts"
+import { bridged, bridgedAsync, native } from "#native.ts"
 import type { ValueTypeSpec } from "#spec.ts"
 
 /**
@@ -180,8 +180,8 @@ function descriptorOf(manifest: Manifest): ExhumedDescriptor {
  * exclusive lock deterministically (R12), so the path is reusable the
  * moment the scope exits.
  */
-function exhumeStore(canonical: string): Exhumed {
-	const outcome = bridged(`exhume bumbledb store at ${canonical}`, function callExhume() {
+async function exhumeStore(canonical: string): Promise<Exhumed> {
+	const outcome = await bridgedAsync(`exhume bumbledb store at ${canonical}`, function callExhume() {
 		return native.dbExhume(canonical)
 	})
 	if (!outcome.ok) {

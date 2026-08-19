@@ -7,7 +7,10 @@
 //! inside `Db::read` / `Db::write` on the JavaScript thread. Instance and
 //! transaction handles are raw pointers valid only while `alive` is set —
 //! they are never transmuted to `'static` and never parked on a worker.
-//! `InstanceBuilder::admit` is the surviving async native task (`Send`).
+//! Control-plane work (`create` / `open` / `fromInstance` / `exhume` /
+//! `admit`) is one temporal shape: every `async` SDK method is a napi
+//! `AsyncTask`. An owned instance holds `Arc<OwnedInstance>` plus a lease
+//! flag so dispose-during-publish is a typed refusal, not a race.
 //!
 //! # Error taxonomy
 //!
@@ -88,6 +91,17 @@ fn abort_sentinel() -> Error {
 
 fn closed_handle(what: &str) -> napi::Error {
     marshal::err(format!("bumbledb: use of a closed {what} handle"))
+}
+
+fn leased_handle(what: &str) -> napi::Error {
+    marshal::err(format!("bumbledb: {what} is leased for publish"))
+}
+
+fn engine_failed(error: &Error) -> (&'static str, String) {
+    (
+        tags::error_family::tag(&error.family()),
+        marshal::engine_message(error),
+    )
 }
 
 fn reentrant_use(what: &str) -> napi::Error {
@@ -224,6 +238,16 @@ outcome_to_napi!(CreateOutcome {
     NewtypeMismatch(message) => { "tag": tags::open_kind::NEWTYPE_MISMATCH, "message": message },
 });
 
+impl TypeName for CreateOutcome {
+    fn type_name() -> &'static str {
+        "object"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
 pub enum OpenOutcome {
     Ok(External<DbHandle>),
     SchemaError(String),
@@ -237,6 +261,16 @@ outcome_to_napi!(OpenOutcome {
     NewtypeMismatch(message) => { "ok": false, "kind": tags::open_kind::NEWTYPE_MISMATCH, "message": message },
     FingerprintMismatch(message) => { "ok": false, "kind": tags::open_kind::FINGERPRINT_MISMATCH, "message": message },
 });
+
+impl TypeName for OpenOutcome {
+    fn type_name() -> &'static str {
+        "object"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
 
 fn descriptor_of(spec: &Object) -> napi::Result<std::result::Result<SchemaDescriptor, OpenOutcome>> {
     let spec = marshal::schema_spec(spec)?;
@@ -256,44 +290,166 @@ fn descriptor_of(spec: &Object) -> napi::Result<std::result::Result<SchemaDescri
     }
 }
 
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn db_create(env: Env, path: String, spec: Object) -> napi::Result<CreateOutcome> {
-    let descriptor = match descriptor_of(&spec)? {
-        Ok(descriptor) => descriptor,
-        Err(OpenOutcome::SchemaError(message)) => return Ok(CreateOutcome::SchemaError(message)),
-        Err(OpenOutcome::NewtypeMismatch(message)) => {
-            return Ok(CreateOutcome::NewtypeMismatch(message));
+enum CreatePrep {
+    Descriptor(SchemaDescriptor),
+    SchemaError(String),
+    NewtypeMismatch(String),
+}
+
+pub enum CreateOutput {
+    Accepted(Engine, SchemaDescriptor),
+    Rejected(Vec<ViolationWire>),
+    SchemaError(String),
+    NewtypeMismatch(String),
+    Failed {
+        kind: &'static str,
+        message: String,
+    },
+}
+
+pub struct CreateTask {
+    path: String,
+    prep: Option<CreatePrep>,
+}
+
+impl Task for CreateTask {
+    type Output = CreateOutput;
+    type JsValue = CreateOutcome;
+
+    fn compute(&mut self) -> napi::Result<CreateOutput> {
+        let prep = self
+            .prep
+            .take()
+            .ok_or_else(|| marshal::err("bumbledb: create already computed".into()))?;
+        let descriptor = match prep {
+            CreatePrep::SchemaError(message) => return Ok(CreateOutput::SchemaError(message)),
+            CreatePrep::NewtypeMismatch(message) => {
+                return Ok(CreateOutput::NewtypeMismatch(message));
+            }
+            CreatePrep::Descriptor(descriptor) => descriptor,
+        };
+        match Db::create(std::path::Path::new(&self.path), descriptor.clone()) {
+            Ok(bumbledb::Admission::Accepted(db)) => Ok(CreateOutput::Accepted(db, descriptor)),
+            Ok(bumbledb::Admission::Rejected(violations)) => Ok(CreateOutput::Rejected(
+                violations_wire(&descriptor, &violations),
+            )),
+            Err(Error::Schema(error)) => Ok(CreateOutput::SchemaError(error.to_string())),
+            Err(error) => {
+                let (kind, message) = engine_failed(&error);
+                Ok(CreateOutput::Failed { kind, message })
+            }
         }
-        Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
-    };
-    match Db::create(std::path::Path::new(&path), descriptor.clone()) {
-        Ok(bumbledb::Admission::Accepted(db)) => Ok(CreateOutcome::Accepted(External::new(
-            assemble(db, descriptor),
-        ))),
-        Ok(bumbledb::Admission::Rejected(violations)) => Ok(CreateOutcome::Rejected(
-            violations_wire(&descriptor, &violations),
-        )),
-        Err(Error::Schema(error)) => Ok(CreateOutcome::SchemaError(error.to_string())),
-        Err(error) => Err(throw_engine(env, &error)),
+    }
+
+    fn resolve(&mut self, env: Env, output: CreateOutput) -> napi::Result<CreateOutcome> {
+        match output {
+            CreateOutput::Accepted(db, descriptor) => Ok(CreateOutcome::Accepted(External::new(
+                assemble(db, descriptor),
+            ))),
+            CreateOutput::Rejected(violations) => Ok(CreateOutcome::Rejected(violations)),
+            CreateOutput::SchemaError(message) => Ok(CreateOutcome::SchemaError(message)),
+            CreateOutput::NewtypeMismatch(message) => Ok(CreateOutcome::NewtypeMismatch(message)),
+            CreateOutput::Failed { kind, message } => {
+                Err(marshal::throw_kind_message(env, kind, message))
+            }
+        }
     }
 }
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn db_open(env: Env, path: String, spec: Object) -> napi::Result<OpenOutcome> {
-    let descriptor = match descriptor_of(&spec)? {
-        Ok(descriptor) => descriptor,
-        Err(outcome) => return Ok(outcome),
+pub fn db_create(path: String, spec: Object) -> napi::Result<AsyncTask<CreateTask>> {
+    let prep = match descriptor_of(&spec)? {
+        Ok(descriptor) => CreatePrep::Descriptor(descriptor),
+        Err(OpenOutcome::SchemaError(message)) => CreatePrep::SchemaError(message),
+        Err(OpenOutcome::NewtypeMismatch(message)) => CreatePrep::NewtypeMismatch(message),
+        Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
     };
-    match Db::open(std::path::Path::new(&path), descriptor.clone()) {
-        Ok(db) => Ok(OpenOutcome::Ok(External::new(assemble(db, descriptor)))),
-        Err(Error::Schema(error)) => Ok(OpenOutcome::SchemaError(error.to_string())),
-        Err(error @ Error::SchemaMismatch { .. }) => Ok(OpenOutcome::FingerprintMismatch(
-            marshal::engine_message(&error),
-        )),
-        Err(error) => Err(throw_engine(env, &error)),
+    Ok(AsyncTask::new(CreateTask {
+        path,
+        prep: Some(prep),
+    }))
+}
+
+enum OpenPrep {
+    Descriptor(SchemaDescriptor),
+    SchemaError(String),
+    NewtypeMismatch(String),
+}
+
+pub enum OpenOutput {
+    Ok(Engine, SchemaDescriptor),
+    SchemaError(String),
+    NewtypeMismatch(String),
+    FingerprintMismatch(String),
+    Failed {
+        kind: &'static str,
+        message: String,
+    },
+}
+
+pub struct OpenTask {
+    path: String,
+    prep: Option<OpenPrep>,
+}
+
+impl Task for OpenTask {
+    type Output = OpenOutput;
+    type JsValue = OpenOutcome;
+
+    fn compute(&mut self) -> napi::Result<OpenOutput> {
+        let prep = self
+            .prep
+            .take()
+            .ok_or_else(|| marshal::err("bumbledb: open already computed".into()))?;
+        let descriptor = match prep {
+            OpenPrep::SchemaError(message) => return Ok(OpenOutput::SchemaError(message)),
+            OpenPrep::NewtypeMismatch(message) => return Ok(OpenOutput::NewtypeMismatch(message)),
+            OpenPrep::Descriptor(descriptor) => descriptor,
+        };
+        match Db::open(std::path::Path::new(&self.path), descriptor.clone()) {
+            Ok(db) => Ok(OpenOutput::Ok(db, descriptor)),
+            Err(Error::Schema(error)) => Ok(OpenOutput::SchemaError(error.to_string())),
+            Err(error @ Error::SchemaMismatch { .. }) => Ok(OpenOutput::FingerprintMismatch(
+                marshal::engine_message(&error),
+            )),
+            Err(error) => {
+                let (kind, message) = engine_failed(&error);
+                Ok(OpenOutput::Failed { kind, message })
+            }
+        }
     }
+
+    fn resolve(&mut self, env: Env, output: OpenOutput) -> napi::Result<OpenOutcome> {
+        match output {
+            OpenOutput::Ok(db, descriptor) => {
+                Ok(OpenOutcome::Ok(External::new(assemble(db, descriptor))))
+            }
+            OpenOutput::SchemaError(message) => Ok(OpenOutcome::SchemaError(message)),
+            OpenOutput::NewtypeMismatch(message) => Ok(OpenOutcome::NewtypeMismatch(message)),
+            OpenOutput::FingerprintMismatch(message) => {
+                Ok(OpenOutcome::FingerprintMismatch(message))
+            }
+            OpenOutput::Failed { kind, message } => {
+                Err(marshal::throw_kind_message(env, kind, message))
+            }
+        }
+    }
+}
+
+#[napi]
+#[allow(clippy::needless_pass_by_value)]
+pub fn db_open(path: String, spec: Object) -> napi::Result<AsyncTask<OpenTask>> {
+    let prep = match descriptor_of(&spec)? {
+        Ok(descriptor) => OpenPrep::Descriptor(descriptor),
+        Err(OpenOutcome::SchemaError(message)) => OpenPrep::SchemaError(message),
+        Err(OpenOutcome::NewtypeMismatch(message)) => OpenPrep::NewtypeMismatch(message),
+        Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
+    };
+    Ok(AsyncTask::new(OpenTask {
+        path,
+        prep: Some(prep),
+    }))
 }
 
 #[napi]
@@ -331,21 +487,92 @@ pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
     }
 }
 
+pub enum PublishOutput {
+    Ok(Engine),
+    Failed {
+        kind: &'static str,
+        message: String,
+    },
+}
+
+pub struct PublishTask {
+    path: String,
+    instance: Arc<OwnedInstance<SchemaDescriptor>>,
+    sealed: Arc<Sealed>,
+    leased: Arc<AtomicBool>,
+}
+
+pub struct PublishedHandle(External<DbHandle>);
+
+impl TypeName for PublishedHandle {
+    fn type_name() -> &'static str {
+        "external"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::External
+    }
+}
+
+impl ToNapiValue for PublishedHandle {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; this forwards the External"
+    )]
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe { External::to_napi_value(env, val.0) }
+    }
+}
+
+impl Task for PublishTask {
+    type Output = PublishOutput;
+    type JsValue = PublishedHandle;
+
+    fn compute(&mut self) -> napi::Result<PublishOutput> {
+        match Db::from_instance(std::path::Path::new(&self.path), self.instance.as_ref()) {
+            Ok(db) => Ok(PublishOutput::Ok(db)),
+            Err(error) => {
+                let (kind, message) = engine_failed(&error);
+                Ok(PublishOutput::Failed { kind, message })
+            }
+        }
+    }
+
+    fn resolve(&mut self, env: Env, output: PublishOutput) -> napi::Result<PublishedHandle> {
+        match output {
+            PublishOutput::Ok(db) => Ok(PublishedHandle(External::new(assemble(
+                db,
+                self.sealed.descriptor.clone(),
+            )))),
+            PublishOutput::Failed { kind, message } => {
+                Err(marshal::throw_kind_message(env, kind, message))
+            }
+        }
+    }
+}
+
+impl Drop for PublishTask {
+    fn drop(&mut self) {
+        self.leased.store(false, Ordering::Release);
+    }
+}
+
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn db_from_instance(
-    env: Env,
     path: String,
     instance: &External<OwnedHandle>,
-) -> napi::Result<External<DbHandle>> {
+) -> napi::Result<AsyncTask<PublishTask>> {
     let owned = live(&instance.inner, "owned instance")?;
-    match Db::from_instance(std::path::Path::new(&path), &owned.instance) {
-        Ok(db) => Ok(External::new(assemble(
-            db,
-            owned.sealed.descriptor.clone(),
-        ))),
-        Err(error) => Err(throw_engine(env, &error)),
+    if owned.leased.swap(true, Ordering::AcqRel) {
+        return Err(leased_handle("owned instance"));
     }
+    Ok(AsyncTask::new(PublishTask {
+        path,
+        instance: Arc::clone(&owned.instance),
+        sealed: Arc::clone(&owned.sealed),
+        leased: Arc::clone(&owned.leased),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -382,24 +609,73 @@ outcome_to_napi!(ExhumeOutcome {
     },
 });
 
+impl TypeName for ExhumeOutcome {
+    fn type_name() -> &'static str {
+        "object"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
+pub enum ExhumeOutput {
+    Ok(Exhumed),
+    DescriptorMissing(String),
+    FormatMismatch(String),
+    Corruption(String),
+    Failed {
+        kind: &'static str,
+        message: String,
+    },
+}
+
+pub struct ExhumeTask {
+    path: String,
+}
+
+impl Task for ExhumeTask {
+    type Output = ExhumeOutput;
+    type JsValue = ExhumeOutcome;
+
+    fn compute(&mut self) -> napi::Result<ExhumeOutput> {
+        match exhume(std::path::Path::new(&self.path)) {
+            Ok(exhumed) => Ok(ExhumeOutput::Ok(exhumed)),
+            Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutput::DescriptorMissing(
+                marshal::engine_message(&error),
+            )),
+            Err(error @ Error::FormatMismatch { .. }) => Ok(ExhumeOutput::FormatMismatch(
+                marshal::engine_message(&error),
+            )),
+            Err(error @ Error::Corruption(_)) => {
+                Ok(ExhumeOutput::Corruption(marshal::engine_message(&error)))
+            }
+            Err(error) => {
+                let (kind, message) = engine_failed(&error);
+                Ok(ExhumeOutput::Failed { kind, message })
+            }
+        }
+    }
+
+    fn resolve(&mut self, env: Env, output: ExhumeOutput) -> napi::Result<ExhumeOutcome> {
+        match output {
+            ExhumeOutput::Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle {
+                inner: RefCell::new(Some(exhumed)),
+            }))),
+            ExhumeOutput::DescriptorMissing(message) => Ok(ExhumeOutcome::DescriptorMissing(message)),
+            ExhumeOutput::FormatMismatch(message) => Ok(ExhumeOutcome::FormatMismatch(message)),
+            ExhumeOutput::Corruption(message) => Ok(ExhumeOutcome::Corruption(message)),
+            ExhumeOutput::Failed { kind, message } => {
+                Err(marshal::throw_kind_message(env, kind, message))
+            }
+        }
+    }
+}
+
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn db_exhume(env: Env, path: String) -> napi::Result<ExhumeOutcome> {
-    match exhume(std::path::Path::new(&path)) {
-        Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle {
-            inner: RefCell::new(Some(exhumed)),
-        }))),
-        Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutcome::DescriptorMissing(
-            marshal::engine_message(&error),
-        )),
-        Err(error @ Error::FormatMismatch { .. }) => Ok(ExhumeOutcome::FormatMismatch(
-            marshal::engine_message(&error),
-        )),
-        Err(error @ Error::Corruption(_)) => {
-            Ok(ExhumeOutcome::Corruption(marshal::engine_message(&error)))
-        }
-        Err(error) => Err(throw_engine(env, &error)),
-    }
+pub fn db_exhume(path: String) -> napi::Result<AsyncTask<ExhumeTask>> {
+    Ok(AsyncTask::new(ExhumeTask { path }))
 }
 
 #[napi]
@@ -1258,9 +1534,10 @@ pub struct OwnedHandle {
 }
 
 struct OwnedSlot {
-    instance: OwnedInstance<SchemaDescriptor>,
+    instance: Arc<OwnedInstance<SchemaDescriptor>>,
     sealed: Arc<Sealed>,
     accounted: Cell<i64>,
+    leased: Arc<AtomicBool>,
 }
 
 fn account_bytes(env: Env, bytes: usize) -> napi::Result<i64> {
@@ -1367,9 +1644,10 @@ impl Task for AdmitTask {
                 let accounted = account_bytes(env, instance.retained_bytes())?;
                 Ok(AdmitOutcome::Accepted(External::new(OwnedHandle {
                     inner: RefCell::new(Some(OwnedSlot {
-                        instance,
+                        instance: Arc::new(instance),
                         sealed: Arc::clone(&self.sealed),
                         accounted: Cell::new(accounted),
+                        leased: Arc::new(AtomicBool::new(false)),
                     })),
                 })))
             }
@@ -1417,6 +1695,12 @@ pub fn owned_instance_close(
     env: Env,
     instance: &External<OwnedHandle>,
 ) -> napi::Result<()> {
+    {
+        let slot = live(&instance.inner, "owned instance")?;
+        if slot.leased.load(Ordering::Acquire) {
+            return Err(leased_handle("owned instance"));
+        }
+    }
     let slot = take_handle(&instance.inner, "owned instance")?;
     release_accounted(env, slot.accounted.get())
 }
@@ -1429,7 +1713,7 @@ pub fn owned_read<'a>(
     let owned = live(&instance.inner, "owned instance")?;
     let handle = InstanceHandle::heap(
         Arc::clone(&owned.sealed),
-        &owned.instance,
+        owned.instance.as_ref(),
         &owned.accounted,
     );
     let alive = Arc::clone(&handle.alive);

@@ -186,7 +186,7 @@ interface Admitted<Rels extends SchemaRelations> {
 async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<Rels>): Promise<Admitted<Rels>> {
 	const dir = path.join(tmpRoot, name)
 	const spec = lower(theory)
-	const created = native.dbCreate(dir, spec)
+	const created = await native.dbCreate(dir, spec)
 	assert.equal(created.tag, "accepted", `${name}: the engine admits the theory`)
 	const fingerprint = native.dbFingerprint(created.db)
 	native.dbClose(created.db)
@@ -199,7 +199,7 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 			assert.equal(fingerprint, pinned, `${name}: the fingerprint matches the cross-host golden (${recipe})`)
 		}
 	}
-	const reopened = native.dbOpen(dir, spec)
+	const reopened = await native.dbOpen(dir, spec)
 	assert.ok(reopened.ok, `${name}: the identical theory reopens the store`)
 	assert.equal(native.dbFingerprint(reopened.db), fingerprint, `${name}: the fingerprint is stable across reopen`)
 	native.dbClose(reopened.db)

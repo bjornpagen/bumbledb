@@ -132,8 +132,8 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 ])
 
 describe("the cross-host fingerprint lock", function suite() {
-	test("a JS-created store carries the pinned fingerprint across the FFI", function pin() {
-		const created = native.dbCreate(storeDir, lower(CrossHost))
+	test("a JS-created store carries the pinned fingerprint across the FFI", async function pin() {
+		const created = await native.dbCreate(storeDir, lower(CrossHost))
 		assert.equal(created.tag, "accepted", "the CrossHost theory admits")
 		assert.equal(
 			native.dbFingerprint(created.db),
@@ -143,16 +143,16 @@ describe("the cross-host fingerprint lock", function suite() {
 		native.dbClose(created.db)
 	})
 
-	test("reopen verifies the stored fingerprint and reads the same identity back", function reopen() {
-		const reopened = native.dbOpen(storeDir, lower(CrossHost))
+	test("reopen verifies the stored fingerprint and reads the same identity back", async function reopen() {
+		const reopened = await native.dbOpen(storeDir, lower(CrossHost))
 		assert.ok(reopened.ok, "the identical theory reopens the store")
 		assert.equal(native.dbFingerprint(reopened.db), PIN)
 		native.dbClose(reopened.db)
 	})
 
-	test("a twisted twin is refused as fingerprintMismatch data", function twisted() {
+	test("a twisted twin is refused as fingerprintMismatch data", async function twisted() {
 		const spec = lower(CrossHost)
-		const refused = native.dbOpen(storeDir, {
+		const refused = await native.dbOpen(storeDir, {
 			relations: spec.relations,
 			statements: spec.statements.slice(0, -1)
 		})

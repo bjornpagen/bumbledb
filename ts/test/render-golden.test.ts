@@ -268,8 +268,8 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 		assert.equal(renderStatement(calendarCapacity), "Hall(id) <=[Duration(booked)]{0..Duration(span)} Session(hall)")
 	})
 
-	test("every materialized slot's manifest spelling equals the SDK render", function golden() {
-		const created = native.dbCreate(storeDir, lower(Golden))
+	test("every materialized slot's manifest spelling equals the SDK render", async function golden() {
+		const created = await native.dbCreate(storeDir, lower(Golden))
 		if (created.tag !== "accepted") {
 			assert.fail(`dbCreate refused the golden theory (${created.tag})`)
 		}
@@ -297,8 +297,8 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 })
 
 describe("the ψ-on-closed golden: manifest spelling, engine folding, violation paste-back", function psiSuite() {
-	test("every Mastery slot's manifest spelling equals the SDK render", function psiGolden() {
-		const created = native.dbCreate(psiStoreDir, lower(Mastery))
+	test("every Mastery slot's manifest spelling equals the SDK render", async function psiGolden() {
+		const created = await native.dbCreate(psiStoreDir, lower(Mastery))
 		if (created.tag !== "accepted") {
 			assert.fail(`dbCreate refused the Mastery theory (${created.tag})`)
 		}

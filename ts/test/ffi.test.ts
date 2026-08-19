@@ -201,8 +201,8 @@ describe("ffi round trip against a real store", function suite() {
 		assert.notEqual(native.engineVersion(), "")
 	})
 
-	test("dbCreate + manifest carries every name→id table", function create() {
-		const created = native.dbCreate(storeDir, spec)
+	test("dbCreate + manifest carries every name→id table", async function create() {
+		const created = await native.dbCreate(storeDir, spec)
 		assert.equal(created.tag, "accepted", "create succeeds on a fresh directory")
 		db = created.db
 		manifest = native.dbManifest(db)
@@ -629,12 +629,12 @@ describe("ffi round trip against a real store", function suite() {
 		native.witnessClose(staleWitness)
 	})
 
-	test("open outcomes: schemaError and fingerprintMismatch as data", function openOutcomes() {
+	test("open outcomes: schemaError and fingerprintMismatch as data", async function openOutcomes() {
 		const badSpec: SchemaSpec = {
 			relations: spec.relations,
 			statements: [{ kind: "fd", relation: "Edge", projection: ["nope"] }]
 		}
-		const badCreate = native.dbCreate(path.join(tmpRoot, "bad"), badSpec)
+		const badCreate = await native.dbCreate(path.join(tmpRoot, "bad"), badSpec)
 		assert.equal(badCreate.tag, "schemaError")
 		assert.match(badCreate.message, /nope/)
 
@@ -645,11 +645,11 @@ describe("ffi round trip against a real store", function suite() {
 			relations: spec.relations,
 			statements: spec.statements.slice(0, 3)
 		}
-		const mismatched = native.dbOpen(storeDir, otherSpec)
+		const mismatched = await native.dbOpen(storeDir, otherSpec)
 		assert.ok(!mismatched.ok, "a different theory cannot open the store")
 		assert.equal(mismatched.kind, "fingerprintMismatch")
 
-		const reopened = native.dbOpen(storeDir, spec)
+		const reopened = await native.dbOpen(storeDir, spec)
 		assert.ok(reopened.ok, "the same theory reopens the store")
 		db = reopened.db
 		native.dbRead(db, function read(instance, _witness) {

@@ -453,12 +453,12 @@ interface Native {
 	 * kind crosses this bridge). Refuses an already-initialized directory
 	 * (throws); schema failures return as data.
 	 */
-	dbCreate(path: string, spec: SchemaSpec): CreateResult
+	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
 	/**
 	 * Opens an existing durable store, verifying format version, store
 	 * kind, and schema fingerprint (`fingerprintMismatch` as data).
 	 */
-	dbOpen(path: string, spec: SchemaSpec): DbOpenResult
+	dbOpen(path: string, spec: SchemaSpec): Promise<DbOpenResult>
 	/**
 	 * Closes the handle. Dependent handles each hold the engine alive; the
 	 * environment (and its exclusive lock) releases when the last closes.
@@ -481,7 +481,7 @@ interface Native {
 	 */
 	dbGeneration(db: DbHandle): bigint
 	/** Publishes an admitted heap instance at `path` without re-judgment. */
-	dbFromInstance(path: string, instance: OwnedHandle): DbHandle
+	dbFromInstance(path: string, instance: OwnedHandle): Promise<DbHandle>
 
 	/**
 	 * Opens a store FROM ITS OWN PERSISTED DESCRIPTOR (the read-only,
@@ -490,7 +490,7 @@ interface Native {
 	 * genuine failures throw. The handle's deterministic teardown is
 	 * `exhumeClose` (R12); GC reclamation remains the backstop only.
 	 */
-	dbExhume(path: string): ExhumeResult
+	dbExhume(path: string): Promise<ExhumeResult>
 	/**
 	 * Closes the exhume handle, releasing its environment (and the store's
 	 * exclusive lock) deterministically — the native teardown under the
@@ -710,6 +710,18 @@ function bridged<T>(context: string, run: () => T): T {
 	}
 }
 
+/**
+ * The async twin of {@link bridged}: every control-plane native is an
+ * `AsyncTask` Promise, and this is the one wrapper those awaits cross.
+ */
+async function bridgedAsync<T>(context: string, run: () => Promise<T>): Promise<T> {
+	try {
+		return await run()
+	} catch (caught) {
+		throw errors.wrap(errorFromThrow(caught), context)
+	}
+}
+
 export type {
 	AdmissionTag,
 	AdmitResult,
@@ -766,4 +778,4 @@ export type {
 	WitnessHandle,
 	WriteTag
 }
-export { bridged, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }
+export { bridged, bridgedAsync, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }

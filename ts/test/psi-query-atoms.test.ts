@@ -108,8 +108,8 @@ function sortedPairs(rows: ReadonlyArray<{ readonly i: bigint; readonly s: strin
 describe("ψ query atoms over closed relations", function suite() {
 	let db: DbHandle
 
-	before(function seed() {
-		const created = native.dbCreate(storeDir, lower(Oncall))
+	before(async function seed() {
+		const created = await native.dbCreate(storeDir, lower(Oncall))
 		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
 		// The native seam is RAW: closed cells are declaration-order row ids

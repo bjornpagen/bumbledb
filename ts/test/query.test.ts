@@ -130,8 +130,8 @@ function sorted(values: readonly bigint[]): bigint[] {
 describe("the query surface against a real store", function suite() {
 	let db: DbHandle
 
-	before(function seed() {
-		const created = native.dbCreate(storeDir, lower(Ledger))
+	before(async function seed() {
+		const created = await native.dbCreate(storeDir, lower(Ledger))
 		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
 		const committed = native.dbWrite(db, function write(tx) {

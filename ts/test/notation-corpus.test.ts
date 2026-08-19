@@ -424,8 +424,8 @@ function docOf(file: string): CorpusDoc {
 describe("the notation conformance corpus (TS replay)", () => {
 	let db: DbHandle
 
-	before(function openTheCorpusStore() {
-		const created = native.dbCreate(storeDir, lower(Ledger))
+	before(async function openTheCorpusStore() {
+		const created = await native.dbCreate(storeDir, lower(Ledger))
 		if (created.tag !== "accepted") {
 			assert.fail(`create the corpus store: ${created.tag}`)
 		}

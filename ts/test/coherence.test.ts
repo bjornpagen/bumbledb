@@ -60,28 +60,28 @@ function paired(source: string | undefined, target: string | undefined): SchemaS
 }
 
 describe("the coherence wall's engine twin", function suite() {
-	test("two disagreeing labels reject with the newtypeMismatch kind", function mismatch() {
-		const outcome = native.dbCreate(path.join(tmpRoot, "mismatch"), paired("SrcKey", "TgtKey"))
+	test("two disagreeing labels reject with the newtypeMismatch kind", async function mismatch() {
+		const outcome = await native.dbCreate(path.join(tmpRoot, "mismatch"), paired("SrcKey", "TgtKey"))
 		assert.equal(outcome.tag, "newtypeMismatch", "a mismatched spec never creates")
 		assert.match(outcome.message, /`Src\.key` \(`SrcKey`\)/)
 		assert.match(outcome.message, /`Tgt\.key` \(`TgtKey`\)/)
 		assert.match(outcome.message, /agree on their newtype, or neither carries one/)
 	})
 
-	test("a labeled face never pairs with a bare one", function halfLabeled() {
-		const outcome = native.dbCreate(path.join(tmpRoot, "half"), paired("SrcKey", undefined))
+	test("a labeled face never pairs with a bare one", async function halfLabeled() {
+		const outcome = await native.dbCreate(path.join(tmpRoot, "half"), paired("SrcKey", undefined))
 		assert.equal(outcome.tag, "newtypeMismatch", "labeled↔bare is the mismatch too")
 		assert.match(outcome.message, /`Tgt\.key` \(no newtype\)/)
 	})
 
-	test("bare pairs with bare and the store creates", function bareBare() {
-		const outcome = native.dbCreate(path.join(tmpRoot, "bare"), paired(undefined, undefined))
+	test("bare pairs with bare and the store creates", async function bareBare() {
+		const outcome = await native.dbCreate(path.join(tmpRoot, "bare"), paired(undefined, undefined))
 		assert.equal(outcome.tag, "accepted", "bare faces pair with bare faces")
 		native.dbClose(outcome.db)
 	})
 
-	test("one shared label passes the wall", function shared() {
-		const outcome = native.dbCreate(path.join(tmpRoot, "shared"), paired("Key", "Key"))
+	test("one shared label passes the wall", async function shared() {
+		const outcome = await native.dbCreate(path.join(tmpRoot, "shared"), paired("Key", "Key"))
 		assert.equal(outcome.tag, "accepted", "agreeing labels pass")
 		native.dbClose(outcome.db)
 	})

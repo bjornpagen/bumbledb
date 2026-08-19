@@ -54,7 +54,7 @@ import type {
 	ViolationFact as WireViolationFact,
 	WitnessHandle
 } from "#native.ts"
-import { bridged, errorFromThrow, native } from "#native.ts"
+import { bridged, bridgedAsync, errorFromThrow, native } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
 import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
@@ -1597,10 +1597,13 @@ function openFromHandle<Rels extends SchemaRelations>(dbHandle: DbHandle, theory
 	return openDb(dbHandle, theory, manifest)
 }
 
-function createStore<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Admission<Rels, Db<Rels>> {
+async function createStore<Rels extends SchemaRelations>(
+	storePath: string,
+	theory: Schema<Rels>
+): Promise<Admission<Rels, Db<Rels>>> {
 	const canonical = path.resolve(storePath)
 	const spec = lower(theory)
-	const created = bridged(`create bumbledb store at ${canonical}`, function callBridge() {
+	const created = await bridgedAsync(`create bumbledb store at ${canonical}`, function callBridge() {
 		return native.dbCreate(canonical, spec)
 	})
 	if (created.tag === "schemaError" || created.tag === "newtypeMismatch") {
@@ -1689,10 +1692,13 @@ function mapViolationWithoutStore<Rels extends SchemaRelations>(
 	})
 }
 
-function openStore<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Db<Rels> {
+async function openStore<Rels extends SchemaRelations>(
+	storePath: string,
+	theory: Schema<Rels>
+): Promise<Db<Rels>> {
 	const canonical = path.resolve(storePath)
 	const spec = lower(theory)
-	const opened = bridged(`open bumbledb store at ${canonical}`, function callBridge() {
+	const opened = await bridgedAsync(`open bumbledb store at ${canonical}`, function callBridge() {
 		return native.dbOpen(canonical, spec)
 	})
 	if (!opened.ok) {
@@ -1813,10 +1819,16 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 			if (rec.spent) {
 				return
 			}
-			rec.spent = true
-			bridged("close bumbledb owned instance", function closeOwned() {
+			try {
 				native.ownedInstanceClose(nativeHandle)
-			})
+			} catch (caught) {
+				const error = errorFromThrow(caught)
+				if (/leased for publish/.test(error.message)) {
+					throw errors.wrap(ErrSpentHandle, "bumbledb owned instance is leased for publish")
+				}
+				throw errors.wrap(error, "close bumbledb owned instance")
+			}
+			rec.spent = true
 		}
 	})
 	ownedRecords.set(instance, rec)
@@ -1936,7 +1948,7 @@ const Db = Object.freeze({
 			throw errors.wrap(ErrSpentHandle, "bumbledb fromInstance target has been disposed")
 		}
 		const canonical = path.resolve(storePath)
-		const dbHandle = bridged(`publish bumbledb instance at ${canonical}`, function publish() {
+		const dbHandle = await bridgedAsync(`publish bumbledb instance at ${canonical}`, function publish() {
 			return native.dbFromInstance(canonical, rec.handle)
 		})
 		return openFromHandle(dbHandle, rec.theory as Schema<Rels>)

@@ -1,6 +1,6 @@
 # 02 — One temporal shape: an async signature means an AsyncTask
 
-- **Status:** OPEN (verified 2026-08-19 17:08 EDT; the tree is hot).
+- **Status:** **fixed this pass** — `CreateTask`/`OpenTask`/`PublishTask`/`ExhumeTask` (`AdmitTask` template); `OwnedHandle` holds `Arc<OwnedInstance>` + lease flag so dispose-during-publish is a typed refusal; tests: `no sync #[napi] fn is awaited by the SDK`, `a large fromInstance does not block a concurrently ticking JS timer`, `dispose-during-publish is the typed spent-handle refusal`
 - **Severity:** should-fix; `fromInstance` is the ship-blocking half.
 - **Supersedes:** VER-05, and answers the "do we have both a sync and async
   API?" review.
