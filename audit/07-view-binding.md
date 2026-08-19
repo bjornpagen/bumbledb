@@ -1,9 +1,12 @@
 # 07 — `ViewMemo`: the active binding is still parallel vectors with a three-meaning `None`
 
-- **Status:** **keep** — `Binding` arms are distinct proofs (unbound /
-  derived / bound). Collapsing `None` would discard which proof held.
-  Brooks: four vectors are accidental; the three meanings of absence
-  are essential and must stay a sum, not one type.
+- **Status:** **fixed this pass** — per-occurrence `Binding` /
+  `OccMemo`; park/unpark is a `Bound` move; the parked-hit `expect` is
+  gone; tests: `residual_bindings_memoize_under_lru`,
+  `rules_share_the_image_and_memoize_every_rules_views`,
+  `a_generation_bump_invalidates_the_memo`,
+  `closed_relation_views_stay_warm_across_generations`,
+  `same_shaped_occurrences_dedup_the_cold_rebuild`.
 - **Severity:** should-fix.
 - **Supersedes:** PROP-006, REP-10, SPINE-17.
 - **Adjudication (third pass): keep CONTESTED — owner ruling required.**

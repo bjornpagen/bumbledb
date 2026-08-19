@@ -1,6 +1,6 @@
 use super::{
-    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
-    OccurrencePin, PARKED_SLOTS, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
+    AggregateSink, Binding, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule,
+    KeyProbeRule, OccurrencePin, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
     ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
@@ -1074,18 +1074,11 @@ fn prepare_ray_probe<C: CatalogRead, I: ImageBind>(
 
 /// COLT sources with their fixed column schemas over [`View::Unbound`]:
 /// prepare touches no image — the first execution binds every view via
-/// the ordinary memo-miss path (a `None` generation never matches),
+/// the ordinary memo-miss path ([`Binding::Unbound`] never matches),
 /// paying the image build exactly where a cold execution already pays
 /// it. Pure column-schema construction; nothing here can fail.
 fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
-    let mut memo = ViewMemo {
-        colts: Vec::new(),
-        epoch: Vec::new(),
-        filters: Vec::new(),
-        parked: Vec::new(),
-        spare_buffers: Vec::new(),
-        tick: 0,
-    };
+    let mut memo = ViewMemo::new();
     for occurrence in plan.occurrences() {
         // Field→column through the span map (docs/architecture/
         // 50-storage.md image layout): a multi-word field contributes its
@@ -1139,12 +1132,12 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
                 }
             })
             .collect();
-        memo.colts
-            .push(Colt::new(View::Unbound, &selections, columns));
-        memo.epoch.push(None);
-        memo.filters.push(Vec::new());
-        memo.parked.push((0..PARKED_SLOTS).map(|_| None).collect());
-        memo.spare_buffers.push(Vec::new());
+        let active = if occurrence.bind.edb().is_none() {
+            Binding::Derived
+        } else {
+            Binding::Unbound
+        };
+        memo.push(Colt::new(View::Unbound, &selections, columns), active);
     }
     memo
 }
