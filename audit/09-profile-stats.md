@@ -1,8 +1,9 @@
 # 09 — `profile` is still off the sealed `Instance`; `hit` has two derivation sites
 
-- **Status:** **keep** (`profile` on sealed `Instance`) — the heap
-  source has no generation clock; putting `profile` on `Instance` would
-  fabricate drift. EXEC-03 (`KeyProbeStats.hit` twice) stays open.
+- **Status:** **fixed this pass** — `Instance::profile` on both arms
+  via `profile_on`; `KeyProbeStats::from_emitted` owns `hit`; tests:
+  `profile_on_owned_and_lease_agrees`,
+  `profile_returns_structured_stats_matching_the_execution`.
 - **Severity:** should-fix.
 - **Supersedes:** PROP-008, EXEC-03.
 - **Adjudication (third pass): keep CONTESTED on the promotion half —

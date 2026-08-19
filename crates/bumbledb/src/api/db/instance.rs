@@ -41,6 +41,20 @@ pub trait Instance<S>: instance_seal::Sealed {
         out: &mut crate::Answers,
     ) -> Result<()>;
 
+    /// Executes with counting instrumentation and returns the answers
+    /// alongside [`crate::api::stats::ExecutionStats`]. Diagnostic: the
+    /// stats shape is unfrozen. Not a staleness clock — a frozen catalog
+    /// profiles; no generation is consulted.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::execute`].
+    fn profile(
+        &self,
+        prepared: &mut crate::PreparedQuery<S>,
+        params: &[crate::ParamArg<'_>],
+    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)>;
+
     /// Full-relation scan of decoded dynamic facts.
     ///
     /// # Errors
@@ -183,6 +197,19 @@ impl<S> Instance<S> for super::OwnedInstance<S> {
         )
     }
 
+    fn profile(
+        &self,
+        prepared: &mut crate::PreparedQuery<S>,
+        params: &[crate::ParamArg<'_>],
+    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)> {
+        prepared.profile_on(
+            &self.core.identity,
+            &self.core.source.catalog,
+            &self.core.source,
+            params,
+        )
+    }
+
     fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         self.scan_dyn(rel)
     }
@@ -234,6 +261,16 @@ impl<S> Instance<S> for super::ReadInstance<'_, S> {
         out: &mut crate::Answers,
     ) -> Result<()> {
         super::ReadInstance::execute(self, prepared, params, out)
+    }
+
+    fn profile(
+        &self,
+        prepared: &mut crate::PreparedQuery<S>,
+        params: &[crate::ParamArg<'_>],
+    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)> {
+        let catalog = self.core.source.catalog();
+        let images = crate::image::LmdbSource::bind(self.txn(), self.cache());
+        prepared.profile_on(&self.core.identity, &catalog, &images, params)
     }
 
     fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {

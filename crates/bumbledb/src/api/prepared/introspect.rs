@@ -5,9 +5,11 @@ use crate::error::Result;
 use crate::exec::introspection::{
     IntrospectionHeader, IntrospectionReport, ReportBody, RulePlan, UnitLabel,
 };
+use crate::image::ImageBind;
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
-use crate::storage::env::ReadTxn;
+use crate::storage::catalog::CatalogRead;
+use crate::storage::env::{CatalogIdentity, ReadTxn};
 
 impl<S> PreparedQuery<S> {
     /// Plan introspection (docs/architecture/40-execution.md): executes the query with counting instrumentation
@@ -180,29 +182,35 @@ impl<S> PreparedQuery<S> {
         cache: &ImageCache,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, ExecutionStats)> {
-        self.check_identity(txn.identity())?;
         let catalog = txn.catalog();
         let images = crate::image::LmdbSource::bind(txn, cache);
+        self.profile_on(txn.identity(), &catalog, &images, params)
+    }
+
+    /// Generic ANALYZE path shared by both [`crate::Instance`] arms.
+    pub(crate) fn profile_on<C: CatalogRead, I: ImageBind>(
+        &mut self,
+        identity: &CatalogIdentity,
+        catalog: &C,
+        images: &I,
+        params: &[ParamArg<'_>],
+    ) -> Result<(Answers, ExecutionStats)> {
+        self.check_identity(identity)?;
         let mut out = Answers::new();
         out.begin(self.signature.columns.len());
         {
             let _s = crate::obs::span(crate::obs::names::BIND_PARAMS);
-            self.bind_param_args(&catalog, params)?;
+            self.bind_param_args(catalog, params)?;
         }
         let point_distinct = match &self.pipeline {
             PreparedPipeline::PointProbe { rule, .. } => Some(rule.distinct_witness.is_some()),
             _ => None,
         };
         if let Some(distinct_bindings) = point_distinct {
-            self.execute_key_probe_direct(&catalog, &mut out)?;
+            self.execute_key_probe_direct(catalog, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats::cq(
-                vec![RuleStats::KeyProbe {
-                    distinct_bindings,
-                    emitted,
-                    absorbed: 0,
-                    hit: emitted > 0,
-                }],
+                vec![RuleStats::key_probe_rule(distinct_bindings, emitted, 0)],
                 Vec::new(),
                 emitted,
                 None,
@@ -217,8 +225,8 @@ impl<S> PreparedQuery<S> {
         match &self.pipeline {
             PreparedPipeline::Reach { .. } => {
                 let mut counters = crate::exec::introspection::ReachCounters::new();
-                let ran = self.run_rules(&catalog, &images, &mut counters)?;
-                self.finish_sink(&catalog, ran, &mut out)?;
+                let ran = self.run_rules(catalog, images, &mut counters)?;
+                self.finish_sink(catalog, ran, &mut out)?;
                 let emits = out.len() as u64;
                 let stats = ExecutionStats::reach_body(
                     self.interior_stats(),
@@ -231,8 +239,8 @@ impl<S> PreparedQuery<S> {
             }
             PreparedPipeline::Cq { .. } | PreparedPipeline::PointProbe { .. } => {
                 let mut rule_stats = Vec::new();
-                let ran = self.run_rules_cq_profile(&catalog, &images, &mut rule_stats)?;
-                self.finish_sink(&catalog, ran, &mut out)?;
+                let ran = self.run_rules_cq_profile(catalog, images, &mut rule_stats)?;
+                self.finish_sink(catalog, ran, &mut out)?;
                 let emits = rule_stats.iter().map(RuleStats::emitted).sum();
                 Ok((
                     out,

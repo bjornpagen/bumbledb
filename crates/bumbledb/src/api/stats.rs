@@ -1,9 +1,10 @@
 //! Structured per-execution statistics (docs/architecture/60-validation.md): the data
 //! behind plan introspection, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
-//! numbers, not a rendered string. Obtained via `ReadInstance::profile`
+//! numbers, not a rendered string. Obtained via [`crate::Instance::profile`]
 //! (ANALYZE semantics: the query really executes, with counting
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
+//! Diagnostic: this shape is unfrozen. It is not a staleness clock.
 
 /// The version shared by rendered and structured plan introspection.
 pub const INTROSPECTION_VERSION: u16 = 7;
@@ -306,6 +307,15 @@ impl RuleStats {
             Self::FreeJoin { .. } => None,
         }
     }
+
+    pub(crate) fn key_probe_rule(distinct_bindings: bool, emitted: u64, absorbed: u64) -> Self {
+        Self::KeyProbe {
+            distinct_bindings,
+            emitted,
+            absorbed,
+            hit: KeyProbeStats::from_emitted(emitted).hit,
+        }
+    }
 }
 
 /// One grounding-eliminated occurrence: never joined, its view never built —
@@ -425,4 +435,11 @@ pub struct CoverStats {
 pub struct KeyProbeStats {
     /// Whether the probe found a fact.
     pub hit: bool,
+}
+
+impl KeyProbeStats {
+    /// One derivation of [`Self::hit`]: a probe hits iff it emitted.
+    pub(crate) fn from_emitted(emitted: u64) -> Self {
+        Self { hit: emitted > 0 }
+    }
 }
