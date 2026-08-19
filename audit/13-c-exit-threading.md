@@ -1,11 +1,13 @@
 # 13 — The C callback exit still smuggles an `Io(Interrupted)` sentinel through the engine
 
-- **Status:** **keep** — `Exit` is already the parse; the write callback is
-  `Result<()>`, so abort must enter that channel or the delta commits.
-  A new `ErrorFamily` arm is an ABI-3 lockstep, not an interior dual.
-  Threading `Result<R, Exit>` through the engine write body would be a
-  second write algebra. Brooks: this is the cost of one `Result<()>`
-  collection protocol, not a discarded proof.
+- **Status:** **keep** (one `Result<()>` channel) / **fixed this pass**
+  (unforgeable hatch). `Error::hatch` / `downcast_hatch` carry a
+  bridge-owned ZST (`CallbackDecline`); family is still `ErrorFamily::Io`
+  — no new ABI kind. `grep -n "ErrorKind::Interrupted" crates/bumbledb-c/src/`
+  is empty. Tests: `hatch_reuses_io_family_and_downcasts`,
+  `genuine_interrupted_is_not_the_hatch`,
+  `abort_plus_engine_interrupt_reports_engine_failure`,
+  `abort_plus_hatch_is_aborted`, `write_abort_commits_nothing`.
 - **Severity:** should-fix.
 - **Supersedes:** BND-04.
 - **Adjudication (third pass): keep ACCEPTED in principle; the fix

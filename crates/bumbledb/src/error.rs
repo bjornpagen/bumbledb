@@ -9,7 +9,9 @@
 mod convert;
 mod display;
 
+use std::any::Any;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::encoding::InternId;
 use crate::ir::{InteriorId, ParamId, VarId};
@@ -1639,6 +1641,30 @@ impl From<std::io::Error> for IoFailure {
     }
 }
 
+/// Type-erased bridge rider. Maps to [`ErrorFamily::Io`] so the C ABI
+/// kind table does not grow. Bridges mint with [`Error::hatch`] and
+/// match with [`Error::downcast_hatch`]; the concrete ZST lives in the
+/// bridge crate and cannot be forged from `Io(Interrupted)`.
+#[derive(Clone)]
+#[doc(hidden)]
+pub struct Hatch(Arc<dyn Any + Send + Sync>);
+
+impl std::fmt::Debug for Hatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Hatch")
+            .field(&Any::type_id(&*self.0))
+            .finish()
+    }
+}
+
+impl PartialEq for Hatch {
+    fn eq(&self, other: &Self) -> bool {
+        Any::type_id(&*self.0) == Any::type_id(&*other.0)
+    }
+}
+
+impl Eq for Hatch {}
+
 /// An LMDB/heed failure owned by [`Error`]. Encoding/decoding drop the
 /// inner boxed payload (it was never clone-faithful); the variant remains.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1728,6 +1754,11 @@ pub enum Error {
     /// host kind table until ABI 3.
     DescriptorMissing,
     Io(IoFailure),
+    /// Hidden type-erased bridge rider. Reuses [`ErrorFamily::Io`].
+    /// Only [`Error::hatch`] mints it; only [`Error::downcast_hatch`]
+    /// matches it. Not a public failure kind and not an ABI family arm.
+    #[doc(hidden)]
+    Hatch(Hatch),
     Lmdb(LmdbFailure),
 
     // --- Runtime resource errors ---
@@ -1971,6 +2002,25 @@ fn family_source<'a>(
 }
 
 impl Error {
+    /// Mint a type-erased bridge rider. The concrete `T` is a
+    /// bridge-owned ZST; the engine never constructs one.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn hatch<T: Any + Send + Sync>(value: T) -> Self {
+        Self::Hatch(Hatch(Arc::new(value)))
+    }
+
+    /// Downcast a bridge rider. `None` for every engine `Error`,
+    /// including a genuine [`Self::Io`].
+    #[doc(hidden)]
+    #[must_use]
+    pub fn downcast_hatch<T: Any + Send + Sync>(&self) -> Option<&T> {
+        match self {
+            Self::Hatch(Hatch(inner)) => inner.downcast_ref(),
+            _ => None,
+        }
+    }
+
     /// The one per-variant descriptor. Display still formats payloads;
     /// every other taxonomy fold reads this.
     #[must_use]
@@ -1987,6 +2037,7 @@ impl Error {
             Self::StoreKindMismatch { .. } => family_only(ErrorFamily::StoreKindMismatch),
             Self::DescriptorMissing => family_only(ErrorFamily::DescriptorMissing),
             Self::Io(err) => family_source(ErrorFamily::Io, err),
+            Self::Hatch(_) => family_only(ErrorFamily::Io),
             Self::Lmdb(err) => family_source(ErrorFamily::Lmdb, err),
             Self::ReadersFull { .. } => family_only(ErrorFamily::ReadersFull),
             Self::Schema(_) => family_only(ErrorFamily::Schema),
@@ -2019,5 +2070,25 @@ impl Error {
     #[must_use]
     pub fn family(&self) -> ErrorFamily {
         self.descriptor().family
+    }
+}
+
+#[cfg(test)]
+mod hatch_tests {
+    use super::*;
+
+    struct Token;
+
+    #[test]
+    fn hatch_reuses_io_family_and_downcasts() {
+        let error = Error::hatch(Token);
+        assert_eq!(error.family(), ErrorFamily::Io);
+        assert!(error.downcast_hatch::<Token>().is_some());
+        assert!(error.downcast_hatch::<u8>().is_none());
+        assert!(
+            Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                .downcast_hatch::<Token>()
+                .is_none()
+        );
     }
 }

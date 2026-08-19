@@ -4,8 +4,8 @@
 
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::sync::{Mutex, PoisonError};
 
 use bumbledb::schema::ValidateDescriptor as _;
@@ -14,15 +14,13 @@ use bumbledb::{
     ReadInstance, RelationId, SchemaDescriptor, StatementId, Value, Witness, WriteTx,
 };
 
-use crate::error::{
-    bdb_error, bdb_violations, fail_busy, fail_engine, fail_schema_message,
-};
+use crate::error::{bdb_error, bdb_violations, fail_busy, fail_engine, fail_schema_message};
 use crate::query::{bdb_prepared, bdb_query, query_in};
 use crate::schema::{bdb_schema_spec, schema_spec_in};
 use crate::value::{bdb_string_view, bdb_value, row_in, rows_in, value_out};
 use crate::{
-    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out, box_out_to, guard,
-    guard_statusless, guard_value, mut_in, out, ref_in, require_out, tag_in,
+    bdb_callback_control, bdb_status, box_in, box_out, box_out_to, guard, guard_statusless,
+    guard_value, mut_in, out, ref_in, require_out, tag_in, BridgeResult, Fail,
 };
 
 pub(crate) type Engine = Db<SchemaDescriptor>;
@@ -50,7 +48,10 @@ pub struct bdb_db {
     retired: Mutex<Vec<Retired>>,
 }
 
-#[allow(dead_code, reason = "boxes are held so stashed C pointers stay allocated")]
+#[allow(
+    dead_code,
+    reason = "boxes are held so stashed C pointers stay allocated"
+)]
 enum Retired {
     Instance(Box<bdb_instance_ref>),
     Witness(Box<bdb_witness>),
@@ -212,9 +213,8 @@ pub type bdb_db_read_callback = Option<
 >;
 
 /// Heap-instance callback: the same query surface, no witness.
-pub type bdb_owned_instance_read_callback = Option<
-    unsafe extern "C" fn(context: *mut c_void, instance: *const bdb_instance_ref) -> u32,
->;
+pub type bdb_owned_instance_read_callback =
+    Option<unsafe extern "C" fn(context: *mut c_void, instance: *const bdb_instance_ref) -> u32>;
 
 pub type bdb_write_callback =
     Option<unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32>;
@@ -383,12 +383,15 @@ fn handle_busy(handle: &bdb_db) -> bool {
     phase_readers(phase) != 0 || phase_writing(phase)
 }
 
+/// Bridge-owned decline token. Only this crate mints it.
+struct CallbackDecline;
+
 fn callback_interrupt() -> Error {
-    Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted))
+    Error::hatch(CallbackDecline)
 }
 
 fn is_callback_interrupt(error: &Error) -> bool {
-    matches!(error, Error::Io(failure) if failure.kind == std::io::ErrorKind::Interrupted)
+    error.downcast_hatch::<CallbackDecline>().is_some()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -396,6 +399,26 @@ enum Exit {
     Proceed,
     Abort,
     Misuse,
+}
+
+enum CallbackEnd<T> {
+    Aborted,
+    Done(T),
+}
+
+/// Post-callback map. A genuine engine `Io(Interrupted)` is not the
+/// hatch — abort plus engine failure reports the engine.
+fn conclude_status<T>(
+    exit: Exit,
+    result: bumbledb::Result<T>,
+) -> Result<CallbackEnd<T>, crate::Fail> {
+    match (exit, result) {
+        (Exit::Misuse, _) => Err(crate::Fail::Misuse),
+        (Exit::Abort, Ok(_)) => Ok(CallbackEnd::Aborted),
+        (Exit::Abort, Err(error)) if is_callback_interrupt(&error) => Ok(CallbackEnd::Aborted),
+        (Exit::Abort | Exit::Proceed, Err(error)) => Err(fail_engine(error)),
+        (Exit::Proceed, Ok(value)) => Ok(CallbackEnd::Done(value)),
+    }
 }
 
 struct InOpReset<'a>(&'a AtomicBool);
@@ -495,8 +518,12 @@ impl bdb_instance_ref {
 
     fn contains_dyn(&self, relation: RelationId, row: &[Value]) -> BridgeResult<bool> {
         match self.kind {
-            KIND_STORE => self.with_store(|snap| snap.contains_dyn(relation, row).map_err(fail_engine)),
-            KIND_HEAP => self.with_heap(|inst| inst.contains_dyn(relation, row).map_err(fail_engine)),
+            KIND_STORE => {
+                self.with_store(|snap| snap.contains_dyn(relation, row).map_err(fail_engine))
+            }
+            KIND_HEAP => {
+                self.with_heap(|inst| inst.contains_dyn(relation, row).map_err(fail_engine))
+            }
             _ => Err(Fail::Misuse),
         }
     }
@@ -508,12 +535,12 @@ impl bdb_instance_ref {
         keys: &[Value],
     ) -> BridgeResult<Option<Vec<Value>>> {
         match self.kind {
-            KIND_STORE => self.with_store(|snap| {
-                snap.get_dyn(relation, key, keys).map_err(fail_engine)
-            }),
-            KIND_HEAP => self.with_heap(|inst| {
-                inst.get_dyn(relation, key, keys).map_err(fail_engine)
-            }),
+            KIND_STORE => {
+                self.with_store(|snap| snap.get_dyn(relation, key, keys).map_err(fail_engine))
+            }
+            KIND_HEAP => {
+                self.with_heap(|inst| inst.get_dyn(relation, key, keys).map_err(fail_engine))
+            }
             _ => Err(Fail::Misuse),
         }
     }
@@ -543,7 +570,10 @@ impl bdb_instance_ref {
         }
     }
 
-    fn prepare(&self, query: &bumbledb::Query) -> BridgeResult<bumbledb::PreparedQuery<SchemaDescriptor>> {
+    fn prepare(
+        &self,
+        query: &bumbledb::Query,
+    ) -> BridgeResult<bumbledb::PreparedQuery<SchemaDescriptor>> {
         match self.kind {
             KIND_STORE => self.with_store(|snap| snap.prepare(query).map_err(fail_engine)),
             KIND_HEAP => self.with_heap(|inst| inst.prepare(query).map_err(fail_engine)),
@@ -679,10 +709,7 @@ fn call_read_callback(
     witness: &bdb_witness,
 ) -> BridgeResult<bdb_callback_control> {
     let callback = callback.ok_or(Fail::Misuse)?;
-    #[expect(
-        unsafe_code,
-        reason = "invoking the caller's extern C function"
-    )]
+    #[expect(unsafe_code, reason = "invoking the caller's extern C function")]
     // SAFETY: non-null was just checked; the ref arguments are heap slots
     // live for the call. A C++ throw through `callback` is unsupported.
     let raw = unsafe { callback(context, instance, witness) };
@@ -695,10 +722,7 @@ fn call_owned_callback(
     instance: &bdb_instance_ref,
 ) -> BridgeResult<bdb_callback_control> {
     let callback = callback.ok_or(Fail::Misuse)?;
-    #[expect(
-        unsafe_code,
-        reason = "invoking the caller's extern C function"
-    )]
+    #[expect(unsafe_code, reason = "invoking the caller's extern C function")]
     let raw = unsafe { callback(context, instance) };
     tag_in(raw)
 }
@@ -709,10 +733,7 @@ fn call_write_callback(
     transaction: &bdb_tx_ref,
 ) -> BridgeResult<bdb_callback_control> {
     let callback = callback.ok_or(Fail::Misuse)?;
-    #[expect(
-        unsafe_code,
-        reason = "invoking the caller's extern C function"
-    )]
+    #[expect(unsafe_code, reason = "invoking the caller's extern C function")]
     let raw = unsafe { callback(context, (&raw const *transaction).cast_mut()) };
     tag_in(raw)
 }
@@ -935,8 +956,7 @@ pub extern "C" fn bdb_instance_builder_new(
     guard(out_error, || {
         require_out(out_builder)?;
         let descriptor = descriptor_of(spec)?;
-        let builder =
-            InstanceBuilder::new(descriptor.clone()).map_err(fail_engine)?;
+        let builder = InstanceBuilder::new(descriptor.clone()).map_err(fail_engine)?;
         box_out_to(
             out_builder,
             bdb_instance_builder {
@@ -1093,9 +1113,7 @@ pub extern "C" fn bdb_instance_builder_admit(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_instance_builder_destroy(
-    builder: *mut bdb_instance_builder,
-) -> bdb_status {
+pub extern "C" fn bdb_instance_builder_destroy(builder: *mut bdb_instance_builder) -> bdb_status {
     guard_statusless(|| {
         drop(box_in(builder)?);
         Ok(bdb_status::Ok)
@@ -1107,9 +1125,7 @@ pub extern "C" fn bdb_instance_builder_destroy(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
-pub extern "C" fn bdb_owned_instance_destroy(
-    instance: *mut bdb_owned_instance,
-) -> bdb_status {
+pub extern "C" fn bdb_owned_instance_destroy(instance: *mut bdb_owned_instance) -> bdb_status {
     guard_statusless(|| {
         drop(box_in(instance)?);
         Ok(bdb_status::Ok)
@@ -1184,14 +1200,9 @@ pub extern "C" fn bdb_db_read(
                 Exit::Abort | Exit::Misuse => Err(callback_interrupt()),
             }
         });
-        match (exit.get(), result) {
-            (Exit::Misuse, _) => Err(Fail::Misuse),
-            (Exit::Abort, Ok(())) => Ok(bdb_status::Aborted),
-            (Exit::Abort, Err(error)) if is_callback_interrupt(&error) => {
-                Ok(bdb_status::Aborted)
-            }
-            (Exit::Abort | Exit::Proceed, Err(error)) => Err(fail_engine(error)),
-            (Exit::Proceed, Ok(())) => Ok(bdb_status::Ok),
+        match conclude_status(exit.get(), result)? {
+            CallbackEnd::Aborted => Ok(bdb_status::Aborted),
+            CallbackEnd::Done(()) => Ok(bdb_status::Ok),
         }
     })
 }
@@ -1219,14 +1230,9 @@ fn write_outcome(
         }
     };
     let result = run(engine.as_ref(), &mut body);
-    match (exit.get(), result) {
-        (Exit::Misuse, _) => Err(Fail::Misuse),
-        (Exit::Abort, Ok(_)) => Ok((bdb_status::Aborted, None)),
-        (Exit::Abort, Err(error)) if is_callback_interrupt(&error) => {
-            Ok((bdb_status::Aborted, None))
-        }
-        (Exit::Abort | Exit::Proceed, Err(error)) => Err(fail_engine(error)),
-        (Exit::Proceed, Ok(ConditionalWrite::Accepted(committed))) => Ok((
+    match conclude_status(exit.get(), result)? {
+        CallbackEnd::Aborted => Ok((bdb_status::Aborted, None)),
+        CallbackEnd::Done(ConditionalWrite::Accepted(committed)) => Ok((
             bdb_status::Ok,
             Some(bdb_write_admission {
                 tag: bdb_admission_tag::Accepted,
@@ -1235,19 +1241,16 @@ fn write_outcome(
                 },
             }),
         )),
-        (Exit::Proceed, Ok(ConditionalWrite::Rejected(violations))) => Ok((
+        CallbackEnd::Done(ConditionalWrite::Rejected(violations)) => Ok((
             bdb_status::Ok,
             Some(bdb_write_admission {
                 tag: bdb_admission_tag::Rejected,
                 value: bdb_write_admission_value {
-                    rejected: box_out(bdb_violations::from_engine(
-                        &violations,
-                        &handle.descriptor,
-                    )),
+                    rejected: box_out(bdb_violations::from_engine(&violations, &handle.descriptor)),
                 },
             }),
         )),
-        (Exit::Proceed, Ok(ConditionalWrite::Moved { witnessed, current })) => Ok((
+        CallbackEnd::Done(ConditionalWrite::Moved { witnessed, current }) => Ok((
             bdb_status::Ok,
             Some(bdb_write_admission {
                 tag: bdb_admission_tag::Moved,
@@ -1559,11 +1562,8 @@ pub extern "C" fn bdb_instance_get(
     guard(out_error, || {
         require_out(out_row)?;
         let keys = row_in(key_values, key_value_count)?;
-        let found = ref_in(instance)?.get_dyn(
-            RelationId(relation),
-            StatementId(key_statement),
-            &keys,
-        )?;
+        let found =
+            ref_in(instance)?.get_dyn(RelationId(relation), StatementId(key_statement), &keys)?;
         match found {
             Some(values) => box_out_to(out_row, bdb_row_set::from_rows(vec![values]))?,
             None => out(out_row, std::ptr::null_mut())?,
@@ -1701,4 +1701,41 @@ pub extern "C" fn bdb_row_set_destroy(rows: *mut bdb_row_set) -> bdb_status {
 #[cfg(test)]
 pub(crate) fn test_only_trigger_panic(out_error: *mut *mut bdb_error) -> bdb_status {
     guard(out_error, || panic!("bumbledb-c test panic hook"))
+}
+
+#[cfg(test)]
+mod decline_tests {
+    use super::*;
+    use bumbledb::ErrorFamily;
+
+    #[test]
+    fn genuine_interrupted_is_not_the_hatch() {
+        let engine = Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        assert!(!is_callback_interrupt(&engine));
+        assert!(is_callback_interrupt(&callback_interrupt()));
+        assert_eq!(callback_interrupt().family(), ErrorFamily::Io);
+        assert_eq!(engine.family(), ErrorFamily::Io);
+    }
+
+    #[test]
+    fn abort_plus_engine_interrupt_reports_engine_failure() {
+        let result: bumbledb::Result<()> = Err(Error::from(std::io::Error::from(
+            std::io::ErrorKind::Interrupted,
+        )));
+        assert!(
+            matches!(
+                conclude_status(Exit::Abort, result),
+                Err(crate::Fail::Error(_))
+            ),
+            "engine Interrupted under abort must not become ABORTED"
+        );
+    }
+
+    #[test]
+    fn abort_plus_hatch_is_aborted() {
+        assert!(matches!(
+            conclude_status(Exit::Abort, Err::<(), _>(callback_interrupt())),
+            Ok(CallbackEnd::Aborted)
+        ));
+    }
 }

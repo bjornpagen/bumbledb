@@ -1072,6 +1072,7 @@ impl fmt::Display for Error {
                 )
             }
             Self::Io(err) => write!(f, "io: {err}"),
+            Self::Hatch(_) => write!(f, "io: bridge decline"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
             Self::ReadersFull { max_readers } => {
                 write!(f, "all {max_readers} reader slots hold open snapshots")
