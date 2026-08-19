@@ -19,6 +19,7 @@
 
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, Result};
+use crate::storage::catalog::{LmdbReadCatalog, LmdbWriteCatalog};
 use crate::storage::env::{ReadTxn, WriteTxn};
 
 /// `_dict` key prefixes.
@@ -65,60 +66,27 @@ pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
     lookup(txn, value.as_bytes())
 }
 
-/// Read-only raw-bytes lookup (readers: the string front above; the
-/// delta's pending-intern path, which must consult the committed
-/// dictionary before minting a provisional id; the sweeper's
-/// committed-only selection encoding).
+/// Thin delegate of [`LmdbReadCatalog::dict_lookup`]. Readers: the string
+/// front above; the delta's pending-intern path; the sweeper's
+/// committed-only selection encoding.
 pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
-    let dict = txn.env().dict();
-    match dict.get(txn.raw(), &forward_key(raw))? {
-        None => Ok(None),
-        Some(bytes) => intern_id_from_stored(bytes).map(Some),
-    }
+    LmdbReadCatalog::new(txn).dict_lookup(raw)
 }
 
-/// Writes one pending intern entry minted by the delta (reader: the 50-storage doc's
-/// commit counter flush). The provisional id was assigned from the same
-/// counter this commit flushes, under the single-writer discipline. The
-/// reverse put refuses overwrite (finding 078): ids are monotonic and
-/// never reused, so a reverse entry already holding the id is the
-/// never-reissue law broken — a loud typed corruption at the write
-/// itself, never a silent clobber arming a stale forward entry.
+/// Thin delegate of [`LmdbWriteCatalog::dict_put_pending`].
 pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: InternId) -> Result<()> {
-    debug_assert!(!id.is_sentinel(), "dictionary id space exhausted");
-    let dict = txn.env().dict();
-    dict.put(
-        txn.raw_mut(),
-        &forward_key(raw),
-        id.raw().to_be_bytes().as_slice(),
-    )?;
-    match dict.put_with_flags(
-        txn.raw_mut(),
-        heed::PutFlags::NO_OVERWRITE,
-        &reverse_key(id),
-        raw,
-    ) {
-        Ok(()) => Ok(()),
-        Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
-            Err(Error::Corruption(CorruptionError::DictReverseIdReuse))
-        }
-        Err(other) => Err(other.into()),
-    }
+    LmdbWriteCatalog::new(txn).dict_put_pending(raw, id)
 }
 
-/// Resolves an id to its raw bytes, borrowed from the LMDB page for the
-/// transaction's lifetime.
+/// Thin delegate of [`LmdbReadCatalog::dict_resolve`]: raw bytes borrowed
+/// from the LMDB page for the transaction's lifetime.
 ///
 /// # Errors
 ///
 /// `Corruption(DanglingInternId)` when the id has no reverse entry — a fact
 /// referencing it is corrupt; never a skip.
 pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: InternId) -> Result<&'txn [u8]> {
-    let dict = txn.env().dict();
-    dict.get(txn.raw(), &reverse_key(id))?
-        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(
-            id.raw(),
-        )))
+    LmdbReadCatalog::new(txn).dict_resolve(id)
 }
 
 #[cfg(test)]

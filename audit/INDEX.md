@@ -22,7 +22,7 @@ over this table when they disagree.
 | 03 | [owned single read](03-ts-owned-single-read.md) | **fixed this pass** — five direct owned reads; lease spelling gone |
 | 04 | [TS builder verbs](04-ts-builder-verbs.md) | **fixed this pass** — full builder verbs; column load/insert |
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
-| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |
+| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / **fixed this pass** (dict) / BLOCKED (scratch — `instance.rs`) |
 | 07 | [view binding](07-view-binding.md) | **fixed this pass** — per-occurrence `Binding` / `OccMemo` |
 | 08 | [relation slot](08-relation-slot.md) | **fixed this pass** — one `RelationSlot` table; SPINE-16 epochs from `ImageBind` |
 | 09 | [profile + stats](09-profile-stats.md) | **fixed this pass** — `Instance::profile` + one `hit` |

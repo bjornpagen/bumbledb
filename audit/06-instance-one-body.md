@@ -1,8 +1,11 @@
 # 06 — One instance algebra: the store arm still reads through `storage::read` and `dict::*`
 
-- **Status:** **keep** (prepare/execute generic; scan residue essential) —
-  a lending cursor cannot borrow a temporary catalog. Two scan/get/contains
-  bodies are the coordinate change, not a dual algebra.
+- **Status:** keep (scan) / **fixed this pass** (store `CodecRead` +
+  `dict::*` delegates) / **BLOCKED** (ScratchPool seed/park — `instance.rs`).
+  Tests: `interning_twice_returns_the_same_id`,
+  `resolve_round_trips_interned_values`,
+  `resolve_of_fabricated_id_is_corruption`, `dict_ids_are_intern_ids`.
+  Scan half untouched (keep-accepted).
 - **Severity:** should-fix.
 - **Supersedes:** SPINE-03, SPINE-05, SPINE-06, SPINE-07, PROP-005, PROP-009,
   PROP-017, REP-12/13/14.
@@ -73,3 +76,26 @@ catalog; every execute enters through the one trait method.
   is gone.
 - No rustdoc names `execute_args`; workspace tests and scenario lanes
   byte-identical.
+
+## Landed this pass (dict remainder)
+
+- `plumbing.rs` `resolve_string` goes through
+  `instance.core.source.catalog().dict_resolve` — the inherent method
+  names the transaction lifetime, so a temporary `Copy` catalog can
+  drop and the mmap bytes still live with the lease (Insight 12: the
+  catalog handle is a coordinate, not a second owner).
+- `dict::{lookup,resolve,put_pending,lookup_str}` are one-line
+  delegates of `LmdbReadCatalog` / `LmdbWriteCatalog`. Bodies live on
+  the catalog. Representation-only: same LMDB gets/puts; goldens and
+  scenario lanes byte-identical.
+- Scan half not touched (`read_instance.rs` still uses `storage::read`).
+
+## Collision (ScratchPool seed/park)
+
+`Db::read` cannot seed or park a pool without Lane D's `instance.rs`:
+`InstanceCore::scratch` is private and `assemble` always does
+`ScratchPool::new()`. Needed there: `assemble` takes a `ScratchPool`
+and a take-back (or `into_parts`). A park slot on the handle also
+needs `api/db.rs` (`Db` / `ParkedReader` have none). The lease already
+borrows no extra handle fields; one `ScratchPool` type already lives
+inside `InstanceCore`. Stopped rather than edit D-owned files.

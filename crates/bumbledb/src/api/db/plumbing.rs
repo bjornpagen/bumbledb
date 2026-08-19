@@ -1,7 +1,6 @@
 use super::{ReadInstance, RelationId, ValueRef};
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, FactShapeError, Result};
-use crate::storage::dict;
 
 /// The typed path's fixed-width interval boundary: checks the host's
 /// checked interval against the field's declared width — exactly the
@@ -52,7 +51,7 @@ pub fn fixed_interval_i64(
 ///
 /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
 pub fn resolve_string<'a, S>(instance: &'a ReadInstance<'_, S>, id: InternId) -> Result<&'a str> {
-    let raw = dict::resolve(instance.txn(), id)?;
+    let raw = instance.core.source.catalog().dict_resolve(id)?;
     std::str::from_utf8(raw)
         .map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id.raw())))
 }
