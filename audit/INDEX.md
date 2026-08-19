@@ -34,7 +34,7 @@ over this table when they disagree.
 | 15 | [exec one evaluator](15-exec-one-evaluator.md) | OPEN — walk shared, entries not; two-module gate unmet |
 | 16 | [verify-store embedding](16-verify-store-embedding.md) | OPEN (later) — structural variants transcribe; `intern_id: u64` |
 | 17 | [docs vocabulary](17-docs-vocabulary.md) | OPEN (docs only) — fence table, snapshot prose, case count, Lean prose |
-| 18 | [ramdisk probe](18-ramdisk-probe.md) | OPEN (environmental) — capability probe, skip-with-reason |
+| 18 | [ramdisk probe](18-ramdisk-probe.md) | **fixed this pass** (`RamDiskProbe` sum; live lock `#[ignore]`) |
 | 19 | [violations attach seam](19-violations-attach-seam.md) | **fixed this pass** (`from_pairs`; decoration builds the stored pairs) |
 
 ## Owner rulings required
