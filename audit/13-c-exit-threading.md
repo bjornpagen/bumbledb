@@ -5,8 +5,8 @@
   bridge-owned ZST (`CallbackDecline`); family is still `ErrorFamily::Io`
   — no new ABI kind. `grep -n "ErrorKind::Interrupted" crates/bumbledb-c/src/`
   is empty. Tests: `hatch_reuses_io_family_and_downcasts`,
-  `genuine_interrupted_is_not_the_hatch`,
-  `abort_plus_engine_interrupt_reports_engine_failure`,
+  `genuine_io_is_not_the_hatch`,
+  `abort_plus_engine_failure_reports_engine_failure`,
   `abort_plus_hatch_is_aborted`, `write_abort_commits_nothing`.
 - **Severity:** should-fix.
 - **Supersedes:** BND-04.

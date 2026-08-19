@@ -2085,10 +2085,9 @@ mod hatch_tests {
         assert_eq!(error.family(), ErrorFamily::Io);
         assert!(error.downcast_hatch::<Token>().is_some());
         assert!(error.downcast_hatch::<u8>().is_none());
-        assert!(
-            Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted))
-                .downcast_hatch::<Token>()
-                .is_none()
-        );
+        let interrupted = Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        assert!(interrupted.downcast_hatch::<Token>().is_none());
+        assert_eq!(interrupted.family(), ErrorFamily::Io);
+        assert_ne!(interrupted, error);
     }
 }

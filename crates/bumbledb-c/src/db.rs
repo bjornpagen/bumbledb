@@ -406,8 +406,8 @@ enum CallbackEnd<T> {
     Done(T),
 }
 
-/// Post-callback map. A genuine engine `Io(Interrupted)` is not the
-/// hatch — abort plus engine failure reports the engine.
+/// Post-callback map. A genuine engine error is not the hatch —
+/// abort plus engine failure reports the engine.
 fn conclude_status<T>(
     exit: Exit,
     result: bumbledb::Result<T>,
@@ -1709,8 +1709,8 @@ mod decline_tests {
     use bumbledb::ErrorFamily;
 
     #[test]
-    fn genuine_interrupted_is_not_the_hatch() {
-        let engine = Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted));
+    fn genuine_io_is_not_the_hatch() {
+        let engine = Error::from(std::io::Error::from(std::io::ErrorKind::Other));
         assert!(!is_callback_interrupt(&engine));
         assert!(is_callback_interrupt(&callback_interrupt()));
         assert_eq!(callback_interrupt().family(), ErrorFamily::Io);
@@ -1718,16 +1718,15 @@ mod decline_tests {
     }
 
     #[test]
-    fn abort_plus_engine_interrupt_reports_engine_failure() {
-        let result: bumbledb::Result<()> = Err(Error::from(std::io::Error::from(
-            std::io::ErrorKind::Interrupted,
-        )));
+    fn abort_plus_engine_failure_reports_engine_failure() {
+        let result: bumbledb::Result<()> =
+            Err(Error::from(std::io::Error::from(std::io::ErrorKind::Other)));
         assert!(
             matches!(
                 conclude_status(Exit::Abort, result),
                 Err(crate::Fail::Error(_))
             ),
-            "engine Interrupted under abort must not become ABORTED"
+            "engine failure under abort must not become ABORTED"
         );
     }
 

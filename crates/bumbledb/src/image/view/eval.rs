@@ -692,7 +692,12 @@ pub(crate) fn kernel_scan(
         FilterPredicate::Compare { .. } => {}
         FilterPredicate::PointIn { field, point } => {
             let (starts, ends) = interval_columns(image, *field);
-            crate::exec::kernel::filter_point_in_u64(starts, ends, resolve_word(point, params), out);
+            crate::exec::kernel::filter_point_in_u64(
+                starts,
+                ends,
+                resolve_word(point, params),
+                out,
+            );
             return true;
         }
         FilterPredicate::AnyPointIn { field, set } => {

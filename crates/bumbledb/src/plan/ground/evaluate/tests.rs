@@ -7,7 +7,7 @@ use super::*;
 use crate::image::view::{
     Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
 };
-use crate::ir::normalize::{normalize_rules, FoldedMark, NormalizedQuery};
+use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value};
 use crate::ir::{CmpOp, OrderCmp, WordCmp};
@@ -566,9 +566,11 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
         ),
     ];
     for (relation, original, expected) in cases {
-        assert!(original
-            .iter()
-            .all(crate::image::view::is_prepare_resolvable));
+        assert!(
+            original
+                .iter()
+                .all(crate::image::view::is_prepare_resolvable)
+        );
         assert_eq!(
             surviving_ids(schema.relation(relation), &original),
             expected

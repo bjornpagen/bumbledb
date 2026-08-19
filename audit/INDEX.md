@@ -9,9 +9,9 @@ earlier 0.13 and 0.15 second-pass area files are deleted — every still-open
 row was carried into a numbered file, and the fixed rows' record is git
 history.
 
-The tree is hot. Statuses below were verified 2026-08-19 ~17:20 EDT and
-agents land fixes continuously — trust the `Status` line inside each file
-over this table when they disagree.
+Statuses verified 2026-08-19 after the audit-lane fanout landed on
+`main`. Trust the `Status` line inside each file over this table when
+they disagree.
 
 ## Roster
 
@@ -22,14 +22,14 @@ over this table when they disagree.
 | 03 | [owned single read](03-ts-owned-single-read.md) | **fixed this pass** — five direct owned reads; lease spelling gone |
 | 04 | [TS builder verbs](04-ts-builder-verbs.md) | **fixed this pass** — full builder verbs; column load/insert |
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
-| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / **fixed this pass** (dict) / BLOCKED (scratch — `instance.rs`) |
+| 06 | [instance one body](06-instance-one-body.md) | keep (scan) / **fixed this pass** (dict + ScratchPool seed/park) |
 | 07 | [view binding](07-view-binding.md) | **fixed this pass** — per-occurrence `Binding` / `OccMemo` |
 | 08 | [relation slot](08-relation-slot.md) | **fixed this pass** — one `RelationSlot` table; SPINE-16 epochs from `ImageBind` |
 | 09 | [profile + stats](09-profile-stats.md) | **fixed this pass** — `Instance::profile` + one `hit` |
 | 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | **fixed this pass** (typed decode; no `ValueRef` `Fixed*` arms) |
 | 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
 | 12 | [C owner tokens](12-c-owner-tokens.md) | **fixed this pass** (`OwnerToken`; bridge pre-refusal test pinned) |
-| 13 | [C exit threading](13-c-exit-threading.md) | keep — one `Result<()>` channel; rider spelling narrowed (unforgeable decline, later) |
+| 13 | [C exit threading](13-c-exit-threading.md) | keep (one `Result<()>` channel) / **fixed this pass** (unforgeable hatch) |
 | 14 | [V8 lazy accounting](14-v8-lazy-accounting.md) | **fixed this pass** (`OwnedSlot.accounted` cell; ops sync `retained_bytes`) |
 | 15 | [exec one evaluator](15-exec-one-evaluator.md) | **fixed this pass** (one `holds` entry; two-module gate pinned) |
 | 16 | [verify-store embedding](16-verify-store-embedding.md) | **fixed this pass** (`StoreFinding::{Judgment, Corruption}`; `InternId`) |
@@ -70,6 +70,25 @@ over this table when they disagree.
    `ValueType`, introspection v7, ABI-3 rows.
 8. One `Box<[RelationSlot]>` (`Closed` | `Frozen` | `Ordinary`);
    `ImageBind` mints `ViewEpoch`; no `txn.generation()` under `image/`.
+9. TS control plane is `AsyncTask` (`create`/`open`/`fromInstance`/`exhume`);
+   owned reads are five direct natives; builder has the engine verb set
+   (`temporal-shape`, `owned-read`, `builder-verbs` tests).
+10. One `holds` entry; `exhaustive_filter_predicate_matches_live_in_two_modules`.
+11. Per-occurrence `Binding` / `OccMemo` (`residual_bindings_memoize_under_lru`
+    and the four sibling memo tests).
+12. `Instance::profile` + `KeyProbeStats::from_emitted`
+    (`profile_on_owned_and_lease_agrees`).
+13. Typed decode; no `unreachable!("schema-typed")`; no `ValueRef` `Fixed*`
+    arms (`typed_decode_reads_the_layout_arm`).
+14. Store `CodecRead` through catalog dict; `assemble` takes a `ScratchPool`;
+    `Db::read` seeds/parks it (`the_reader_cache_is_invisible_except_in_speed`).
+15. `StoreFinding::{Judgment, Corruption}`; dangling ids are `InternId`.
+16. Docs/Lean snapshot-word sweep; census token; ramdisk `RamDiskProbe` sum
+    with live lock `#[ignore]` (`timed_families_refuse_a_live_ram_disk`).
+17. Unforgeable C decline hatch (`hatch_reuses_io_family_and_downcasts`,
+    `abort_plus_engine_failure_reports_engine_failure`). No new
+    `ErrorFamily` arm. Pointer: [kept.md](kept.md) (C abort still rides
+    one `Result<()>`).
 
 ## Already right (do not "fix" back)
 
@@ -90,12 +109,11 @@ over this table when they disagree.
 
 ## Suggested order of work
 
-1. **02** — make the async signatures honest (`fromInstance` first: it is
-   O(catalog) on the event loop).
-2. **03 + 04** — one way to read an owned instance; full builder verb set.
-3. **10** — typed decode both sides; delete the last `unreachable!`s.
-4. Owner rules on **07 / 09**, then whichever open.
-5. **13** (unforgeable decline) + **06** (codec dict path, scratch pools,
-   doc ghosts) + **15** (evaluator entries).
-6. **16**, **17**, **18** in any order; **18** also gates release
-   on bare metal.
+The numbered interior roster is closed except accepted keeps (**05**,
+**06** scan, **13** one-channel). Remaining release work:
+
+1. **18** live ramdisk lock on bare metal (`--ignored`) — no release
+   checklist exists under `docs/**`; the one-liner stays in
+   [18](18-ramdisk-probe.md).
+2. **06** scan unification only if a catalog member is built at lease
+   birth (the recorded keep).

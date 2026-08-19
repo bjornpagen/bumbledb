@@ -1,8 +1,8 @@
-use super::fact_word::{fact_operand, FactOperand};
 use super::KeyProbePlan;
+use super::fact_word::{FactOperand, fact_operand};
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, Result};
-use crate::image::view::{holds, Const, Loaded, OperandAddr, Operands};
+use crate::image::view::{Const, Loaded, OperandAddr, Operands, holds};
 use crate::obs;
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;

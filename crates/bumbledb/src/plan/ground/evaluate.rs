@@ -377,7 +377,7 @@ impl crate::image::view::Operands for SealedRow<'_> {
         &self,
         at: crate::image::view::OperandAddr,
     ) -> Result<crate::image::view::Loaded, Self::Error> {
-        use crate::exec::dispatch::{fact_operand, FactOperand};
+        use crate::exec::dispatch::{FactOperand, fact_operand};
         Ok(
             match fact_operand(self.fact, at.field()).expect("sealed rows are valid") {
                 FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
