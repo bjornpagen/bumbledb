@@ -54,8 +54,8 @@ fn fact(schema: &Schema, id: u64) -> Vec<u8> {
     encode_fact(
         &[
             ValueRef::U64(id),
-            ValueRef::fixed_bytes(&head),
-            ValueRef::fixed_bytes(&hash),
+            ValueRef::bytes(&head),
+            ValueRef::bytes(&hash),
         ],
         schema.relation(D).layout(),
         &mut bytes,

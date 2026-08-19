@@ -14,7 +14,8 @@ mod tests;
 
 pub(crate) use decode::FieldDecodeError;
 pub use decode::{
-    decode_bool, decode_field, decode_fixed_interval_start, decode_i64, decode_u64, field_bytes,
+    decode_bool, decode_bool_at, decode_field, decode_fixed_bytes, decode_fixed_interval_start,
+    decode_i64, decode_interval_i64, decode_interval_u64, decode_u64, field_bytes,
     field_word_bytes,
 };
 pub(crate) use decode::{decode_values, decode_values_keyed_into, split_halves};
@@ -110,7 +111,7 @@ impl FixedBytesValue {
     /// The value's `len` raw bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes[..usize::from(self.len)]
+        &self.bytes[..self.len()]
     }
 
     /// The declared width in bytes.
@@ -130,8 +131,8 @@ impl FixedBytesValue {
 /// A decoded field value at the encoding layer.
 ///
 /// `String` carries an intern id here; resolving an id to raw bytes is
-/// the dictionary's job (docs/architecture/50-storage.md). `FixedBytes`
-/// carries its value whole — bytes<N> values are inline, never interned.
+/// the dictionary's job (docs/architecture/50-storage.md). Bytes payloads
+/// carry no width — `N` lives on the layout's [`ValueType::FixedBytes`].
 /// Every variant is fixed-width, so the type is `Copy` and carries no
 /// borrow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,8 +142,9 @@ pub enum ValueRef {
     I64(i64),
     /// Intern id of a UTF-8 string.
     String(InternId),
-    /// A `bytes<N>` value, inline.
-    FixedBytes(FixedBytesValue),
+    /// A `bytes<N>` payload. Width is the layout arm, not this buffer;
+    /// unused tail is zero by construction.
+    Bytes([u8; MAX_FIXED_BYTES]),
     /// Nonempty interval over U64.
     IntervalU64(Interval<u64>),
     /// Nonempty interval over I64.
@@ -150,14 +152,22 @@ pub enum ValueRef {
 }
 
 impl ValueRef {
-    /// Wraps raw `bytes<N>` bytes (the macro codegen's constructor).
+    /// Wraps raw `bytes<N>` bytes. `N` is the layout's
+    /// [`ValueType::FixedBytes`]; this buffer does not carry a second
+    /// width.
     ///
     /// # Panics
     ///
     /// As [`FixedBytesValue::new`] — schema-typed callers only.
     #[must_use]
-    pub fn fixed_bytes(raw: &[u8]) -> Self {
-        Self::FixedBytes(FixedBytesValue::new(raw))
+    pub fn bytes(raw: &[u8]) -> Self {
+        assert!(
+            !raw.is_empty() && raw.len() <= MAX_FIXED_BYTES,
+            "bytes<N> widths are 1..=64"
+        );
+        let mut bytes = [0u8; MAX_FIXED_BYTES];
+        bytes[..raw.len()].copy_from_slice(raw);
+        Self::Bytes(bytes)
     }
 }
 

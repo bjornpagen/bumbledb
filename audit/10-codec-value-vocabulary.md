@@ -1,7 +1,12 @@
 # 10 — Typed decode still round-trips the wide `ValueRef` sum; `FixedBytes` still rides the value
 
-- **Status:** OPEN (verified 2026-08-19 17:10 EDT — four
-  `unreachable!("schema-typed")` sites in `api/db.rs`; the tree is hot).
+- **Status:** **fixed this pass** (verified 2026-08-19 18:15 EDT —
+  `grep 'unreachable!("schema-typed")' crates/` empty; `ValueRef` has no
+  `Fixed*` arms; width lives on the layout. Tests:
+  `typed_decode_reads_the_layout_arm`,
+  `append_field_writes_layout_bytes_width`,
+  `decode_field_round_trips_every_type`. Stores and goldens
+  byte-identical. `IntervalTail` remains the recorded later-tail.)
 - **Severity:** should-fix.
 - **Supersedes:** VER-02, PROP-014; carries PROP-015/REP-05 as its tail.
 

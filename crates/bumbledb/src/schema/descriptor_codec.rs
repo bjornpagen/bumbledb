@@ -21,7 +21,7 @@
 //!
 //! [`CorruptionError::MalformedValue`]: crate::error::CorruptionError::MalformedValue
 
-use crate::encoding::{FactLayout, ValueRef, decode_field};
+use crate::encoding::{FactLayout, ValueRef, decode_field, decode_fixed_bytes};
 use bumbledb_theory::{Interval, Value};
 
 use super::fingerprint::FORMAT_VERSION_LABEL;
@@ -177,23 +177,35 @@ fn extension_row(
     }
     let mut values = Vec::with_capacity(layout.field_count().saturating_sub(1));
     for idx in 0..layout.field_count() {
-        let decoded = decode_field(layout.encoded(fact), idx)
-            .map_err(|_| "descriptor extension row value")?;
         if idx == 0 {
+            let decoded = decode_field(layout.encoded(fact), idx)
+                .map_err(|_| "descriptor extension row value")?;
             if decoded != ValueRef::U64(row_id as u64) {
                 return Err("descriptor extension row id");
             }
             continue;
         }
-        values.push(match decoded {
-            ValueRef::Bool(v) => Value::Bool(v),
-            ValueRef::U64(v) => Value::U64(v),
-            ValueRef::I64(v) => Value::I64(v),
-            ValueRef::String(_) => return Err("descriptor extension row str column"),
-            ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-            ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
-            ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
-        });
+        if matches!(layout.field_type(idx), ValueType::FixedBytes { .. }) {
+            values.push(Value::FixedBytes(
+                decode_fixed_bytes(layout.encoded(fact), idx)
+                    .map_err(|_| "descriptor extension row value")?
+                    .into(),
+            ));
+            continue;
+        }
+        values.push(
+            match decode_field(layout.encoded(fact), idx)
+                .map_err(|_| "descriptor extension row value")?
+            {
+                ValueRef::Bool(v) => Value::Bool(v),
+                ValueRef::U64(v) => Value::U64(v),
+                ValueRef::I64(v) => Value::I64(v),
+                ValueRef::String(_) => return Err("descriptor extension row str column"),
+                ValueRef::Bytes(_) => return Err("descriptor extension row bytes column"),
+                ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
+                ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
+            },
+        );
     }
     Ok(Row {
         handle: handle.into(),

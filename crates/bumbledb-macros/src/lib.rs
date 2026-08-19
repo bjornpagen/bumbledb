@@ -2830,7 +2830,7 @@ fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> S
             relation = cx.relation,
         ),
         FieldTy::FixedBytes(_) => {
-            format!("::bumbledb::__private::ValueRef::fixed_bytes(&{access})")
+            format!("::bumbledb::__private::ValueRef::bytes(&{access})")
         }
         FieldTy::Str if insert => format!(
             "::bumbledb::__private::ValueRef::String(context.intern_str(self.{})?)",

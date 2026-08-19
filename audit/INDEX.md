@@ -26,7 +26,7 @@ over this table when they disagree.
 | 07 | [view binding](07-view-binding.md) | **CONTESTED** — owner ruling required (the keep defends the fix, not the code) |
 | 08 | [relation slot](08-relation-slot.md) | **CONTESTED** — owner ruling required (the keep inverts the mechanism); SPINE-16 open either way |
 | 09 | [profile + stats](09-profile-stats.md) | **CONTESTED** on promotion (profile ≠ staleness); `hit` twice OPEN by both sides |
-| 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | OPEN — 4 × `unreachable!("schema-typed")`; `ValueRef::FixedBytes` |
+| 10 | [codec value vocabulary](10-codec-value-vocabulary.md) | **fixed this pass** (typed decode; no `ValueRef` `Fixed*` arms) |
 | 11 | [C ref slots](11-c-ref-slots.md) | **fixed this pass** (retired slots leak on destroy; `MISUSE` test pinned) |
 | 12 | [C owner tokens](12-c-owner-tokens.md) | **fixed this pass** (`OwnerToken`; bridge pre-refusal test pinned) |
 | 13 | [C exit threading](13-c-exit-threading.md) | keep — one `Result<()>` channel; rider spelling narrowed (unforgeable decline, later) |

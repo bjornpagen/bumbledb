@@ -93,10 +93,10 @@ pub trait CodecRead<S>: codec_seal::Sealed {
     fn resolve_str(&self, id: InternId) -> Result<&str>;
 
     fn decode_bool_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<bool> {
-        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
-            crate::encoding::ValueRef::Bool(v) => Ok(v),
-            _ => unreachable!("schema-typed"),
-        }
+        Ok(crate::encoding::decode_bool_at(
+            view(self.schema(), relation, fact),
+            idx,
+        )?)
     }
 
     fn decode_u64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<u64> {
@@ -124,11 +124,10 @@ pub trait CodecRead<S>: codec_seal::Sealed {
         fact: &'f [u8],
         idx: usize,
     ) -> Result<&'f [u8]> {
-        let layout = self.schema().relation(relation).layout();
-        let crate::encoding::ValueType::FixedBytes { len } = layout.field_type(idx) else {
-            unreachable!("schema-typed");
-        };
-        Ok(&crate::encoding::field_bytes(layout.encoded(fact), idx)[..usize::from(len)])
+        Ok(crate::encoding::decode_fixed_bytes(
+            view(self.schema(), relation, fact),
+            idx,
+        )?)
     }
 
     fn decode_interval_u64_field(
@@ -137,10 +136,10 @@ pub trait CodecRead<S>: codec_seal::Sealed {
         fact: &[u8],
         idx: usize,
     ) -> Result<crate::Interval<u64>> {
-        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
-            crate::encoding::ValueRef::IntervalU64(interval) => Ok(interval),
-            _ => unreachable!("schema-typed"),
-        }
+        Ok(crate::encoding::decode_interval_u64(
+            view(self.schema(), relation, fact),
+            idx,
+        )?)
     }
 
     fn decode_interval_i64_field(
@@ -149,10 +148,10 @@ pub trait CodecRead<S>: codec_seal::Sealed {
         fact: &[u8],
         idx: usize,
     ) -> Result<crate::Interval<i64>> {
-        match crate::encoding::decode_field(view(self.schema(), relation, fact), idx)? {
-            crate::encoding::ValueRef::IntervalI64(interval) => Ok(interval),
-            _ => unreachable!("schema-typed"),
-        }
+        Ok(crate::encoding::decode_interval_i64(
+            view(self.schema(), relation, fact),
+            idx,
+        )?)
     }
 }
 

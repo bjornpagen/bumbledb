@@ -1,4 +1,6 @@
-use super::decode::{decode_fixed_bytes, decode_i64, decode_interval_i64, decode_interval_u64};
+use super::decode::{
+    decode_i64, decode_padded_fixed_bytes, interval_i64_from_words, interval_u64_from_words,
+};
 use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
 use crate::encoding::FieldDecodeError;
@@ -147,7 +149,7 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
         ValueRef::String(InternId::from_raw(7)),
-        ValueRef::fixed_bytes(&[0xAA; 12]),
+        ValueRef::bytes(&[0xAA; 12]),
         ValueRef::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
         ),
@@ -245,7 +247,7 @@ fn append_field_matches_determinant_image_slices() {
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
         ValueRef::String(InternId::from_raw(7)),
-        ValueRef::fixed_bytes(&[0xAA; 12]),
+        ValueRef::bytes(&[0xAA; 12]),
         ValueRef::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
         ),
@@ -336,8 +338,41 @@ fn decode_field_surfaces_corruption() {
     fact[39] = 0x00;
     assert_eq!(
         decode_field(layout.encoded(&fact), 5),
-        Ok(ValueRef::fixed_bytes(&[0xAA; 12]))
+        Ok(ValueRef::bytes(&[0xAA; 12]))
     );
+}
+
+/// Typed entries read the layout arm and never construct [`ValueRef`].
+#[test]
+fn typed_decode_reads_the_layout_arm() {
+    let layout = mixed_layout();
+    let mut fact = Vec::new();
+    encode_fact(&mixed_values(), &layout, &mut fact);
+    let view = layout.encoded(&fact);
+    assert_eq!(decode_bool_at(view, 0), Ok(true));
+    assert_eq!(decode_bool_at(view, 1), Ok(false));
+    assert_eq!(decode_fixed_bytes(view, 5), Ok(&[0xAA; 12][..]));
+    assert_eq!(
+        decode_interval_u64(view, 6),
+        Ok(bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"))
+    );
+    assert_eq!(
+        decode_interval_i64(view, 7),
+        Ok(bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"))
+    );
+}
+
+/// Width lives on the layout: a 16-byte payload at a `bytes<8>` slot
+/// writes eight bytes, not sixteen.
+#[test]
+fn append_field_writes_layout_bytes_width() {
+    let mut out = Vec::new();
+    append_field(
+        ValueRef::bytes(&[0xAA; 16]),
+        ValueType::FixedBytes { len: 8 },
+        &mut out,
+    );
+    assert_eq!(out, vec![0xAA; 8]);
 }
 
 #[test]
@@ -353,8 +388,8 @@ fn fixed_bytes_round_trip_at_pad_boundaries() {
         assert_eq!(padded.len(), len.div_ceil(8) * 8);
         assert_eq!(&padded[..len], &raw[..]);
         assert!(padded[len..].iter().all(|&b| b == 0));
-        let decoded =
-            decode_fixed_bytes(&padded, u16::try_from(len).unwrap()).expect("zero pad decodes");
+        let decoded = decode_padded_fixed_bytes(&padded, u16::try_from(len).unwrap())
+            .expect("zero pad decodes");
         assert_eq!(decoded.as_bytes(), &raw[..]);
         assert_eq!(decoded.padded(), &padded[..]);
     }
@@ -408,7 +443,7 @@ fn interval_round_trip_edges_and_random_pairs() {
         (-1, i64::MAX),
     ] {
         assert_eq!(
-            decode_interval_i64(encode_interval_i64(
+            interval_i64_from_words(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             ))
             .map(bumbledb_theory::Interval::bounds),
@@ -417,7 +452,7 @@ fn interval_round_trip_edges_and_random_pairs() {
     }
     for (start, end) in [(0, u64::MAX), (0, 1), (u64::MAX - 1, u64::MAX)] {
         assert_eq!(
-            decode_interval_u64(encode_interval_u64(
+            interval_u64_from_words(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             ))
             .map(bumbledb_theory::Interval::bounds),
@@ -429,7 +464,7 @@ fn interval_round_trip_edges_and_random_pairs() {
     for _ in 0..1_000 {
         let (start, end) = rand_interval_u64(&mut rng);
         assert_eq!(
-            decode_interval_u64(encode_interval_u64(
+            interval_u64_from_words(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             ))
             .map(bumbledb_theory::Interval::bounds),
@@ -440,7 +475,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             start.cast_signed().max(end.cast_signed()),
         );
         assert_eq!(
-            decode_interval_i64(encode_interval_i64(
+            interval_i64_from_words(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             ))
             .map(bumbledb_theory::Interval::bounds),
@@ -505,7 +540,7 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
         bytes[..8].copy_from_slice(&encode_u64(start));
         bytes[8..].copy_from_slice(&encode_u64(end));
         assert_eq!(
-            decode_interval_u64(bytes),
+            interval_u64_from_words(bytes),
             Err(FieldDecodeError::InvalidInterval(bytes))
         );
     }
@@ -514,7 +549,7 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
         bytes[..8].copy_from_slice(&encode_i64(start));
         bytes[8..].copy_from_slice(&encode_i64(end));
         assert_eq!(
-            decode_interval_i64(bytes),
+            interval_i64_from_words(bytes),
             Err(FieldDecodeError::InvalidInterval(bytes))
         );
     }

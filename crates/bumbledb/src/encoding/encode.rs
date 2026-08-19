@@ -65,7 +65,7 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
         Value::Bool(v) => ValueRef::Bool(*v),
         Value::U64(v) => ValueRef::U64(*v),
         Value::I64(v) => ValueRef::I64(*v),
-        Value::FixedBytes(raw) => ValueRef::fixed_bytes(raw),
+        Value::FixedBytes(raw) => ValueRef::bytes(raw),
         Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
         Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
         Value::String(_) => {
@@ -75,10 +75,14 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
     append_field(value, ty, out);
 }
 
-/// Appends one field at the layout's type — interval fixedness lives
-/// here, not on [`ValueRef`].
+/// Appends one field at the layout's type — width lives here, not on
+/// [`ValueRef`]. A `bytes<N>` payload writes `N`'s padded width; a
+/// general interval value at a fixed-width slot writes the start word.
 pub fn append_field(value: ValueRef, ty: ValueType, out: &mut Vec<u8>) {
     match (value, ty) {
+        (ValueRef::Bytes(buf), ValueType::FixedBytes { len }) => {
+            out.extend_from_slice(&buf[..super::fixed_bytes_words(len) * 8]);
+        }
         (ValueRef::IntervalU64(interval), ValueType::FixedInterval { .. }) => {
             out.extend_from_slice(&encode_u64(interval.start()));
         }
@@ -92,7 +96,8 @@ pub fn append_field(value: ValueRef, ty: ValueType, out: &mut Vec<u8>) {
 /// Appends the canonical encoding of ONE field value when the caller has
 /// already selected the encoding arm (general intervals write both
 /// halves). Typed facts go through [`encode_fact`], which consults the
-/// layout.
+/// layout. Bytes payloads write only through [`append_field`] at the
+/// layout type — a width-free buffer has no encoding of its own.
 pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
     match value {
         ValueRef::Bool(v) => {
@@ -107,8 +112,8 @@ pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
         ValueRef::String(id) => {
             out.extend_from_slice(&encode_u64(id.raw()));
         }
-        ValueRef::FixedBytes(value) => {
-            out.extend_from_slice(value.padded());
+        ValueRef::Bytes(_) => {
+            panic!("bytes<N> field: append_field writes at the layout type")
         }
         ValueRef::IntervalU64(interval) => {
             out.extend_from_slice(&encode_interval_u64(interval));
