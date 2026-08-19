@@ -21,8 +21,7 @@
 //! this compiled verdict per binding and poisons on the first Ray.
 
 use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, OperandAddr, SlotOps, ViewWordSource, WordOrParam,
-    duration_holds, holds,
+    Const, FilterPredicate, IntervalConst, OperandAddr, SlotOps, ViewWordSource, WordOrParam, holds,
 };
 use crate::ir::WordCmp;
 use crate::ir::normalize::lower_literal;
@@ -218,7 +217,11 @@ impl CompiledVerdict {
         for &(start, end) in &self.disjuncts {
             let mut conjunct = Verdict3::Holds;
             for leaf in &self.leaves[start..end] {
-                match (conjunct, leaf_verdict(leaf, &ops, params)) {
+                let verdict = match holds(leaf, &ops, params).unwrap_or_else(|e| match e {}) {
+                    None => Verdict3::Ray,
+                    Some(held) => Verdict3::of(held),
+                };
+                match (conjunct, verdict) {
                     (_, Verdict3::Fails) => {
                         conjunct = Verdict3::Fails;
                         break;
@@ -234,22 +237,6 @@ impl CompiledVerdict {
             }
         }
         folded
-    }
-}
-
-fn leaf_verdict<F: Fn(usize) -> u64 + ?Sized>(
-    leaf: &FilterPredicate,
-    ops: &SlotOps<'_, F>,
-    params: &[Const],
-) -> Verdict3 {
-    match leaf {
-        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
-            match duration_holds(leaf, ops, params).unwrap_or_else(|e| match e {}) {
-                None => Verdict3::Ray,
-                Some(holds) => Verdict3::of(holds),
-            }
-        }
-        other => Verdict3::of(holds(other, ops, params).unwrap_or_else(|e| match e {})),
     }
 }
 

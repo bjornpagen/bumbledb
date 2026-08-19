@@ -1,7 +1,9 @@
 # 15 — The predicate walk is shared; the interpreters are not
 
-- **Status:** OPEN (verified 2026-08-19 17:10 EDT — the shared walk is
-  referenced from five-plus modules; the tree is hot).
+- **Status:** **fixed this pass** — one `holds` entry (`Option<bool>`;
+  Ray is `None`); callers construct `Operands` and call it. Grep gate:
+  `exhaustive_filter_predicate_matches_live_in_two_modules`. EXEC-02
+  `NodeScratch` tail untouched.
 - **Severity:** should-fix.
 - **Supersedes:** EXEC-01; carries EXEC-02 as its tail.
 

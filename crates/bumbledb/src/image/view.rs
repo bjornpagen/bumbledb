@@ -12,7 +12,8 @@ mod eval;
 
 pub use apply::apply;
 pub(crate) use eval::{
-    Loaded, OperandAddr, Operands, SlotOps, duration_holds, holds, is_prepare_resolvable, mask_of,
+    Loaded, OperandAddr, Operands, SlotOps, holds, is_prepare_resolvable, push_handle,
+    render_filter, resolve_filter_into,
 };
 
 #[cfg(test)]
@@ -253,6 +254,15 @@ pub enum FilterPredicate {
 }
 
 impl FilterPredicate {
+    /// The measure kinds — evaluated last by the filter-order law.
+    #[must_use]
+    pub(crate) fn is_measure(&self) -> bool {
+        matches!(
+            self,
+            Self::DurationCompare { .. } | Self::DurationFieldsCompare { .. }
+        )
+    }
+
     /// Whole-value or word residual sides — kind-grouped lists only.
     pub(crate) fn compare_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::WordCmp) {
         match *self {
