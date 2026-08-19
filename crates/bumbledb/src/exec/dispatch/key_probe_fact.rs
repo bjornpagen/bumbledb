@@ -1,8 +1,8 @@
+use super::fact_word::{fact_operand, FactOperand};
 use super::KeyProbePlan;
-use super::fact_word::{FactOperand, fact_operand};
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, Result};
-use crate::image::view::{Const, FilterPredicate, Loaded, OperandAddr, Operands, holds};
+use crate::image::view::{holds, Const, Loaded, OperandAddr, Operands};
 use crate::obs;
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
@@ -113,15 +113,6 @@ impl<Cat: CatalogRead> Operands for FactRow<'_, '_, Cat> {
     }
 }
 
-fn fact_matches<Cat: CatalogRead>(
-    catalog: &Cat,
-    fact: crate::encoding::FactView<'_, '_>,
-    filter: &FilterPredicate,
-    params: &[Const],
-) -> Result<bool> {
-    holds(filter, &FactRow { fact, catalog }, params)
-}
-
 fn fetch_checked<'c, Cat: CatalogRead>(
     catalog: &'c Cat,
     schema: &Schema,
@@ -212,10 +203,11 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
         return Ok(None); // miss: empty result
     };
 
-    // Remaining filters run on the fact bytes.
+    // Remaining filters run on the fact bytes — one entry, this provider.
     let fact = layout.encoded(stored.as_ref());
+    let ops = FactRow { fact, catalog };
     for filter in &plan.remaining_filters {
-        if !fact_matches(catalog, fact, filter, params)? {
+        if !holds(filter, &ops, params)?.unwrap_or(false) {
             return Ok(None);
         }
     }

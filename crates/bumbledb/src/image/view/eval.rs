@@ -1,16 +1,23 @@
 //! One predicate walk over an operand-provider capability.
 //!
-//! Four interpreters used to spell the same algebra — image columns,
-//! LMDB fact bytes, ray-probe slots, batch words — each copying
-//! `point_in` / `resolve` / `const_interval`. One [`Operands`] trait,
-//! one [`holds`] walk, four providers. Static dispatch, never `dyn`.
+//! Callers construct an [`Operands`] provider — image columns, fact
+//! bytes, or binding slots — and call [`holds`]. Measure-of-ray is
+//! `None`; every other outcome is `Some`. There is no second walk.
+//! Static dispatch, never `dyn`.
+
+use std::sync::Arc;
 
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::WordCmp;
-use bumbledb_theory::schema::FieldId;
+use crate::obs;
+use crate::schema::Relation;
+use crate::storage::catalog::CatalogRead;
+use crate::storage::dict;
+use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 use super::{
-    Const, FilterPredicate, IntervalConst, MaskConst, SetConst, ViewWordSource, WordOrParam,
+    BoundView, Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource,
+    WordOrParam,
 };
 
 /// Address of one operand in a provider's space. Image and fact
@@ -346,81 +353,72 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
     }
 }
 
-/// One predicate over one operand source. Measure kinds are unreachable
-/// here — they take [`duration_holds`] (Kleene Ray) or the fallible
-/// refinement pass (views).
+/// One predicate over one operand source. Measure-of-ray is `None`;
+/// every other outcome is `Some`. Callers construct the provider;
+/// this is the only entry.
 pub(crate) fn holds<O: Operands>(
     predicate: &FilterPredicate,
     ops: &O,
     params: &[Const],
-) -> Result<bool, O::Error> {
+) -> std::result::Result<Option<bool>, O::Error> {
     Ok(match predicate {
-        FilterPredicate::Compare { field, op, value } => {
-            compare_loaded(ops, ops.loaded(*field)?, resolve(value, params), *op)?
-        }
+        FilterPredicate::Compare { field, op, value } => Some(compare_loaded(
+            ops,
+            ops.loaded(*field)?,
+            resolve(value, params),
+            *op,
+        )?),
         FilterPredicate::FieldsCompare { left, right, op } => {
-            fields_compare(ops.loaded(*left)?, ops.loaded(*right)?, *op)
+            Some(fields_compare(ops.loaded(*left)?, ops.loaded(*right)?, *op))
         }
         FilterPredicate::PointIn { field, point } => {
             let (start, end) = ops.pair(*field)?;
-            point_in(start, end, resolve_word(point, params))
+            Some(point_in(start, end, resolve_word(point, params)))
         }
         FilterPredicate::AnyPointIn { field, set } => {
             let (start, end) = ops.pair(*field)?;
             let points = word_set(set, params);
             let idx = points.partition_point(|&p| p < start);
-            idx < points.len() && points[idx] < end
+            Some(idx < points.len() && points[idx] < end)
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
             let (l_start, l_end) = ops.pair(*left)?;
             let (r_start, r_end) = ops.pair(*right)?;
-            mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &l_start, &l_end, &r_start, &r_end,
-            ))
+            Some(
+                mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                    &l_start, &l_end, &r_start, &r_end,
+                )),
+            )
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (f_start, f_end) = ops.pair(*field)?;
             let (start, end) = const_interval(other, params);
-            mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                &f_start, &f_end, &start, &end,
-            ))
+            Some(
+                mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                    &f_start, &f_end, &start, &end,
+                )),
+            )
         }
         FilterPredicate::FieldsPointIn { interval, point } => {
             let (start, end) = ops.pair(*interval)?;
-            point_in(start, end, ops.word(*point)?)
+            Some(point_in(start, end, ops.word(*point)?))
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let (start, end) = const_interval(outer, params);
-            match ops.loaded(*field)? {
+            Some(match ops.loaded(*field)? {
                 Loaded::Word(word) => point_in(start, end, word),
                 Loaded::Byte(_) | Loaded::Pair(..) | Loaded::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
-            }
+            })
         }
-        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
-            unreachable!("measure filters take duration_holds or the refinement pass")
-        }
-    })
-}
-
-/// The measure comparison: `None` is Ray (`end == MAX`); `Some` is the
-/// two-valued order on `(end − start)`.
-pub(crate) fn duration_holds<O: Operands>(
-    predicate: &FilterPredicate,
-    ops: &O,
-    params: &[Const],
-) -> Result<Option<bool>, O::Error> {
-    match predicate {
         FilterPredicate::DurationCompare { field, op, value } => {
             let (start, end) = ops.pair(*field)?;
             if end == u64::MAX {
-                return Ok(None);
+                None
+            } else {
+                Some(op.compare(&(end - start), &resolve_duration_word(value, params)))
             }
-            Ok(Some(op.compare(
-                &(end - start),
-                &resolve_duration_word(value, params),
-            )))
         }
         FilterPredicate::DurationFieldsCompare {
             interval,
@@ -429,12 +427,12 @@ pub(crate) fn duration_holds<O: Operands>(
         } => {
             let (start, end) = ops.pair(*interval)?;
             if end == u64::MAX {
-                return Ok(None);
+                None
+            } else {
+                Some(op.compare(&(end - start), &ops.word(*scalar)?))
             }
-            Ok(Some(op.compare(&(end - start), &ops.word(*scalar)?)))
         }
-        _ => unreachable!("duration_holds is the measure kinds"),
-    }
+    })
 }
 
 fn resolve_duration_word(value: &WordOrParam, params: &[Const]) -> u64 {
@@ -541,6 +539,8 @@ fn interval_at(image: &RelationImage, field: FieldId, position: usize) -> (u64, 
 }
 
 /// Conjunction over an image row. Infallible: image decode already ran.
+/// Measure kinds stay true here — the filter-order law refines them
+/// after this walk ([`refine_measure`]).
 #[must_use]
 pub(crate) fn row_holds(
     image: &RelationImage,
@@ -549,10 +549,821 @@ pub(crate) fn row_holds(
     position: usize,
 ) -> bool {
     let ops = ImageRow { image, position };
-    predicates.iter().all(|predicate| match predicate {
-        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
+    predicates.iter().all(|predicate| {
+        if predicate.is_measure() {
+            return true;
+        }
+        holds(predicate, &ops, params)
+            .unwrap_or_else(|e| match e {})
+            .unwrap_or(false)
+    })
+}
+
+/// The single column of a scalar field, through its span.
+fn scalar_column(image: &RelationImage, field: OperandAddr) -> ColumnView<'_> {
+    image.column(usize::from(image.span(field.field()).first_column))
+}
+
+/// An interval field's two word-column slices.
+fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64]) {
+    let span = image.span(field.field());
+    debug_assert_eq!(span.width, ColumnWidth::WordPair);
+    let first = usize::from(span.first_column);
+    match (image.column(first), image.column(first + 1)) {
+        (ColumnView::Words(starts), ColumnView::Words(ends)) => (starts, ends),
+        _ => unreachable!("an interval span covers two word columns"),
+    }
+}
+
+/// One measure predicate over the current survivors. A full view takes
+/// the fused dense kernel; survivor views refine scalar, position by
+/// position. A ray never survives here.
+pub(crate) fn refine_measure(
+    image: &Arc<RelationImage>,
+    predicate: &FilterPredicate,
+    params: &[Const],
+    view: View,
+    spare: &mut Vec<u32>,
+) -> View {
+    match predicate {
+        FilterPredicate::DurationCompare { field, op, value } => {
+            let bound = resolve_word(value, params);
+            let (lo, hi) = match op {
+                crate::ir::OrderCmp::Lt => match bound.checked_sub(1) {
+                    Some(hi) => (0, hi),
+                    None => (1, 0),
+                },
+                crate::ir::OrderCmp::Le => (0, bound),
+                crate::ir::OrderCmp::Gt => match bound.checked_add(1) {
+                    Some(lo) => (lo, u64::MAX),
+                    None => (1, 0),
+                },
+                crate::ir::OrderCmp::Ge => (bound, u64::MAX),
+            };
+            let (starts, ends) = interval_columns(image, *field);
+            match view {
+                View::Bound(BoundView::All(_)) => {
+                    let mut positions = std::mem::take(spare);
+                    positions.clear();
+                    crate::exec::kernel::filter_duration_range_u64(
+                        starts,
+                        ends,
+                        lo,
+                        hi,
+                        &mut positions,
+                    );
+                    View::Bound(BoundView::Survivors {
+                        image: Arc::clone(image),
+                        positions,
+                    })
+                }
+                View::Bound(BoundView::Survivors {
+                    image: view_image,
+                    mut positions,
+                }) => {
+                    let mut cursor = 0usize;
+                    for read in 0..positions.len() {
+                        let p = positions[read] as usize;
+                        let (start, end) = (starts[p], ends[p]);
+                        positions[cursor] = positions[read];
+                        cursor +=
+                            usize::from(end != u64::MAX && lo <= end - start && end - start <= hi);
+                    }
+                    positions.truncate(cursor);
+                    View::Bound(BoundView::Survivors {
+                        image: view_image,
+                        positions,
+                    })
+                }
+                View::Unbound => unreachable!("apply binds the view it filters"),
+            }
+        }
+        FilterPredicate::DurationFieldsCompare {
+            interval,
+            op,
+            scalar,
+        } => {
+            let (starts, ends) = interval_columns(image, *interval);
+            let scalars = match scalar_column(image, *scalar) {
+                ColumnView::Words(words) => words,
+                ColumnView::Bytes(_) => unreachable!("validated: the measure side is u64"),
+            };
+            let mut positions = match view {
+                View::Bound(BoundView::All(_)) => {
+                    let mut positions = std::mem::take(spare);
+                    positions.clear();
+                    positions
+                        .extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
+                    positions
+                }
+                View::Bound(BoundView::Survivors { positions, .. }) => positions,
+                View::Unbound => unreachable!("apply binds the view it filters"),
+            };
+            let mut cursor = 0usize;
+            for read in 0..positions.len() {
+                let p = positions[read] as usize;
+                let (start, end) = (starts[p], ends[p]);
+                positions[cursor] = positions[read];
+                cursor += usize::from(end != u64::MAX && op.compare(&(end - start), &scalars[p]));
+            }
+            positions.truncate(cursor);
+            View::Bound(BoundView::Survivors {
+                image: Arc::clone(image),
+                positions,
+            })
+        }
+        _ => unreachable!("refine_measure takes the measure kinds"),
+    }
+}
+
+/// Attempts the kernel fast path for one predicate. Returns whether the
+/// scan ran; `false` falls back to the scalar [`row_holds`] loop.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)]
+pub(crate) fn kernel_scan(
+    image: &RelationImage,
+    predicate: &FilterPredicate,
+    params: &[Const],
+    out: &mut Vec<u32>,
+) -> bool {
+    match predicate {
+        FilterPredicate::Compare { .. } => {}
+        FilterPredicate::PointIn { field, point } => {
+            let (starts, ends) = interval_columns(image, *field);
+            crate::exec::kernel::filter_point_in_u64(starts, ends, resolve_word(point, params), out);
+            return true;
+        }
+        FilterPredicate::AnyPointIn { field, set } => {
+            let (starts, ends) = interval_columns(image, *field);
+            crate::exec::kernel::filter_any_point_in_u64(starts, ends, word_set(set, params), out);
+            return true;
+        }
+        FilterPredicate::FieldWithin { field, outer } => {
+            let (start, end) = const_interval(outer, params);
+            let span = image.span(field.field());
+            debug_assert_eq!(span.width, ColumnWidth::Word);
+            let ColumnView::Words(words) = image.column(usize::from(span.first_column)) else {
+                unreachable!("a word span covers a word column")
+            };
+            crate::exec::kernel::filter_range_u64(words, start, end - 1, out);
+            return true;
+        }
+        FilterPredicate::FieldsAllen { left, right, mask } => {
+            let (l_starts, l_ends) = interval_columns(image, *left);
+            let (r_starts, r_ends) = interval_columns(image, *right);
+            crate::exec::kernel::allen_filter_columns(
+                l_starts,
+                l_ends,
+                r_starts,
+                r_ends,
+                mask_of(*mask, params),
+                out,
+            );
+            return true;
+        }
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let (starts, ends) = interval_columns(image, *field);
+            let (start, end) = const_interval(other, params);
+            crate::exec::kernel::allen_filter_columns_const(
+                starts,
+                ends,
+                start,
+                end,
+                mask_of(*mask, params),
+                out,
+            );
+            return true;
+        }
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::FieldsPointIn { .. }
+        | FilterPredicate::DurationCompare { .. }
+        | FilterPredicate::DurationFieldsCompare { .. } => {
+            return false;
+        }
+    }
+    let FilterPredicate::Compare { field, op, value } = predicate else {
+        unreachable!("every other kind returned above")
+    };
+    let span = image.span(field.field());
+    let value = resolve(value, params);
+    if span.width == ColumnWidth::WordPair {
+        return false;
+    }
+    if let ColumnWidth::Words { count } = span.width {
+        let (Const::Words(words), WordCmp::Eq) = (value, op) else {
+            return false;
+        };
+        debug_assert_eq!(words.len(), usize::from(count), "validated width");
+        let first = usize::from(span.first_column);
+        let ColumnView::Words(column0) = image.column(first) else {
+            unreachable!("a Words span covers word columns")
+        };
+        crate::exec::kernel::filter_eq_u64(column0, words[0], out);
+        for (i, expected) in words.iter().enumerate().skip(1) {
+            let ColumnView::Words(column) = image.column(first + i) else {
+                unreachable!("a Words span covers word columns")
+            };
+            let mut cursor = 0usize;
+            for read in 0..out.len() {
+                let position = out[read] as usize;
+                out[cursor] = out[read];
+                cursor += usize::from(column[position] == *expected);
+            }
+            out.truncate(cursor);
+        }
+        return true;
+    }
+    match (image.column(usize::from(span.first_column)), value) {
+        (ColumnView::Words(words), Const::Word(c)) => {
+            let (lo, hi) = match op {
+                WordCmp::Eq => {
+                    crate::exec::kernel::filter_eq_u64(words, *c, out);
+                    return true;
+                }
+                WordCmp::Lt => {
+                    let Some(hi) = c.checked_sub(1) else {
+                        out.clear();
+                        return true;
+                    };
+                    (0, hi)
+                }
+                WordCmp::Le => (0, *c),
+                WordCmp::Gt => {
+                    let Some(lo) = c.checked_add(1) else {
+                        out.clear();
+                        return true;
+                    };
+                    (lo, u64::MAX)
+                }
+                WordCmp::Ge => (*c, u64::MAX),
+                WordCmp::Ne => return false,
+            };
+            crate::exec::kernel::filter_range_u64(words, lo, hi, out);
             true
         }
-        _ => holds(predicate, &ops, params).unwrap_or_else(|e| match e {}),
-    })
+        (ColumnView::Bytes(bytes), Const::Byte(c)) if *op == WordCmp::Eq => {
+            crate::exec::kernel::filter_eq_u8(bytes, *c, out);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Substitutes one filter's symbolic constants into its resolved slot,
+/// in place. `Ok(false)` = the positive-occurrence `Eq` short-circuit.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)]
+pub(crate) fn resolve_filter_into<C: CatalogRead>(
+    catalog: &C,
+    template: &mut FilterPredicate,
+    params: &[Const],
+    missed: &[bool],
+    negated: bool,
+    dst: &mut FilterPredicate,
+    latched: &mut u32,
+) -> crate::error::Result<bool> {
+    match template {
+        FilterPredicate::Compare { field, op, value } => {
+            if let Const::PendingIntern { bytes } = value {
+                match catalog.dict_lookup(bytes)? {
+                    Some(id) => {
+                        let word = Const::Word(id.raw());
+                        *value = word;
+                        *latched += 1;
+                        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(id.raw()));
+                    }
+                    None if *op == WordCmp::Eq && !negated => return Ok(false),
+                    None => {
+                        write_compare(dst, *field, *op, Some(Const::Word(dict::SENTINEL_ID)));
+                        return Ok(true);
+                    }
+                }
+            }
+            let resolved = match value {
+                Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
+                Const::Words(words) => {
+                    write_compare(dst, *field, *op, None);
+                    write_words_value(dst, words);
+                    return Ok(true);
+                }
+                Const::Param(param) => {
+                    if missed[usize::from(param.0)] && *op == WordCmp::Eq && !negated {
+                        return Ok(false);
+                    }
+                    match &params[usize::from(param.0)] {
+                        Const::Words(words) => {
+                            write_compare(dst, *field, *op, None);
+                            write_words_value(dst, words);
+                            return Ok(true);
+                        }
+                        other => other.clone(),
+                    }
+                }
+                Const::ParamSet(param) => {
+                    debug_assert_eq!(*op, WordCmp::Eq, "validated: sets only under Eq");
+                    if missed[usize::from(param.0)] && !negated {
+                        return Ok(false);
+                    }
+                    let Const::WordSet(words) = &params[usize::from(param.0)] else {
+                        unreachable!("validated: a set param resolves to a word set")
+                    };
+                    write_compare(dst, *field, *op, None);
+                    write_word_set_value(dst, words);
+                    return Ok(true);
+                }
+                Const::WordSet(words) => {
+                    debug_assert_eq!(*op, WordCmp::Eq, "plan-constant sets ride Eq");
+                    write_compare(dst, *field, *op, None);
+                    write_word_set_value(dst, words);
+                    return Ok(true);
+                }
+                Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
+            };
+            write_compare(dst, *field, *op, Some(resolved));
+        }
+        FilterPredicate::PointIn { field, point } => {
+            let word = match point {
+                ViewWordSource::Word(word) => *word,
+                ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Word(word) => *word,
+                    _ => unreachable!("param slice: a point param resolves to a word"),
+                },
+            };
+            *dst = FilterPredicate::PointIn {
+                field: *field,
+                point: ViewWordSource::Word(word),
+            };
+        }
+        FilterPredicate::AnyPointIn { field, set } => {
+            let SetConst::ParamSet(param) = set else {
+                unreachable!("templates carry ParamSet markers")
+            };
+            let Const::WordSet(words) = &params[usize::from(param.0)] else {
+                unreachable!("param slice: a set param resolves to a word set")
+            };
+            if let FilterPredicate::AnyPointIn {
+                field: dst_field,
+                set: SetConst::WordSet(dst_words),
+            } = dst
+            {
+                *dst_field = *field;
+                dst_words.clear();
+                dst_words.extend_from_slice(words);
+            } else {
+                *dst = FilterPredicate::AnyPointIn {
+                    field: *field,
+                    set: SetConst::WordSet(words.clone()),
+                };
+            }
+        }
+        FilterPredicate::FieldWithin { field, outer } => {
+            let resolved = match outer {
+                IntervalConst::Interval { .. } => outer.clone(),
+                IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Interval { start, end } => IntervalConst::Interval {
+                        start: *start,
+                        end: *end,
+                    },
+                    _ => unreachable!("param slice: the outer side is an interval"),
+                },
+            };
+            *dst = FilterPredicate::FieldWithin {
+                field: *field,
+                outer: resolved,
+            };
+        }
+        FilterPredicate::FieldsAllen { left, right, mask } => {
+            *dst = FilterPredicate::FieldsAllen {
+                left: *left,
+                right: *right,
+                mask: mask_of(*mask, params),
+            };
+        }
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let resolved = match other {
+                IntervalConst::Interval { .. } => other.clone(),
+                IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Interval { start, end } => IntervalConst::Interval {
+                        start: *start,
+                        end: *end,
+                    },
+                    _ => unreachable!("param slice: the Allen constant side is an interval"),
+                },
+            };
+            *dst = FilterPredicate::FieldAllen {
+                field: *field,
+                other: resolved,
+                mask: mask_of(*mask, params),
+            };
+        }
+        FilterPredicate::DurationCompare { field, op, value } => {
+            let resolved = match value {
+                WordOrParam::Word(_) => *value,
+                WordOrParam::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Word(word) => WordOrParam::Word(*word),
+                    _ => unreachable!("param slice: a measure compares against a u64 word"),
+                },
+            };
+            *dst = FilterPredicate::DurationCompare {
+                field: *field,
+                op: *op,
+                value: resolved,
+            };
+        }
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::FieldsPointIn { .. }
+        | FilterPredicate::DurationFieldsCompare { .. } => {
+            dst.clone_from(template);
+        }
+    }
+    Ok(true)
+}
+
+fn write_compare(dst: &mut FilterPredicate, field: OperandAddr, op: WordCmp, value: Option<Const>) {
+    if let FilterPredicate::Compare {
+        field: dst_field,
+        op: dst_op,
+        value: dst_value,
+    } = dst
+    {
+        *dst_field = field;
+        *dst_op = op;
+        if let Some(value) = value {
+            *dst_value = value;
+        }
+        return;
+    }
+    *dst = FilterPredicate::Compare {
+        field,
+        op,
+        value: value.unwrap_or(Const::WordSet(Vec::new())),
+    };
+}
+
+fn write_word_set_value(dst: &mut FilterPredicate, words: &[u64]) {
+    let FilterPredicate::Compare { value, .. } = dst else {
+        unreachable!("write_compare just shaped the slot")
+    };
+    if let Const::WordSet(dst_words) = value {
+        dst_words.clear();
+        dst_words.extend_from_slice(words);
+    } else {
+        *value = Const::WordSet(words.to_vec());
+    }
+}
+
+fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
+    let FilterPredicate::Compare { value, .. } = dst else {
+        unreachable!("write_compare just shaped the slot")
+    };
+    if let Const::Words(dst_words) = value
+        && dst_words.len() == words.len()
+    {
+        dst_words.copy_from_slice(words);
+    } else {
+        *value = Const::Words(words.into());
+    }
+}
+
+/// One prepare-resolved filter's picture (unresolvable shapes never
+/// reach a folded occurrence's list).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)]
+pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
+    use crate::ir::normalize::{decoded_interval, decoded_scalar, render_const};
+    use crate::ir::render::{literal, mask_names};
+    let name = |field: &OperandAddr| relation.field(field.field()).name.as_ref();
+    match filter {
+        FilterPredicate::Compare { field, op, value } => {
+            out.push_str(name(field));
+            out.push_str(if matches!(value, Const::WordSet(_)) {
+                " ∈ "
+            } else {
+                op_symbol(*op)
+            });
+            match value {
+                Const::Word(word)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
+                    push_handle(out, relation, *word);
+                }
+                Const::WordSet(words)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
+                    out.push('{');
+                    for (index, word) in words.iter().enumerate() {
+                        if index > 0 {
+                            out.push_str(", ");
+                        }
+                        push_handle(out, relation, *word);
+                    }
+                    out.push('}');
+                }
+                _ => render_const(out, &relation.field(field.field()).value_type, value),
+            }
+        }
+        FilterPredicate::FieldsCompare { left, right, op } => {
+            out.push_str(name(left));
+            out.push_str(op_symbol(*op));
+            out.push_str(name(right));
+        }
+        FilterPredicate::PointIn { field, point } => {
+            let ViewWordSource::Word(point) = point else {
+                render_unparsed_filter(out, filter);
+                return;
+            };
+            literal(
+                out,
+                &decoded_scalar(
+                    &element_type(&relation.field(field.field()).value_type),
+                    *point,
+                ),
+            );
+            out.push_str(" in ");
+            out.push_str(name(field));
+        }
+        FilterPredicate::FieldsPointIn { interval, point } => {
+            out.push_str(name(point));
+            out.push_str(" in ");
+            out.push_str(name(interval));
+        }
+        FilterPredicate::FieldWithin { field, outer } => {
+            let IntervalConst::Interval { start, end } = outer else {
+                render_unparsed_filter(out, filter);
+                return;
+            };
+            out.push_str(name(field));
+            out.push_str(" in ");
+            let outer_type = ValueType::Interval {
+                element: match relation.field(field.field()).value_type {
+                    ValueType::I64 => IntervalElement::I64,
+                    _ => IntervalElement::U64,
+                },
+            };
+            literal(out, &decoded_interval(&outer_type, (*start, *end)));
+        }
+        FilterPredicate::FieldsAllen { left, right, mask } => {
+            out.push_str("Allen(");
+            out.push_str(name(left));
+            out.push_str(", ");
+            mask_names(out, *mask);
+            out.push_str(", ");
+            out.push_str(name(right));
+            out.push(')');
+        }
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let (mask, IntervalConst::Interval { start, end }) = (mask, other) else {
+                render_unparsed_filter(out, filter);
+                return;
+            };
+            out.push_str("Allen(");
+            out.push_str(name(field));
+            out.push_str(", ");
+            mask_names(out, *mask);
+            out.push_str(", ");
+            literal(
+                out,
+                &decoded_interval(&relation.field(field.field()).value_type, (*start, *end)),
+            );
+            out.push(')');
+        }
+        FilterPredicate::AnyPointIn { .. }
+        | FilterPredicate::DurationCompare { .. }
+        | FilterPredicate::DurationFieldsCompare { .. } => {
+            render_unparsed_filter(out, filter);
+        }
+    }
+}
+
+fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
+    use std::fmt::Write as _;
+    let _ = write!(out, "{filter:?}");
+}
+
+/// One row id at a closed relation's own id position, as its handle.
+pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
+    let row = relation
+        .body()
+        .closed_rows()
+        .and_then(|rows| usize::try_from(id).ok().and_then(|index| rows.get(index)));
+    if let Some(row) = row {
+        out.push_str(&row.handle);
+    } else {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{}({id}?)", relation.name());
+    }
+}
+
+fn element_type(value_type: &ValueType) -> ValueType {
+    match value_type {
+        ValueType::Interval {
+            element: IntervalElement::I64,
+        }
+        | ValueType::FixedInterval {
+            element: IntervalElement::I64,
+            ..
+        } => ValueType::I64,
+        _ => ValueType::U64,
+    }
+}
+
+fn op_symbol(op: WordCmp) -> &'static str {
+    match op {
+        WordCmp::Eq => " == ",
+        WordCmp::Ne => " != ",
+        WordCmp::Lt => " < ",
+        WordCmp::Le => " <= ",
+        WordCmp::Gt => " > ",
+        WordCmp::Ge => " >= ",
+    }
+}
+
+#[cfg(test)]
+mod gate {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const VARIANTS: &[&str] = &[
+        "Compare",
+        "FieldsCompare",
+        "PointIn",
+        "AnyPointIn",
+        "FieldsAllen",
+        "FieldAllen",
+        "FieldsPointIn",
+        "FieldWithin",
+        "DurationCompare",
+        "DurationFieldsCompare",
+    ];
+
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                if path.file_name().and_then(|s| s.to_str()) == Some("tests") {
+                    continue;
+                }
+                rust_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
+                && path.file_name().and_then(|s| s.to_str()) != Some("tests.rs")
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    fn match_bodies(src: &str) -> Vec<&str> {
+        let mut bodies = Vec::new();
+        let mut i = 0;
+        while let Some(rel) = src[i..].find("match") {
+            let at = i + rel;
+            let before = at == 0 || {
+                let b = src.as_bytes()[at - 1];
+                !b.is_ascii_alphanumeric() && b != b'_'
+            };
+            let after = at + 5;
+            let after_ok = after >= src.len() || {
+                let a = src.as_bytes()[after];
+                !a.is_ascii_alphanumeric() && a != b'_'
+            };
+            if before && after_ok {
+                if let Some(brace) = src[at..].find('{') {
+                    let start = at + brace;
+                    if let Some(end) = matching_brace(&src[start..]) {
+                        bodies.push(&src[start + 1..start + end]);
+                        i = start + end + 1;
+                        continue;
+                    }
+                }
+            }
+            i = at + 5;
+        }
+        bodies
+    }
+
+    fn matching_brace(from: &str) -> Option<usize> {
+        let mut depth = 0;
+        let mut i = 0;
+        let bytes = from.as_bytes();
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                        } else if bytes[i] == b'"' {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'{' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    fn pattern_variants(body: &str) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let mut depth = 0i32;
+        let mut awaiting_arrow = true;
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while i < body.len() {
+            if !body.is_char_boundary(i) {
+                i += 1;
+                continue;
+            }
+            let rest = &body[i..];
+            if rest.starts_with("FilterPredicate::") && depth == 0 && awaiting_arrow {
+                let after = &rest["FilterPredicate::".len()..];
+                if let Some(name) = VARIANTS.iter().find(|v| {
+                    after.starts_with(*v)
+                        && after
+                            .as_bytes()
+                            .get(v.len())
+                            .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
+                }) {
+                    found.insert((*name).to_string());
+                }
+                i += "FilterPredicate::".len();
+                continue;
+            }
+            match bytes[i] {
+                b'{' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 && !awaiting_arrow {
+                        awaiting_arrow = true;
+                    }
+                    i += 1;
+                }
+                b'=' if depth == 0 && rest.starts_with("=>") => {
+                    awaiting_arrow = false;
+                    i += 2;
+                }
+                b',' if depth == 0 && !awaiting_arrow => {
+                    awaiting_arrow = true;
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        found
+    }
+
+    /// Grep gate (audit/15): exhaustive `FilterPredicate` matches live
+    /// in the evaluator and the selectivity reader only.
+    #[test]
+    fn exhaustive_filter_predicate_matches_live_in_two_modules() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&src, &mut files);
+        let mut exhaustive = Vec::new();
+        for path in &files {
+            let text = fs::read_to_string(path).expect("read");
+            let mut names = BTreeSet::new();
+            for body in match_bodies(&text) {
+                names.extend(pattern_variants(body));
+            }
+            if VARIANTS.iter().all(|v| names.contains(*v)) {
+                let rel = path
+                    .strip_prefix(&src)
+                    .expect("under src")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                exhaustive.push(rel);
+            }
+        }
+        exhaustive.sort();
+        assert_eq!(
+            exhaustive,
+            ["image/view/eval.rs", "plan/selectivity.rs"],
+            "exhaustive FilterPredicate matches belong in the evaluator and selectivity only"
+        );
+    }
 }

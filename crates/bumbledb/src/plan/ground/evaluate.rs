@@ -90,13 +90,14 @@
 
 use std::collections::BTreeSet;
 
-use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
-use crate::ir::render::{literal, mask_names};
 use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
-use bumbledb_theory::schema::{FieldId, IntervalElement, RelationId, ValueType};
+use bumbledb_theory::schema::{FieldId, RelationId};
+
+pub(crate) use crate::image::view::push_handle;
 
 use super::var_is_dead;
 
@@ -376,7 +377,7 @@ impl crate::image::view::Operands for SealedRow<'_> {
         &self,
         at: crate::image::view::OperandAddr,
     ) -> Result<crate::image::view::Loaded, Self::Error> {
-        use crate::exec::dispatch::{FactOperand, fact_operand};
+        use crate::exec::dispatch::{fact_operand, FactOperand};
         Ok(
             match fact_operand(self.fact, at.field()).expect("sealed rows are valid") {
                 FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
@@ -407,7 +408,9 @@ pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) ->
                 fact: layout.encoded(&row.fact),
             };
             filters.iter().all(|filter| {
-                crate::image::view::holds(filter, &ops, &[]).unwrap_or_else(|e| match e {})
+                crate::image::view::holds(filter, &ops, &[])
+                    .unwrap_or_else(|e| match e {})
+                    .unwrap_or(false)
             })
         })
         .map(|(id, _)| id as u64)
@@ -547,174 +550,10 @@ pub(crate) fn folded_picture(
         if index > 0 {
             out.push_str(" ∧ ");
         }
-        render_filter(&mut out, relation, filter);
+        crate::image::view::render_filter(&mut out, relation, filter);
     }
     out.push('}');
     out
-}
-
-/// One prepare-resolved filter's picture (unresolvable shapes never
-/// reach a folded occurrence's list).
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
-fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
-    use crate::ir::normalize::{decoded_interval, decoded_scalar, render_const};
-    let name =
-        |field: &crate::image::view::OperandAddr| relation.field(field.field()).name.as_ref();
-    match filter {
-        FilterPredicate::Compare { field, op, value } => {
-            out.push_str(name(field));
-            out.push_str(if matches!(value, Const::WordSet(_)) {
-                " ∈ "
-            } else {
-                op_symbol(*op)
-            });
-            // The relation's own id position holds row ids — print the
-            // handles (a membership set as a handle set), never numbers.
-            match value {
-                Const::Word(word)
-                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
-                {
-                    push_handle(out, relation, *word);
-                }
-                Const::WordSet(words)
-                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
-                {
-                    out.push('{');
-                    for (index, word) in words.iter().enumerate() {
-                        if index > 0 {
-                            out.push_str(", ");
-                        }
-                        push_handle(out, relation, *word);
-                    }
-                    out.push('}');
-                }
-                _ => render_const(out, &relation.field(field.field()).value_type, value),
-            }
-        }
-        FilterPredicate::FieldsCompare { left, right, op } => {
-            out.push_str(name(left));
-            out.push_str(op_symbol(*op));
-            out.push_str(name(right));
-        }
-        FilterPredicate::PointIn { field, point } => {
-            let ViewWordSource::Word(point) = point else {
-                render_unparsed_filter(out, filter);
-                return;
-            };
-            literal(
-                out,
-                &decoded_scalar(
-                    &element_type(&relation.field(field.field()).value_type),
-                    *point,
-                ),
-            );
-            out.push_str(" in ");
-            out.push_str(name(field));
-        }
-        FilterPredicate::FieldsPointIn { interval, point } => {
-            out.push_str(name(point));
-            out.push_str(" in ");
-            out.push_str(name(interval));
-        }
-        FilterPredicate::FieldWithin { field, outer } => {
-            let IntervalConst::Interval { start, end } = outer else {
-                render_unparsed_filter(out, filter);
-                return;
-            };
-            out.push_str(name(field));
-            out.push_str(" in ");
-            let outer_type = ValueType::Interval {
-                element: match relation.field(field.field()).value_type {
-                    ValueType::I64 => IntervalElement::I64,
-                    _ => IntervalElement::U64,
-                },
-            };
-            literal(out, &decoded_interval(&outer_type, (*start, *end)));
-        }
-        FilterPredicate::FieldsAllen { left, right, mask } => {
-            out.push_str("Allen(");
-            out.push_str(name(left));
-            out.push_str(", ");
-            mask_names(out, *mask);
-            out.push_str(", ");
-            out.push_str(name(right));
-            out.push(')');
-        }
-        FilterPredicate::FieldAllen { field, other, mask } => {
-            let (mask, IntervalConst::Interval { start, end }) = (mask, other) else {
-                render_unparsed_filter(out, filter);
-                return;
-            };
-            out.push_str("Allen(");
-            out.push_str(name(field));
-            out.push_str(", ");
-            mask_names(out, *mask);
-            out.push_str(", ");
-            literal(
-                out,
-                &decoded_interval(&relation.field(field.field()).value_type, (*start, *end)),
-            );
-            out.push(')');
-        }
-        FilterPredicate::AnyPointIn { .. }
-        | FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => {
-            render_unparsed_filter(out, filter);
-        }
-    }
-}
-
-/// Defensive diagnostic fallback for an original filter that no longer
-/// parses. Folded marks prove this unreachable in ordinary construction,
-/// but diagnostic rendering stays total over the public filter sum.
-fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
-    use std::fmt::Write as _;
-    let _ = write!(out, "{filter:?}");
-}
-
-/// One row id at a closed relation's own id position, as its handle —
-/// `DirectPass`; an out-of-range id prints visibly wrong as `Kind(7?)`
-/// (the `ir/render` fallback convention: the relation's name, since the
-/// engine never learns host newtype names).
-pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
-    let row = relation
-        .body()
-        .closed_rows()
-        .and_then(|rows| usize::try_from(id).ok().and_then(|index| rows.get(index)));
-    if let Some(row) = row {
-        out.push_str(&row.handle);
-    } else {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{}({id}?)", relation.name());
-    }
-}
-
-/// An interval field's element type (the point's rendering type).
-fn element_type(value_type: &ValueType) -> ValueType {
-    match value_type {
-        ValueType::Interval {
-            element: IntervalElement::I64,
-        }
-        | ValueType::FixedInterval {
-            element: IntervalElement::I64,
-            ..
-        } => ValueType::I64,
-        _ => ValueType::U64,
-    }
-}
-
-fn op_symbol(op: WordCmp) -> &'static str {
-    match op {
-        WordCmp::Eq => " == ",
-        WordCmp::Ne => " != ",
-        WordCmp::Lt => " < ",
-        WordCmp::Le => " <= ",
-        WordCmp::Gt => " > ",
-        WordCmp::Ge => " >= ",
-    }
 }
 
 #[cfg(test)]
