@@ -1,6 +1,6 @@
 # 03 — Two spellings of every owned read; the lease is a store coordinate on the heap arm
 
-- **Status:** OPEN (verified 2026-08-19 ~17:00 EDT; the tree is hot).
+- **Status:** **fixed this pass** — `ownedScan`/`ownedContains`/`ownedGet`/`ownedExecute`/`ownedPrepare` on `OwnedHandle`; `owned_read` and `OwnedInstance.read` deleted; both reclaimers `unregister` on dispose; tests: `owned_read and OwnedInstance.read are gone; the five direct entries exist`, `a generic host function compiles against ReadInstance and OwnedInstance`, `owned get/scan/contains are plain methods; a hot get loop mints no per-call handle`
 - **Severity:** should-fix.
 - **Supersedes:** VER-06.
 

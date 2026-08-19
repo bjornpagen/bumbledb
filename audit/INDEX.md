@@ -19,7 +19,7 @@ over this table when they disagree.
 | --- | --- | --- |
 | 01 | [napi error carrier](01-napi-error-carrier.md) | **fixed this pass** (`create_error` + `kind`; suite green pending re-run) |
 | 02 | [one temporal shape](02-ts-temporal-shape.md) | **fixed this pass** — AsyncTask control plane; lease flag on publish |
-| 03 | [owned single read](03-ts-owned-single-read.md) | OPEN — per-op lease round trips; two spellings of every owned read |
+| 03 | [owned single read](03-ts-owned-single-read.md) | **fixed this pass** — five direct owned reads; lease spelling gone |
 | 04 | [TS builder verbs](04-ts-builder-verbs.md) | OPEN — `load`+`admit` only; engine has delete/reserve/contains/get |
 | 05 | [WriteDelta lifetime](05-writedelta-lifetime.md) | keep **accepted** (cost ruling; reopening horizon recorded) |
 | 06 | [instance one body](06-instance-one-body.md) | keep (scan) / OPEN (dict + scratch) — rustdoc `execute_args` ghosts **fixed this pass** |

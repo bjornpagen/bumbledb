@@ -595,7 +595,16 @@ interface Native {
 	instanceBuilderClose(builder: BuilderHandle): void
 	instanceBuilderAdmit(builder: BuilderHandle): Promise<AdmitResult>
 	ownedInstanceClose(instance: OwnedHandle): void
-	ownedRead<R>(instance: OwnedHandle, callback: (instance: InstanceHandle) => R): R
+	ownedScan(instance: OwnedHandle, relationId: number): FactValue[][]
+	ownedContains(instance: OwnedHandle, relationId: number, values: readonly FactValue[]): boolean
+	ownedGet(
+		instance: OwnedHandle,
+		relationId: number,
+		keyStatementId: number,
+		keyValues: readonly FactValue[]
+	): FactValue[] | null
+	ownedPrepare(instance: OwnedHandle, query: ParsedQuery): PrepareResult
+	ownedExecute(prepared: PreparedHandle, instance: OwnedHandle, params: readonly QueryParam[]): FactValue[][]
 }
 
 /**

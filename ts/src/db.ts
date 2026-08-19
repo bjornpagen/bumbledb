@@ -828,7 +828,6 @@ interface InstanceState {
 	readonly handle: InstanceHandle
 	live: boolean
 	readonly owner: object
-	readonly store: boolean
 }
 
 const instanceStates = new WeakMap<object, InstanceState>()
@@ -891,13 +890,26 @@ const ErrUseAfterScope = errors.new(
 const ErrForeignPrepared = errors.new("bumbledb foreignPrepared: a prepared query met a foreign instance")
 const ErrForeignWitness = errors.new("bumbledb foreignWitness: a witness met a foreign store")
 
-function createReadInstance<Rels extends SchemaRelations>(
-	nativeHandle: InstanceHandle,
-	store: boolean,
+/**
+ * The shared typed read surface: store leases and owned instances both
+ * expose scan/get/contains/execute/prepare. The native ops are the only
+ * difference — one way to read, two handle kinds.
+ */
+interface CatalogNative {
+	scan(relationId: number): FactValue[][]
+	contains(relationId: number, values: readonly FactValue[]): boolean
+	get(relationId: number, statementId: number, keyValues: readonly FactValue[]): FactValue[] | null
+	prepare(query: ReturnType<typeof lowerQuery>): ReturnType<typeof native.instancePrepare>
+	execute(prepared: PreparedHandle, params: ReturnType<typeof wireParams>): FactValue[][]
+}
+
+function catalogMethods<Rels extends SchemaRelations>(
 	theory: Schema<Rels>,
 	tables: Tables,
-	owner: object
-): ReadInstance<Rels> {
+	owner: object,
+	assertLive: () => void,
+	ops: CatalogNative
+): Pick<ReadInstance<Rels>, "scan" | "get" | "contains" | "execute" | "prepare"> {
 	function resolveOrdinary(relation: AnyRelation): RelationEntry {
 		const entry = tables.relations.get(relation.name)
 		if (entry === undefined || entry.member !== relation) {
@@ -943,70 +955,53 @@ function createReadInstance<Rels extends SchemaRelations>(
 		}
 		return plan
 	}
-	const state: InstanceState = { handle: nativeHandle, live: true, owner, store }
-	function assertLive(): void {
-		if (!state.live) {
-			throw errors.wrap(
-				ErrUseAfterScope,
-				"bumbledb read instance is invalidated — its owning callback already returned"
-			)
-		}
+	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
+		assertLive()
+		const entry = resolveOrdinary(relation)
+		return bridged("bumbledb instance contains", function readContains() {
+			return ops.contains(entry.id, rowOf(relation.data, recordOf(fact)))
+		})
 	}
-	const reads = {
-		contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-			assertLive()
-			const entry = resolveOrdinary(relation)
-			return bridged("bumbledb instance contains", function readContains() {
-				return native.instanceContains(state.handle, entry.id, rowOf(relation.data, recordOf(fact)))
-			})
-		},
-		get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-			relation: R,
-			keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-			declaredKey?: DeclaredKeyFact<R, P>
-		): Fact<R> | undefined {
-			assertLive()
-			const entry = resolveOrdinary(relation)
-			return selectKeyRead(
-				keyOrStatement,
-				declaredKey,
-				function byStatement(statement, key) {
-					const selected = declaredKeyOf(relation, statement)
-					const row = bridged("bumbledb instance get", function readGet() {
-						return native.instanceGet(
-							state.handle,
-							entry.id,
-							selected.statementId,
-							keyRowOf(relation.data, selected.projection, recordOf(key))
-						)
-					})
-					return row === null ? undefined : factOf(relation, row)
-				},
-				function byPrimary(key) {
-					const primaryKey = entry.primaryKey
-					if (primaryKey === undefined) {
-						throw errors.new(
-							`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-						)
-					}
-					const row = bridged("bumbledb instance get", function readGet() {
-						return native.instanceGet(
-							state.handle,
-							entry.id,
-							primaryKey.statementId,
-							keyRowOf(relation.data, primaryKey.projection, recordOf(key))
-						)
-					})
-					return row === null ? undefined : factOf(relation, row)
+	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
+		relation: R,
+		keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
+		declaredKey?: DeclaredKeyFact<R, P>
+	): Fact<R> | undefined {
+		assertLive()
+		const entry = resolveOrdinary(relation)
+		return selectKeyRead(
+			keyOrStatement,
+			declaredKey,
+			function byStatement(statement, key) {
+				const selected = declaredKeyOf(relation, statement)
+				const row = bridged("bumbledb instance get", function readGet() {
+					return ops.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, recordOf(key)))
+				})
+				return row === null ? undefined : factOf(relation, row)
+			},
+			function byPrimary(key) {
+				const primaryKey = entry.primaryKey
+				if (primaryKey === undefined) {
+					throw errors.new(
+						`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+					)
 				}
-			)
-		}
+				const row = bridged("bumbledb instance get", function readGet() {
+					return ops.get(
+						entry.id,
+						primaryKey.statementId,
+						keyRowOf(relation.data, primaryKey.projection, recordOf(key))
+					)
+				})
+				return row === null ? undefined : factOf(relation, row)
+			}
+		)
 	}
 	function scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[] {
 		assertLive()
 		const entry = resolveOrdinary(relation)
 		const rows = bridged("bumbledb instance scan", function readScan() {
-			return native.instanceScan(state.handle, entry.id)
+			return ops.scan(entry.id)
 		})
 		return rows.map(function decodeRow(row) {
 			return factOf(relation, row)
@@ -1017,13 +1012,11 @@ function createReadInstance<Rels extends SchemaRelations>(
 		const plan = planOf(prepared)
 		const wire = wireParams(plan.params, recordOf(params))
 		const rows = bridged("execute bumbledb prepared query", function callExecute() {
-			return native.preparedExecute(plan.handle, state.handle, wire)
+			return ops.execute(plan.handle, wire)
 		})
 		return decodeAnswers<Row>(plan.finds, rows)
 	}
-	function prepareOnInstance<Row, Params extends ParamsRecord>(
-		q: Query<Rels, Row, Params>
-	): Prepared<Rels, Row, Params> {
+	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
 		assertLive()
 		if (q.schema !== theory) {
 			throw errors.new(
@@ -1032,7 +1025,7 @@ function createReadInstance<Rels extends SchemaRelations>(
 		}
 		const queryIr = lowerQuery(q)
 		const outcome = bridged("prepare bumbledb query", function callPrepare() {
-			return native.instancePrepare(state.handle, queryIr)
+			return ops.prepare(queryIr)
 		})
 		if (!outcome.ok) {
 			throwPrepareRefusal(outcome.message)
@@ -1050,21 +1043,49 @@ function createReadInstance<Rels extends SchemaRelations>(
 		planReclaimer.register(prepared, outcome.prepared)
 		return prepared
 	}
+	return { scan, get, contains, execute, prepare }
+}
+
+function createReadInstance<Rels extends SchemaRelations>(
+	nativeHandle: InstanceHandle,
+	theory: Schema<Rels>,
+	tables: Tables,
+	owner: object
+): ReadInstance<Rels> {
+	const state: InstanceState = { handle: nativeHandle, live: true, owner }
+	function assertLive(): void {
+		if (!state.live) {
+			throw errors.wrap(
+				ErrUseAfterScope,
+				"bumbledb read instance is invalidated — its owning callback already returned"
+			)
+		}
+	}
+	const methods = catalogMethods(theory, tables, owner, assertLive, {
+		scan(relationId) {
+			return native.instanceScan(state.handle, relationId)
+		},
+		contains(relationId, values) {
+			return native.instanceContains(state.handle, relationId, values)
+		},
+		get(relationId, statementId, keyValues) {
+			return native.instanceGet(state.handle, relationId, statementId, keyValues)
+		},
+		prepare(query) {
+			return native.instancePrepare(state.handle, query)
+		},
+		execute(prepared, params) {
+			return native.preparedExecute(prepared, state.handle, params)
+		}
+	})
 	const instance: ReadInstance<Rels> = Object.freeze({
 		get generation() {
 			assertLive()
-			if (!state.store) {
-				throw errors.new("bumbledb: generation is a store-read diagnostic, not an owned-instance method")
-			}
 			return bridged("bumbledb instance generation", function readGeneration() {
 				return native.instanceGeneration(state.handle)
 			})
 		},
-		scan,
-		get: reads.get,
-		contains: reads.contains,
-		execute,
-		prepare: prepareOnInstance
+		...methods
 	})
 	instanceStates.set(instance, state)
 	return instance
@@ -1281,15 +1302,15 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return witness
 	}
 
-	function makeInstance(nativeHandle: InstanceHandle, store: boolean): ReadInstance<Rels> {
-		return createReadInstance(nativeHandle, store, theory, tables, owner)
+	function makeInstance(nativeHandle: InstanceHandle): ReadInstance<Rels> {
+		return createReadInstance(nativeHandle, theory, tables, owner)
 	}
 
 	function read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R> {
 		let captured: R | undefined
 		const result = bridged("bumbledb read", function runRead() {
 			return native.dbRead(handle, function onRead(nativeInstance, nativeWitness) {
-				const instance = makeInstance(nativeInstance, true)
+				const instance = makeInstance(nativeInstance)
 				const witness = makeWitness(nativeWitness)
 				const value = body(instance, witness)
 				const state = instanceStates.get(instance)
@@ -1708,7 +1729,6 @@ async function openStore<Rels extends SchemaRelations>(
 }
 
 interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
-	read<R>(body: (instance: ReadInstance<Rels>) => SyncResult<R>): SyncResult<R>
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
@@ -1750,71 +1770,31 @@ const builderReclaimer = new FinalizationRegistry<BuilderHandle>(function reclai
 function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theory: Schema<Rels>): OwnedInstance<Rels> {
 	const owner = Object.freeze({})
 	const rec = { handle: nativeHandle, theory, spent: false, owner }
+	const tables = tablesFromTheory(theory)
 	function assertLive(): void {
 		if (rec.spent) {
 			throw errors.wrap(ErrSpentHandle, "bumbledb owned instance has been disposed")
 		}
 	}
-	function withInstance<R>(body: (instance: ReadInstance<Rels>) => R): R {
-		assertLive()
-		let captured: R | undefined
-		const result = bridged("bumbledb owned read", function run() {
-			return native.ownedRead(nativeHandle, function onRead(nativeInstance) {
-				const instance = createReadInstance(nativeInstance, false, theory, tablesFromTheory(theory), rec.owner)
-				const value = body(instance)
-				const state = instanceStates.get(instance)
-				if (state !== undefined) {
-					state.live = false
-				}
-				if (isThenable(value)) {
-					throw errors.wrap(ErrAsyncCallback, "bumbledb owned read callback returned a thenable")
-				}
-				captured = value
-				return value
-			})
-		})
-		return (captured ?? result) as R
-	}
+	const methods = catalogMethods(theory, tables, owner, assertLive, {
+		scan(relationId) {
+			return native.ownedScan(nativeHandle, relationId)
+		},
+		contains(relationId, values) {
+			return native.ownedContains(nativeHandle, relationId, values)
+		},
+		get(relationId, statementId, keyValues) {
+			return native.ownedGet(nativeHandle, relationId, statementId, keyValues)
+		},
+		prepare(query) {
+			return native.ownedPrepare(nativeHandle, query)
+		},
+		execute(prepared, params) {
+			return native.ownedExecute(prepared, nativeHandle, params)
+		}
+	})
 	const instance: OwnedInstance<Rels> = Object.freeze({
-		read: withInstance,
-		prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
-			return withInstance(function prep(readInstance) {
-				return readInstance.prepare(q)
-			})
-		},
-		execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[] {
-			return withInstance(function run(readInstance) {
-				return readInstance.execute(prepared, params)
-			})
-		},
-		scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[] {
-			return withInstance(function run(readInstance) {
-				return readInstance.scan(relation)
-			})
-		},
-		contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-			return withInstance(function run(readInstance) {
-				return readInstance.contains(relation, fact)
-			})
-		},
-		get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-			relation: R,
-			keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-			declaredKey?: DeclaredKeyFact<R, P>
-		): Fact<R> | undefined {
-			return withInstance(function run(readInstance) {
-				return selectKeyRead(
-					keyOrStatement,
-					declaredKey,
-					function byStatement(statement, key) {
-						return readInstance.get(relation, statement, key)
-					},
-					function byPrimary(key) {
-						return readInstance.get(relation, key)
-					}
-				)
-			})
-		},
+		...methods,
 		[Symbol.dispose](): void {
 			if (rec.spent) {
 				return
@@ -1829,10 +1809,11 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 				throw errors.wrap(error, "close bumbledb owned instance")
 			}
 			rec.spent = true
+			ownedReclaimer.unregister(instance)
 		}
 	})
 	ownedRecords.set(instance, rec)
-	ownedReclaimer.register(instance, nativeHandle)
+	ownedReclaimer.register(instance, nativeHandle, instance)
 	return instance
 }
 
@@ -1865,6 +1846,7 @@ function wrapBuilder<Rels extends SchemaRelations>(
 				throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
 			}
 			rec.spent = true
+			builderReclaimer.unregister(builder)
 			let outcome: AdmitResult
 			try {
 				outcome = await native.instanceBuilderAdmit(nativeHandle)
@@ -1891,13 +1873,14 @@ function wrapBuilder<Rels extends SchemaRelations>(
 				return
 			}
 			rec.spent = true
+			builderReclaimer.unregister(builder)
 			bridged("close bumbledb instance builder", function closeBuilder() {
 				native.instanceBuilderClose(nativeHandle)
 			})
 		}
 	})
 	builderRecords.set(builder, rec)
-	builderReclaimer.register(builder, nativeHandle)
+	builderReclaimer.register(builder, nativeHandle, builder)
 	return builder
 }
 

@@ -721,18 +721,10 @@ pub fn exhume_scan(
 // Borrowed instance + witness
 // ---------------------------------------------------------------------------
 
-enum InstanceKind {
-    Store(*const ()),
-    Heap {
-        instance: *const OwnedInstance<SchemaDescriptor>,
-        accounted: *const Cell<i64>,
-    },
-}
-
 pub struct InstanceHandle {
     sealed: Arc<Sealed>,
     alive: Arc<AtomicBool>,
-    kind: InstanceKind,
+    instance: *const (),
 }
 
 impl InstanceHandle {
@@ -740,22 +732,7 @@ impl InstanceHandle {
         Self {
             sealed,
             alive: Arc::new(AtomicBool::new(true)),
-            kind: InstanceKind::Store(std::ptr::from_ref(instance).cast()),
-        }
-    }
-
-    fn heap(
-        sealed: Arc<Sealed>,
-        instance: &OwnedInstance<SchemaDescriptor>,
-        accounted: &Cell<i64>,
-    ) -> Self {
-        Self {
-            sealed,
-            alive: Arc::new(AtomicBool::new(true)),
-            kind: InstanceKind::Heap {
-                instance: std::ptr::from_ref(instance),
-                accounted: std::ptr::from_ref(accounted),
-            },
+            instance: std::ptr::from_ref(instance).cast(),
         }
     }
 
@@ -764,57 +741,12 @@ impl InstanceHandle {
         body: impl FnOnce(&dyn InstanceOps) -> napi::Result<R>,
     ) -> napi::Result<R> {
         require_alive(self.alive.as_ref(), "instance")?;
-        match self.kind {
-            InstanceKind::Store(ptr) => {
-                #[expect(
-                    unsafe_code,
-                    reason = "ptr is the Db::read argument; alive is cleared before that frame returns"
-                )]
-                let instance = unsafe { &*ptr.cast::<bumbledb::ReadInstance<'_, SchemaDescriptor>>() };
-                body(&StoreOps(instance))
-            }
-            InstanceKind::Heap { instance, .. } => {
-                #[expect(
-                    unsafe_code,
-                    reason = "ptr is the owned instance borrow; alive is cleared before owned_read returns"
-                )]
-                let instance = unsafe { &*instance };
-                body(&HeapOps(instance))
-            }
-        }
-    }
-
-    fn sync_accounted(&self, env: Env) -> napi::Result<()> {
-        let InstanceKind::Heap {
-            instance,
-            accounted,
-        } = self.kind
-        else {
-            return Ok(());
-        };
         #[expect(
             unsafe_code,
-            reason = "both pointers are the OwnedSlot borrow held for owned_read"
+            reason = "ptr is the Db::read argument; alive is cleared before that frame returns"
         )]
-        let (instance, accounted) = unsafe { (&*instance, &*accounted) };
-        let want = i64::try_from(instance.retained_bytes()).unwrap_or(i64::MAX);
-        let have = accounted.get();
-        let delta = want.saturating_sub(have);
-        if delta != 0 {
-            env.adjust_external_memory(delta)?;
-            accounted.set(want);
-        }
-        Ok(())
-    }
-
-    fn with_instance_accounted<R>(
-        &self,
-        env: Env,
-        body: impl FnOnce(&dyn InstanceOps) -> napi::Result<R>,
-    ) -> napi::Result<R> {
-        let result = self.with_instance(body);
-        self.sync_accounted(env)?;
-        result
+        let instance = unsafe { &*self.instance.cast::<bumbledb::ReadInstance<'_, SchemaDescriptor>>() };
+        body(&StoreOps(instance))
     }
 }
 
@@ -1047,7 +979,7 @@ pub fn instance_scan(
     instance: &External<InstanceHandle>,
     relation: u32,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
-    let rows = instance.with_instance_accounted(env, |ops| {
+    let rows = instance.with_instance( |ops| {
         ops.scan(RelationId(relation))
             .map_err(|error| throw_engine(env, &error))
     })?;
@@ -1065,7 +997,7 @@ pub fn instance_contains(
         let sealed = &instance.sealed;
         marshal::fact_row(&sealed.descriptor, relation, &values)?
     };
-    instance.with_instance_accounted(env, |ops| {
+    instance.with_instance( |ops| {
         ops.contains(row.0, &row.1)
             .map_err(|error| throw_engine(env, &error))
     })
@@ -1086,7 +1018,7 @@ pub fn instance_get(
         key_statement,
         &key_values,
     )?;
-    let found = instance.with_instance_accounted(env, |ops| {
+    let found = instance.with_instance( |ops| {
         ops.get(rel, key, &row)
             .map_err(|error| throw_engine(env, &error))
     })?;
@@ -1458,7 +1390,7 @@ pub fn instance_prepare(
     query: Object,
 ) -> napi::Result<PrepareOutcome> {
     let query = marshal::query_in(&query)?;
-    let result = instance.with_instance_accounted(env, |ops| Ok(ops.prepare(&query)))?;
+    let result = instance.with_instance( |ops| Ok(ops.prepare(&query)))?;
     prepare_outcome(env, result)
 }
 
@@ -1478,7 +1410,7 @@ pub fn prepared_execute(
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
     let params = marshal::params_in(&params)?;
     let mut prepared = prepared_mut(prepared)?;
-    let answers = instance.with_instance_accounted(env, |ops| {
+    let answers = instance.with_instance( |ops| {
         ops.execute(&mut prepared, &params)
             .map_err(|error| thrown(env, error))
     })?;
@@ -1494,7 +1426,7 @@ pub fn prepared_explain(
 ) -> napi::Result<ExplainWire> {
     let params = marshal::params_in(&params)?;
     let mut prepared = prepared_mut(prepared)?;
-    let stats = instance.with_instance_accounted(env, |ops| {
+    let stats = instance.with_instance( |ops| {
         ops.explain(&mut prepared, &params)
             .map_err(|error| thrown(env, error))
     })?;
@@ -1553,6 +1485,28 @@ fn release_accounted(env: Env, accounted: i64) -> napi::Result<()> {
         env.adjust_external_memory(-accounted)?;
     }
     Ok(())
+}
+
+fn sync_owned_accounted(env: Env, slot: &OwnedSlot) -> napi::Result<()> {
+    let want = i64::try_from(slot.instance.retained_bytes()).unwrap_or(i64::MAX);
+    let have = slot.accounted.get();
+    let delta = want.saturating_sub(have);
+    if delta != 0 {
+        env.adjust_external_memory(delta)?;
+        slot.accounted.set(want);
+    }
+    Ok(())
+}
+
+fn owned_ops<R>(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    body: impl FnOnce(&HeapOps<'_>, &Sealed) -> napi::Result<R>,
+) -> napi::Result<R> {
+    let slot = live(&instance.inner, "owned instance")?;
+    let result = body(&HeapOps(slot.instance.as_ref()), &slot.sealed);
+    sync_owned_accounted(env, &slot)?;
+    result
 }
 
 #[napi]
@@ -1706,20 +1660,81 @@ pub fn owned_instance_close(
 }
 
 #[napi]
-pub fn owned_read<'a>(
-    instance: &'a External<OwnedHandle>,
-    callback: Function<'a, External<InstanceHandle>, Unknown<'a>>,
-) -> napi::Result<Unknown<'a>> {
-    let owned = live(&instance.inner, "owned instance")?;
-    let handle = InstanceHandle::heap(
-        Arc::clone(&owned.sealed),
-        owned.instance.as_ref(),
-        &owned.accounted,
-    );
-    let alive = Arc::clone(&handle.alive);
-    let result = callback.call(External::new(handle));
-    alive.store(false, Ordering::Release);
-    result
+pub fn owned_scan(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    relation: u32,
+) -> napi::Result<Vec<Vec<ValueOut>>> {
+    let rows = owned_ops(env, instance, |ops, _sealed| {
+        ops.scan(RelationId(relation))
+            .map_err(|error| throw_engine(env, &error))
+    })?;
+    marshal::rows_out(rows)
+}
+
+#[napi]
+pub fn owned_contains(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    relation: u32,
+    values: Array,
+) -> napi::Result<bool> {
+    owned_ops(env, instance, |ops, sealed| {
+        let row = marshal::fact_row(&sealed.descriptor, relation, &values)?;
+        ops.contains(row.0, &row.1)
+            .map_err(|error| throw_engine(env, &error))
+    })
+}
+
+#[napi]
+pub fn owned_get(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    relation: u32,
+    key_statement: u32,
+    key_values: Array,
+) -> napi::Result<Option<Vec<ValueOut>>> {
+    let found = owned_ops(env, instance, |ops, sealed| {
+        let (rel, key, row) = marshal::key_row(
+            &sealed.descriptor,
+            &sealed.statements,
+            relation,
+            key_statement,
+            &key_values,
+        )?;
+        ops.get(rel, key, &row)
+            .map_err(|error| throw_engine(env, &error))
+    })?;
+    found
+        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
+        .transpose()
+}
+
+#[napi]
+pub fn owned_prepare(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    query: Object,
+) -> napi::Result<PrepareOutcome> {
+    let query = marshal::query_in(&query)?;
+    let result = owned_ops(env, instance, |ops, _sealed| Ok(ops.prepare(&query)))?;
+    prepare_outcome(env, result)
+}
+
+#[napi]
+pub fn owned_execute(
+    env: Env,
+    prepared: &External<PreparedHandle>,
+    instance: &External<OwnedHandle>,
+    params: Array,
+) -> napi::Result<Vec<Vec<ValueOut>>> {
+    let params = marshal::params_in(&params)?;
+    let mut prepared = prepared_mut(prepared)?;
+    let answers = owned_ops(env, instance, |ops, _sealed| {
+        ops.execute(&mut prepared, &params)
+            .map_err(|error| thrown(env, error))
+    })?;
+    Ok(marshal::answers_out(&answers))
 }
 
 #[cfg(test)]
