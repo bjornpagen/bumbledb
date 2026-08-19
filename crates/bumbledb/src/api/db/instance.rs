@@ -122,14 +122,23 @@ pub(crate) struct InstanceCore<Src, S> {
 }
 
 impl<Src, S> InstanceCore<Src, S> {
-    pub(crate) fn assemble(schema: Arc<Schema>, identity: CatalogIdentity, source: Src) -> Self {
+    pub(crate) fn assemble(
+        schema: Arc<Schema>,
+        identity: CatalogIdentity,
+        source: Src,
+        scratch: ScratchPool,
+    ) -> Self {
         Self {
             schema,
             identity,
             source,
-            scratch: ScratchPool::new(),
+            scratch,
             marker: PhantomData,
         }
+    }
+
+    pub(crate) fn into_parts(self) -> (Src, ScratchPool) {
+        (self.source, self.scratch)
     }
 
     pub(crate) fn with_scratch<R>(
@@ -145,7 +154,7 @@ impl<Src, S> InstanceCore<Src, S> {
 
 impl<S> InstanceCore<FrozenSource, S> {
     pub(crate) fn new(schema: Arc<Schema>, source: FrozenSource) -> Self {
-        Self::assemble(schema, CatalogIdentity::mint(), source)
+        Self::assemble(schema, CatalogIdentity::mint(), source, ScratchPool::new())
     }
 }
 

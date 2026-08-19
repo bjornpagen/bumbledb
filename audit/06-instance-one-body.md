@@ -1,11 +1,12 @@
 # 06 — One instance algebra: the store arm still reads through `storage::read` and `dict::*`
 
 - **Status:** keep (scan) / **fixed this pass** (store `CodecRead` +
-  `dict::*` delegates) / **BLOCKED** (ScratchPool seed/park — `instance.rs`).
-  Tests: `interning_twice_returns_the_same_id`,
+  `dict::*` delegates + ScratchPool seed/park). Tests:
+  `interning_twice_returns_the_same_id`,
   `resolve_round_trips_interned_values`,
-  `resolve_of_fabricated_id_is_corruption`, `dict_ids_are_intern_ids`.
-  Scan half untouched (keep-accepted).
+  `resolve_of_fabricated_id_is_corruption`, `dict_ids_are_intern_ids`,
+  `the_reader_cache_is_invisible_except_in_speed`. Scan half
+  untouched (keep-accepted).
 - **Severity:** should-fix.
 - **Supersedes:** SPINE-03, SPINE-05, SPINE-06, SPINE-07, PROP-005, PROP-009,
   PROP-017, REP-12/13/14.
@@ -99,3 +100,11 @@ and a take-back (or `into_parts`). A park slot on the handle also
 needs `api/db.rs` (`Db` / `ParkedReader` have none). The lease already
 borrows no extra handle fields; one `ScratchPool` type already lives
 inside `InstanceCore`. Stopped rather than edit D-owned files.
+
+## Landed this pass (scratch remainder)
+
+D landed. `InstanceCore::assemble` takes a `ScratchPool`; `into_parts`
+gives it back. `Db::read` seeds from `Db.scratch` and parks it after
+the lease. Owned instances still mint `ScratchPool::new()` at
+`InstanceCore::new`. One pool type; the lease borrows no extra handle
+fields. Scan half still untouched.

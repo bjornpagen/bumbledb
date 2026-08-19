@@ -37,7 +37,6 @@ use crate::encoding::{InternId, ValueRef};
 use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::Schema;
-use crate::storage::catalog::CatalogRead;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, ReadTxn};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
@@ -370,6 +369,10 @@ pub struct Db<S> {
     /// store advances, not a second process counter.
     generation: std::sync::atomic::AtomicU64,
     schema: Arc<Schema>,
+    /// Parked point-read scratch. Seeded into `InstanceCore` at
+    /// [`Db::read`] and taken back after the lease — one pool, no
+    /// handle-field borrow on the lease.
+    scratch: Mutex<Option<ScratchPool>>,
     /// The typestate marker (`fn() -> S` keeps `Send + Sync` independent
     /// of `S` — the definition value itself is consumed at open).
     marker: PhantomData<fn() -> S>,
@@ -427,10 +430,11 @@ pub(crate) struct ReadScratch {
     pub(crate) refs: Vec<ValueRef>,
 }
 
-/// The `Db`-owned point-read scratch pool (`docs/architecture/70-api.md`
-/// § the write path — the allocation contract is symmetric across
-/// transaction kinds, ruled 2026-07-23, R15): `ReadInstance` point reads take
-/// a scratch set and restore it — the `&self` twin of
+/// Point-read scratch pool (`docs/architecture/70-api.md` § the write
+/// path — the allocation contract is symmetric across transaction kinds,
+/// ruled 2026-07-23, R15). One pool lives inside `InstanceCore`;
+/// [`Db::read`] seeds and parks it. `ReadInstance` point reads take a
+/// scratch set and restore it — the `&self` twin of
 /// [`WriteTx::with_scratch`]'s take/restore. One entry per concurrent
 /// point reader; contention grows the pool once, then the steady state
 /// allocates nothing. `try_lock` on both sides: readers never block on

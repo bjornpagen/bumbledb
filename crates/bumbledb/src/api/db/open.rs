@@ -121,6 +121,7 @@ impl<S> Db<S> {
             read_cache: Mutex::new(None),
             generation: std::sync::atomic::AtomicU64::new(generation.storage_word()),
             schema,
+            scratch: Mutex::new(None),
             marker: std::marker::PhantomData,
         })
     }
