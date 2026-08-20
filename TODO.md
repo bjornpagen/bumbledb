@@ -36,7 +36,8 @@ finding stamps live in git history.
   (`audit/36-perf-leaf-batch.md`: o4 0.07×, 25_541/375_923 µs; 500k
   leaf descends at 24 ns, was 53–69 ns/tuple; `run_leaf_pinned_run`
   stays HANDOFF), 044 skipped (`audit/37-perf-telescoped-count.md`:
-  `jp_force_n0` 1.25 µs), the 009 step-2 per-forced-map min/max fence.
+  `jp_force_n0` 1.25 µs), 009 step-2 closed (`audit/38-perf-minmax-fence.md`:
+  Acc::Min/Max live under GroupState; o5 692/174954 µs, no jp_force).
   Finding 053
   (FilterPredicate interpreters) closed in
   [`proposals/exec-representation.md`](proposals/exec-representation.md).
