@@ -4,7 +4,7 @@
 //! (`Db::create_nosync` / `Db::open_nosync`). Not a store kind: the
 //! stamped corpus is the same bytes either lane opens; only the
 //! environment flags differ. The crate-private [`StoreMode::Nosync`]
-//! arm is the NosyncLane flag issue 33 re-anchors on.
+//! arm is the `NosyncLane` flag issue 33 re-anchors on.
 
 use std::path::Path;
 

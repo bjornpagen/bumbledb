@@ -86,7 +86,7 @@ impl ImageCache {
     }
 
     /// Slot-dispatched read/build. Epochs arrive from [`LmdbSource`]
-    /// (ImageBind) — never re-derived from a raw txn.
+    /// (`ImageBind`) — never re-derived from a raw txn.
     pub(crate) fn get_or_build_at(
         &self,
         txn: &ReadTxn<'_>,

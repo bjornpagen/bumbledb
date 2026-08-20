@@ -8,7 +8,7 @@ use crate::{clockproxy, families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
 use super::write_families::write_families;
-use super::{ensure_corpus, BenchRun, CorpusPaths, CASES_FILE};
+use super::{BenchRun, CASES_FILE, CorpusPaths, ensure_corpus};
 
 /// The stamp-refusal message, with the user's own flags substituted.
 pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {

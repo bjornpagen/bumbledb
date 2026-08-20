@@ -38,14 +38,12 @@ type Rels = (typeof Ledger)["relations"]
  * The shared read surface both arms structurally satisfy. Assigning a
  * `ReadInstance` and an `OwnedInstance` here is the type-level gate.
  */
-function againstSharedRead<Rels extends SchemaRelations>(
-	host: {
-		scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
-		contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-		get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-		execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
-	}
-): void {
+function againstSharedRead<Rels extends SchemaRelations>(host: {
+	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
+	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
+	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
+	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
+}): void {
 	void host
 }
 

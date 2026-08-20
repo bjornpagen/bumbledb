@@ -123,6 +123,10 @@ fn to_markdown(report: &HeapReport) -> String {
     out.push_str("| family | heap p50 ns | lmdb p50 ns | heap/lmdb |\n");
     out.push_str("| --- | ---: | ---: | ---: |\n");
     for row in &report.point_reads {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "p50 ns becomes a printed ratio; mantissa loss is below the table's two decimals"
+        )]
         let ratio = row.heap.p50 as f64 / (row.lmdb.p50 as f64).max(1.0);
         let _ = writeln!(
             out,
@@ -179,7 +183,7 @@ fn sizes_for_postings(postings: u64) -> Sizes {
         entries: (postings / 2).max(1),
         accounts,
         holders: (accounts / 4).max(1),
-        instruments: postings.min(32).max(1),
+        instruments: postings.clamp(1, 32),
         orgs,
         org_parents: orgs - 1,
         posting_tags: postings,
@@ -232,6 +236,14 @@ fn join_query() -> Query {
 /// # Errors
 ///
 /// Setup or admit failure.
+///
+/// # Panics
+///
+/// If a duration in nanoseconds does not fit in `u64`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one run body owns the heap-arm report; splitting would hide the lane order"
+)]
 pub fn run(args: &HeapArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(

@@ -27,6 +27,10 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
 
     /// Dictionary lookup against this catalog's transaction. The handle
     /// is `Copy`; the answer is owned, so a temporary catalog is fine.
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
+    )]
     pub(crate) fn dict_lookup(&self, raw: &[u8]) -> Result<Option<InternId>> {
         match self
             .txn
@@ -42,6 +46,10 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
     /// Reverse resolve. Lifetime is the catalog's transaction, not the
     /// borrow of this `Copy` handle — store `CodecRead` can drop the
     /// temporary and still return the mmap bytes.
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
+    )]
     pub(crate) fn dict_resolve(&self, id: InternId) -> Result<&'txn [u8]> {
         self.txn
             .env()

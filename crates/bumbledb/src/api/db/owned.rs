@@ -195,6 +195,10 @@ impl<S> OwnedInstance<S> {
     /// # Errors
     ///
     /// `FactShape` when a manual `Key` impl lies about its statement.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the public get takes Key by value to match ReadInstance::get"
+    )]
     pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
         self.get_typed(&key)
     }

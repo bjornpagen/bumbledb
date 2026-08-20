@@ -63,8 +63,8 @@ use bumbledb::obs;
 use bumbledb::{Admission, Db, Violation};
 
 use crate::corpus_gen::Rng;
-use crate::harness::{stats, Stats};
-use crate::windowed::{load, world, Mass};
+use crate::harness::{Stats, stats};
+use crate::windowed::{Mass, load, world};
 
 #[cfg(test)]
 mod tests;
@@ -163,12 +163,14 @@ fn grind_children(parents: &[u64], ranks: &[u64], next_id: &mut u64) -> Vec<(u64
     parents
         .iter()
         .zip(ranks)
-        .map(|(&parent, &rank)| loop {
-            let id = *next_id;
-            *next_id += 1;
-            let hash = model_fact_hash(&child_fact_bytes(id, parent, 0));
-            if slab(hash_rank_word(&hash), k) == rank {
-                return (id, parent);
+        .map(|(&parent, &rank)| {
+            loop {
+                let id = *next_id;
+                *next_id += 1;
+                let hash = model_fact_hash(&child_fact_bytes(id, parent, 0));
+                if slab(hash_rank_word(&hash), k) == rank {
+                    return (id, parent);
+                }
             }
         })
         .collect()
@@ -254,14 +256,16 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
             "hash-model pin: the probe commit was not rejected as expected: {outcome:?}"
         ));
     };
-    let [(
-        Violation::Containment {
-            direction: bumbledb::Direction::SourceUnsatisfied,
-            fact,
-            ..
-        },
-        _,
-    )] = violations.as_slice()
+    let [
+        (
+            Violation::Containment {
+                direction: bumbledb::Direction::SourceUnsatisfied,
+                fact,
+                ..
+            },
+            _,
+        ),
+    ] = violations.as_slice()
     else {
         return Err(format!(
             "hash-model pin: expected exactly one source-side containment citation, got {violations:?}"

@@ -6,11 +6,11 @@
  */
 
 import assert from "node:assert/strict"
-import * as errors from "@superbuilders/errors"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
+import * as errors from "@superbuilders/errors"
 import { Db, ErrSpentHandle, InstanceBuilder, relation, schema, str, u64 } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
 
@@ -66,11 +66,7 @@ describe("one temporal shape: async means AsyncTask", function suite() {
 			})
 			.join("\n")
 		for (const method of sync) {
-			assert.doesNotMatch(
-				sdk,
-				new RegExp(`await native\\.${method}\\b`),
-				`SDK must not await sync native.${method}`
-			)
+			assert.doesNotMatch(sdk, new RegExp(`await native\\.${method}\\b`), `SDK must not await sync native.${method}`)
 		}
 	})
 
@@ -106,7 +102,7 @@ describe("one temporal shape: async means AsyncTask", function suite() {
 				instance[Symbol.dispose]()
 			},
 			function isSpent(error: unknown) {
-				return errors.is(error, ErrSpentHandle) && /leased for publish/.test(String(error))
+				return error instanceof Error && errors.is(error, ErrSpentHandle) && /leased for publish/.test(String(error))
 			}
 		)
 		await publish

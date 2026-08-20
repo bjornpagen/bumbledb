@@ -48,9 +48,9 @@ import type {
 	PreparedHandle,
 	TxHandle,
 	WireFreshRange,
+	WireMutationReport,
 	Violation as WireViolation,
 	ViolationFact as WireViolationFact,
-	WireMutationReport,
 	WitnessHandle
 } from "#native.ts"
 import { bridged, bridgedAsync, errorFromThrow, native } from "#native.ts"
@@ -117,9 +117,7 @@ function columnsOf(relation: AnyRelation, batch: object): FactValue[][] {
 		if (count === undefined) {
 			count = raw.length
 		} else if (raw.length !== count) {
-			throw errors.new(
-				`relation ${relation.name}: column ${declared.name} has length ${raw.length}, expected ${count}`
-			)
+			throw errors.new(`relation ${relation.name}: column ${declared.name} has length ${raw.length}, expected ${count}`)
 		}
 		return raw.map(function marshalCell(value: unknown) {
 			return cellOf(`relation ${relation.name} field ${declared.name}`, declared.field, value)
@@ -1736,9 +1734,7 @@ const ErrNewtypeMismatch = errors.new(
 	"bumbledb newtypeMismatch: a statement pairs faces whose newtypes disagree — the faces of a dependency agree on their newtype, or neither carries one"
 )
 const ErrSchemaError = errors.new("bumbledb schemaError: the declaration failed validation")
-const ErrFingerprintMismatch = errors.new(
-	"bumbledb fingerprintMismatch: the store's schema does not match this theory"
-)
+const ErrFingerprintMismatch = errors.new("bumbledb fingerprintMismatch: the store's schema does not match this theory")
 const ErrIrError = errors.new("bumbledb irError: the query failed validation")
 
 function throwOpenRefusal(
@@ -1863,10 +1859,7 @@ function mapViolationWithoutStore<Rels extends SchemaRelations>(
 	})
 }
 
-async function openStore<Rels extends SchemaRelations>(
-	storePath: string,
-	theory: Schema<Rels>
-): Promise<Db<Rels>> {
+async function openStore<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Promise<Db<Rels>> {
 	const canonical = path.resolve(storePath)
 	const spec = lower(theory)
 	const opened = await bridgedAsync(`open bumbledb store at ${canonical}`, function callBridge() {
@@ -2026,11 +2019,7 @@ function wrapBuilder<Rels extends SchemaRelations>(
 			})
 			return Object.freeze({ submitted: report.submitted, changed: report.changed })
 		},
-		reserve<R extends MemberRelation<Rels>>(
-			relation: R,
-			field: FreshKeys<R> & string,
-			count: bigint
-		): FreshRange {
+		reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange {
 			assertLive()
 			const entry = ordinaryEntry(tables, theory, relation)
 			const declared = relation.data.fields.find(function byName(candidate) {
@@ -2179,9 +2168,9 @@ export {
 	abandon,
 	Db,
 	ErrAsyncCallback,
+	ErrFingerprintMismatch,
 	ErrForeignPrepared,
 	ErrForeignWitness,
-	ErrFingerprintMismatch,
 	ErrIrError,
 	ErrNewtypeMismatch,
 	ErrSchemaError,

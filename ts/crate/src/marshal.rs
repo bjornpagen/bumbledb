@@ -280,7 +280,7 @@ fn sealed_fields(
         })?;
     Ok(rel
         .sealed_fields()
-        .map(|slot| (Box::from(slot.name()), slot.value_type().clone()))
+        .map(|slot| (Box::from(slot.name()), *slot.value_type()))
         .collect())
 }
 
@@ -1196,8 +1196,8 @@ impl ValueOut {
     /// inbound refusal — the store's decode lanes can surface at-rest
     /// damage, and a repair (`from_utf8_lossy`) would silently corrupt
     /// what the engine's own corruption taxonomy convicts.
-    pub(crate) fn from_value(value: Value) -> napi::Result<Self> {
-        Ok(match value {
+    pub(crate) fn from_value(value: Value) -> Self {
+        match value {
             Value::Bool(v) => Self::Bool(v),
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
@@ -1211,7 +1211,7 @@ impl ValueOut {
                 start: interval.start(),
                 end: interval.end(),
             },
-        })
+        }
     }
 }
 
@@ -1250,7 +1250,7 @@ impl ToNapiValue for ValueOut {
 }
 
 /// Owned rows to their outward form, cells moved.
-pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> napi::Result<Vec<Vec<ValueOut>>> {
+pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> Vec<Vec<ValueOut>> {
     rows.into_iter()
         .map(|row| row.into_iter().map(ValueOut::from_value).collect())
         .collect()
@@ -1363,7 +1363,7 @@ impl ToNapiValue for ManifestWire {
                     for (name, value) in row.values {
                         let mut value_obj = Object::new(&env_handle)?;
                         value_obj.set("name", name.as_ref())?;
-                        value_obj.set("value", ValueOut::from_value(value)?)?;
+                        value_obj.set("value", ValueOut::from_value(value))?;
                         values.push(value_obj);
                     }
                     row_obj.set("values", values)?;
@@ -1490,7 +1490,7 @@ impl ToNapiValue for ViolationWire {
             for (name, value) in fields {
                 let mut field_obj = Object::new(&env_handle)?;
                 field_obj.set("name", name)?;
-                field_obj.set("value", ValueOut::from_value(value)?)?;
+                field_obj.set("value", ValueOut::from_value(value))?;
                 field_objs.push(field_obj);
             }
             fact_obj.set("fields", field_objs)?;
@@ -1554,7 +1554,7 @@ impl ToNapiValue for ExplainWire {
         };
         let mut rules = Vec::with_capacity(rule_stats.len());
         for rule in rule_stats {
-            rules.push(explain_rule_out(&env_handle, rule)?);
+            rules.push(explain_rule_out(&env_handle, &rule)?);
         }
         root.set("rules", rules)?;
         let mut interiors = Vec::with_capacity(interior_stats.len());
@@ -1585,7 +1585,10 @@ impl ToNapiValue for ExplainWire {
 }
 
 /// One rule's stats object ([`ExplainWire`]'s per-rule section).
-fn explain_rule_out(env: &Env, rule: bumbledb::RuleStats) -> napi::Result<Object<'_>> {
+fn explain_rule_out<'env>(
+    env: &'env Env,
+    rule: &bumbledb::RuleStats,
+) -> napi::Result<Object<'env>> {
     let mut rule_obj = Object::new(env)?;
     rule_obj.set("distinctBindings", rule.distinct_bindings())?;
     rule_obj.set("emitted", rule.emitted())?;

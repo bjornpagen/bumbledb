@@ -3,8 +3,8 @@ use bumbledb::Db;
 use crate::fixture::TempDir;
 
 use super::{
-    child_fact_bytes, grind_children, hash_rank_word, load, model_fact_hash, pin_hash_model,
-    run_with_floor, shuffled_ranks, slab, world, Mass, ID_BASE,
+    ID_BASE, Mass, child_fact_bytes, grind_children, hash_rank_word, load, model_fact_hash,
+    pin_hash_model, run_with_floor, shuffled_ranks, slab, world,
 };
 use crate::corpus_gen::Rng;
 
