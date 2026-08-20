@@ -362,6 +362,13 @@ impl<'s> Selections<'s> {
         Self::encode_with(schema, &mut lookup)
     }
 
+    /// Complete-judgment scratch resident with this table — $J$ stand-in.
+    #[must_use]
+    pub(crate) fn scratch_bytes(&self) -> usize {
+        self.checks.len() * std::mem::size_of::<SideChecks>()
+            + self.capacities.len() * std::mem::size_of::<SideChecks>()
+    }
+
     /// The shared constructor. Three call sites monomorphize here
     /// (`encode`, `encode_committed`, `encode_lookup`) — a two-arm
     /// enum would still leave the heap-admit lookup as a third

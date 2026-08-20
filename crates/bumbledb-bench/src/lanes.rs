@@ -1,5 +1,5 @@
-//! The metric lanes: three REPORT-class subcommands — `storage`,
-//! `writes`, `curves`.
+//! The metric lanes: four REPORT-class subcommands — `storage`,
+//! `writes`, `curves`, `heap`.
 //!
 //! The charter: each lane produces a report artifact and exits 0 on
 //! success; non-zero only on refusal, setup failure, oracle
@@ -11,6 +11,7 @@
 //! measurement sessions — this tool run never times for publication.
 
 pub mod curves;
+pub mod heap;
 pub mod storage;
 pub mod writes;
 

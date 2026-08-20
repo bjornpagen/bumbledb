@@ -438,6 +438,35 @@ fn load_and_reserve_admits() {
 }
 
 #[test]
+fn admit_measured_reports_the_five_phases() {
+    let mut builder = InstanceBuilder::new(Ledger).expect("valid");
+    let id = builder
+        .reserve::<AccountId>(1)
+        .expect("reserve")
+        .start()
+        .expect("nonempty");
+    builder
+        .load([&Account {
+            id,
+            holder: "ada",
+            balance: 10,
+        }])
+        .expect("load");
+    let (admission, tel) = builder.admit_measured().expect("admit");
+    let instance = admission.expect("accepted");
+    assert!(
+        tel.a > 0 || tel.i > 0 || tel.r > 0,
+        "staging left a quantity"
+    );
+    assert_eq!(
+        tel.f,
+        u64::try_from(instance.retained_bytes()).expect("fits"),
+        "F is the frozen catalog before lazy images"
+    );
+    assert!(tel.j > 0, "complete-judgment scratch is live");
+}
+
+#[test]
 fn owned_instance_is_send_sync() {
     fn require<T: Send + Sync>() {}
     require::<OwnedInstance<Ledger>>();

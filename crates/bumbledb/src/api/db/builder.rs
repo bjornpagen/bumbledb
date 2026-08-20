@@ -247,12 +247,25 @@ impl<S> InstanceBuilder<S> {
     /// `TransactionPoisoned` if a prior apply failed after a prefix
     /// entered the stage; `Corruption` / `Internal` on infra failure.
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
+        Ok(self.admit_measured()?.0)
+    }
+
+    /// [`Self::admit`] plus the five phase quantities $A,I,R,F,J$.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit`].
+    pub fn admit_measured(
+        self,
+    ) -> Result<(Admission<OwnedInstance<S>>, crate::AdmissionTelemetry)> {
         self.mutation.refuse_poisoned()?;
         let (schema, stage) = self.mutation.into_heap();
-        Ok(
-            crate::storage::catalog::admit_catalog(schema.as_ref(), stage)?
-                .map(|catalog| OwnedInstance::new(schema, catalog)),
-        )
+        let (admission, telemetry) =
+            crate::storage::catalog::admit_catalog_measured(schema.as_ref(), stage)?;
+        Ok((
+            admission.map(|catalog| OwnedInstance::new(schema, catalog)),
+            telemetry,
+        ))
     }
 }
 

@@ -153,6 +153,8 @@ pub use interval::Interval;
 /// differential unit tests (as a dev-dependency) enable.
 #[cfg(feature = "ground-off")]
 pub use plan::ground::with_grounding_disabled;
+/// Heap-admit phase quantities $A,I,R,F,J$ (`proposals/instance-lifetime.md`).
+pub use storage::catalog::AdmissionTelemetry;
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived

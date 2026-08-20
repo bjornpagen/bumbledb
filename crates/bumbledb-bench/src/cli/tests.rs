@@ -305,6 +305,46 @@ fn curves_parses_the_lane_flags() {
 }
 
 #[test]
+fn heap_parses_the_lane_flags() {
+    let cmd = parse(&argv(&[
+        "heap",
+        "--scale",
+        "S",
+        "--seed",
+        "2",
+        "--dir",
+        "/tmp/h",
+        "--samples",
+        "8",
+        "--prefixes",
+        "64,256",
+        "--primer-spec",
+        "/tmp/primer",
+        "--primer-snapshot",
+        "/tmp/lc",
+        "--out",
+        "artifacts",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Heap(HeapArgs {
+            scale: Scale::S,
+            seed: 2,
+            dir: PathBuf::from("/tmp/h"),
+            samples: Some(8),
+            prefixes: vec![64, 256],
+            primer_spec: PathBuf::from("/tmp/primer"),
+            primer_snapshot: PathBuf::from("/tmp/lc"),
+            out: Some(PathBuf::from("artifacts")),
+        })
+    );
+    assert_eq!(parse(&argv(&["heap"])), Ok(Cmd::Heap(HeapArgs::default())));
+    let err = parse(&argv(&["heap", "--prefixes", "0"])).unwrap_err();
+    assert!(err.contains("0"), "{err}");
+}
+
+#[test]
 fn churn_parses_its_flags() {
     let cmd = parse(&argv(&[
         "churn",
@@ -499,6 +539,7 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["writes"],
         vec!["curves"],
         vec!["churn"],
+        vec!["heap"],
     ] {
         let cmd = parse(&argv(&tokens)).expect("parses");
         assert!(cmd.runs_measurements(), "{tokens:?} runs measurements");
@@ -539,6 +580,7 @@ fn help_text_names_the_binary_and_version() {
         "storage",
         "writes",
         "curves",
+        "heap",
         "queries",
     ] {
         assert!(text.contains(command), "{command}");

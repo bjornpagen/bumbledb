@@ -75,6 +75,13 @@ impl Arena {
         }
     }
 
+    /// Sum of chunk capacities — the proposal's staged-arena $A$ / run
+    /// $R$ quantity, not live length.
+    #[must_use]
+    pub(crate) fn capacity(&self) -> usize {
+        self.chunks.iter().map(Vec::capacity).sum()
+    }
+
     /// Resolves a handle back to its bytes.
     #[must_use]
     pub fn get(&self, slice: ArenaSlice) -> &[u8] {

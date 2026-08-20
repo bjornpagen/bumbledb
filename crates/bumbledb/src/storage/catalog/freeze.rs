@@ -16,6 +16,18 @@ use bumbledb_theory::schema::ValueType;
 use super::complete::judge_complete;
 use super::decorate::decorate_violations;
 
+/// The five admission phase quantities (`proposals/instance-lifetime.md`):
+/// $A$ staged arenas, $I$ compact staging index, $R$ sorted-run bytes,
+/// $F$ frozen catalog, $J$ complete-judgment scratch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdmissionTelemetry {
+    pub a: u64,
+    pub i: u64,
+    pub r: u64,
+    pub f: u64,
+    pub j: u64,
+}
+
 /// Readable packed catalog after the key merge, before the statement
 /// roster. Freeze to [`FrozenCatalog`] is a field move.
 pub(crate) struct CandidateCatalog {
@@ -46,15 +58,23 @@ struct AssignedFact {
 /// Peak-memory: the identity index drops first. Facts copy into the run
 /// arena; the stage's fact arena then drops. No `BTreeMap` catalog, no
 /// `WriteDelta`, no `CommitPlan`.
-pub(crate) fn admit_catalog(
+pub(crate) fn admit_catalog(schema: &Schema, stage: HeapStage) -> Result<Admission<FrozenCatalog>> {
+    Ok(admit_catalog_measured(schema, stage)?.0)
+}
+
+/// [`admit_catalog`] plus the five phase quantities $A,I,R,F,J$.
+pub(crate) fn admit_catalog_measured(
     schema: &Schema,
     mut stage: HeapStage,
-) -> Result<Admission<FrozenCatalog>> {
+) -> Result<(Admission<FrozenCatalog>, AdmissionTelemetry)> {
+    let a = stage.phase_a();
+    let i = stage.phase_i();
     stage.discard_identity();
     let selections = Selections::encode_lookup(schema, |raw| Ok(stage.lookup_raw(raw)))?;
 
     let mut runs = Arena::new();
     let assigned = assign_rows(schema, &stage, &mut runs);
+    let assigned_cap = assigned.capacity();
     stage.release_facts();
 
     let mut data_entries = Vec::new();
@@ -70,6 +90,15 @@ pub(crate) fn admit_catalog(
     data_entries.sort_by(|a, b| runs.get(a.0).cmp(runs.get(b.0)));
     dict_entries.sort_by(|a, b| runs.get(a.0).cmp(runs.get(b.0)));
 
+    let r = u64::try_from(runs.capacity()).expect("run arena fits u64");
+    let j = u64::try_from(
+        selections.scratch_bytes()
+            + assigned_cap * std::mem::size_of::<AssignedFact>()
+            + data_entries.capacity() * std::mem::size_of::<(ArenaSlice, ArenaSlice)>()
+            + dict_entries.capacity() * std::mem::size_of::<(ArenaSlice, ArenaSlice)>(),
+    )
+    .expect("judgment scratch fits u64");
+
     let mut key_violations = Vec::new();
     let data =
         pack_data_with_key_phase(schema, &runs, &assigned, &data_entries, &mut key_violations)?;
@@ -81,6 +110,8 @@ pub(crate) fn admit_catalog(
     let candidate = CandidateCatalog {
         inner: FrozenCatalog::from_parts(data, dict, dict_next),
     };
+    let f = u64::try_from(candidate.catalog().byte_size()).expect("frozen bytes fit u64");
+    let telemetry = AdmissionTelemetry { a, i, r, f, j };
 
     if !key_violations.is_empty() {
         let sealed = match Violations::seal(schema, key_violations) {
@@ -89,17 +120,16 @@ pub(crate) fn admit_catalog(
             }
             Admission::Accepted(()) => unreachable!("nonempty collector"),
         };
-        return Ok(Admission::Rejected(sealed));
+        return Ok((Admission::Rejected(sealed), telemetry));
     }
 
     let statement = judge_complete(candidate.catalog(), schema, &selections)?;
     match Violations::seal(schema, statement) {
-        Admission::Accepted(()) => Ok(Admission::Accepted(candidate.freeze())),
-        Admission::Rejected(violations) => Ok(Admission::Rejected(decorate_violations(
-            violations,
-            schema,
-            candidate.catalog(),
-        ))),
+        Admission::Accepted(()) => Ok((Admission::Accepted(candidate.freeze()), telemetry)),
+        Admission::Rejected(violations) => Ok((
+            Admission::Rejected(decorate_violations(violations, schema, candidate.catalog())),
+            telemetry,
+        )),
     }
 }
 

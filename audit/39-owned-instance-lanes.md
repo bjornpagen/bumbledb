@@ -1,6 +1,8 @@
 # 39 — New lanes: the heap arm gets measured like the store arm
 
-- **Status:** OPEN (final pass).
+- **Status:** **fixed this pass** — three lanes run under `heap`; first
+  pins in `crates/bumbledb-bench/HEAP-BASELINE.md`. Primer gate
+  **blocked** with the ask (corpus reachable; no Rust opener).
 - **Severity:** performance coverage — the heap arm shipped without its
   ladder.
 
@@ -27,6 +29,28 @@ had numbers.
    already names; it has never been run.
 4. The bare-metal ramdisk row rides the release checklist (closed issue
    18's suggested one-liner) beside this lane.
+
+## First pin (2026-08-20, Apple M2 Max, release, scale S, 8 samples)
+
+| family | heap p50 | lmdb p50 | ratio |
+| --- | ---: | ---: | ---: |
+| get | 167 ns | 292 ns | 0.57× |
+| contains | 333 ns | 417 ns | 0.80× |
+| scan | 19_542 ns | 25_500 ns | 0.77× |
+
+Admission (four prefixes): 693 → 41_432 facts, 1.29M → 1.03M facts/s,
+ns/fact 773 → 974 (**1.26×**, no superlinear term). Telemetry columns
+A/I/R/F/J are on every row (`InstanceBuilder::admit_measured`).
+
+join 123 µs / 500 rows · `fromInstance` 251 ms.
+
+## Primer verdict
+
+**blocked.** Source JSONL and a 1.68 GB `standards-evidence-ir.bumbledb`
+are on disk. The bench cannot open the store without a
+fingerprint-matching Rust `SchemaDescriptor` of StandardsEvidenceIR
+(Grade handles `"1"`..`"12"` and `"source-normalized"`). Ask recorded
+in `HEAP-BASELINE.md` — never silently skipped.
 
 ## Acceptance
 

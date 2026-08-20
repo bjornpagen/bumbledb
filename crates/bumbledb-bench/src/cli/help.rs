@@ -26,6 +26,8 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 curves   scale-curve runner + cold/warm/memoized panel\n\
     \x20          (report-class)\n\
     \x20 churn    long-lived churn: degradation time series, both engines\n\
+    \x20 heap     heap-arm ladder: frozen-vs-LMDB point reads, admission\n\
+    \x20          A/I/R/F/J prefixes, Primer scaling gate (report-class)\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -134,6 +136,18 @@ pub fn help() -> String {
          \x20                 (default steady,nosync,delete-heavy)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-churn)\n\
          \x20 report-class; series artifact churn-report.json — never a gate\n\
+         \n\
+         HEAP:\n\
+         \x20 --scale S|M|L   point-read corpus scale  (default S)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --samples N     measured samples/family  (default 32)\n\
+         \x20 --prefixes a,b  posting-count admit prefixes\n\
+         \x20                 (default 256,1024,4096,16384)\n\
+         \x20 --primer-spec PATH   sibling primer-spec (default ../primer-spec)\n\
+         \x20 --primer-snapshot PATH  LC 1.11.0 JSONL dir\n\
+         \x20                 (default ../knowledge-graph-data/v1.11.0)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-heap)\n\
          \n\
          SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
          \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\

@@ -19,6 +19,12 @@ finding stamps live in git history.
   8-sample p50 328 ms vs SQLite 694 ms (**0.47×**). `jp_descend_n1`
   exclusive 197.7 ms is the 2-path walk; `jp_force_n0` 1.25 µs. Finding
   044 (audit/37) skipped on that force number.
+- **Heap-arm ladder** — **closed** as a lane (audit/39 /
+  `crates/bumbledb-bench/HEAP-BASELINE.md`): heap get 167/292 ns
+  (0.57× vs LMDB), admit prefixes 693→41432 facts at 1.26× ns/fact,
+  A/I/R/F/J on every row. Primer four-prefix gate **blocked** with the
+  ask: fingerprint-matching Rust SchemaDescriptor for
+  StandardsEvidenceIR (source JSONL + 1.68 GB store are on disk).
 - **Overlap constants re-pin**: `OVERLAP_CROSSOVER = 16`
   (`exec/run/overlap_leaf.rs`) and `FLAT_SWEEP_CEILING = 128`
   (`interval/overlap.rs`) are rig-pinned provisional — re-pin both from the

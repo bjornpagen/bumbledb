@@ -5,8 +5,8 @@ use crate::duralane::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
-    BenchArgs, ChurnArgs, Cmd, CorpusArgs, CurvesArgs, ScenarioArgs, StorageArgs, SweepArgs,
-    WritesArgs,
+    BenchArgs, ChurnArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ScenarioArgs, StorageArgs,
+    SweepArgs, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -333,6 +333,40 @@ fn parse_curves(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Curves(args))
 }
 
+fn parse_prefix_list(flag: &str, raw: &str) -> Result<Vec<u64>, String> {
+    if raw.is_empty() {
+        return Err(format!("`{flag}` needs at least one prefix"));
+    }
+    raw.split(',')
+        .map(|token| {
+            let n = parse_u64(flag, token)?;
+            if n == 0 {
+                return Err(format!("`{flag}` rejects 0 — a prefix needs facts"));
+            }
+            Ok(n)
+        })
+        .collect()
+}
+
+fn parse_heap(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = HeapArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--scale" => args.scale = parse_scale(tokens.value(&flag)?)?,
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--prefixes" => args.prefixes = parse_prefix_list(&flag, tokens.value(&flag)?)?,
+            "--primer-spec" => args.primer_spec = PathBuf::from(tokens.value(&flag)?),
+            "--primer-snapshot" => args.primer_snapshot = PathBuf::from(tokens.value(&flag)?),
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("heap", &flag)),
+        }
+    }
+    Ok(Cmd::Heap(args))
+}
+
 fn parse_churn(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = ChurnArgs::default();
     while let Some(flag) = tokens.next() {
@@ -387,6 +421,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
         "churn" => parse_churn(&mut tokens),
+        "heap" => parse_heap(&mut tokens),
         "merge" => {
             let mut dirs = Vec::new();
             while let Some(token) = tokens.next() {

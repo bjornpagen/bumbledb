@@ -109,6 +109,9 @@ pub enum Cmd {
     /// The long-lived churn lanes: degradation series on both engines,
     /// oracle-gated per sample.
     Churn(ChurnArgs),
+    /// The heap-arm ladder: frozen-vs-LMDB point reads, admission
+    /// $A,I,R,F,J$, Primer scaling gate (report-class).
+    Heap(HeapArgs),
 }
 
 impl Cmd {
@@ -131,7 +134,8 @@ impl Cmd {
             | Self::Storage(_)
             | Self::Writes(_)
             | Self::Curves(_)
-            | Self::Churn(_) => true,
+            | Self::Churn(_)
+            | Self::Heap(_) => true,
             Self::Help
             | Self::Queries
             | Self::Gen(_)
@@ -329,6 +333,37 @@ impl Default for ChurnArgs {
             vacuum_every: DEFAULT_VACUUM_EVERY,
             analyze_every: DEFAULT_ANALYZE_EVERY,
             runs: None,
+            out: None,
+        }
+    }
+}
+
+/// `heap`'s knobs ([`crate::lanes::heap`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeapArgs {
+    pub scale: Scale,
+    pub seed: u64,
+    pub dir: PathBuf,
+    pub samples: Option<u32>,
+    /// Posting-count prefixes for the admission ladder (four by default).
+    pub prefixes: Vec<u64>,
+    /// Sibling `primer-spec` checkout.
+    pub primer_spec: PathBuf,
+    /// Learning Commons 1.11.0 snapshot (`nodes.jsonl` + `relationships.jsonl`).
+    pub primer_snapshot: PathBuf,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for HeapArgs {
+    fn default() -> Self {
+        Self {
+            scale: Scale::S,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            samples: None,
+            prefixes: vec![256, 1_024, 4_096, 16_384],
+            primer_spec: PathBuf::from("../primer-spec"),
+            primer_snapshot: PathBuf::from("../knowledge-graph-data/v1.11.0"),
             out: None,
         }
     }
