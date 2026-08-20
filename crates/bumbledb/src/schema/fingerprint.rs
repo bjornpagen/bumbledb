@@ -163,9 +163,8 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
 /// fingerprint (`docs/architecture/50-storage.md` § the `_meta` block):
 /// one canonical encoding exists, and persisting anything else would mint
 /// a second one. Readers: store creation and format-8 open-time
-/// fingerprint check (`storage/env`). The descriptor decode half is
-/// retained so fingerprints stay byte-identical; it is not a product
-/// open path.
+/// fingerprint check (`storage/env`). There is no decoder: the bytes are
+/// the fingerprint preimage, not a product open path.
 #[must_use]
 pub(crate) fn canonical_descriptor(schema: &Schema) -> Vec<u8> {
     let mut bytes = Vec::new();

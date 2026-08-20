@@ -481,8 +481,7 @@ impl RelationDescriptor {
     /// accessor's structural peer over [`spec::RelationSpec`] — the
     /// spec carries the newtypes a descriptor deliberately drops), the
     /// engine seal that MATERIALIZES the synthetic field
-    /// (`bumbledb::schema::validate`), and the codec decode that
-    /// re-parses it (`bumbledb::schema::descriptor_codec`).
+    /// (`bumbledb::schema::validate`).
     pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
         self.extension
             .is_some()

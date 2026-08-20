@@ -52,9 +52,8 @@ Owned exhume surfaces landed here: `api/db/exhume.rs`, `storage/env/exhume.rs`,
 descriptor compare, `DescriptorMissing`/`DescriptorRoundTrip` and their C
 kinds, the R17 `OpenLane::ReadOnly` arm, and
 `strip`/`overwrite_schema_descriptor_for_tests`. The descriptor **decode**
-half of `schema/descriptor_codec.rs` and the unused `wire.rs` decode helpers
-are lane B — deleting them here would collide; they now warn `dead_code`
-until B lands. `verify_store`'s descriptor↔fingerprint pass stays until
-that file's owner deletes it; `ReadTxn::schema_descriptor` remains as its
-only reader. Bench and docs still mention exhume (lanes D/E). `META_SCHEMA_DESCRIPTOR`
+half of `schema/descriptor_codec.rs` and the unused `wire.rs` decode
+helpers are deleted (encode remains in `fingerprint.rs`).
+`verify_store`'s leftover descriptor-hash pass still reads a vanished
+`META_SCHEMA_DESCRIPTOR` key if one is present. `META_SCHEMA_DESCRIPTOR`
 leaving the roster is 23.

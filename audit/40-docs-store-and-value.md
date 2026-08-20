@@ -64,10 +64,8 @@ data. There is no theory-less open.
 Integration 1 left `exhume` comments in files this lane does not own.
 Not edited:
 
-- `crates/bumbledb/src/schema/descriptor_codec.rs` (module docs and test
-  comments still name [`crate::exhume`] as the decoder's reader)
-- `crates/bumbledb/src/schema/fingerprint.rs` (rustdoc still names the
-  exhume round-trip pin; test comment "field exhume failure")
+- `crates/bumbledb/src/schema/fingerprint.rs` (test comment "field exhume
+  failure")
 
 Related leftover outside this lane: `META_SCHEMA_DESCRIPTOR` key `[5]`
 still readable so `verify_store`'s leftover descriptor pass compiles

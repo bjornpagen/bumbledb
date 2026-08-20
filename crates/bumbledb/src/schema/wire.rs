@@ -1,6 +1,6 @@
-//! Shared descriptor-wire tags. Encoder ([`super::fingerprint`]) and decoder
-//! ([`super::descriptor_codec`]) name the same discriminants; the bytes are
-//! the historical stream (tag 1 remains the deleted-enum tombstone).
+//! Shared descriptor-wire tags. The encoder ([`super::fingerprint`]) names
+//! these discriminants; the bytes are the historical stream (tag 1 remains
+//! the deleted-enum tombstone). There is no decoder.
 
 use super::{Bound, FieldId};
 
@@ -15,13 +15,6 @@ macro_rules! wire_tag {
         impl $name {
             pub(crate) const fn tag(self) -> u8 {
                 self as u8
-            }
-
-            pub(crate) const fn from_byte(byte: u8) -> Option<Self> {
-                match byte {
-                    $($val => Some(Self::$var),)*
-                    _ => None,
-                }
             }
         }
     };
@@ -92,15 +85,6 @@ impl EncodedHi {
             Some(Bound::Lit(value)) => Self::Lit(value),
             Some(Bound::TargetField(field)) => Self::TargetField(field),
             Some(Bound::TargetDuration(field)) => Self::TargetDuration(field),
-        }
-    }
-
-    pub(crate) fn to_bound(self) -> Option<Bound> {
-        match self {
-            Self::Unbounded => None,
-            Self::Lit(value) => Some(Bound::Lit(value)),
-            Self::TargetField(field) => Some(Bound::TargetField(field)),
-            Self::TargetDuration(field) => Some(Bound::TargetDuration(field)),
         }
     }
 
