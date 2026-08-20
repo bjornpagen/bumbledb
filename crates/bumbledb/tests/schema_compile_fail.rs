@@ -40,12 +40,30 @@ fn expected_errors(source: &str, fixture: &Path) -> Vec<String> {
 /// Nightly-2026-08-15 cargo (build-dir layout v2) stores each unit under
 /// `target/<profile>/build/<pkg>/<hash>/out/` instead of a single `deps`
 /// directory. The runner still understands the legacy `deps` layout.
+///
+/// After a toolchain bump, CI `restore-keys` can leave a previous rustc's
+/// `deps/` tree next to a freshly rebuilt v2 layout. Returning only `deps/`
+/// then feeds rustc an incompatible rlib (E0514) and the first fixture
+/// dies without its pinned diagnostic. Search every live layout and pick
+/// a current-rustc artifact below.
 fn search_dirs() -> Vec<PathBuf> {
     let exe = std::env::current_exe().expect("the test binary knows its path");
-    if let Some(deps) = legacy_deps(&exe) {
-        return vec![deps];
+    let mut dirs = Vec::new();
+    if let Some(build) = exe
+        .ancestors()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("build"))
+    {
+        dirs.extend(unit_out_dirs(build));
     }
-    unit_out_dirs(&exe)
+    if let Some(deps) = legacy_deps(&exe) {
+        dirs.push(deps);
+    }
+    assert!(
+        !dirs.is_empty(),
+        "no cargo artifact directories above {}",
+        exe.display()
+    );
+    dirs
 }
 
 fn legacy_deps(exe: &Path) -> Option<PathBuf> {
@@ -62,11 +80,7 @@ fn legacy_deps(exe: &Path) -> Option<PathBuf> {
     None
 }
 
-fn unit_out_dirs(exe: &Path) -> Vec<PathBuf> {
-    let build = exe
-        .ancestors()
-        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("build"))
-        .unwrap_or_else(|| panic!("no cargo build directory above {}", exe.display()));
+fn unit_out_dirs(build: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for pkg in std::fs::read_dir(build).expect("read cargo build dir") {
         let pkg = pkg.expect("pkg entry").path();
@@ -83,11 +97,6 @@ fn unit_out_dirs(exe: &Path) -> Vec<PathBuf> {
             }
         }
     }
-    assert!(
-        !dirs.is_empty(),
-        "no unit out directories under {}",
-        build.display()
-    );
     dirs
 }
 
@@ -102,12 +111,13 @@ fn dir_has_artifact(dir: &Path) -> bool {
     })
 }
 
-/// The newest artifact for one crate: `lib{name}-{hash}.{ext…}`.
-/// Newest-by-mtime picks the current build when feature variants left
-/// siblings behind; any variant carries the surface the fixtures use.
-fn newest_artifact(dirs: &[PathBuf], name: &str, extensions: &[&str]) -> PathBuf {
+/// Candidates for one crate: `lib{name}-{hash}.{ext…}`, newest first.
+/// Newest-by-mtime prefers the current build when feature variants left
+/// siblings behind; rustc compatibility then drops a previous toolchain's
+/// leftover (CI cache restore after a rustc pin move).
+fn artifact_candidates(dirs: &[PathBuf], name: &str, extensions: &[&str]) -> Vec<PathBuf> {
     let prefix = format!("lib{name}-");
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
@@ -129,23 +139,73 @@ fn newest_artifact(dirs: &[PathBuf], name: &str, extensions: &[&str]) -> PathBuf
                 .metadata()
                 .and_then(|m| m.modified())
                 .expect("artifact mtime");
-            if best.as_ref().is_none_or(|(when, _)| modified > *when) {
-                best = Some((modified, path));
-            }
+            found.push((modified, path));
         }
     }
-    best.map_or_else(
-        || panic!("no lib{name} artifact in cargo unit out dirs"),
-        |(_, path)| path,
-    )
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+fn rustc_accepts_rlib(
+    rustc: &str,
+    name: &str,
+    artifact: &Path,
+    search: &[PathBuf],
+    scratch: &Path,
+) -> bool {
+    let probe = scratch.join(format!("__compat_{name}.rs"));
+    std::fs::write(&probe, format!("extern crate {name};\n")).expect("write rustc compat probe");
+    let mut command = Command::new(rustc);
+    command
+        .arg("--edition=2021")
+        .arg("--crate-type=lib")
+        .arg("--emit=metadata")
+        .arg("--out-dir")
+        .arg(scratch);
+    for dir in search {
+        command
+            .arg("-L")
+            .arg(format!("dependency={}", dir.display()));
+    }
+    let output = command
+        .arg("--extern")
+        .arg(format!("{name}={}", artifact.display()))
+        .arg(&probe)
+        .output()
+        .expect("spawn rustc compat probe");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    !stderr.contains("E0514") && !stderr.contains("incompatible version of rustc")
+}
+
+fn compatible_artifact(
+    dirs: &[PathBuf],
+    name: &str,
+    extensions: &[&str],
+    rustc: &str,
+    scratch: &Path,
+) -> PathBuf {
+    let candidates = artifact_candidates(dirs, name, extensions);
+    assert!(
+        !candidates.is_empty(),
+        "no lib{name} artifact in cargo unit out dirs"
+    );
+    let mut rejected = Vec::new();
+    for path in &candidates {
+        if rustc_accepts_rlib(rustc, name, path, dirs, scratch) {
+            return path.clone();
+        }
+        rejected.push(path.display().to_string());
+    }
+    panic!(
+        "no rustc-compatible lib{name} artifact (E0514 on every candidate: {})",
+        rejected.join(", ")
+    );
 }
 
 /// Compiles one fixture, expecting failure with the pinned diagnostics.
-fn check_fixture(fixture: &Path, search: &[PathBuf], out_dir: &Path) {
+fn check_fixture(fixture: &Path, search: &[PathBuf], out_dir: &Path, bumbledb: &Path, rustc: &str) {
     let source = std::fs::read_to_string(fixture).expect("read fixture");
     let expected = expected_errors(&source, fixture);
-    let bumbledb = newest_artifact(search, "bumbledb", &["rlib"]);
-    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
     let mut command = Command::new(rustc);
     command
         .arg("--edition=2021")
@@ -183,12 +243,14 @@ fn check_fixture(fixture: &Path, search: &[PathBuf], out_dir: &Path) {
 fn schema_compile_fail_fixtures() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schema-compile-fail");
     let search = search_dirs();
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
     let out_dir = std::env::temp_dir().join(format!(
         "bumbledb-schema-compile-fail-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).expect("create scratch out-dir");
+    let bumbledb = compatible_artifact(&search, "bumbledb", &["rlib"], &rustc, &out_dir);
     let mut seen = 0;
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&fixtures)
         .expect("read the fixture dir")
@@ -197,7 +259,7 @@ fn schema_compile_fail_fixtures() {
         .collect();
     entries.sort();
     for fixture in entries {
-        check_fixture(&fixture, &search, &out_dir);
+        check_fixture(&fixture, &search, &out_dir, &bumbledb, &rustc);
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
