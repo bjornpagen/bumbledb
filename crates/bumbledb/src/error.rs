@@ -9,9 +9,7 @@
 mod convert;
 mod display;
 
-use std::any::Any;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::encoding::InternId;
 use crate::ir::{InteriorId, ParamId, VarId};
@@ -109,11 +107,6 @@ pub enum CorruptionError {
     /// [`crate::error::Error::DestinationExists`], and `open` refuses
     /// [`crate::error::Error::AlreadyInitialized`] — never corruption.
     MetaMissing,
-    /// The `_meta` store-kind marker is PRESENT but undecodable — a
-    /// wrong-width value or a byte no [`crate::StoreKind`] encodes to.
-    /// Distinct from [`CorruptionError::MetaMissing`]: the key exists,
-    /// so this is corrupt data, not a missing key.
-    StoreKindInvalid,
     /// An intern id with no reverse dictionary entry — a fact referencing it
     /// is corrupt. The miss sentinel is not a stored id; the sweeper
     /// reports a stored [`InternId::SENTINEL`] as [`Self::Malformed`].
@@ -158,14 +151,8 @@ pub enum CorruptionError {
     /// formatted payload. Lifecycle and integrity kinds are named
     /// variants, not strings in this arm.
     MalformedValue(&'static str),
-    /// An ephemeral dirty marker was armed at exhume: the store's last
-    /// session never proved its sync (wipe vs investigate).
-    EphemeralDirtyArmed,
     /// The dictionary reverse map already holds this minted id.
     DictReverseIdReuse,
-    /// The exhumed descriptor decoded, then failed to re-encode to the
-    /// persisted bytes.
-    DescriptorRoundTrip,
     /// A stored string's bytes are not UTF-8 — distinct from a dangling id
     /// (the reverse entry exists; its content is mojibake).
     NonUtf8Intern(u64),
@@ -1641,29 +1628,12 @@ impl From<std::io::Error> for IoFailure {
     }
 }
 
-/// Type-erased bridge rider. Maps to [`ErrorFamily::Io`] so the C ABI
-/// kind table does not grow. Bridges mint with [`Error::hatch`] and
-/// match with [`Error::downcast_hatch`]; the concrete ZST lives in the
-/// bridge crate and cannot be forged from `Io(Interrupted)`.
-#[derive(Clone)]
+/// Concrete bridge decline. Maps to [`ErrorFamily::Io`] so the C ABI
+/// kind table does not grow. Only [`Error::hatch`] mints it; only
+/// [`Error::is_hatch`] matches it. Unforgeable from real I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[doc(hidden)]
-pub struct Hatch(Arc<dyn Any + Send + Sync>);
-
-impl std::fmt::Debug for Hatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Hatch")
-            .field(&Any::type_id(&*self.0))
-            .finish()
-    }
-}
-
-impl PartialEq for Hatch {
-    fn eq(&self, other: &Self) -> bool {
-        Any::type_id(&*self.0) == Any::type_id(&*other.0)
-    }
-}
-
-impl Eq for Hatch {}
+pub struct Hatch;
 
 /// An LMDB/heed failure owned by [`Error`]. Encoding/decoding drop the
 /// inner boxed payload (it was never clone-faithful); the variant remains.
@@ -1715,8 +1685,7 @@ pub enum Error {
     /// Open-time: a foreign LMDB environment, or a half-created empty
     /// root that is not a usable store.
     AlreadyInitialized,
-    /// A fresh-store constructor (`create`, new `ephemeral`,
-    /// `from_instance`, `ephemeral_from_instance`, `compact`) was asked
+    /// A fresh-store constructor (`create`, `from_instance`, `compact`) was asked
     /// to claim a path that already exists — including as an empty
     /// directory. An existing path is a previous claim on the name; the
     /// engine does not guess. Payloads carry the path, not formatted
@@ -1736,26 +1705,9 @@ pub enum Error {
     /// one — holds the environment's advisory lock. One writer, many
     /// reader threads, one handle, one process (`00-product.md`).
     EnvironmentLocked,
-    /// The store on disk is not the KIND this constructor opens
-    /// (`docs/architecture/50-storage.md` § the ephemeral store kind):
-    /// `Db::open` reached an ephemeral store, or `Db::ephemeral` reached
-    /// a durable one. The kind is a property of the store, marked in
-    /// `_meta` at creation — never a mode of a handle — so the durable
-    /// surface can never quietly read a store that skipped its fsyncs,
-    /// and the ephemeral surface can never quietly strip a durable
-    /// store's guarantee. Checked after the format version, before the
-    /// fingerprint.
-    StoreKindMismatch {
-        mismatch: Mismatch<crate::storage::env::StoreKind>,
-    },
-    /// Retired format-7 adoption refusal. Format 8 stores always persist
-    /// the descriptor; a missing key is
-    /// [`CorruptionError::MetaMissing`]. The variant remains for the
-    /// host kind table until ABI 3.
-    DescriptorMissing,
     Io(IoFailure),
-    /// Hidden type-erased bridge rider. Reuses [`ErrorFamily::Io`].
-    /// Only [`Error::hatch`] mints it; only [`Error::downcast_hatch`]
+    /// Hidden concrete bridge decline. Reuses [`ErrorFamily::Io`].
+    /// Only [`Error::hatch`] mints it; only [`Error::is_hatch`]
     /// matches it. Not a public failure kind and not an ABI family arm.
     #[doc(hidden)]
     Hatch(Hatch),
@@ -1955,8 +1907,6 @@ pub enum ErrorFamily {
     DestinationExists,
     PublishedButUnsynced,
     EnvironmentLocked,
-    StoreKindMismatch,
-    DescriptorMissing,
     Io,
     Lmdb,
     ReadersFull,
@@ -2002,23 +1952,20 @@ fn family_source<'a>(
 }
 
 impl Error {
-    /// Mint a type-erased bridge rider. The concrete `T` is a
-    /// bridge-owned ZST; the engine never constructs one.
+    /// Mint the bridge decline. The engine never constructs one on any
+    /// engine path.
     #[doc(hidden)]
     #[must_use]
-    pub fn hatch<T: Any + Send + Sync>(value: T) -> Self {
-        Self::Hatch(Hatch(Arc::new(value)))
+    pub fn hatch() -> Self {
+        Self::Hatch(Hatch)
     }
 
-    /// Downcast a bridge rider. `None` for every engine `Error`,
+    /// Match the bridge decline. `false` for every engine `Error`,
     /// including a genuine [`Self::Io`].
     #[doc(hidden)]
     #[must_use]
-    pub fn downcast_hatch<T: Any + Send + Sync>(&self) -> Option<&T> {
-        match self {
-            Self::Hatch(Hatch(inner)) => inner.downcast_ref(),
-            _ => None,
-        }
+    pub fn is_hatch(&self) -> bool {
+        matches!(self, Self::Hatch(_))
     }
 
     /// The one per-variant descriptor. Display still formats payloads;
@@ -2034,8 +1981,6 @@ impl Error {
                 family_source(ErrorFamily::PublishedButUnsynced, source)
             }
             Self::EnvironmentLocked => family_only(ErrorFamily::EnvironmentLocked),
-            Self::StoreKindMismatch { .. } => family_only(ErrorFamily::StoreKindMismatch),
-            Self::DescriptorMissing => family_only(ErrorFamily::DescriptorMissing),
             Self::Io(err) => family_source(ErrorFamily::Io, err),
             Self::Hatch(_) => family_only(ErrorFamily::Io),
             Self::Lmdb(err) => family_source(ErrorFamily::Lmdb, err),
@@ -2077,17 +2022,177 @@ impl Error {
 mod hatch_tests {
     use super::*;
 
-    struct Token;
-
     #[test]
     fn hatch_reuses_io_family_and_downcasts() {
-        let error = Error::hatch(Token);
+        let error = Error::hatch();
         assert_eq!(error.family(), ErrorFamily::Io);
-        assert!(error.downcast_hatch::<Token>().is_some());
-        assert!(error.downcast_hatch::<u8>().is_none());
+        assert!(error.is_hatch());
         let interrupted = Error::from(std::io::Error::from(std::io::ErrorKind::Interrupted));
-        assert!(interrupted.downcast_hatch::<Token>().is_none());
+        assert!(!interrupted.is_hatch());
         assert_eq!(interrupted.family(), ErrorFamily::Io);
         assert_ne!(interrupted, error);
+    }
+}
+
+/// Zero-dyn engine census (audit/27). `dyn` in production engine src is
+/// legal only on `std::error::Error::source` and the `ErrorDescriptor`
+/// mirror that feeds it. Test modules (`tests.rs`, `tests/`) follow the
+/// FilterPredicate gate's skip — they are not the law's surface.
+#[cfg(test)]
+mod zero_dyn_census {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const ENGINE_SRC: &[&str] = &[
+        "crates/bumbledb/src",
+        "crates/bumbledb-theory/src",
+        "crates/bumbledb-query/src",
+        "crates/bumbledb-macros/src",
+    ];
+
+    /// Pinned exemption: the `Error::source` signature plus the two
+    /// `ErrorDescriptor` lines that carry the same `dyn Error` the
+    /// impl returns. A new `dyn` fails with file:line.
+    const EXEMPT: &[(&str, &str)] = &[
+        (
+            "crates/bumbledb/src/error.rs",
+            "pub source: Option<&'a (dyn std::error::Error + 'static)>,",
+        ),
+        (
+            "crates/bumbledb/src/error.rs",
+            "source: &'a (dyn std::error::Error + 'static),",
+        ),
+        (
+            "crates/bumbledb/src/error/convert.rs",
+            "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
+        ),
+    ];
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root")
+    }
+
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                if path.file_name().and_then(|s| s.to_str()) == Some("tests") {
+                    continue;
+                }
+                rust_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
+                && path.file_name().and_then(|s| s.to_str()) != Some("tests.rs")
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    fn strip_strings(line: &str) -> String {
+        let mut out = String::with_capacity(line.len());
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '"' {
+                out.push(' ');
+                while let Some(d) = chars.next() {
+                    if d == '\\' {
+                        chars.next();
+                        continue;
+                    }
+                    if d == '"' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn code_span(line: &str) -> String {
+        let stripped = strip_strings(line);
+        let trim = stripped.trim_start();
+        if trim.starts_with("//") {
+            return String::new();
+        }
+        match stripped.find("//") {
+            Some(at) => stripped[..at].trim().to_owned(),
+            None => stripped.trim().to_owned(),
+        }
+    }
+
+    fn has_type_dyn(code: &str) -> bool {
+        let bytes = code.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"dyn") {
+                let before = i == 0 || {
+                    let b = bytes[i - 1];
+                    !b.is_ascii_alphanumeric() && b != b'_'
+                };
+                let after = i + 3;
+                let after_ok = after < bytes.len() && bytes[after].is_ascii_whitespace();
+                if before && after_ok {
+                    return true;
+                }
+                i += 3;
+            } else {
+                i += 1;
+            }
+        }
+        false
+    }
+
+    fn exempt(rel: &str, line: &str) -> bool {
+        let trimmed = line.trim();
+        EXEMPT
+            .iter()
+            .any(|(path, snippet)| *path == rel && trimmed == *snippet)
+    }
+
+    #[test]
+    fn zero_dyn_engine_pins_error_source_exemption() {
+        let root = workspace_root();
+        let mut files = Vec::new();
+        for rel in ENGINE_SRC {
+            rust_files(&root.join(rel), &mut files);
+        }
+        files.sort();
+        let mut unexpected = Vec::new();
+        let mut exempt_hits = 0usize;
+        for path in &files {
+            let rel = path
+                .strip_prefix(&root)
+                .expect("under workspace")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = fs::read_to_string(path).expect("read");
+            for (idx, line) in text.lines().enumerate() {
+                let code = code_span(line);
+                if !has_type_dyn(&code) {
+                    continue;
+                }
+                if exempt(&rel, line) {
+                    exempt_hits += 1;
+                    continue;
+                }
+                unexpected.push(format!("{rel}:{}: {line}", idx + 1));
+            }
+        }
+        assert_eq!(
+            exempt_hits,
+            EXEMPT.len(),
+            "exemption list drifted — expected {} Error::source lines, found {exempt_hits}",
+            EXEMPT.len()
+        );
+        assert!(
+            unexpected.is_empty(),
+            "engine dyn outside the Error::source exemption:\n{}",
+            unexpected.join("\n")
+        );
     }
 }

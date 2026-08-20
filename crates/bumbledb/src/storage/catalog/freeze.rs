@@ -466,7 +466,7 @@ fn probe_pointwise_neighbors(
         let KeyForm::Pointwise { tail, .. } = key.form() else {
             continue;
         };
-        let tail_bytes = tail.bytes();
+        let tail_bytes = tail.width();
         if det_a.len() < tail_bytes || det_b.len() < tail_bytes {
             return Err(Error::Corruption(
                 crate::error::CorruptionError::MalformedValue("U determinant tail"),
@@ -477,13 +477,11 @@ fn probe_pointwise_neighbors(
         if prefix_a != prefix_b {
             continue;
         }
-        let (_, end) = tail
-            .words(&det_a[det_a.len() - tail_bytes..])
+        let (_, end) = crate::encoding::interval_words(*tail, &det_a[det_a.len() - tail_bytes..])
             .ok_or(Error::Corruption(
-                crate::error::CorruptionError::MalformedValue("U determinant tail"),
-            ))?;
-        let (ns, _) = tail
-            .words(&det_b[det_b.len() - tail_bytes..])
+            crate::error::CorruptionError::MalformedValue("U determinant tail"),
+        ))?;
+        let (ns, _) = crate::encoding::interval_words(*tail, &det_b[det_b.len() - tail_bytes..])
             .ok_or(Error::Corruption(
                 crate::error::CorruptionError::MalformedValue("U determinant tail"),
             ))?;

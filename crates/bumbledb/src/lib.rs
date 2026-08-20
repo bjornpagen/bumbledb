@@ -126,9 +126,8 @@ mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{
-    CodecRead, CodecWrite, Db, Exhumed, Fact, Fresh, FreshRange, FreshRangeIter, Instance,
-    InstanceBuilder, Key, MutationReport, OwnedInstance, Probe, ReadInstance, Witness, WriteTx,
-    exhume,
+    CodecRead, CodecWrite, Db, Fact, Fresh, FreshRange, FreshRangeIter, InstanceBuilder, Key,
+    MutationReport, OwnedInstance, Probe, ReadInstance, Witness, WriteTx,
 };
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
@@ -160,7 +159,6 @@ pub use plan::ground::with_grounding_disabled;
 /// artifact, never reuse one.
 pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 pub use storage::env::GenerationId;
-pub use storage::env::StoreKind;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

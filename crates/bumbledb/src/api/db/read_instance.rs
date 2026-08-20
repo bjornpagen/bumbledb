@@ -11,7 +11,7 @@ impl<S> ReadInstance<'_, S> {
     ///
     /// # Errors
     ///
-    /// As [`crate::Instance::prepare`].
+    /// As [`crate::OwnedInstance::prepare`].
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         let catalog = self.core.source.catalog();
         crate::api::prepared::prepare_on(
@@ -28,7 +28,8 @@ impl<S> ReadInstance<'_, S> {
     /// # Errors
     ///
     /// `UnknownRelation`; `Corruption` on a malformed counter.
-    pub fn row_count(&self, relation: RelationId) -> Result<u64> {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
         let Some(_) = self.core.schema.relation_checked(relation) else {
             return Err(DynIdError::UnknownRelation { relation }.into());
         };
@@ -87,7 +88,7 @@ impl<S> ReadInstance<'_, S> {
 
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
-    /// as data. The sealed [`crate::Instance::profile`] impl.
+    /// as data.
     ///
     /// # Errors
     ///
@@ -98,7 +99,9 @@ impl<S> ReadInstance<'_, S> {
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
-        crate::Instance::profile(self, prepared, params)
+        let catalog = self.core.source.catalog();
+        let images = crate::image::LmdbSource::bind(self.txn(), self.cache());
+        prepared.profile_on(&self.core.identity, &catalog, &images, params)
     }
 
     /// The export surface (`70-api.md` ETL story): a full-relation scan

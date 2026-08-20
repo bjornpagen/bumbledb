@@ -853,7 +853,7 @@ bumbledb::schema! {
 // =====================================================================
 
 fn flow_open() {
-    // create / open / ephemeral / ephemeral-reopen (the probe battery).
+    // create / open (the probe battery).
     let dir = common::TempDir::new("census-open");
     let db = measured("open", "Db::create(fixture schema)", true, || {
         Db::create(dir.path(), schema())
@@ -864,25 +864,6 @@ fn flow_open() {
     let db = measured("open", "Db::open(existing)", true, || {
         Db::open(dir.path(), schema()).expect("open")
     });
-    drop(db);
-
-    let edir = common::TempDir::new("census-ephemeral");
-    let db = measured("open", "Db::ephemeral(fresh)", true, || {
-        Db::ephemeral(edir.path(), schema())
-            .expect("ephemeral create")
-            .expect("accepted")
-    });
-    drop(db);
-    let db = measured(
-        "open",
-        "Db::ephemeral(reopen: probe battery)",
-        false,
-        || {
-            Db::ephemeral(edir.path(), schema())
-                .expect("ephemeral reopen")
-                .expect("accepted")
-        },
-    );
     drop(db);
 
     // Validate/open scaling with schema width.

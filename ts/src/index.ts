@@ -16,10 +16,7 @@
  * `db.prepare` as a plain value; the comparison/connective builders are
  * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
  * common host identifiers — import aliasing is the answer; the SDK does
- * not rename for collision-avoidance), the exhume surface
- * (`Db.exhume` — the one schema-independent read path: the store's
- * self-described shapes and raw facts by name, typed at bare structural
- * values, deliberately schema-free). The raw native bridge is not exported.
+ * not rename for collision-avoidance). The raw native bridge is not exported.
  */
 
 export type {
@@ -88,19 +85,6 @@ export {
 	ErrUseAfterScope,
 	InstanceBuilder
 } from "#db.ts"
-export type {
-	Exhumed,
-	ExhumedAxiom,
-	ExhumedDescriptor,
-	ExhumedFact,
-	ExhumedField,
-	ExhumedRelation
-} from "#exhume.ts"
-export {
-	ErrExhumeCorruption,
-	ErrExhumeFormatMismatch,
-	ErrExhumeNoDescriptor
-} from "#exhume.ts"
 export type {
 	AnyFace,
 	Arity,

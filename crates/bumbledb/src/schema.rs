@@ -185,65 +185,17 @@ impl Theory for SchemaDescriptor {
     }
 }
 
-/// Trailing interval encoding of a sealed projection (CONTRACT C9):
-/// the interval-restricted [`ValueType`]. Width has one owner —
-/// [`ValueType::width`]. General stores both order-preserving halves; a
-/// fixed-width type stores the START word only — the bias of both
-/// element encodings is additive, so `start_word + w` IS the encoded end
-/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IntervalTail(ValueType);
-
-impl IntervalTail {
-    /// Restricts `ty` to an interval-family type.
-    #[must_use]
-    pub(crate) const fn of(ty: ValueType) -> Option<Self> {
-        if ty.is_interval() {
-            Some(Self(ty))
-        } else {
-            None
-        }
-    }
-
-    /// Trailing encoded bytes: [`ValueType::width`] of the interval type.
-    pub(crate) const fn bytes(self) -> usize {
-        self.0.width()
-    }
-
-    /// The `(start, end)` order-preserving words of a tail slice —
-    /// `None` on a malformed tail (wrong width, or a fixed start at or
-    /// past the Q2 bound; callers convict corruption). Both element
-    /// ceilings encode to `u64::MAX`, so the fixed bound is one word
-    /// compare in either domain.
-    pub(crate) fn words(self, tail: &[u8]) -> Option<(u64, u64)> {
-        if tail.len() != self.bytes() {
-            return None;
-        }
-        match self.0 {
-            ValueType::Interval { .. } => {
-                let start = u64::from_be_bytes(tail[..8].try_into().ok()?);
-                let end = u64::from_be_bytes(tail[8..].try_into().ok()?);
-                Some((start, end))
-            }
-            ValueType::FixedInterval { width, .. } => {
-                let bytes: [u8; 8] = tail.try_into().ok()?;
-                crate::encoding::decode_fixed_interval_start(bytes, width).ok()
-            }
-            _ => None,
-        }
-    }
-}
-
 impl Schema {
-    /// The interval-tail descriptor of a pointwise key's determinant;
-    /// `None` for scalar keys. A read of the sealed witness — validation
-    /// minted the tail once, so no commit or sweep re-walks the
-    /// projection.
+    /// The interval-family [`ValueType`] of a pointwise key's
+    /// determinant; `None` for scalar keys. Validation minted the type
+    /// once, so no commit or sweep re-walks the projection. Width has
+    /// one owner — [`ValueType::width`] — and the tail decoder is
+    /// [`crate::encoding::interval_words`].
     #[expect(
         clippy::unused_self,
         reason = "the schema is the witness's minting authority — readers go through it"
     )]
-    pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
+    pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<ValueType> {
         key.tail()
     }
 }
@@ -285,8 +237,8 @@ pub(crate) enum Enforcement {
         target_key: KeyId,
         key_projection: Box<[FieldId]>,
         disjoint: DisjointDeterminantProof,
-        source_tail: IntervalTail,
-        target_tail: IntervalTail,
+        source_tail: ValueType,
+        target_tail: ValueType,
     },
     /// A closed target's stage-1-known answer set.
     Closed { members: MemberSet },
@@ -544,7 +496,7 @@ pub enum KeyForm {
     /// consumer re-walks the projection, and no boolean licenses the
     /// sweep.
     Pointwise {
-        tail: IntervalTail,
+        tail: ValueType,
         disjoint: DisjointDeterminantProof,
     },
 }
@@ -570,7 +522,7 @@ impl KeyStatement {
     /// The trailing interval encoding of a Pointwise key; `None` on the
     /// other arms.
     #[must_use]
-    pub(crate) fn tail(&self) -> Option<IntervalTail> {
+    pub(crate) fn tail(&self) -> Option<ValueType> {
         self.form.as_pointwise()
     }
 }
@@ -593,7 +545,7 @@ impl KeyForm {
 
     /// The trailing encoding when this key is [`KeyForm::Pointwise`].
     #[must_use]
-    pub(crate) const fn as_pointwise(&self) -> Option<IntervalTail> {
+    pub(crate) const fn as_pointwise(&self) -> Option<ValueType> {
         match *self {
             Self::Pointwise { tail, .. } => Some(tail),
             Self::FreshRow { .. } | Self::Scalar => None,
@@ -650,7 +602,7 @@ impl ContainmentStatement {
 pub enum SealedWeight {
     Unit,
     Field(FieldId),
-    Duration { field: FieldId, tail: IntervalTail },
+    Duration { field: FieldId, tail: ValueType },
 }
 
 impl SealedWeight {
@@ -673,7 +625,7 @@ pub enum SealedBound {
     Unbounded,
     Lit(u64),
     TargetField(FieldId),
-    Duration { field: FieldId, tail: IntervalTail },
+    Duration { field: FieldId, tail: ValueType },
 }
 
 impl SealedBound {

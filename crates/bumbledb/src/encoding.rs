@@ -18,7 +18,7 @@ pub use decode::{
     decode_i64, decode_interval_i64, decode_interval_u64, decode_u64, field_bytes,
     field_word_bytes,
 };
-pub(crate) use decode::{decode_values, decode_values_keyed_into, split_halves};
+pub(crate) use decode::{decode_values, decode_values_keyed_into, interval_words, split_halves};
 pub use encode::{append_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64};
 // The two-half interval encoders' production users live inside this
 // module (the type-aware `encode_literal` and `encode_fact` arms); the

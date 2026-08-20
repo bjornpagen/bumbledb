@@ -825,6 +825,30 @@ fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
 }
 
 #[test]
+fn interval_words_reads_through_the_layout_width() {
+    // One owner: 16 general, 8 fixed — `ValueType::width` plus this decoder.
+    let general = ValueType::Interval {
+        element: IntervalElement::U64,
+    };
+    assert_eq!(general.width(), 16);
+    let encoded =
+        encode_interval_u64(bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty"));
+    assert_eq!(interval_words(general, &encoded), Some((3, 9)));
+    assert_eq!(interval_words(general, &encoded[..8]), None);
+
+    let fixed = ValueType::FixedInterval {
+        element: IntervalElement::U64,
+        width: 5,
+    };
+    assert_eq!(fixed.width(), 8);
+    let start = encode_u64(10);
+    assert_eq!(interval_words(fixed, &start), Some((10, 15)));
+    assert_eq!(interval_words(fixed, &encoded), None);
+
+    assert_eq!(interval_words(ValueType::U64, &encode_u64(1)), None);
+}
+
+#[test]
 fn fixed_interval_round_trips_one_word() {
     // The encoding is the start word — 8 bytes, not 16 — and decode
     // re-derives the end from the layout's constant width.

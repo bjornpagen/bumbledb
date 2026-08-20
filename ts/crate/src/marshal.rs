@@ -44,7 +44,7 @@ pub(crate) fn err(message: String) -> napi::Error {
     napi::Error::from_reason(message)
 }
 
-/// Engine `Display` for data-path messages (open/exhume refusals). Throws
+/// Engine `Display` for data-path messages (open refusals). Throws
 /// use [`throw_engine`]: kind is a field, not a prefix on this string.
 pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
     error.to_string()

@@ -24,8 +24,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, CapacityEnforcement, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyForm,
-    KeyId, Schema,
+    AxiomIndex, CapacityEnforcement, CapacityId, ContainmentId, Enforcement, KeyForm, KeyId,
+    Schema, ValueType,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
@@ -295,7 +295,7 @@ pub(crate) enum DeterminantOp {
     Pointwise {
         statement: StatementId,
         determinant: DeterminantImage,
-        tail: IntervalTail,
+        tail: ValueType,
     },
 }
 

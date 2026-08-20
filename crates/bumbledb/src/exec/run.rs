@@ -22,7 +22,7 @@
 use std::num::NonZeroUsize;
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::image::view::FilterPredicate;
+use crate::image::view::OperandAddr;
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
@@ -595,24 +595,65 @@ struct NodeScratch {
     pending_origins: Vec<u32>,
 }
 
+/// Whole-value residual: operator, vars, slots, and compared width.
+/// Plan-derivable — extracted so `NodePrecompute` never clones a
+/// [`crate::image::view::FilterPredicate`].
+#[derive(Clone, Copy)]
+struct ResidualSpec {
+    op: crate::ir::WordCmp,
+    lhs: crate::ir::VarId,
+    rhs: crate::ir::VarId,
+    lhs_slot: usize,
+    rhs_slot: usize,
+    width: usize,
+}
+
+/// Word residual: operator, already-offset sides, and slots.
+#[derive(Clone, Copy)]
+struct WordResidualSpec {
+    op: crate::ir::WordCmp,
+    left: OperandAddr,
+    right: OperandAddr,
+    lhs_slot: usize,
+    rhs_slot: usize,
+}
+
+/// Allen residual sides, slots, and the construction-time literal mask.
+/// [`NodePrecompute::allen_masks`] is the per-execution copy
+/// [`Executor::bind_allen_masks`] rewrites in place.
+#[derive(Clone, Copy)]
+struct AllenResidualSpec {
+    lhs: crate::ir::VarId,
+    rhs: crate::ir::VarId,
+    lhs_slot: usize,
+    rhs_slot: usize,
+    mask: crate::allen::AllenMask,
+}
+
+/// Measure residual: operator, interval/scalar vars, and slots.
+#[derive(Clone, Copy)]
+struct DurationResidualSpec {
+    op: crate::ir::OrderCmp,
+    interval: crate::ir::VarId,
+    scalar: crate::ir::VarId,
+    interval_slot: usize,
+    scalar_slot: usize,
+}
+
 /// Per-node executor precompute: residual slot layouts, resolved Allen
 /// masks, and probe specs for the node they describe. Construction
 /// derives each field from that node's plan lists; nothing here is a
-/// parallel vector on [`Executor`].
+/// parallel vector on [`Executor`]. Residual metadata is plain data —
+/// the plan's kind-grouped `FilterPredicate` lists stay on the plan.
 struct NodePrecompute {
-    /// Whole-value residuals: (predicate, lhs slot, rhs slot, width).
-    residual_slots: Vec<(FilterPredicate, usize, usize, usize)>,
-    /// Word residuals: (predicate, lhs slot, rhs slot), slots already
-    /// offset to the compared word.
-    word_residual_slots: Vec<(FilterPredicate, usize, usize)>,
-    /// Allen residuals: (predicate, lhs base slot, rhs base slot).
-    allen_residual_slots: Vec<(FilterPredicate, usize, usize)>,
+    residual_slots: Vec<ResidualSpec>,
+    word_residual_slots: Vec<WordResidualSpec>,
+    allen_residual_slots: Vec<AllenResidualSpec>,
     /// This execution's resolved Allen masks — literal masks are fixed
-    /// at construction; param masks are rewritten in place by
+    /// at construction; param masks would be rewritten in place by
     /// [`Executor::bind_allen_masks`] before every execution.
     allen_masks: Vec<crate::allen::AllenMask>,
-    /// Measure residuals: (predicate, interval base slot, scalar slot).
-    duration_residual_slots: Vec<(FilterPredicate, usize, usize)>,
+    duration_residual_slots: Vec<DurationResidualSpec>,
     point_probes: Vec<PointProbeSpec>,
     anti_probes: Vec<AntiProbeSpec>,
 }

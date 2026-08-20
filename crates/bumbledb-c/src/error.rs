@@ -41,8 +41,6 @@ pub enum bdb_error_kind {
     DestinationExists,
     PublishedButUnsynced,
     EnvironmentLocked,
-    StoreKindMismatch,
-    DescriptorMissing,
     ReadersFull,
     Validation,
     CommitSync,
@@ -145,8 +143,6 @@ fn kind_of(error: &Error) -> bdb_error_kind {
         ErrorFamily::DestinationExists => bdb_error_kind::DestinationExists,
         ErrorFamily::PublishedButUnsynced => bdb_error_kind::PublishedButUnsynced,
         ErrorFamily::EnvironmentLocked => bdb_error_kind::EnvironmentLocked,
-        ErrorFamily::StoreKindMismatch => bdb_error_kind::StoreKindMismatch,
-        ErrorFamily::DescriptorMissing => bdb_error_kind::DescriptorMissing,
         ErrorFamily::Io => bdb_error_kind::Io,
         ErrorFamily::Lmdb => bdb_error_kind::Lmdb,
         ErrorFamily::ReadersFull => bdb_error_kind::ReadersFull,
@@ -223,10 +219,7 @@ fn view_violation(violation: &OwnedViolation) -> bdb_violation {
 }
 
 impl bdb_violations {
-    pub(crate) fn from_engine(
-        violations: &Violations,
-        descriptor: &SchemaDescriptor,
-    ) -> Self {
+    pub(crate) fn from_engine(violations: &Violations, descriptor: &SchemaDescriptor) -> Self {
         Self {
             violations: owned_violations(violations, descriptor),
         }

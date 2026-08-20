@@ -4,14 +4,14 @@
 
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    Admission, ConditionalWrite, Db, Error, FieldId, Instance, InstanceBuilder, OwnedInstance,
-    ReadInstance, RelationId, SchemaDescriptor, StatementId, Value, Witness, WriteTx,
+    Admission, ConditionalWrite, Db, Error, FieldId, InstanceBuilder, OwnedInstance, ReadInstance,
+    RelationId, SchemaDescriptor, StatementId, Value, Witness, WriteTx,
 };
 
 use crate::error::{bdb_error, bdb_violations, fail_busy, fail_engine, fail_schema_message};
@@ -19,8 +19,8 @@ use crate::query::{bdb_prepared, bdb_query, query_in};
 use crate::schema::{bdb_schema_spec, schema_spec_in};
 use crate::value::{bdb_string_view, bdb_value, row_in, rows_in, value_out};
 use crate::{
-    bdb_callback_control, bdb_status, box_in, box_out, box_out_to, guard, guard_statusless,
-    guard_value, mut_in, out, ref_in, require_out, tag_in, BridgeResult, Fail,
+    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out, box_out_to, guard,
+    guard_statusless, guard_value, mut_in, out, ref_in, require_out, tag_in,
 };
 
 pub(crate) type Engine = Db<SchemaDescriptor>;
@@ -383,15 +383,12 @@ fn handle_busy(handle: &bdb_db) -> bool {
     phase_readers(phase) != 0 || phase_writing(phase)
 }
 
-/// Bridge-owned decline token. Only this crate mints it.
-struct CallbackDecline;
-
 fn callback_interrupt() -> Error {
-    Error::hatch(CallbackDecline)
+    Error::hatch()
 }
 
 fn is_callback_interrupt(error: &Error) -> bool {
-    error.downcast_hatch::<CallbackDecline>().is_some()
+    error.is_hatch()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -560,12 +557,12 @@ impl bdb_instance_ref {
         answers: &mut bumbledb::Answers,
     ) -> BridgeResult<()> {
         match self.kind {
-            KIND_STORE => self.with_store(|snap| {
-                Instance::execute(snap, prepared, params, answers).map_err(fail_engine)
-            }),
-            KIND_HEAP => self.with_heap(|inst| {
-                Instance::execute(inst, prepared, params, answers).map_err(fail_engine)
-            }),
+            KIND_STORE => {
+                self.with_store(|snap| snap.execute(prepared, params, answers).map_err(fail_engine))
+            }
+            KIND_HEAP => {
+                self.with_heap(|inst| inst.execute(prepared, params, answers).map_err(fail_engine))
+            }
             _ => Err(Fail::Misuse),
         }
     }
@@ -577,14 +574,6 @@ impl bdb_instance_ref {
         match self.kind {
             KIND_STORE => self.with_store(|snap| snap.prepare(query).map_err(fail_engine)),
             KIND_HEAP => self.with_heap(|inst| inst.prepare(query).map_err(fail_engine)),
-            _ => Err(Fail::Misuse),
-        }
-    }
-
-    fn row_count(&self, relation: RelationId) -> BridgeResult<u64> {
-        match self.kind {
-            KIND_STORE => self.with_store(|snap| snap.row_count(relation).map_err(fail_engine)),
-            KIND_HEAP => self.with_heap(|inst| inst.row_count(relation).map_err(fail_engine)),
             _ => Err(Fail::Misuse),
         }
     }
@@ -819,56 +808,6 @@ pub extern "C" fn bdb_db_open(
         let descriptor = descriptor_of(spec)?;
         let db = Db::open(std::path::Path::new(path), descriptor.clone()).map_err(fail_engine)?;
         box_out_to(out_db, assemble(db, descriptor))?;
-        Ok(bdb_status::Ok)
-    })
-}
-
-/// Opens or initializes an EPHEMERAL store. Fresh initialize and wipe
-/// complete-admit empty; an existing admitted format-8 store reopens as
-/// accepted.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "extern export: the unsafe(no_mangle) ABI attribute"
-)]
-pub extern "C" fn bdb_db_ephemeral(
-    path: bdb_string_view,
-    spec: *const bdb_schema_spec,
-    out_admission: *mut bdb_db_admission,
-    out_error: *mut *mut bdb_error,
-) -> bdb_status {
-    guard(out_error, || {
-        require_out(out_admission)?;
-        out(out_admission, empty_db_admission())?;
-        let path = path.as_str("store path")?;
-        let descriptor = descriptor_of(spec)?;
-        match Db::ephemeral(std::path::Path::new(path), descriptor.clone()).map_err(fail_engine)? {
-            Admission::Accepted(db) => {
-                out(
-                    out_admission,
-                    bdb_db_admission {
-                        tag: bdb_admission_tag::Accepted,
-                        value: bdb_db_admission_value {
-                            accepted: box_out(assemble(db, descriptor)),
-                        },
-                    },
-                )?;
-            }
-            Admission::Rejected(violations) => {
-                out(
-                    out_admission,
-                    bdb_db_admission {
-                        tag: bdb_admission_tag::Rejected,
-                        value: bdb_db_admission_value {
-                            rejected: box_out(bdb_violations::from_engine(
-                                &violations,
-                                &descriptor,
-                            )),
-                        },
-                    },
-                )?;
-            }
-        }
         Ok(bdb_status::Ok)
     })
 }
@@ -1587,25 +1526,6 @@ pub extern "C" fn bdb_instance_scan(
         require_out(out_rows)?;
         let rows = ref_in(instance)?.scan(RelationId(relation))?;
         box_out_to(out_rows, bdb_row_set::from_rows(rows))?;
-        Ok(bdb_status::Ok)
-    })
-}
-
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "extern export: the unsafe(no_mangle) ABI attribute"
-)]
-pub extern "C" fn bdb_instance_row_count(
-    instance: *const bdb_instance_ref,
-    relation: u32,
-    out_count: *mut u64,
-    out_error: *mut *mut bdb_error,
-) -> bdb_status {
-    guard(out_error, || {
-        require_out(out_count)?;
-        let count = ref_in(instance)?.row_count(RelationId(relation))?;
-        out(out_count, count)?;
         Ok(bdb_status::Ok)
     })
 }

@@ -21,7 +21,6 @@ import type {
 	CmpOpIr,
 	ConditionTreeIr,
 	ErrorFamilyKind,
-	ExhumeKind,
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
@@ -78,8 +77,6 @@ const ROSTERS = {
 		"destinationExists",
 		"publishedButUnsynced",
 		"environmentLocked",
-		"storeKindMismatch",
-		"descriptorMissing",
 		"io",
 		"lmdb",
 		"readersFull",
@@ -103,7 +100,6 @@ const ROSTERS = {
 	admissionTag: ["accepted", "rejected"],
 	writeTag: ["accepted", "rejected", "abandoned", "moved"],
 	openKind: ["schemaError", "newtypeMismatch", "fingerprintMismatch"],
-	exhumeKind: ["descriptorMissing", "formatMismatch", "corruption"],
 	prepareKind: ["irError"]
 } as const
 
@@ -135,7 +131,6 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.admissionTag)[number], AdmissionTag>>,
 	Expect<Equal<(typeof ROSTERS.writeTag)[number], WriteTag>>,
 	Expect<Equal<(typeof ROSTERS.openKind)[number], OpenKind>>,
-	Expect<Equal<(typeof ROSTERS.exhumeKind)[number], ExhumeKind>>,
 	Expect<Equal<(typeof ROSTERS.prepareKind)[number], PrepareKind>>
 ]
 

@@ -598,7 +598,7 @@ fn r6_noise_guard(cells: &[EngineFlagCell]) -> bool {
 }
 
 /// R6 (the ephemeral admission's number): the small-commit shape
-/// through the REAL constructor — `Db::ephemeral` vs `Db::create` on
+/// through the REAL constructor — `Db::create_nosync` vs `Db::create` on
 /// the same HFS+ ramdisk, plus ephemeral-on-SSD (the kind is
 /// device-independent) and create-on-SSD as the fullfsync anchor. The
 /// four cells are INTERLEAVED per repetition (the R4 co-tenancy
@@ -648,7 +648,7 @@ fn ramdisk_phase_r_ephemeral() {
         },
         EngineFlagCell {
             name: "ephemeral @ ssd",
-            db: Db::ephemeral(&ssd_dir.path().join("ephemeral"), Meter)
+            db: Db::create_nosync(&ssd_dir.path().join("ephemeral"), Meter)
                 .expect("store creates")
                 .expect("accepted"),
             bucket: 0,
@@ -666,7 +666,7 @@ fn ramdisk_phase_r_ephemeral() {
         },
         EngineFlagCell {
             name: "ephemeral @ hfs+ ramdisk",
-            db: Db::ephemeral(&disk.store_dir("ephemeral"), Meter)
+            db: Db::create_nosync(&disk.store_dir("ephemeral"), Meter)
                 .expect("store creates")
                 .expect("accepted"),
             bucket: 0,

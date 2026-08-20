@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::catalog::FrozenCatalog;
-use crate::storage::env::{Environment, FORMAT_VERSION, StoreKind};
+use crate::storage::env::{Environment, FORMAT_VERSION};
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
@@ -51,13 +51,9 @@ fn every_prefix_before_rename_hides_the_destination() {
     {
         let dir = TempDir::new(&format!("publish-prefix-{step:?}"));
         let dest = dir.path().join("store");
-        let prefix = Environment::publish_until(
-            &dest,
-            StoreKind::Durable,
-            &PublishCatalog::frozen(&empty, &schema),
-            step,
-        )
-        .expect("prefix");
+        let prefix =
+            Environment::publish_until(&dest, &PublishCatalog::frozen(&empty, &schema), step)
+                .expect("prefix");
         assert!(!dest.exists(), "{step:?} must not expose dest");
         assert!(!prefix.dest_exists);
         assert!(
@@ -83,19 +79,14 @@ fn prefix_at_or_after_rename_is_openable_format_8() {
     for step in [PublishStep::Rename, PublishStep::SyncParent] {
         let dir = TempDir::new(&format!("publish-renamed-{step:?}"));
         let dest = dir.path().join("store");
-        let prefix = Environment::publish_until(
-            &dest,
-            StoreKind::Durable,
-            &PublishCatalog::frozen(&empty, &schema),
-            step,
-        )
-        .expect("prefix");
+        let prefix =
+            Environment::publish_until(&dest, &PublishCatalog::frozen(&empty, &schema), step)
+                .expect("prefix");
         assert!(dest.exists(), "{step:?} exposes dest");
         assert!(prefix.dest_exists);
         let env = Environment::open(&dest, &schema).expect("openable format 8");
         let meta = env.read_store_meta().expect("parse_meta");
         assert_eq!(meta.version.word(), FORMAT_VERSION);
-        assert_eq!(meta.kind, StoreKind::Durable);
         assert_eq!(meta.generation.value(), 0);
         drop(env);
         drop(prefix);
@@ -108,27 +99,27 @@ fn post_rename_sync_failure_is_published_but_unsynced() {
     let empty = FrozenCatalog::empty();
     let dir = TempDir::new("publish-unsynced");
     let dest = dir.path().join("store");
-    let err = Environment::publish_failing_parent_sync(
-        &dest,
-        StoreKind::Durable,
-        &PublishCatalog::frozen(&empty, &schema),
-    )
-    .expect_err("injected parent-sync failure");
+    let err =
+        Environment::publish_failing_parent_sync(&dest, &PublishCatalog::frozen(&empty, &schema))
+            .expect_err("injected parent-sync failure");
     assert!(matches!(err, Error::PublishedButUnsynced { .. }), "{err:?}");
     assert!(dest.exists(), "never removes the visible destination");
     Environment::open(&dest, &schema).expect("complete format-8 store");
 }
 
 #[test]
-fn parse_meta_reads_six_keys() {
+fn parse_meta_reads_four_keys() {
     use crate::storage::env::MetaKey;
-    assert_eq!(MetaKey::PARSE_ORDER.len(), 6);
+    assert_eq!(MetaKey::PARSE_ORDER.len(), 4);
+    assert_eq!(
+        MetaKey::PARSE_ORDER.map(|k| k.key),
+        [&[0][..], &[1], &[2], &[3]]
+    );
     let schema = schema();
     let dir = TempDir::new("publish-parse-meta");
     let env = Environment::create(dir.path(), &schema).expect("create");
     let meta = env.read_store_meta().expect("parse");
     assert_eq!(meta.version.word(), 8);
-    assert_eq!(meta.kind, StoreKind::Durable);
     assert_eq!(meta.generation.value(), 0);
     assert_eq!(meta.dict_next.raw(), 0);
 }

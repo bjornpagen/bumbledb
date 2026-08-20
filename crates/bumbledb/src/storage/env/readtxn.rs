@@ -30,16 +30,13 @@ impl ReadTxn<'_> {
     }
 
     /// The stored `_meta` schema fingerprint, raw (reader:
-    /// `Db::verify_store`'s descriptor pass — the hash the persisted
-    /// descriptor bytes must reproduce).
+    /// `Db::verify_store`'s leftover descriptor pass).
     pub(crate) fn stored_fingerprint(&self) -> Result<[u8; 32]> {
         read_fingerprint(&self.env.meta, &self.txn)
     }
 
-    /// The persisted canonical schema-descriptor bytes as of this
-    /// snapshot, `None` if the key is absent (reader:
-    /// `Db::verify_store`'s descriptor pass — format 8 open already
-    /// required the key).
+    /// Retired descriptor key. New stores do not write it; `None` then.
+    /// Left for `verify_store`'s descriptor pass (not this lane).
     pub(crate) fn schema_descriptor(&self) -> Result<Option<&[u8]>> {
         Ok(self.env.meta.get(&self.txn, META_SCHEMA_DESCRIPTOR)?)
     }

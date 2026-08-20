@@ -65,11 +65,10 @@ impl Executor {
         // issued. Per-parent Slot reads, word offsets via the cover's
         // word bases (width 2 = the pairwise interval compare).
         counters.phase_start(node_idx, JoinPhase::Residual);
-        for (residual, lhs_slot, rhs_slot, width) in &self.precompute[node_idx].residual_slots {
+        for spec in &self.precompute[node_idx].residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let (left, right, op) = residual.compare_sides();
-            let lhs_word = super::word_base(cover_vars, left.var(), |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, right.var(), |v| self.width_of(v));
+            let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, spec.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -80,10 +79,10 @@ impl Executor {
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
                 let pass = super::compare_wide(
-                    op,
-                    *width,
-                    |offset| value(lhs_word, *lhs_slot, offset),
-                    |offset| value(rhs_word, *rhs_slot, offset),
+                    spec.op,
+                    spec.width,
+                    |offset| value(lhs_word, spec.lhs_slot, offset),
+                    |offset| value(rhs_word, spec.rhs_slot, offset),
                 );
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
@@ -93,14 +92,13 @@ impl Executor {
         // Word residuals: the decomposed interval compositions over
         // pre-offset slot pairs — same placement, same compaction
         // (docs/architecture/20-query-ir.md, § normalization).
-        for (residual, lhs_slot, rhs_slot) in &self.precompute[node_idx].word_residual_slots {
+        for spec in &self.precompute[node_idx].word_residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let (left, right, op) = residual.compare_sides();
             let side = |addr: crate::image::view::OperandAddr| {
                 super::word_base(cover_vars, addr.var(), |v| self.width_of(v))
                     .map(|base| base + addr.offset())
             };
-            let (lhs_word, rhs_word) = (side(left), side(right));
+            let (lhs_word, rhs_word) = (side(spec.left), side(spec.right));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -110,7 +108,10 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word],
                     None => scratch.pending_bindings[parent * slot_count + slot],
                 };
-                let pass = op.compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
+                let pass = spec.op.compare(
+                    &value(lhs_word, spec.lhs_slot),
+                    &value(rhs_word, spec.rhs_slot),
+                );
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
             }
@@ -123,16 +124,15 @@ impl Executor {
         // and compact on the branchless cursor-write (the line-parallel
         // twin of `run_node`'s pass; docs/architecture/40-execution.md,
         // § vectorized execution).
-        for (r_idx, (residual, lhs_slot, rhs_slot)) in self.precompute[node_idx]
+        for (r_idx, spec) in self.precompute[node_idx]
             .allen_residual_slots
             .iter()
             .enumerate()
         {
             let mask = self.precompute[node_idx].allen_masks[r_idx];
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let (left, right, _) = residual.allen_sides();
-            let lhs_word = super::word_base(cover_vars, left.var(), |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, right.var(), |v| self.width_of(v));
+            let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, spec.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.allen_gather, 4 * n);
             let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
@@ -145,10 +145,10 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word + offset],
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
-                a_starts[k] = value(lhs_word, *lhs_slot, 0);
-                a_ends[k] = value(lhs_word, *lhs_slot, 1);
-                b_starts[k] = value(rhs_word, *rhs_slot, 0);
-                b_ends[k] = value(rhs_word, *rhs_slot, 1);
+                a_starts[k] = value(lhs_word, spec.lhs_slot, 0);
+                a_ends[k] = value(lhs_word, spec.lhs_slot, 1);
+                b_starts[k] = value(rhs_word, spec.rhs_slot, 0);
+                b_ends[k] = value(rhs_word, spec.rhs_slot, 1);
             }
             crate::exec::kernel::allen_code_batch(
                 a_starts,
@@ -168,13 +168,10 @@ impl Executor {
         // compare. A ray never survives the comparison (its verdict is
         // Ray, not Fails; the Kleene verdict algebra, R6 — the prepared
         // query's ray-probe pass renders it).
-        for (residual, interval_slot, scalar_slot) in
-            &self.precompute[node_idx].duration_residual_slots
-        {
+        for spec in &self.precompute[node_idx].duration_residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
-            let (interval, scalar, op) = residual.duration_sides();
-            let interval_word = super::word_base(cover_vars, interval.var(), |v| self.width_of(v));
-            let scalar_word = super::word_base(cover_vars, scalar.var(), |v| self.width_of(v));
+            let interval_word = super::word_base(cover_vars, spec.interval, |v| self.width_of(v));
+            let scalar_word = super::word_base(cover_vars, spec.scalar, |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
@@ -184,10 +181,12 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word + offset],
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
-                let start = value(interval_word, *interval_slot, 0);
-                let end = value(interval_word, *interval_slot, 1);
+                let start = value(interval_word, spec.interval_slot, 0);
+                let end = value(interval_word, spec.interval_slot, 1);
                 let pass = end != u64::MAX
-                    && op.compare(&(end - start), &value(scalar_word, *scalar_slot, 0));
+                    && spec
+                        .op
+                        .compare(&(end - start), &value(scalar_word, spec.scalar_slot, 0));
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
             }

@@ -1,5 +1,7 @@
 //! Admitted heap instance: an immutable packed catalog plus query.
 
+use std::sync::Arc;
+
 use crate::Answers;
 use crate::ParamArg;
 use crate::PreparedQuery;
@@ -8,16 +10,16 @@ use crate::error::Result;
 use crate::image::FrozenSource;
 use crate::ir::{Query, Value};
 use crate::schema::Schema;
-use crate::storage::catalog::FrozenCatalog;
+use crate::storage::catalog::{CatalogRead, FrozenCatalog};
 #[cfg(test)]
 use crate::storage::env::CatalogIdentity;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::instance::{Instance, InstanceCore};
+use super::instance::InstanceCore;
 use super::{Fact, Key};
 
 /// An admitted heap instance. Mutation is unrepresentable. Query
-/// methods live on the sealed [`crate::Instance`] trait.
+/// methods are inherent on this type.
 ///
 /// `Send + Sync`: hosts may share an admitted instance across threads.
 ///
@@ -98,23 +100,36 @@ impl<S> OwnedInstance<S> {
     ///
     /// # Errors
     ///
-    /// As [`Instance::prepare`].
+    /// Validation errors; `Corruption` from catalog reads.
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
-        Instance::prepare(self, query)
+        crate::api::prepared::prepare_on(
+            &self.core.identity,
+            &self.core.source.catalog,
+            &self.core.source,
+            Arc::clone(&self.core.schema),
+            query,
+        )
     }
 
     /// Executes a prepared query bound to this instance.
     ///
     /// # Errors
     ///
-    /// As [`Instance::execute`].
+    /// `ForeignPreparedQuery` when `prepared` came from another
+    /// instance; bind and storage errors otherwise.
     pub fn execute(
         &self,
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
         out: &mut Answers,
     ) -> Result<()> {
-        Instance::execute(self, prepared, params, out)
+        prepared.execute_on(
+            &self.core.identity,
+            &self.core.source.catalog,
+            &self.core.source,
+            params,
+            out,
+        )
     }
 
     /// Executes with counting instrumentation. Diagnostic: the stats
@@ -122,83 +137,99 @@ impl<S> OwnedInstance<S> {
     ///
     /// # Errors
     ///
-    /// As [`Instance::execute`].
+    /// As [`Self::execute`].
+    #[doc(hidden)]
     pub fn profile(
         &self,
         prepared: &mut PreparedQuery<S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, ExecutionStats)> {
-        Instance::profile(self, prepared, params)
+        prepared.profile_on(
+            &self.core.identity,
+            &self.core.source.catalog,
+            &self.core.source,
+            params,
+        )
     }
 
     /// Full-relation scan of decoded dynamic facts.
     ///
     /// # Errors
     ///
-    /// As [`Instance::scan`].
+    /// `UnknownRelation`; per-item `Corruption`.
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        Instance::scan(self, rel)
+        self.scan_dyn(rel)
     }
 
     /// Typed full-relation scan.
     ///
     /// # Errors
     ///
-    /// As [`Instance::scan_facts`].
+    /// As [`Self::scan`].
     pub fn scan_facts<'a, F: Fact<'a, Schema = S>>(
         &'a self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
-        Instance::scan_facts(self)
+        self.scan_typed()
     }
 
     /// Membership of a typed fact.
     ///
     /// # Errors
     ///
-    /// As [`Instance::contains`].
+    /// Dictionary resolution errors.
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
-        Instance::contains(self, fact)
+        self.contains_fact(fact)
     }
 
     /// Membership of a dynamic fact.
     ///
     /// # Errors
     ///
-    /// As [`Instance::contains_dyn`].
+    /// `FactShape` on an unknown relation or arity/type mismatch.
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        Instance::contains_dyn(self, rel, values)
+        self.contains_values(rel, values)
     }
 
     /// Keyed lookup of a typed fact.
     ///
     /// # Errors
     ///
-    /// As [`Instance::get`].
+    /// `FactShape` when a manual `Key` impl lies about its statement.
     pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
-        Instance::get(self, key)
+        self.get_typed(&key)
     }
 
     /// Keyed lookup through a data-supplied key statement.
     ///
     /// # Errors
     ///
-    /// As [`Instance::get_dyn`].
+    /// As [`crate::ReadInstance::get_dyn`].
     pub fn get_dyn(
         &self,
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
-        Instance::get_dyn(self, relation, key, key_values)
+        let mut out = Vec::new();
+        Ok(self
+            .get_dyn_into(relation, key, key_values, &mut out)?
+            .then_some(out))
     }
 
     /// Exact live row count of `relation`.
     ///
     /// # Errors
     ///
-    /// As [`Instance::row_count`].
-    pub fn row_count(&self, relation: RelationId) -> Result<u64> {
-        Instance::row_count(self, relation)
+    /// `UnknownRelation`; `Corruption` on a malformed counter.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
+        let Some(rel) = self.core.schema.relation_checked(relation) else {
+            return Err(crate::error::DynIdError::UnknownRelation { relation }.into());
+        };
+        match rel.body().closed_rows() {
+            Some(rows) => Ok(u64::try_from(rows.len()).expect("bounded extension")),
+            None => self.core.source.catalog.row_count(relation),
+        }
     }
 }
 

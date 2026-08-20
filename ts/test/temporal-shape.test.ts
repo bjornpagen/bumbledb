@@ -1,6 +1,6 @@
 /**
  * Issue 02: an `async` SDK method is a napi AsyncTask — one temporal
- * shape. The control plane (create / open / fromInstance / exhume / admit)
+ * shape. The control plane (create / open / fromInstance / admit)
  * never awaits a sync `#[napi]` fn; a large publish does not block a
  * ticking JS timer; dispose-during-publish is a typed spent-handle refusal.
  */
@@ -59,9 +59,8 @@ describe("one temporal shape: async means AsyncTask", function suite() {
 		assert.ok(asyncTasks.includes("dbCreate"), "dbCreate is an AsyncTask")
 		assert.ok(asyncTasks.includes("dbOpen"), "dbOpen is an AsyncTask")
 		assert.ok(asyncTasks.includes("dbFromInstance"), "dbFromInstance is an AsyncTask")
-		assert.ok(asyncTasks.includes("dbExhume"), "dbExhume is an AsyncTask")
 		assert.ok(asyncTasks.includes("instanceBuilderAdmit"), "instanceBuilderAdmit is an AsyncTask")
-		const sdk = ["src/db.ts", "src/exhume.ts", "src/native.ts"]
+		const sdk = ["src/db.ts", "src/native.ts"]
 			.map(function read(file) {
 				return fs.readFileSync(path.join(packageRoot, file), "utf8")
 			})

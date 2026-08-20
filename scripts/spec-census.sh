@@ -251,8 +251,82 @@ while IFS= read -r hit; do
   fi
 done < <(grep -nE -- '\bsnapshots?\b' "${api_snapshot_rustdoc[@]}" || true)
 
+# ---- (g): zero-dyn engine (audit/27) --------------------------------
+# Production src of the engine crates. `dyn` is legal only on
+# `Error::source` and the `ErrorDescriptor` mirror that feeds Display.
+
+engine_src=(
+  crates/bumbledb/src
+  crates/bumbledb-theory/src
+  crates/bumbledb-query/src
+  crates/bumbledb-macros/src
+)
+
+dyn_exempt_hits=0
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  lineno=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    case "$trimmed" in
+      //*) continue ;;
+    esac
+    code=$(awk '
+      {
+        out = ""
+        in_str = 0
+        n = length($0)
+        for (i = 1; i <= n; i++) {
+          c = substr($0, i, 1)
+          if (in_str) {
+            if (c == "\\") { i++; continue }
+            if (c == "\"") in_str = 0
+          } else if (c == "\"") {
+            in_str = 1
+          } else {
+            out = out c
+          }
+        }
+        print out
+      }
+    ' <<< "$line")
+    code="${code%%//*}"
+    case "$code" in
+      *dyn[[:space:]]* | *$'\tdyn '*) ;;
+      *) continue ;;
+    esac
+    # Word-boundary `dyn` followed by whitespace (type position).
+    if ! printf '%s' "$code" | grep -qE '(^|[^A-Za-z0-9_])dyn[[:space:]]'; then
+      continue
+    fi
+    exempt=0
+    if [ "$path" = "crates/bumbledb/src/error.rs" ] && {
+         [ "$trimmed" = "pub source: Option<&'a (dyn std::error::Error + 'static)>," ] ||
+         [ "$trimmed" = "source: &'a (dyn std::error::Error + 'static)," ]
+       }; then
+      exempt=1
+    elif [ "$path" = "crates/bumbledb/src/error/convert.rs" ] &&
+         [ "$trimmed" = "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {" ]; then
+      exempt=1
+    fi
+    if [ "$exempt" -eq 1 ]; then
+      dyn_exempt_hits=$((dyn_exempt_hits + 1))
+    else
+      echo "spec-census: FAIL — engine dyn outside Error::source exemption: $path:$lineno: $line" >&2
+      fail=1
+    fi
+  done < "$path"
+done < <(find "${engine_src[@]}" -type f -name '*.rs' \
+  ! -name 'tests.rs' ! -path '*/tests/*' | sort)
+
+if [ "$dyn_exempt_hits" -ne 3 ]; then
+  echo "spec-census: FAIL — Error::source exemption drifted (expected 3 lines, found $dyn_exempt_hits)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned"

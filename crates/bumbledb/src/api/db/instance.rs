@@ -1,4 +1,5 @@
-//! Sealed query surface and the generic core behind an admitted instance.
+//! Generic core behind an admitted instance, plus the owned-instance
+//! query bodies. Public query methods live on the concrete types.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -7,110 +8,12 @@ use super::{CodecRead, Fact, Key, Probe, ScratchPool, codec_seal};
 use crate::encoding::InternId;
 use crate::error::{DynIdError, Result};
 use crate::image::FrozenSource;
-use crate::ir::{Query, Value};
+use crate::ir::Value;
 use crate::schema::Schema;
 use crate::storage::catalog::{CatalogRead, FactCursor};
 use crate::storage::env::CatalogIdentity;
 use crate::storage::read;
 use bumbledb_theory::schema::{RelationId, StatementId};
-
-mod instance_seal {
-    pub trait Sealed {}
-}
-
-/// Query surface shared by admitted instances. Foreign implementations
-/// are unrepresentable.
-pub trait Instance<S>: instance_seal::Sealed {
-    /// Prepares a query against this instance's catalog.
-    ///
-    /// # Errors
-    ///
-    /// Validation errors; `Corruption` from catalog reads.
-    fn prepare(&self, query: &Query) -> Result<crate::PreparedQuery<S>>;
-
-    /// Executes a prepared query bound to this instance.
-    ///
-    /// # Errors
-    ///
-    /// `ForeignPreparedQuery` when `prepared` came from another
-    /// instance; bind and storage errors otherwise.
-    fn execute(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-        out: &mut crate::Answers,
-    ) -> Result<()>;
-
-    /// Executes with counting instrumentation and returns the answers
-    /// alongside [`crate::api::stats::ExecutionStats`]. Diagnostic: the
-    /// stats shape is unfrozen. Not a staleness clock — a frozen catalog
-    /// profiles; no generation is consulted.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::execute`].
-    fn profile(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)>;
-
-    /// Full-relation scan of decoded dynamic facts.
-    ///
-    /// # Errors
-    ///
-    /// `UnknownRelation`; per-item `Corruption`.
-    fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_>;
-
-    /// Typed full-relation scan.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::scan`].
-    fn scan_facts<'a, F: Fact<'a, Schema = S>>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = Result<F>> + 'a>;
-
-    /// Membership of a typed fact.
-    ///
-    /// # Errors
-    ///
-    /// Dictionary resolution errors.
-    fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool>;
-
-    /// Membership of a dynamic fact.
-    ///
-    /// # Errors
-    ///
-    /// `FactShape` on an unknown relation or arity/type mismatch.
-    fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool>;
-
-    /// Keyed lookup of a typed fact.
-    ///
-    /// # Errors
-    ///
-    /// `FactShape` when a manual `Key` impl lies about its statement.
-    fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>>;
-
-    /// Keyed lookup through a data-supplied key statement.
-    ///
-    /// # Errors
-    ///
-    /// As [`crate::ReadInstance::get_dyn`].
-    fn get_dyn(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>>;
-
-    /// Exact live row count of `relation`.
-    ///
-    /// # Errors
-    ///
-    /// `UnknownRelation`; `Corruption` on a malformed counter.
-    fn row_count(&self, relation: RelationId) -> Result<u64>;
-}
 
 /// Generic owner of an admitted catalog plus scratch.
 pub(crate) struct InstanceCore<Src, S> {
@@ -158,9 +61,6 @@ impl<S> InstanceCore<FrozenSource, S> {
     }
 }
 
-impl<S> instance_seal::Sealed for super::OwnedInstance<S> {}
-impl<S> instance_seal::Sealed for super::ReadInstance<'_, S> {}
-
 impl<S> codec_seal::Sealed for super::OwnedInstance<S> {}
 
 impl<S> CodecRead<S> for super::OwnedInstance<S> {
@@ -180,146 +80,11 @@ impl<S> CodecRead<S> for super::OwnedInstance<S> {
     }
 }
 
-impl<S> Instance<S> for super::OwnedInstance<S> {
-    fn prepare(&self, query: &Query) -> Result<crate::PreparedQuery<S>> {
-        crate::api::prepared::prepare_on(
-            &self.core.identity,
-            &self.core.source.catalog,
-            &self.core.source,
-            Arc::clone(&self.core.schema),
-            query,
-        )
-    }
-
-    fn execute(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-        out: &mut crate::Answers,
-    ) -> Result<()> {
-        prepared.execute_on(
-            &self.core.identity,
-            &self.core.source.catalog,
-            &self.core.source,
-            params,
-            out,
-        )
-    }
-
-    fn profile(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)> {
-        prepared.profile_on(
-            &self.core.identity,
-            &self.core.source.catalog,
-            &self.core.source,
-            params,
-        )
-    }
-
-    fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        self.scan_dyn(rel)
-    }
-
-    fn scan_facts<'a, F: Fact<'a, Schema = S>>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
-        self.scan_typed()
-    }
-
-    fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
-        self.contains_fact(fact)
-    }
-
-    fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.contains_values(rel, values)
-    }
-
-    fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
-        self.get_typed(&key)
-    }
-
-    fn get_dyn(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out)?
-            .then_some(out))
-    }
-
-    fn row_count(&self, relation: RelationId) -> Result<u64> {
-        self.relation_row_count(relation)
-    }
-}
-
-impl<S> Instance<S> for super::ReadInstance<'_, S> {
-    fn prepare(&self, query: &Query) -> Result<crate::PreparedQuery<S>> {
-        super::ReadInstance::prepare(self, query)
-    }
-
-    fn execute(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-        out: &mut crate::Answers,
-    ) -> Result<()> {
-        super::ReadInstance::execute(self, prepared, params, out)
-    }
-
-    fn profile(
-        &self,
-        prepared: &mut crate::PreparedQuery<S>,
-        params: &[crate::ParamArg<'_>],
-    ) -> Result<(crate::Answers, crate::api::stats::ExecutionStats)> {
-        let catalog = self.core.source.catalog();
-        let images = crate::image::LmdbSource::bind(self.txn(), self.cache());
-        prepared.profile_on(&self.core.identity, &catalog, &images, params)
-    }
-
-    fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        super::ReadInstance::scan(self, rel)
-    }
-
-    fn scan_facts<'a, F: Fact<'a, Schema = S>>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
-        super::ReadInstance::scan_facts(self)
-    }
-
-    fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
-        super::ReadInstance::contains(self, fact)
-    }
-
-    fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        super::ReadInstance::contains_dyn(self, rel, values)
-    }
-
-    fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
-        super::ReadInstance::get(self, key)
-    }
-
-    fn get_dyn(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
-        super::ReadInstance::get_dyn(self, relation, key, key_values)
-    }
-
-    fn row_count(&self, relation: RelationId) -> Result<u64> {
-        super::ReadInstance::row_count(self, relation)
-    }
-}
-
 impl<S> super::OwnedInstance<S> {
-    fn scan_dyn(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
+    pub(super) fn scan_dyn(
+        &self,
+        rel: RelationId,
+    ) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         let Some(relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
@@ -352,7 +117,7 @@ impl<S> super::OwnedInstance<S> {
         )))
     }
 
-    fn scan_typed<'a, F: Fact<'a, Schema = S>>(
+    pub(super) fn scan_typed<'a, F: Fact<'a, Schema = S>>(
         &'a self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
         let relation = self.core.schema.relation(F::RELATION);
@@ -374,7 +139,7 @@ impl<S> super::OwnedInstance<S> {
         )))
     }
 
-    fn contains_fact<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
+    pub(super) fn contains_fact<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.core.with_scratch(|scratch| {
             if matches!(
                 fact.encode_probe(self, &mut scratch.bytes)?,
@@ -396,7 +161,7 @@ impl<S> super::OwnedInstance<S> {
         })
     }
 
-    fn contains_values(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
+    pub(super) fn contains_values(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         let Some(relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
@@ -422,7 +187,10 @@ impl<S> super::OwnedInstance<S> {
         })
     }
 
-    fn get_typed<'a, K: Key<'a, Schema = S>>(&'a self, key: &K) -> Result<Option<K::Fact>> {
+    pub(super) fn get_typed<'a, K: Key<'a, Schema = S>>(
+        &'a self,
+        key: &K,
+    ) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'a>>::RELATION;
         let (_, statement) =
             super::get::key_statement_of(&self.core.schema, relation, K::STATEMENT)?;
@@ -477,7 +245,7 @@ impl<S> super::OwnedInstance<S> {
         })
     }
 
-    fn get_dyn_into(
+    pub(super) fn get_dyn_into(
         &self,
         relation: RelationId,
         key: StatementId,
@@ -542,16 +310,6 @@ impl<S> super::OwnedInstance<S> {
             )?;
             Ok(true)
         })
-    }
-
-    fn relation_row_count(&self, relation: RelationId) -> Result<u64> {
-        let Some(rel) = self.core.schema.relation_checked(relation) else {
-            return Err(DynIdError::UnknownRelation { relation }.into());
-        };
-        match rel.body().closed_rows() {
-            Some(rows) => Ok(u64::try_from(rows.len()).expect("bounded extension")),
-            None => self.core.source.catalog.row_count(relation),
-        }
     }
 }
 

@@ -84,21 +84,6 @@ fn opening_a_format_7_store_fails_closed() {
         ),
         "{err:?}"
     );
-    let err = Db::ephemeral(dir.path(), empty_holds())
-        .map(|_| ())
-        .unwrap_err();
-    assert!(
-        matches!(
-            err,
-            Error::FormatMismatch {
-                mismatch: Mismatch {
-                    witnessed: 7,
-                    required: 8,
-                },
-            }
-        ),
-        "{err:?}"
-    );
 }
 
 #[test]
@@ -131,18 +116,6 @@ fn empty_that_does_not_hold_is_violations_and_mints_no_lease() {
     assert!(
         !path.exists(),
         "complete-admit runs before any directory is created"
-    );
-
-    let ephemeral_path = dir.path().join("ephemeral");
-    match Db::ephemeral(&ephemeral_path, empty_does_not_hold()).expect("ephemeral") {
-        Admission::Rejected(ephemeral_violations) => {
-            assert_eq!(ephemeral_violations, violations);
-        }
-        Admission::Accepted(_) => panic!("unsatisfiable empty must not mint an ephemeral lease"),
-    }
-    assert!(
-        !ephemeral_path.exists(),
-        "rejected empty ephemeral creates no directory"
     );
 }
 

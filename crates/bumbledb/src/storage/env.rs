@@ -11,10 +11,8 @@ use heed::{AnyTls, Database, RoTxn, RwTxn, WithoutTls};
 mod acquire_lock;
 mod create;
 mod debug;
-mod ephemeral;
 mod escaped_fresh;
 pub(crate) use escaped_fresh::FreshMarks;
-pub(crate) mod exhume;
 mod maintenance;
 mod open;
 mod open_env;
@@ -24,9 +22,8 @@ mod readtxn;
 mod txn;
 mod writetxn;
 
-pub(crate) use ephemeral::EphemeralClass;
 pub(crate) use publish::PublishCatalog;
-use read_meta::MetaKey;
+pub(crate) use read_meta::MetaKey;
 #[cfg(test)]
 use read_meta::{StoreMeta, parse_meta};
 
@@ -73,12 +70,8 @@ impl CatalogIdentity {
 /// order-mark form and its `R`-edge namespace left the vocabulary), so
 /// the canonical schema encoding changed again; nothing deployed
 /// carries an order statement, and a v3 store's fingerprint is computed
-/// under a retired encoding. Version 5: the store-kind marker — every
-/// store now carries a `_meta` kind byte ([`StoreKind`]) that open
-/// reads and refuses on mismatch; a new meta key consulted at open is
-/// an encoding change, so it bumps (the version-bump law,
-/// `docs/architecture/50-storage.md` § open-time checks; nothing
-/// deployed carries a v4 store). Version 6: the one id allocator
+/// under a retired encoding. Version 5: a store-kind marker lived in
+/// `_meta` (retired pre-publish: kind is not data). Version 6: the one id allocator
 /// (ruled 2026-07-23, R16) — on a fresh-keyed relation the first fresh
 /// field's value IS the `F` row id, that auto-key's `U` tree is gone,
 /// and the `S` row-id high-water exists only where no fresh field
@@ -92,62 +85,12 @@ impl CatalogIdentity {
 /// admission provenance: every ordinary writable handle began from a
 /// complete empty admission, a raw copy of an admitted instance, a
 /// compact of an admitted format-8 store, or an incremental commit on
-/// an admitted format-8 base. Open consults the persisted descriptor
-/// (reads it; never back-fills) after version, kind, roster, and
-/// fingerprint. Every earlier version — format 7 included — refuses
-/// on every open surface. No format-7 decoder and no migration path
-/// exist — ETL is the story.
+/// an admitted format-8 base. Open is version, then fingerprint.
+/// Pre-publish the `_meta` roster was revised in place to four keys
+/// (format, fingerprint, generation, dict-next). Every earlier
+/// version — format 7 included — refuses on every open surface. No
+/// format-7 decoder and no migration path exist — ETL is the story.
 pub const FORMAT_VERSION: u32 = 8;
-
-/// The store KIND, marked on disk in `_meta` beside the format version
-/// and fingerprint (`docs/architecture/50-storage.md`). A kind is a
-/// property of the STORE, never a mode of a handle: `Db::create`/
-/// `Db::open` mint and open only durable stores, `Db::ephemeral` only
-/// ephemeral ones, and the cross-open is the typed
-/// [`crate::error::Error::StoreKindMismatch`] — parse, don't validate.
-/// The kind carries the durability claim (an ephemeral store does not
-/// promise to survive a machine crash), so it is device-independent:
-/// ephemeral-on-SSD is legitimate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreKind {
-    /// Durability is LMDB defaults — fsync per commit; a committed
-    /// posting survives power loss (`00-product.md`).
-    Durable,
-    /// A scratch/staging store: the environment carries `MDB_NOSYNC`,
-    /// so commits skip the fullfsync boundary. Process-kill atomicity
-    /// is unchanged (the crashpoint sweep runs against this kind too);
-    /// a machine crash loses the store by definition — the kind says
-    /// so.
-    Ephemeral,
-}
-
-impl StoreKind {
-    /// The persisted `_meta` byte.
-    pub(crate) const fn meta_byte(self) -> u8 {
-        match self {
-            Self::Durable => 0,
-            Self::Ephemeral => 1,
-        }
-    }
-
-    /// Decodes the persisted `_meta` byte; `None` is corrupt data.
-    pub(crate) const fn from_meta_byte(byte: u8) -> Option<Self> {
-        match byte {
-            0 => Some(Self::Durable),
-            1 => Some(Self::Ephemeral),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for StoreKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Durable => "durable",
-            Self::Ephemeral => "ephemeral",
-        })
-    }
-}
 
 /// The persisted storage transaction id: the generation a snapshot
 /// witnessed and a state-changing commit advances. This is not the
@@ -190,30 +133,24 @@ impl std::fmt::Display for GenerationId {
     }
 }
 
-/// Fixed map size, both store kinds: comfortably above the 1 GB scale
-/// axiom. Not configurable — path-only public surface. The map is an
+/// Fixed map size: comfortably above the 1 GB scale axiom. Not
+/// configurable — path-only public surface. The map is an
 /// address-space reservation, never an allocation: no open path
 /// truncates or preallocates `data.mdb` to the map (LMDB's full-map
 /// ftruncate lives only under `MDB_WRITEMAP` — `mdb_env_map`, mdb.c —
-/// and no kind carries that flag), so a store's data file holds
+/// and no constructor carries that flag), so a store's data file holds
 /// exactly the pages ever committed, on every filesystem.
 ///
-/// RETRACTION (cleanup-0.5.0 ruling 1): 4 GiB → 32 GiB, and the
-/// ephemeral kind's eager capacity contract retired with the raise.
-/// The 4 GiB ceiling was priced when the ephemeral kind materialized
-/// its FULL map at every open (WRITEMAP's ftruncate on non-sparse
-/// filesystems; explicit block preallocation on sparse ones) — a
-/// 32 GiB eager map would have been 32 GiB of real disk per ephemeral
-/// open, unpayable on a ~14 GB CI runner, the 5 GiB ramdisk default,
-/// or a contributor laptop. Dropping WRITEMAP (the recorded fallback,
-/// `docs/architecture/50-storage.md` § the ephemeral store kind)
+/// RETRACTION (cleanup-0.5.0 ruling 1): 4 GiB → 32 GiB. The 4 GiB
+/// ceiling was priced when a retired constructor materialized its FULL
+/// map at every open (WRITEMAP's ftruncate on non-sparse filesystems;
+/// explicit block preallocation on sparse ones). Dropping WRITEMAP
 /// removed the last full-map ftruncate, so the raise costs nothing:
 /// capacity refusal reverts to the filesystem's own lazy behavior.
 /// The retracted comment also claimed EVERY open ftruncates the map
 /// (the container-filesystem `ENOSPC` warning) — that was true only
-/// of WRITEMAP opens, i.e. never of durable stores; verdict read off
-/// mdb.c and pinned in-tree by the refusal tests' `< 1 GiB` fixture
-/// bounds.
+/// of WRITEMAP opens; verdict read off mdb.c and pinned in-tree by
+/// the refusal tests' `< 1 GiB` fixture bounds.
 ///
 /// The consequence still worth naming — **the hard capacity
 /// ceiling**: resize is deliberately gone (the PRD 22 dead end:
@@ -242,48 +179,17 @@ const META_FORMAT_VERSION: &[u8] = MetaKey::FORMAT_VERSION.key;
 const META_FINGERPRINT: &[u8] = MetaKey::FINGERPRINT.key;
 const META_TX_ID: &[u8] = MetaKey::GENERATION.key;
 const META_DICT_NEXT_ID: &[u8] = MetaKey::DICT_NEXT.key;
-#[cfg(test)]
-const META_STORE_KIND: &[u8] = MetaKey::STORE_KIND.key;
-/// The canonical schema-descriptor bytes — the fingerprint's exact
-/// preimage, persisted so the store is self-describing
-/// (`docs/architecture/50-storage.md` § the `_meta` block). Written at
-/// creation. Format 8 open decodes this key after version, kind,
-/// roster, and fingerprint: absence is
-/// [`crate::error::CorruptionError::MetaMissing`], a hash disagreeing
-/// with the stored fingerprint is
-/// [`crate::error::CorruptionError::DescriptorFingerprintDesync`]. No
-/// back-fill and no "not yet adopted" state — those were the format-7
-/// adoption decoder, deleted at the cutover.
-const META_SCHEMA_DESCRIPTOR: &[u8] = MetaKey::DESCRIPTOR.key;
-
-/// Three live environment modes (R17/R18): durable writer, ephemeral
-/// writer, exhume reader. Disk [`StoreKind`] stays the persisted sum.
-pub(crate) enum EnvMode {
-    Durable {
-        /// Held until `Environment` drops; never read.
-        #[allow(dead_code)]
-        lock: std::fs::File,
-    },
-    Ephemeral {
-        /// Held until `Environment` drops; never read. Must outlive `env`
-        /// (fields drop in declaration order) so another handle cannot
-        /// acquire the path while heed still has it open.
-        #[allow(dead_code)]
-        lock: std::fs::File,
-        dirty_marker: std::path::PathBuf,
-    },
-    Exhume,
-}
+/// Retired descriptor key `[5]`. New stores do not write it.
+/// `ReadTxn::schema_descriptor` still reads it so `verify_store`'s
+/// leftover descriptor pass compiles (not this lane).
+const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
 
 /// The LMDB substrate: environment plus the three named databases.
 ///
-/// On a durable store, durability is LMDB defaults — fsync per commit;
+/// Durability is LMDB defaults — fsync per commit;
 /// `NOSYNC`/`WRITEMAP`/`MAPASYNC` are not expressible through the
-/// durable constructors (`create`/`open` pass [`StoreKind::Durable`] to
-/// `open_env`, which derives flags from the kind alone — there is no
-/// flag parameter to reach). An ephemeral store
-/// ([`Environment::ephemeral`]) carries `NOSYNC`, and its kind is
-/// marked on disk so the durable constructors refuse it typed.
+/// public constructors. A bench-only NOSYNC open lane exists behind
+/// a crate-hidden entry; it is not a store kind.
 pub struct Environment {
     env: heed::Env<WithoutTls>,
     meta: Database<Bytes, Bytes>,
@@ -293,9 +199,9 @@ pub struct Environment {
     /// record it and refuse to execute against any other environment's
     /// snapshots — the generation clock knows whose clock it is.
     identity: CatalogIdentity,
-    /// Writer lock vs exhume vs ephemeral marker — one sum, not two
-    /// independent Options.
-    mode: EnvMode,
+    /// Advisory lock — held by ownership until drop.
+    #[allow(dead_code)]
+    lock: std::fs::File,
     /// Process-lifetime escaped `Q` high-water: once `reserve` has handed
     /// an id to the host, this floor never retreats in this process —
     /// even when the counters-only disk flush fails
@@ -308,59 +214,6 @@ pub struct Environment {
     /// Test-only: remaining injected failures of the escaped-id flush.
     #[cfg(test)]
     fail_fresh_flush: AtomicU32,
-}
-
-/// The clean-close half of the ephemeral crash contract (R18): force
-/// the environment's pages down (the close-side fsync — marker-absent
-/// must imply data-synced, or a post-close power loss would reopen a
-/// torn store as verified), then clear the marker and sync its dirent
-/// chain. Durable environments carry no marker and drop untouched.
-/// Best-effort: a failed sync LEAVES the marker set — the next open
-/// wipes, which is exactly the contract for a store whose sync was
-/// never proven.
-impl Drop for Environment {
-    fn drop(&mut self) {
-        // Match the ephemeral arm without moving the writer lock. Fields
-        // drop in declaration order (`env` before `mode`), so the lock
-        // must still be held while heed closes — otherwise another
-        // handle can acquire it and surface `EnvAlreadyOpened`.
-        let dirty_marker = match &mut self.mode {
-            EnvMode::Ephemeral { dirty_marker, .. } => std::mem::take(dirty_marker),
-            EnvMode::Durable { .. } | EnvMode::Exhume => return,
-        };
-        if self.env.force_sync().is_err() {
-            return;
-        }
-        if std::fs::remove_file(&dirty_marker).is_ok() {
-            let _ = sync_dirent_chain(dirty_marker.parent().unwrap_or(std::path::Path::new(".")));
-        }
-    }
-}
-
-/// The ephemeral dirty marker's on-disk home (R18): a sibling FILE, not
-/// a `_meta` key — the marker must be readable before any LMDB page is
-/// trusted, and the whole point is never opening a possibly-torn store.
-pub(crate) fn dirty_marker_path(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.join("ephemeral.dirty")
-}
-
-/// Clears an ORPHANED dirty marker from a proven-durable store's
-/// directory — the durable half of the R18 lifecycle. Only ephemeral
-/// opens mint markers, so one lying beside a store that just verified
-/// DURABLE is a stale trap (an earlier ephemeral store at the path died,
-/// then the path was reused): left armed, a later
-/// [`Environment::ephemeral`] call would have to classify around it
-/// forever. Called only AFTER the durable open verified the kind — a
-/// refusal never mutates, marker included.
-pub(super) fn clear_orphan_marker(dir: &std::path::Path) -> crate::error::Result<()> {
-    match std::fs::remove_file(dirty_marker_path(dir)) {
-        Ok(()) => {
-            sync_dirent_chain(dir)?;
-            Ok(())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(crate::error::Error::from(e)),
-    }
 }
 
 /// A fresh-store constructor refuses any existing destination, including
@@ -379,10 +232,9 @@ pub(crate) fn refuse_existing_destination(path: &std::path::Path) -> crate::erro
 /// what a power loss must survive for entries inside `dir` to still
 /// exist. LMDB fsyncs file CONTENTS per commit and never opens a
 /// directory (no directory fsync anywhere in mdb.c), so this is the
-/// one mechanism behind its three callers: `Db::compact`'s copy,
-/// `Environment::create`'s birth (finding 022), and the ephemeral dirty
-/// marker's bracket (R18). Directories above the immediate parent are
-/// the caller's own story.
+/// one mechanism behind its two callers: `Db::compact`'s copy and
+/// `Environment::create`'s birth (finding 022). Directories above the
+/// immediate parent are the caller's own story.
 pub(crate) fn sync_dirent_chain(dir: &std::path::Path) -> std::io::Result<()> {
     for d in [dir, parent_dir(dir)] {
         std::fs::File::open(d)?.sync_all()?;
@@ -398,32 +250,10 @@ fn parent_dir(dir: &std::path::Path) -> &std::path::Path {
     }
 }
 
-/// Test-only `_meta` fixture surgery: the missing-descriptor,
-/// desynced-descriptor, and version-mismatch fixtures the exhume and
-/// `verify_store` tests build by mutating a real store's meta block —
-/// mirroring on-disk states no current production path can produce.
+/// Test-only `_meta` fixture surgery: version-mismatch fixtures built
+/// by mutating a real store's meta block.
 #[cfg(test)]
 impl Environment {
-    /// Deletes the persisted schema descriptor — a torn format-8 `_meta`.
-    pub(crate) fn strip_schema_descriptor_for_tests(&self) -> crate::error::Result<()> {
-        let mut wtxn = self.env.write_txn()?;
-        self.meta.delete(&mut wtxn, META_SCHEMA_DESCRIPTOR)?;
-        wtxn.commit()?;
-        Ok(())
-    }
-
-    /// Overwrites the persisted schema descriptor with arbitrary bytes —
-    /// the descriptor/fingerprint-desync fixture.
-    pub(crate) fn overwrite_schema_descriptor_for_tests(
-        &self,
-        bytes: &[u8],
-    ) -> crate::error::Result<()> {
-        let mut wtxn = self.env.write_txn()?;
-        self.meta.put(&mut wtxn, META_SCHEMA_DESCRIPTOR, bytes)?;
-        wtxn.commit()?;
-        Ok(())
-    }
-
     /// Overwrites the stored format version — the version-mismatch
     /// fixture.
     pub(crate) fn force_format_version_for_tests(&self, version: u32) -> crate::error::Result<()> {
@@ -439,15 +269,15 @@ impl Environment {
 }
 
 impl Environment {
-    /// The one construction site for the handle: open/create/exhume fill
-    /// the LMDB pieces; the escaped-fresh maps start empty (a reopen has
+    /// The one construction site for the handle: open/create fill the
+    /// LMDB pieces; the escaped-fresh maps start empty (a reopen has
     /// no in-process high-water — disk `Q` is the floor).
     pub(super) fn assemble(
         env: heed::Env<WithoutTls>,
         meta: Database<Bytes, Bytes>,
         data: Database<Bytes, Bytes>,
         dict: Database<Bytes, Bytes>,
-        mode: EnvMode,
+        lock: std::fs::File,
     ) -> Self {
         Self {
             env,
@@ -455,40 +285,11 @@ impl Environment {
             data,
             dict,
             identity: CatalogIdentity::mint(),
-            mode,
+            lock,
             escaped_fresh: Mutex::new(escaped_fresh::FreshMarks::default()),
             pending_fresh_flush: Mutex::new(escaped_fresh::FlushState::default()),
             #[cfg(test)]
             fail_fresh_flush: AtomicU32::new(0),
-        }
-    }
-
-    /// On-disk kind of this writing handle. Heap instances are not a
-    /// [`StoreKind`].
-    pub(crate) fn kind(&self) -> StoreKind {
-        match self.mode {
-            EnvMode::Durable { .. } => StoreKind::Durable,
-            EnvMode::Ephemeral { .. } => StoreKind::Ephemeral,
-            EnvMode::Exhume => {
-                unreachable!("writer surfaces never hold an exhume environment")
-            }
-        }
-    }
-
-    /// Assembles [`EnvMode`] once. Ephemeral carries the marker path
-    /// from the first construction; there is no later rewrite.
-    pub(super) fn mode_for(
-        kind: StoreKind,
-        lock: std::fs::File,
-        dirty_marker: Option<std::path::PathBuf>,
-    ) -> EnvMode {
-        match kind {
-            StoreKind::Durable => EnvMode::Durable { lock },
-            StoreKind::Ephemeral => EnvMode::Ephemeral {
-                lock,
-                dirty_marker: dirty_marker
-                    .expect("ephemeral assembly carries the dirty-marker path"),
-            },
         }
     }
 

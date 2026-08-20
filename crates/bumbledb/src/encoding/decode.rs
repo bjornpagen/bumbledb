@@ -113,6 +113,28 @@ pub const fn decode_fixed_interval_start(
     }
 }
 
+/// Order-preserving `(start, end)` words of an interval-family encoded
+/// tail. Width has one owner: [`ValueType::width`] (16 general, 8 fixed).
+/// `None` when `ty` is not an interval type, the slice is the wrong
+/// width, or a fixed start sits at or past the Q2 bound.
+pub(crate) fn interval_words(ty: ValueType, tail: &[u8]) -> Option<(u64, u64)> {
+    if !ty.is_interval() || tail.len() != ty.width() {
+        return None;
+    }
+    match ty {
+        ValueType::Interval { .. } => {
+            let bytes: [u8; 16] = tail.try_into().ok()?;
+            let (start, end) = split_halves(bytes);
+            Some((u64::from_be_bytes(start), u64::from_be_bytes(end)))
+        }
+        ValueType::FixedInterval { width, .. } => {
+            let bytes: [u8; 8] = tail.try_into().ok()?;
+            decode_fixed_interval_start(bytes, width).ok()
+        }
+        _ => None,
+    }
+}
+
 /// Validates a `bytes<len>` field's word-padded encoding: `padded` is
 /// the field's `⌈len/8⌉ × 8` stored bytes, and every byte past `len`
 /// must be zero — the pad is encoding, not data, so a nonzero pad byte

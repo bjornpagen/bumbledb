@@ -311,7 +311,7 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
     /// Comparison directions, derived once from half-open semantics: a
     /// determinant is `prefix ‖ interval-tail` with order-preserving
     /// words (16-byte `start ‖ end`, or the 8-byte fixed start whose end
-    /// derives from the type's width — [`IntervalTail::words`]), so byte
+    /// derives from the type's width — [`crate::encoding::interval_words`]), so byte
     /// order within the group is start order, and word comparison is
     /// numeric comparison. Two half-open intervals `[s, e)` and `[x, y)`
     /// share a point iff `x < e && s < y`. The predecessor sorts strictly
@@ -325,14 +325,13 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
         rel: RelationId,
         statement: StatementId,
         u_len: usize,
-        tail: crate::schema::IntervalTail,
+        tail: crate::schema::ValueType,
         fact_bytes: &[u8],
     ) -> Result<()> {
         let inserted = &self.key[..u_len];
-        let tail_bytes = tail.bytes();
+        let tail_bytes = tail.width();
         let prefix = &inserted[..u_len - tail_bytes];
-        let (start, end) = tail
-            .words(&inserted[u_len - tail_bytes..])
+        let (start, end) = crate::encoding::interval_words(tail, &inserted[u_len - tail_bytes..])
             .expect("the plan derived this determinant from a validated fact");
 
         let mut incumbent_row: Option<u64> = None;
@@ -346,8 +345,7 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                     "U determinant key length",
                 )));
             }
-            let (_, pe) = tail
-                .words(&pred.key[u_len - tail_bytes..])
+            let (_, pe) = crate::encoding::interval_words(tail, &pred.key[u_len - tail_bytes..])
                 .ok_or(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant tail",
                 )))?;
@@ -365,8 +363,7 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                     "U determinant key length",
                 )));
             }
-            let (ns, _) = tail
-                .words(&succ.key[u_len - tail_bytes..])
+            let (ns, _) = crate::encoding::interval_words(tail, &succ.key[u_len - tail_bytes..])
                 .ok_or(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant tail",
                 )))?;

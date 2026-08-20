@@ -30,7 +30,7 @@ impl LeafPrecompute {
             && precompute[last]
                 .residual_slots
                 .iter()
-                .all(|(_, _, _, width)| *width == 1)
+                .all(|spec| spec.width == 1)
             && plan.nodes()[last].subatoms[0]
                 .vars
                 .iter()
@@ -41,19 +41,18 @@ impl LeafPrecompute {
         let cover_vars = &plan.nodes()[last].subatoms[0].vars;
         let mut scan_residuals = Vec::new();
         let mut const_residuals = Vec::new();
-        for (residual, lhs_slot, rhs_slot, _) in &precompute[last].residual_slots {
+        for spec in &precompute[last].residual_slots {
             let resolve = |var: crate::ir::VarId, slot: usize| {
                 cover_vars
                     .iter()
                     .position(|cv| *cv == var)
                     .map_or(Source::Slot(slot), Source::Batch)
             };
-            let (left, right, op) = residual.compare_sides();
-            let lhs = resolve(left.var(), *lhs_slot);
-            let rhs = resolve(right.var(), *rhs_slot);
+            let lhs = resolve(spec.lhs, spec.lhs_slot);
+            let rhs = resolve(spec.rhs, spec.rhs_slot);
             match (lhs, rhs) {
-                (Source::Slot(l), Source::Slot(r)) => const_residuals.push((op, l, r)),
-                _ => scan_residuals.push((op, lhs, rhs)),
+                (Source::Slot(l), Source::Slot(r)) => const_residuals.push((spec.op, l, r)),
+                _ => scan_residuals.push((spec.op, lhs, rhs)),
             }
         }
         Self::Fast {

@@ -1,8 +1,8 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
 use super::{
-    CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation,
-    RelationBody,
+    CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, RelationBody,
+    ValueType,
 };
 
 impl Relation {
@@ -79,9 +79,10 @@ impl Relation {
     /// (`start ‖ end`), 8 fixed (`interval<E, w>`: the start word; the
     /// end is `start + w`, the width being the type's).
     #[must_use]
-    pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<IntervalTail> {
-        projection
-            .iter()
-            .find_map(|field| IntervalTail::of(self.field(*field).value_type))
+    pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<ValueType> {
+        projection.iter().find_map(|field| {
+            let ty = self.field(*field).value_type;
+            ty.is_interval().then_some(ty)
+        })
     }
 }

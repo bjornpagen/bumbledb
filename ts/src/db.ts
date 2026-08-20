@@ -32,8 +32,6 @@
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
-import type { Exhumed } from "#exhume.ts"
-import { exhumeStore } from "#exhume.ts"
 import { rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { cellOf, factOf, handleOf, isFreshField, type KeyFact, keyRowOf, recordOf, rowOf } from "#marshal.ts"
@@ -2108,11 +2106,11 @@ const InstanceBuilder = Object.freeze({
 /**
  * The store lifecycle — `Db.create(path, schema)` / `Db.open(path, schema)`.
  * Create refuses an already-initialized directory; open verifies format
- * version, store kind, and the schema fingerprint. A second live handle
- * on the same path is the engine's `EnvironmentLocked`. There is no close
- * anywhere: the process owns the environment until GC/exit (durability is
- * the engine's per-commit fsync). One store kind exists: durable —
- * resume = reopen in a fresh process, or hold the `Db` this process opened.
+ * version and the schema fingerprint. A second live handle on the same
+ * path is the engine's `EnvironmentLocked`. There is no close anywhere:
+ * the process owns the environment until GC/exit (durability is the
+ * engine's per-commit fsync). Resume = reopen in a fresh process, or
+ * hold the `Db` this process opened.
  */
 const Db = Object.freeze({
 	/** Creates a fresh durable store at `path` from the schema. */
@@ -2146,21 +2144,6 @@ const Db = Object.freeze({
 			return native.dbFromInstance(canonical, rec.handle)
 		})
 		return openFromHandle(dbHandle, rec.theory as Schema<Rels>)
-	},
-	/**
-	 * Opens a store READ-ONLY from its own persisted descriptor — the SDK's
-	 * one schema-independent read path (no theory, no fingerprint check; the
-	 * store rebirth tool's entry). Lives beside `open`/`create` so the path
-	 * law stays in one place: the same `node:path.resolve` canonicalization,
-	 * applied here. The value is NOT cached and is a DISPOSABLE lifetime
-	 * (R12) — `using exhumed = await Db.exhume(path)` releases the engine
-	 * handle and the store's exclusive lock at scope exit, so a same-path
-	 * reopen never waits on GC. A format mismatch or missing descriptor
-	 * rejects with the corresponding typed exhume error; open never adopts
-	 * a legacy store.
-	 */
-	async exhume(storePath: string): Promise<Exhumed> {
-		return exhumeStore(path.resolve(storePath))
 	}
 })
 

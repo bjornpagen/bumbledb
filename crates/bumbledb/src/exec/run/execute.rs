@@ -1,10 +1,10 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor, LeafPrecompute,
-    NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, Sink, ValidatedPlan,
+    AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive,
+    DurationResidualSpec, Executor, LeafPrecompute, NodePrecompute, NodeScratch, PipeTables,
+    PointProbeSpec, ResidualSpec, Sink, ValidatedPlan, WordResidualSpec,
 };
-use crate::image::view::FilterPredicate;
 use crate::plan::fj::PlanNode;
 use std::num::NonZeroUsize;
 
@@ -86,58 +86,63 @@ impl NodePrecompute {
             .residuals
             .iter()
             .map(|r| {
-                let (left, right, _) = r.compare_sides();
+                let (left, right, op) = r.compare_sides();
                 debug_assert_eq!(
                     width_of(left.var()),
                     width_of(right.var()),
                     "validated: residual sides share a structural type"
                 );
-                (
-                    r.clone(),
-                    plan.slot_of(left.var()),
-                    plan.slot_of(right.var()),
-                    width_of(left.var()),
-                )
+                ResidualSpec {
+                    op,
+                    lhs: left.var(),
+                    rhs: right.var(),
+                    lhs_slot: plan.slot_of(left.var()),
+                    rhs_slot: plan.slot_of(right.var()),
+                    width: width_of(left.var()),
+                }
             })
             .collect();
         let word_residual_slots = node
             .word_residuals
             .iter()
             .map(|r| {
-                let (left, right, _) = r.compare_sides();
-                (
-                    r.clone(),
-                    plan.slot_of(left.var()) + left.offset(),
-                    plan.slot_of(right.var()) + right.offset(),
-                )
+                let (left, right, op) = r.compare_sides();
+                WordResidualSpec {
+                    op,
+                    left,
+                    right,
+                    lhs_slot: plan.slot_of(left.var()) + left.offset(),
+                    rhs_slot: plan.slot_of(right.var()) + right.offset(),
+                }
             })
             .collect();
-        let allen_residual_slots: Vec<(FilterPredicate, usize, usize)> = node
+        let allen_residual_slots: Vec<AllenResidualSpec> = node
             .allen_residuals
             .iter()
             .map(|r| {
-                let (left, right, _) = r.allen_sides();
-                (
-                    r.clone(),
-                    plan.slot_of(left.var()),
-                    plan.slot_of(right.var()),
-                )
+                let (left, right, mask) = r.allen_sides();
+                AllenResidualSpec {
+                    lhs: left.var(),
+                    rhs: right.var(),
+                    lhs_slot: plan.slot_of(left.var()),
+                    rhs_slot: plan.slot_of(right.var()),
+                    mask,
+                }
             })
             .collect();
-        let allen_masks = allen_residual_slots
-            .iter()
-            .map(|(residual, _, _)| residual.allen_sides().2)
-            .collect();
+        let allen_masks = allen_residual_slots.iter().map(|spec| spec.mask).collect();
         let duration_residual_slots = node
             .duration_residuals
             .iter()
             .map(|r| {
-                let (interval, scalar, _) = r.duration_sides();
-                (
-                    r.clone(),
-                    plan.slot_of(interval.var()),
-                    plan.slot_of(scalar.var()),
-                )
+                let (interval, scalar, op) = r.duration_sides();
+                DurationResidualSpec {
+                    op,
+                    interval: interval.var(),
+                    scalar: scalar.var(),
+                    interval_slot: plan.slot_of(interval.var()),
+                    scalar_slot: plan.slot_of(scalar.var()),
+                }
             })
             .collect();
         Self {
@@ -176,6 +181,9 @@ impl Executor {
             batch > 0,
             "a batch has at least one element (set_batch_size is the caller-facing knob)"
         );
+        // construction-time: every NodeScratch / executor Vec below is
+        // the retained-capacity pool. Warm execute clears; it does not
+        // allocate. The 26-site census (Vec::new / clone) lives here.
         let var_widths: Vec<(crate::ir::VarId, usize)> = plan
             .slots()
             .iter()
@@ -198,7 +206,7 @@ impl Executor {
                 node.subatoms
                     .iter()
                     .map(|s| {
-                        let mut words = Vec::new();
+                        let mut words = Vec::new(); // construction-time: slot_map words
                         for var in &s.vars {
                             let slot = plan.slot_of(*var);
                             for offset in 0..width_of(*var) {
@@ -258,6 +266,7 @@ impl Executor {
                         .iter()
                         .map(|_| vec![Cursor::Row(0); batch])
                         .collect(),
+                    // construction-time: retained-capacity scratch pools
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
@@ -312,12 +321,12 @@ impl Executor {
     /// every join execution; the executor itself never touches params.
     pub fn bind_allen_masks(&mut self, _params: &[crate::image::view::Const]) {
         for node in &mut self.precompute {
-            for ((residual, _, _), mask) in node
+            for (spec, mask) in node
                 .allen_residual_slots
                 .iter()
                 .zip(node.allen_masks.iter_mut())
             {
-                *mask = residual.allen_sides().2;
+                *mask = spec.mask;
             }
         }
     }

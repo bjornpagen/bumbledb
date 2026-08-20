@@ -349,8 +349,6 @@ wire_tags! {
         DESTINATION_EXISTS: ErrorFamily::DestinationExists => "destinationExists",
         PUBLISHED_BUT_UNSYNCED: ErrorFamily::PublishedButUnsynced => "publishedButUnsynced",
         ENVIRONMENT_LOCKED: ErrorFamily::EnvironmentLocked => "environmentLocked",
-        STORE_KIND_MISMATCH: ErrorFamily::StoreKindMismatch => "storeKindMismatch",
-        DESCRIPTOR_MISSING: ErrorFamily::DescriptorMissing => "descriptorMissing",
         IO: ErrorFamily::Io => "io",
         LMDB: ErrorFamily::Lmdb => "lmdb",
         READERS_FULL: ErrorFamily::ReadersFull => "readersFull",
@@ -398,15 +396,6 @@ pub(crate) mod open_kind {
     pub(crate) const FINGERPRINT_MISMATCH: &str = "fingerprintMismatch";
     #[allow(dead_code)]
     pub(crate) const TAGS: &[&str] = &[SCHEMA_ERROR, NEWTYPE_MISMATCH, FINGERPRINT_MISMATCH];
-}
-
-/// `dbExhume` refusal kinds.
-pub(crate) mod exhume_kind {
-    pub(crate) const DESCRIPTOR_MISSING: &str = "descriptorMissing";
-    pub(crate) const FORMAT_MISMATCH: &str = "formatMismatch";
-    pub(crate) const CORRUPTION: &str = "corruption";
-    #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[DESCRIPTOR_MISSING, FORMAT_MISMATCH, CORRUPTION];
 }
 
 /// `dbPrepare` roster-error kind.
@@ -459,7 +448,6 @@ mod golden {
             ("admissionTag", super::admission_tag::TAGS.to_vec()),
             ("writeTag", super::write_tag::TAGS.to_vec()),
             ("openKind", super::open_kind::TAGS.to_vec()),
-            ("exhumeKind", super::exhume_kind::TAGS.to_vec()),
             ("prepareKind", super::prepare_kind::TAGS.to_vec()),
         ]
     }

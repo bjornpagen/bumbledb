@@ -46,7 +46,6 @@ mod builder;
 mod delete;
 mod delete_dyn;
 mod encode_dyn;
-mod exhume;
 mod get;
 mod insert;
 mod insert_dyn;
@@ -63,8 +62,6 @@ mod reserve;
 mod write;
 
 pub use builder::InstanceBuilder;
-pub use exhume::{Exhumed, exhume};
-pub use instance::Instance;
 pub use mutation::{FreshRange, FreshRangeIter, MutationReport};
 pub use owned::OwnedInstance;
 pub use write::Witness;

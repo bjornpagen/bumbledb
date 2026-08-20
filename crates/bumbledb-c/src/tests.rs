@@ -20,19 +20,19 @@ use crate::answers::{
     bdb_answers_new, bdb_instance_execute,
 };
 use crate::db::{
-    bdb_admission_tag, bdb_db, bdb_db_admission, bdb_db_create, bdb_db_destroy, bdb_db_ephemeral,
-    bdb_db_fingerprint, bdb_db_open, bdb_db_read, bdb_db_write, bdb_db_write_from, bdb_fingerprint,
-    bdb_fresh_range, bdb_fresh_range_tag, bdb_instance_admission, bdb_instance_builder,
-    bdb_instance_builder_admit, bdb_instance_builder_new, bdb_instance_contains, bdb_instance_get,
-    bdb_instance_ref, bdb_instance_scan, bdb_mutation_report, bdb_owned_instance_destroy,
-    bdb_row_set, bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get, bdb_row_set_len,
-    bdb_tx_contains, bdb_tx_delete, bdb_tx_get, bdb_tx_insert, bdb_tx_ref, bdb_tx_reserve,
-    bdb_witness, bdb_write_admission, test_only_trigger_panic,
+    bdb_admission_tag, bdb_db, bdb_db_admission, bdb_db_create, bdb_db_destroy, bdb_db_fingerprint,
+    bdb_db_open, bdb_db_read, bdb_db_write, bdb_db_write_from, bdb_fingerprint, bdb_fresh_range,
+    bdb_fresh_range_tag, bdb_instance_admission, bdb_instance_builder, bdb_instance_builder_admit,
+    bdb_instance_builder_new, bdb_instance_contains, bdb_instance_get, bdb_instance_ref,
+    bdb_instance_scan, bdb_mutation_report, bdb_owned_instance_destroy, bdb_row_set,
+    bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get, bdb_row_set_len, bdb_tx_contains,
+    bdb_tx_delete, bdb_tx_get, bdb_tx_insert, bdb_tx_ref, bdb_tx_reserve, bdb_witness,
+    bdb_write_admission, test_only_trigger_panic,
 };
 use crate::error::{
     bdb_error, bdb_error_destroy, bdb_error_get_kind, bdb_error_get_message, bdb_error_kind,
-    bdb_statement_kind, bdb_violation, bdb_violations_destroy,
-    bdb_violations_get, bdb_violations_len,
+    bdb_statement_kind, bdb_violation, bdb_violations_destroy, bdb_violations_get,
+    bdb_violations_len,
 };
 use crate::query::{
     bdb_agg_op, bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind,
@@ -127,7 +127,9 @@ fn error_message(error: *const bdb_error) -> String {
 
 // Closure-to-C-callback trampolines: the generic F is smuggled through the
 // context pointer, exactly as a C caller smuggles its state.
-extern "C" fn read_trampoline<F: FnMut(*const bdb_instance_ref, *const bdb_witness) -> bdb_callback_control>(
+extern "C" fn read_trampoline<
+    F: FnMut(*const bdb_instance_ref, *const bdb_witness) -> bdb_callback_control,
+>(
     context: *mut c_void,
     instance: *const bdb_instance_ref,
     witness: *const bdb_witness,
@@ -658,7 +660,7 @@ fn create_refuses_existing_destination() {
 }
 
 #[test]
-fn create_open_ephemeral_close() {
+fn create_open_close() {
     let dir = temp_store("lifecycle");
     let db = create_uptime(&dir);
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
@@ -676,23 +678,6 @@ fn create_open_ephemeral_close() {
         assert_eq!(status, bdb_status::Ok, "open: {}", err_text(error));
         db
     });
-    assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
-
-    // The ephemeral kind is its own constructor and store.
-    let ephemeral_dir = temp_store("lifecycle-ephemeral");
-    let db = with_uptime_spec(|spec| {
-        let mut admission = empty_db_admission();
-        let mut error: *mut bdb_error = null_mut();
-        let status = bdb_db_ephemeral(
-            sv(ephemeral_dir.to_str().expect("utf-8 path")),
-            spec,
-            &raw mut admission,
-            &raw mut error,
-        );
-        assert_eq!(status, bdb_status::Ok, "ephemeral: {}", err_text(error));
-        take_accepted_db(admission)
-    });
-    seed_service_outage(db, "scratch", (0, 5));
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
 
     // Destroying a null handle is misuse, not a crash.
@@ -1058,7 +1043,12 @@ fn write_from_ok_and_moved() {
             entered = true;
             bdb_callback_control::Ok
         });
-        assert_eq!(status, bdb_status::Ok, "moved is not an error: {}", err_text(error));
+        assert_eq!(
+            status,
+            bdb_status::Ok,
+            "moved is not an error: {}",
+            err_text(error)
+        );
         assert!(error.is_null());
         assert!(!entered, "the closure never runs on a moved generation");
         assert_eq!(admission.tag, bdb_admission_tag::Moved);
@@ -1186,7 +1176,12 @@ fn foreign_prepared_is_refused_at_the_bridge() {
             answers,
             &raw mut error,
         );
-        assert_eq!(status, bdb_status::Error, "foreign execute: {}", err_text(error));
+        assert_eq!(
+            status,
+            bdb_status::Error,
+            "foreign execute: {}",
+            err_text(error)
+        );
         assert_eq!(error_kind(error), bdb_error_kind::ForeignPrepared);
         destroy_error(error);
         bdb_callback_control::Ok
@@ -1445,7 +1440,12 @@ fn pointwise_key_violation_is_rejected_and_renderable() {
         );
         bdb_callback_control::Ok
     });
-    assert_eq!(status, bdb_status::Ok, "rejection is not an error: {}", err_text(error));
+    assert_eq!(
+        status,
+        bdb_status::Ok,
+        "rejection is not an error: {}",
+        err_text(error)
+    );
     assert!(error.is_null());
     assert_eq!(admission.tag, bdb_admission_tag::Rejected);
     let violations = unsafe { admission.value.rejected };
@@ -1980,7 +1980,8 @@ fn consumed_builder_cannot_admit_twice() {
             err_text(error)
         );
         let mut admission = empty_instance_admission();
-        let status = bdb_instance_builder_admit(&raw mut builder, &raw mut admission, &raw mut error);
+        let status =
+            bdb_instance_builder_admit(&raw mut builder, &raw mut admission, &raw mut error);
         assert_eq!(status, bdb_status::Ok, "admit: {}", err_text(error));
         assert!(builder.is_null(), "admit nulls the caller's pointer");
         assert_ne!(admission.tag, bdb_admission_tag::Empty);

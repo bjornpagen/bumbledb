@@ -1,7 +1,7 @@
 //! The schema-spec crossing: borrowed C view structs
 //! mirroring `bumbledb::SchemaSpec` field for field, copied IMMEDIATELY
 //! into the Rust-owned spec — no borrowed caller memory survives
-//! `bdb_db_create` / `bdb_db_open` / `bdb_db_ephemeral`. The engine's
+//! `bdb_db_create` / `bdb_db_open`. The engine's
 //! `SchemaSpec::descriptor()` remains the canonical lowering; this module
 //! judges nothing.
 

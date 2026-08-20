@@ -82,8 +82,6 @@ typedef enum bdb_error_kind {
   BDB_ERROR_KIND_DESTINATION_EXISTS,
   BDB_ERROR_KIND_PUBLISHED_BUT_UNSYNCED,
   BDB_ERROR_KIND_ENVIRONMENT_LOCKED,
-  BDB_ERROR_KIND_STORE_KIND_MISMATCH,
-  BDB_ERROR_KIND_DESCRIPTOR_MISSING,
   BDB_ERROR_KIND_READERS_FULL,
   BDB_ERROR_KIND_VALIDATION,
   BDB_ERROR_KIND_COMMIT_SYNC,
@@ -781,14 +779,6 @@ enum bdb_status bdb_db_open(struct bdb_string_view path,
                             struct bdb_db **out_db,
                             struct bdb_error **out_error);
 
-// Opens or initializes an EPHEMERAL store. Fresh initialize and wipe
-// complete-admit empty; an existing admitted format-8 store reopens as
-// accepted.
-enum bdb_status bdb_db_ephemeral(struct bdb_string_view path,
-                                 const struct bdb_schema_spec *spec,
-                                 struct bdb_db_admission *out_admission,
-                                 struct bdb_error **out_error);
-
 // Raw-copies an admitted heap instance into a new durable store.
 enum bdb_status bdb_db_from_instance(struct bdb_string_view path,
                                      const struct bdb_owned_instance *instance,
@@ -925,11 +915,6 @@ enum bdb_status bdb_instance_scan(const struct bdb_instance_ref *instance,
                                   uint32_t relation,
                                   struct bdb_row_set **out_rows,
                                   struct bdb_error **out_error);
-
-enum bdb_status bdb_instance_row_count(const struct bdb_instance_ref *instance,
-                                       uint32_t relation,
-                                       uint64_t *out_count,
-                                       struct bdb_error **out_error);
 
 enum bdb_status bdb_instance_prepare(const struct bdb_instance_ref *instance,
                                      const struct bdb_query *query,

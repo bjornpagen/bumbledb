@@ -84,63 +84,56 @@ impl Executor {
             }
         }
         scratch.residual_sources.clear();
-        for (residual, lhs_slot, rhs_slot, _) in &self.precompute[node_idx].residual_slots {
+        for spec in &self.precompute[node_idx].residual_slots {
             let resolve = |var: crate::ir::VarId, slot: usize| {
                 super::word_base(cover_vars, var, |v| self.width_of(v))
                     .map_or(Source::Slot(slot), Source::Batch)
             };
-            scratch.residual_sources.push({
-                let (left, right, _) = residual.compare_sides();
-                (
-                    resolve(left.var(), *lhs_slot),
-                    resolve(right.var(), *rhs_slot),
-                )
-            });
+            scratch.residual_sources.push((
+                resolve(spec.lhs, spec.lhs_slot),
+                resolve(spec.rhs, spec.rhs_slot),
+            ));
         }
         // Word residuals: sources pre-offset to the compared word — a
         // cover-bound side reads its word base plus the residual's
         // Start/End offset.
         scratch.word_residual_sources.clear();
-        for (residual, lhs_slot, rhs_slot) in &self.precompute[node_idx].word_residual_slots {
+        for spec in &self.precompute[node_idx].word_residual_slots {
             let resolve = |side: crate::image::view::OperandAddr, slot: usize| {
                 super::word_base(cover_vars, side.var(), |v| self.width_of(v))
                     .map_or(Source::Slot(slot), |base| {
                         Source::Batch(base + side.offset())
                     })
             };
-            let (left, right, _) = residual.compare_sides();
-            scratch
-                .word_residual_sources
-                .push((resolve(left, *lhs_slot), resolve(right, *rhs_slot)));
+            scratch.word_residual_sources.push((
+                resolve(spec.left, spec.lhs_slot),
+                resolve(spec.right, spec.rhs_slot),
+            ));
         }
         // Allen residuals: one base source per side; evaluation reads
         // the (start, end) pair at offsets 0/1.
         scratch.allen_sources.clear();
-        for (residual, lhs_slot, rhs_slot) in &self.precompute[node_idx].allen_residual_slots {
+        for spec in &self.precompute[node_idx].allen_residual_slots {
             let resolve = |var: crate::ir::VarId, slot: usize| {
                 super::word_base(cover_vars, var, |v| self.width_of(v))
                     .map_or(Source::Slot(slot), Source::Batch)
             };
-            let (left, right, _) = residual.allen_sides();
             scratch.allen_sources.push((
-                resolve(left.var(), *lhs_slot),
-                resolve(right.var(), *rhs_slot),
+                resolve(spec.lhs, spec.lhs_slot),
+                resolve(spec.rhs, spec.rhs_slot),
             ));
         }
         // Measure residuals: the interval side at its word base (pair
         // read at offsets 0/1), the u64 side at its single word.
         scratch.duration_sources.clear();
-        for (residual, interval_slot, scalar_slot) in
-            &self.precompute[node_idx].duration_residual_slots
-        {
+        for spec in &self.precompute[node_idx].duration_residual_slots {
             let resolve = |var: crate::ir::VarId, slot: usize| {
                 super::word_base(cover_vars, var, |v| self.width_of(v))
                     .map_or(Source::Slot(slot), Source::Batch)
             };
-            let (interval, scalar, _) = residual.duration_sides();
             scratch.duration_sources.push((
-                resolve(interval.var(), *interval_slot),
-                resolve(scalar.var(), *scalar_slot),
+                resolve(spec.interval, spec.interval_slot),
+                resolve(spec.scalar, spec.scalar_slot),
             ));
         }
 
@@ -223,8 +216,7 @@ impl Executor {
             // the memory-bound hash probes.
             counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
-                let (residual, _, _, width) = &self.precompute[node_idx].residual_slots[r_idx];
-                let (_, _, op) = residual.compare_sides();
+                let spec = &self.precompute[node_idx].residual_slots[r_idx];
                 let n = scratch.survivors.len();
                 grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
@@ -235,8 +227,8 @@ impl Executor {
                         Source::Slot(slot) => bindings.get(slot + offset),
                     };
                     let pass = super::compare_wide(
-                        op,
-                        *width,
+                        spec.op,
+                        spec.width,
                         |offset| value(lhs_src, offset),
                         |offset| value(rhs_src, offset),
                     );
@@ -250,10 +242,7 @@ impl Executor {
             // exactly like the whole-value residuals above
             // (docs/architecture/20-query-ir.md, § normalization).
             for (r_idx, (lhs_src, rhs_src)) in scratch.word_residual_sources.iter().enumerate() {
-                let op = self.precompute[node_idx].word_residual_slots[r_idx]
-                    .0
-                    .compare_sides()
-                    .2;
+                let op = self.precompute[node_idx].word_residual_slots[r_idx].op;
                 let n = scratch.survivors.len();
                 grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
@@ -374,10 +363,7 @@ impl Executor {
             // stride-1 twin is the view kernel,
             // `exec::kernel::filter_duration_range_u64`).
             for (r_idx, (interval_src, scalar_src)) in scratch.duration_sources.iter().enumerate() {
-                let op = self.precompute[node_idx].duration_residual_slots[r_idx]
-                    .0
-                    .duration_sides()
-                    .2;
+                let op = self.precompute[node_idx].duration_residual_slots[r_idx].op;
                 let n = scratch.survivors.len();
                 grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {

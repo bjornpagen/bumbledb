@@ -35,16 +35,6 @@ type BuilderHandle = { readonly __brand: "bumbledb.builder" }
 type OwnedHandle = { readonly __brand: "bumbledb.owned" }
 
 /**
- * One exhumed store — the read-only, theory-less open (engine 70-api.md
- * § exhume). Lifetimes are disposables (ruled 2026-07-23, R12):
- * `exhumeClose` is the deterministic teardown the SDK's `Symbol.dispose`
- * rides — releasing the environment (and the store's exclusive lock)
- * scope-shaped, never a GC race; the engine-side drop remains the
- * reclamation-only backstop for a collected-but-undisposed handle.
- */
-type ExhumeHandle = { readonly __brand: "bumbledb.exhume" }
-
-/**
  * One live write transaction — the submitted delta with the engine's
  * final-state point-read view. Valid only inside a write callback.
  */
@@ -331,22 +321,6 @@ type DbOpenResult =
 	  }
 
 /**
- * `dbExhume`'s domain outcome: the live exhume handle, or one of the three
- * typed refusals as data — `descriptorMissing` (a format-8 store whose
- * descriptor key is absent; open never back-fills), `formatMismatch`
- * (including every format-7 store), and `corruption` (the persisted
- * descriptor fails its integrity gates). Genuine failures — a missing
- * path, a held exclusive lock — throw.
- */
-type ExhumeResult =
-	| { readonly ok: true; readonly exhume: ExhumeHandle }
-	| {
-			readonly ok: false
-			readonly kind: "descriptorMissing" | "formatMismatch" | "corruption"
-			readonly message: string
-	  }
-
-/**
  * `dbWrite` / `dbWriteFrom` native outcome. The SDK attaches the callback
  * return onto the accepted arm. Moved is data, never an error kind.
  */
@@ -392,8 +366,6 @@ type ErrorFamilyKind =
 	| "destinationExists"
 	| "publishedButUnsynced"
 	| "environmentLocked"
-	| "storeKindMismatch"
-	| "descriptorMissing"
 	| "io"
 	| "lmdb"
 	| "readersFull"
@@ -417,7 +389,6 @@ type ErrorFamilyKind =
 type AdmissionTag = "accepted" | "rejected"
 type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"
 type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
-type ExhumeKind = "descriptorMissing" | "formatMismatch" | "corruption"
 type PrepareKind = "irError"
 
 /**
@@ -449,14 +420,13 @@ interface Native {
 	engineVersion(): string
 
 	/**
-	 * Creates a fresh DURABLE store at `path` (frozen ruling 3: no ephemeral
-	 * kind crosses this bridge). Refuses an already-initialized directory
-	 * (throws); schema failures return as data.
+	 * Creates a fresh durable store at `path`. Refuses an already-initialized
+	 * directory (throws); schema failures return as data.
 	 */
 	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
 	/**
-	 * Opens an existing durable store, verifying format version, store
-	 * kind, and schema fingerprint (`fingerprintMismatch` as data).
+	 * Opens an existing durable store, verifying format version and
+	 * schema fingerprint (`fingerprintMismatch` as data).
 	 */
 	dbOpen(path: string, spec: SchemaSpec): Promise<DbOpenResult>
 	/**
@@ -482,37 +452,6 @@ interface Native {
 	dbGeneration(db: DbHandle): bigint
 	/** Publishes an admitted heap instance at `path` without re-judgment. */
 	dbFromInstance(path: string, instance: OwnedHandle): Promise<DbHandle>
-
-	/**
-	 * Opens a store FROM ITS OWN PERSISTED DESCRIPTOR (the read-only,
-	 * theory-less open; engine 70-api.md § exhume) — no schema crosses in.
-	 * The three typed refusals return as data ({@link ExhumeResult});
-	 * genuine failures throw. The handle's deterministic teardown is
-	 * `exhumeClose` (R12); GC reclamation remains the backstop only.
-	 */
-	dbExhume(path: string): Promise<ExhumeResult>
-	/**
-	 * Closes the exhume handle, releasing its environment (and the store's
-	 * exclusive lock) deterministically — the native teardown under the
-	 * SDK's `Symbol.dispose` (ruled 2026-07-23, R12: lifetimes are
-	 * disposables, never `close()` methods to remember).
-	 */
-	exhumeClose(exhume: ExhumeHandle): void
-	/**
-	 * The exhumed store's persisted schema as manifest-shaped data — the
-	 * engine's own manifest rendering of the STORED descriptor: relations
-	 * in engine-id order, sealed field lists (a closed relation opens with
-	 * the synthetic (`id`, u64) handle field) with structural value types,
-	 * and closed-relation rosters.
-	 */
-	exhumeDescriptor(exhume: ExhumeHandle): Manifest
-	/**
-	 * Full-relation export by NAME in row-id order, values marshaled per
-	 * the STORED descriptor (str already resolved through `_dict` inside
-	 * the engine; a closed relation scans its sealed roster). Each call is
-	 * one self-contained snapshot read; an unknown relation name throws.
-	 */
-	exhumeScan(exhume: ExhumeHandle, relationName: string): FactValue[][]
 
 	/**
 	 * Runs `callback` synchronously inside the engine read lease. The
@@ -738,8 +677,8 @@ function errorFromThrow(caught: unknown): Error {
 }
 
 /**
- * The bridge guard — THE one wrapper every native call crosses (db.ts and
- * exhume.ts both import it): runs one native call and wraps anything it
+ * The bridge guard — THE one wrapper every native call crosses (db.ts
+ * imports it): runs one native call and wraps anything it
  * throws, so marshal-shape refusals and handle-lifecycle refusals cross as
  * genuine typed failures, never bare foreign errors. Engine throws keep
  * their forced kind.
@@ -780,9 +719,6 @@ export type {
 	DbHandle,
 	DbOpenResult,
 	ErrorFamilyKind,
-	ExhumeHandle,
-	ExhumeKind,
-	ExhumeResult,
 	Explain,
 	FactValue,
 	FindTermIr,

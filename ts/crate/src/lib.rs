@@ -7,8 +7,8 @@
 //! inside `Db::read` / `Db::write` on the JavaScript thread. Instance and
 //! transaction handles are raw pointers valid only while `alive` is set —
 //! they are never transmuted to `'static` and never parked on a worker.
-//! Control-plane work (`create` / `open` / `fromInstance` / `exhume` /
-//! `admit`) is one temporal shape: every `async` SDK method is a napi
+//! Control-plane work (`create` / `open` / `fromInstance` / `admit`) is
+//! one temporal shape: every `async` SDK method is a napi
 //! `AsyncTask`. An owned instance holds `Arc<OwnedInstance>` plus a lease
 //! flag so dispose-during-publish is a typed refusal, not a race.
 //!
@@ -24,9 +24,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::schema::{SpecIssue, StatementDescriptor};
 use bumbledb::{
-    Answers, BindValue, Db, Error, Exhumed, FieldId, FreshRange, InstanceBuilder, MutationReport,
+    Answers, BindValue, Db, Error, FieldId, FreshRange, InstanceBuilder, MutationReport,
     OwnedInstance, ParamArg, PreparedQuery, Query, RelationId, SchemaDescriptor, StatementId,
-    Theory, Value, Violations, Witness, WriteTx, exhume, render_rejection,
+    Theory, Value, Violations, Witness, WriteTx, render_rejection,
 };
 use napi::bindgen_prelude::{
     Array, AsyncTask, BigInt, Env, External, FnArgs, Function, Object, Task, ToNapiValue, TypeName,
@@ -560,145 +560,6 @@ pub fn db_from_instance(
         sealed: Arc::clone(&owned.sealed),
         leased: Arc::clone(&owned.leased),
     }))
-}
-
-// ---------------------------------------------------------------------------
-// Exhume
-// ---------------------------------------------------------------------------
-
-pub struct ExhumeHandle {
-    inner: RefCell<Option<Exhumed>>,
-}
-
-pub enum ExhumeOutcome {
-    Ok(External<ExhumeHandle>),
-    DescriptorMissing(String),
-    FormatMismatch(String),
-    Corruption(String),
-}
-
-outcome_to_napi!(ExhumeOutcome {
-    Ok(handle) => { "ok": true, "exhume": handle },
-    DescriptorMissing(message) => {
-        "ok": false,
-        "kind": tags::exhume_kind::DESCRIPTOR_MISSING,
-        "message": message,
-    },
-    FormatMismatch(message) => {
-        "ok": false,
-        "kind": tags::exhume_kind::FORMAT_MISMATCH,
-        "message": message,
-    },
-    Corruption(message) => {
-        "ok": false,
-        "kind": tags::exhume_kind::CORRUPTION,
-        "message": message,
-    },
-});
-
-impl TypeName for ExhumeOutcome {
-    fn type_name() -> &'static str {
-        "object"
-    }
-
-    fn value_type() -> ValueType {
-        ValueType::Object
-    }
-}
-
-pub enum ExhumeOutput {
-    Ok(Exhumed),
-    DescriptorMissing(String),
-    FormatMismatch(String),
-    Corruption(String),
-    Failed { kind: &'static str, message: String },
-}
-
-pub struct ExhumeTask {
-    path: String,
-}
-
-impl Task for ExhumeTask {
-    type Output = ExhumeOutput;
-    type JsValue = ExhumeOutcome;
-
-    fn compute(&mut self) -> napi::Result<ExhumeOutput> {
-        match exhume(std::path::Path::new(&self.path)) {
-            Ok(exhumed) => Ok(ExhumeOutput::Ok(exhumed)),
-            Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutput::DescriptorMissing(
-                marshal::engine_message(&error),
-            )),
-            Err(error @ Error::FormatMismatch { .. }) => Ok(ExhumeOutput::FormatMismatch(
-                marshal::engine_message(&error),
-            )),
-            Err(error @ Error::Corruption(_)) => {
-                Ok(ExhumeOutput::Corruption(marshal::engine_message(&error)))
-            }
-            Err(error) => {
-                let (kind, message) = engine_failed(&error);
-                Ok(ExhumeOutput::Failed { kind, message })
-            }
-        }
-    }
-
-    fn resolve(&mut self, _env: Env, output: ExhumeOutput) -> napi::Result<ExhumeOutcome> {
-        match output {
-            ExhumeOutput::Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle {
-                inner: RefCell::new(Some(exhumed)),
-            }))),
-            ExhumeOutput::DescriptorMissing(message) => {
-                Ok(ExhumeOutcome::DescriptorMissing(message))
-            }
-            ExhumeOutput::FormatMismatch(message) => Ok(ExhumeOutcome::FormatMismatch(message)),
-            ExhumeOutput::Corruption(message) => Ok(ExhumeOutcome::Corruption(message)),
-            ExhumeOutput::Failed { kind: _, message } => Err(napi::Error::from_reason(message)),
-        }
-    }
-}
-
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn db_exhume(path: String) -> napi::Result<AsyncTask<ExhumeTask>> {
-    Ok(AsyncTask::new(ExhumeTask { path }))
-}
-
-#[napi]
-pub fn exhume_descriptor(exhume: &External<ExhumeHandle>) -> napi::Result<ManifestWire> {
-    let exhumed = live(&exhume.inner, "exhume")?;
-    Ok(ManifestWire(exhumed.descriptor().clone().manifest()))
-}
-
-#[napi]
-pub fn exhume_close(exhume: &External<ExhumeHandle>) -> napi::Result<()> {
-    take_handle(&exhume.inner, "exhume")?;
-    Ok(())
-}
-
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn exhume_scan(
-    env: Env,
-    exhume: &External<ExhumeHandle>,
-    relation_name: String,
-) -> napi::Result<Vec<Vec<ValueOut>>> {
-    let exhumed = live(&exhume.inner, "exhume")?;
-    let Some(relation) = exhumed.relation(&relation_name) else {
-        return Err(marshal::err(format!(
-            "bumbledb: the exhumed store's descriptor declares no relation `{relation_name}`"
-        )));
-    };
-    let rows = exhumed.read(|snap| {
-        let iter = snap.scan(relation)?;
-        let mut rows = Vec::new();
-        for row in iter {
-            rows.push(row?);
-        }
-        Ok(rows)
-    });
-    match rows {
-        Ok(rows) => marshal::rows_out(rows),
-        Err(error) => Err(throw_engine(env, &error)),
-    }
 }
 
 // ---------------------------------------------------------------------------

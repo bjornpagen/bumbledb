@@ -26,8 +26,6 @@
 		"destinationExists",
 		"publishedButUnsynced",
 		"environmentLocked",
-		"storeKindMismatch",
-		"descriptorMissing",
 		"io",
 		"lmdb",
 		"readersFull",
@@ -51,6 +49,5 @@
 	"admissionTag": ["accepted", "rejected"],
 	"writeTag": ["accepted", "rejected", "abandoned", "moved"],
 	"openKind": ["schemaError", "newtypeMismatch", "fingerprintMismatch"],
-	"exhumeKind": ["descriptorMissing", "formatMismatch", "corruption"],
 	"prepareKind": ["irError"]
 }

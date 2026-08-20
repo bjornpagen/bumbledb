@@ -344,6 +344,9 @@ struct PoolMark {
 /// enum over an `Arc`'d image plus survivor positions) and its pools, so a
 /// prepared query can hold and [`Colt::reset`] it across executions with
 /// every capacity retained (the 40-execution doc's zero-alloc discipline).
+///
+/// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone()` on
+/// refill/advance — those paths truncate to a [`PoolMark`] and reuse.
 pub struct Colt {
     view: View,
     /// Per selection level: point-probe vs set-union ([`SelectionKind`]).

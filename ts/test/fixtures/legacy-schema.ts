@@ -2,7 +2,7 @@
  * The CREATING theory of the committed legacy-store fixture
  * (`test/fixtures/legacy-store`) — the schema the store at that directory
  * was created under. Format 7 has no decoder in this engine: open and
- * exhume refuse the fixture as a format mismatch. There is no adoption
+ * open refuse the fixture as a format mismatch. There is no adoption
  * path and no descriptor back-fill.
  *
  * Fixture provenance: regenerated 2026-07-24 at storage format v7 (the

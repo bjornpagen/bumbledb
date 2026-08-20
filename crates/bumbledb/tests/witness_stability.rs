@@ -113,7 +113,7 @@ fn rejection<T: std::fmt::Debug>(outcome: bumbledb::Result<bumbledb::Admission<T
 /// scan does).
 fn seeded_world(tag: &str) -> (common::TempDir, Db<WitnessWorld>) {
     let dir = common::TempDir::new(tag);
-    let db = Db::ephemeral(dir.path(), WitnessWorld)
+    let db = Db::create(dir.path(), WitnessWorld)
         .expect("create")
         .expect("accepted");
     for id in [1, 2, 3] {
@@ -275,7 +275,7 @@ fn the_source_witness_is_the_key_least_violator() {
 
     let run = |tag: &str, reverse: bool| -> Violations {
         let dir = common::TempDir::new(tag);
-        let db = Db::ephemeral(dir.path(), WitnessWorld)
+        let db = Db::create(dir.path(), WitnessWorld)
             .expect("create")
             .expect("accepted");
         rejection(db.write(|tx| {
@@ -323,7 +323,7 @@ fn the_source_witness_is_the_key_least_violator() {
 #[test]
 fn the_capacity_witness_is_the_key_least_violating_parent() {
     let dir = common::TempDir::new("witness-capacity");
-    let db = Db::ephemeral(dir.path(), WitnessWorld)
+    let db = Db::create(dir.path(), WitnessWorld)
         .expect("create")
         .expect("accepted");
     insert_parent(&db, 10);
@@ -371,7 +371,7 @@ fn the_capacity_witness_is_the_key_least_violating_parent() {
 #[test]
 fn the_target_witness_is_the_first_committed_survivor() {
     let dir = common::TempDir::new("witness-target");
-    let db = Db::ephemeral(dir.path(), WitnessWorld)
+    let db = Db::create(dir.path(), WitnessWorld)
         .expect("create")
         .expect("accepted");
     insert_parent(&db, 30);

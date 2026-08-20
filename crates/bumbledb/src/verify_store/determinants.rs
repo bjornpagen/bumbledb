@@ -107,7 +107,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             prev_pointwise = None;
             return Ok(());
         };
-        if determinant.len() < tail.bytes() {
+        if determinant.len() < tail.width() {
             // A pointwise determinant shorter than its interval is a width
             // desync the re-derivation above already convicted.
             prev_pointwise = None;
@@ -115,10 +115,10 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         }
         if let Some(prev) = &prev_pointwise {
             let same_group = prev.len() == key.len()
-                && prev[..prev.len() - tail.bytes()] == key[..key.len() - tail.bytes()];
+                && prev[..prev.len() - tail.width()] == key[..key.len() - tail.width()];
             let words = (
-                tail.words(&prev[prev.len() - tail.bytes()..]),
-                tail.words(&key[key.len() - tail.bytes()..]),
+                crate::encoding::interval_words(tail, &prev[prev.len() - tail.width()..]),
+                crate::encoding::interval_words(tail, &key[key.len() - tail.width()..]),
             );
             // A tail past the Q2 bound is a malformed value the F pass's
             // canonical re-decode already convicts; the disjointness walk

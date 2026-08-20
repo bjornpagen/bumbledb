@@ -268,8 +268,6 @@ trace_points! {
     CREATE_DURABLE => "create_durable", Commit,
     /// One `Db::write`, closure plus commit.
     WRITE_TXN => "write_txn", Commit,
-    /// The R18 ephemeral wipe of a crash-marked store.
-    EPHEMERAL_WIPE => "ephemeral_wipe", Storage,
     /// The whole `Db::verify_store` sweep.
     VERIFY_STORE => "verify_store", Storage,
     /// The `F` (fact) namespace pass.

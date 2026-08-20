@@ -38,7 +38,9 @@ use std::ops::Bound;
 
 use super::plan::{CommitPlan, IncrementalObligations, MarkWeight, Owed, RKeyOp};
 use super::{decode_row_id, fact_by_row};
-use crate::encoding::{FactLayout, InternId, encode_u64, field_bytes, field_word_bytes};
+use crate::encoding::{
+    FactLayout, InternId, encode_u64, field_bytes, field_word_bytes, interval_words,
+};
 use crate::error::{
     Admission, Check, CorruptionError, Direction, Error, Result, Violation, Violations,
 };
@@ -46,8 +48,8 @@ use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, BoundCeiling, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
-    CompiledSide, ContainmentId, DisjointDeterminantProof, EncodableCheck, Enforcement,
-    IntervalTail, KeyForm, KeyId, Schema, SealedBound, SealedWeight, Survivors,
+    CompiledSide, ContainmentId, DisjointDeterminantProof, EncodableCheck, Enforcement, KeyForm,
+    KeyId, Schema, SealedBound, SealedWeight, Survivors, ValueType,
 };
 use crate::storage::catalog::{
     Bounds, CatalogMap, CatalogRead, LmdbPeekCatalog, LmdbSortedGets, ReadCursor, SortedGets,
@@ -83,7 +85,7 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
 /// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
 pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Admission<()>> {
     let obligations = view.plan.incremental_obligations();
-    let mut violations = Vec::new();
+    let mut violations = Vec::new(); // construction-time: one collector per commit
     check_source(view, &obligations, &mut violations)?;
     check_target(view, &obligations, &mut violations)?;
     check_capacities(view, &obligations, &mut violations)?;
@@ -256,16 +258,14 @@ impl SlotShape {
 /// the one arithmetic in the module that could underflow on hostile
 /// bytes).
 fn interval_measure(
-    tail: IntervalTail,
+    tail: ValueType,
     bytes: &[u8],
     statement: bumbledb_theory::schema::StatementId,
     fact: &[u8],
 ) -> Result<u64> {
-    let (start, end) =
-        tail.words(bytes)
-            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                "capacity interval field",
-            )))?;
+    let (start, end) = interval_words(tail, bytes).ok_or(Error::Corruption(
+        CorruptionError::MalformedValue("capacity interval field"),
+    ))?;
     if end == u64::MAX {
         return Err(Error::CapacityRayMeasure {
             statement,
@@ -319,12 +319,6 @@ pub(crate) struct SideChecks {
     pub(crate) target: SelectionCheck,
 }
 
-/// An intern resolver: maps a string literal's raw bytes to an intern
-/// id, or `None` when no fact can carry the value — the one seam between
-/// [`Selections::encode`] (delta-aware) and [`Selections::encode_committed`]
-/// (committed dictionary only).
-type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<InternId>> + 'a;
-
 /// Pre-encoded selections for every `Containment` and `Capacity`
 /// statement, built once per commit — the commit-local scratch that keeps
 /// literal encoding out of the per-fact loops. Carries the schema it was
@@ -368,8 +362,14 @@ impl<'s> Selections<'s> {
         Self::encode_with(schema, &mut lookup)
     }
 
-    /// The shared constructor over an [`InternResolver`].
-    fn encode_with(schema: &'s Schema, resolve: &mut InternResolver<'_>) -> Result<Self> {
+    /// The shared constructor. Three call sites monomorphize here
+    /// (`encode`, `encode_committed`, `encode_lookup`) — a two-arm
+    /// enum would still leave the heap-admit lookup as a third
+    /// source, so `F: FnMut` is the form that deletes the trait object.
+    fn encode_with<F>(schema: &'s Schema, resolve: &mut F) -> Result<Self>
+    where
+        F: FnMut(&[u8]) -> Result<Option<InternId>>,
+    {
         let checks = schema
             .containments()
             .iter()
@@ -424,7 +424,10 @@ impl<'s> Selections<'s> {
     }
 }
 
-fn resolve_side(side: &CompiledSide, resolve: &mut InternResolver<'_>) -> Result<SelectionCheck> {
+fn resolve_side<F>(side: &CompiledSide, resolve: &mut F) -> Result<SelectionCheck>
+where
+    F: FnMut(&[u8]) -> Result<Option<InternId>>,
+{
     if side.is_empty() {
         return Ok(SelectionCheck::Empty);
     }
@@ -446,12 +449,12 @@ fn resolve_encodable(checks: &[EncodableCheck]) -> SelectionCheck {
             .iter()
             .map(|check| match check {
                 EncodableCheck::Encoded { field, bytes } => {
-                    (*field, FieldCheck::One(bytes.clone()))
+                    (*field, FieldCheck::One(bytes.clone())) // construction-time: Selections::encode
                 }
                 EncodableCheck::EncodedSet {
                     field,
                     alternatives,
-                } => (*field, FieldCheck::AnyOf(alternatives.clone())),
+                } => (*field, FieldCheck::AnyOf(alternatives.clone())), // construction-time: Selections::encode
             })
             .collect(),
     )
@@ -462,30 +465,32 @@ fn resolve_encodable(checks: &[EncodableCheck]) -> SelectionCheck {
 /// text resolves through the boundary's dictionary view. A set binding's
 /// never-interned `str` alternatives drop out of the disjunction (each is
 /// individually unsatisfiable); a binding with nothing left is `Never`.
-fn resolve_checks(
-    compiled: &[CompiledCheck],
-    resolve: &mut InternResolver<'_>,
-) -> Result<SelectionCheck> {
+fn resolve_checks<F>(compiled: &[CompiledCheck], resolve: &mut F) -> Result<SelectionCheck>
+where
+    F: FnMut(&[u8]) -> Result<Option<InternId>>,
+{
     if compiled.is_empty() {
         return Ok(SelectionCheck::Empty);
     }
     let mut fields = Vec::with_capacity(compiled.len());
     for check in compiled {
         let (field, encoded): (FieldId, FieldCheck) = match check {
-            CompiledCheck::Encoded { field, bytes } => (*field, FieldCheck::One(bytes.clone())),
+            CompiledCheck::Encoded { field, bytes } => {
+                (*field, FieldCheck::One(bytes.clone())) // construction-time: Selections::encode
+            }
             CompiledCheck::EncodedSet {
                 field,
                 alternatives,
-            } => (*field, FieldCheck::AnyOf(alternatives.clone())),
+            } => (*field, FieldCheck::AnyOf(alternatives.clone())), // construction-time: Selections::encode
             CompiledCheck::Interned { field, text } => match resolve(text.as_bytes())? {
-                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id.raw())))),
+                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id.raw())))), // construction-time: Selections::encode
                 None => return Ok(SelectionCheck::Never),
             },
             CompiledCheck::InternedSet { field, texts } => {
                 let mut alternatives = Vec::with_capacity(texts.len());
                 for text in texts {
                     if let Some(id) = resolve(text.as_bytes())? {
-                        alternatives.push(Box::new(encode_u64(id.raw())) as Box<[u8]>);
+                        alternatives.push(Box::new(encode_u64(id.raw())) as Box<[u8]>); // construction-time: Selections::encode
                     }
                 }
                 if alternatives.is_empty() {
@@ -609,6 +614,8 @@ pub(super) fn check_source(
         collect(outcome, violations)?;
     }
     for membership in obligations.memberships() {
+        // construction-time: plan-owned Check; the collector takes one copy
+        // (closed-target memberships, not the per-fact edge loop).
         collect(Ok(membership.check.clone()), violations)?;
     }
     span.set_count(probes);
@@ -626,8 +633,8 @@ struct AffectedSource<'a> {
     source_row: u64,
     key_bytes: &'a [u8],
     disjoint: DisjointDeterminantProof,
-    source_tail: IntervalTail,
-    target_tail: IntervalTail,
+    source_tail: ValueType,
+    target_tail: ValueType,
 }
 
 impl AffectedSource<'_> {
@@ -766,12 +773,14 @@ pub(super) fn check_target(
                     // one seam, each derived from its own field's type.
                     let source_tail = *source_tail;
                     let target_tail = *target_tail;
-                    let (ts, te) = target_tail
-                        .words(&determinant[determinant.len() - target_tail.bytes()..])
-                        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                            "U determinant tail",
-                        )))?;
-                    let group = &determinant[..determinant.len() - target_tail.bytes()];
+                    let (ts, te) = interval_words(
+                        target_tail,
+                        &determinant[determinant.len() - target_tail.width()..],
+                    )
+                    .ok_or(Error::Corruption(
+                        CorruptionError::MalformedValue("U determinant tail"),
+                    ))?;
+                    let group = &determinant[..determinant.len() - target_tail.width()];
                     let prefix = keys::reverse_prefix(&mut key, sid, group);
                     let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
                         (Bound::Included(prefix), Bound::Unbounded);
@@ -787,16 +796,18 @@ pub(super) fn check_target(
                                 "R key shape",
                             )));
                         };
-                        if key_bytes.len() != group.len() + source_tail.bytes() {
+                        if key_bytes.len() != group.len() + source_tail.width() {
                             return Err(Error::Corruption(CorruptionError::MalformedValue(
                                 "R key width",
                             )));
                         }
-                        let (ss, se) = source_tail
-                            .words(&key_bytes[key_bytes.len() - source_tail.bytes()..])
-                            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                                "R key interval tail",
-                            )))?;
+                        let (ss, se) = interval_words(
+                            source_tail,
+                            &key_bytes[key_bytes.len() - source_tail.width()..],
+                        )
+                        .ok_or(Error::Corruption(
+                            CorruptionError::MalformedValue("R key interval tail"),
+                        ))?;
                         if ss < te && ts < se {
                             affected.insert(AffectedSource {
                                 containment: dependent.containment,
@@ -1037,7 +1048,7 @@ fn closed_source_survivor(
         }
         keys::determinant_image(layout.encoded(&row.fact), key_projection, &mut derived);
         if derived.as_bytes() == determinant {
-            return Some(row.fact.clone());
+            return Some(row.fact.clone()); // cold-arm: violation payload
         }
     }
     None
@@ -1109,6 +1120,11 @@ pub(crate) struct Checker<'a, C: CatalogRead> {
     catalog: &'a C,
     schema: &'a Schema,
     key: KeyBuf,
+    /// Retained `F` bytes for a probe that does not hold the fact
+    /// across the next catalog get. Capacity is the commit high-water.
+    fact_scratch: Vec<u8>,
+    /// Retained holder-fact bytes that must survive `measure_children`.
+    parent_scratch: Vec<u8>,
 }
 
 impl<'a, C: CatalogRead> Checker<'a, C> {
@@ -1117,10 +1133,12 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
             catalog,
             schema,
             key: [0; MAX_KEY],
+            fact_scratch: Vec::new(),   // construction-time: Checker retain
+            parent_scratch: Vec::new(), // construction-time: Checker retain
         }
     }
 
-    fn row_fact(&self, relation: RelationId, row_id: u64) -> Result<Vec<u8>> {
+    fn load_row(&mut self, relation: RelationId, row_id: u64, parent: bool) -> Result<()> {
         let stored = self
             .catalog
             .fetch_fact(relation, row_id)?
@@ -1130,7 +1148,14 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
             }))?;
         let bytes = stored.as_ref();
         crate::storage::read::check_width(self.schema, relation, row_id, bytes)?;
-        Ok(bytes.to_vec())
+        let dst = if parent {
+            &mut self.parent_scratch
+        } else {
+            &mut self.fact_scratch
+        };
+        dst.clear();
+        dst.extend_from_slice(bytes);
+        Ok(())
     }
 
     /// Scalar target probe: one `U` get on the target key's determinant. A miss
@@ -1143,10 +1168,14 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<Check> {
         let target_key = self.schema.key(probe.target_key);
         if target_key.form().as_fresh_row().is_some() {
-            let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
+            let row_id = fresh_row_word(probe.key_bytes)?;
+            let f_key = keys::fact_key(probe.target_relation, row_id);
+            let Some(fact) = self.catalog.get(CatalogMap::Data, &f_key)? else {
                 return Ok(probe.unsatisfied(self.schema));
             };
-            return Ok(self.check_fact(probe, &fact));
+            let bytes = fact.as_ref();
+            crate::storage::read::check_width(self.schema, probe.target_relation, row_id, bytes)?;
+            return Ok(self.check_fact(probe, bytes));
         }
         let u_key = keys::determinant_key(
             &mut self.key,
@@ -1157,8 +1186,9 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         let Some(value) = self.catalog.get(CatalogMap::Data, u_key)? else {
             return Ok(probe.unsatisfied(self.schema));
         };
-        let value = value.as_ref().to_vec();
-        self.check_segment(probe, &value)
+        // decode_row_id copies the word to the stack before the next
+        // get; no host copy of the U value.
+        self.check_segment(probe, value.as_ref())
     }
 
     /// [`Checker::check_scalar`]'s sorted-worklist twin (the T8
@@ -1213,8 +1243,8 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     pub(crate) fn check_coverage(
         &mut self,
         disjoint: DisjointDeterminantProof,
-        source_tail: IntervalTail,
-        target_tail: IntervalTail,
+        source_tail: ValueType,
+        target_tail: ValueType,
         probe: &Probe<'_>,
     ) -> Result<Check> {
         disjoint.authorize_coverage();
@@ -1240,13 +1270,13 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
             probe.key_bytes,
         )
         .len();
-        let group_len = full_src_len - source_tail.bytes();
+        let group_len = full_src_len - source_tail.width();
         let seek_len = group_len + 8;
-        let (source_start, source_end) = source_tail
-            .words(&self.key[group_len..full_src_len])
-            .expect("the plan derived these key bytes from a validated fact");
+        let (source_start, source_end) =
+            interval_words(source_tail, &self.key[group_len..full_src_len])
+                .expect("the plan derived these key bytes from a validated fact");
         // Every stored key of the group has exactly this length.
-        let full_len = group_len + target_tail.bytes();
+        let full_len = group_len + target_tail.width();
 
         // Entry location: the one determinant entry that can cover `s`. A
         // segment starting exactly at `s` has full key `seek ‖ its end`
@@ -1257,11 +1287,18 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         // proves nothing covers `s` (the group is disjoint and
         // start-ordered), so there is no entry segment and the sweep
         // gaps at `s` over an empty walk.
-        let seek = self.key[..seek_len].to_vec();
-        let group = self.key[..group_len].to_vec();
-        let located =
-            self.locate_coverage_entry(&seek, &group, full_len, target_tail, source_start)?;
-        let segments = self.collect_coverage_segments(located, &group, full_len, target_tail)?;
+        // Seek/group are already in `self.key` — a Vec copy was the
+        // per-walk tax. Catalog GAT copies below stay (the sweep owns
+        // segment values past the next get).
+        let located = self.locate_coverage_entry(
+            &self.key[..seek_len],
+            &self.key[..group_len],
+            full_len,
+            target_tail,
+            source_start,
+        )?;
+        let segments =
+            self.collect_coverage_segments(located, &self.key[..group_len], full_len, target_tail)?;
         sweep(
             segments.into_iter().map(Ok),
             Some((source_start, source_end)),
@@ -1301,21 +1338,17 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         checks: &SideChecks,
         parent_key: &[u8],
     ) -> Result<Check> {
-        let parent_owned: Option<Vec<u8>>;
         let parent_fact: &[u8] = match &statement.enforcement {
             CapacityEnforcement::ScalarProbe { target_key, .. } => {
                 let key_statement = self.schema.key(*target_key);
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
                 // holder itself — nothing to defer.
-                let fact = match key_statement.form() {
+                match key_statement.form() {
                     KeyForm::FreshRow { .. } => {
-                        let Some(fact) =
-                            self.fresh_row_fact(statement.target.relation, parent_key)?
-                        else {
+                        if !self.load_fresh_parent(statement.target.relation, parent_key)? {
                             return Ok(Check::Holds);
-                        };
-                        fact
+                        }
                     }
                     KeyForm::Scalar | KeyForm::Pointwise { .. } => {
                         let u_key = keys::determinant_key(
@@ -1350,25 +1383,25 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                             let measure =
                                 self.measure_children(statement, &checks.source, parent_key, hi)?;
                             if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
-                                let parent_fact =
-                                    self.row_fact(statement.target.relation, row_id)?;
+                                self.load_row(statement.target.relation, row_id, true)?;
                                 return Ok(self.capacity_violation(
                                     statement,
-                                    parent_fact.into(),
+                                    self.parent_scratch.clone().into(), // cold-arm: conviction
                                     measure,
                                 ));
                             }
                             return Ok(Check::Holds);
                         }
-                        self.row_fact(statement.target.relation, row_id)?
+                        self.load_row(statement.target.relation, row_id, true)?;
                     }
-                };
+                }
                 let layout = self.schema.relation(statement.target.relation).layout();
-                if !satisfies(&checks.target, layout, &fact) {
+                if !satisfies(&checks.target, layout, &self.parent_scratch) {
                     return Ok(Check::Holds);
                 }
-                parent_owned = Some(fact);
-                parent_owned.as_ref().expect("just stored")
+                // Held across measure_children — that walk uses
+                // `self.key` / catalog, never `parent_scratch`.
+                &self.parent_scratch
             }
             // A closed parent: the member set IS the ψ-selected roster,
             // and the parent tuple is the axiom's 8-byte id encoding.
@@ -1399,9 +1432,34 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         let hi = self.resolve_hi(statement, parent_fact)?;
         let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
         if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
-            return Ok(self.capacity_violation(statement, parent_fact.into(), measure));
+            // Conviction is the cold arm: one payload copy.
+            return Ok(self.capacity_violation(
+                statement,
+                self.capacity_payload(statement, parent_key),
+                measure,
+            ));
         }
         Ok(Check::Holds)
+    }
+
+    fn capacity_payload(&self, statement: &CapacityStatement, parent_key: &[u8]) -> Box<[u8]> {
+        match &statement.enforcement {
+            CapacityEnforcement::ScalarProbe { .. } => self.parent_scratch.clone().into(), // cold-arm: conviction
+            CapacityEnforcement::Closed { .. } => {
+                let word: [u8; 8] = parent_key
+                    .try_into()
+                    .expect("closed parent key width checked above");
+                let id = u64::from_be_bytes(word);
+                let rows = self
+                    .schema
+                    .relation(statement.target.relation)
+                    .body()
+                    .closed_rows()
+                    .expect("Closed arm resolves only against a closed target");
+                let index = usize::try_from(id).expect("a contained axiom index fits usize");
+                rows[index].fact.clone() // cold-arm: conviction
+            }
+        }
     }
 
     fn capacity_violation(
@@ -1479,15 +1537,15 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
             matches!(hi, BoundCeiling::Unbounded) && measure >= u128::from(statement.lo)
         };
         let slot = SlotShape::of(statement.weight);
-        let prefix_owned = keys::reverse_prefix(&mut self.key, statement.id, parent_key).to_vec();
+        let prefix_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key).len();
         let bounds = Bounds {
-            start: Bound::Included(prefix_owned.as_slice()),
+            start: Bound::Included(&self.key[..prefix_len]),
             end: Bound::Unbounded,
         };
         let mut range = self.catalog.range(CatalogMap::Data, bounds)?;
         let mut measure = 0u128;
         while let Some(entry) = ReadCursor::next(&mut range)? {
-            if !entry.key.starts_with(&prefix_owned) {
+            if !entry.key.starts_with(&self.key[..prefix_len]) {
                 break;
             }
             measure += u128::from(slot.decode(entry.value)?);
@@ -1502,19 +1560,17 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     /// id ([`fresh_row_word`]) and one `F` get answers — the found fact,
     /// or the miss whose verdict belongs to the caller (a violation at
     /// the scalar probe, no-holder at the capacity check).
-    fn fresh_row_fact(
-        &mut self,
-        relation: RelationId,
-        determinant: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
+    fn load_fresh_parent(&mut self, relation: RelationId, determinant: &[u8]) -> Result<bool> {
         let row_id = fresh_row_word(determinant)?;
         let f_key = keys::fact_key(relation, row_id);
         match self.catalog.get(CatalogMap::Data, &f_key)? {
-            None => Ok(None),
+            None => Ok(false),
             Some(bytes) => {
                 let bytes = bytes.as_ref();
                 crate::storage::read::check_width(self.schema, relation, row_id, bytes)?;
-                Ok(Some(bytes.to_vec()))
+                self.parent_scratch.clear();
+                self.parent_scratch.extend_from_slice(bytes);
+                Ok(true)
             }
         }
     }
@@ -1522,13 +1578,13 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     /// The per-segment target-selection check: with an empty σ the determinant
     /// hit alone is the proof; otherwise the found target fact is fetched
     /// (one `F` get via the determinant's row id) and byte-checked against σ.
-    fn check_segment(&self, probe: &Probe<'_>, value: &[u8]) -> Result<Check> {
+    fn check_segment(&mut self, probe: &Probe<'_>, value: &[u8]) -> Result<Check> {
         if matches!(probe.target_check, SelectionCheck::Empty) {
             return Ok(Check::Holds);
         }
         let row_id = decode_row_id(value)?;
-        let target_fact = self.row_fact(probe.target_relation, row_id)?;
-        Ok(self.check_fact(probe, &target_fact))
+        self.load_row(probe.target_relation, row_id, false)?;
+        Ok(self.check_fact(probe, &self.fact_scratch))
     }
 
     /// The σ half of a probe over a target fact already in hand — the
@@ -1551,12 +1607,13 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         seek: &[u8],
         group: &[u8],
         full_len: usize,
-        target_tail: IntervalTail,
+        target_tail: ValueType,
         source_start: u64,
     ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
         if let Some(hit) = self.catalog.greater_or_equal(CatalogMap::Data, seek)?
             && hit.key.starts_with(seek)
         {
+            // RULED: catalog GAT ends at the next get; the walk owns the entry.
             return Ok(Some((hit.key.to_vec(), hit.value.to_vec())));
         }
         match self.catalog.lower(CatalogMap::Data, seek)? {
@@ -1566,12 +1623,10 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                         "U determinant key length",
                     )));
                 }
-                let (_, pred_end) =
-                    target_tail
-                        .words(&pred.key[group.len()..])
-                        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                            "U determinant tail",
-                        )))?;
+                let (_, pred_end) = interval_words(target_tail, &pred.key[group.len()..]).ok_or(
+                    Error::Corruption(CorruptionError::MalformedValue("U determinant tail")),
+                )?;
+                // RULED: catalog GAT ends at the next get; the walk owns the pred.
                 Ok((pred_end > source_start).then(|| (pred.key.to_vec(), pred.value.to_vec())))
             }
             _ => Ok(None),
@@ -1583,10 +1638,10 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         located: Option<(Vec<u8>, Vec<u8>)>,
         group: &[u8],
         full_len: usize,
-        target_tail: IntervalTail,
+        target_tail: ValueType,
     ) -> Result<Vec<(u64, u64, Vec<u8>)>> {
         let Some((entry_key, entry_value)) = located else {
-            return Ok(Vec::new());
+            return Ok(Vec::new()); // empty walk: no segments, no alloc of note
         };
         let Some((_, _, _)) = (entry_key.len() == full_len)
             .then(|| segment_words(&entry_key, &entry_value, target_tail))
@@ -1596,7 +1651,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                 "U determinant key length",
             )));
         };
-        let mut segments = Vec::new();
+        let mut segments = Vec::new(); // RULED: one walk Vec; GAT values must outlive the next get
         let (start, end, _) =
             segment_words(&entry_key, &entry_value, target_tail).expect("length-checked above");
         segments.push((start, end, entry_value));
@@ -1619,6 +1674,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                     "U determinant key length",
                 )));
             };
+            // RULED: Continuation<_,_,Vec<u8>> takes owned values; catalog lending ends.
             segments.push((start, end, entry.value.to_vec()));
         }
         Ok(segments)
@@ -1632,7 +1688,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
 type DeterminantSegment<'t> = (u64, u64, &'t [u8]);
 
 /// Parses a determinant key into the sweep's word pair through the
-/// key's [`IntervalTail`] (the acceptance gate puts the interval last):
+/// key's interval [`ValueType`] (the acceptance gate puts the interval last):
 /// the general tail splits its 16 bytes; a fixed tail derives the end
 /// from the type's width. `None` on a key too short to carry the tail
 /// or a fixed start past the Q2 bound — the callers' key-shape
@@ -1640,12 +1696,12 @@ type DeterminantSegment<'t> = (u64, u64, &'t [u8]);
 fn segment_words<'t>(
     key: &[u8],
     value: &'t [u8],
-    tail: IntervalTail,
+    tail: ValueType,
 ) -> Option<DeterminantSegment<'t>> {
-    if key.len() < tail.bytes() {
+    if key.len() < tail.width() {
         return None;
     }
-    let (start, end) = tail.words(&key[key.len() - tail.bytes()..])?;
+    let (start, end) = interval_words(tail, &key[key.len() - tail.width()..])?;
     Some((start, end, value))
 }
 
@@ -1655,7 +1711,7 @@ fn segment_words<'t>(
 /// nonempty). `Pack`'s emit-maximal sibling drives the same sweep from
 /// its own call site (`docs/architecture/20-query-ir.md`).
 struct GapAt<'c, 'a, 'p, C: CatalogRead> {
-    checker: &'c Checker<'a, C>,
+    checker: &'c mut Checker<'a, C>,
     probe: &'c Probe<'p>,
 }
 

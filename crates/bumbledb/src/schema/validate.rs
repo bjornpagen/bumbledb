@@ -18,11 +18,11 @@ use std::collections::BTreeMap;
 use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
     CompiledSide, CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof,
-    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, IntervalTail,
-    KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody,
-    RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning, SealedBound,
-    SealedWeight, Side, StatementDescriptor, StatementId, StatementRef, Survivors, ValueMismatch,
-    ValueType, Weight, value_matches,
+    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyForm, KeyId,
+    KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody, RelationDescriptor,
+    RelationId, Schema, SchemaDescriptor, SchemaWarning, SealedBound, SealedWeight, Side,
+    StatementDescriptor, StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight,
+    value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -457,7 +457,7 @@ enum FunctionalityEvidence {
     /// The disjointness proof WITH the tail the gate derived it from —
     /// what validation learned survives to sealing (parse, don't
     /// validate), so no consumer re-derives the trailing encoding.
-    Pointwise(DisjointDeterminantProof, IntervalTail),
+    Pointwise(DisjointDeterminantProof, ValueType),
 }
 
 /// The projection positions holding interval-typed fields — the one scan
@@ -675,7 +675,7 @@ fn validate_functionality(
     let tail = interval_position.map(|pos| {
         let idx = usize::from(projection.ordered()[pos].0);
         match relation.fields[idx].value_type {
-            ty if ty.is_interval() => IntervalTail::of(ty).expect("interval field"),
+            ty if ty.is_interval() => ty,
             _ => unreachable!("interval_positions found an interval field"),
         }
     });
@@ -740,12 +740,16 @@ fn validate_functionality(
                         // end derives from the type's width). Sealed rows
                         // encode at validate, so a malformed tail is a
                         // programmer invariant, never data.
-                        let (a_start, a_end) = tail
-                            .words(field_bytes(layout.encoded(&row.fact), idx))
-                            .expect("sealed rows hold canonical interval bytes");
-                        let (b_start, b_end) = tail
-                            .words(field_bytes(layout.encoded(&earlier.fact), idx))
-                            .expect("sealed rows hold canonical interval bytes");
+                        let (a_start, a_end) = crate::encoding::interval_words(
+                            tail,
+                            field_bytes(layout.encoded(&row.fact), idx),
+                        )
+                        .expect("sealed rows hold canonical interval bytes");
+                        let (b_start, b_end) = crate::encoding::interval_words(
+                            tail,
+                            field_bytes(layout.encoded(&earlier.fact), idx),
+                        )
+                        .expect("sealed rows hold canonical interval bytes");
                         a_start < b_end && b_start < a_end
                     }
                 };
@@ -962,13 +966,14 @@ fn validate_capacity(
         }
         Weight::DurationOf(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
-            let tail = IntervalTail::of(descriptor.value_type).ok_or_else(|| {
-                StatementErrorKind::CapacityWeightNotDuration {
+            if !descriptor.value_type.is_interval() {
+                return Err(StatementErrorKind::CapacityWeightNotDuration {
                     relation: source.relation,
                     field,
                 }
-                .at(id)
-            })?;
+                .at(id));
+            }
+            let tail = descriptor.value_type;
             SealedWeight::Duration { field, tail }
         }
     };
@@ -1004,13 +1009,14 @@ fn validate_capacity(
         }
         Some(Bound::TargetDuration(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
-            let tail = IntervalTail::of(descriptor.value_type).ok_or_else(|| {
-                StatementErrorKind::CapacityBoundNotDuration {
+            if !descriptor.value_type.is_interval() {
+                return Err(StatementErrorKind::CapacityBoundNotDuration {
                     relation: target.relation,
                     field,
                 }
-                .at(id)
-            })?;
+                .at(id));
+            }
+            let tail = descriptor.value_type;
             if !matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
@@ -1463,7 +1469,7 @@ fn resolve_target_key(
     target_projection: &Projection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-    source_tail: Option<IntervalTail>,
+    source_tail: Option<ValueType>,
 ) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
 

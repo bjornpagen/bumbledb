@@ -187,7 +187,7 @@ impl<S> PreparedQuery<S> {
         self.profile_on(txn.identity(), &catalog, &images, params)
     }
 
-    /// Generic ANALYZE path shared by both [`crate::Instance`] arms.
+    /// Generic ANALYZE path shared by both admitted-instance arms.
     pub(crate) fn profile_on<C: CatalogRead, I: ImageBind>(
         &mut self,
         identity: &CatalogIdentity,

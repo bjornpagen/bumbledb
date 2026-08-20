@@ -235,7 +235,7 @@ impl<S> PreparedQuery<S> {
                 words.clear();
                 words
             }
-            _ => Vec::new(),
+            _ => Vec::new(), // first set-bind constructs the pool; warm re-bind hits WordSet
         };
         for (element, value) in values.iter().enumerate() {
             let Some(word_count) = element_words(catalog, value, expected, &mut words)? else {

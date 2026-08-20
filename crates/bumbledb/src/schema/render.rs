@@ -464,8 +464,8 @@ impl Names for DeclaredNames<'_> {
 }
 
 /// The lazy renderer behind both entry points.
-struct Rendered<'a> {
-    names: &'a dyn Names,
+struct Rendered<'a, N: Names + ?Sized> {
+    names: &'a N,
     statement: RenderedStatement<'a>,
     id: StatementId,
 }
@@ -490,7 +490,7 @@ enum RenderedStatement<'a> {
     },
 }
 
-impl fmt::Display for Rendered<'_> {
+impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.statement {
             RenderedStatement::Key {
@@ -581,9 +581,9 @@ impl fmt::Display for Rendered<'_> {
 /// target-row field ident, or `Duration(field)` — the bound formatter
 /// behind the capacity window (idents resolve through the same
 /// [`Names`] the sides use; unknown ids take the `field#N` fallback).
-fn bound(
+fn bound<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
+    names: &N,
     target: RelationId,
     bound: &Bound,
 ) -> fmt::Result {
@@ -598,9 +598,9 @@ fn bound(
     }
 }
 
-fn relation_name(
+fn relation_name<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
+    names: &N,
     relation: RelationId,
 ) -> fmt::Result {
     match names.relation_name(relation) {
@@ -609,9 +609,9 @@ fn relation_name(
     }
 }
 
-fn field_name(
+fn field_name<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
+    names: &N,
     relation: RelationId,
     field: FieldId,
 ) -> fmt::Result {
@@ -621,16 +621,16 @@ fn field_name(
     }
 }
 
-fn side(f: &mut fmt::Formatter<'_>, names: &dyn Names, side: &Side) -> fmt::Result {
+fn side<N: Names + ?Sized>(f: &mut fmt::Formatter<'_>, names: &N, side: &Side) -> fmt::Result {
     side_parts(f, names, side.relation, &side.projection, &side.selection)
 }
 
 /// `Name(p1, p2 | s1 == lit1, s2 == {lit2, lit3})` — the one side shape;
 /// the selection block only when σ is nonempty; a disjunctive binding
 /// renders its literal set in braces.
-fn side_parts(
+fn side_parts<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
+    names: &N,
     relation: RelationId,
     projection: &[FieldId],
     selection: &[(FieldId, LiteralSet)],
@@ -674,9 +674,9 @@ fn side_parts(
 /// bare-handle spelling back out); an out-of-range word prints visibly
 /// wrong as `Kind(7?)` — the `ir/render` convention, one fallback
 /// everywhere.
-fn selection_literal(
+fn selection_literal<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
+    names: &N,
     relation: RelationId,
     field: FieldId,
     value: &Value,

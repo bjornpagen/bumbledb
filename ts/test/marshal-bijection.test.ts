@@ -6,9 +6,8 @@
  * - the round trip: insert with `"Savings"`, final-state tx reads and
  *   snapshot `scan`/`get` all return `"Savings"` (strict equality), and
  *   `delete`/`contains` lower the NAME through the same one seam;
- * - the raw cell: the store holds `1n` — asserted through exhume, which
- *   stays RAW by design (it is the recovery surface: rows carry the
- *   engine's ids, and the roster crosses SEPARATELY on the descriptor);
+ * - the raw cell: the store holds the closed roster's declaration-order
+ *   id (`Savings` is `1n`); typed scan/get decode it back to the name;
  * - the write throw: an unknown handle name is a pointed marshal refusal
  *   naming the vocabulary and its roster (the 0.4.0 UPGRADE over 0.3.0's
  *   any-bigint-compiles), and a bare bigint is a shape refusal — the old
@@ -35,7 +34,6 @@ import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-marshal-"))
 const storeDir = path.join(tmpRoot, "store")
-const exhumeDir = path.join(tmpRoot, "store-exhume")
 const lawlessDir = path.join(tmpRoot, "lawless")
 const lawlessCopyDir = path.join(tmpRoot, "lawless-copy")
 
@@ -134,37 +132,6 @@ describe("the marshal bijection over closed rosters", function suite() {
 		})
 		assert.equal(cycle.tag, "accepted", "the net-zero delta commits")
 		assert.equal(db.scan(Account).length, 1, "the checking row died in its own delta")
-	})
-
-	test("the store's raw cell is the u64 row id — exhume stays RAW by design", async function rawCell() {
-		copyStore(storeDir, exhumeDir)
-		const exhumed = await Db.exhume(exhumeDir)
-		const raw = exhumed.scan("Account")
-		assert.equal(raw.length, 1)
-		const cell = must(raw[0]).kind
-		/**
-		 * Exhume is the recovery surface and DELIBERATELY not a consumer of
-		 * the bijection: rows stay raw (the engine's cell, never the decoded
-		 * name) and the roster crosses SEPARATELY on the descriptor — so a
-		 * store outliving its schema is still fully recoverable by name.
-		 */
-		assert.equal(typeof cell, "bigint", "the exhumed cell is the raw engine cell, never the decoded name")
-		assert.strictEqual(cell, 1n, 'the raw cell of "Savings" is its declaration-order row id')
-		const kindRelation = must(
-			exhumed.descriptor.relations.find(function byName(candidate) {
-				return candidate.name === "Kind"
-			})
-		)
-		assert.deepEqual(
-			must(kindRelation.roster).map(function pair(axiom) {
-				return { handle: axiom.handle, id: axiom.id }
-			}),
-			[
-				{ handle: "Checking", id: 0n },
-				{ handle: "Savings", id: 1n }
-			],
-			"the roster travels separately on the descriptor — the bijection is recoverable without the theory"
-		)
 	})
 
 	test("an unknown handle name is a pointed write refusal (the 0.4.0 upgrade)", function unknownName() {

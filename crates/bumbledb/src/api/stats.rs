@@ -1,7 +1,8 @@
 //! Structured per-execution statistics (docs/architecture/60-validation.md): the data
 //! behind plan introspection, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
-//! numbers, not a rendered string. Obtained via [`crate::Instance::profile`]
+//! numbers, not a rendered string. Obtained via [`crate::OwnedInstance::profile`]
+//! / [`crate::ReadInstance::profile`]
 //! (ANALYZE semantics: the query really executes, with counting
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 //! Diagnostic: this shape is unfrozen. It is not a staleness clock.

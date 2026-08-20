@@ -223,10 +223,6 @@ impl fmt::Display for CorruptionError {
                 "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
             ),
             Self::MetaMissing => write!(f, "the _meta database or a required key is absent"),
-            Self::StoreKindInvalid => write!(
-                f,
-                "the _meta store-kind marker is present but not a valid kind encoding"
-            ),
             Self::DanglingInternId(id) => {
                 write!(f, "intern id {} has no dictionary entry", id.raw())
             }
@@ -263,12 +259,7 @@ impl fmt::Display for CorruptionError {
                 relation.0, exceeded.observed, exceeded.ceiling
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
-            Self::EphemeralDirtyArmed => write!(
-                f,
-                "ephemeral dirty marker armed — the store's last session never proved its sync"
-            ),
             Self::DictReverseIdReuse => write!(f, "dict reverse id reuse"),
-            Self::DescriptorRoundTrip => write!(f, "descriptor round trip"),
             Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
             Self::NonzeroFixedBytesPad(tail) => write!(
                 f,
@@ -1057,19 +1048,6 @@ impl fmt::Display for Error {
             }
             Self::EnvironmentLocked => {
                 write!(f, "another live handle holds this environment's lock")
-            }
-            Self::StoreKindMismatch { mismatch } => {
-                write!(
-                    f,
-                    "the store on disk is {}, this constructor opens {} stores",
-                    mismatch.witnessed, mismatch.required
-                )
-            }
-            Self::DescriptorMissing => {
-                write!(
-                    f,
-                    "the store carries no schema descriptor (format 8 requires it)"
-                )
             }
             Self::Io(err) => write!(f, "io: {err}"),
             Self::Hatch(_) => write!(f, "io: bridge decline"),

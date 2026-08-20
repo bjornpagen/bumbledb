@@ -3,17 +3,18 @@
 //! for the zero-warm-allocation gate and the benchmark's memory
 //! observability.
 //!
-//! Feature-gated (`alloc-counter`) and thread-naive by design — the gate
-//! protocol is single-threaded. Only [`AllocSnapshot`] — plain data, the
-//! bench report's field type — exists without the feature; the
-//! allocator, its statics, and every reading function compile only when
-//! the feature registers the counter. The counter wraps the system allocator and
-//! tracks **events** (allocations including reallocations; deallocations)
-//! and **bytes** (window-relative alloc/dealloc totals; absolute live and
-//! peak-live). A steady-state measured window must see **zero** of either
-//! event kind — growth inside a seen (generation, parameter envelope) is
-//! a failure, not amortization; only a new intermediate high-water may
-//! allocate.
+//! The counter type, its statics, and the reading functions always
+//! compile so the ordinary-tier budget binary (`tests/alloc_budgets.rs`)
+//! can register [`CountingAllocator`] without the feature. The lib
+//! itself installs `#[global_allocator]` only under `alloc-counter`
+//! (the release gate and the bench `obs` feature). Thread-naive by
+//! design — the protocol is single-threaded. The counter wraps the
+//! system allocator and tracks **events** (allocations including
+//! reallocations; deallocations) and **bytes** (window-relative
+//! alloc/dealloc totals; absolute live and peak-live). A steady-state
+//! measured window must see **zero** of either event kind — growth
+//! inside a seen (generation, parameter envelope) is a failure, not
+//! amortization; only a new intermediate high-water may allocate.
 //!
 //! Event/byte asymmetry for `realloc`, deliberate: a realloc counts as one
 //! allocation event and zero deallocation events (the gate's historical
@@ -35,38 +36,27 @@
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
 // delegates to the system allocator and counts.
 
-#[cfg(feature = "alloc-counter")]
 use std::alloc::{GlobalAlloc, Layout, System};
-#[cfg(feature = "alloc-counter")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(feature = "alloc-counter")]
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "alloc-counter")]
 static DEALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "alloc-counter")]
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "alloc-counter")]
 static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "alloc-counter")]
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "alloc-counter")]
 static PEAK_LIVE: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(feature = "alloc-counter")]
 fn bump_live(add: u64) {
     let prev = LIVE_BYTES.fetch_add(add, Ordering::Relaxed);
     PEAK_LIVE.fetch_max(prev.saturating_add(add), Ordering::Relaxed);
 }
 
-/// The wrapping allocator, registered as the global allocator whenever the
-/// `alloc-counter` feature is on.
-#[cfg(feature = "alloc-counter")]
+/// The wrapping allocator. The lib registers it under `alloc-counter`;
+/// the ordinary-tier budget binary registers it when that feature is off.
 pub struct CountingAllocator;
 
 // SAFETY: every method delegates directly to `System`, which upholds the
 // GlobalAlloc contract; the counters are side effects with no aliasing.
-#[cfg(feature = "alloc-counter")]
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
@@ -154,7 +144,6 @@ pub struct AllocSnapshot {
 }
 
 /// Reads every counter at once.
-#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn snapshot() -> AllocSnapshot {
     AllocSnapshot {
@@ -173,7 +162,6 @@ pub fn snapshot() -> AllocSnapshot {
 
 /// Zeroes the window counters (events and bytes) — the start of a measured
 /// window. Live bytes are absolute and unaffected.
-#[cfg(feature = "alloc-counter")]
 pub fn reset() {
     ALLOCATIONS.store(0, Ordering::Relaxed);
     DEALLOCATIONS.store(0, Ordering::Relaxed);
@@ -182,14 +170,12 @@ pub fn reset() {
 }
 
 /// Allocation events (including reallocations) since the last [`reset`].
-#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn count() -> u64 {
     ALLOCATIONS.load(Ordering::Relaxed)
 }
 
 /// Deallocation events since the last [`reset`].
-#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn dealloc_count() -> u64 {
     DEALLOCATIONS.load(Ordering::Relaxed)

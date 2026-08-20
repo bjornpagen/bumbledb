@@ -16,7 +16,7 @@ use crate::storage::catalog::{
 use super::acquire_lock::acquire_lock;
 use super::open_env::{OpenLane, open_env};
 use super::read_meta::write_fresh_meta;
-use super::{Environment, GenerationId, StoreKind};
+use super::{Environment, GenerationId};
 
 /// Atomic publication as data. A new step extends the crash matrix by
 /// construction; a forgotten crash case is a missing enum arm.
@@ -90,16 +90,12 @@ impl<'a> PublishCatalog<'a> {
 }
 
 impl Environment {
-    /// Publishes `catalog` at `path` as `kind`. The destination must not
+    /// Publishes `catalog` at `path`. The destination must not
     /// exist. Staging is a sibling `<name>.staging.<nonce>`; a failure
     /// before [`PublishStep::Rename`] never exposes `path`. A failure
     /// after rename is [`Error::PublishedButUnsynced`].
-    pub(crate) fn publish(
-        path: &Path,
-        kind: StoreKind,
-        catalog: &PublishCatalog<'_>,
-    ) -> Result<Self> {
-        match publish_inner(path, kind, catalog, None, false)? {
+    pub(crate) fn publish(path: &Path, catalog: &PublishCatalog<'_>) -> Result<Self> {
+        match publish_inner(path, catalog, OpenLane::Write, None, false)? {
             PublishOutcome::Done(env) => Ok(env),
             PublishOutcome::Prefix { .. } => {
                 unreachable!("full publish has no stop_after")
@@ -107,10 +103,21 @@ impl Environment {
         }
     }
 
-    /// Empty-catalog birth: create and a fresh ephemeral.
-    pub(crate) fn publish_empty(path: &Path, kind: StoreKind, schema: &Schema) -> Result<Self> {
+    /// Empty-catalog birth: create.
+    pub(crate) fn publish_empty(path: &Path, schema: &Schema) -> Result<Self> {
         let catalog = FrozenCatalog::empty();
-        Self::publish(path, kind, &PublishCatalog::frozen(&catalog, schema))
+        Self::publish(path, &PublishCatalog::frozen(&catalog, schema))
+    }
+
+    /// Bench-only: same publication, attach with [`OpenLane::Nosync`].
+    #[doc(hidden)]
+    pub(crate) fn publish_nosync(path: &Path, catalog: &PublishCatalog<'_>) -> Result<Self> {
+        match publish_inner(path, catalog, OpenLane::Nosync, None, false)? {
+            PublishOutcome::Done(env) => Ok(env),
+            PublishOutcome::Prefix { .. } => {
+                unreachable!("full publish has no stop_after")
+            }
+        }
     }
 }
 
@@ -125,8 +132,8 @@ enum PublishOutcome {
 
 fn publish_inner(
     dest: &Path,
-    kind: StoreKind,
     catalog: &PublishCatalog<'_>,
+    lane: OpenLane,
     stop_after: Option<PublishStep>,
     fail_parent_sync: bool,
 ) -> Result<PublishOutcome> {
@@ -147,8 +154,8 @@ fn publish_inner(
                     .as_ref()
                     .expect("CreateStaging precedes WriteCatalog");
                 lock = Some(acquire_lock(dir)?);
-                let env = open_env(dir, OpenLane::Write(kind))?;
-                raw = Some(write_catalog(env, kind, catalog)?);
+                let env = open_env(dir, lane)?;
+                raw = Some(write_catalog(env, catalog)?);
             }
             PublishStep::CommitAndClose => {
                 drop(raw.take());
@@ -193,7 +200,7 @@ fn publish_inner(
 
     let env = attach(
         dest,
-        kind,
+        lane,
         lock.take().expect("WriteCatalog acquired the lock"),
         catalog.schema,
     )?;
@@ -249,17 +256,16 @@ fn next_nonce() -> u64 {
 
 fn write_catalog(
     env: heed::Env<WithoutTls>,
-    kind: StoreKind,
     catalog: &PublishCatalog<'_>,
 ) -> Result<heed::Env<WithoutTls>> {
     match catalog.inner {
         PublishInner::Frozen(frozen) => {
-            write_from_catalog(&env, kind, catalog.schema, catalog.generation, frozen)?;
+            write_from_catalog(&env, catalog.schema, catalog.generation, frozen)?;
         }
         PublishInner::Store(source) => {
             let txn = source.read_txn()?;
             let live = LmdbReadCatalog::new(&txn);
-            write_from_catalog(&env, kind, catalog.schema, catalog.generation, &live)?;
+            write_from_catalog(&env, catalog.schema, catalog.generation, &live)?;
         }
     }
     Ok(env)
@@ -267,7 +273,6 @@ fn write_catalog(
 
 fn write_from_catalog<C: CatalogRead>(
     env: &heed::Env<WithoutTls>,
-    kind: StoreKind,
     schema: &Schema,
     generation: GenerationId,
     catalog: &C,
@@ -282,7 +287,6 @@ fn write_from_catalog<C: CatalogRead>(
         &meta,
         &mut wtxn,
         schema,
-        kind,
         generation,
         catalog.dict_next_id()?,
     )?;
@@ -313,22 +317,9 @@ fn sync_staging_files(staging: &Path) -> Result<()> {
     Ok(super::sync_dirent_chain(staging)?)
 }
 
-fn attach(path: &Path, kind: StoreKind, lock: File, schema: &Schema) -> Result<Environment> {
-    let dirty_marker = match kind {
-        StoreKind::Durable => None,
-        StoreKind::Ephemeral => {
-            let marker = super::dirty_marker_path(path);
-            File::create(&marker)?.sync_all()?;
-            super::sync_dirent_chain(path)?;
-            Some(marker)
-        }
-    };
-    let raw = open_env(path, OpenLane::Write(kind))?;
-    let opened = Environment::verify_and_open(raw, lock, schema, kind, dirty_marker)?;
-    if kind == StoreKind::Durable {
-        super::clear_orphan_marker(path)?;
-    }
-    Ok(opened)
+fn attach(path: &Path, lane: OpenLane, lock: File, schema: &Schema) -> Result<Environment> {
+    let raw = open_env(path, lane)?;
+    Environment::verify_and_open(raw, lock, schema)
 }
 
 #[cfg(test)]
@@ -376,11 +367,10 @@ fn remove_staging_siblings(dest: &Path) {
 impl Environment {
     pub(super) fn publish_until(
         path: &Path,
-        kind: StoreKind,
         catalog: &PublishCatalog<'_>,
         last: PublishStep,
     ) -> Result<PublishPrefix> {
-        match publish_inner(path, kind, catalog, Some(last), false)? {
+        match publish_inner(path, catalog, OpenLane::Write, Some(last), false)? {
             PublishOutcome::Prefix {
                 dest_exists,
                 staging,
@@ -395,10 +385,9 @@ impl Environment {
 
     pub(super) fn publish_failing_parent_sync(
         path: &Path,
-        kind: StoreKind,
         catalog: &PublishCatalog<'_>,
     ) -> Result<Self> {
-        match publish_inner(path, kind, catalog, None, true)? {
+        match publish_inner(path, catalog, OpenLane::Write, None, true)? {
             PublishOutcome::Done(env) => Ok(env),
             PublishOutcome::Prefix { .. } => unreachable!("full publish"),
         }

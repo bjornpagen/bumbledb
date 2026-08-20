@@ -24,7 +24,7 @@ impl<S> Db<S> {
     /// Publishes a compacted copy of the store to `dest` (a directory
     /// that must not exist): one [`crate::storage::env::PublishStep`]
     /// fold, live `_data` and `_dict` bytes, fresh `_meta` with the
-    /// source kind and generation. The source stays open and untouched.
+    /// source generation. The source stays open and untouched.
     /// The copy is a first-class store: open it, read it, write to it.
     ///
     /// Durability, exactly: on return the copied `data.mdb` is fsynced,
@@ -43,11 +43,7 @@ impl<S> Db<S> {
     /// created; `Lmdb` from the copy itself.
     pub fn compact(&self, dest: &Path) -> Result<()> {
         let catalog = crate::storage::env::PublishCatalog::store(&self.env, self.schema.as_ref())?;
-        drop(crate::storage::env::Environment::publish(
-            dest,
-            self.env.kind(),
-            &catalog,
-        )?);
+        drop(crate::storage::env::Environment::publish(dest, &catalog)?);
         crate::obs::event(
             crate::obs::names::COMPACT_DURABLE,
             crate::obs::TraceArgs::Count(2),
