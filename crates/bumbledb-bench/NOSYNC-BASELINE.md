@@ -1,20 +1,19 @@
 # NosyncLane commit-ladder pin
 
-Issue 33. Substrate: `StoreMode::Nosync` (`Db::create_nosync` /
-`Db::open_nosync`) over a durable-shaped store — not the deleted
-ephemeral kind. Campaign 1.24–1.44 is not comparable.
+Substrate: `StoreMode::Nosync` (`Db::create_nosync` / `Db::open_nosync`)
+over a durable-shaped store.
 
-Pin (2026-08-20, Apple M2 Max, obs release, scale S, seed 1, 8 samples,
-`writes --lanes nosync --batches 1,10,100,1000`):
+Pin: 2026-08-20 shared-machine night, Apple M2 Max, revision `4dd1ee96`,
+`writes --out bench-out/night-2026-08-20/writes`, nosync lane.
 
 | family | ours p50 ns | sqlite p50 ns | ours/sqlite |
 | --- | ---: | ---: | ---: |
-| `commit_b1` | 47542 | 37125 | 1.28× |
-| `commit_b10` | 218542 | 317042 | 0.69× |
-| `commit_b100` | 1433875 | 1940750 | 0.74× |
-| `commit_b1000` | 9345041 | 8105709 | 1.15× |
-| `delete_b1` | 45708 | 28583 | 1.60× |
-| `delete_b10` | 175000 | 343667 | 0.51× |
-| `delete_b100` | 1425958 | 2494417 | 0.57× |
-| `delete_b1000` | 9338959 | 9764833 | 0.96× |
-| `insert_stream` | 688915791 | 480292042 | 1.43× |
+| `commit_b1` | 49959 | 31834 | 1.57× |
+| `commit_b10` | 189291 | 246292 | 0.77× |
+| `commit_b100` | 1123542 | 1820375 | 0.62× |
+| `commit_b1000` | 8266042 | 9891041 | 0.84× |
+| `delete_b1` | 41458 | 39166 | 1.06× |
+| `delete_b10` | 173459 | 217709 | 0.80× |
+| `delete_b100` | 1300250 | 2506000 | 0.52× |
+| `delete_b1000` | 9500500 | 12739000 | 0.75× |
+| `insert_stream` | 625392750 | 441358625 | 1.42× |

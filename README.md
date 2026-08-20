@@ -168,8 +168,8 @@ as part of the test suite.
 
 ## Performance
 
-The charts below come from the 2026-08-19 shared-machine night at revision
-`22e618d9` (crate 0.15.0) on an Apple M2 Max. Boost was on; the idle-machine
+The charts below come from the 2026-08-20 shared-machine night at revision
+`4dd1ee96` (crate 0.15.0) on an Apple M2 Max. Boost was on; the idle-machine
 requirement was waived. The main datasets contain 253,264 ledger rows and
 192,369 calendar rows. SQLite used prepared statements, appropriate indexes,
 `ANALYZE`, a 256 MiB cache, and matching durability settings.
@@ -180,7 +180,7 @@ with a separate straightforward implementation. The primary read tests were
 run three times for durable stores and three times with durability disabled;
 the summary charts use the best median from each group. Raw reports, machine
 load, clock readings, and timing details are retained under
-`bench-out/night-2026-08-19/`.
+`bench-out/night-2026-08-20/`.
 
 These tests favor the work Bumbledb is designed for: joins, graph traversal,
 time intervals, and aggregates over warm in-memory data. The transaction and
@@ -193,9 +193,9 @@ results:
 
 ![Bumbledb and SQLite read latency](assets/bench-vs-sqlite.svg)
 
-Across those 33 queries, Bumbledb's median latency has a **26.6× geometric
+Across those 33 queries, Bumbledb's median latency has a **27.9× geometric
 mean speedup** over SQLite for the durable store. The individual results range
-from **3.8×** for a skewed lookup to **434×** for a calendar scan:
+from **2.6×** for an account-set lookup to **419×** for a calendar scan:
 
 ![Read speedup over SQLite](assets/bench-speedup.svg)
 
@@ -218,8 +218,8 @@ ratios.
 ### Additional workloads
 
 The broader suite covers joins, graph queries, analytical rollups, point
-lookups, cyclic joins, and time intervals. Across the 34 comparisons that
-finished in both engines, Bumbledb's median latency has a **21.8× geometric
+lookups, cyclic joins, and time intervals. Across the 31 comparisons that
+finished in both engines, Bumbledb's median latency has a **20.7× geometric
 mean speedup**. Two direct SQL translations exceeded the one-second limit.
 
 ![Speedup across additional workloads](assets/bench-scenarios.svg)
@@ -239,12 +239,12 @@ The analytical tests cover grouped totals, windows, and drill-downs:
 
 Point reads are close because they play directly to SQLite's B-tree
 implementation. Bumbledb is **3.3×** faster on the closest prepared lookup and
-**1.5×** faster on its typed keyed read:
+**1.4×** faster on its typed keyed read:
 
 ![Point-read latency](assets/world-points.svg)
 
 Cyclic joins are a difficult case for a fixed sequence of binary joins.
-Bumbledb is **11.2×** faster on the first ring query and **9.6×** faster on
+Bumbledb is **11.7×** faster on the first ring query and **9.7×** faster on
 the first bipartite stress test:
 
 ![Cyclic-join latency](assets/world-rings.svg)
@@ -259,9 +259,9 @@ the direct translations where they materially improve the comparison:
 
 SQLite's stress-test queries were limited to one second per sample. Two direct
 translations exceeded that limit on every attempt. Bumbledb completed the
-larger bipartite join in **1.77 seconds** and the interval-overlap join in
-**50.2 milliseconds**. A hand-written SQLite version of the overlap query did
-finish; Bumbledb was **10.7×** faster than that version.
+larger bipartite join in **1.51 seconds** and the interval-overlap join in
+**44.5 milliseconds**. A hand-written SQLite version of the overlap query did
+finish; Bumbledb was **10.8×** faster than that version.
 
 ![Queries that exceeded SQLite's time limit](assets/adversarial-dnf.svg)
 
@@ -270,7 +270,7 @@ finish; Bumbledb was **10.7×** faster than that version.
 The transaction benchmark measures keyed reads, inserts, updates, upserts,
 read-modify-write operations, deletes, and a 90/10 read/write mix with matching
 durability settings. SQLite is faster on 20 of the 22 comparisons and has a
-**1.80×** geometric mean advantage overall. Bumbledb wins the keyed reads, but
+**1.73×** geometric mean advantage overall. Bumbledb wins the keyed reads, but
 SQLite's write path is substantially faster for large batches when durability
 is disabled.
 
@@ -281,17 +281,17 @@ references, fixed sets, and resource limits with SQLite
 `UNIQUE`/`FOREIGN KEY`/`CHECK`/trigger implementations. SQLite is faster on
 10 of 12 comparisons. Successful durable commits are close, while SQLite
 rejects invalid writes much faster. The largest gap is a failed durable key
-check: Bumbledb spends 4.64 ms because its never-reuse ID guarantee is itself
-persisted, while SQLite returns after 8.33 µs.
+check: Bumbledb spends 5.04 ms because its never-reuse ID guarantee is itself
+persisted, while SQLite returns after 19.5 µs.
 
 ![Constraint-check performance](assets/world-lawful.svg)
 
 ### Writes
 
 Durable single-record commits are dominated by the storage flush in both
-engines: Bumbledb measures 4.72 ms at p50 and SQLite 4.26 ms. SQLite is also
-faster on a large collection insert, completing it in 0.74 seconds compared
-with Bumbledb's 0.78 seconds.
+engines: Bumbledb measures 5.06 ms at p50 and SQLite 4.47 ms. On a large
+collection insert Bumbledb completes it in 0.64 seconds compared with
+SQLite's 0.70 seconds.
 
 ![Write and first-read latency](assets/bench-writes.svg)
 
@@ -318,16 +318,16 @@ performance.
 ### Scale and cold starts
 
 The scale test repeats four representative queries at the published dataset
-sizes. The calendar scan is **442×** faster than the direct SQLite query and
-**155×** faster than a hand-written alternative; the triangle query is
-**15.5×** faster, and the recursive fan-out query is **35.4×** faster.
+sizes. The calendar scan is **417×** faster than the direct SQLite query and
+**149×** faster than a hand-written alternative; the triangle query is
+**15.0×** faster, and the recursive fan-out query is **36.3×** faster.
 
 ![Performance at the published dataset sizes](assets/bench-curves.svg)
 
 The first query after opening a database includes work that later executions
-reuse. SQLite is faster on the cold recursive fan-out query, at 16.5 µs versus
-Bumbledb's 686 µs. Once warm, Bumbledb completes it in 1.04 µs versus SQLite's
-11.8 µs.
+reuse. SQLite is faster on the cold recursive fan-out query, at 15.4 µs versus
+Bumbledb's 616 µs. Once warm, Bumbledb completes it in 584 ns versus SQLite's
+10.6 µs.
 
 ![Cold and warm query latency](assets/bench-warmth.svg)
 
@@ -339,10 +339,10 @@ without durability, and a delete-heavy workload. One SQLite configuration
 runs periodic `VACUUM` and `ANALYZE`, with that maintenance time included in
 its throughput.
 
-On the durable steady workload, SQLite's window-probe latency rises from 300
-to 564 µs while Bumbledb remains between 20 and 21 µs. Bumbledb's store grows
-from 74.5 to 83.0 MB; SQLite's unmaintained store grows from 14.8 to 17.4 MB,
-and periodic `VACUUM` reduces it to 13.2 MB. SQLite remains ahead on durable
+On the durable steady workload, SQLite's window-probe latency rises from 288
+to 516 µs while Bumbledb remains at 21 µs. Bumbledb's store grows from 74.5
+to 83.0 MB; SQLite's unmaintained store grows from 14.8 to 17.4 MB, and
+periodic `VACUUM` reduces it to 13.2 MB. SQLite remains ahead on durable
 write throughput, while Bumbledb is ahead with durability disabled.
 
 Probe latency:
@@ -366,9 +366,9 @@ Write throughput:
 ### Heap instance versus the leased store
 
 The same ledger corpus, published once into a durable store and once into an
-`OwnedInstance`, is compared on point reads. Heap `get` is 167 ns against
-LMDB's 250 ns; `contains` is 334 ns against 458 ns. Admission cost on this
-night rose from 716 ns/fact at 693 facts to 1,016 ns/fact at 41,432 facts.
+`OwnedInstance`, is compared on point reads. Heap `get` is 208 ns against
+LMDB's 291 ns; `contains` is 375 ns against 417 ns. Admission cost on this
+night rose from 785 ns/fact at 693 facts to 910 ns/fact at 41,432 facts.
 
 ### Reproducing the benchmarks
 

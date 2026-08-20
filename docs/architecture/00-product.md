@@ -389,8 +389,8 @@ hold a concrete type).
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine =
    the owner's. **The claim is unearned until the suite runs green on this
-   engine** — earned at scale S, most recently by the 2026-08-19
-   shared-machine night (code rev `22e618d9`, wall power: verify-stamped per binary,
+   engine** — earned at scale S, most recently by the 2026-08-20
+   shared-machine night (code rev `4dd1ee96`, wall power: verify-stamped per binary,
    `all_win: true` on every gated family in all six suite reps; published
    charts in `assets/`, raw traces in git history), and re-voided
    by any format or semantics change until re-run. The "ratchet" is a manually

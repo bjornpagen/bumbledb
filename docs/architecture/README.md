@@ -60,7 +60,7 @@ laws).
 
 - **Scale-L claims are informational only**: the oracle stamp, the benchmark
   ALL-WIN, and the pinned denominators are earned at scale S (most recently
-  the 2026-08-19 shared-machine night, code rev `22e618d9`, verify-stamped per binary;
+  the 2026-08-20 shared-machine night, code rev `4dd1ee96`, verify-stamped per binary;
   charts in `assets/`, raw traces in git history) — but no L corpus exists, so the
   10 ms budget and every L-scale claim bind nothing yet (`00-product.md`).
   (The NOSYNC-flag-lane numbers ride the like-for-like pairing
