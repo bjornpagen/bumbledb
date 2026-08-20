@@ -51,7 +51,7 @@ use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement, Protocol, Stats};
 use crate::json;
 use crate::report::{GhzReport, Provenance};
-use crate::schema::{ids, schema, Ledger, Posting, PostingId};
+use crate::schema::{Ledger, Posting, PostingId, ids, schema};
 use crate::sqlite_run::POSTING_INSERT;
 use crate::{clockproxy, corpus, sqlmap, trace_out, writebench};
 

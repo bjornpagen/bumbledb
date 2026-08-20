@@ -5,7 +5,7 @@ use crate::differential::{self, Op, Verdict};
 use crate::naive::{Delta, NaiveDb};
 use crate::writebench::write_protocol;
 
-use super::{calendar, calendar_rows, ids, power, power_baseline, power_rows, Mass, PARENTS};
+use super::{Mass, PARENTS, calendar, calendar_rows, ids, power, power_baseline, power_rows};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-capacity-{tag}"));

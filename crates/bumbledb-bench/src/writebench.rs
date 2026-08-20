@@ -18,7 +18,7 @@ use bumbledb::{Answers, Db, RelationId};
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
 use crate::families::{self, param_args};
 use crate::harness::{self, Measurement, Protocol, Rotation};
-use crate::schema::{ids, AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId};
+use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids};
 
 /// The registered protocol for a write family (shared with the `SQLite`
 /// mirror runners in `sqlite_run`).

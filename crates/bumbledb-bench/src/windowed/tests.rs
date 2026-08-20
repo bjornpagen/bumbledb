@@ -5,7 +5,7 @@ use crate::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb};
 use crate::writebench::write_protocol;
 
-use super::{baseline, ids, parent_kind, relation_rows, world, Mass};
+use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-windowed-{tag}"));
