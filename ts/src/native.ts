@@ -493,11 +493,7 @@ interface Native {
 	 * field order — the column transport, same parse-all-first batch as
 	 * {@link Native.txInsert}.
 	 */
-	txInsertColumns(
-		tx: TxHandle,
-		relationId: number,
-		columns: readonly (readonly FactValue[])[]
-	): WireMutationReport
+	txInsertColumns(tx: TxHandle, relationId: number, columns: readonly (readonly FactValue[])[]): WireMutationReport
 	/** Records a collection of deletes; returns the engine `{ submitted, changed }` report. */
 	txDelete(tx: TxHandle, relationId: number, rows: readonly (readonly FactValue[])[]): WireMutationReport
 	/**
@@ -551,12 +547,7 @@ interface Native {
 		relationId: number,
 		rows: readonly (readonly FactValue[])[]
 	): WireMutationReport
-	instanceBuilderReserve(
-		builder: BuilderHandle,
-		relationId: number,
-		fieldId: number,
-		count: bigint
-	): WireFreshRange
+	instanceBuilderReserve(builder: BuilderHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
 	instanceBuilderContains(builder: BuilderHandle, relationId: number, values: readonly FactValue[]): boolean
 	instanceBuilderGet(
 		builder: BuilderHandle,
