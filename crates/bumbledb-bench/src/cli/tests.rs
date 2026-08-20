@@ -318,10 +318,6 @@ fn heap_parses_the_lane_flags() {
         "8",
         "--prefixes",
         "64,256",
-        "--primer-spec",
-        "/tmp/primer",
-        "--primer-snapshot",
-        "/tmp/lc",
         "--out",
         "artifacts",
     ]))
@@ -334,8 +330,6 @@ fn heap_parses_the_lane_flags() {
             dir: PathBuf::from("/tmp/h"),
             samples: Some(8),
             prefixes: vec![64, 256],
-            primer_spec: PathBuf::from("/tmp/primer"),
-            primer_snapshot: PathBuf::from("/tmp/lc"),
             out: Some(PathBuf::from("artifacts")),
         })
     );

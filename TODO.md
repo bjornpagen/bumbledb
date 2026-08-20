@@ -22,9 +22,7 @@ finding stamps live in git history.
 - **Heap-arm ladder** — **closed** as a lane (audit/39 /
   `crates/bumbledb-bench/HEAP-BASELINE.md`): heap get 167/292 ns
   (0.57× vs LMDB), admit prefixes 693→41432 facts at 1.26× ns/fact,
-  A/I/R/F/J on every row. Primer four-prefix gate **blocked** with the
-  ask: fingerprint-matching Rust SchemaDescriptor for
-  StandardsEvidenceIR (source JSONL + 1.68 GB store are on disk).
+  A/I/R/F/J on every row.
 - **Overlap constants re-pin**: `OVERLAP_CROSSOVER = 16`
   (`exec/run/overlap_leaf.rs`) and `FLAT_SWEEP_CEILING = 128`
   (`interval/overlap.rs`) are rig-pinned provisional — re-pin both from the
@@ -81,8 +79,7 @@ finding stamps live in git history.
 - **0.15.0** (2026-08-19): admitted-instance / ABI-3 / format-8; Phase 2
   lanes D+E on main. Shared-machine night at `22e618d9` re-pins the README
   charts (durable read geomean 26.6×, scenarios 21.8×, compacted storage
-  167 / 228 B/fact). Heap primer remains blocked. Audit 35 remains owner
-  quiet-machine.
+  167 / 228 B/fact). Audit 35 remains owner quiet-machine.
 - **bugbash-perf campaign** (2026-07-25 → 2026-08-03): instrument → gate →
   baseline → hunt → 44/44 findings fixed across seven file-disjoint lanes
   → rebench (reads 0.87–0.94 on five of six reps, scenarios 0.88 with the

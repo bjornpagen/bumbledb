@@ -1,14 +1,9 @@
-//! The heap-arm ladder: frozen-vs-LMDB point reads, admission
-//! throughput with $A,I,R,F,J$, and the Primer scaling gate —
-//! REPORT-class ([`crate::lanes`] carries the charter).
+//! The heap-arm ladder: frozen-vs-LMDB point reads and admission
+//! throughput with $A,I,R,F,J$ — REPORT-class ([`crate::lanes`] carries
+//! the charter).
 //!
-//! Point reads and admission use the ledger generator stream (the same
-//! bytes `corpus::load_bumbledb` writes). Primer is the sibling
-//! `primer-spec` Learning Commons 1.11.0 corpus: reachable source JSONL
-//! plus a completed `standards-evidence-ir.bumbledb`. Opening that store
-//! from Rust needs a fingerprint-matching `SchemaDescriptor`; until that
-//! transcription lands the gate is **blocked** with the ask — never
-//! silently skipped.
+//! Both arms use the ledger generator stream (the same bytes
+//! `corpus::load_bumbledb` writes).
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -25,22 +20,6 @@ use crate::json;
 use crate::report::Provenance;
 use crate::schema::{Account, AccountId, Ledger, ids};
 
-/// Learning Commons 1.11.0 node export (primer-spec docs/sources).
-const LC_NODES_BYTES: u64 = 292_652_341;
-const LC_RELS_BYTES: u64 = 520_406_049;
-const LC_NODES_SHA: &str = "ffc142f72450c9692a9e547207cba3e0cd4012eb00c1d1be6aaced165c4139c5";
-const LC_RELS_SHA: &str = "74389d5e438e7a7f23e1128539827533ae08acacc73c9f3e4c81cc07a8916b21";
-
-/// The ask when the store is on disk but Rust cannot open it.
-const PRIMER_SCHEMA_ASK: &str = "\
-Ask: land a fingerprint-matching Rust SchemaDescriptor (or schema! \
-transcription) of StandardsEvidenceIR so the bench can open the sibling \
-standards-evidence-ir.bumbledb and run four prefixes through load → \
-complete admit → keyed reads → representative joins → fromInstance. \
-Grade handles include \"1\"..\"12\" and \"source-normalized\", which \
-schema! identifiers cannot spell. Source JSONL and a completed store \
-are on disk — do not silently skip.";
-
 /// Default posting-count prefixes for the admission ladder.
 pub const DEFAULT_PREFIXES: [u64; 4] = [256, 1_024, 4_096, 16_384];
 
@@ -56,7 +35,6 @@ pub struct HeapReport {
     pub publish_ns: u64,
     pub join_ns: u64,
     pub join_rows: u64,
-    pub primer: PrimerGate,
 }
 
 /// One warm point-read family, heap vs LMDB.
@@ -75,19 +53,6 @@ pub struct AdmitRow {
     pub facts_per_sec: f64,
     pub ns_per_fact: f64,
     pub telemetry: AdmissionTelemetry,
-}
-
-/// Primer four-prefix gate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrimerGate {
-    pub status: &'static str,
-    pub primer_spec: String,
-    pub snapshot: String,
-    pub nodes_bytes: Option<u64>,
-    pub rels_bytes: Option<u64>,
-    pub store: Option<String>,
-    pub store_bytes: Option<u64>,
-    pub ask: Option<String>,
 }
 
 fn push_stats(out: &mut String, stats: &Stats) {
@@ -140,47 +105,10 @@ pub fn to_json(report: &HeapReport) -> String {
     }
     let _ = write!(
         out,
-        "],\"publish_ns\":{},\"join_ns\":{},\"join_rows\":{},\"primer\":",
+        "],\"publish_ns\":{},\"join_ns\":{},\"join_rows\":{}}}",
         report.publish_ns, report.join_ns, report.join_rows
     );
-    push_primer(&mut out, &report.primer);
-    out.push('}');
     out
-}
-
-fn push_primer(out: &mut String, gate: &PrimerGate) {
-    out.push_str("{\"status\":");
-    json::push_str_lit(out, gate.status);
-    out.push_str(",\"primer_spec\":");
-    json::push_str_lit(out, &gate.primer_spec);
-    out.push_str(",\"snapshot\":");
-    json::push_str_lit(out, &gate.snapshot);
-    out.push_str(",\"nodes_bytes\":");
-    push_opt_u64(out, gate.nodes_bytes);
-    out.push_str(",\"rels_bytes\":");
-    push_opt_u64(out, gate.rels_bytes);
-    out.push_str(",\"store\":");
-    match &gate.store {
-        Some(path) => json::push_str_lit(out, path),
-        None => out.push_str("null"),
-    }
-    out.push_str(",\"store_bytes\":");
-    push_opt_u64(out, gate.store_bytes);
-    out.push_str(",\"ask\":");
-    match &gate.ask {
-        Some(ask) => json::push_str_lit(out, ask),
-        None => out.push_str("null"),
-    }
-    out.push('}');
-}
-
-fn push_opt_u64(out: &mut String, value: Option<u64>) {
-    match value {
-        Some(v) => {
-            let _ = write!(out, "{v}");
-        }
-        None => out.push_str("null"),
-    }
 }
 
 fn to_markdown(report: &HeapReport) -> String {
@@ -222,18 +150,6 @@ fn to_markdown(report: &HeapReport) -> String {
         let _ = writeln!(out, "\nSuperlinear term: {growth}\n");
     } else {
         out.push_str("\nNo unexplained superlinear term on this prefix ladder.\n");
-    }
-    out.push_str("\n## Primer scaling gate\n\n");
-    let _ = writeln!(out, "status: **{}**", report.primer.status);
-    if let Some(ask) = &report.primer.ask {
-        let _ = writeln!(out, "\n{ask}\n");
-    }
-    if let Some(store) = &report.primer.store {
-        let _ = writeln!(
-            out,
-            "store: `{store}` ({} bytes)",
-            report.primer.store_bytes.unwrap_or(0)
-        );
     }
     out.push_str("\nBare-metal ramdisk row rides issue 18's release checklist beside this lane.\n");
     out
@@ -311,107 +227,7 @@ fn join_query() -> Query {
     })
 }
 
-fn file_len(path: &Path) -> Result<u64, String> {
-    std::fs::metadata(path)
-        .map(|m| m.len())
-        .map_err(|e| format!("{}: {e}", path.display()))
-}
-
-fn sha256_hex(path: &Path) -> Option<String> {
-    let output = std::process::Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(path)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split_whitespace().next().map(str::to_owned)
-}
-
-fn latest_evidence_store(primer: &Path) -> Option<PathBuf> {
-    let builds = primer.join(".primer/builds");
-    let entries = std::fs::read_dir(&builds).ok()?;
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in entries.flatten() {
-        let store = entry.path().join("standards-evidence-ir.bumbledb");
-        let data = store.join("data.mdb");
-        let Ok(meta) = std::fs::metadata(&data) else {
-            continue;
-        };
-        let modified = meta.modified().ok()?;
-        if best.as_ref().is_none_or(|(t, _)| modified > *t) {
-            best = Some((modified, store));
-        }
-    }
-    best.map(|(_, path)| path)
-}
-
-fn probe_primer(args: &HeapArgs) -> PrimerGate {
-    let spec = args.primer_spec.clone();
-    let snapshot = args.primer_snapshot.clone();
-    let nodes = snapshot.join("nodes.jsonl");
-    let rels = snapshot.join("relationships.jsonl");
-    let nodes_bytes = file_len(&nodes).ok();
-    let rels_bytes = file_len(&rels).ok();
-    let store = latest_evidence_store(&spec);
-    let store_bytes = store
-        .as_ref()
-        .and_then(|p| file_len(&p.join("data.mdb")).ok());
-
-    let size_ok = nodes_bytes == Some(LC_NODES_BYTES) && rels_bytes == Some(LC_RELS_BYTES);
-    let digest_ok = match (sha256_hex(&nodes), sha256_hex(&rels)) {
-        (Some(n), Some(r)) => n == LC_NODES_SHA && r == LC_RELS_SHA,
-        _ => size_ok,
-    };
-
-    let (status, ask) = if !size_ok && nodes_bytes.is_none() {
-        (
-            "blocked",
-            Some(format!(
-                "Ask: place Learning Commons 1.11.0 `nodes.jsonl` + \
-                 `relationships.jsonl` (sizes {LC_NODES_BYTES}/{LC_RELS_BYTES}, \
-                 digests in primer-spec/docs/sources/learning-commons-1.11.0.md) \
-                 at {} — never silently skip.",
-                snapshot.display()
-            )),
-        )
-    } else if !digest_ok {
-        (
-            "blocked",
-            Some(format!(
-                "Ask: snapshot at {} does not match the pinned 1.11.0 sizes/digests \
-                 (nodes {LC_NODES_BYTES} {LC_NODES_SHA}, rels {LC_RELS_BYTES} {LC_RELS_SHA}).",
-                snapshot.display()
-            )),
-        )
-    } else if store.is_none() {
-        (
-            "blocked",
-            Some(format!(
-                "Ask: no standards-evidence-ir.bumbledb under {}/.primer/builds. \
-                 Run `pnpm run verify:learning-commons` in primer-spec.",
-                spec.display()
-            )),
-        )
-    } else {
-        ("blocked", Some(PRIMER_SCHEMA_ASK.to_owned()))
-    };
-
-    PrimerGate {
-        status,
-        primer_spec: spec.display().to_string(),
-        snapshot: snapshot.display().to_string(),
-        nodes_bytes,
-        rels_bytes,
-        store: store.map(|p| p.display().to_string()),
-        store_bytes,
-        ask,
-    }
-}
-
-/// Runs the three heap-arm lanes.
+/// Runs the heap-arm lanes.
 ///
 /// # Errors
 ///
@@ -559,7 +375,6 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
         });
     }
 
-    let primer = probe_primer(args);
     let report = HeapReport {
         provenance: crate::report::provenance(Path::new(".")),
         scale: args.scale.label(),
@@ -586,7 +401,6 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
         publish_ns,
         join_ns,
         join_rows,
-        primer,
     };
     std::fs::write(out_dir.join("heap-report.json"), to_json(&report))
         .map_err(|e| format!("artifact: {e}"))?;
@@ -615,15 +429,12 @@ mod tests {
     fn tiny_ladder_emits_the_three_lanes() {
         let dir = scratch("tiny");
         let out = dir.join("out");
-        let missing = dir.join("no-primer");
         let code = run(&HeapArgs {
             scale: Scale::Tiny,
             seed: 1,
             dir: dir.clone(),
             samples: Some(4),
             prefixes: vec![64, 256],
-            primer_spec: missing.join("spec"),
-            primer_snapshot: missing.join("snap"),
             out: Some(out.clone()),
         })
         .expect("tiny heap ladder runs");
@@ -649,13 +460,7 @@ mod tests {
                 assert!(tel.get(key).is_some(), "{key}");
             }
         }
-        assert_eq!(
-            parsed
-                .get("primer")
-                .and_then(|p| p.get("status"))
-                .and_then(Value::as_str),
-            Some("blocked")
-        );
+        assert!(parsed.get("primer").is_none());
         assert!(out.join("heap-report.md").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

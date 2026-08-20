@@ -1098,10 +1098,9 @@ of these at once:
 - `S` and `Q` entries.
 - Relation images.
 
-That representation reproduces the multi-gigabyte peaks observed in Primer's
-own normalization loads even when the final encoded catalog is compact. The
-Primer normalization corpus in the sibling `primer-spec` repository is the
-reference workload; the acceptance gates name it.
+That representation reproduces multi-gigabyte peaks on large heap-admission
+loads even when the final encoded catalog is compact. The ledger admission
+prefix ladder is the measured workload; the acceptance gates name it.
 
 ### Staging representation
 
@@ -2067,8 +2066,8 @@ the premise is unsound.
 `Admission.lean`'s `touched_delta_bounded` obligation forces every touched
 key to be delta-bounded. That is a **structural refusal** of
 answer-dependent statement forms: a general exact-cover form cannot enter
-admission without reworking that contract, so the Primer boundary below is a
-theorem-shaped consequence, not a scoping preference.
+admission without reworking that contract, so the application exact-cover
+boundary below is a theorem-shaped consequence, not a scoping preference.
 
 Implementation work adds these named artifacts, in lockstep with the Rust
 steps that consume them:
@@ -2115,42 +2114,32 @@ conformance lanes, and the bridge prose stand; nobody hunts for phantom
 lockstep work. Lean `def Instance` remains the mathematical relation-to-facts
 map — it is not the purged Rust trait.
 
-## Primer boundary
+## Application exact-covers
 
 Bumbledb currently proves its declared functionality, pointwise
 functionality, containment, coverage, and capacity statements. Mirrored
 containments remain two containment statements with a sealed pairing.
 
-Primer's normalization ledger needs stronger application equations. The
-current schema in sibling path
-`primer-spec/src/theory/ledger/normalization.ts` does not encode all of these:
+Application-level exact-cover equations — total cover, pairwise disjoint
+arms, missing reverse witnesses — are not schema statements. Admission
+does not certify them, and by `touched_delta_bounded` it structurally
+cannot without a reworked admission contract.
 
-- The disposition arms totally cover every `InputFact`.
-- The disposition arms are pairwise disjoint.
-- Every `DirectImageFact` has a producing `OutputFactInput` witness — the
-  schema encodes only the reverse containment.
-- The witness-input projection equals the required core and overlay source
-  roster.
-
-Therefore Bumbledb admission alone does not certify Primer's normalization
-exact covers — and by `touched_delta_bounded`, it structurally cannot without
-a reworked admission contract.
-
-The correct application pipeline is:
+The host pipeline is:
 
 ```text
 InstanceBuilder
     → Bumbledb admission
-    → OwnedInstance<NormalizationLedger>
+    → OwnedInstance<S>
     → exact-cover defect queries
-    → application Admission<CertifiedNormalization>
+    → application Admission<Certified>
 ```
 
-`CertifiedNormalization` owns the admitted instance and an application
-certificate tied to its `CatalogIdentity`. The application checker returns its
-own exact sum of accepted certificate or structured exact-cover violations.
-It never reads absence as success; each defect query participates in an
-explicit equality or disjointness judgment.
+The application checker owns the admitted instance and an application
+certificate tied to its `CatalogIdentity`. It returns its own exact sum of
+accepted certificate or structured exact-cover violations. It never reads
+absence as success; each defect query participates in an explicit equality
+or disjointness judgment.
 
 If exact cover becomes an upstream dependency form, it needs a separate
 proposal that extends the schema vocabulary, Lean `holds`, the executable
@@ -2536,14 +2525,9 @@ mutable candidate can execute a query.
   scan/join/key_probe; `allocs_per_committed_fact <= K` (`K` derived in the
   test); `allocs_per_point_read == 0` on both arms; admit peak via
   `AllocAbsolute::peak_live_bytes`.
-- The full Primer normalization corpus — sourced from the sibling
-  `primer-spec` repository — completes through load, complete admit, keyed
-  reads, representative joins, and raw persistence.
-- The full Primer lane records wall time, CPU time, peak RSS, frozen bytes,
-  image bytes, prepared/scratch/answer capacity, entry count, and allocation
-  count.
-- The API does not release until that lane shows no unexplained superlinear
-  growth as fact count scales through at least four corpus prefixes.
+- The heap admission prefix ladder records wall time, facts/sec, and
+  $A,I,R,F,J$ across at least four prefixes, with no unexplained
+  superlinear ns/fact growth.
 
 ### Zero-dyn gates
 
@@ -2606,8 +2590,8 @@ mutable candidate can execute a query.
   trait without the recorded add-back trigger.
 - Calling a durable store on tmpfs, or the hidden NOSYNC bench flag, a
   store kind.
-- Claiming Bumbledb admission proves Primer exact covers that the schema does
-  not declare.
+- Claiming Bumbledb admission proves application exact-covers that the
+  schema does not declare.
 
 The representation is the feature. An accepted value carries the admission
 fact. A builder cannot be queried. A read instance cannot escape its storage

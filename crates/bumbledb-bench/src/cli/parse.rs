@@ -358,8 +358,6 @@ fn parse_heap(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--prefixes" => args.prefixes = parse_prefix_list(&flag, tokens.value(&flag)?)?,
-            "--primer-spec" => args.primer_spec = PathBuf::from(tokens.value(&flag)?),
-            "--primer-snapshot" => args.primer_snapshot = PathBuf::from(tokens.value(&flag)?),
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("heap", &flag)),
         }

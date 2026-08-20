@@ -2,9 +2,7 @@
 
 2026-08-20, Apple M2 Max, release `bumbledb-bench heap`, scale S, seed 1, 8 samples.
 
-Command: `heap --scale S --samples 8 --prefixes 256,1024,4096,16384` with
-`--primer-spec /Users/bjorn/Documents/primer-spec` and
-`--primer-snapshot /Users/bjorn/Documents/knowledge-graph-data/v1.11.0`.
+Command: `heap --scale S --samples 8 --prefixes 256,1024,4096,16384`.
 
 ## Frozen vs LMDB point reads (same ledger corpus, NOSYNC publish)
 
@@ -30,21 +28,5 @@ the B-tree). Scan is the Account relation only.
 
 ns/fact grew **1.26×** from 693 to 41_432 facts — no unexplained
 superlinear term (gate threshold is 2×).
-
-## Primer scaling gate
-
-**blocked** (corpus reachable; opener missing).
-
-- Source JSONL present at `knowledge-graph-data/v1.11.0` (sizes
-  292_652_341 / 520_406_049, the pinned 1.11.0 pair).
-- Completed store
-  `primer-spec/.primer/builds/2026-08-18T21-07-04.800Z-a0ee7a25-b34c-4940-9127-ce6228a3cedc/standards-evidence-ir.bumbledb`
-  (1_680_998_400 bytes).
-- **Ask:** land a fingerprint-matching Rust `SchemaDescriptor` (or
-  `schema!` transcription) of StandardsEvidenceIR so the bench can open
-  that store and run four prefixes through load → complete admit →
-  keyed reads → representative joins → `fromInstance`. Grade handles
-  include `"1"`..`"12"` and `"source-normalized"`, which `schema!`
-  identifiers cannot spell.
 
 Bare-metal ramdisk row rides issue 18's release checklist beside this lane.

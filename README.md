@@ -369,9 +369,6 @@ The same ledger corpus, published once into a durable store and once into an
 `OwnedInstance`, is compared on point reads. Heap `get` is 167 ns against
 LMDB's 250 ns; `contains` is 334 ns against 458 ns. Admission cost on this
 night rose from 716 ns/fact at 693 facts to 1,016 ns/fact at 41,432 facts.
-The primer four-prefix gate stayed blocked: the source JSONL and completed
-store are on disk, but the opener still needs a fingerprint-matching Rust
-`SchemaDescriptor` for StandardsEvidenceIR.
 
 ### Reproducing the benchmarks
 

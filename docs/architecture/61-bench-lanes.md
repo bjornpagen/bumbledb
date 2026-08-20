@@ -80,7 +80,6 @@ here, never restated.
 | `churn` | steady-state posting working set | per-cycle probe warm p50, store bytes, write facts/sec, engine counters | `churn --out` | `churn-report.json` (`churn_schema: 1`, auto-ingested and charted directly by the viz) + `churn.md`; the one-run condensation is retired — §contracts | Report | per-lane sessions per `60-validation.md` § the churn lanes: `sqlite-bare`/`sqlite-maint` durable, `sqlite-nosync` matched to the hidden NOSYNC flag; probes prepared fresh per sample point on both engines; `maint`'s VACUUM/ANALYZE charged into its own throughput window |
 | `heap-point` | ledger + calendar (canonical corpus) | warm `get`/`contains`/`scan` p50, heap arm vs store arm | `heap-point --out` | `heap-point-report.json` / `.md` | Report — frozen vs LMDB point reads | n/a — engine-only; both arms oracle-gated against the same corpus |
 | `admit-throughput` | heap admission prefixes | facts/sec and the five phase quantities (`A`, `I`, `R`, `F`, `J`) | `admit --out` | `admit-report.json` / `.md` | Report — admission telemetry as a lane | n/a — engine-only |
-| `primer-scale` | Primer normalization corpus (`primer-spec`) | wall/CPU/peak RSS/frozen bytes across ≥4 prefixes; no unexplained superlinear growth | `primer-scale --out` | `primer-scale-report.json` / `.md` | Report — the proposal's Primer gate | n/a — engine-only; blocked with a named ask if the corpus cannot be obtained |
 
 Answer ordering is deliberately not a lane: ordering is the host
 language's own sort over returned rows — there is no engine work to

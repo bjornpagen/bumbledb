@@ -109,8 +109,8 @@ pub enum Cmd {
     /// The long-lived churn lanes: degradation series on both engines,
     /// oracle-gated per sample.
     Churn(ChurnArgs),
-    /// The heap-arm ladder: frozen-vs-LMDB point reads, admission
-    /// $A,I,R,F,J$, Primer scaling gate (report-class).
+    /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
+    /// $A,I,R,F,J$ (report-class).
     Heap(HeapArgs),
 }
 
@@ -347,10 +347,6 @@ pub struct HeapArgs {
     pub samples: Option<u32>,
     /// Posting-count prefixes for the admission ladder (four by default).
     pub prefixes: Vec<u64>,
-    /// Sibling `primer-spec` checkout.
-    pub primer_spec: PathBuf,
-    /// Learning Commons 1.11.0 snapshot (`nodes.jsonl` + `relationships.jsonl`).
-    pub primer_snapshot: PathBuf,
     pub out: Option<PathBuf>,
 }
 
@@ -362,8 +358,6 @@ impl Default for HeapArgs {
             dir: PathBuf::from("bench-data"),
             samples: None,
             prefixes: vec![256, 1_024, 4_096, 16_384],
-            primer_spec: PathBuf::from("../primer-spec"),
-            primer_snapshot: PathBuf::from("../knowledge-graph-data/v1.11.0"),
             out: None,
         }
     }

@@ -13,8 +13,7 @@ fully fleshed fix, and acceptance gates. Fixers update the `Status` line
 with test names when they land a fix; the auditor appends an
 **Adjudication** block when a `keep` ruling is accepted, narrowed, or
 contested — nobody deletes the other side's words. Standing do-not-fix
-rulings live in [kept.md](kept.md). Downstream integration gaps live in
-[primer-integration.md](primer-integration.md).
+rulings live in [kept.md](kept.md).
 
 The tree is hot: agents fix issues while audits run. Re-verify a file's
 evidence against the working tree before starting work on it, and update

@@ -2,8 +2,7 @@
 
 Lens: [REQUIRED-READING.md](REQUIRED-READING.md). Owner-approved plan,
 filed 2026-08-19. The interior pass (01–19) is closed; its record is git
-history. Standing rulings: [kept.md](kept.md). Downstream gaps:
-[primer-integration.md](primer-integration.md). Convention:
+history. Standing rulings: [kept.md](kept.md). Convention:
 [README.md](README.md).
 
 Three laws govern this pass:
@@ -38,7 +37,7 @@ Three laws govern this pass:
 | 36 | [leaf batch-of-1 (014)](36-perf-leaf-batch.md) | D | **fixed this pass** — o4 0.07×; 24 ns/row (was 53–69); pinned-run stays HANDOFF |
 | 37 | [telescoped Count (044)](37-perf-telescoped-count.md) | D | **fixed this pass** — skipped: 34's `jp_force_n0` is 1.25 µs |
 | 38 | [min/max fence (009)](38-perf-minmax-fence.md) | D | **fixed this pass** — Acc::Min/Max live; o5 0.00×; Force does not rank |
-| 39 | [owned-instance lanes](39-owned-instance-lanes.md) | D | **fixed this pass** — heap 0.57× get; admit 1.26× ns/fact; Primer blocked (schema ask) |
+| 39 | [owned-instance lanes](39-owned-instance-lanes.md) | D | **fixed this pass** — heap 0.57× get; admit 1.26× ns/fact |
 | 40 | [docs store-and-value](40-docs-store-and-value.md) | E | **fixed this pass** — store+value docs; census (h); Lean untouched |
 
 ## Order

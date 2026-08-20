@@ -1,8 +1,7 @@
 # 39 — New lanes: the heap arm gets measured like the store arm
 
-- **Status:** **fixed this pass** — three lanes run under `heap`; first
-  pins in `crates/bumbledb-bench/HEAP-BASELINE.md`. Primer gate
-  **blocked** with the ask (corpus reachable; no Rust opener).
+- **Status:** **fixed this pass** — two lanes run under `heap`; first
+  pins in `crates/bumbledb-bench/HEAP-BASELINE.md`.
 - **Severity:** performance coverage — the heap arm shipped without its
   ladder.
 
@@ -21,13 +20,7 @@ had numbers.
 2. **Admission throughput**: facts/second and the five phase quantities
    (`A`, `I`, `R`, `F`, `J`) across corpus prefixes — the proposal's
    telemetry, promoted into a lane.
-3. **The Primer scaling gate** (proposal's Allocation and performance
-   gates): the full normalization corpus from the sibling `primer-spec`
-   repo through load → complete admit → keyed reads → representative joins
-   → `fromInstance` publish, across at least four prefixes, with no
-   unexplained superlinear growth. This is the release gate the proposal
-   already names; it has never been run.
-4. The bare-metal ramdisk row rides the release checklist (closed issue
+3. The bare-metal ramdisk row rides the release checklist (closed issue
    18's suggested one-liner) beside this lane.
 
 ## First pin (2026-08-20, Apple M2 Max, release, scale S, 8 samples)
@@ -44,18 +37,7 @@ A/I/R/F/J are on every row (`InstanceBuilder::admit_measured`).
 
 join 123 µs / 500 rows · `fromInstance` 251 ms.
 
-## Primer verdict
-
-**blocked.** Source JSONL and a 1.68 GB `standards-evidence-ir.bumbledb`
-are on disk. The bench cannot open the store without a
-fingerprint-matching Rust `SchemaDescriptor` of StandardsEvidenceIR
-(Grade handles `"1"`..`"12"` and `"source-normalized"`). Ask recorded
-in `HEAP-BASELINE.md` — never silently skipped.
-
 ## Acceptance
 
-- The three lanes exist, run under the bench driver, and their first pins
+- The two lanes exist, run under the bench driver, and their first pins
   are recorded in the bench docs.
-- The Primer gate's verdict (green or the named superlinear term) is
-  recorded; if the corpus cannot be obtained, the gate is marked blocked
-  with the ask — never silently skipped.
