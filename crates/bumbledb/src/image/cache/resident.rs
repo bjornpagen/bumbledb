@@ -11,7 +11,7 @@ impl ImageCache {
     pub fn resident(&self) -> (u64, u64) {
         let mut images = 0;
         let mut bytes = 0;
-        for slot in self.slots.iter() {
+        for slot in &self.slots {
             match slot {
                 RelationSlot::Closed(slot) | RelationSlot::Frozen(slot) => {
                     if let Some(image) = slot.get() {
