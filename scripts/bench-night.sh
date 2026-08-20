@@ -60,7 +60,11 @@ esac
 [ -n "$1" ] || usage
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$REPO/target/release/bumbledb-bench"
+# The binary path must be the dir cargo actually writes. A leftover
+# CARGO_TARGET_DIR (napi rebuild, sandbox cache) used to compile 0.15
+# into one tree and time a stale $REPO/target/release 0.14 binary.
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/target}"
+BIN="$TARGET_DIR/release/bumbledb-bench"
 OBS_TARGET="$REPO/target/bench-obs"
 OBS_BIN="$OBS_TARGET/release/bumbledb-bench"
 LOCK="${BUMBLEDB_MEASURE_LOCK:-/tmp/bumbledb.measure.lock}"

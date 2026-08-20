@@ -322,7 +322,9 @@ fn run_cell(
     shuffle_rng: &mut Rng,
 ) -> Result<Cell, String> {
     let _ = std::fs::remove_dir_all(dir);
-    std::fs::create_dir_all(dir).map_err(|e| format!("sweep scratch: {e}"))?;
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("sweep scratch: {e}"))?;
+    }
     let db = Db::create_nosync(dir, world::WindowedWorld)
         .map_err(|e| format!("sweep nosync create: {e:?}"))?
         .expect("accepted");

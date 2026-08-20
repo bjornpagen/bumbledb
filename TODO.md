@@ -78,6 +78,11 @@ finding stamps live in git history.
 
 ## Shipped (compressed ledger — detail in git history and the stamped docs)
 
+- **0.15.0** (2026-08-19): admitted-instance / ABI-3 / format-8; Phase 2
+  lanes D+E on main. Shared-machine night at `22e618d9` re-pins the README
+  charts (durable read geomean 26.6×, scenarios 21.8×, compacted storage
+  167 / 228 B/fact). Heap primer remains blocked. Audit 35 remains owner
+  quiet-machine.
 - **bugbash-perf campaign** (2026-07-25 → 2026-08-03): instrument → gate →
   baseline → hunt → 44/44 findings fixed across seven file-disjoint lanes
   → rebench (reads 0.87–0.94 on five of six reps, scenarios 0.88 with the
