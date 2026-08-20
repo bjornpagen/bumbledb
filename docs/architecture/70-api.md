@@ -361,150 +361,54 @@ is reachable from the crate root: `Db`, `ReadInstance`/`WriteTx`,
 `Theory`,
 `SchemaDescriptor`, `SchemaSpec` + `SchemaSpecError`, `Value`, the `ir`
 module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
-`Violation`/`Violations`, `SchemaFingerprint`, and `exhume`/`Exhumed`
-(§ exhume).
+`Violation`/`Violations`, and `SchemaFingerprint`.
 
 ## Environment lifecycle
 
 - `Db::open(path, Ledger)` — no tuning parameters: map size, max readers, and LMDB
-  flags are internal (fsync durability on durable stores per `00-product.md`;
-  flags are derived from the store KIND, never from a parameter); the schema definition
+  flags are internal (fsync durability per `00-product.md`; flags are derived
+  from the open lane, never from a parameter); the schema definition
   (`Theory` — the macro's header struct, or a runtime-built `SchemaDescriptor`,
   which implements the trait as itself) is validated here (typed `SchemaError` on an
   invalid declaration) and what gets fingerprint-verified. Open verifies format
-  version, then store kind, then schema fingerprint; each mismatch is a typed
-  hard failure.
+  version, then schema fingerprint; each mismatch is a typed hard failure.
   `Db::create(path, Ledger)`
   initializes a fresh environment with the schema's fingerprint and returns
   `Result<Admission<Db<S>>>` — an empty store that fails complete admission is
   `Admission::Rejected` with the sealed violation set, no lease, no panic.
-  Every fresh-store constructor (`create`, new `ephemeral`, `from_instance`,
+  Every fresh-store constructor (`create`, `from_instance`,
   `compact`) **refuses an existing destination, including an empty directory**,
   as `DestinationExists { path }`: a previous claim on the name is not guessed
   at. Healing a half-created path is refused — staging plus atomic rename makes
   a half-created destination unrepresentable.
-- `Db::ephemeral(path, Ledger)` — the ephemeral store KIND's one constructor
-  (`50-storage.md` § the ephemeral store kind; never a flag on `create`/`open`).
-  A missing or empty directory initializes a fresh ephemeral store — the kind
-  marked in `_meta` at birth — and a cleanly handed-off ephemeral store reopens
-  under the same version/kind/fingerprint checks as `open` (create-or-open: a
-  scratch store earns the convenience because a mistaken fresh store at a
-  typo'd path destroys
-  nothing durable; the dogfooding doctrine, `00-product.md`). **The ephemeral
-  contract** (ruled 2026-07-23, R18): contents survive process restarts, not
-  machine crashes — and the kind's own loss claim is representable on disk. A
-  dirty marker, set fsynced at open and cleared by a small synced commit at
-  clean close, records the lineage; a store that crossed a machine crash is
-  detected at reopen and wipes-and-reinits, so post-crash reopen yields a
-  valid empty store, always — the fingerprint-valid-but-torn state is
-  unrepresentable, and verified-reopen vouches only for marker-proven clean
-  handoffs. The environment
-  carries `NOSYNC` (`50-storage.md` § the ephemeral store kind carries the
-  ruling-1 retraction of the old `WRITEMAP|NOSYNC` set); every semantic —
-  judgment, point reads, queries,
-  locking — is identical to a durable store, and only machine-crash durability is
-  renounced, by the store's own on-disk claim. Device-independent:
-  ephemeral-on-SSD is legitimate.
-- **The cross-open matrix is typed** (`crates/bumbledb/tests/ephemeral.rs`):
-  `Db::open` on an ephemeral store and `Db::ephemeral` on a durable store are each
-  `StoreKindMismatch { found, expected }`; `Db::create` on an existing path is
-  `DestinationExists` (create never opens a store, so the kind never gets a
-  say). `AlreadyInitialized` is the open-time refusal of a foreign LMDB
+- `Db::from_instance(path, &OwnedInstance)` — raw-copies an admitted value into
+  a new store. One write transaction: every `_data` and `_dict` byte, plus a
+  freshly synthesized four-key `_meta`. Does not re-judge.
+- There is one store. A scratch working set is a durable store on tmpfs, or
+  `InstanceBuilder` → `admit` → the owned value. Bench-hidden
+  `create_nosync` / `open_nosync` / `from_instance_nosync` are not embedding
+  API and not a kind.
+- `AlreadyInitialized` is the open-time refusal of a foreign LMDB
   environment or an unusable empty root.
-- **The two-store staging pattern** (the sighting the surface exists for): build
-  an ephemeral store — collection inserts, judged exactly as a durable store judges —
-  read/repair until the theory holds, then ETL the survivors into the durable
-  store (`instance.scan` then `insert_dyn` under host-chosen `write`s, § ETL below) and delete the directory. The
-  staging side pays no fullfsync per commit (the small-commit shape measures
-  43–70x over durable-on-SSD for the staging pattern and 3.1–3.5x over a
-  plain ramdisk store across the `NOSYNC`-only re-earn sessions, device tax
-  1.1–1.6x, the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`, the
-  Measure phase 2026-07-19; the artifact retired with the 2026-07-20 pin
-  swap, `6d5560a8` — git history); the durable side's
-  guarantees never dilute because the kinds cannot cross-open.
 - **The lock law is a writer law** (ruled 2026-07-23, R17): one handle per path
   (`00-product.md`) governs writers. Every writing constructor —
-  `create`/`open`/`ephemeral`, each of which hands out `db.write` — holds an
-  exclusive advisory lock on `<dir>/bumbledb.lock`; a second live writer handle
-  on the same path — in this process or another — is `EnvironmentLocked` at open
-  time. The handle is shareable across threads; drop closes and releases the
-  lock. Ephemeral stores included — among writers the lock does not vary by
-  kind. Readers open `MDB_RDONLY`, lockless: archival reads work on read-only
-  media, restored snapshots, and mounted backups with no carve-outs (§ exhume,
-  the reader constructor).
+  `create`/`open`/`from_instance`/`compact`, each of which hands out `db.write`
+  — holds an exclusive advisory lock on `<dir>/bumbledb.lock`; a second live
+  writer handle on the same path — in this process or another — is
+  `EnvironmentLocked` at open time. The handle is shareable across threads;
+  drop closes and releases the lock. There is no public read-only constructor.
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
-  destroys data. `Db::ephemeral` **never destroys data it promised to keep**
-  (the law as reworded by R18, ruled 2026-07-23) — it opens or initializes,
-  deletion of a spent staging store is the host's explicit act, and the one
-  thing it wipes — an ephemeral store that crossed a machine crash — is
-  exactly the data the kind renounced on-disk at birth.
-  Nor does it MUTATE on refusal: an existing data file is probed through a plain
-  durable-flagged open before the
-  ephemeral flags are ever applied — and since ruling 1 no open of ANY kind
-  truncates or preallocates the map (`50-storage.md` § environment constants),
-  the law holds structurally rather than by flag choice — so a refused probe —
-  a durable store, a
-  foreign LMDB environment, a stale or forged store — leaves `data.mdb`
-  byte-identical (pinned by the byte-identity tests in
-  `crates/bumbledb/tests/ephemeral.rs` and `storage/env/tests.rs`).
+  destroys data. Since ruling 1 no open truncates or preallocates the map
+  (`50-storage.md` § environment constants).
 
-## Exhume — the read-only, theory-less open
+## The store and the value
 
-`bumbledb::exhume(path) -> Exhumed` opens a store FROM ITS OWN PERSISTED
-DESCRIPTION (`50-storage.md` § the `_meta` block) — no caller-supplied theory
-anywhere. A crate-root function, not a `Db` constructor: `Db<S>`'s typestate IS
-a theory, and this entry's whole point is having none. The sighting it exists
-for: a run store whose creating schema has since evolved — the record outlives
-the schema, and exhume is how the record is read back (the rebirth pattern:
-exhume the old store, create the successor under the new theory, copy, re-derive).
-
-The open sequence: format version, then the store-kind marker — read and
-validated but never compared against an expectation (exhume takes no
-durability decision and reads BOTH kinds; the kind is reported on the handle).
-Then the persisted descriptor, behind two integrity gates: blake3 of the stored
-bytes must equal the stored fingerprint (the fingerprint IS that hash — one
-value twice), and the decoded declaration must validate and re-encode to the
-exact stored bytes (the self-verifying round trip: decoder drift can never
-silently misread a store).
-
-The handle exposes exactly:
-
-- **The descriptor** — the schema as declared (`SchemaDescriptor`): relation
-  names, field names and types, `fresh` marks, closed-relation rosters (each
-  ground axiom's handle and values, so callers can render handles — the store
-  itself holds zero vocabulary bytes, `50-storage.md` § virtual relations) —
-  plus the verified fingerprint and the store kind.
-- **The read surface** — `exhumed.read(|snap| ...)` over one consistent
-  snapshot: `scan` (the `F`-namespace row-major walk, decoding per the
-  descriptor — str resolved through `_dict`, numerics/bytes/bool/intervals
-  inline; closed relations scan their sealed rosters), `contains_dyn`,
-  `get_dyn`. Rows come back as `Value`s in field declaration order; the
-  descriptor's field-name list at the same positions is the name-keyed
-  reading. `exhumed.relation(name)` resolves a relation NAME to its id
-  (declaration order mints every id).
-
-No write surface exists on the type, no prepare entry, and no statement is
-ever judged — the record is read verbatim. An exhumed handle never takes the
-writer path (readers-don't-block, `50-storage.md`) — and it holds no lock
-either: the lock law is a writer law (ruled 2026-07-23, R17), so exhume opens
-the environment `MDB_RDONLY`, never touches the lock file, and is genuinely
-read-only down to the storage layer. The archival sighting reads exactly the
-media it names — a read-only bind mount, a restored snapshot, a mounted
-backup — with no carve-outs.
-
-**Refusals, all typed:** `Io` on a nonexistent path (never `EnvironmentLocked`
-— readers are lockless, R17);
-`FormatMismatch` on any other version (no migration path, as everywhere);
-`DescriptorMissing` on a store not yet adopted — the remedy in the error: open
-it once under its creating schema and the back-fill (`50-storage.md`) makes it
-self-describing; `Corruption(DescriptorFingerprintDesync)` when the stored
-descriptor hashes to something other than the stored fingerprint (the same
-disagreement `Db::verify_store` convicts as a finding);
-`Corruption(MalformedValue)` on undecodable descriptor bytes.
-
-(Admitted past the v0 freeze by the course-serialization packet's engine
-ruling — additive public API, docs in the same change; the store rebirth tool
-is the consumer that names its shape.)
+The public engine is two things. **The store** (`Db`) is mutable, durable, and
+leased: `read` hands a `ReadInstance` for the callback; `write` hands a
+`WriteTx`. **The value** (`OwnedInstance`) is immutable, proven, and owned.
+There is no third duration, no store kind, and no theory-less open. A real
+migration is reads and writes with two schemas the host both possesses
+(`cookbook.md` recipe 28).
 
 ## Transactions
 
@@ -805,12 +709,9 @@ checks in one integer compare.
 
 ## Errors (taxonomy skeleton)
 
-- **Open errors:** `FormatMismatch`, `StoreKindMismatch { found, expected }` (the
-  kind marker read after the version, before the fingerprint — the cross-open
-  matrix, § environment lifecycle), `SchemaMismatch`, `DestinationExists`, `AlreadyInitialized`,
+- **Open errors:** `FormatMismatch`, `SchemaMismatch`, `DestinationExists`, `AlreadyInitialized`,
   `EnvironmentLocked` (writers only — the lock law is a writer law, R17;
-  § environment lifecycle), `DescriptorMissing` (exhume only, § exhume — the
-  not-yet-adopted store, remedy in the error), `Io`, `Lmdb`.
+  § environment lifecycle), `Io`, `Lmdb`.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.
@@ -1176,8 +1077,8 @@ round trip per fact dies.
 ### Resource lifetimes are disposables (ruled 2026-07-23, R12)
 
 The SDK assumes the latest Node 26 runtime. Every SDK object holding a
-native lifetime — exhume the first citizen, snapshots and scoped reads
-alike — implements `Symbol.dispose` / `Symbol.asyncDispose` (whichever
+native lifetime — owned instances, builders, witnesses, and scoped writes —
+implements `Symbol.dispose` / `Symbol.asyncDispose` (whichever
 matches its teardown reality), and `using` / `await using` is the documented
 idiom. The zero-closables doctrine restates as: **lifetimes are disposables,
 never `close()`** — release is deterministic and scope-shaped in the
@@ -1194,7 +1095,7 @@ profiling stays engine-internal (§ observability).
 
 **FREEZE IS DECLARED at this commit (2026-07-15).** The surface above — the
 `schema!` grammar (owner-evolvable by its own standing ruling), the environment
-lifecycle (`create`/`open`/`ephemeral`), the unified `db.prepare`, the
+lifecycle (`create`/`open`/`from_instance`), the unified `db.prepare`, the
 transaction closures with their point reads and the generation witness,
 collection `insert`/`delete`/`reserve` inside `write`, the scan exports, and
 the error taxonomy — is the v0 embedding API.

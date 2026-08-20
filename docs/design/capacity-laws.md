@@ -6,7 +6,7 @@ proofs + gate `b2584bcb..df7c25e2` (2026-07-24/25). §8 rulings 1–6 and §8b
 C1–C19 landed as ruled. The ONE open tail closed 2026-08-01: C17's
 slot-vs-fetch measured choice ran on the power-budget lane (both arms, same
 protocol, oracle-gated per arm) and the SLOT arm won on every weighted row —
-min-of-3 ephemeral p50s, µs: `commit_capacity_sum` fetch 35.2 vs slot 32.3,
+min-of-3 NOSYNC p50s, µs: `commit_capacity_sum` fetch 35.2 vs slot 32.3,
 `commit_capacity_duration` fetch 34.2 vs slot 30.8, statement-free control
 18.2 under both arms.
 The slot arm landed as the only form, the fetch arm and the

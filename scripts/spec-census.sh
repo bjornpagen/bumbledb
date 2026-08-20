@@ -325,8 +325,35 @@ if [ "$dyn_exempt_hits" -ne 3 ]; then
   fail=1
 fi
 
+# ---- (h): purged store-and-value tokens (audit/40) --------------------
+# The public engine is the store and the proven value. These spellings
+# cannot return as live API. History / deleted-vocabulary / purged /
+# add-back lines may name them. Lean `def Instance` is the mathematical
+# map — not this gate.
+
+purged_spelling='Db::ephemeral|bdb_db_ephemeral|StoreKindMismatch|StoreKind::|enum StoreKind|`StoreKind`|\bStoreKind\b|\bephemeral\b|\bexhume\b|Exhumed|ExhumeHandle|DescriptorMissing|DescriptorRoundTrip|META_STORE_KIND|META_SCHEMA_DESCRIPTOR|trait Instance|Instance<S>|sealed Instance|enum EnvMode|`EnvMode`|EnvMode::|\bEnvMode\b|persisted descriptor|self-describing'
+
+purged_docs=(
+  docs/architecture/*.md
+  docs/cookbook.md
+  docs/feature-register.md
+  docs/design/*.md
+  docs/research/*.md
+  ts/PUBLISHING.md
+)
+purged_allow='purged|add-back|Add-back'
+
+while IFS= read -r hit; do
+  text="${hit#*:}"
+  text="${text#*:}"
+  if ! printf '%s' "$text" | grep -qE -- "$purged_allow"; then
+    echo "spec-census: FAIL — purged store-and-value token: $hit" >&2
+    fail=1
+  fi
+done < <(grep -nEi -- "$purged_spelling" "${purged_docs[@]}" 2>/dev/null || true)
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned, purged store-and-value tokens absent outside history"

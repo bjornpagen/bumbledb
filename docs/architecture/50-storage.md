@@ -1,9 +1,9 @@
 # 50 — Storage
 
 LMDB is the only durable backend (decision recorded in `00-product.md`), accessed
-through `heed`. Durability (fsync per commit on durable stores; the durable
-constructors cannot express `NOSYNC`/`WRITEMAP`/`MAPASYNC` — the ephemeral store
-KIND below is a different store, never a mode), write
+through `heed`. Durability (fsync per commit; the public constructors cannot
+express `NOSYNC`/`WRITEMAP`/`MAPASYNC` — a bench-hidden NOSYNC open flag is
+not a store kind), write
 atomicity, and reader snapshot isolation come from real LMDB transactions. Single
 writer, many reader threads, one process (`00-product.md`).
 **Decision: `heed`.** **Alternative:** `lmdb-rkv`/raw FFI. **Why it lost:** heed is the
@@ -13,15 +13,12 @@ becomes a correctness or maintenance liability.
 **The lock law is a writer law** (ruled 2026-07-23, R17). One handle per path
 governs the write surface: the exclusive advisory lock
 (`storage/env/acquire_lock.rs`) belongs to the writing constructors — `Db`
-handles, durable or ephemeral — and to nothing else. A read-only open takes no
-lock and opens the environment `MDB_RDONLY` (its own arm of the one raw-open
-chokepoint, `storage/env/open_env.rs`), registering dbis through a read
-transaction: a read-only environment can corrupt nothing, so there is nothing
-for a lock to protect. `exhume` (`storage/env/exhume.rs`) is thereby genuinely
-read-only down to the storage layer — the archival lane works on read-only
-media, restored snapshots, and mounted backups, with no carve-outs — and its
-read-only-ness is representation, not API-surface omission: from a read-only
-environment the write path is unrepresentable.
+handles — and to nothing else. Every public open is a writing constructor
+(`OpenLane::Write`). There is no public read-only or theory-less open:
+archival media is ETL'd from a store the host can write, under a theory the
+host possesses. The one raw-open chokepoint (`storage/env/open_env.rs`)
+derives flags from the lane; the only other arm is bench-hidden
+`OpenLane::Nosync`.
 
 Environment constants are decisions, not knobs: `map_size` is fixed at 32 GiB
 (comfortably above the 1 GB scale axiom — the map is the hard capacity ceiling,
@@ -33,12 +30,12 @@ per slot (~64 KiB total), and the snapshot past the table is the typed `ReadersF
 error naming the limit. The map is an **address-space reservation, never an
 allocation**: no open path truncates or preallocates `data.mdb` to the map (LMDB's
 full-map ftruncate lives only under `MDB_WRITEMAP` — `mdb_env_map`, mdb.c — and no
-store kind carries that flag), so a store's data file holds exactly the pages ever
+public constructor carries that flag), so a store's data file holds exactly the pages ever
 committed, on every filesystem. (Retraction, cleanup-0.5.0 ruling 1: the size was
-4 GiB, priced when the ephemeral kind eagerly materialized its full map at every
-open; dropping `WRITEMAP` and the eager capacity contract — § the ephemeral store
-kind — made the raise free. The retracted text also claimed every open ftruncates
-the map: true only of `WRITEMAP` opens, i.e. never of durable stores; verdict read
+4 GiB, priced when a retired `WRITEMAP` open eagerly materialized its full map;
+dropping `WRITEMAP` and the eager capacity contract made the raise free. The
+retracted text also claimed every open ftruncates the map: true only of
+`WRITEMAP` opens, i.e. never of a public constructor; verdict read
 off mdb.c and pinned by the refusal tests' `< 1 GiB` fixture bounds.)
 
 ## Design inputs (why this layout)
@@ -84,23 +81,12 @@ S | relation_id | stat              -> u64            counters: stat 0 = row cou
                                                       IS its fresh id, minted from Q; ruled 2026-07-23, R16)
 ```
 
-Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, the
-dictionary next-id counter — the delta's pending-intern design mints provisional ids
-against it from read leases — and the **schema descriptor**: the canonical
-schema-encoding bytes the fingerprint hashes, persisted whole so the store is
-**self-describing**; readers: `exhume` — the read-only, theory-less open,
-`70-api.md` § exhume — and `Db::verify_store`, whose descriptor pass convicts a
-store whose descriptor does not hash to the stored fingerprint. Written at
-creation; **back-filled by any successful fingerprint-matching open**: the
-verified fingerprint proves the caller's theory is the creating theory, so open
-writes the theory's canonical bytes in its own committed transaction — the
-adoption path for every pre-descriptor store, one open under the true schema and
-the store is self-describing forever. The storage tx id does not advance (the
-descriptor is not query-visible state). Descriptor presence is ADDITIVE — no
-format-version bump: the version-bump law targets keys open *decodes*, where
-absence would be a silent default; the ordinary open path never reads this key,
-and `exhume` refuses its absence with the typed `DescriptorMissing` naming the
-remedy — absence is a stated condition, never a default) and `_dict` (**str-only** — `bytes<N>` values are inline in
+Plus `_meta` — **four keys**: format version, schema fingerprint, storage tx id
+(generation), and the dictionary next-id counter (the delta's pending-intern
+design mints provisional ids against it from read leases). The fingerprint
+**is** blake3 of the canonical schema encoding; those bytes are not a `_meta`
+key. Open is version, then fingerprint. Kind is not data. `_dict` is
+(**str-only** — `bytes<N>` values are inline in
 facts, never interned, so the key hash carries no type tag: forward
 `blake3(bytes) → id`, reverse `id → bytes`; collision axiom in
 `10-data-model.md`). Key components are big-endian
@@ -215,7 +201,7 @@ facts, never interned, so the key hash carries no type tag: forward
 - Key-component widths: `relation_id` u32, `field_id` u16, statement id u16, `row_id`
   u64 — all big-endian; ids assigned by declaration/materialized order and pinned by
   the fingerprint.
-- Open-time checks, in order: storage format version, then store kind, then schema
+- Open-time checks, in order: storage format version, then schema
   fingerprint — each
   mismatch is a hard failure. No other format version opens and no migration path
   exists (ETL is the story, `70-api.md`; compatibility is never a design input,
@@ -230,11 +216,9 @@ facts, never interned, so the key hash carries no type tag: forward
   `R`-edge namespace left the vocabulary
   (`docs/architecture/30-dependencies.md` § refused: order marks), so every v3
   fingerprint was computed under a retired encoding — nothing deployed carries
-  an order statement. Version 5 is the store-kind marker: every store carries a
-  `_meta` kind byte (§ the ephemeral store kind) that open consults — a new meta
-  key read at open is an encoding change, so it bumps (nothing deployed carries a
-  v4 store; a v4 store would otherwise open with the kind key absent, which is
-  exactly the silent-default class the bump law exists to refuse). Version 6 is
+  an order statement. Version 5 added a `_meta` key that open no longer
+  reads (kind is not data; retired pre-publish) — a new key read at open is
+  an encoding change, so it bumps (nothing deployed carries a v4 store). Version 6 is
   the one id allocator (ruled 2026-07-23, R16, § key layout above): on a
   fresh-keyed relation the first fresh field's value IS the `F` row id, the
   auto-key's `U` tree is gone, and the `S` row-id high-water exists only where
@@ -247,8 +231,9 @@ facts, never interned, so the key hash carries no type tag: forward
   v6 fingerprint decodes wrong and a weighted-statement `R` entry has no v6
   reading at all — one bump covers both,   and every pre-cutover store refuses
   to open on every lane. Version 8 is the admitted-instance cutover: create
-  complete-admits empty, open requires the persisted descriptor, format-7
-  decoding is deleted, and every earlier format refuses on every open surface.
+  complete-admits empty, open is version then fingerprint, `_meta` is four
+  keys (roster revised in place pre-publish), format-7 decoding is deleted,
+  and every earlier format refuses on every open surface.
 - **A destination path is either absent or a complete store** (format 8).
   Fresh-store constructors refuse an existing path — including an empty
   directory — as `DestinationExists`. Open of a foreign LMDB environment or an
@@ -257,8 +242,8 @@ facts, never interned, so the key hash carries no type tag: forward
   half-created store cannot occupy the destination path. `MetaMissing` convicts
   only a genuinely absent key inside an initialized store.
 - **Malformed and missing are distinct meta states** (ruled 2026-07-23, R18).
-  One decode discipline for every `_meta` value — the split the store-kind
-  reader pins: an absent key is `MetaMissing`; a present value that fails to
+  One decode discipline for every `_meta` value — the split `parse_meta`
+  pins: an absent key is `MetaMissing`; a present value that fails to
   decode (wrong width, unknown byte) is the malformed-value corruption naming
   the key, never `MetaMissing`. The two states point at opposite remedies
   (initialize vs. investigate a torn write), so one error value never encodes
@@ -415,9 +400,8 @@ variant agreement.
    immutable plan and re-committed — each retry an obs event
    (`commit_sync_retry`), the escaping error carrying the count. The contract is
    untouched: a retry re-runs the full write-and-sync, so every commit that
-   reports success fsynced — no sync mode exists on a durable store, and none
-   may be born (the ephemeral store KIND is not a mode: § the ephemeral store
-   kind).
+   reports success fsynced — no sync mode exists on a public constructor, and
+   none may be born. A bench-hidden NOSYNC flag is not a store kind.
 
 User operation order inside the closure is therefore semantically irrelevant
 (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); the
@@ -522,128 +506,6 @@ asserts the named conviction (`crates/bumbledb/src/verify_store/tests.rs`) —
 an empty finding list is backed by a fixture per claim, not by a smoke test.
 (The packet-era coverage ledger this section once cited is retired; the
 fixtures are its durable form.)
-
-## The ephemeral store kind
-
-A store IS a kind, marked on disk: `_meta` carries a kind byte (0 durable,
-1 ephemeral) beside the format version and fingerprint, written at creation and
-read at every open — after the version check, before the fingerprint. The durable
-constructors (`Db::create`/`Db::open`) mint and open only durable stores;
-`Db::ephemeral` (`70-api.md` § environment lifecycle) only ephemeral ones; the
-cross-open matrix is four cells, all typed
-(`crates/bumbledb/tests/ephemeral.rs`): open-on-durable and
-ephemeral-on-ephemeral succeed, open-on-ephemeral and ephemeral-on-durable are the
-typed `StoreKindMismatch` naming found and expected kinds. Parse, don't validate:
-holding a `Db` handle proves the store's kind, so the durable surface can never
-quietly read a store that skipped its fsyncs.
-
-An ephemeral environment differs from a durable one in exactly one flag: the
-LMDB `MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
-one raw-open chokepoint, where the flags are DERIVED from the kind and the open
-lane — `MDB_RDONLY` belongs to the read-only lane, R17 above — no flag
-parameter exists, so the durable paths structurally cannot reach them; the unsafe
-policy allowance and safety comments live there). `NOTLS`, the advisory lock, the
-map size, the reader table, fingerprint verification, the whole write path, the
-dependency judgment, and WriteTx point-read semantics are identical — proven by
-the durable/ephemeral differential oracle (`60-validation.md`). The kind's one
-other distinction is lifecycle, not environment: the dirty marker of the crash
-contract below.
-
-What the kind renounces is machine-crash (power-loss) durability and nothing
-else. **The crash-sweep evidence** (banked; the sweep died with the fuzzing
-apparatus, `60-validation.md` § the deletion record): the deterministic
-crashpoint sweep — every named commit-pipeline point × the ops-prefix matrix —
-ran against ephemeral stores too, and every combination
-recovered all-or-nothing under `NOSYNC` exactly as the durable table
-above claims: reopen, `verify_store` green, contents at the expected side, victim
-replay — no third observable outcome. This is the expected LMDB
-result — `NOSYNC` removes the fsync barrier, which only a power loss can
-exploit, and never touches the meta-page commit protocol that atomicity stands
-on — and the sweep was the proof the expectation was not doing the work.
-(Retraction, cleanup-0.5.0 ruling 1: the flag set was `WRITEMAP|NOSYNC` —
-WRITEMAP shipped on the 2026-07-15 sweep verdict with NOSYNC-only as the
-recorded fallback. Ruling 1 promoted the fallback to the law: WRITEMAP's
-open-time full-map ftruncate forced the eager capacity contract, whose price
-at the 32 GiB map — 32 GiB of real disk or RAM per ephemeral open — no lane
-could pay. The deterministic sweep and the kill smoke re-ran green under
-NOSYNC-only; the ≥2,000-round statistical kill lane's recorded sessions
-predate the flip, and a NOSYNC-only session is owed with the Measure phase.
-Nothing was weakened.)
-
-**The crash contract** (ruled 2026-07-23, R18): contents survive process
-restarts, never machine crashes — and reopening after a crash yields a valid
-empty store, always. Every ephemeral open sets a synced dirty marker before
-trusting anything else, and a clean close clears it behind one forced data
-sync — the kind's only fsyncs, bracketing its lifetime. The marker's on-disk
-home is a sibling FILE, `<dir>/ephemeral.dirty` — never a `_meta` key,
-because the marker must be readable before any LMDB page is trusted, and
-the whole point is never opening a possibly-torn store. A reopen that finds the marker
-set — power loss, or a process death that never reached clean close — wipes the
-store and re-initializes it; the verified reopen (version, kind, fingerprint,
-the same checks as `open`) is reserved for the marker-proven clean lineage.
-What the marker refuses to open is the state `NOSYNC` makes possible and
-`_meta` cannot see: a meta page flushed by incidental writeback over data pages
-that never landed — fingerprint-valid over trees no committed transaction ever
-contained. That state is unrepresentable, not detected: the possibly-torn store
-is never opened at all. The kind's law is thereby exact — **an ephemeral store
-never destroys data it promised to keep** — and the marker-clean lineage is the
-promise's whole extent: a store that crossed a machine crash was already lost
-by the store's own definition (below). The banked sweep evidence above keeps
-its meaning — it proved `NOSYNC` never broke the meta-page commit protocol
-under process kill — but reopen-after-unclean-death no longer stands on it: the
-wipe happens before any data page is trusted.
-
-The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
-ephemeral-on-ramdisk buys the flag's latency on top of the device's — the
-device tax measured **1.1–1.6x** under `NOSYNC`-only (the R6 lane of
-`crates/bumbledb/tests/ramdisk_phase_r.rs`, re-earned by the Measure phase
-2026-07-19 across three interleaved sessions; the artifact retired with the
-2026-07-20 pin swap, `6d5560a8` — git history; the retired `WRITEMAP|NOSYNC` figure was
-~1.0–1.1x — and the device-independence *design* stands on the kind marker,
-not the number). The kind
-carries the no-durability claim, not the device, so no lie is possible — a
-machine crash loses an ephemeral store by the store's own definition. (The
-device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
-Capacity under the lazy map is the filesystem's own story: no open truncates
-or preallocates anything (§ environment constants above), a store's data file
-holds only committed pages, and a volume that fills surfaces as the failing
-commit's typed `Lmdb` error. (Retraction, same ruling: the retired capacity
-contract judged capacity once at open — real blocks for the full map,
-`StorageFull` typed — to keep WRITEMAP's sparse ftruncate honest under
-`NOSYNC`; with no dirty pages ever written through a mapping, the
-unbackable-page hazard it guarded against is gone with the flag, and the
-eager allocation would be pure cost.)
-
-Lean owns none of this: durability and crash recovery are mechanism, outside the
-model (`lean/README.md` § what Lean does NOT own), so the store kind adds no
-Bridge row and the census expects no citation here — the sweep and the
-differential oracle are the evidence.
-
-**Decision: a distinct constructor and an on-disk KIND marker, `NOSYNC`.**
-**Alternative 1:** a sync-mode flag on `create`/`open`. **Why it lost:** a mode is
-a runtime claim nobody can read back; a kind is parsed at open and refuses
-mismatches typed — and the durability law (`00-product.md`) stays whole: *no sync
-mode exists on a durable store, and none may be born.* **Alternative 2:** the
-earlier RAM-backed-device precondition (the phase-2 refusal's shape: ephemeral
-only on RAM-backed paths). **Why it lost (superseded):** it tied the API's truth
-conditions to device identity, which the kind marker makes unnecessary — the
-marker, not the medium, carries the claim. **Alternative 3:** `WRITEMAP|NOSYNC` —
-the flag set that originally shipped (the sweep convicted nothing and the R4
-cells priced it fastest on the small-commit shape). **Why it lost (reversed,
-cleanup-0.5.0 ruling 1):** WRITEMAP's open-time full-map ftruncate forced the
-eager capacity contract, unpayable at the 32 GiB map; its measured price
-advantage was earned under the old flag set, and the Measure phase re-earned
-the kind's price under `NOSYNC`-only (2026-07-19, three interleaved R6
-sessions; the artifact retired with the pin swap `6d5560a8`, git history:
-small-commit flags dividend
-27–52x on SSD and 3.1–3.5x on the ramdisk, staging win 43–70x, device tax
-1.1–1.6x — the WRITEMAP-era ~75–90x / ~4.2–4.4x band narrowed, the win
-stands whole, so the rationale survives its own re-argument). The deterministic crash sweep and the kill
-smoke re-ran green under `NOSYNC`-only while they lived (they died with the
-fuzzing apparatus, `60-validation.md` § the deletion record), so the kind's
-claim lost nothing. **Reverses if:** any
-crashpoint ever shows a non-all-or-nothing recovery on an ephemeral store —
-the kind and surface stay while the flag set answers for it.
 
 ## The columnar image cache (the hot representation)
 

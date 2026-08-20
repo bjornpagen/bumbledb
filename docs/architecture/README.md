@@ -63,7 +63,7 @@ laws).
   the 2026-08-16 shared-machine night, code rev `d2a62728`, verify-stamped per binary;
   charts in `assets/`, raw traces in git history) — but no L corpus exists, so the
   10 ms budget and every L-scale claim bind nothing yet (`00-product.md`).
-  (The ephemeral-lane numbers ride the like-for-like NOSYNC pairing
+  (The NOSYNC-flag-lane numbers ride the like-for-like pairing
   established at the campaign; the pre-campaign Measure-phase artifacts
   retired with the 2026-07-20 pin swap `6d5560a8` and live in git history.)
   *Trigger: generating the L corpus.*

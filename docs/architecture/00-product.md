@@ -122,11 +122,11 @@ language. **Reverses if:** never — owner axiom.
   an exclusive advisory lock on `<dir>/bumbledb.lock` for the handle's lifetime,
   so a second writer — another process, or a second `Db` on the same path in this
   one — fails loudly at open time (`EnvironmentLocked`, a writer-vs-writer
-  refusal) instead of corrupting derived state silently. Readers hold no lock and
-  open `MDB_RDONLY`: a read-only environment can corrupt nothing, so archival
-  reads work on read-only media, restored snapshots, and mounted backups, with no
-  carve-outs (`50-storage.md`, `70-api.md` § exhume). The multi-process closure
-  is exactly the write surface — recorded as closed there.
+  refusal) instead of corrupting derived state silently. Every public open is a
+  writing constructor and takes the lock. There is no public read-only or
+  theory-less open: archival media is ETL'd from a store the host can write,
+  under a theory the host possesses (`50-storage.md`, `70-api.md`). The
+  multi-process closure is exactly the write surface — recorded as closed there.
 - **Threading doctrine: bumbledb owns zero threads.** The engine never spawns one — no
   background writers, compactors, or build pools; all threads belong to the
   application, extending the host-owns-composition principle to scheduling. Parallelism
@@ -149,38 +149,19 @@ language. **Reverses if:** never — owner axiom.
   unrepresentable here. Across transactions, read-compute-write is optimistic:
   witnessed by a `Witness` (`write_from`, `70-api.md` § conditional writes), checked
   in O(1) at commit.
-- **Durability: fsync per commit on durable stores** (LMDB defaults). A committed
-  posting survives power loss — it's a ledger. The law's scope is the durable store
-  KIND: no sync mode exists on a durable store, and none may be born —
-  `NOSYNC`/`WRITEMAP`/`MAPASYNC` are not expressible through the durable
-  constructors. SQLite is benchmarked at `synchronous=FULL` for fairness.
-  **The carve-out (a decision, not a mode): the ephemeral store kind.**
-  `Db::ephemeral` births a store whose `_meta` carries an ephemeral-kind marker and
-  whose environment carries `NOSYNC` (`50-storage.md` § the ephemeral store
-  kind; the retired `WRITEMAP` half of the original flag set is the ruling-1
-  retraction recorded there): a different store KIND with a different constructor
-  and an on-disk marker —
-  never a flag on `create`/`open` — so the cross-open is a typed refusal and no
-  durable store can quietly lose its guarantee. The sighting is the ephemeral
-  relational engine: staging stores judged before ETL into a durable store, analysis
-  working sets, scratch stores — the small-commit shape where `NOSYNC`-only
-  measures **27–52x over durable-on-SSD** through the real constructor on the
-  same device, 43–70x for the full staging pattern (ephemeral-on-ramdisk vs
-  durable-on-SSD), 3.1–3.5x over a plain-ramdisk durable store, with a
-  1.1–1.6x device tax (per-session bands across three interleaved R6
-  sessions, the Measure phase 2026-07-19, the R6 lane of
-  `crates/bumbledb/tests/ramdisk_phase_r.rs`; the measurement artifact
-  retired with the 2026-07-20 pin swap, `6d5560a8` — a git-history record,
-  not a tree path; the retired `WRITEMAP|NOSYNC` band was
-  ~75–90x / ~4.2–4.4x / 1.0–1.1x). The owner's doctrine, recorded
-  verbatim: "everything we can do to make dogfooding easier is upgraded to a
-  feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
-  precondition. **Why it lost:** the KIND carries the no-machine-crash-durability
-  claim, not the device — ephemeral-on-SSD is legitimate (a machine crash loses an
-  ephemeral store by definition, so no lie is possible), and a device precondition
-  would smuggle device identity into the API's truth conditions. **Reverses if:** a
-  workload demands durable semantics from a scratch store — which is spelled
-  `Db::create` plus ETL, so never.
+- **Durability: fsync per commit** (LMDB defaults). A committed
+  posting survives power loss — it's a ledger. There is one store: no sync
+  mode exists on a public constructor, and none may be born —
+  `NOSYNC`/`WRITEMAP`/`MAPASYNC` are not expressible through `create` /
+  `open` / `from_instance`. A scratch working set is a durable store on
+  tmpfs, or the owned value (`InstanceBuilder` → `admit`). Bench-hidden
+  NOSYNC constructors are a lane flag, not a kind. SQLite is benchmarked at
+  `synchronous=FULL` for fairness.
+  **Decision: one store.** **Alternative:** a second no-durability kind with
+  its own constructor and on-disk marker. **Why it lost:** no named product
+  consumer; TS never had the surface; the niche is tmpfs plus a hidden bench
+  flag. **Reverses if:** the recorded add-back trigger in
+  `proposals/instance-lifetime.md` fires.
 
 ## Target hardware
 
@@ -384,6 +365,15 @@ value-type roster is six); *rule program / stored rules* → the host loop over
 prepared queries (queries are host data, assembled per prepare); *magic sets /
 demand transformation* → the host seeds the frontier (`20-query-ir.md` § engine
 recursion).
+Storage-lifecycle purge (each add-back in `proposals/instance-lifetime.md`):
+*ephemeral store kind* → purged (add-back: a named product consumer of
+mutable-no-durability that tmpfs cannot cover);
+*exhume* → purged (add-back: a real bytes-without-code incident, CLI only);
+*persisted descriptor* → purged (add-back: same bytes-without-code incident);
+*StoreKind* → purged (kind is not data);
+*EnvMode* → purged (the lock is a `File`);
+*sealed Instance trait* → purged (add-back: a named generic host that cannot
+hold a concrete type).
 
 ## Success criteria
 

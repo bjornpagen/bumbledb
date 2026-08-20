@@ -39,7 +39,7 @@ Three laws govern this pass:
 | 37 | [telescoped Count (044)](37-perf-telescoped-count.md) | D | sequenced after 34's trace |
 | 38 | [min/max fence (009)](38-perf-minmax-fence.md) | D | confirm premise under `GroupState` |
 | 39 | [owned-instance lanes](39-owned-instance-lanes.md) | D | the heap arm gets its ladder + the Primer gate |
-| 40 | [docs store-and-value](40-docs-store-and-value.md) | E | proposal, arch docs, census tokens; Lean untouched |
+| 40 | [docs store-and-value](40-docs-store-and-value.md) | E | **fixed this pass** — store+value docs; census (h); Lean untouched |
 
 ## Order
 

@@ -12,10 +12,15 @@ assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
 `0.15.0` is the admitted-instance / ABI-3 / format-8 release over `0.14.0` —
-`OwnedInstance`, `ReadInstance`, `InstanceBuilder`, `WriteTx`, sealed
-`Instance`, and `Admission`; snapshot-named surfaces are gone; C
-`bdb_abi_version()` is 3. Engine crates, `bumbledb-c`, the napi crate, and both
-npm packages share one spelling.
+one public engine: **the store** (`Db`, leased `ReadInstance` / `WriteTx`)
+and **the value** (`OwnedInstance`, `InstanceBuilder`, `Admission`).
+Format 8 and ABI 3 are revised in place under the pre-publish rule: the
+`_meta` roster is four keys (format, fingerprint, generation, dict-next);
+kind is not data; there is no theory-less open and no public instance
+trait. Snapshot-named surfaces are gone. C `bdb_abi_version()` stays 3.
+**Pre-publish format-8 stores rebuild from source** — there is no
+in-format migration for a roster revised before publish. Engine crates,
+`bumbledb-c`, the napi crate, and both npm packages share one spelling.
 
 `0.14.0` is the write-algebra / ABI-2 release over `0.12.2` — one collection
 `insert`/`delete`/`reserve` inside `write`; empty, singleton, and many are one

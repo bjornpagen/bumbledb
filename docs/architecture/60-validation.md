@@ -448,7 +448,7 @@ so lockstep twinning is a property of the type):
 | run | mix | ours lane | SQLite twins |
 |---|---|---|---|
 | `steady` | steady churn with swap updates riding along | `ours-durable` | `sqlite-bare`, `sqlite-maint` |
-| `nosync` | the same steady mix | `ours-ephemeral` | `sqlite-nosync` |
+| `nosync` | the same steady mix | `ours-nosync` | `sqlite-nosync` |
 | `delete-heavy` | half the working set churned per cycle | `ours-durable` | `sqlite-bare` |
 
 Parity config, exact. `bare` and `maint` run the standard fairness session
@@ -464,7 +464,7 @@ INTO its own throughput window and recorded as `maintenance_ns` —
 maintenance-included honesty: the time spent in `VACUUM` is SQLite's, on the
 record (`churn/run.rs: maintain` charges both ledgers in one place). `nosync`
 is the same session with `synchronous=OFF`, the documented match for the
-ephemeral store kind's `MDB_NOSYNC` — both sides commit into the OS page
+bench-hidden NOSYNC flag's `MDB_NOSYNC` — both sides commit into the OS page
 cache with no sync boundary. The sampler's `wal_checkpoint(TRUNCATE)` is
 size accounting only, excluded from every throughput window (it exists so
 `disk_bytes` reads the main file honestly); SQLite's own autocheckpoints
@@ -655,7 +655,7 @@ mmap and `wal_autocheckpoint` settings. The nosync config is identical
 minus the sync boundary (`synchronous=OFF`, `fullfsync=OFF`) — the honest
 `MDB_NOSYNC` twin: WAL frames written, never synced, on both engines. The
 engine's durability axis has exactly two points — `Db::create` (durable)
-and `Db::ephemeral` (NOSYNC) — and every writes row rides inside a lane
+and the bench-hidden NOSYNC flag — and every writes row rides inside a lane
 object carrying its `lane` and `sqlite_sync` labels, so a number can never
 be quoted without its durability context.
 
@@ -721,11 +721,11 @@ the `DurabilityLane` sum (`crates/bumbledb-bench/src/duralane.rs` — the one
 constructor of both sides' config and the authority for every pragma): the
 durable pair is `Db::create` — LMDB issues `F_FULLFSYNC` unconditionally on
 macOS, the durability-parity clause above restated — against SQLite WAL
-`synchronous=FULL` `fullfsync=ON`; the nosync pair is `Db::ephemeral`
-(`MDB_NOSYNC`, no sync boundary ever crossed) against WAL
+`synchronous=FULL` `fullfsync=ON`; the nosync pair is the bench-hidden
+NOSYNC flag (`MDB_NOSYNC`, no sync boundary ever crossed) against WAL
 `synchronous=OFF`. **Decision:** OFF, not NORMAL. **Alternative:**
 `synchronous=NORMAL`, the usual "relaxed" WAL setting. **Why it lost:**
-NORMAL still syncs at WAL checkpoints, so it would cross-match a store kind
+NORMAL still syncs at WAL checkpoints, so it would cross-match a flag
 that never crosses a sync boundary at all. Matched pairs only, never
 cross-matched, by type — and `DurabilityLane::assert_parity` reads the
 session pragmas back, so a misconfigured twin fails before flattering
@@ -987,36 +987,22 @@ Sizing note: the script's default volume is 5 GiB of plain headroom
 for the sweeps' many concurrent scratch stores — a store's data file
 holds only the pages ever committed, so any size that holds the
 lanes' actual data works. (Retraction, cleanup-0.5.0 ruling 1,
-mirrored in the script's own header: the old rationale was that an
-ephemeral store's data file was ftruncated to the full 4 GiB map at
+mirrored in the script's own header: the old rationale was that a
+retired `WRITEMAP` open's data file was ftruncated to the full 4 GiB map at
 open under the retired `MDB_WRITEMAP` flag and HFS+ has no sparse
 files, so the volume had to hold map size + slack; no open allocates
 the map anymore — `50-storage.md` § environment constants.)
 
-**The ephemeral store kind's evidence** (`50-storage.md` § the
-ephemeral store kind; Lean owns none of it — durability and crash are
-mechanism, outside the model, so no Bridge row and no citation exist
-to expect). The standing instrument: the **durable/ephemeral
-differential oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one
-deterministic ops sequence replayed against a `Db::create` store and a
-`Db::ephemeral` store, asserting identical commit verdicts, identical
-COMPLETE violation sets, identical WriteTx point reads, and identical
-full relation contents: the flags change the durability mechanism,
-never a semantic; plus the typed cross-open matrix in the same file.
-Two further instruments — the ephemeral crashpoint sweep and the
-NOSYNC commit-window kill sweep — lived in `fuzz/tests/` and died
-with the fuzzing apparatus (§ the deletion record, above). Their
-verdicts while they lived: every sweep green, all-or-nothing recovery
-on both kinds, no third observable outcome; the admission's reversal
-clause ("reverses if a sweep ever convicts a crashpoint on an
-ephemeral store") was never triggered and now stands without a
-standing executed lane — the sweeps' mechanism and session numbers
-live in git history at the deletion commit's parent.
-Device honesty is unchanged and orthogonal: *ephemeral* is a
-store kind (an on-disk durability claim), *RAM-backed* is a device
-fact — the timed lanes' refusal keys on the device, never the kind,
-and an ephemeral store on the SSD is as legitimate as a durable store
-on a ramdisk is for the untimed lanes.
+**NOSYNC is a bench flag, not a kind** (`50-storage.md`; Lean owns none of
+it — durability and crash are mechanism, outside the model, so no Bridge
+row and no citation exist to expect). The hidden constructors
+(`create_nosync` / `open_nosync`) attach `MDB_NOSYNC` on an ordinary
+store. Two further instruments — a crashpoint sweep and the NOSYNC
+commit-window kill sweep — lived in `fuzz/tests/` and died with the
+fuzzing apparatus (§ the deletion record, above). Their verdicts while
+they lived live in git history at the deletion commit's parent.
+Device honesty is orthogonal: *RAM-backed* is a device fact — the timed
+lanes' refusal keys on the device, never a constructor.
 
 ## Small worlds and Miri — the exhaustive complement
 

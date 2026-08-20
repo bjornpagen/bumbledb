@@ -57,7 +57,9 @@ string (program lifetime, NUL-terminated) — the product identity, lockstep
 with the engine and the TypeScript SDK at **0.15.0**. `bdb_abi_version()` is
 `3` — layout generation, not the release spelling: admitted instances,
 synchronous read callbacks, tagged admissions, and the retirement of
-snapshot-named functions. Bump on a layout-visible change.
+snapshot-named functions. Revised in place under the pre-publish rule
+(format 8, ABI 3): pre-publish stores rebuild from source. Bump on a
+layout-visible change.
 
 ```text
 bdb_abi_version() == 3           layout generation (not the release spelling)
@@ -104,5 +106,6 @@ Not this cut:
   unions). `bdb_value` and the IR/spec views carry every payload field; only
   `kind` selects which are live. Packing those remaining views as unions is an
   ABI bump (`bdb_abi_version`).
-- **No exhume.** Archival open is a Rust/TS surface (`70-api.md`).
+- **No theory-less open.** Migration is two schemas the host both possesses
+  (`70-api.md`, cookbook recipe 28).
 - **No explain / staleness.** Harness-only per `70-api.md`; not embedding API.
