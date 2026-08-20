@@ -63,6 +63,10 @@ pub(crate) fn admit_catalog(schema: &Schema, stage: HeapStage) -> Result<Admissi
 }
 
 /// [`admit_catalog`] plus the five phase quantities $A,I,R,F,J$.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "A/I/R/F/J are the heap-arm phase names, not anonymous locals"
+)]
 pub(crate) fn admit_catalog_measured(
     schema: &Schema,
     mut stage: HeapStage,

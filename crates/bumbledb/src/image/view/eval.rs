@@ -1238,14 +1238,15 @@ mod gate {
                 let a = src.as_bytes()[after];
                 !a.is_ascii_alphanumeric() && a != b'_'
             };
-            if before && after_ok {
-                if let Some(brace) = src[at..].find('{') {
-                    let start = at + brace;
-                    if let Some(end) = matching_brace(&src[start..]) {
-                        bodies.push(&src[start + 1..start + end]);
-                        i = start + end + 1;
-                        continue;
-                    }
+            if before
+                && after_ok
+                && let Some(brace) = src[at..].find('{')
+            {
+                let start = at + brace;
+                if let Some(end) = matching_brace(&src[start..]) {
+                    bodies.push(&src[start + 1..start + end]);
+                    i = start + end + 1;
+                    continue;
                 }
             }
             i = at + 5;

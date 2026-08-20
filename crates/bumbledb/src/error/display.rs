@@ -212,6 +212,10 @@ impl fmt::Display for FactShapeError {
 }
 
 impl fmt::Display for CorruptionError {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one Display arm per CorruptionError variant; splitting would hide the roster"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBool(byte) => write!(f, "invalid Bool byte {byte:#04x}"),

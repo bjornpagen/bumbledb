@@ -102,15 +102,14 @@ pub(crate) fn write_families(
                 facts_per_sec: None,
                 ghz: Some(ghz.into()),
             });
-            if name == "cold_containment_walk_delete" {
-                if let Some(table) =
+            if name == "cold_containment_walk_delete"
+                && let Some(table) =
                     writebench::trace_cold_containment_walk_delete(&db, cfg, trace_dir)?
-                {
-                    flames.push(report::FlameEmbed {
-                        name: name.to_owned(),
-                        table,
-                    });
-                }
+            {
+                flames.push(report::FlameEmbed {
+                    name: name.to_owned(),
+                    table,
+                });
             }
         }
         // The witnessed-write row (the PRD-18 spine debt): engine-only —

@@ -54,7 +54,7 @@ pub struct BenchArgs {
     pub trace: bool,
     pub alloc: bool,
     /// Time against the hidden NOSYNC attach (`Db::open_nosync`) over
-    /// the stamped durable-shaped corpus — the NosyncLane flag.
+    /// the stamped durable-shaped corpus — the `NosyncLane` flag.
     /// `--nosync` and `--ephemeral` set the same switch.
     pub ephemeral: bool,
     /// Per-rep proxy stamps + normalized p50 — the

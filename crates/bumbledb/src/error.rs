@@ -2037,7 +2037,7 @@ mod hatch_tests {
 /// Zero-dyn engine census (audit/27). `dyn` in production engine src is
 /// legal only on `std::error::Error::source` and the `ErrorDescriptor`
 /// mirror that feeds it. Test modules (`tests.rs`, `tests/`) follow the
-/// FilterPredicate gate's skip — they are not the law's surface.
+/// `FilterPredicate` gate's skip — they are not the law's surface.
 #[cfg(test)]
 mod zero_dyn_census {
     use std::fs;
@@ -2052,7 +2052,7 @@ mod zero_dyn_census {
 
     /// Pinned exemption: the `Error::source` signature plus the two
     /// `ErrorDescriptor` lines that carry the same `dyn Error` the
-    /// impl returns. A new `dyn` fails with file:line.
+    /// impl returns. A new `dyn` fails with <file:line>.
     const EXEMPT: &[(&str, &str)] = &[
         (
             "crates/bumbledb/src/error.rs",

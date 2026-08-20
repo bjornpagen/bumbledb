@@ -335,7 +335,7 @@ fn heap_parses_the_lane_flags() {
     );
     assert_eq!(parse(&argv(&["heap"])), Ok(Cmd::Heap(HeapArgs::default())));
     let err = parse(&argv(&["heap", "--prefixes", "0"])).unwrap_err();
-    assert!(err.contains("0"), "{err}");
+    assert!(err.contains('0'), "{err}");
 }
 
 #[test]

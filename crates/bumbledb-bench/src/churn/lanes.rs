@@ -23,7 +23,7 @@ use super::ops;
 ///   own throughput series (maintenance-included honesty — `SQLite`
 ///   gets its best realistic self, and pays for it on the record).
 /// - [`Nosync`](Self::Nosync) is the `synchronous=OFF` twin matched to
-///   LMDB `NOSYNC` — the NosyncLane pairing.
+///   LMDB `NOSYNC` — the `NosyncLane` pairing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqliteLaneKind {
     /// The fairness session, untouched for the whole run.
