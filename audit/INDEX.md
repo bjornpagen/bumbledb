@@ -33,10 +33,10 @@ Three laws govern this pass:
 | 31 | [NodeScratch copies](31-node-scratch-copies.md) | C | **fixed this pass** — residual specs; no predicate clones |
 | 32 | [delete lane 3.1–3.4×](32-perf-delete-lane.md) | D | **fixed this pass** — twin lit; re-ruled: I1 rebuild (`image_distincts` 7.6 ms), not apply_deletes |
 | 33 | [commit ladder](33-perf-commit-ladder.md) | D | **fixed this pass** — NosyncLane pin: commit_b1 1.28×, b10 0.69×, b100 0.74×, b1000 1.15× |
-| 34 | [r6 descend 1.46](34-perf-r6-descend.md) | D | fresh flame first — the tree moved |
+| 34 | [r6 descend 1.46](34-perf-r6-descend.md) | D | **fixed this pass** — fresh flame; 0.47× vs SQLite; descend-n1 is the 2-path walk |
 | 35 | [overlap re-pin](35-overlap-repin.md) | owner | quiet-machine sweep; never by inspection |
 | 36 | [leaf batch-of-1 (014)](36-perf-leaf-batch.md) | D | re-bench o4 first |
-| 37 | [telescoped Count (044)](37-perf-telescoped-count.md) | D | sequenced after 34's trace |
+| 37 | [telescoped Count (044)](37-perf-telescoped-count.md) | D | **fixed this pass** — skipped: 34's `jp_force_n0` is 1.25 µs |
 | 38 | [min/max fence (009)](38-perf-minmax-fence.md) | D | confirm premise under `GroupState` |
 | 39 | [owned-instance lanes](39-owned-instance-lanes.md) | D | the heap arm gets its ladder + the Primer gate |
 | 40 | [docs store-and-value](40-docs-store-and-value.md) | E | proposal, arch docs, census tokens; Lean untouched |

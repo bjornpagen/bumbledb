@@ -15,10 +15,10 @@ finding stamps live in git history.
   1.07–1.17 is the same substrate change (sweep cells now
   `create_nosync`). Flamediffs from the close live in git history
   (`writes.durable.delete_b100.diff.svg`, `writes.nosync.commit_b100.diff.svg`).
-- **r6_two_path_count 1.46** (ours 131→197 ms) on the sink/plan lane's own
-  COUNT-shaped territory — descend now carries essentially the whole query
-  (`flame/scenarios.rings.r6_two_path_count.warm.diff.svg`, jp_descend
-  51%+45%). Same discipline: trace-reader ranking before any change.
+- **r6_two_path_count 1.46** — **closed** (audit/34): fresh flame,
+  8-sample p50 328 ms vs SQLite 694 ms (**0.47×**). `jp_descend_n1`
+  exclusive 197.7 ms is the 2-path walk; `jp_force_n0` 1.25 µs. Finding
+  044 (audit/37) skipped on that force number.
 - **Overlap constants re-pin**: `OVERLAP_CROSSOVER = 16`
   (`exec/run/overlap_leaf.rs`) and `FLAT_SWEEP_CEILING = 128`
   (`interval/overlap.rs`) are rig-pinned provisional — re-pin both from the
