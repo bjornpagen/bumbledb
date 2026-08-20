@@ -1339,6 +1339,13 @@ packed span.
 
 ## Operating the store
 
+The public engine is two things. **The store** (`Db`) is mutable, durable,
+and leased: `create` / `open` take the writer lock; `read` hands a
+`ReadInstance` for the callback; `write` hands a `WriteTx`. **The value**
+(`OwnedInstance`) is immutable, proven, and owned: `InstanceBuilder` loads
+and `admit`s, then `Db::from_instance` publishes the packed catalog as a
+new store. There is no third duration.
+
 ## 28. Migration is ETL
 
 Guarantee: Lean theorem + validator/runtime premises + host discipline —
@@ -1349,7 +1356,10 @@ the semantic transform and dependency-safe load order.
 There is no in-place migration and never will be: a schema is a theory,
 the store records the theory's fingerprint, and `Db::open` under a changed
 theory is a hard `SchemaMismatch` — the engine refuses to reinterpret facts
-it judged under different laws. Migration is extract, transform, load:
+it judged under different laws. The host possesses both theories. There is
+no theory-less open of a store whose schema you do not have — a real
+migration is reads and writes with two schemas you both possess.
+Migration is extract, transform, load:
 `scan` exports every fact of a relation as typed values under one `ReadInstance`
 (one generation — the export is a consistent instant), the host transforms,
 and `insert_dyn` inside `write` imports into a store created under the new theory. The

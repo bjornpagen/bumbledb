@@ -177,11 +177,11 @@ compose Max then keyed get.
 
 ### 11. Resource lifetimes are disposables — RULED IN (ruled 2026-07-23, R12)
 - **The law.** The SDK assumes the latest Node 26 runtime and its explicit
-  resource management. `ExhumeHandle` implements
+  resource management. Owned instances, builders, and witnesses implement
   `Symbol.dispose`/`Symbol.asyncDispose` (whichever matches teardown
   reality); `using` / `await using` is the documented idiom; the congruence
   audit extends the protocol to every SDK object holding a native lifetime
-  (exhume, snapshots/scoped reads). The zero-closables doctrine restates as:
+  (owned instances, builders, witnesses, scoped writes). The zero-closables doctrine restates as:
   lifetimes are disposables, never `close()`. Kills the GC-held exclusive
   lock — same-path reuse hostage to an unforceable finalizer (finding 066).
 
@@ -256,7 +256,7 @@ compose Max then keyed get.
   before timing) and the SLOT arm won every weighted row — the value slot
   carries the child's u64 weight (LE), paid once at write time
   (`commit_capacity_sum` 32.3 vs 35.2 µs, `commit_capacity_duration` 30.8
-  vs 34.2 µs, min-of-3 ephemeral p50s; control 18.2 both arms). The fetch
+  vs 34.2 µs, min-of-3 NOSYNC p50s; control 18.2 both arms). The fetch
   arm and the `CAPACITY_WEIGHT_SLOT` flag are deleted per C17's own law;
   the numbers are the CONSTRAINT comment at the walk
   (`crates/bumbledb/src/storage/commit/judgment.rs`). **OWNER RULING OWED:** the
@@ -336,7 +336,7 @@ under the tag) — both rows shipped 2026-07-19:
 - The O(delta) slab append: scoped out with invariant language recorded
   (copy-on-append ruling record).
 - The per-store map size parameter: recorded follow-up design (G1), only if
-  a real ephemeral capacity need appears.
+  a real tmpfs-or-NOSYNC capacity need appears.
 - The tagged-template query notation: REJECTED, verdict 5 above (owner ruling
   2026-07-20); the conformance corpus
   (`crates/bumbledb-query/tests/notation-corpus/`) stays as the ramp.

@@ -39,7 +39,7 @@ Three laws govern this pass:
 | 37 | [telescoped Count (044)](37-perf-telescoped-count.md) | D | **fixed this pass** — skipped: 34's `jp_force_n0` is 1.25 µs |
 | 38 | [min/max fence (009)](38-perf-minmax-fence.md) | D | **fixed this pass** — Acc::Min/Max live; o5 0.00×; Force does not rank |
 | 39 | [owned-instance lanes](39-owned-instance-lanes.md) | D | **fixed this pass** — heap 0.57× get; admit 1.26× ns/fact; Primer blocked (schema ask) |
-| 40 | [docs store-and-value](40-docs-store-and-value.md) | E | proposal, arch docs, census tokens; Lean untouched |
+| 40 | [docs store-and-value](40-docs-store-and-value.md) | E | **fixed this pass** — store+value docs; census (h); Lean untouched |
 
 ## Order
 

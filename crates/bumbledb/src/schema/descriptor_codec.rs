@@ -1,9 +1,9 @@
 //! The canonical schema-descriptor DECODER — the exact inverse of
 //! [`super::fingerprint`]'s `canonical_bytes` stream, one function per
 //! production of that encoding (label, relations with fields and sealed
-//! extensions, statements in materialized order). Readers: the exhume
-//! entry ([`crate::exhume`]) — the only consumer that ever holds
-//! descriptor bytes without the theory that produced them.
+//! extensions, statements in materialized order). Encode stays so
+//! fingerprints remain byte-identical; the decoder is not a product
+//! open path.
 //!
 //! The decoder returns the schema **as declared** (a [`SchemaDescriptor`]
 //! ready for `.validate()`): the canonical stream carries the SEALED shape
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn the_canonical_stream_round_trips_to_the_declared_descriptor() {
-        // The whole exhume premise in one assert chain: encode the sealed
+        // The whole encode/decode premise in one assert chain: encode the sealed
         // schema, decode the stream, and the DECLARED descriptor comes
         // back structurally identical (the fixture's literal sets are
         // pre-canonical, so sealing changes nothing).
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn a_decoded_descriptor_revalidates_to_the_same_fingerprint_and_bytes() {
-        // The self-verifying round trip the exhume entry pins per store:
+        // The self-verifying encode/decode round trip pinned per store:
         // decode → validate → re-encode reproduces the exact input bytes,
         // so the fingerprint is preserved through the whole cycle.
         let schema = everything().validate().expect("valid fixture");

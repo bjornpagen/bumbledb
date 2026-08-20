@@ -22,6 +22,16 @@ Heap construction and durable mutation also have different durations:
 They share one private collection-mutation algebra. They do not collapse into
 one public `Admitting` type.
 
+The public engine is two things, not three:
+
+| Representation | After admission | Backing | Promise |
+|---|---|---|---|
+| **The store** (`Db`, leased `ReadInstance` / `WriteTx`) | Mutable; reads and writes on a lease | LMDB | Fsync durability |
+| **The value** (`OwnedInstance`) | Immutable; proven; owned | Heap | Process lifetime only |
+
+`InstanceBuilder` is the unproved candidate, not a third duration. There is
+no store kind, no NOSYNC kind, and no theory-less open.
+
 Admission is a parse into an accepted type. It is not a Boolean property on a
 mutable object.
 
@@ -105,8 +115,10 @@ existing Rust engine through the native TypeScript binding.
 
 ## Current facts
 
-The design starts from the code that exists at 0.14.0. Every row is verified
-against the tree.
+The design started from the code that existed at 0.14.0. Every row below is
+that snapshot — not present-tense law. Present-tense store-and-value law is
+the rest of this proposal; purged surfaces record their add-back triggers
+in place.
 
 | Current fact | Consequence |
 |---|---|
@@ -127,7 +139,7 @@ against the tree.
 | A concrete `struct SortedGets<'a>` already exists in `storage/commit/judgment.rs` (the T8 ascending-probe walker). | The trait takes the name; the existing struct becomes its LMDB implementation. |
 | `_data` stores `F`, `M`, `U`, `R`, `S`, and `Q`. `_dict` stores both dictionary directions. `_meta` stores exactly six keys: format, fingerprint, generation, dictionary next-id, kind, and descriptor. The ephemeral dirty marker is deliberately a **sibling file**, never a `_meta` key, because the marker must be readable before any LMDB page is trusted. | Persistence must preserve the data and dictionary namespaces while synthesizing fresh metadata. No lifecycle state enters `_meta`. |
 | `Db::create` and `Db::ephemeral` initialize into an existing **empty** directory today, and `create` heals a half-created store (`Error::NotInitialized`). `compact` refuses an existing destination with an untyped `Io(AlreadyExists)`. | The path-must-not-exist rule is a behavior break for mkdir-then-create hosts, and an error-taxonomy cutover, both recorded below. |
-| `Db::ephemeral` is an explicit NOSYNC LMDB store kind with reopen, dirty-marker recovery, C, and benchmark semantics. The crashpoint test harness was owner-killed; `crashpoint!` sites are no-op atomicity names. | Ephemeral is not an in-memory mode and this proposal keeps it. Crash coverage must be rebuilt as data, not resurrected as a macro sweep. |
+| `Db::ephemeral` is an explicit NOSYNC LMDB store kind with reopen, dirty-marker recovery, C, and benchmark semantics. The crashpoint test harness was owner-killed; `crashpoint!` sites are no-op atomicity names. | The 0.14 snapshot kept it; the storage-lifecycle purge deletes it (add-back trigger in § Ephemeral stores). Crash coverage stays the publication crash matrix — not a resurrected macro sweep. |
 | TS reads are scope-shaped both ways today: `db.read(fn)` and a `using`-disposable `ReadScope` handle from `db.read()`, backed by a snapshot **worker** that owns the real `Db::read` closure across a request channel. The runtime thenable probe exists on the write path only. Exported error values exist (`ErrGenerationMoved`, `ErrNewtypeMismatch`); everything else is anonymous. | The worker is sound — it is deleted because the handle-shaped read is deleted, not because it fabricated a lifetime. The thenable probe extends to reads. The error-value idiom generalizes. |
 | C surfaces rejection as `BDB_ERROR_KIND_COMMIT_REJECTED` through `bdb_error`; `bdb_abi_version()` returns 2 and nothing enforces it; snapshot-named functions exist (`bdb_db_read`, `bdb_snapshot_*`, `bdb_db_write_from`). | The rejection-as-status inversion, the kind-enum deltas, and the ABI bump are enumerated below. |
 | There is no `Db::memory()` and no current public `InstanceBuilder`, `OwnedInstance`, `Instance` trait, `CatalogRead`, `FrozenCatalog`, `MutationCore`, or `CatalogIdentity`. | These names describe new API, not renames. |
@@ -486,45 +498,25 @@ The read transaction parks only after `body` returns and the instance is
 invalidated by Rust lifetime. The parked-reader optimization remains behind
 `Db::read`.
 
-A sealed public trait permits generic host code without permitting foreign
-implementations:
+**Purged: the sealed `Instance<S>` trait.** Generic host code over a public
+trait is a speculative consumer. TS types structurally; Rust hosts hold
+concrete types. Deleting the trait deletes the roster debates permanently
+(`row_count` / `profile` promotion fights become unrepresentable).
 
-```rust
-pub trait Instance<S>: private::Sealed {
-    fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>>;
-    fn execute(
-        &self,
-        prepared: &mut PreparedQuery<S>,
-        params: &[ParamArg<'_>],
-        out: &mut Answers,
-    ) -> Result<()>;
-    // Plus: scan, scan_facts, contains, contains_dyn, get, get_dyn,
-    // row_count, profile.
-}
-```
+Both public types keep inherent methods. Generic algorithm bodies
+(`prepare_on`, `execute_on`, `profile_on`, the `InstanceCore` internals)
+stay crate-private sharing — that was always the real value.
 
-The roster is exact about provenance:
+- `scan`, `scan_facts`, `contains`, `contains_dyn`, `get`, `get_dyn` lift
+  from today's `Snapshot` onto both concrete types.
+- `execute` is one inherent entry on each type. Today's `execute` /
+  `execute_args` twins collapse onto it: `ParamArg::Scalar` already embeds
+  `BindValue`, so the scalar-only spelling was a duplicate entry.
+- `row_count` is `pub(crate)` — it was promoted only for the trait roster.
+- `profile` is `#[doc(hidden)]` harness surface on both concrete types.
 
-- `scan`, `scan_facts`, `contains`, `contains_dyn`, `get`, `get_dyn`, and
-  `profile` lift from today's `Snapshot`.
-- `execute` is one entry point. Today's `execute`/`execute_args` twins
-  collapse onto it: `ParamArg::Scalar` already embeds `BindValue`, so the
-  scalar-only spelling was a duplicate entry, and duplicates are control
-  flow. The collect wrappers ride the one entry.
-- `row_count(relation)` is **new public API**. Nothing named `row_count`
-  exists on `Snapshot` today; the count reaches only the planner through
-  crate-internal paths. It is admitted here because a host sizing its reads
-  is a legitimate consumer of a number the engine already maintains.
-- `profile` is **promoted** from `#[doc(hidden)]`. It stays a diagnostic
-  whose stats shape is explicitly unfrozen, and the promotion is stated
-  rather than smuggled. The promotion is gated on fixing the shape first:
-  `RuleStats` today is one tag beside four fields that must be empty under it
-  (hand-filled `Vec::new()` at two sites) with `key_probe: Option<..>` as the
-  real discriminant, and `KeyProbeStats.hit` is derived **two different
-  ways** at its two construction sites. It becomes
-  `enum RuleStats { KeyProbe { .. }, FreeJoin { .. } }` — the shape
-  `StatsBody` already uses one level up — with one derivation of `hit`,
-  before any of it goes public.
+**Add-back trigger:** a named generic host that cannot hold a concrete type
+and cannot use TS structural typing. Until then the trait does not exist.
 
 Static dispatch selects `FrozenSource` or `LmdbSource`. The dense executor sees
 the same relation-image types in both cases.
@@ -1386,7 +1378,10 @@ catalog or an owner image cache.
 
 The storage format increments from 7 to 8, and the format ledger in
 `storage/env.rs` gains the v8 row: admission provenance, the store-birth
-protocol, and the six-key `_meta` roster unchanged.
+protocol, and the four-key `_meta` roster — format, fingerprint, generation,
+dict-next. Pre-publish the roster was revised in place: 0.15.0 is unpublished,
+so format 8 stays 8 and format-8 stores created this week rebuild from source.
+`bdb_abi_version()` stays 3 under the same rule.
 
 Format 8 means every ordinary writable handle began from one of these sources:
 
@@ -1396,9 +1391,8 @@ Format 8 means every ordinary writable handle began from one of these sources:
 - A successful incremental commit from an already admitted format-8 base.
 
 The format version is the provenance boundary. Ordinary `Db::open` refuses
-every earlier version. It may trust `holds` only after version, kind, database
-roster, fingerprint, and descriptor checks succeed — the descriptor check is
-new work at open; today open writes the descriptor and never reads it.
+every earlier version. Open is *version → fingerprint → go*. Kind is not
+data. The persisted descriptor is purged with exhume (below).
 
 No old store is silently blessed by open. A full `verify_store` pass is useful
 harness diagnostics, but it does not upgrade or admit an old store.
@@ -1425,10 +1419,9 @@ InstanceBuilder::new
     → Db::from_instance
 ```
 
-`Db::ephemeral` follows the same empty-admission rule for a new ephemeral
-store. Its breaking signature is also `Result<Admission<Db<S>>>`; reopening an
-existing admitted format-8 ephemeral store returns the accepted arm. An
-existing empty directory is not an implicit create request.
+**Purged:** `Db::ephemeral` / `Db::ephemeral_from_instance`. Add-back
+trigger recorded in § Ephemeral stores. An existing empty directory is not
+an implicit create request.
 
 ### Store-birth error taxonomy
 
@@ -1436,11 +1429,10 @@ The path-must-not-exist rule is a behavior change, and the error enum changes
 with it:
 
 - **`Error::DestinationExists { path }` is added.** It fires from `create`,
-  new `ephemeral`, `from_instance`, `ephemeral_from_instance`, and `compact`
-  for any existing destination, including an empty directory. It replaces
-  `Error::AlreadyInitialized` at every fresh-store constructor and replaces
-  `compact`'s untyped `Io(AlreadyExists)` string — payloads carry paths, not
-  formatted prose.
+  `from_instance`, and `compact` for any existing destination, including an
+  empty directory. It replaces `Error::AlreadyInitialized` at every
+  fresh-store constructor and replaces `compact`'s untyped `Io(AlreadyExists)`
+  string — payloads carry paths, not formatted prose.
 - **`Error::NotInitialized` is deleted.** It named the half-created store
   that `create` used to heal. Under staging plus atomic rename, a
   half-created store cannot exist at a destination path; the state is
@@ -1484,39 +1476,31 @@ It does not copy relation images. It does not reinsert facts. It does not mint
 new row ids. It does not re-intern strings. It does not run judgment again.
 
 The destination `_meta` block is synthesized fresh, and it is exactly the
-existing six keys — no lifecycle key exists or is added:
+four keys — no lifecycle key exists or is added:
 
 - Format version 8.
-- `StoreKind::Durable`.
 - The instance schema fingerprint.
-- The canonical schema descriptor.
 - `GenerationId::initial()` with value zero.
 - The copied dictionary next-id.
 
-Separately from `_meta`: no dirty-marker sibling file exists at the
-destination. The marker is deliberately a file, never a `_meta` key, because
-it must be readable before any LMDB page is trusted; a fresh durable store
-simply has none.
-
 Source `_meta` is never copied because `FrozenCatalog` has none.
 
-An ephemeral sibling, `Db::ephemeral_from_instance`, performs the same raw copy
-but synthesizes `StoreKind::Ephemeral` and arms the marker-file lifecycle only
-after the destination is complete.
+**Purged:** `StoreKind`, the persisted descriptor key, and
+`Db::ephemeral_from_instance`. The fingerprint is still blake3 of the
+canonical encoding; those bytes are not a `_meta` key. Add-back triggers
+in § Ephemeral stores and § Format cutover.
 
 ### One store birth
 
-Store birth has one implementation. `publish(source, kind, path)` folds the
+Store birth has one implementation. `publish(source, path)` folds the
 `PublishStep` list below over a catalog source; the public constructors are
-spellings of it:
+spellings of it. Kind is not a parameter — there is one store.
 
-| Constructor | Source | Kind |
-|---|---|---|
-| `Db::create` | the admitted empty candidate | Durable |
-| `Db::ephemeral` (fresh path) | the admitted empty candidate | Ephemeral |
-| `Db::from_instance` | an `OwnedInstance` | Durable |
-| `Db::ephemeral_from_instance` | an `OwnedInstance` | Ephemeral |
-| `Db::compact` | an open format-8 store's compacted copy | the source's kind |
+| Constructor | Source |
+|---|---|
+| `Db::create` | the admitted empty candidate |
+| `Db::from_instance` | an `OwnedInstance` |
+| `Db::compact` | an open format-8 store's compacted copy |
 
 `Db::create` is literally `InstanceBuilder::new(theory) → admit → publish` —
 composition, not a sibling code path kept in agreement by review. Two
@@ -1533,11 +1517,11 @@ consequences fall out:
 
 ### Atomic publication as data
 
-Every new store path must not exist. This rule covers `create`, new
-`ephemeral`, `from_instance`, `ephemeral_from_instance`, and `compact`
-destinations — `compact` adopts this protocol wholesale, replacing its
-current direct copy. The precondition makes directory publication one atomic
-rename rather than an in-place initialization protocol.
+Every new store path must not exist. This rule covers `create`,
+`from_instance`, and `compact` destinations — `compact` adopts this protocol
+wholesale, replacing its current direct copy. The precondition makes
+directory publication one atomic rename rather than an in-place
+initialization protocol.
 
 The protocol is a value, not a comment. The constructor folds over a reified
 step list:
@@ -1589,103 +1573,80 @@ each hand-paired with a diagnostic string at every read site, **validated and
 discarded** — `check_format_version -> Result<()>` and
 `check_fingerprint -> Result<()>` throw away what they read — while the type
 actually named `MetaBlock` holds a database *handle*, not the block's
-contents. The open-precedence law ("ONE check precedence") is enforced by
+contents. The open-precedence law ("ONE check precedence") was enforced by
 convention across three hand-written sequences: ordinary open, the ephemeral
-probe, and exhume.
+probe, and exhume. Those last two sequences are purged with their surfaces.
 
 Format 8 lands `parse_meta`, the parse-don't-validate form:
 
 ```rust
 struct StoreMeta {
     version: FormatVersion,
-    kind: StoreKind,
     fingerprint: SchemaFingerprint,
     generation: GenerationId,
     dict_next: InternId,
-    descriptor: DescriptorBytes,
 }
 ```
 
 One `MetaKey` table owns each key's byte, diagnostic name, and codec.
 `parse_meta` returns the whole block typed; the precedence law becomes the
-parser's field order, and the three hand-written sequences collapse into one.
-Downstream, the bare-bit boundary between "read the store" and "know the
-store" closes:
+parser's field order. Open is one sequence: version, then fingerprint.
 
-- `probe_ephemeral_kind` stops verifying four facts and returning one `bool`
-  the caller stores as `has_meta`; it returns
-  `EphemeralTarget::{Fresh, Existing(StoreMeta)}`, and the flagged reopen
-  re-assembles what the probe parsed instead of re-verifying it.
-- `marker_shields_durable` stops reading the on-disk `StoreKind` and
-  discarding it — the kind it read rides the verdict — and the
-  `Err(NotInitialized)` it uses internally as a control-flow token deletes
-  with the variant.
-- The three-boolean ephemeral classifier (`crashed` / `has_data` /
-  `has_meta`: eight combinations, four legal, one suppression guard) becomes
-  one classification computed once:
-  `Fresh | ExistingVerified(StoreMeta) | CrashVictim`.
-- `EnvMode` stops being filled in two phases. Today `initialize` hardcodes
-  `EnvMode::Durable` even for an ephemeral store and `arm_ephemeral` rewrites
-  the field later behind an `unreachable!`; the marker path threads into
-  assembly so the finished mode is constructed once and the two-phase window
-  — where `Drop`'s crash contract reads the wrong mode — is unrepresentable.
-- `ExhumedEnvironment`'s `(fingerprint, descriptor)` pair — a hash and its
-  own preimage as two independently settable fields — becomes the
-  hash-verified `SelfDescription` the parse mints.
+**Purged from this block:** `StoreKind`, the persisted descriptor,
+`EnvMode`, the ephemeral classifier, and `ExhumedEnvironment`. `Environment`
+holds a plain `lock: File`. Add-back triggers in § Ephemeral stores and
+§ Format cutover.
 
 ### Format cutover
 
-Format-7 durable and ephemeral stores fail every open surface with
-`FormatMismatch`. This includes ordinary open, ephemeral reopen, exhume,
-compact source open, and host bindings.
+Format-7 stores fail every open surface with `FormatMismatch`. This includes
+ordinary open, compact source open, and host bindings.
 
 The release contains no format-7 decoder and no migration mode. A caller
 rebuilds a format-8 store from source evidence. The engine never attempts to
-infer the new admission provenance from old bytes.
+infer the new admission provenance from old bytes. Pre-publish format-8
+stores whose `_meta` still carried a kind byte or a persisted descriptor
+rebuild the same way — the roster was revised in place; there is no
+in-format migration.
 
-This is an intentional compatibility break. It keeps the trusted open path and
-the read-only path on one storage grammar.
+This is an intentional compatibility break. It keeps the trusted open path
+on one storage grammar.
 
-`Exhumed` opens format 8 only. Its dynamic scan surface delegates to a
-`ReadInstance<SchemaDescriptor>` inside its existing lexical callback. It does
-not expose a second borrowed catalog type.
+**Purged: exhume and the persisted descriptor it was born with.**
+`bumbledb::exhume` / `Exhumed` answered "I have bytes but not code" — a
+failure mode the store's owner essentially cannot have (the schema is
+source code in the same repo as the app). The migration story it theoretically
+served (dyn-scanning a store through napi `Value` marshaling) was never
+serious; a real migration is reads and writes with two schemas you both
+possess. The descriptor **encode** half stays — the fingerprint is the blake3
+of the canonical encoding. The decode half, the open-time descriptor check,
+`DescriptorMissing`, and `DescriptorRoundTrip` die with the only reader.
+
+**Add-back trigger:** a real bytes-without-code incident resurrects exhume
+**from git as a standalone CLI tool**, never as SDK surface.
 
 ## Ephemeral stores
 
-This proposal retains `Db::ephemeral`.
+**Purged.** This proposal does not retain `Db::ephemeral`.
 
-Ephemeral is an on-disk or ramdisk LMDB store with an explicit NOSYNC contract.
-It supports repeated incremental writes, concurrent MVCC reads, clean reopen,
-dirty-marker recovery, C embedding, and benchmark parity. Its crash coverage
-rides the dirty-marker tests and the publication crash matrix above — the
-old crashpoint harness is gone and stays gone. An immutable `OwnedInstance`
-does not replace these semantics.
+The mutable-no-durability niche is covered by a durable store on tmpfs
+(correctness) and a bench-private NOSYNC open flag (perf) — hidden
+`create_nosync` / `open_nosync` / `from_instance_nosync`, not embedding API,
+not a store kind. No product consumer exists: TS deliberately has none, and
+the only callers were the bench harness and the C mirror of the harness.
 
-Ephemeral stays **one verb** while durable is two (`create` / `open`), and
-the asymmetry is essential rather than accidental: dirty-marker recovery must
-wipe and re-initialize under a single call. An `ephemeral_open` that
-wiped-and-refused would mutate on refusal — forbidden by the
-refusal-never-mutates law — and one that refused-without-wiping would strand
-garbage that a separate `ephemeral_create` then refuses to clobber. The
-branch on filesystem state *is* the crash-recovery problem, not a
-representation artifact; splitting the verb would hide the branch inside a
-worse protocol.
+Purged with the kind: `StoreKind` (a one-arm sum is a unit),
+`META_STORE_KIND`, `StoreKindMismatch`, `bdb_db_ephemeral`, the dirty-marker
+sibling-file law, `EnvMode`, crash-marker gates, and the windowed-ephemeral
+bench lane.
 
-The three durations are therefore distinct:
+**Add-back trigger:** a named product consumer of mutable-no-durability that
+a durable store on tmpfs cannot cover, plus a reason the hidden NOSYNC bench
+flag is not enough. Until then kind is not data.
 
-| Representation | Mutable after admission | Backing | Machine-crash promise |
-|---|---:|---|---|
-| `OwnedInstance` | No | Heap | Process lifetime only |
-| Durable `Db` | Yes | LMDB | Fsync durability |
-| Ephemeral `Db` | Yes | LMDB NOSYNC | No survival promise |
-
-`StoreKind` remains the persisted two-arm disk sum. Heap ownership does not
-become a third `StoreKind` because a heap instance has no store metadata.
-
-Deleting ephemeral would be a separate product proposal. It would have to
-delete the Rust and C constructors, the kind metadata arm, dirty-marker
-recovery, the differential oracle, and benchmark lanes together. TypeScript
-deliberately has no ephemeral surface today and gains none here.
+The two durations are therefore the store and the value — see the ruling
+table. Heap ownership is not a store kind because a heap instance has no
+store metadata.
 
 ## TypeScript surface
 
@@ -1967,13 +1928,13 @@ typedef struct bdb_write_admission {
 The admit call takes `bdb_instance_builder **`. It nulls the caller's pointer
 after consuming the builder on every outcome.
 
-`bdb_db_create` and `bdb_db_ephemeral` keep the ABI's one convention — every
-fallible export returns `bdb_status` and writes through out-parameters — and
-fill a `bdb_db_admission` out-parameter on every OK result. Reopening an
-existing format-8 ephemeral store fills the accepted arm. `bdb_db_open` also
-keeps the convention: it returns `bdb_status` and fills `bdb_db **out`
-directly, with **no** admission union, because format-8 open carries
-admission provenance and has nothing to adjudicate.
+`bdb_db_create` keeps the ABI's one convention — every fallible export
+returns `bdb_status` and writes through out-parameters — and fills a
+`bdb_db_admission` out-parameter on every OK result. **Purged:**
+`bdb_db_ephemeral` and its admission arm. `bdb_db_open` also keeps the
+convention: it returns `bdb_status` and fills `bdb_db **out` directly, with
+**no** admission union, because format-8 open carries admission provenance
+and has nothing to adjudicate. ABI stays 3, revised in place.
 
 `bdb_db_write` and `bdb_db_write_from` fill `bdb_write_admission`. A theory
 rejection returns `BDB_STATUS_OK` with the rejected arm — rejection is a
@@ -2146,6 +2107,13 @@ steps that consume them:
 
 The executable `judgeB` remains the differential semantic oracle. The packed
 catalog is a representation refinement, not a new denotation.
+
+**Lean is untouched by the storage-lifecycle purge.** Deleting the ephemeral
+kind, exhume, the persisted descriptor, `StoreKind`, `EnvMode`, and the
+sealed `Instance` trait is storage-lifecycle, not judgment. L1–L5, the
+conformance lanes, and the bridge prose stand; nobody hunts for phantom
+lockstep work. Lean `def Instance` remains the mathematical relation-to-facts
+map — it is not the purged Rust trait.
 
 ## Primer boundary
 
@@ -2399,14 +2367,16 @@ change a judgment name their Lean twin and land with it.
    `Binding` slot, land `RelationSlot`, and retire `CommitSeq`. Move
    `staleness` onto `&ReadInstance`.
 10. **Format 8.** Make create complete-admit empty. Refuse earlier formats on
-    every open surface. Add the open-time descriptor check. Extend the format
-    ledger. Delete legacy format decoding.
-11. **Persistence.** Add raw data/dictionary export, fresh `_meta` synthesis,
-    `parse_meta`/`StoreMeta` with the `MetaKey` table, the ephemeral
-    classifier sum and threaded `EnvMode`, the reified `PublishStep`
-    protocol, the prefix crash matrix, staging hygiene, and the one
-    `publish` implementation behind all five constructors — `compact`
-    included.
+    every open surface. Four-key `_meta` (format, fingerprint, generation,
+    dict-next), roster revised in place. No open-time descriptor check —
+    exhume is purged. Extend the format ledger. Delete legacy format
+    decoding.
+11. **Persistence.** Add raw data/dictionary export, fresh four-key `_meta`
+    synthesis, `parse_meta`/`StoreMeta` with the `MetaKey` table, the
+    reified `PublishStep` protocol, the prefix crash matrix, staging
+    hygiene, and the one `publish` implementation behind the three
+    constructors — `compact` included. No kind parameter; no `EnvMode`;
+    no crash-marker gates.
 12. **Rust API cutover.** Rename the borrowed query surface to `ReadInstance`.
     Remove snapshot names. Change create and write to nested admission sums
     and `write_from` to `ConditionalWrite`. Collapse conditional writes onto
@@ -2428,7 +2398,10 @@ change a judgment name their Lean twin and land with it.
     regenerate `bumbledb_c.h`.
 15. **Documentation cutover.** Update architecture, API, storage, validation,
     benchmark, publishing, and cookbook documents in the same release,
-    including the format ledger and the conformance fence table.
+    including the format ledger, the four-key `_meta` roster, the purged
+    ephemeral / exhume / `Instance`-trait sections with add-back triggers,
+    and the census deleted-token list. Lean is untouched (storage-lifecycle,
+    not judgment).
 
 Steps 4 through 9 may live behind crate-private code during development. There
 is no public half-state in which a format-7 store is treated as admitted or a
@@ -2517,9 +2490,9 @@ mutable candidate can execute a query.
 - Raw persistence preserves every source `_data` and `_dict` byte.
 - Raw persistence preserves row ids, `S`, `Q`, dictionary ids, and dictionary
   next-id.
-- Destination `_meta` is fresh and contains exactly the six keys: format 8,
-  the selected disk kind, schema fingerprint, canonical descriptor, initial
-  generation, and copied dictionary next-id. No lifecycle key exists.
+- Destination `_meta` is fresh and contains exactly the four keys: format 8,
+  schema fingerprint, initial generation, and copied dictionary next-id. No
+  lifecycle key exists. No kind byte. No persisted descriptor.
 - Source metadata and images never copy.
 - Every fresh-store constructor rejects an existing destination, including an
   empty directory, with `DestinationExists` — `compact` included.
@@ -2559,6 +2532,10 @@ mutable candidate can execute a query.
 - Admission telemetry reports $A$, $I$, $R$, $F$, $J$, and observed peak RSS.
 - Observed phase peaks respect the declared peak-memory equation within
   allocator and runtime overhead measured by an empty-process control.
+- Budget tests pin the law: `allocs_per_warm_query == 0` on store and heap
+  scan/join/key_probe; `allocs_per_committed_fact <= K` (`K` derived in the
+  test); `allocs_per_point_read == 0` on both arms; admit peak via
+  `AllocAbsolute::peak_live_bytes`.
 - The full Primer normalization corpus — sourced from the sibling
   `primer-spec` repository — completes through load, complete admit, keyed
   reads, representative joins, and raw persistence.
@@ -2567,6 +2544,19 @@ mutable candidate can execute a query.
   count.
 - The API does not release until that lane shows no unexplained superlinear
   growth as fact count scales through at least four corpus prefixes.
+
+### Zero-dyn gates
+
+- Engine crates (`bumbledb`, `bumbledb-theory`, `bumbledb-query`,
+  `bumbledb-macros` emission) contain no `dyn` except the three
+  `Error::source` / `ErrorDescriptor` lines `spec-census.sh` (g) pins.
+- SDK crates may use `dyn` — bridges erase types for hosts.
+
+### `_meta` four-key gate
+
+- A roster test pins exactly four keys; `parse_meta` returns the four-field
+  `StoreMeta`. No crash-marker gate exists — the dirty-marker sibling file
+  died with the ephemeral kind.
 
 ## Refused designs
 
@@ -2591,7 +2581,7 @@ mutable candidate can execute a query.
   images.
 - Copying source `_meta` into a destination store.
 - Blessing a format-7 store during ordinary open.
-- Retaining a format-7 decoder in exhume, compact, or a migration branch.
+- Retaining a format-7 decoder in compact or a migration branch.
 - Healing a half-created destination instead of making the state
   unrepresentable.
 - A spent-by-move witness — overturned here; evidence does not wear out.
@@ -2612,9 +2602,10 @@ mutable candidate can execute a query.
 - Outcome kinds and wire tags outside the `tags.json` golden.
 - In-band `{0, 0}` sentinels on new ABI payloads.
 - Stored derived fields justified by citations that do not resolve.
-- Splitting `Db::ephemeral` into create/open verbs — the wipe-and-initialize
-  recovery is one atomic operation under the refusal-never-mutates law.
-- Calling the existing ephemeral store an in-memory mode or a durability lie.
+- Restoring a store kind, a persisted descriptor, or a sealed `Instance`
+  trait without the recorded add-back trigger.
+- Calling a durable store on tmpfs, or the hidden NOSYNC bench flag, a
+  store kind.
 - Claiming Bumbledb admission proves Primer exact covers that the schema does
   not declare.
 

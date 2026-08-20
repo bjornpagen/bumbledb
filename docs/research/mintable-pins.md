@@ -130,7 +130,7 @@ Primer's stores absorb this by construction:
   (schema.ts:316-328, capability-ledger packet 2026-07-18: "run stores are per-run and
   disposable … the engine's fingerprint check refuses to open a pre-packet store") and
   lattice-cutover `prd-02-run-store-theory.md:520-527` ("fresh store, reshape legal").
-- `store/rebirth.ts` is the zero-LLM carry-across-fingerprints path (exhume → create →
+- `store/rebirth.ts` is the zero-LLM carry-across-fingerprints path (scan → create →
   copy), but the active lattice-cutover packet DELETES it ("the run store is disposable
   — new fingerprint, fresh store, regenerate", lattice-cutover `00-README.md:88-89`,
   :188-189). Rebuildability holds either way; the ruled story is regenerate, not carry.

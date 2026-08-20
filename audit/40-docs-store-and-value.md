@@ -1,6 +1,10 @@
 # 40 — Docs and spec lockstep: the store and the value
 
-- **Status:** OPEN (final pass; lands after 20–23).
+- **Status:** **fixed this pass** — proposal two-row table (the store / the
+  value); ephemeral, exhume, and sealed-`Instance` sections rewritten as
+  purged with add-back triggers; arch docs + cookbook + PUBLISHING
+  lockstep; `spec-census.sh` (h) pins the grown deleted-token list;
+  Lean untouched (L1–L5 stand). Verify: `bash scripts/spec-census.sh`.
 - **Severity:** documentation lockstep (step-15 discipline).
 
 ## The changes
@@ -27,8 +31,49 @@
    change; this file records that assertion so nobody hunts for phantom
    lockstep work.
 
+## The fix
+
+Present-tense law is one public engine: the store and the proven value.
+C ABI stays 3. Format 8 stays 8; the `_meta` roster was revised in place
+to four keys (format, fingerprint, generation, dict-next). Kind is not
+data. There is no theory-less open.
+
+- Proposal: two-row table in the ruling; sealed-trait roster, format
+  cutover, and ephemeral section are **purged** with the recorded
+  add-back triggers (tmpfs + hidden NOSYNC flag; exhume from git as a
+  CLI, never SDK; a named generic host that cannot hold a concrete type).
+  Persistence gate is four keys. Crash-marker gates are gone. Zero-dyn
+  and alloc-budget gates added. Lean correspondence states the purge
+  does not touch L1–L5.
+- Architecture, cookbook recipe 28, and PUBLISHING describe that law
+  and do not name purged surfaces outside deleted-vocabulary / add-back
+  lines.
+- `spec-census.sh` (h) greps the living docs for the deleted tokens and
+  allows only `purged` / `add-back` lines.
+
 ## Acceptance
 
 - `spec-census.sh` green with the grown token list; no doc names a purged
   surface outside history sections; the proposal's gates match the
-  implemented laws.
+  implemented laws (four-key `_meta`, `OpenLane::{Write,Nosync}`, no
+  public `Db::ephemeral` / `exhume` / `trait Instance`).
+- Lean is untouched: no `lean/` file in this commit.
+
+## Collision
+
+Integration 1 left `exhume` comments in files this lane does not own.
+Not edited:
+
+- `crates/bumbledb/src/schema/descriptor_codec.rs` (module docs and test
+  comments still name [`crate::exhume`] as the decoder's reader)
+- `crates/bumbledb/src/schema/fingerprint.rs` (rustdoc still names the
+  exhume round-trip pin; test comment "field exhume failure")
+
+Related leftover outside this lane: `META_SCHEMA_DESCRIPTOR` key `[5]`
+still readable so `verify_store`'s leftover descriptor pass compiles
+(`storage/env.rs`, `readtxn.rs`). Bench crate still spells `--ephemeral`
+and `Db::ephemeral` (lane D).
+
+## Adjudication
+
+Docs and census only. Engine, C, TS, bench, and Lean were not edited.

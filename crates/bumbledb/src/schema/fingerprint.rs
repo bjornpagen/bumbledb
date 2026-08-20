@@ -162,9 +162,10 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
 /// preimage, materialized. These are THE bytes a store persists beside its
 /// fingerprint (`docs/architecture/50-storage.md` § the `_meta` block):
 /// one canonical encoding exists, and persisting anything else would mint
-/// a second one. Readers: store creation, format-8 open-time
-/// `check_descriptor` (`storage/env`), `Db::verify_store`'s descriptor
-/// pass, and the exhume round-trip pin ([`crate::exhume`]).
+/// a second one. Readers: store creation and format-8 open-time
+/// fingerprint check (`storage/env`). The descriptor decode half is
+/// retained so fingerprints stay byte-identical; it is not a product
+/// open path.
 #[must_use]
 pub(crate) fn canonical_descriptor(schema: &Schema) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -174,9 +175,8 @@ pub(crate) fn canonical_descriptor(schema: &Schema) -> Vec<u8> {
 
 /// Blake3 of a canonical descriptor byte string — the one hash the
 /// fingerprint IS. Split from [`fingerprint`] so the store paths that
-/// already hold the persisted bytes (`verify_store`'s descriptor pass, the
-/// exhume verification) hash exactly what they read instead of
-/// re-encoding.
+/// already hold the persisted bytes hash exactly what they read instead
+/// of re-encoding.
 #[must_use]
 pub(crate) fn fingerprint_of_descriptor(bytes: &[u8]) -> SchemaFingerprint {
     SchemaFingerprint(*blake3::hash(bytes).as_bytes())
@@ -668,7 +668,7 @@ mod tests {
     /// in the operator's read order (C2): target ‖ weight ‖ lo ‖ hi ‖
     /// source. The count-only tag 2 never had a byte golden; the
     /// most-changed encoding does not land without one — a codec drift
-    /// here would otherwise surface first as a field exhume failure.
+    /// here would otherwise surface first as a field decode failure.
     #[expect(
         clippy::too_many_lines,
         reason = "one byte-golden, every weight/bound kind pinned in read order — clearer kept together"

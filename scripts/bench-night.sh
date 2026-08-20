@@ -98,7 +98,7 @@ esac
 # rather than kept as a never-landing spelling). `adversarial` has not
 # landed yet and keeps its contract spelling — the probe reports it
 # SKIP-UNAVAILABLE until it does.
-PROBED=" storage curves writes crud lawful adversarial churn "
+PROBED=" storage curves writes crud lawful adversarial churn heap "
 
 lane_table() {
     cat <<EOF
@@ -107,9 +107,9 @@ verify|SETUP|"$BIN" verify
 bench-durable-r1|$OUT/bench-durable-r1/report.json|"$BIN" bench --out "$OUT/bench-durable-r1"
 bench-durable-r2|$OUT/bench-durable-r2/report.json|"$BIN" bench --out "$OUT/bench-durable-r2"
 bench-durable-r3|$OUT/bench-durable-r3/report.json|"$BIN" bench --out "$OUT/bench-durable-r3"
-bench-ephemeral-r1|$OUT/bench-ephemeral-r1/report.json|"$BIN" bench --ephemeral --out "$OUT/bench-ephemeral-r1"
-bench-ephemeral-r2|$OUT/bench-ephemeral-r2/report.json|"$BIN" bench --ephemeral --out "$OUT/bench-ephemeral-r2"
-bench-ephemeral-r3|$OUT/bench-ephemeral-r3/report.json|"$BIN" bench --ephemeral --out "$OUT/bench-ephemeral-r3"
+bench-nosync-r1|$OUT/bench-nosync-r1/report.json|"$BIN" bench --nosync --out "$OUT/bench-nosync-r1"
+bench-nosync-r2|$OUT/bench-nosync-r2/report.json|"$BIN" bench --nosync --out "$OUT/bench-nosync-r2"
+bench-nosync-r3|$OUT/bench-nosync-r3/report.json|"$BIN" bench --nosync --out "$OUT/bench-nosync-r3"
 scenarios|$OUT/scenarios/scenarios.md|"$BIN" scenarios --out "$OUT/scenarios"
 sweep-commit|$OUT/sweep-commit/sweep.md|mkdir -p "$OUT/sweep-commit" && "$OBS_BIN" sweep-commit > "$OUT/sweep-commit/sweep.md"
 storage|$OUT/storage/storage-report.json|"$BIN" storage --out "$OUT/storage"
@@ -119,6 +119,7 @@ crud|$OUT/crud/crud.json|"$BIN" crud --out "$OUT/crud"
 lawful|$OUT/lawful/lawful.json|"$BIN" lawful --out "$OUT/lawful"
 adversarial|$OUT/adversarial/report.json|"$BIN" adversarial --out "$OUT/adversarial"
 churn|$OUT/churn/churn-report.json|"$BIN" churn --out "$OUT/churn"
+heap|$OUT/heap/heap-report.json|"$BIN" heap --out "$OUT/heap"
 EOF
 }
 

@@ -97,11 +97,9 @@ API routes). Against that substrate:
    (`SHIPPED_PLATFORMS = "darwin-arm64"`) throws at module load on any other host.
    The loader comment calls linux "pure addition," but today it does not exist, and CI
    runs macos-latest only (x86_64-linux is a cross-compile check, no test lane).
-2. **No read-only open mode.** No `MDB_RDONLY` path anywhere in `crates/`; every open
-   is read-write. Even `exhume` — the "read-only, theory-less open"
-   (`docs/architecture/70-api.md:362-401`) — takes the same exclusive advisory lock by
-   **creating and writing** `bumbledb.lock`
-   (`crates/bumbledb/src/storage/env/acquire_lock.rs:12-16`). A store file inside a
+2. **No read-only open mode.** Every public open is a writing constructor and
+   takes the exclusive advisory lock (`bumbledb.lock`). There is no
+   theory-less open. A store file inside a
    read-only deploy bundle cannot be opened in place; every cold start would copy to `/tmp`.
 3. **Single-process by recorded decision.** `00-product.md:88-96`: multi-process access
    is out of the envelope in v0; a second handle on the same path fails loudly
