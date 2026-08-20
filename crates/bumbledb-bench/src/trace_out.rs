@@ -116,3 +116,21 @@ pub fn traced_twin(
     theirs(TRACED_ONE)?;
     Ok(table)
 }
+
+/// One traced *cold* sample: the eviction touch and the rebuild query
+/// share one capture ([`crate::harness::traced_cold_sample`]). The
+/// delete lane's twin (issue 32) — a `None` dir is the untraced run.
+///
+/// # Errors
+///
+/// Either closure's error and trace I/O, as messages.
+pub fn traced_cold_solo(
+    dir: Option<&std::path::Path>,
+    family: &str,
+    touch: &mut dyn FnMut() -> Result<(), String>,
+    query: &mut dyn FnMut() -> Result<u64, String>,
+) -> Result<Option<String>, String> {
+    let Some(dir) = dir else { return Ok(None) };
+    let (_, events) = crate::harness::traced_cold_sample(touch, query)?;
+    emit_pair(dir, family, events).map(Some)
+}

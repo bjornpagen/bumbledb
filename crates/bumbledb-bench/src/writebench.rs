@@ -18,7 +18,7 @@ use bumbledb::{Answers, Db, RelationId};
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
 use crate::families::{self, param_args};
 use crate::harness::{self, Measurement, Protocol, Rotation};
-use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids};
+use crate::schema::{ids, AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId};
 
 /// The registered protocol for a write family (shared with the `SQLite`
 /// mirror runners in `sqlite_run`).
@@ -373,6 +373,51 @@ pub fn cold_containment_walk_delete(
     )
 }
 
+/// The delete lane's traced twin (issue 32): one seeded swap + one
+/// delete-bearing touch + the containment walk, inside a single cold
+/// capture. Own seed page (`cfg.seed ^ 0x0115_0005`) so the twin never
+/// collides with the timed stream (`0x0115_0004`). A `None` dir is the
+/// untraced run.
+///
+/// # Errors
+///
+/// Engine errors and trace I/O, stringified.
+///
+/// # Panics
+///
+/// Only on registry corruption (`containment_walk` missing).
+pub fn trace_cold_containment_walk_delete(
+    db: &Db<Ledger>,
+    cfg: GenConfig,
+    dir: Option<&Path>,
+) -> Result<Option<String>, String> {
+    let family = families::all()
+        .iter()
+        .find(|f| f.name == "containment_walk")
+        .expect("containment_walk is registered");
+    let query = (family.query)();
+    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut rotation = Rotation::new((family.params)(&cfg));
+    let mut buffer = Answers::new();
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0115_0005);
+    let mut prev = posting_swap_seed(db, &mut rng, &sizes)?;
+    crate::trace_out::traced_cold_solo(
+        dir,
+        "cold_containment_walk_delete",
+        &mut || {
+            prev = posting_swap(db, &mut rng, &sizes, &prev)?;
+            Ok(())
+        },
+        &mut || {
+            let args = param_args(rotation.next_set());
+            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
+                .map_err(|e| format!("cold execute: {e:?}"))?;
+            Ok(buffer.len() as u64)
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,6 +581,40 @@ mod tests {
             cold.stats.p50,
             warm.stats.p50
         );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The delete lane's traced twin (issue 32): one Chrome+folded pair
+    /// under the given dir, the cold capture carrying the delete-bearing
+    /// touch. Smoke, not a measurement.
+    #[cfg(feature = "obs")]
+    #[test]
+    fn cold_containment_walk_delete_traced_twin_lands() {
+        let dir = scratch("cold-delete-trace");
+        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
+        corpus::load_bumbledb(&db, CFG).expect("load");
+        let trace_dir = dir.join("trace");
+        let table = trace_cold_containment_walk_delete(&db, CFG, Some(&trace_dir))
+            .expect("the traced twin runs")
+            .expect("Some dir emits a table");
+        assert!(!table.is_empty(), "the flame embed is non-empty");
+        let json_path = trace_dir.join("cold_containment_walk_delete.json");
+        let text = std::fs::read_to_string(&json_path)
+            .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+        assert!(
+            text.starts_with("[\n") && text.ends_with("\n]\n"),
+            "{} parses as a Chrome array",
+            json_path.display()
+        );
+        assert!(
+            text.contains(bumbledb::obs::names::APPLY_DELETES.label())
+                || text.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
+            "the delete-bearing commit reaches the artifact"
+        );
+        let folded = std::fs::read_to_string(trace_dir.join("cold_containment_walk_delete.folded"))
+            .expect("the folded twin lands beside the json");
+        assert!(!folded.is_empty(), "a non-degenerate fold");
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

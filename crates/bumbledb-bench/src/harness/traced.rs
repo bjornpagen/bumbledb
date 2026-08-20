@@ -29,8 +29,8 @@ where
 /// Either closure's error (the capture is drained either way).
 pub fn traced_cold_sample<T, F>(touch: &mut T, f: &mut F) -> Result<(u64, Vec<TraceEvent>), String>
 where
-    T: FnMut() -> Result<(), String>,
-    F: FnMut() -> Result<u64, String>,
+    T: FnMut() -> Result<(), String> + ?Sized,
+    F: FnMut() -> Result<u64, String> + ?Sized,
 {
     use bumbledb::obs::names;
     bumbledb::obs::start_capture();

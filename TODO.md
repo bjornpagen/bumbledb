@@ -8,13 +8,12 @@ finding stamps live in git history.
 ## Owed — the campaign's own residue (data first, no intuition fixes)
 
 - **The storage-lane regression cluster** (the rebench called its own lane
-  NOT CASHED): `cold_containment_walk_delete` 3.1–3.4× in all six reps,
-  the NOSYNC commit ladder 1.24–1.44 (b100 traced suspects: apply_deletes
-  self-time 2.1× under the cursor-fold applier, judgment_source +70% under
-  the T8 walk at small batch — the sweep only priced 1k–4k parents),
-  windowed ephemeral 1.07–1.17. Attribution first: the delete lane has no
-  traced twin (the reps' write set is untraced by protocol) — light it,
-  then fix. Flamediffs from the close live in git history
+  NOT CASHED): `cold_containment_walk_delete` **closed** (audit/32: traced
+  twin lit; current-tree flame is `image_distincts` 7577 µs on the I1
+  full rebuild, sibling insert-touch 903 µs, `apply_deletes` 19 µs,
+  `delete_b100` 0.89× vs SQLite). Remaining: the NOSYNC commit ladder
+  1.24–1.44 (audit/33 — re-baseline on NosyncLane) and windowed
+  ephemeral 1.07–1.17. Flamediffs from the close live in git history
   (`writes.durable.delete_b100.diff.svg`, `writes.nosync.commit_b100.diff.svg`).
 - **r6_two_path_count 1.46** (ours 131→197 ms) on the sink/plan lane's own
   COUNT-shaped territory — descend now carries essentially the whole query

@@ -23,12 +23,12 @@ use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebenc
 ///
 /// Under `--trace` the windowed and capacity judgment lanes land their
 /// traced solo samples under `trace_dir` (flat, beside the read-family
-/// pairs) and their flame embeds into `flames`. The PAIRED ledger
-/// families stay untraced here by decision: `writes --trace`'s commit
-/// ladder captures the identical Ledger commit shape (`commit_b1` IS
-/// `commit_single`'s span tree), so a second capture would duplicate an
-/// artifact, and the cold walks' eviction protocol is not a steady
-/// state a solo sample can honestly wear.
+/// pairs) and their flame embeds into `flames`. `cold_containment_walk_delete`
+/// lands its traced cold twin here (issue 32) — one captured
+/// delete-bearing touch + walk after the timed window. The other PAIRED
+/// ledger families stay untraced: `writes --trace`'s commit ladder
+/// already captures `commit_single`'s span tree, and the insert-touch
+/// cold walk is not the attributed lane.
 #[expect(
     clippy::too_many_lines,
     reason = "one lane list, ordered by the fsync-shadow rule — splitting would hide the order"
@@ -102,6 +102,16 @@ pub(crate) fn write_families(
                 facts_per_sec: None,
                 ghz: Some(ghz.into()),
             });
+            if name == "cold_containment_walk_delete" {
+                if let Some(table) =
+                    writebench::trace_cold_containment_walk_delete(&db, cfg, trace_dir)?
+                {
+                    flames.push(report::FlameEmbed {
+                        name: name.to_owned(),
+                        table,
+                    });
+                }
+            }
         }
         // The witnessed-write row (the PRD-18 spine debt): engine-only —
         // SQLite has no snapshot-witness surface, so the row is
