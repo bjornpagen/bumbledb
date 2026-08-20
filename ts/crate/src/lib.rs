@@ -298,6 +298,10 @@ enum CreatePrep {
     NewtypeMismatch(String),
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the Task output owns the Engine handle until resolve; boxing adds a hop without shrinking the JS wire type"
+)]
 pub enum CreateOutput {
     Accepted(Engine, SchemaDescriptor),
     Rejected(Vec<ViolationWire>),
@@ -374,6 +378,10 @@ enum OpenPrep {
     NewtypeMismatch(String),
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the Task output owns the Engine handle until resolve; boxing adds a hop without shrinking the JS wire type"
+)]
 pub enum OpenOutput {
     Ok(Engine, SchemaDescriptor),
     SchemaError(String),
@@ -479,6 +487,10 @@ pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
     }
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the Task output owns the Engine handle until resolve; boxing adds a hop without shrinking the JS wire type"
+)]
 pub enum PublishOutput {
     Ok(Engine),
     Failed { kind: &'static str, message: String },
@@ -680,12 +692,12 @@ impl InstanceOps for StoreOps<'_> {
         &self,
         prepared: &PreparedQuery<SchemaDescriptor>,
     ) -> Result<StalenessWire, WireError> {
-        staleness_wire(prepared.staleness(self.0).map_err(|e| wire(&e))?)
+        Ok(staleness_wire(prepared.staleness(self.0).map_err(|e| wire(&e))?))
     }
     fn generation(&self) -> Result<u64, WireError> {
         self.0
             .generation()
-            .map(|generation| generation.value())
+            .map(bumbledb::GenerationId::value)
             .map_err(|error| wire(&error))
     }
 }
@@ -744,8 +756,8 @@ impl InstanceOps for HeapOps<'_> {
     }
 }
 
-fn staleness_wire(staleness: bumbledb::Staleness) -> Result<StalenessWire, WireError> {
-    Ok(match staleness {
+fn staleness_wire(staleness: bumbledb::Staleness) -> StalenessWire {
+    match staleness {
         bumbledb::Staleness::NoStatistics => StalenessWire {
             per_occurrence: Vec::new(),
             max_ratio: 1.0,
@@ -760,7 +772,7 @@ fn staleness_wire(staleness: bumbledb::Staleness) -> Result<StalenessWire, WireE
                 .collect(),
             max_ratio,
         },
-    })
+    }
 }
 
 pub struct WitnessHandle {
@@ -768,6 +780,11 @@ pub struct WitnessHandle {
 }
 
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::type_complexity,
+    reason = "napi Function is the callback token; the generic is the JS arity, not a rustc type we own"
+)]
 pub fn db_read<'a>(
     env: Env,
     db: &'a External<DbHandle>,
@@ -833,7 +850,7 @@ pub fn instance_scan(
         ops.scan(RelationId(relation))
             .map_err(|error| throw_engine(env, &error))
     })?;
-    marshal::rows_out(rows)
+    Ok(marshal::rows_out(rows))
 }
 
 #[napi]
@@ -872,9 +889,7 @@ pub fn instance_get(
         ops.get(rel, key, &row)
             .map_err(|error| throw_engine(env, &error))
     })?;
-    found
-        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
-        .transpose()
+    Ok(found.map(|values| values.into_iter().map(ValueOut::from_value).collect()))
 }
 
 #[napi]
@@ -916,6 +931,10 @@ impl TxHandle {
         Ok(unsafe { &*self.engine })
     }
 
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "the write token is a raw pointer into the Db::write frame; alive is cleared before that frame returns"
+    )]
     fn tx(&self) -> napi::Result<&mut WriteTx<'_, SchemaDescriptor>> {
         require_alive(self.alive.as_ref(), "transaction")?;
         #[expect(
@@ -950,6 +969,10 @@ enum WriteExit {
     Throw(napi::Error),
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi Function is the callback token; the JS thread consumes it by value"
+)]
 fn run_write(
     env: Env,
     inner: &DbInner,
@@ -1027,6 +1050,10 @@ impl Drop for WriteFlag<'_> {
 }
 
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi Function is the callback token; the JS thread consumes it by value"
+)]
 pub fn db_write(
     env: Env,
     db: &External<DbHandle>,
@@ -1037,6 +1064,10 @@ pub fn db_write(
 }
 
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi Function is the callback token; the JS thread consumes it by value"
+)]
 pub fn db_write_from(
     env: Env,
     db: &External<DbHandle>,
@@ -1160,9 +1191,7 @@ pub fn tx_get(
         .tx()?
         .get_dyn(rel, key, &row)
         .map_err(|e| throw_engine(env, &e))?;
-    found
-        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
-        .transpose()
+    Ok(found.map(|values| values.into_iter().map(ValueOut::from_value).collect()))
 }
 
 #[napi]
@@ -1200,6 +1229,10 @@ struct PreparedInner {
     prepared: UnsafeCell<PreparedQuery<SchemaDescriptor>>,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the prepared handle is the Ok payload; boxing would add a hop on the one success path"
+)]
 pub enum PrepareOutcome {
     Ok(External<PreparedHandle>),
     IrError(String),
@@ -1500,9 +1533,7 @@ pub fn instance_builder_get(
     let found = live_mut(&builder.inner, "builder")?
         .get_dyn(rel, key, &row)
         .map_err(|error| throw_engine(env, &error))?;
-    found
-        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
-        .transpose()
+    Ok(found.map(|values| values.into_iter().map(ValueOut::from_value).collect()))
 }
 
 #[napi]
@@ -1615,7 +1646,7 @@ pub fn owned_scan(
         ops.scan(RelationId(relation))
             .map_err(|error| throw_engine(env, &error))
     })?;
-    marshal::rows_out(rows)
+    Ok(marshal::rows_out(rows))
 }
 
 #[napi]
@@ -1651,9 +1682,7 @@ pub fn owned_get(
         ops.get(rel, key, &row)
             .map_err(|error| throw_engine(env, &error))
     })?;
-    found
-        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
-        .transpose()
+    Ok(found.map(|values| values.into_iter().map(ValueOut::from_value).collect()))
 }
 
 #[napi]
