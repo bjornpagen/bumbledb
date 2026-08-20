@@ -62,7 +62,7 @@ pub struct RunConfig {
     pub seed: u64,
     pub samples: u32,
     /// Which constructor built the timed stores: `durable` or
-    /// `ephemeral` (`bench --ephemeral`).
+    /// `nosync` (`bench --nosync`).
     pub store: &'static str,
 }
 

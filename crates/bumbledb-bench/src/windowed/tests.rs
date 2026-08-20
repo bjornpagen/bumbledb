@@ -5,7 +5,7 @@ use crate::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb};
 use crate::writebench::write_protocol;
 
-use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
+use super::{baseline, ids, parent_kind, relation_rows, world, Mass};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-windowed-{tag}"));
@@ -164,7 +164,7 @@ fn traced_windowed_lands_the_judgment_spans() {
         },
         &dir.join("scratch"),
         &|name| name == "commit_window_admission",
-        crate::storemode::StoreMode::Ephemeral,
+        crate::storemode::StoreMode::Nosync,
         Some(&trace_dir),
         &mut flames,
     )

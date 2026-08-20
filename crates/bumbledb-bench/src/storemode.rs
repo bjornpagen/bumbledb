@@ -1,11 +1,10 @@
-//! The timed lanes' store constructor switch. `bench --ephemeral` runs
-//! the roster against [`Db::ephemeral`] stores (`MDB_NOSYNC`
-//! — the in-memory characterization lane, `docs/architecture/70-api.md`
-//! § environment lifecycle); the default is the durable constructor.
-//! A mode over the bench's scratch stores, never a flag on the engine:
-//! the store kind is on-disk identity there, so an ephemeral run loads
-//! ephemeral twins — `Db::ephemeral` on the stamped durable corpus is
-//! the typed `StoreKindMismatch` refusal, by design.
+//! The timed lanes' store constructor switch. `bench --nosync`
+//! (`--ephemeral` is the same flag) runs the roster against a
+//! durable-shaped store attached with the hidden NOSYNC open
+//! (`Db::create_nosync` / `Db::open_nosync`). Not a store kind: the
+//! stamped corpus is the same bytes either lane opens; only the
+//! environment flags differ. The crate-private [`StoreMode::Nosync`]
+//! arm is the NosyncLane flag issue 33 re-anchors on.
 
 use std::path::Path;
 
@@ -17,7 +16,9 @@ use bumbledb::{Admission, Db};
 pub enum StoreMode {
     #[default]
     Durable,
-    Ephemeral,
+    /// Hidden NOSYNC attach over a durable-shaped store — the
+    /// characterization lane, never a product kind.
+    Nosync,
 }
 
 impl StoreMode {
@@ -29,7 +30,7 @@ impl StoreMode {
     pub fn create<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
         match match self {
             Self::Durable => Db::create(path, schema),
-            Self::Ephemeral => Db::ephemeral(path, schema),
+            Self::Nosync => Db::create_nosync(path, schema),
         } {
             Err(error) => Err(format!("create ({}): {error:?}", self.label())),
             Ok(Admission::Accepted(db)) => Ok(db),
@@ -40,12 +41,25 @@ impl StoreMode {
         }
     }
 
+    /// Re-open a published store under the mode's attach flags.
+    ///
+    /// # Errors
+    ///
+    /// The engine's error, stringified with the mode named.
+    pub fn open<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
+        match self {
+            Self::Durable => Db::open(path, schema),
+            Self::Nosync => Db::open_nosync(path, schema),
+        }
+        .map_err(|error| format!("open ({}): {error:?}", self.label()))
+    }
+
     /// The mode's name, as reports print it.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Durable => "durable",
-            Self::Ephemeral => "ephemeral",
+            Self::Nosync => "nosync",
         }
     }
 }

@@ -53,8 +53,9 @@ pub struct BenchArgs {
     pub samples: Option<u32>,
     pub trace: bool,
     pub alloc: bool,
-    /// Time against `Db::ephemeral` stores (the in-memory
-    /// characterization lane) instead of the durable constructors.
+    /// Time against the hidden NOSYNC attach (`Db::open_nosync`) over
+    /// the stamped durable-shaped corpus — the NosyncLane flag.
+    /// `--nosync` and `--ephemeral` set the same switch.
     pub ephemeral: bool,
     /// Per-rep proxy stamps + normalized p50 — the
     /// confirm-run mode for suspicious findings.

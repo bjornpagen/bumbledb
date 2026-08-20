@@ -171,7 +171,7 @@ fn churn_replay_is_deterministic() {
 fn churn_ephemeral_minter_matches_durable() {
     let cfg = ChurnConfig::smoke(5);
     let (durable, _, _, dir_a) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "kind-d");
-    let (ephemeral, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Ephemeral, &[], "kind-e");
+    let (ephemeral, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Nosync, &[], "kind-e");
     let ours_d = verify_end::posting_multiset_ours(&durable.db).expect("durable multiset");
     let ours_e = verify_end::posting_multiset_ours(&ephemeral.db).expect("ephemeral multiset");
     crate::compare::multisets(ours_d, ours_e).expect("store kinds agree");

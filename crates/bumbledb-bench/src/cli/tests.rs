@@ -102,6 +102,24 @@ fn bench_parses_every_knob() {
     );
     let err = parse(&argv(&["bench", "--frobnicate"])).unwrap_err();
     assert!(err.contains("--frobnicate"), "{err}");
+    let nosync = parse(&argv(&["bench", "--nosync"])).expect("parses");
+    assert_eq!(
+        nosync,
+        Cmd::Bench(BenchArgs {
+            ephemeral: true,
+            ..BenchArgs {
+                corpus: CorpusArgs::default(),
+                families: None,
+                samples: None,
+                trace: false,
+                alloc: false,
+                ephemeral: false,
+                proxy_per_rep: false,
+                out: None,
+                i_am_lying: false,
+            }
+        })
+    );
 }
 
 #[test]

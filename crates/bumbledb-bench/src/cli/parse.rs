@@ -143,7 +143,7 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--trace" => args.trace = true,
             "--alloc" => args.alloc = true,
-            "--ephemeral" => args.ephemeral = true,
+            "--ephemeral" | "--nosync" => args.ephemeral = true,
             "--proxy-per-rep" => args.proxy_per_rep = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             "--i-am-lying" => args.i_am_lying = true,

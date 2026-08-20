@@ -51,7 +51,7 @@ use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement, Protocol, Stats};
 use crate::json;
 use crate::report::{GhzReport, Provenance};
-use crate::schema::{Ledger, Posting, PostingId, ids, schema};
+use crate::schema::{ids, schema, Ledger, Posting, PostingId};
 use crate::sqlite_run::POSTING_INSERT;
 use crate::{clockproxy, corpus, sqlmap, trace_out, writebench};
 
@@ -503,30 +503,18 @@ fn insert_stream_sqlite(
 /// cannot see it — its generator-stream count is already pinned by
 /// writebench's own test, and this cheap witness re-opens pair 0 (the
 /// durable lane through `Db::open`, the nosync lane through
-/// `Db::ephemeral`, its create-or-open constructor) and confirms both
-/// sides hold exactly the posting mass.
+/// `Db::open_nosync`) and confirms both sides hold exactly the posting
+/// mass.
 fn verify_insert_stream_pair(
     scratch: &Path,
     lane: DurabilityLane,
     expected_postings: u64,
 ) -> Result<(), String> {
     let dir = scratch.join("insert-stream-bumbledb-0");
-    let db = match lane.store_mode() {
-        crate::storemode::StoreMode::Durable => Db::open(&dir, Ledger)
-            .map_err(|e| format!("insert_stream re-open ({}): {e:?}", lane.label()))?,
-        crate::storemode::StoreMode::Ephemeral => match Db::ephemeral(&dir, Ledger) {
-            Err(e) => {
-                return Err(format!("insert_stream re-open ({}): {e:?}", lane.label()));
-            }
-            Ok(bumbledb::Admission::Accepted(db)) => db,
-            Ok(bumbledb::Admission::Rejected(violations)) => {
-                return Err(format!(
-                    "insert_stream re-open ({}): empty rejected: {violations}",
-                    lane.label()
-                ));
-            }
-        },
-    };
+    let db = lane
+        .store_mode()
+        .open(&dir, Ledger)
+        .map_err(|e| format!("insert_stream re-open ({}): {e}", lane.label()))?;
     let ours = db
         .read(|snap| Ok(snap.scan(ids::POSTING)?.count()))
         .map_err(|e| format!("insert_stream re-scan: {e:?}"))? as u64;
@@ -963,7 +951,7 @@ mod tests {
         );
         assert_eq!(
             DurabilityLane::Nosync.store_mode(),
-            crate::storemode::StoreMode::Ephemeral
+            crate::storemode::StoreMode::Nosync
         );
     }
 

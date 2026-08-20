@@ -23,7 +23,7 @@ use super::ops;
 ///   own throughput series (maintenance-included honesty — `SQLite`
 ///   gets its best realistic self, and pays for it on the record).
 /// - [`Nosync`](Self::Nosync) is the `synchronous=OFF` twin matched to
-///   LMDB `NOSYNC` — the ephemeral pairing.
+///   LMDB `NOSYNC` — the NosyncLane pairing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqliteLaneKind {
     /// The fairness session, untouched for the whole run.
@@ -31,7 +31,7 @@ pub enum SqliteLaneKind {
     /// The fairness session plus the operator's periodic maintenance,
     /// paid on the record.
     Maint,
-    /// The `synchronous=OFF` twin of the ephemeral store kind.
+    /// The `synchronous=OFF` twin of the hidden NOSYNC attach.
     Nosync,
 }
 
@@ -70,7 +70,7 @@ impl SqliteLaneKind {
 pub fn ours_label(mode: StoreMode) -> &'static str {
     match mode {
         StoreMode::Durable => "ours-durable",
-        StoreMode::Ephemeral => "ours-ephemeral",
+        StoreMode::Nosync => "ours-ephemeral",
     }
 }
 
@@ -116,7 +116,7 @@ pub fn all() -> &'static [RunSpec] {
         RunSpec {
             name: "nosync",
             mix: ops::STEADY,
-            ours: StoreMode::Ephemeral,
+            ours: StoreMode::Nosync,
             sqlite: &[SqliteLaneKind::Nosync],
         },
         RunSpec {

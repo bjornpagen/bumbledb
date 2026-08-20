@@ -5,7 +5,7 @@ use crate::differential::{self, Op, Verdict};
 use crate::naive::{Delta, NaiveDb};
 use crate::writebench::write_protocol;
 
-use super::{Mass, PARENTS, calendar, calendar_rows, ids, power, power_baseline, power_rows};
+use super::{calendar, calendar_rows, ids, power, power_baseline, power_rows, Mass, PARENTS};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-capacity-{tag}"));
@@ -370,7 +370,7 @@ fn traced_capacity_lands_the_judgment_spans() {
         },
         &dir.join("scratch"),
         &|name| name == "commit_capacity_sum",
-        crate::storemode::StoreMode::Ephemeral,
+        crate::storemode::StoreMode::Nosync,
         Some(&trace_dir),
         &mut flames,
     )

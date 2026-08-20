@@ -10,11 +10,12 @@
 //!   with `SQLite` WAL `synchronous=FULL` `fullfsync=ON`
 //!   `checkpoint_fullfsync=ON`: both engines flush **to media** on
 //!   every commit.
-//! - **Nosync** pairs `Db::ephemeral` — `MDB_NOSYNC`: pages and meta
-//!   are pwritten, no sync boundary is ever crossed — with `SQLite`
-//!   WAL `synchronous=OFF` (WAL frames written, never synced). OFF,
-//!   not NORMAL, because NORMAL still syncs at WAL checkpoints and
-//!   would cross-match a store kind that never syncs at all.
+//! - **Nosync** pairs `Db::create_nosync` / `Db::open_nosync` — the
+//!   hidden NOSYNC attach over a durable-shaped store (`MDB_NOSYNC`:
+//!   pages and meta are pwritten, no sync boundary is ever crossed) —
+//!   with `SQLite` WAL `synchronous=OFF` (WAL frames written, never
+//!   synced). OFF, not NORMAL, because NORMAL still syncs at WAL
+//!   checkpoints and would cross-match a lane that never syncs at all.
 //!
 //! Matched pairs only, never cross-matched, by type. The
 //! [`DurabilityLane::assert_parity`] readback is the `FairnessCheck`
@@ -37,12 +38,12 @@ pub const ALL: [DurabilityLane; 2] = [DurabilityLane::Durable, DurabilityLane::N
 
 impl DurabilityLane {
     /// The engine side of the pair: `Durable` builds with `Db::create`,
-    /// `Nosync` with `Db::ephemeral` (`MDB_NOSYNC`).
+    /// `Nosync` with `Db::create_nosync` (`MDB_NOSYNC`).
     #[must_use]
     pub fn store_mode(self) -> StoreMode {
         match self {
             Self::Durable => StoreMode::Durable,
-            Self::Nosync => StoreMode::Ephemeral,
+            Self::Nosync => StoreMode::Nosync,
         }
     }
 
@@ -75,11 +76,12 @@ impl DurabilityLane {
                  both engines flush to media on every commit"
             }
             Self::Nosync => {
-                "Db::ephemeral (MDB_NOSYNC: pages and meta pwritten, no sync boundary ever \
-                 crossed) vs SQLite WAL synchronous=OFF fullfsync=OFF checkpoint_fullfsync=OFF, \
-                 cache_size=-262144, temp_store=MEMORY, whole-file mmap (coverage asserted), \
-                 wal_autocheckpoint=0 — WAL frames written, never synced (OFF, not NORMAL: NORMAL still syncs at \
-                 checkpoints, which would cross-match a store kind that never syncs)"
+                "Db::create_nosync (MDB_NOSYNC: pages and meta pwritten, no sync boundary ever \
+                 crossed; durable-shaped store, not a kind) vs SQLite WAL synchronous=OFF \
+                 fullfsync=OFF checkpoint_fullfsync=OFF, cache_size=-262144, temp_store=MEMORY, \
+                 whole-file mmap (coverage asserted), wal_autocheckpoint=0 — WAL frames written, \
+                 never synced (OFF, not NORMAL: NORMAL still syncs at checkpoints, which would \
+                 cross-match a lane that never syncs)"
             }
         }
     }

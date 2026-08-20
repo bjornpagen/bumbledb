@@ -1,17 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use bumbledb::Db;
-
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::{self, GenConfig};
 use crate::harness::Protocol;
 use crate::schema::Ledger;
-use crate::storemode::StoreMode;
-use crate::{clockproxy, corpus, families, report, sqlite_run, verify};
+use crate::{clockproxy, families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
 use super::write_families::write_families;
-use super::{BenchRun, CASES_FILE, CorpusPaths, ensure_corpus};
+use super::{ensure_corpus, BenchRun, CorpusPaths, CASES_FILE};
 
 /// The stamp-refusal message, with the user's own flags substituted.
 pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
@@ -100,35 +97,6 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     Ok((paths, verified))
 }
 
-/// One ephemeral read twin: the corpus loaded into a scratch sibling
-/// under the ephemeral constructor, compacted into place (the loader
-/// law's geometry — the stamped durable corpus ships compacted, so the
-/// twin must too), then reopened ephemeral for the timed lanes.
-fn ephemeral_twin<S: bumbledb::schema::Theory + Copy>(
-    root: &Path,
-    name: &str,
-    schema: S,
-    load: impl FnOnce(&Db<S>) -> Result<(), String>,
-) -> Result<Db<S>, String> {
-    let target = root.join(name);
-    let _ = std::fs::remove_dir_all(&target);
-    let load_dir = root.join(format!("{name}-load"));
-    let _ = std::fs::remove_dir_all(&load_dir);
-    let db = StoreMode::Ephemeral.create(&load_dir, schema)?;
-    load(&db)?;
-    db.compact(&target)
-        .map_err(|e| format!("compact {name}: {e:?}"))?;
-    drop(db);
-    std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove {name}-load: {e}"))?;
-    match Db::ephemeral(&target, schema) {
-        Err(error) => Err(format!("open ephemeral {name}: {error:?}")),
-        Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
-        Ok(bumbledb::Admission::Rejected(violations)) => Err(format!(
-            "open ephemeral {name}: empty rejected: {violations}"
-        )),
-    }
-}
-
 /// `bench`. Returns the exit code: 0 when every selected gate family
 /// won (and the budget held where it gates), 1 otherwise.
 ///
@@ -163,36 +131,15 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     } else {
         crate::duralane::DurabilityLane::Durable
     };
-    // The ephemeral read twins: `Db::ephemeral` on the stamped durable
-    // corpus is the typed `StoreKindMismatch` refusal (the kind is
-    // on-disk identity), so an ephemeral run loads the SAME generated
-    // corpus (the stamp's digest identity) fresh into ephemeral stores
-    // and compacts them into place — the compact keeps the timed
-    // store's geometry identical to the stamped corpus's (live-sized,
-    // `docs/architecture/50-storage.md`). The kind marker rides the
-    // compacted `_meta`, so the copy reopens ephemeral.
-    let (db, cal_db) = if args.ephemeral {
-        let root = out_dir.join("ephemeral-corpus");
-        eprintln!("bench: loading the ephemeral read twins (same corpus, ephemeral kind)");
-        (
-            ephemeral_twin(&root, "db", Ledger, |db| {
-                corpus::load_bumbledb(db, cfg)
-                    .map(drop)
-                    .map_err(|e| format!("load bumbledb: {e:?}"))
-            })?,
-            ephemeral_twin(&root, "cal-db", crate::calendar::Scheduling, |db| {
-                crate::calendar::corpus::load_bumbledb(db, cfg)
-                    .map(drop)
-                    .map_err(|e| format!("load calendar: {e:?}"))
-            })?,
-        )
-    } else {
-        (
-            Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?,
-            Db::open(&paths.cal_db, crate::calendar::Scheduling)
-                .map_err(|e| format!("open calendar db: {e:?}"))?,
-        )
-    };
+    // The NosyncLane re-anchor (issue 33): the hidden NOSYNC attach
+    // opens the SAME stamped durable-shaped corpus. Kind is not data
+    // anymore, so there is no twin to reload.
+    let mode = lane.store_mode();
+    if args.ephemeral {
+        eprintln!("bench: opening the stamped corpus under NosyncLane");
+    }
+    let db = mode.open(&paths.db, Ledger)?;
+    let cal_db = mode.open(&paths.cal_db, crate::calendar::Scheduling)?;
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;

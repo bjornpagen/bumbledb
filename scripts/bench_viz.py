@@ -365,8 +365,9 @@ def ingest_report(inputs, path):
         return
     config = payload.get("config")
     store = config.get("store") if isinstance(config, dict) else None
-    if store in ("durable", "ephemeral"):
-        inputs[f"{store}_runs"].append(payload)
+    if store in ("durable", "ephemeral", "nosync"):
+        pool = "ephemeral" if store in ("ephemeral", "nosync") else "durable"
+        inputs[f"{pool}_runs"].append(payload)
     else:
         print(f"note: {path} is neither a lane payload nor a RunReport — skipped")
 

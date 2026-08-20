@@ -32,7 +32,7 @@ Three laws govern this pass:
 | 30 | [IntervalTail merge](30-interval-tail-merge.md) | B | **fixed this pass** — `ValueType` width owner; `IntervalTail` gone; `golden_fingerprint_pins_the_hash` |
 | 31 | [NodeScratch copies](31-node-scratch-copies.md) | C | **fixed this pass** — residual specs; no predicate clones |
 | 32 | [delete lane 3.1–3.4×](32-perf-delete-lane.md) | D | **fixed this pass** — twin lit; re-ruled: I1 rebuild (`image_distincts` 7.6 ms), not apply_deletes |
-| 33 | [commit ladder](33-perf-commit-ladder.md) | D | re-baseline on the NOSYNC flag, then attribute |
+| 33 | [commit ladder](33-perf-commit-ladder.md) | D | **fixed this pass** — NosyncLane pin: commit_b1 1.28×, b10 0.69×, b100 0.74×, b1000 1.15× |
 | 34 | [r6 descend 1.46](34-perf-r6-descend.md) | D | fresh flame first — the tree moved |
 | 35 | [overlap re-pin](35-overlap-repin.md) | owner | quiet-machine sweep; never by inspection |
 | 36 | [leaf batch-of-1 (014)](36-perf-leaf-batch.md) | D | re-bench o4 first |

@@ -3,8 +3,8 @@ use bumbledb::Db;
 use crate::fixture::TempDir;
 
 use super::{
-    ID_BASE, Mass, child_fact_bytes, grind_children, hash_rank_word, load, model_fact_hash,
-    pin_hash_model, run_with_floor, shuffled_ranks, slab, world,
+    child_fact_bytes, grind_children, hash_rank_word, load, model_fact_hash, pin_hash_model,
+    run_with_floor, shuffled_ranks, slab, world, Mass, ID_BASE,
 };
 use crate::corpus_gen::Rng;
 
@@ -21,8 +21,8 @@ use crate::corpus_gen::Rng;
 #[test]
 fn the_hash_model_matches_the_engine() {
     let dir = TempDir::new("sweep-pin");
-    let db = Db::ephemeral(dir.path(), world::WindowedWorld)
-        .expect("ephemeral")
+    let db = Db::create_nosync(dir.path(), world::WindowedWorld)
+        .expect("nosync")
         .expect("accepted");
     load(&db, Mass::unit()).expect("load the unit mass");
     pin_hash_model(&db).expect("the sweep's hash model matches the engine");
