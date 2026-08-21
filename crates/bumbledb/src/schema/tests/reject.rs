@@ -1,11 +1,18 @@
 use super::*;
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 
-fn target_key(key: u16, projection: &[FieldId]) -> TargetKeyCandidate {
+fn target_key(key: u16, projection: &[FieldId], names: &[&str]) -> TargetKeyCandidate {
     TargetKeyCandidate {
         key: KeyId(key),
         projection: projection.into(),
+        projection_names: names.iter().map(|name| Box::from(*name)).collect(),
     }
+}
+
+/// Owned name payloads for a target-key rejection's projection — ids and
+/// names pair positionwise, exactly as validation constructs them.
+fn names(names: &[&str]) -> Box<[Box<str>]> {
+    names.iter().map(|name| Box::from(*name)).collect()
 }
 
 // Field-level checks first, then the statement reject corpus: one test per
@@ -293,7 +300,9 @@ fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
         decl.validate().unwrap_err(),
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
+            target_name: "S".into(),
             projection: Box::new([FieldId(0)]),
+            projection_names: names(&["a"]),
             available: Box::new([])
         }
         .at(StatementId(2))
@@ -329,7 +338,9 @@ fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
         decl.validate().unwrap_err(),
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
+            target_name: "S".into(),
             projection: Box::new([FieldId(0), FieldId(1)]),
+            projection_names: names(&["a", "b"]),
             available: Box::new([])
         }
         .at(StatementId(2))
@@ -654,7 +665,9 @@ fn rejects_no_matching_target_key() {
         decl.validate().unwrap_err(),
         StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(1),
+            target_name: "T".into(),
             projection: Box::new([FieldId(0)]),
+            projection_names: names(&["x"]),
             available: Box::new([])
         }
         .at(StatementId(0))
@@ -682,8 +695,8 @@ fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key(
     let error = decl.validate().unwrap_err();
     assert_eq!(
         error.to_string(),
-        "statement 2: target relation 1 projection {0, 1} matches no declared key; \
-         available keys: key 0 {0}; key 1 {1, 2}"
+        "statement 2: target relation T (1) projection {x (0), y (1)} matches no \
+         declared key; available keys: key 0 {x (0)}; key 1 {y (1), z (2)}"
     );
 }
 
@@ -710,16 +723,18 @@ fn rejects_interval_containment_without_pointwise_key() {
         error,
         StatementErrorKind::NoPointwiseTargetKey {
             target: RelationId(1),
+            target_name: "T".into(),
             projection: Box::new([FieldId(0), FieldId(1)]),
-            available: Box::new([target_key(0, &[FieldId(0)])])
+            projection_names: names(&["who", "during"]),
+            available: Box::new([target_key(0, &[FieldId(0)], &["who"])])
         }
         .at(StatementId(1))
     );
     assert_eq!(
         error.to_string(),
-        "statement 1: target relation 1 projection {0, 1} matches no declared key; \
-         available keys: key 0 {0}; hint: declare the exact pointwise key \
-         `R(prefix…, interval) -> R`"
+        "statement 1: target relation T (1) projection {who (0), during (1)} \
+         matches no declared key; available keys: key 0 {who (0)}; hint: declare \
+         the exact pointwise key `R(prefix…, interval) -> R`"
     );
 }
 
@@ -1107,7 +1122,9 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
-            projection: Box::new([FieldId(1)])
+            target_name: "Currency".into(),
+            projection: Box::new([FieldId(1)]),
+            projection_names: names(&["minor_units"])
         }
         .at(StatementId(1))
     );
@@ -1152,7 +1169,9 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
         decl.validate().unwrap_err(),
         StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
-            projection: Box::new([FieldId(1)])
+            target_name: "Kind".into(),
+            projection: Box::new([FieldId(1)]),
+            projection_names: names(&["weight"])
         }
         .at(StatementId(2))
     );

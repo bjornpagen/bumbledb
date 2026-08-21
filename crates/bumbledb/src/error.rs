@@ -71,11 +71,14 @@ pub struct Exceeded<T> {
 
 /// One declared key offered as owned evidence in a target-key rejection.
 /// The diagnostic may outlive the descriptor, so it carries no schema
-/// references.
+/// references — the field NAMES ride beside the ids as owned strings
+/// (`projection_names` pairs `projection` positionwise), so the refusal
+/// speaks the caller's own vocabulary without a descriptor lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetKeyCandidate {
     pub key: KeyId,
     pub projection: Box<[FieldId]>,
+    pub projection_names: Box<[Box<str>]>,
 }
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
@@ -603,17 +606,26 @@ pub enum StatementErrorKind {
     },
     /// Roster "IND whose target projection matches no key of the target":
     /// probe-ability requires Y to be a permutation of a declared key.
+    /// Names ride beside the ids (`target_name`, and `projection_names`
+    /// pairing `projection` positionwise) as owned strings — validation
+    /// has the descriptor in hand, and the refusal must speak the
+    /// caller's vocabulary at every boundary (60-containment-parity).
     NoMatchingTargetKey {
         target: RelationId,
+        target_name: Box<str>,
         projection: Box<[FieldId]>,
+        projection_names: Box<[Box<str>]>,
         available: Box<[TargetKeyCandidate]>,
     },
     /// Roster "IND … (or, with an interval position, no pointwise key
     /// carrying it)": the coverage walk needs the target's own key to keep
-    /// its intervals disjoint and ordered.
+    /// its intervals disjoint and ordered. Same owned-name payloads as
+    /// [`StatementErrorKind::NoMatchingTargetKey`].
     NoPointwiseTargetKey {
         target: RelationId,
+        target_name: Box<str>,
         projection: Box<[FieldId]>,
+        projection_names: Box<[Box<str>]>,
         available: Box<[TargetKeyCandidate]>,
     },
     /// An interval position on a containment with a closed side — refused
@@ -632,10 +644,13 @@ pub enum StatementErrorKind {
     /// closed relation are legal, point-read-served objects whose field
     /// set may equal the refused projection — the refusal reason is
     /// closedness, a different fact than key absence, and the two carry
-    /// different encodings.
+    /// different encodings. Names ride beside the ids exactly as on
+    /// [`StatementErrorKind::NoMatchingTargetKey`].
     ClosedTargetNotHandle {
         target: RelationId,
+        target_name: Box<str>,
         projection: Box<[FieldId]>,
+        projection_names: Box<[Box<str>]>,
     },
     /// A statement between constants that the ground axioms refute: both
     /// sides of the judgment are sealed at validate, so its truth is

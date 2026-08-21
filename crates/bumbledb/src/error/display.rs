@@ -42,18 +42,23 @@ impl fmt::Display for LmdbFailure {
     }
 }
 
+/// A field set with the names beside the ids — `{name (id), …}`, sorted
+/// by id so the set spelling stays order-free exactly as the id-only
+/// rendering was. `names` pairs `projection` positionwise (the variants'
+/// construction invariant).
 fn field_set(
     f: &mut fmt::Formatter<'_>,
     projection: &[bumbledb_theory::schema::FieldId],
+    names: &[Box<str>],
 ) -> fmt::Result {
-    let mut fields = projection.to_vec();
-    fields.sort_unstable();
+    let mut fields: Vec<_> = projection.iter().copied().zip(names.iter()).collect();
+    fields.sort_unstable_by_key(|(field, _)| *field);
     write!(f, "{{")?;
-    for (index, field) in fields.iter().enumerate() {
+    for (index, (field, name)) in fields.iter().enumerate() {
         if index > 0 {
             write!(f, ", ")?;
         }
-        write!(f, "{}", field.0)?;
+        write!(f, "{name} ({})", field.0)?;
     }
     write!(f, "}}")
 }
@@ -61,12 +66,18 @@ fn field_set(
 fn target_key_rejection(
     f: &mut fmt::Formatter<'_>,
     target: bumbledb_theory::schema::RelationId,
+    target_name: &str,
     projection: &[bumbledb_theory::schema::FieldId],
+    projection_names: &[Box<str>],
     available: &[TargetKeyCandidate],
     pointwise: bool,
 ) -> fmt::Result {
-    write!(f, "target relation {} projection ", target.0)?;
-    field_set(f, projection)?;
+    write!(
+        f,
+        "target relation {target_name} ({}) projection ",
+        target.0
+    )?;
+    field_set(f, projection, projection_names)?;
     write!(f, " matches no declared key; available keys: ")?;
     if available.is_empty() {
         write!(f, "none")?;
@@ -76,7 +87,7 @@ fn target_key_rejection(
                 write!(f, "; ")?;
             }
             write!(f, "key {} ", candidate.key.0)?;
-            field_set(f, &candidate.projection)?;
+            field_set(f, &candidate.projection, &candidate.projection_names)?;
         }
     }
     if pointwise {
@@ -613,31 +624,56 @@ impl fmt::Display for StatementErrorKind {
             ),
             Self::NoMatchingTargetKey {
                 target,
+                target_name,
                 projection,
+                projection_names,
                 available,
-            } => target_key_rejection(f, *target, projection, available, false),
+            } => target_key_rejection(
+                f,
+                *target,
+                target_name,
+                projection,
+                projection_names,
+                available,
+                false,
+            ),
             Self::NoPointwiseTargetKey {
                 target,
+                target_name,
                 projection,
+                projection_names,
                 available,
-            } => target_key_rejection(f, *target, projection, available, true),
+            } => target_key_rejection(
+                f,
+                *target,
+                target_name,
+                projection,
+                projection_names,
+                available,
+                true,
+            ),
             Self::ClosedContainmentInterval { relation: r } => write!(
                 f,
                 "interval position on a containment with closed relation {} — \
                  pointwise judgments against a virtual extension are refused",
                 r.0
             ),
-            Self::ClosedTargetNotHandle { target, projection } => {
+            Self::ClosedTargetNotHandle {
+                target,
+                target_name,
+                projection,
+                projection_names,
+            } => {
                 write!(
                     f,
-                    "closed target relation {} is addressed by its synthetic id \
-                     only — projection ",
+                    "closed target relation {target_name} ({}) is addressed by its \
+                     synthetic id only — projection ",
                     target.0
                 )?;
-                field_set(f, projection)?;
+                field_set(f, projection, projection_names)?;
                 write!(
                     f,
-                    " must be exactly {{0}} (rewrite the target side as `R(id)`)"
+                    " must be exactly {{id (0)}} (rewrite the target side as `R(id)`)"
                 )
             }
             Self::ClosedStatementRefuted { relation: r, row } => write!(

@@ -1069,6 +1069,7 @@ mod equality_reverse_key {
                     target,
                     projection,
                     available,
+                    ..
                 },
             }) if target == Source::RELATION
                 && *projection == [FieldId(0)]

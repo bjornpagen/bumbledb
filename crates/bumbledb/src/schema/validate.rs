@@ -1487,7 +1487,9 @@ fn resolve_target_key(
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
+                target_name: target_relation.name.clone(),
                 projection: target.projection.clone(),
+                projection_names: projection_field_names(target_relation, &target.projection),
             }
             .at(id));
         }
@@ -1503,7 +1505,7 @@ fn resolve_target_key(
     // two intervals (the FD gate rejects them), so with two or more there
     // is no pointwise key to resolve — reject without searching.
     if positions.len() > 1 {
-        return Err(missing_target_key(id, target, descriptors, true));
+        return Err(missing_target_key(id, target, relations, descriptors, true));
     }
     let interval_position = positions.first().copied();
 
@@ -1514,6 +1516,7 @@ fn resolve_target_key(
         return Err(missing_target_key(
             id,
             target,
+            relations,
             descriptors,
             interval_position.is_some(),
         ));
@@ -1571,7 +1574,9 @@ fn resolve_capacity_target(
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
+                target_name: target_relation.name.clone(),
                 projection: target.projection.clone(),
+                projection_names: projection_field_names(target_relation, &target.projection),
             }
             .at(id));
         }
@@ -1583,7 +1588,13 @@ fn resolve_capacity_target(
     let Some((key_idx, key_projection)) =
         matching_functionality(target.relation, target_projection.fields(), descriptors)
     else {
-        return Err(missing_target_key(id, target, descriptors, false));
+        return Err(missing_target_key(
+            id,
+            target,
+            relations,
+            descriptors,
+            false,
+        ));
     };
     Ok(CapacityEnforcement::ScalarProbe {
         target_key: functionality_key_id(descriptors, key_idx),
@@ -1648,10 +1659,23 @@ fn functionality_key_id(descriptors: &[StatementDescriptor], key_idx: usize) -> 
     )
 }
 
+/// The projection's field names off the sealed field roster, owned — the
+/// name payloads every target-key diagnostic carries beside its ids. The
+/// projection was validated (`validate_projection`) before any rejection
+/// citing it, so the index is total.
+fn projection_field_names(relation: &Relation, projection: &[FieldId]) -> Box<[Box<str>]> {
+    projection
+        .iter()
+        .map(|field| relation.fields[usize::from(field.0)].name.clone())
+        .collect()
+}
+
 /// Owned evidence for an exact-target-key rejection. Key ids follow the
-/// functionality-only typed arena order, exactly as successful sealing.
+/// functionality-only typed arena order, exactly as successful sealing;
+/// names come off the target's validated field roster.
 fn target_key_candidates(
     target: RelationId,
+    relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Box<[TargetKeyCandidate]> {
     let mut next_key = 0usize;
@@ -1668,6 +1692,10 @@ fn target_key_candidates(
                 available.push(TargetKeyCandidate {
                     key,
                     projection: projection.clone(),
+                    projection_names: projection_field_names(
+                        &relations[target.0 as usize],
+                        projection,
+                    ),
                 });
             }
         }
@@ -1678,23 +1706,31 @@ fn target_key_candidates(
 fn missing_target_key(
     statement: StatementId,
     side: &Side,
+    relations: &[Relation],
     descriptors: &[StatementDescriptor],
     pointwise: bool,
 ) -> SchemaError {
     let target = side.relation;
+    let target_relation = &relations[target.0 as usize];
+    let target_name = target_relation.name.clone();
     let projection = side.projection.clone();
-    let available = target_key_candidates(target, descriptors);
+    let projection_names = projection_field_names(target_relation, &projection);
+    let available = target_key_candidates(target, relations, descriptors);
     if pointwise {
         StatementErrorKind::NoPointwiseTargetKey {
             target,
+            target_name,
             projection,
+            projection_names,
             available,
         }
         .at(statement)
     } else {
         StatementErrorKind::NoMatchingTargetKey {
             target,
+            target_name,
             projection,
+            projection_names,
             available,
         }
         .at(statement)
