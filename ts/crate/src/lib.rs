@@ -613,6 +613,7 @@ impl InstanceHandle {
 
 trait InstanceOps {
     fn scan(&self, relation: RelationId) -> bumbledb::Result<Vec<Vec<Value>>>;
+    fn count(&self, relation: RelationId) -> bumbledb::Result<u64>;
     fn contains(&self, relation: RelationId, values: &[Value]) -> bumbledb::Result<bool>;
     fn get(
         &self,
@@ -654,6 +655,9 @@ fn scan_rows(
 impl InstanceOps for StoreOps<'_> {
     fn scan(&self, relation: RelationId) -> bumbledb::Result<Vec<Vec<Value>>> {
         scan_rows(self.0.scan(relation)?)
+    }
+    fn count(&self, relation: RelationId) -> bumbledb::Result<u64> {
+        self.0.count(relation)
     }
     fn contains(&self, relation: RelationId, values: &[Value]) -> bumbledb::Result<bool> {
         self.0.contains_dyn(relation, values)
@@ -705,6 +709,9 @@ impl InstanceOps for StoreOps<'_> {
 impl InstanceOps for HeapOps<'_> {
     fn scan(&self, relation: RelationId) -> bumbledb::Result<Vec<Vec<Value>>> {
         scan_rows(self.0.scan(relation)?)
+    }
+    fn count(&self, relation: RelationId) -> bumbledb::Result<u64> {
+        self.0.count(relation)
     }
     fn contains(&self, relation: RelationId, values: &[Value]) -> bumbledb::Result<bool> {
         self.0.contains_dyn(relation, values)
@@ -851,6 +858,18 @@ pub fn instance_scan(
             .map_err(|error| throw_engine(env, &error))
     })?;
     Ok(marshal::rows_out(rows))
+}
+
+#[napi]
+pub fn instance_count(
+    env: Env,
+    instance: &External<InstanceHandle>,
+    relation: u32,
+) -> napi::Result<u64> {
+    instance.with_instance(|ops| {
+        ops.count(RelationId(relation))
+            .map_err(|error| throw_engine(env, &error))
+    })
 }
 
 #[napi]
@@ -1647,6 +1666,18 @@ pub fn owned_scan(
             .map_err(|error| throw_engine(env, &error))
     })?;
     Ok(marshal::rows_out(rows))
+}
+
+#[napi]
+pub fn owned_count(
+    env: Env,
+    instance: &External<OwnedHandle>,
+    relation: u32,
+) -> napi::Result<u64> {
+    owned_ops(env, instance, |ops, _sealed| {
+        ops.count(RelationId(relation))
+            .map_err(|error| throw_engine(env, &error))
+    })
 }
 
 #[napi]

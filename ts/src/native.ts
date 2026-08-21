@@ -461,6 +461,12 @@ interface Native {
 	dbRead<R>(db: DbHandle, callback: (instance: InstanceHandle, witness: WitnessHandle) => R): R
 	instanceGeneration(instance: InstanceHandle): bigint
 	instanceScan(instance: InstanceHandle, relationId: number): FactValue[][]
+	/**
+	 * Exact cardinality of a relation at this lease's snapshot — the
+	 * engine's maintained counter, u64 crossing as `bigint` by the wire
+	 * law, never a scan.
+	 */
+	instanceCount(instance: InstanceHandle, relationId: number): bigint
 	instanceContains(instance: InstanceHandle, relationId: number, values: readonly FactValue[]): boolean
 	instanceGet(
 		instance: InstanceHandle,
@@ -559,6 +565,8 @@ interface Native {
 	instanceBuilderAdmit(builder: BuilderHandle): Promise<AdmitResult>
 	ownedInstanceClose(instance: OwnedHandle): void
 	ownedScan(instance: OwnedHandle, relationId: number): FactValue[][]
+	/** The owned-instance twin of {@link Native.instanceCount}: the frozen catalog's exact cardinality. */
+	ownedCount(instance: OwnedHandle, relationId: number): bigint
 	ownedContains(instance: OwnedHandle, relationId: number, values: readonly FactValue[]): boolean
 	ownedGet(
 		instance: OwnedHandle,

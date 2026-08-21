@@ -485,6 +485,18 @@ interface ReadInstance<Rels extends SchemaRelations> {
 	/** Full-relation export in row-id order, decoded to bare structural facts. */
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	/**
+	 * Exact cardinality of `relation` at this lease's snapshot — a
+	 * structural read of the engine's maintained counter (folded
+	 * transactionally at every commit, pinned equal to the scan count),
+	 * never a scan, never an estimate. `bigint` by the wire law: engine
+	 * cardinality is u64, which is not a JavaScript safe integer by
+	 * construction. `count` and `scan` run inside the lease's one read
+	 * transaction, so both observe the same snapshot. Closed relations
+	 * are a type error, exactly as `scan` — a sealed extension is schema
+	 * data whose length the caller already declared.
+	 */
+	count<R extends MemberRelation<Rels>>(relation: R): bigint
+	/**
 	 * Committed-state point lookup through the relation's primary key
 	 * (the {@link KeyFact} rule); `undefined` on a miss.
 	 */
@@ -555,6 +567,8 @@ interface Db<Rels extends SchemaRelations> {
 	read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R>
 	/** `db.scan(r)` === `db.read(instance => instance.scan(r))` — the symmetry rule. */
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
+	/** `db.count(r)` === `db.read(instance => instance.count(r))` — the symmetry rule. */
+	count<R extends MemberRelation<Rels>>(relation: R): bigint
 	/** `db.get(r, k)` === `db.read(instance => instance.get(r, k))` — the symmetry rule. */
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	/** `db.get(r, s, k)` === `db.read(instance => instance.get(r, s, k))` — the symmetry rule, keyed form. */
@@ -949,11 +963,12 @@ const ErrForeignWitness = errors.new("bumbledb foreignWitness: a witness met a f
 
 /**
  * The shared typed read surface: store leases and owned instances both
- * expose scan/get/contains/execute/prepare. The native ops are the only
+ * expose scan/count/get/contains/execute/prepare. The native ops are the only
  * difference — one way to read, two handle kinds.
  */
 interface CatalogNative {
 	scan(relationId: number): FactValue[][]
+	count(relationId: number): bigint
 	contains(relationId: number, values: readonly FactValue[]): boolean
 	get(relationId: number, statementId: number, keyValues: readonly FactValue[]): FactValue[] | null
 	prepare(query: ReturnType<typeof lowerQuery>): ReturnType<typeof native.instancePrepare>
@@ -966,7 +981,7 @@ function catalogMethods<Rels extends SchemaRelations>(
 	owner: object,
 	assertLive: () => void,
 	ops: CatalogNative
-): Pick<ReadInstance<Rels>, "scan" | "get" | "contains" | "execute" | "prepare"> {
+): Pick<ReadInstance<Rels>, "scan" | "count" | "get" | "contains" | "execute" | "prepare"> {
 	function resolveOrdinary(relation: AnyRelation): RelationEntry {
 		const entry = tables.relations.get(relation.name)
 		if (entry === undefined || entry.member !== relation) {
@@ -1064,6 +1079,13 @@ function catalogMethods<Rels extends SchemaRelations>(
 			return factOf(relation, row)
 		})
 	}
+	function count<R extends MemberRelation<Rels>>(relation: R): bigint {
+		assertLive()
+		const entry = resolveOrdinary(relation)
+		return bridged("bumbledb instance count", function readCount() {
+			return ops.count(entry.id)
+		})
+	}
 	function execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[] {
 		assertLive()
 		const plan = planOf(prepared)
@@ -1100,7 +1122,7 @@ function catalogMethods<Rels extends SchemaRelations>(
 		planReclaimer.register(prepared, outcome.prepared)
 		return prepared
 	}
-	return { scan, get, contains, execute, prepare }
+	return { scan, count, get, contains, execute, prepare }
 }
 
 function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation): RelationEntry {
@@ -1210,6 +1232,9 @@ function createReadInstance<Rels extends SchemaRelations>(
 	const methods = catalogMethods(theory, tables, owner, assertLive, {
 		scan(relationId) {
 			return native.instanceScan(state.handle, relationId)
+		},
+		count(relationId) {
+			return native.instanceCount(state.handle, relationId)
 		},
 		contains(relationId, values) {
 			return native.instanceContains(state.handle, relationId, values)
@@ -1479,6 +1504,12 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		})
 	}
 
+	function count<R extends MemberRelation<Rels>>(relation: R): bigint {
+		return read(function countInScope(instance) {
+			return instance.count(relation)
+		})
+	}
+
 	function get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
@@ -1711,6 +1742,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		schema: theory,
 		read,
 		scan,
+		count,
 		get,
 		contains,
 		execute,
@@ -1875,6 +1907,7 @@ interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
+	count<R extends MemberRelation<Rels>>(relation: R): bigint
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
@@ -1931,6 +1964,9 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 	const methods = catalogMethods(theory, tables, owner, assertLive, {
 		scan(relationId) {
 			return native.ownedScan(nativeHandle, relationId)
+		},
+		count(relationId) {
+			return native.ownedCount(nativeHandle, relationId)
 		},
 		contains(relationId, values) {
 			return native.ownedContains(nativeHandle, relationId, values)
