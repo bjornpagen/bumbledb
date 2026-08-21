@@ -55,6 +55,22 @@ pub fn engine_version() -> String {
 struct Sealed {
     descriptor: SchemaDescriptor,
     statements: Vec<StatementDescriptor>,
+    /// The resident sealed field rosters, index = `RelationId` ordinal —
+    /// D4 (`proposals/one-representation/70`): computed once here,
+    /// borrowed by every fact-lane call; the bridge re-derives nothing.
+    rosters: Vec<marshal::SealedRoster>,
+}
+
+/// The one `Sealed` constructor: descriptor → materialized statements +
+/// resident rosters, at handle construction (open/create/publish/builder).
+fn seal(descriptor: SchemaDescriptor) -> Sealed {
+    let statements = descriptor.materialized_statements();
+    let rosters = marshal::sealed_rosters(&descriptor);
+    Sealed {
+        descriptor,
+        statements,
+        rosters,
+    }
 }
 
 type Engine = Db<SchemaDescriptor>;
@@ -197,14 +213,10 @@ fn violations_wire(descriptor: &SchemaDescriptor, violations: &Violations) -> Ve
 }
 
 fn assemble(db: Engine, descriptor: SchemaDescriptor) -> DbHandle {
-    let statements = descriptor.materialized_statements();
     DbHandle {
         inner: RefCell::new(Some(DbInner {
             db: Arc::new(db),
-            sealed: Arc::new(Sealed {
-                descriptor,
-                statements,
-            }),
+            sealed: Arc::new(seal(descriptor)),
             writing: AtomicBool::new(false),
         })),
     }
@@ -881,7 +893,7 @@ pub fn instance_contains(
 ) -> napi::Result<bool> {
     let row = {
         let sealed = &instance.sealed;
-        marshal::fact_row(&sealed.descriptor, relation, &values)?
+        marshal::fact_row(&sealed.rosters, relation, &values)?
     };
     instance.with_instance(|ops| {
         ops.contains(row.0, &row.1)
@@ -898,7 +910,7 @@ pub fn instance_get(
     key_values: Array,
 ) -> napi::Result<Option<Vec<ValueOut>>> {
     let (rel, key, row) = marshal::key_row(
-        &instance.sealed.descriptor,
+        &instance.sealed.rosters,
         &instance.sealed.statements,
         relation,
         key_statement,
@@ -1140,7 +1152,7 @@ pub fn tx_insert(
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&tx.sealed.descriptor, relation, &rows)?;
+    let facts = marshal::fact_rows(&tx.sealed.rosters, relation, &rows)?;
     let report = tx
         .tx()?
         .insert_dyn(facts.0, facts.1)
@@ -1155,7 +1167,7 @@ pub fn tx_insert_columns(
     relation: u32,
     columns: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_columns(&tx.sealed.descriptor, relation, &columns)?;
+    let facts = marshal::fact_columns(&tx.sealed.rosters, relation, &columns)?;
     let report = tx
         .tx()?
         .insert_dyn(facts.0, facts.1)
@@ -1170,7 +1182,7 @@ pub fn tx_delete(
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&tx.sealed.descriptor, relation, &rows)?;
+    let facts = marshal::fact_rows(&tx.sealed.rosters, relation, &rows)?;
     let report = tx
         .tx()?
         .delete_dyn(facts.0, facts.1)
@@ -1185,7 +1197,7 @@ pub fn tx_contains(
     relation: u32,
     values: Array,
 ) -> napi::Result<bool> {
-    let row = marshal::fact_row(&tx.sealed.descriptor, relation, &values)?;
+    let row = marshal::fact_row(&tx.sealed.rosters, relation, &values)?;
     tx.tx()?
         .contains_dyn(row.0, &row.1)
         .map_err(|e| throw_engine(env, &e))
@@ -1200,7 +1212,7 @@ pub fn tx_get(
     key_values: Array,
 ) -> napi::Result<Option<Vec<ValueOut>>> {
     let (rel, key, row) = marshal::key_row(
-        &tx.sealed.descriptor,
+        &tx.sealed.rosters,
         &tx.sealed.statements,
         relation,
         key_statement,
@@ -1445,15 +1457,11 @@ pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<Bui
         }
         Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
     };
-    let statements = descriptor.materialized_statements();
     let builder =
         InstanceBuilder::new(descriptor.clone()).map_err(|error| throw_engine(env, &error))?;
     Ok(External::new(BuilderHandle {
         inner: RefCell::new(Some(builder)),
-        sealed: Arc::new(Sealed {
-            descriptor,
-            statements,
-        }),
+        sealed: Arc::new(seal(descriptor)),
     }))
 }
 
@@ -1464,7 +1472,7 @@ pub fn instance_builder_load(
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&builder.sealed.descriptor, relation, &rows)?;
+    let facts = marshal::fact_rows(&builder.sealed.rosters, relation, &rows)?;
     let report = live_mut(&builder.inner, "builder")?
         .load_dyn(facts.0, facts.1)
         .map_err(|error| throw_engine(env, &error))?;
@@ -1478,7 +1486,7 @@ pub fn instance_builder_load_columns(
     relation: u32,
     columns: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_columns(&builder.sealed.descriptor, relation, &columns)?;
+    let facts = marshal::fact_columns(&builder.sealed.rosters, relation, &columns)?;
     let report = live_mut(&builder.inner, "builder")?
         .load_dyn(facts.0, facts.1)
         .map_err(|error| throw_engine(env, &error))?;
@@ -1492,7 +1500,7 @@ pub fn instance_builder_delete(
     relation: u32,
     rows: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&builder.sealed.descriptor, relation, &rows)?;
+    let facts = marshal::fact_rows(&builder.sealed.rosters, relation, &rows)?;
     let report = live_mut(&builder.inner, "builder")?
         .delete_dyn(facts.0, facts.1)
         .map_err(|error| throw_engine(env, &error))?;
@@ -1528,7 +1536,7 @@ pub fn instance_builder_contains(
     relation: u32,
     values: Array,
 ) -> napi::Result<bool> {
-    let row = marshal::fact_row(&builder.sealed.descriptor, relation, &values)?;
+    let row = marshal::fact_row(&builder.sealed.rosters, relation, &values)?;
     live_mut(&builder.inner, "builder")?
         .contains_dyn(row.0, &row.1)
         .map_err(|error| throw_engine(env, &error))
@@ -1543,7 +1551,7 @@ pub fn instance_builder_get(
     key_values: Array,
 ) -> napi::Result<Option<Vec<ValueOut>>> {
     let (rel, key, row) = marshal::key_row(
-        &builder.sealed.descriptor,
+        &builder.sealed.rosters,
         &builder.sealed.statements,
         relation,
         key_statement,
@@ -1688,7 +1696,7 @@ pub fn owned_contains(
     values: Array,
 ) -> napi::Result<bool> {
     owned_ops(env, instance, |ops, sealed| {
-        let row = marshal::fact_row(&sealed.descriptor, relation, &values)?;
+        let row = marshal::fact_row(&sealed.rosters, relation, &values)?;
         ops.contains(row.0, &row.1)
             .map_err(|error| throw_engine(env, &error))
     })
@@ -1704,7 +1712,7 @@ pub fn owned_get(
 ) -> napi::Result<Option<Vec<ValueOut>>> {
     let found = owned_ops(env, instance, |ops, sealed| {
         let (rel, key, row) = marshal::key_row(
-            &sealed.descriptor,
+            &sealed.rosters,
             &sealed.statements,
             relation,
             key_statement,

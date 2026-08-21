@@ -23,7 +23,9 @@ use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
-use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
+use bumbledb::schema::{
+    FieldDescriptor, Generation, IntervalElement, SealedField, StatementDescriptor, ValueType,
+};
 use bumbledb::{
     AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
     ExecutionStats, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm, Interior, InteriorId, Interval,
@@ -94,14 +96,22 @@ fn js_type_name(ty: JsType) -> &'static str {
     }
 }
 
-/// A required object property, with the missing-key error naming its context.
-fn req<T: FromNapiValue>(obj: &Object, key: &str, ctx: &str) -> napi::Result<T> {
+/// A required object property, with the missing-key error naming its
+/// context. `ctx` is any `Display` so hot-lane callers hand a LAZY
+/// renderer (`format_args!`/[`CellCtx`]) — the context string is built on
+/// the error arm only (D3, `proposals/one-representation/70`), and the
+/// rendered text is byte-identical to the eager `&str` it replaced.
+fn req<T: FromNapiValue>(obj: &Object, key: &str, ctx: impl std::fmt::Display) -> napi::Result<T> {
     obj.get::<T>(key)?
         .ok_or_else(|| err(format!("bumbledb marshal: missing `{key}` in {ctx}")))
 }
 
-/// A required array element.
-fn req_at<T: FromNapiValue>(arr: &Array, index: u32, ctx: &str) -> napi::Result<T> {
+/// A required array element; `ctx` is lazy exactly as [`req`]'s.
+fn req_at<T: FromNapiValue>(
+    arr: &Array,
+    index: u32,
+    ctx: impl std::fmt::Display,
+) -> napi::Result<T> {
     arr.get::<T>(index)?.ok_or_else(|| {
         err(format!(
             "bumbledb marshal: missing element {index} in {ctx}"
@@ -109,8 +119,9 @@ fn req_at<T: FromNapiValue>(arr: &Array, index: u32, ctx: &str) -> napi::Result<
     })
 }
 
-/// A `bigint` as `u64`, lossless or a typed error naming its position.
-pub(crate) fn u64_in(value: &BigInt, ctx: &str) -> napi::Result<u64> {
+/// A `bigint` as `u64`, lossless or a typed error naming its position
+/// (`ctx` lazy as [`req`]'s).
+pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<u64> {
     let (sign, word, lossless) = value.get_u64();
     if sign || !lossless {
         return Err(err(format!(
@@ -120,8 +131,9 @@ pub(crate) fn u64_in(value: &BigInt, ctx: &str) -> napi::Result<u64> {
     Ok(word)
 }
 
-/// A `bigint` as `i64`, lossless or a typed error naming its position.
-pub(crate) fn i64_in(value: &BigInt, ctx: &str) -> napi::Result<i64> {
+/// A `bigint` as `i64`, lossless or a typed error naming its position
+/// (`ctx` lazy as [`req`]'s).
+pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<i64> {
     let (word, lossless) = value.get_i64();
     if !lossless {
         return Err(err(format!(
@@ -154,8 +166,14 @@ fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
 
 /// A half-open interval from a `{start, end}` bigint pair, per element
 /// domain; an empty interval (`start >= end`) is a shape error — the engine
-/// value is nonempty by construction (`bumbledb::Interval`).
-fn interval_in(obj: &Object, element: IntervalElement, ctx: &str) -> napi::Result<Value> {
+/// value is nonempty by construction (`bumbledb::Interval`). `ctx` is lazy
+/// as [`req`]'s (`Copy` because both bound reads and the emptiness refusal
+/// name the same position).
+fn interval_in(
+    obj: &Object,
+    element: IntervalElement,
+    ctx: impl std::fmt::Display + Copy,
+) -> napi::Result<Value> {
     match element {
         IntervalElement::U64 => {
             let start = u64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
@@ -182,8 +200,26 @@ fn interval_in(obj: &Object, element: IntervalElement, ctx: &str) -> napi::Resul
     }
 }
 
+/// The fact-lane cell position, rendered ONLY when an error names it —
+/// D3 (`proposals/one-representation/70`): the old eager
+/// `format!("relation `{r}` field `{f}`")` bought one heap string per
+/// SUCCESS cell (~25–30 M alloc/free pairs per Primer run, never read);
+/// this `Copy` pair renders the byte-identical text on the error arm.
+#[derive(Clone, Copy)]
+struct CellCtx<'a> {
+    relation: &'a str,
+    field: &'a str,
+}
+
+impl std::fmt::Display for CellCtx<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "relation `{}` field `{}`", self.relation, self.field)
+    }
+}
+
 /// One natural JS value marshaled against the schema-declared type of its
-/// field — the fact-row lane's one conversion.
+/// field — the fact-row lane's one conversion. Error contexts are built
+/// on the error arm only (D3): a succeeding cell allocates nothing here.
 #[expect(
     unsafe_code,
     reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
@@ -196,7 +232,7 @@ fn schema_value(
     relation: &str,
     field: &str,
 ) -> napi::Result<Value> {
-    let ctx = format!("relation `{relation}` field `{field}`");
+    let ctx = CellCtx { relation, field };
     let got = value.get_type()?;
     let mismatch = |want: &str| {
         err(format!(
@@ -219,7 +255,7 @@ fn schema_value(
             }
             Ok(Value::U64(u64_in(
                 &unsafe { value.cast::<BigInt>()? },
-                &ctx,
+                ctx,
             )?))
         }
         ValueType::I64 => {
@@ -228,7 +264,7 @@ fn schema_value(
             }
             Ok(Value::I64(i64_in(
                 &unsafe { value.cast::<BigInt>()? },
-                &ctx,
+                ctx,
             )?))
         }
         ValueType::String => {
@@ -255,61 +291,79 @@ fn schema_value(
             if got != JsType::Object {
                 return Err(mismatch("{ start, end } bigint pair"));
             }
-            interval_in(&unsafe { value.cast::<Object>()? }, *element, &ctx)
+            interval_in(&unsafe { value.cast::<Object>()? }, *element, ctx)
         }
     }
 }
 
-/// A relation's SEALED field roster — the numbering every dynamic-surface
-/// row and statement addresses, read through THE one owner of the
-/// synthetic-id law (`RelationDescriptor::sealed_fields`: a closed
-/// relation's synthetic (`id`, u64) handle field first, declared fields
-/// after); the bridge re-derives nothing.
-fn sealed_fields(
-    descriptor: &SchemaDescriptor,
-    relation: RelationId,
-) -> napi::Result<Vec<(Box<str>, ValueType)>> {
-    let rel = descriptor
-        .relations
-        .get(relation.0 as usize)
-        .ok_or_else(|| {
-            err(format!(
-                "bumbledb marshal: unknown relation id {}",
-                relation.0
-            ))
-        })?;
-    Ok(rel
-        .sealed_fields()
-        .map(|slot| (Box::from(slot.name()), *slot.value_type()))
-        .collect())
+/// One relation's RESIDENT sealed roster — D4
+/// (`proposals/one-representation/70`): the per-handle materialization of
+/// THE one owner of the synthetic-id law
+/// (`RelationDescriptor::sealed_fields`: a closed relation's synthetic
+/// (`id`, u64) handle field first, declared fields after), computed once
+/// at handle construction and borrowed by every fact-lane call — the old
+/// per-call `Vec<(Box<str>, ValueType)>` re-derivation of an immutable
+/// roster is deleted, not cached.
+pub(crate) struct SealedRoster {
+    pub(crate) name: Box<str>,
+    pub(crate) fields: Vec<FieldDescriptor>,
 }
 
-fn relation_name(descriptor: &SchemaDescriptor, relation: RelationId) -> String {
-    descriptor.relations.get(relation.0 as usize).map_or_else(
-        || format!("relation#{}", relation.0),
-        |rel| rel.name.to_string(),
-    )
+/// Every relation's resident roster, index = `RelationId` ordinal (the
+/// declaration-order law). Called once per `Sealed` construction.
+pub(crate) fn sealed_rosters(descriptor: &SchemaDescriptor) -> Vec<SealedRoster> {
+    descriptor
+        .relations
+        .iter()
+        .map(|relation| SealedRoster {
+            name: relation.name.clone(),
+            fields: relation
+                .sealed_fields()
+                .map(|slot| match slot {
+                    // The synthetic handle slot materializes as an ordinary
+                    // descriptor (name "id", u64, no generation): the bridge
+                    // only reads name + type, and the sealed ORDER stays the
+                    // iterator's law, restated nowhere.
+                    SealedField::SyntheticId => FieldDescriptor {
+                        name: Box::from(slot.name()),
+                        value_type: *slot.value_type(),
+                        generation: Generation::None,
+                    },
+                    SealedField::Declared(field) => field.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The resident roster of one relation id, or the unknown-relation refusal.
+fn roster(rosters: &[SealedRoster], relation: RelationId) -> napi::Result<&SealedRoster> {
+    rosters.get(relation.0 as usize).ok_or_else(|| {
+        err(format!(
+            "bumbledb marshal: unknown relation id {}",
+            relation.0
+        ))
+    })
 }
 
 /// One dynamic fact row: natural JS values in sealed field order,
 /// schema-directed, arity-checked.
 pub(crate) fn fact_row(
-    descriptor: &SchemaDescriptor,
+    rosters: &[SealedRoster],
     relation: u32,
     values: &Array,
 ) -> napi::Result<(RelationId, Vec<Value>)> {
     let rel = RelationId(relation);
-    let fields = sealed_fields(descriptor, rel)?;
-    let name = relation_name(descriptor, rel);
-    Ok((rel, one_fact_row(&name, &fields, values)?))
+    let roster = roster(rosters, rel)?;
+    Ok((rel, one_fact_row(&roster.name, &roster.fields, values)?))
 }
 
-/// A collection of dynamic fact rows. Relation lookup and the field
-/// roster run once. Empty is lawful and still a mutation (the engine
-/// observes poison). Every nonempty row is parsed against the relation's
-/// arity — mixed width is refused before any row enters the delta.
+/// A collection of dynamic fact rows. The resident roster is borrowed
+/// once. Empty is lawful and still a mutation (the engine observes
+/// poison). Every nonempty row is parsed against the relation's arity —
+/// mixed width is refused before any row enters the delta.
 pub(crate) fn fact_rows(
-    descriptor: &SchemaDescriptor,
+    rosters: &[SealedRoster],
     relation: u32,
     rows: &Array,
 ) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
@@ -317,29 +371,30 @@ pub(crate) fn fact_rows(
     if rows.len() == 0 {
         return Ok((rel, Vec::new()));
     }
-    let fields = sealed_fields(descriptor, rel)?;
-    let name = relation_name(descriptor, rel);
+    let roster = roster(rosters, rel)?;
+    let name: &str = &roster.name;
     let mut out = Vec::with_capacity(rows.len() as usize);
     for index in 0..rows.len() {
-        let row: Array = req_at(rows, index, &format!("relation `{name}` collection"))?;
-        out.push(one_fact_row(&name, &fields, &row)?);
+        let row: Array = req_at(rows, index, format_args!("relation `{name}` collection"))?;
+        out.push(one_fact_row(name, &roster.fields, &row)?);
     }
     Ok((rel, out))
 }
 
 /// A collection of dynamic fact rows in column-major order: one JS array
-/// per sealed field, every column the same length. Relation lookup and
-/// the field roster run once. Empty (every column length 0) is lawful.
-/// Ragged lengths and arity drift are refused before any row is built —
-/// the same parse-all-first contract as [`fact_rows`].
+/// per sealed field, every column the same length. The resident roster is
+/// borrowed once. Empty (every column length 0) is lawful. Ragged lengths
+/// and arity drift are refused before any row is built — the same
+/// parse-all-first contract as [`fact_rows`].
 pub(crate) fn fact_columns(
-    descriptor: &SchemaDescriptor,
+    rosters: &[SealedRoster],
     relation: u32,
     columns: &Array,
 ) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
     let rel = RelationId(relation);
-    let fields = sealed_fields(descriptor, rel)?;
-    let name = relation_name(descriptor, rel);
+    let roster = roster(rosters, rel)?;
+    let name: &str = &roster.name;
+    let fields = &roster.fields;
     if columns.len() as usize != fields.len() {
         return Err(err(format!(
             "bumbledb marshal: relation `{name}`: expected {} columns, got {}",
@@ -353,11 +408,11 @@ pub(crate) fn fact_columns(
     let mut cols = Vec::with_capacity(fields.len());
     let mut row_count: Option<u32> = None;
     for index in 0..columns.len() {
-        let column: Array = req_at(columns, index, &format!("relation `{name}` columns"))?;
+        let column: Array = req_at(columns, index, format_args!("relation `{name}` columns"))?;
         match row_count {
             None => row_count = Some(column.len()),
             Some(expected) if column.len() != expected => {
-                let (field, _) = &fields[index as usize];
+                let field = &fields[index as usize].name;
                 return Err(err(format!(
                     "bumbledb marshal: relation `{name}`: column `{field}` has length {}, expected {expected}",
                     column.len()
@@ -371,13 +426,13 @@ pub(crate) fn fact_columns(
     let mut out = Vec::with_capacity(n as usize);
     for row in 0..n {
         let mut values = Vec::with_capacity(fields.len());
-        for (col_index, (field, expected)) in fields.iter().enumerate() {
+        for (col_index, field) in fields.iter().enumerate() {
             let value = req_at::<Unknown>(
                 &cols[col_index],
                 row,
-                &format!("relation `{name}` column `{field}`"),
+                format_args!("relation `{name}` column `{}`", field.name),
             )?;
-            values.push(schema_value(expected, &value, &name, field.as_ref())?);
+            values.push(schema_value(&field.value_type, &value, name, &field.name)?);
         }
         out.push(values);
     }
@@ -386,7 +441,7 @@ pub(crate) fn fact_columns(
 
 fn one_fact_row(
     name: &str,
-    fields: &[(Box<str>, ValueType)],
+    fields: &[FieldDescriptor],
     values: &Array,
 ) -> napi::Result<Vec<Value>> {
     if values.len() as usize != fields.len() {
@@ -397,9 +452,9 @@ fn one_fact_row(
         )));
     }
     let mut row = Vec::with_capacity(fields.len());
-    for (index, (field, expected)) in (0..values.len()).zip(fields.iter()) {
-        let value = req_at::<Unknown>(values, index, &format!("relation `{name}` row"))?;
-        row.push(schema_value(expected, &value, name, field.as_ref())?);
+    for (index, field) in (0..values.len()).zip(fields.iter()) {
+        let value = req_at::<Unknown>(values, index, format_args!("relation `{name}` row"))?;
+        row.push(schema_value(&field.value_type, &value, name, &field.name)?);
     }
     Ok(row)
 }
@@ -407,14 +462,21 @@ fn one_fact_row(
 /// One point-read key row: natural JS values in the key statement's
 /// projection order, schema-directed through the projected fields' types.
 pub(crate) fn key_row(
-    descriptor: &SchemaDescriptor,
+    rosters: &[SealedRoster],
     statements: &[StatementDescriptor],
     relation: u32,
     key_statement: u32,
     values: &Array,
 ) -> napi::Result<(RelationId, StatementId, Vec<Value>)> {
     let rel = RelationId(relation);
-    let name = relation_name(descriptor, rel);
+    // The statement refusals below may name a relation the roster table
+    // does not know — the id-speak fallback keeps their text unchanged;
+    // the roster lookup itself refuses after the statement checks, exactly
+    // where the old per-call derivation refused.
+    let name = rosters.get(relation as usize).map_or_else(
+        || format!("relation#{relation}"),
+        |roster| roster.name.to_string(),
+    );
     let statement_id = StatementId(u16_id(key_statement, "key statement id")?);
     let Some(StatementDescriptor::Functionality {
         relation: key_relation,
@@ -430,7 +492,7 @@ pub(crate) fn key_row(
             "bumbledb marshal: statement {key_statement} is not a key of relation `{name}`"
         )));
     }
-    let fields = sealed_fields(descriptor, rel)?;
+    let fields = &roster(rosters, rel)?.fields;
     if values.len() as usize != projection.len() {
         return Err(err(format!(
             "bumbledb marshal: key of `{name}`: expected {} key values, got {}",
@@ -442,14 +504,14 @@ pub(crate) fn key_row(
     // The index rides the Array's own u32 space (arity-checked equal above),
     // so no usize→u32 cast exists to go wrong.
     for (index, field_id) in (0..values.len()).zip(projection.iter()) {
-        let (field, expected) = fields.get(usize::from(field_id.0)).ok_or_else(|| {
+        let field = fields.get(usize::from(field_id.0)).ok_or_else(|| {
             err(format!(
                 "bumbledb marshal: key of `{name}`: projection field {} out of range",
                 field_id.0
             ))
         })?;
-        let value = req_at::<Unknown>(values, index, &format!("key of `{name}`"))?;
-        row.push(schema_value(expected, &value, &name, field)?);
+        let value = req_at::<Unknown>(values, index, format_args!("key of `{name}`"))?;
+        row.push(schema_value(&field.value_type, &value, &name, &field.name)?);
     }
     Ok((rel, statement_id, row))
 }
