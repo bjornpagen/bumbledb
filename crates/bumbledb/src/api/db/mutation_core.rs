@@ -387,6 +387,11 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         self.parse_bytes.clear();
         self.parse_ready.clear();
         self.parse_spans.clear();
+        // One collection's intern+encode loop, one span (`DYN_ENCODE`,
+        // proposals/one-representation/10-measurement.md) — collection
+        // granularity, never per row; an encode refusal aborts the span
+        // (payload stays `TraceArgs::None`), the commit spans' discipline.
+        let mut encode_span = crate::obs::span(crate::obs::names::DYN_ENCODE);
         for fact in facts {
             let row = match self.with_scratch(|core, bytes| encode(core, fact, bytes)) {
                 Ok(row) => row,
@@ -407,6 +412,8 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
                 }
             }
         }
+        encode_span.set_count(u64::try_from(self.parse_ready.len()).expect("collection fits u64"));
+        encode_span.end();
         self.apply_prepared(relation, want)
     }
 
@@ -420,6 +427,10 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         let ready = std::mem::take(&mut self.parse_ready);
         let spans = std::mem::take(&mut self.parse_spans);
         let bytes = std::mem::take(&mut self.parse_bytes);
+        // One collection's backend-apply loop, one span (`DELTA_APPLY`,
+        // 10-measurement.md) — collection granularity; a backend refusal
+        // aborts the span, exactly as the encode span above.
+        let mut apply_span = crate::obs::span(crate::obs::names::DELTA_APPLY);
         for (is_ready, (start, len)) in ready.iter().zip(spans.iter()) {
             if !is_ready {
                 continue;
@@ -446,6 +457,8 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
                 }
             }
         }
+        apply_span.set_count(submitted);
+        apply_span.end();
         self.parse_bytes = bytes;
         self.parse_ready = ready;
         self.parse_spans = spans;
@@ -507,7 +520,14 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        AcceptedCollection::from_value_rows(rel, relation.fields(), rows).map(Some)
+        // One dynamic collection's shape parse, one span (`DYN_PARSE`,
+        // 10-measurement.md) — collection granularity; a shape refusal
+        // aborts the span.
+        let mut span = crate::obs::span(crate::obs::names::DYN_PARSE);
+        let coll = AcceptedCollection::from_value_rows(rel, relation.fields(), rows)?;
+        span.set_count(coll.rows());
+        span.end();
+        Ok(Some(coll))
     }
 
     /// Applies one shape-proved collection under `want` — the one

@@ -63,6 +63,23 @@ impl<S: Theory> InstanceBuilder<S> {
 }
 
 impl<S> InstanceBuilder<S> {
+    /// One heap-stage collection load, one span (`BUILDER_LOAD`,
+    /// `proposals/one-representation/10-measurement.md`): every builder
+    /// load verb — typed, dyn, accepted — records at collection
+    /// granularity, never per row, counting the rows submitted; a
+    /// refusal aborts the span (payload stays `TraceArgs::None`), the
+    /// commit spans' discipline.
+    fn observed_load(
+        &mut self,
+        load: impl FnOnce(&mut MutationCore<HeapMutation, S>) -> Result<MutationReport>,
+    ) -> Result<MutationReport> {
+        let mut span = crate::obs::span(crate::obs::names::BUILDER_LOAD);
+        let report = load(&mut self.mutation)?;
+        span.set_count(report.submitted());
+        span.end();
+        Ok(report)
+    }
+
     /// Records a collection of typed inserts against the empty base.
     /// Empty is lawful. Singleton is `[&fact]`.
     ///
@@ -77,7 +94,7 @@ impl<S> InstanceBuilder<S> {
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
     ) -> Result<MutationReport> {
-        self.mutation.load(facts)
+        self.observed_load(|mutation| mutation.load(facts))
     }
 
     /// Records a collection of typed deletes. Never mints: a never-interned
@@ -104,7 +121,7 @@ impl<S> InstanceBuilder<S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        self.mutation.load_dyn(rel, facts)
+        self.observed_load(|mutation| mutation.load_dyn(rel, facts))
     }
 
     /// Dynamic-row sibling of [`Self::delete`].
@@ -131,8 +148,7 @@ impl<S> InstanceBuilder<S> {
     /// constructor already refused.
     #[doc(hidden)]
     pub fn load_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
-        self.mutation
-            .apply_accepted(collection, Disposition::Insert)
+        self.observed_load(|mutation| mutation.apply_accepted(collection, Disposition::Insert))
     }
 
     /// The delete disposition of [`Self::load_accepted`] — resolve-only,

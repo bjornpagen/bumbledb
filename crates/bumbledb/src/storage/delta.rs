@@ -340,18 +340,17 @@ impl WriteDelta<'_> {
     }
 
     /// Probes this transaction issued to the committed dictionary — the
-    /// `INTERN_PROBE` trace point's probe count (reader: the obs wiring;
-    /// until it lands, the delta tests pin the one-probe-per-distinct-
-    /// committed-string law through this directly).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// `INTERN_PROBE` trace point's probe count, emitted once at commit
+    /// entry where the totals are final (`storage/commit/write.rs`); the
+    /// delta tests pin the one-probe-per-distinct-committed-string law
+    /// through this directly.
     pub(crate) fn committed_dict_probes(&self) -> u64 {
         self.committed_memo.dict_probes.get()
     }
 
     /// Committed-memo answers, each exactly one saved LMDB get — the
-    /// `INTERN_PROBE` trace point's hit count (reader: the obs wiring;
-    /// the delta tests until then).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// `INTERN_PROBE` trace point's hit count, emitted beside
+    /// [`Self::committed_dict_probes`].
     pub(crate) fn committed_memo_hits(&self) -> u64 {
         self.committed_memo.memo_hits.get()
     }
