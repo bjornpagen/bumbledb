@@ -708,7 +708,9 @@ impl InstanceOps for StoreOps<'_> {
         &self,
         prepared: &PreparedQuery<SchemaDescriptor>,
     ) -> Result<StalenessWire, WireError> {
-        Ok(staleness_wire(prepared.staleness(self.0).map_err(|e| wire(&e))?))
+        Ok(staleness_wire(
+            prepared.staleness(self.0).map_err(|e| wire(&e))?,
+        ))
     }
     fn generation(&self) -> Result<u64, WireError> {
         self.0
@@ -1656,11 +1658,7 @@ pub fn owned_scan(
 }
 
 #[napi]
-pub fn owned_count(
-    env: Env,
-    instance: &External<OwnedHandle>,
-    relation: u32,
-) -> napi::Result<u64> {
+pub fn owned_count(env: Env, instance: &External<OwnedHandle>, relation: u32) -> napi::Result<u64> {
     owned_ops(env, instance, |ops, _sealed| {
         ops.count(RelationId(relation))
             .map_err(|error| throw_engine(env, &error))
