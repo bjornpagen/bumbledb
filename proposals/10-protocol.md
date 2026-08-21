@@ -1,112 +1,115 @@
-# 10 — The object protocol
+# 10 — The braided object protocol
+
+## Braids
+
+At driver initialization the schema descriptor's statement graph —
+ordinary relations as nodes; an edge wherever a containment or capacity
+statement relates two of them (FDs are self-loops; closed relations and
+closed-target statements contribute nothing, per 15) — decomposes into
+connected components: **braids**. The braid id is the smallest
+`RelationId` in the component, rendered `c{id:08x}`. Braid assignment is a
+pure function of the descriptor, implemented in both languages, pinned by
+the codec goldens (80). A theory whose relations are all connected has one
+braid and this protocol degenerates to the serial log — the serial design
+survives as the special case, not a mode.
+
+Statements never span braids, so braids never conflict (L9): each has an
+independent chain, and cross-braid ordering is semantically invisible.
 
 ## Key layout
 
-All keys live under a caller-supplied prefix. A prefix is a store; a tenant
-is a prefix. Generation numbers render as zero-padded lowercase hex, 16
-chars (`{g:016x}`), so lexicographic order is numeric order.
+Generation numbers zero-padded lowercase hex, 16 chars. A prefix is a
+store; a tenant is a prefix (`<root>/t/<tenant>/…`, control-plane at
+`t/_shared/…`).
 
 ```
-<prefix>/manifest.json                 — the pointer (CAS-guarded)
-<prefix>/log/{g:016x}                  — command batch producing generation g (create-only)
-<prefix>/ckpt/{g:016x}.mdb             — compacted data.mdb at generation g (immutable)
+<prefix>/manifest.json                     — the pointer (CAS-guarded)
+<prefix>/log/{braid}/{g:016x}              — batch producing braid-generation g (create-only)
+<prefix>/ckpt/{v:016x}.mdb                 — compacted store at vector-sum v (immutable)
+<prefix>/ids/{relation:08x}/{field:04x}    — fresh-id lease counter (CAS)
+<prefix>/escrow/{W:04x}/{fkey hex}         — capacity escrow grants (v2)
 ```
 
-Per-tenant deployments use `<root>/t/<tenant-id>/…` with the shared
-reference-data store at `<root>/t/_shared/…`. The driver takes the prefix as
-an opaque string; tenancy is layout, not code.
+## Generations and the vector
+
+Within a braid, the engine's `GenerationId` **is** the log index — but the
+store's single generation counter advances across braids, so the mapping
+is: the store generation is the **vector sum**, and the manifest carries
+the per-braid heads. Concretely: batch objects carry `(braid,
+braid_generation)` in the header; a replica's state is the vector
+`{braid → applied count}`; the engine generation equals the sum of the
+vector (every applied batch advances it once). `ckpt/{v}` names the vector
+sum; the manifest records the full vector beside it.
 
 ## The manifest
 
-Canonical single-line UTF-8 JSON (one spelling; producers emit exactly this
-field order; consumers parse strictly, refuse unknown fields):
+Canonical single-line UTF-8 JSON, strict parse, field order fixed:
 
 ```json
-{"v":1,"fingerprint":"<64 hex>","checkpoint":{"g":123,"key":"ckpt/000000000000007b.mdb","digest":"<64 hex>"},"log_floor":123,"writer":"<opaque id or empty>"}
+{"v":2,"fingerprint":"<64 hex>","checkpoint":{"sum":123,"vector":{"c00000001":80,"c00000005":43},"key":"ckpt/000000000000007b.mdb","digest":"<64 hex>"},"floors":{"c00000001":85,"c00000005":43},"writer":""}
 ```
 
-- `v` — manifest format version; consumers refuse ≠ 1.
-- `fingerprint` — the store's schema fingerprint (hex of the engine's
-  32-byte fingerprint). Every reader and writer refuses a mismatch before
-  doing anything else.
-- `checkpoint` — the newest checkpoint: its generation, key, and blake3
-  digest of the object bytes. `g = 0` with an empty key means "no
-  checkpoint yet; bootstrap from an empty store via `Db::create`".
-- `log_floor` — a **lower bound** on the tip. The manifest is advisory
-  about the head; the truth is the log objects themselves.
-- `writer` — advisory identity of the resident writer (empty in serverless
-  mode). Informational only; arbitration is CAS, never this field.
-
-Creation: `PUT manifest.json` with `If-None-Match: *`. Update (checkpoint
-publication or floor advance): `PUT` with `If-Match: <etag read>`. A 412
-means re-read and reconcile; the manifest is never blind-overwritten.
+`floors` are advisory lower bounds per braid; the truth about each head is
+the braid's own objects, discovered by forward probing (`GET
+log/{braid}/{k+1}` until 404). Manifest creation: `If-None-Match: *`;
+update (checkpoint publication / floor advance): `If-Match: <etag>`; 412 ⇒
+re-read, keep the newer checkpoint, retry. The manifest is never updated
+per commit.
 
 ## Log objects
 
-`log/{g:016x}` is created with `If-None-Match: *` and is **immutable
-forever after** — never overwritten, never appended. Exactly one writer can
-create each key; the 412 loser pulls the winner's object, applies it, and
-retries its own commit at the next index. Contents: one command batch
-(20-command-codec.md) whose header carries `base_generation = g − 1`.
-
-Total order without consensus: the sequence `log/1, log/2, …` is the
-history, and CAS on each key is the arbitration. There is no other
-coordination primitive in the protocol.
-
-## Tip discovery
-
-From any known generation `k` (a replica's local generation, or
-`manifest.log_floor`): probe `GET log/{k+1:016x}`; on success apply and
-advance; on 404 the tip is `k`. Probing is the one discovery mechanism —
-no LIST dependence (LIST is eventually-shaped on some vendors; GET-after-PUT
-is strongly consistent on all supported ones). A 404 probe costs a GET
-request (≈ $0.00003/1000 on Express).
+`log/{braid}/{g}` is created with `If-None-Match: *` and is immutable
+forever. Exactly one writer wins each slot; the 412 loser runs the loser
+algebra (15): intersect footprints (both batches share base g−1 in that
+braid, which is what makes raw-key comparison sound), then republish
+(disjoint) or re-judge (conflict). The batch carries its footprint
+section; replicas recompute and refuse mismatches.
 
 ## Checkpoints
 
-A checkpoint is the engine's `compact()` output — the single `data.mdb`
-file — uploaded as `ckpt/{g:016x}.mdb` where `g` is the store's generation
-at compaction (compaction runs under a read transaction, so `g` is exact).
-`lock.mdb` is never shipped; LMDB recreates it at open. After upload, the
-publisher CAS-updates the manifest (`checkpoint`, `log_floor = g`).
-Checkpoint cadence is a deployment knob: every K generations or B bytes of
-log, whichever first (defaults: K = 256, B = 16 MiB).
+`compact()` output uploaded as `ckpt/{sum}.mdb` with the full vector in
+the manifest entry. Cadence: every K = 256 applied batches (vector-sum
+delta) or 16 MiB of log, whichever first. Restore verification: blake3 =
+digest, opened generation = `checkpoint.sum`, fingerprint match — refusals,
+never warnings. Publication races are benign (manifest CAS keeps the
+newest; losing checkpoint objects are `gc` fodder).
 
-Restore-side verification: after download, blake3(bytes) must equal
-`checkpoint.digest`; the opened store's generation must equal
-`checkpoint.g` and its fingerprint must match the manifest. Any mismatch is
-a typed refusal, never a warning.
+## Fresh-id leases
+
+`ids/{relation}/{field}` holds a canonical u64 (decimal ASCII). A writer
+leases `[n, n+4096)` by CAS-incrementing; commands carry concrete ids.
+Cross-writer collision is structurally impossible; the counter object is
+the failover floor (adoption reads it — no in-log floor ops exist; the
+old FloorBump op is deleted from the codec). The counter is coordination,
+not truth: replay determinism never depends on it, because ids ride in the
+commands.
 
 ## Retention, truncation, PITR
 
-- The PITR window `R` (days) is policy: object-store lifecycle rules delete
-  `log/*` and `ckpt/*` older than `R`, **except** the newest checkpoint and
-  all log objects `≥` its generation, which are exempt (implemented by
-  lifecycle-on-prefix plus the publisher tagging the live checkpoint, or by
-  a driver `gc` verb that deletes explicitly — the driver verb is the v1
-  ruling; lifecycle rules are the v2 automation).
-- PITR to generation `g`: pick the newest checkpoint with `ckpt.g ≤ g`,
-  replay log to `g`, done. Restore never mutates the source prefix; it
-  materializes into a fresh prefix or a local store.
-- Bucket versioning is not required by the protocol (log objects are
-  immutable; the manifest is the only mutable key, and its history is
-  reconstructible from the log). Enabling it is harmless belt-and-braces.
+- Restore point = a **vector** (or a wall-clock instant mapped to one via
+  the batches' informational timestamps: per braid, the largest g with
+  `ts ≤ T`). Restore = newest checkpoint with `vector ≤ v` pointwise, then
+  replay each braid to its target — braid order irrelevant (L8).
+- The `gc` verb (v1; lifecycle rules are v2 automation) deletes log
+  objects and checkpoints older than window R, always exempting the
+  newest checkpoint and every log object ≥ its vector, per braid.
+- Bucket versioning optional belt-and-braces; the protocol needs only
+  immutable logs + one CAS key.
 
-## Consistency assumptions (and why they hold)
+## Store properties required (verified per vendor in 40)
 
-The protocol requires exactly three store properties, all verified on the
-supported vendors (40-object-store.md): strong read-after-write for GET
-after PUT; atomic create-only PUT (`If-None-Match: *`); atomic
-compare-and-swap PUT (`If-Match: <etag>`). Nothing else — no atomic
-multi-key operations, no LIST consistency, no append.
+Strong read-after-write GET; atomic create-only PUT; atomic If-Match CAS.
+Nothing else — no LIST consistency, no multi-key atomicity, no append.
 
 ## Failure semantics
 
 | Event | Outcome |
 | --- | --- |
-| Crash after log PUT, before local apply | Restart replays `log/{local+1}` — idempotent by the index=generation law |
-| Crash after local commit, before log PUT (resident mode) | The one-slot sidecar republishes (60-writer.md); serverless mode cannot enter this state (publish precedes ack, local state is disposable) |
-| CAS 412 on `log/{g+1}` | Pull winner, apply, retry the host write against the new state — semantically a retried write; the re-judgment verdict may legitimately change |
-| Manifest CAS 412 | Re-read, keep the newer checkpoint, retry floor advance |
-| Torn/partial download | Digest check refuses; re-pull |
-| Fingerprint mismatch anywhere | Typed refusal; migration is out of scope (00) |
+| Crash after log PUT, before local apply | replay `log/{braid}/{local+1}` — idempotent (index law) |
+| Crash after local commit, before PUT (resident) | per-braid one-slot sidecar republishes (60); two forced resolutions, no judgment call |
+| CAS 412 on a log slot | the loser algebra (15): intersect → republish or re-judge |
+| Manifest CAS 412 | re-read, reconcile, retry |
+| Footprint recompute ≠ published section | `FootprintMismatch` — corruption-class, never retried |
+| Replayed batch rejected by local judgment | `ReplayDiverged` — corruption-class (writers only publish accepted batches; determinism guarantees replicas agree) |
+| `GapDetected` (gc'd tail) | discard local store, re-open from newest checkpoint |
+| Fingerprint mismatch anywhere | typed refusal; migration out of scope |

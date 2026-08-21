@@ -1,32 +1,38 @@
-# bumbledb-log — the object log
+# bumbledb-log — the braided object log
 
-The PRD set for `bumbledb-log` (Rust crate) and `@bjornpagen/bumbledb-log`
-(TS package): replication, durability, backup, point-in-time recovery, and
-per-tenant sharding for bumbledb, implemented as a single-writer command log
-over conditional-write object storage. No servers required; a resident
-writer is one deployment *mode*, not a component.
+The PRD set for `bumbledb-log` (Rust) and `@bjornpagen/bumbledb-log` (TS):
+durability, replication, backup, PITR, per-tenant sharding, **and
+theory-derived concurrency** for bumbledb, over conditional-write object
+storage. No servers; a resident writer is a mode.
 
-These documents are **normative** in the same sense as
-`docs/architecture/`: they are the contract the implementation is verified
-against, written before the code, updated in lockstep with it. Read
-[00-product.md](00-product.md) first. [90-rollout.md](90-rollout.md) is the
-self-contained build plan for an agent fleet.
+The thesis: bumbledb's constraint set is closed and compiled, so the
+conflict relation between concurrent commits is *computable per commit* —
+the schema's statement graph shards the log into independent braids, and
+each commit publishes a footprint that is a machine-checked commutativity
+certificate. Invariants are never weakened (this is not a CRDT);
+concurrency is extracted from the declared theory, and the extraction is
+a Lean theorem (L6–L9).
+
+These documents are **normative** in the `docs/architecture/` sense.
+Read [00-product.md](00-product.md) first; [15-conflict-algebra.md](15-conflict-algebra.md)
+is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 
 | Doc | Contract |
 | --- | --- |
-| [00-product.md](00-product.md) | What it is, the four deployment cases, non-goals, laws |
-| [10-protocol.md](10-protocol.md) | Keys, manifest, log objects, checkpoints, CAS rules, PITR, truncation |
-| [20-command-codec.md](20-command-codec.md) | The command wire format and the determinism laws |
-| [30-engine-seams.md](30-engine-seams.md) | The one engine addition and the guarantees the engine already provides |
-| [40-object-store.md](40-object-store.md) | The store capability trait, vendor matrix, dependency rulings |
-| [50-replica.md](50-replica.md) | Replica lifecycle: pull, replay, refresh, Vercel, per-tenant LRU |
-| [60-writer.md](60-writer.md) | The two writer modes, group commit, crash recovery, failover |
-| [70-typescript.md](70-typescript.md) | The TS package surface and its temporal law |
-| [80-conformance.md](80-conformance.md) | Determinism lanes, crash matrix, contention lane, cross-codec goldens, gates |
-| [90-rollout.md](90-rollout.md) | The overnight build: lanes, file ownership, order, acceptance |
+| [00-product.md](00-product.md) | What it is, the laws, the four deployment cases, non-goals |
+| [10-protocol.md](10-protocol.md) | Braids, keys, manifest + vector, log slots, checkpoints, leases, PITR, gc |
+| [15-conflict-algebra.md](15-conflict-algebra.md) | Footprints over raw values, the four commutativity matrices, the loser algebra, escrow, L6–L9 |
+| [20-command-codec.md](20-command-codec.md) | The batch wire format (v2), footprint section, determinism laws, IDL refusal |
+| [30-engine-seams.md](30-engine-seams.md) | The one engine addition; why the footprint is deliberately not a seam |
+| [40-object-store.md](40-object-store.md) | The five-verb capability, vendor matrix, verb-consumer map, dependency rulings |
+| [50-replica.md](50-replica.md) | The vector sidecar and its forced recoveries, catch-up, Vercel, tenants |
+| [60-writer.md](60-writer.md) | Auto-split, the two writer modes, group commit, adoption, escrow wiring |
+| [70-typescript.md](70-typescript.md) | The TS surface, the mirrored pure trio, temporal law, error identities |
+| [80-conformance.md](80-conformance.md) | Nine lanes: determinism, commutativity oracle, matrix cells, crash matrices, contention, PITR, parity, pins, fuzz |
+| [90-rollout.md](90-rollout.md) | The build lanes (incl. the Lean lane), order, gates, checklist |
 
-House laws apply throughout: representation over control flow
-(`audit/REQUIRED-READING.md`), one way to do each thing, zero `dyn` in our
-own Rust (dependency internals exempt, like `heed`), no allocation on
-steady-state paths that are not already network-bound, attribution-first for
-any performance claim, and every requirement names its consumer.
+House laws throughout: representation over control flow
+(`audit/REQUIRED-READING.md`); one way per question; zero `dyn` in our own
+Rust; sums for outcomes; parse-all-first; attribution-first; every
+requirement names its consumer. The Lean gate is structural: optimism does
+not merge before footprint stability (L7) builds.

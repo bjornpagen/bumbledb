@@ -1,106 +1,128 @@
 # 80 — Conformance and gates
 
-The driver gets the house assurance treatment: determinism is a pinned
-oracle agreement, crashes are an iteration over reified protocol steps, and
-every law is a test. All lanes run on `FsStore` — the suite needs no cloud
-account; the `S3Store` gets a thin smoke lane gated behind credentials in
-the environment (skipped-with-reason otherwise, per the ramdisk precedent).
+Determinism is a pinned oracle agreement; crashes are an iteration over
+reified protocol steps; the conflict algebra is adversarially exercised
+cell by cell; every law is a test. All lanes run on `FsStore` — no cloud
+account in the suite; `S3Store` gets a credential-gated smoke lane
+(skipped-with-reason otherwise).
 
-## Lane 1 — replay determinism (the core oracle)
+## Lane 1 — replay determinism (the base oracle)
 
-Generate random command sequences with the existing bench corpus generator
-(theories + facts from `corpus_gen`), then compare three ways of arriving
-at the same generation:
+Random command sequences from the bench corpus generator, three arrivals
+compared at every probed vector: **direct** apply; **replayed** through
+the log; **checkpoint-hopped** (checkpoint mid-sequence, restore, replay
+tail). Gate: `catalog_digest` triple-equality across ≥ 100 generated
+worlds. A disagreement is a trophy.
 
-- **Direct**: apply batches straight to store A.
-- **Replayed**: publish to a log via the writer, replay onto fresh store B.
-- **Checkpoint-hopped**: checkpoint mid-sequence, restore store C from the
-  checkpoint, replay the tail.
+## Lane 2 — commutativity (L8 as a running oracle)
 
-Gate: `catalog_digest(A) == catalog_digest(B) == catalog_digest(C)` at
-every probed generation, across ≥ 100 generated worlds. This is the
-three-oracle habit applied to replication; a disagreement is a trophy.
+Generate footprint-**disjoint** pairs (A, B) on one braid (the generator
+uses `footprintOf` to filter): apply A;B on one store and B;A on another.
+Gate: equal `catalog_digest` and equal verdicts. Then the braid corollary:
+random interleavings of multi-braid histories all converge. This lane is
+the executable shadow of the Lean theorem — both must exist; neither
+substitutes for the other.
 
-## Lane 2 — the crash matrix (protocol steps as data)
+## Lane 3 — the conflict matrix, adversarially, cell by cell
 
-Both writer modes' sequences are reified enums (the `PublishStep`
-discipline):
+For **every cell** of 15's four matrices, a hand fixture pair (A, B) built
+on a shared base:
+
+- **Commute cells**: both orders accepted; digests equal; the loser
+  algebra's republish path (no re-judgment) taken — pinned by a counter
+  on the revalidation entry.
+- **CONFLICT cells**: the loser algebra re-judges and produces exactly
+  the serial verdict — the double-booking fixture rejects with the FD
+  violation; the dangling-reference fixture rejects the `need` loser or
+  the `support−` loser per order; the capacity fixture's arithmetic
+  matches `Σ` against the slack, both signs, mixed signs, floor and
+  ceiling.
+- The W-class quantitative boundary: sums exactly at slack (commute) and
+  slack + 1 (conflict), for unit and weighted children, `parent±` rows
+  included.
+
+Every cell cites its matrix coordinates in the test name. A new statement
+class cannot ship without extending this lane (the fixture table is an
+exhaustive match over the footprint classes — a missing cell fails to
+compile, the house roster discipline).
+
+## Lane 4 — the crash matrices (protocol steps as data)
 
 ```rust
-enum ServerlessStep { Encode, ApplyLocal, PutLog, Ack }
-enum ResidentStep   { Encode, WriteSidecar, ApplyLocal, AckLocal, PutLog, DeleteSidecar }
+enum ServerlessStep { Encode, Footprint, IntentWrite, ApplyLocal, VectorBump, PutLog, Ack }
+enum ResidentStep   { Encode, PendingWrite, IntentWrite, ApplyLocal, VectorBump, AckLocal, PutLog, PendingClear }
+enum ReplicaStep    { IntentWrite, ApplyLocal, VectorBump }
 ```
 
-For every proper prefix: execute the prefix against `FsStore`, kill,
-recover (re-open per 50/60), and assert the postcondition table — no acked
-commit is ever lost, no un-acked state survives observation, sidecar
-resolution matches the two forced cases, and a fork discarded is a fork
-gone. A new step extends the matrix by construction; a forgotten crash
-case is a missing enum arm and fails to compile.
+Every proper prefix of each: execute, kill, recover per 50/60's forced
+resolutions, assert the postcondition table — no acked commit lost, no
+un-acked state observable, sidecar/vector reconciliation lands in exactly
+one of its two forced cases, fork-discard leaves no residue. A forgotten
+crash case is a missing enum arm.
 
-## Lane 3 — contention (serverless CAS arbitration)
+## Lane 5 — contention and the loser algebra
 
-N in-process writers (N ∈ {2, 4, 8}) commit interleaved random batches
-against one `FsStore` log. Gates: the log is gap-free and each key was
-created exactly once; every writer's acked commits appear in the log
-exactly once; all writers' stores converge to equal `catalog_digest` after
-final refresh; every `Contended` was followed by state advance. Fault
-injection: the ambiguous-outcome retry law (40) is exercised by a store
-wrapper that drops responses after applying writes — the GET-verify path
-must resolve every ambiguity.
+N writers (2/4/8) over one `FsStore`, mixed workloads: mostly-disjoint
+(booking different slots) and adversarial (hot key, hot capacity parent).
+Gates: per-braid logs gap-free, each slot created once; every acked commit
+appears exactly once; all replicas converge (`catalog_digest`); disjoint
+losses never re-judge (counter-pinned); conflicting losses produce serial
+verdicts; the ambiguous-outcome GET-verify law (40) resolves injected
+response drops; bounded-retry surfaces `ErrContention` under a fixture
+designed to livelock.
 
-## Lane 4 — PITR and gc
+## Lane 6 — PITR, gc, and the vector
 
-Build a 500-generation history with checkpoints every 64. Gates: restore
-to every generation g reproduces `catalog_digest` recorded at g during the
-build; `gc` with window R deletes exactly the objects the retention law
-names and a post-gc restore to any retained g still succeeds; a restore
-into a gc'd gap refuses with `GapDetected`, never fabricates.
+A 500-commit multi-braid history, checkpoints every 64 (vector-sum).
+Gates: restore to every recorded vector reproduces its recorded digest;
+by-time restore maps through the informational timestamps monotonically;
+`gc` with window R deletes exactly the retention law's set per braid; a
+restore into a gc'd gap refuses `GapDetected`.
 
-## Lane 5 — codec cross-goldens (Rust ⇄ TS)
+## Lane 7 — parity goldens (Rust ⇄ TS, the protocol trio)
 
-A checked-in corpus of batches: every op kind, every value tag, boundary
-values (`u64::MAX`, empty strings, max-width `FixedBytes`, half-open
-interval edges), a multi-op group-commit batch, and every refusal case
-(bad magic, version 2, flags ≠ 0, wrong fingerprint, wrong arity, wrong
-tag, non-UTF-8 string). Both implementations must byte-produce and parse
-the corpus identically; refusals must carry the same typed identity. Wired
-into the `tags.json`-golden tier so drift is a compile/test failure on
-either side.
+Checked-in corpora for the three pure functions: `encode/decodeBatch`
+(every op kind, every tag, boundary values, every refusal — bad magic,
+version 1, flags ≠ 0, wrong fingerprint, wrong braid relation, unsorted
+footprint, kind 3), `footprintOf` (every class and mode, the W deltas,
+closed-statement emptiness), `braidsOf` (multi-component schemas, mirror
+statements, closed relations excluded, singleton = serial degenerate).
+Byte-exact both directions; refusals carry the same typed identity.
 
-## Lane 6 — engine-guarantee pins (from 30)
+## Lane 8 — engine-guarantee pins (30)
 
-- Intern-mint determinism: same batch → two fresh stores → equal digests.
-- Fresh-in-command: replayed fresh ids collide as ordinary functionality
-  rejections; `ReplayDiverged` is the surfaced class during replay.
-- Generation/no-op law: rejected and empty commits create no log objects
-  and advance nothing.
+Intern-mint determinism; fresh-in-command collisions as ordinary
+rejections; host-order independence; no-op/rejected commits create no
+objects and advance nothing.
 
-## Law gates (the census tier)
+## Lane 9 — fuzz
 
-- **Zero-dyn**: the engine census extends to `bumbledb-log`'s own code
-  (dependency internals exempt).
-- **Temporal law (TS)**: every exported async function awaits a store
-  operation on some path; no async-in-name-only.
-- **Allocation**: codec encode/decode allocate only output buffers (no
-  per-row temporaries) — one `alloc_counter` window test; everything else
-  in the driver is network-bound by construction and exempt by the
-  recorded FFI/boundary rule.
-- **Vocabulary census**: `spec-census.sh` gains the driver's tokens
-  (manifest fields, op kinds, error identities) across Rust/TS/docs.
+The batch decoder (offset-free sequential — prove it): arbitrary bytes
+and golden mutations; no panic, no overflow, every rejection typed. Same
+harness over the manifest parser and the footprint recomputation
+comparator.
 
-## Error identity (pinned here, used everywhere)
+## Law gates (census tier)
 
-One taxonomy, sums not strings: `Refused` (fingerprint/version/manifest —
-typed per cause), `GapDetected`, `ReplayDiverged` (corruption-class),
-`Contended` (an outcome, never an error), `StoreErr` (the vendor `Err`
-channel). TS mirrors with exported `Err*` values on the SDK's existing
-idiom.
+Zero-dyn extends to `bumbledb-log`'s own code; TS temporal gate (every
+exported async awaits a store verb); codec/footprint alloc windows
+(output buffers only); `spec-census.sh` gains the protocol tokens
+(manifest fields, op kinds, footprint classes, error identities) across
+Rust/TS/docs — and the Lean names L6–L9 once they land, wired like L1–L5.
 
-## Performance pins (attribution-first; no claims without these)
+## Lean gates
 
-Recorded by a bench lane, not asserted in docs: serverless commit latency
-(FsStore floor + S3 smoke when credentialed), resident local-ack latency,
-group-commit throughput at batch sizes {1, 16, 512}, cold-open time vs
-checkpoint size {8, 64, 256 MiB}, refresh probe cost. The 00-product
-envelope is replaced by these numbers in the first release notes.
+L6–L9 exist under their stated names, build, and are cited from the
+driver's revalidation and republish sites the way the engine cites
+`DeltaRestriction`. Lane 2 (executable commutativity) and Lane 3 (matrix)
+are CI-required alongside them; Layer-2 optimism (the republish-without-
+re-judgment path) does not merge before L7.
+
+## Performance pins (attribution-first; replaces 00's envelope)
+
+Recorded, not asserted: per-braid commit latency (FsStore floor + gated
+S3/Express smoke); disjoint-loss cost (intersection + PUT) vs conflict
+cost (re-judge) vs the old discard baseline; group-commit throughput ×
+braid count; cold-open vs checkpoint size with parallel braid replay;
+probe cost per idle pass. The first release notes carry these numbers or
+the release does not happen.

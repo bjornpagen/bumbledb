@@ -1,89 +1,95 @@
 # 50 — The replica
 
-A replica is a local store that is a materialized view of a log prefix,
-plus the loop that keeps it current. Replicas are disposable by
-construction: correctness never depends on a replica surviving.
+A replica is a local store that is a materialized view of the braids'
+prefixes, plus the loop that keeps it current. Replicas are disposable by
+construction; the only local file that carries protocol state is the
+sidecar, and it has forced recovery rules.
+
+## The vector sidecar
+
+The store's engine generation is the vector **sum**; the per-braid split
+lives in `dir/vector.json` (canonical one-line JSON: `{"v":1,"vector":
+{"c00000001":80,…},"intent":null}`), written atomically (temp + rename,
+fsync). The apply discipline:
+
+1. Write `intent = {braid, gen}` to the sidecar (fsync).
+2. `db.write` the batch (the engine commit).
+3. Bump `vector[braid]`, clear `intent`, rewrite the sidecar.
+
+Crash recovery at open — two forced resolutions, no judgment call:
+
+- `intent` present and `sum(vector) == db.generation() − 1` → the engine
+  commit landed; bump that braid, clear intent.
+- `intent` present and `sum(vector) == db.generation()` → the commit
+  didn't land; clear intent, the batch replays normally.
+- Any other disagreement between sum and generation → the sidecar or
+  store is torn → **discard the directory and re-pull** (the disposable
+  law; local state is cache, never truth).
 
 ## Lifecycle
 
-```
-open(store: S, prefix, dir, theory) -> Result<Replica>
-```
+`open(store, prefix, dir, theory)`:
 
-1. GET `manifest.json`; refuse `v ≠ 1` or fingerprint ≠ `theory`'s.
-2. If `dir` already holds a store: open it (format-8 verification runs),
-   confirm fingerprint, take its generation as `k`. A stale or torn local
-   dir is deleted and re-pulled — local state is cache, never truth.
-3. Else if the manifest has a checkpoint: download, verify blake3 =
-   `checkpoint.digest`, write `data.mdb`, open, assert generation =
-   `checkpoint.g`; `k = checkpoint.g`.
-4. Else bootstrap: `Db::create(dir, theory)` (the empty-candidate
-   admission); `k = 0`.
-5. Catch up: probe `log/{k+1}` … apply … until 404 (the codec's `apply`,
-   idempotent and gap-refusing).
+1. GET `manifest.json`; refuse `v ≠ 2` or fingerprint mismatch. Derive
+   the braid set from the descriptor locally and refuse if the manifest's
+   braid ids disagree (both are pure functions of the same schema).
+2. Local dir present → sidecar recovery above, then open + format-8
+   verification; else download the checkpoint (blake3 = digest, opened
+   generation = `checkpoint.sum`), seed the sidecar with
+   `checkpoint.vector`; else bootstrap `Db::create` with the zero vector.
+3. Catch up every braid: probe `log/{braid}/{vector[braid]+1}` … apply
+   (codec `apply`, which recomputes footprints and enforces the sidecar
+   discipline) … until 404. Braid order is irrelevant (L8); the loop
+   interleaves round-robin so one hot braid cannot starve the others'
+   freshness.
 
-## Refresh
+## Refresh and read-your-writes
 
-`refresh()` runs the catch-up loop once and returns the new generation.
-Policies (host-chosen, one mechanism):
+- `refresh()` — one catch-up pass over all braids; returns the vector.
+- `refresh(braid)` — one braid (cheap point freshness for a known-hot
+  flow).
+- `wait_for(braid, g)` — refresh until `vector[braid] ≥ g`. Commits
+  return `(braid, generation)`; hosts thread that pair for cross-instance
+  read-your-writes. The committing instance is always read-its-own
+  without waiting.
 
-- **On-demand**: call before a request that needs freshness.
-- **Interval**: a timer (or Vercel `waitUntil`) calling `refresh()` every
-  N ms.
-- **Wait-for**: `wait_for(g)` — refresh until `generation() ≥ g` (the
-  read-your-writes tool: a host that just committed `g` elsewhere passes
-  `g` through and waits here).
-
-Staleness bound = refresh cadence. The committing instance itself is always
-read-your-writes without waiting (its local apply lands before ack).
-
-The probe is one 404 GET when idle. On Express that is ~$0.00003/1000 and
-single-digit ms; per-request probing is affordable, but interval + a
-manifest `get_if_changed` fallback is the default recipe.
+Idle probe cost: one 404 GET per braid per pass; braid counts are
+schema-bounded (single digits for real apps). Interval refresh via
+`waitUntil` remains the Vercel default.
 
 ## Reads
 
-The replica exposes the engine's own surfaces — it *is* a `Db`:
-`replica.db()` for prepared queries, point reads, scans. No wrapper query
-API; one way to read. Writers in the same process use the same `Db` via the
-writer component (60); replica-only deployments never open a write path.
+`replica.db()` — the engine's own surface; no wrapper query API. Replicas
+never open a write path; writers (60) are a replica plus the right to
+create log objects.
 
 ## Vercel Fluid recipe (case 1)
 
-- Module-level singleton: `const replica = await openReplica(...)` at
-  module scope — Fluid shares it across the instance's concurrent
-  invocations; instances scale out with their own copies.
-- Store lives under `/tmp` (500 MB budget, per-instance, ephemeral —
-  exactly what "cache, never truth" wants). Cold start = checkpoint pull +
-  tail replay; warm instances amortize it to zero.
-- Freshness: `waitUntil(replica.refresh())` after responding, plus
-  `wait_for` on flows that read their own cross-instance writes.
-- Budget math is a deployment gate, not a hope: checkpoint size +
-  working set must fit 400 MB (leave 100 MB headroom). The leaf-blob
-  pattern (digests in relations, bytes in the bucket) is what keeps
-  metadata stores in the tens of MB.
+Module-scope singleton (Fluid shares it across the instance's concurrent
+requests); store + sidecar under `/tmp` (500 MB, per-instance, ephemeral —
+what "cache, never truth" wants); cold start = checkpoint pull + per-braid
+tail replay (braids download and replay in parallel); freshness =
+`waitUntil(replica.refresh())` plus `wait_for` where flows read their own
+cross-instance writes. Budget gate: checkpoint + working set ≤ 400 MB
+(100 MB headroom) — the leaf-blob pattern keeps metadata stores in the
+tens of MB.
 
 ## Per-tenant (case 4)
 
-```
-openTenants(store, root, opts { budget_bytes, max_open }) -> TenantCache
-tenants.get(tenant_id) -> Result<Replica>   // opens or returns cached
-```
-
-An LRU keyed by tenant id over the same `Replica` type: eviction closes
-the store and deletes its dir (disposable law). The control-plane tenant
-(`t/_shared`) is pinned, never evicted. Per-tenant budgets are enforced by
-the same math as above. Cross-tenant queries are **not** a replica
-feature — they are the heap arm's job (scan the tenants you need into an
-`InstanceBuilder`, `admit`, query the `OwnedInstance`); the replica layer
-refuses to pretend otherwise.
+`openTenants(store, root, { budget_bytes, max_open })` — an LRU of
+replicas keyed by tenant id; eviction closes and deletes the dir
+(disposable law); `t/_shared` pinned. Braids shard *within* a tenant;
+tenants shard the world. Cross-tenant queries are the heap arm's job —
+scan the tenants you need into an `InstanceBuilder`, `admit`, query the
+`OwnedInstance`; the replica layer refuses to pretend otherwise.
 
 ## Failure behavior
 
 | Event | Behavior |
 | --- | --- |
-| Digest mismatch on checkpoint | delete download, retry once, then `Err` |
-| `GapDetected` during replay (lifecycle deleted a needed log object) | discard local store, re-open from the newest checkpoint |
-| `ReplayDiverged` (a logged batch rejected locally) | corruption-class `Err`; never retried; surfaces with generation and batch key |
-| Manifest fingerprint mismatch | typed refusal at open |
-| Local dir torn (open fails verification) | delete, re-pull — the disposable law |
+| Checkpoint digest mismatch | delete download, retry once, then `Err` |
+| `GapDetected` (gc'd tail) | discard dir, re-open from newest checkpoint |
+| `FootprintMismatch` / `ReplayDiverged` | corruption-class `Err` naming braid, generation, and key; never retried |
+| Sidecar/store disagreement beyond the two forced cases | discard dir, re-pull |
+| Manifest braid set ≠ locally derived braids | typed refusal (schema/manifest drift) |
+| Fingerprint mismatch anywhere | typed refusal at open |

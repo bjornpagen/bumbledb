@@ -49,6 +49,15 @@ in our code (dependency internals exempt, per the engine's census law).
 | OCI Object Storage | native if-none-match | native if-match | case-3 target; resident mode doesn't even need CAS |
 | Local filesystem | rename-based create-only | lockfile+rename CAS | the test/conformance impl; also the macOS sync target |
 
+## Protocol consumers of the five verbs (nothing else is permitted)
+
+Log slots: `put_create`. Manifest: `get` + `put_swap` (+ `put_create` at
+birth). Tip probing: `get` per braid. Manifest polling: `get_if_changed`.
+Id-lease counters (`ids/…`): `get` + `put_swap` (read n, swap n+4096;
+`Moved` ⇒ re-read and retry — the counter is coordination, not truth).
+Escrow grants (v2): `put_create` with TTL-bearing bodies. `gc`: `delete`.
+A sixth verb appearing in a review is a design error somewhere upstream.
+
 ## Implementations shipped in v1
 
 1. **`FsStore`** — local directory. Create-only = `O_CREAT|O_EXCL` temp +

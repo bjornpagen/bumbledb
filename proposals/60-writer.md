@@ -1,13 +1,12 @@
 # 60 — The writer
 
-One commit path, two placements. A writer is a replica plus the right to
-create log objects. The host-facing verb is:
+A writer is a replica plus the right to create log objects. One commit
+path; two placements; the loser algebra (15) between them and the bucket.
 
 ```rust
 pub enum Commit<R> {
-    Accepted { value: R, generation: GenerationId },
+    Accepted { value: R, braid: BraidId, generation: u64 },
     Rejected(Violations),
-    Contended { winner: GenerationId },   // serverless mode only: lost the slot; state advanced
 }
 
 pub fn commit<R>(
@@ -16,88 +15,102 @@ pub fn commit<R>(
 ) -> Result<Commit<R>>;
 ```
 
-`Batch` records ops (typed inserts/deletes lower to the codec's raw rows;
-`reserve` mints fresh ids locally and the resulting inserts carry them as
-plain values — the log never contains a reservation). The body runs
-against the replica's current state for reads-before-write. `Contended`
-mirrors `ConditionalWrite::Moved`: an expected answer, data not error;
-hosts loop on it exactly like a moved witness.
+There is no `Contended` arm anymore: contention is the driver's to absorb
+via the loser algebra — a disjoint loss republishes silently; a conflicting
+loss re-judges, and the host receives either the eventual `Accepted` or
+the `Rejected` that serial execution would have produced. Bounded retries
+(default 16 losses) then surface as an `Err::Contention` with the braid
+and last winner — an operational signal (add escrow, examine the hot key),
+not an expected outcome. `Batch` records typed inserts/deletes; `reserve`
+draws from the id lease (10) and the resulting inserts carry concrete
+values; reservations never appear in the log.
 
-## Serverless mode (case 1 — any instance may write)
+## Auto-split (spanning batches)
 
-The ordering law is **publish before ack; local state is disposable**:
+`commit` partitions the recorded ops by braid. One braid — the normal
+case, since the schema's own dependencies put related relations together —
+commits as below. Multiple braids — writes to relations *no statement
+relates* — commit as independent per-braid batches, sequentially, and the
+outcome is the vector of per-braid outcomes (`Commit::Split(Vec<…>)` in
+the full signature). Partial completion is semantically invisible to the
+theory (L9: no statement can observe cross-braid state); a host invariant
+spanning braids is by definition undeclared — declare it and the braids
+merge. No cross-braid claim protocol exists, deliberately.
 
-1. Build the batch; encode with `base = k` (local generation).
-2. Apply locally via one `db.write`. `Rejected` → return
-   `Commit::Rejected` — nothing touched the network; rejection is free.
-3. Accepted → `put_create(log/{k+1}, batch)`.
-   - `Created` → ack `Accepted { generation: k+1 }`. (Crash between 2 and
-     3 loses only an un-acked local fork, which dies with `/tmp`.)
-   - `Exists` → this instance's local store is now a fork: **discard the
-     local store**, re-open from checkpoint + log (50), and return
-     `Contended { winner }`. The host retries `commit` against the new
-     state; the re-judgment may legitimately change the verdict — that is
-     the correct semantics of a retried write.
-4. Every K commits (or when this writer created `log/g` with
-   `g − manifest.checkpoint.g ≥ K`): compact, upload `ckpt/{g}.mdb`,
-   manifest CAS. Checkpoint publication races are benign: manifest CAS
-   keeps the newest; a losing checkpoint object is garbage for `gc`.
+## Serverless mode (any instance may write)
 
-Fork-discard is the price of coordinator-free writes; at SaaS booking
-rates contention is rare, and the discard is a re-pull of a small store.
-Deployments that measure real contention add the v2 lease object — a
-recorded nicety, not v1 surface.
+Publish-before-ack; local state disposable; per braid:
 
-## Resident mode (cases 2/3 — one process owns writes by arrangement)
+1. Build the batch; compute the footprint (`footprint(descriptor, ops)`);
+   set `braid_gen = vector[braid] + 1`.
+2. Apply locally (sidecar discipline, one `db.write`). `Rejected` →
+   return it — the network was never touched; rejections are free.
+3. `put_create(log/{braid}/{braid_gen})`.
+   - `Created` → ack `Accepted`.
+   - `Exists` → fetch the winner, run the loser algebra:
+     a. **Disjoint** (no CONFLICT cell): apply the winner's batch locally
+        (sidecar discipline), `braid_gen += 1`, recompute nothing,
+        republish. The already-committed local application of *our* batch
+        is not rolled back — but note the subtlety: our batch committed
+        locally *before* the winner's; the replayed order everywhere else
+        is winner-first. L8 (commutativity under disjointness) is exactly
+        the theorem that makes the two orders byte-equal, so the local
+        store remains a correct materialization. This is where L8 is
+        load-bearing, not decorative.
+     b. **Conflict**: the local store diverged in a way L8 does not cover
+        → discard the directory, re-open (50), re-run the host body
+        against fresh state, return its verdict (accepted after
+        republish, or the honest rejection). Fork-discard is the price of
+        a real conflict — and only of a real one; the disjoint common
+        case keeps everything.
+4. Checkpoint duty: after creating a batch that puts the vector sum ≥
+   `manifest.checkpoint.sum + 256` (or 16 MiB of log since), compact,
+   upload, manifest-CAS. Races benign.
 
-Local-latency writes with the log as the WAL. The one-slot sidecar closes
-the crash window:
+## Resident mode (one process owns writes by arrangement)
 
-1. Build + encode the batch (`base = k`).
-2. Write the batch bytes to `dir/pending.batch` (single file, fsynced) —
-   the one-deep local WAL.
-3. Apply locally (`db.write`). Rejected → delete sidecar, return
-   `Rejected`.
-4. Ack the host now if configured for `ack = local` (1 ms writes,
-   RPO = publish lag) or after step 5 for `ack = published` (RPO = 0).
-   The mode is a constructor parameter; the default is `published`.
-5. `put_create(log/{k+1})` — in resident mode this never loses (no other
-   writer by arrangement); an `Exists` here means the arrangement was
-   violated and is a corruption-class error naming both writers.
-6. Delete the sidecar.
+Local-latency acks; the log is the WAL; per braid, the sidecar gains a
+`pending` slot (the batch bytes, fsynced) alongside the vector:
 
-Crash recovery at open: if `pending.batch` exists —
-`local generation == log tip + 1` → republish it (step 5) and continue;
-`local == tip` → the crash was pre-commit; discard the sidecar. Both
-resolutions are forced by the index=generation law; there is no judgment
-call.
+1. Encode; write `pending = {braid, gen, bytes}` (fsync).
+2. Apply locally. Rejected → clear pending, return `Rejected`.
+3. `ack = local` → ack now (1 ms, RPO = publish lag) or `ack = published`
+   → ack after 4. Constructor parameter; default `published`.
+4. `put_create(log/{braid}/{gen})`. `Exists` here means the single-writer
+   arrangement was violated — corruption-class, naming both writers.
+5. Clear `pending`.
+
+Recovery at open: `pending` present and `vector[braid] == gen` → the
+commit landed; republish, clear. `pending` present and
+`vector[braid] == gen − 1` → pre-commit crash; discard pending. Two
+forced resolutions, composed with the vector-intent rules of 50.
 
 ## Group commit
 
-The writer runs one commit loop; concurrent host `commit` calls queue.
-The loop drains the queue into **one** batch (bounded: 512 host writes or
-4 MiB encoded, whichever first), applies as one `db.write` (one generation,
-one log object), and resolves every queued caller with the shared outcome.
-A rejection rejects the whole batch (the engine's write is atomic); the
-loop then falls back to one-by-one application for that drain so an
-innocent host write is never rejected for a neighbor's violation —
-degraded throughput under rejection is the recorded trade. No linger timer
-in v1: batch whatever is queued, never wait.
+One commit loop per braid; concurrent `commit` calls partition and queue
+per braid. Each drain packs up to 512 host writes or 4 MiB into one batch
+(one generation, one object) and resolves every caller with the shared
+outcome; a rejection triggers one-by-one fallback for that drain so an
+innocent write never fails for a neighbor's violation. No linger in v1.
+Hot-braid throughput = PUT rate × batch size; braids multiply it.
 
-## Failover and adoption (resident mode)
+## Adoption and failover (resident)
 
-Adopting a store (new box, restored PITR, promoted replica): open as a
-replica, catch up to tip, then publish one **FloorBump batch** advancing
-every fresh field's floor to `local floor + gap` (default gap 1 000 000).
-This is the never-reissue safety across writer identities: ids reserved
-but never committed by the dead writer can never be re-minted by the new
-one. The adoption batch is an ordinary log object; replicas replay it like
-anything else. Then write `manifest.writer` (advisory) and begin.
+Adopt = open as replica, catch up all braids, read the id-lease counters
+(the authoritative floors — no in-log floor ops exist), lease fresh
+ranges, set `manifest.writer` (advisory), begin. A stale previous writer
+still holding old leases can only produce K-conflicts, which the loser
+algebra converts into honest rejections.
+
+## Escrow (v2, per 15)
+
+Wired here when a measured hot capacity parent exists: hold a grant →
+treat `Δ ≤ granted` at that key as conflict-free in step 3a. Avoidance
+only; the algebra remains the guard.
 
 ## Backups, restated
 
-Resident mode inherits everything from the log: no `compact`-cron for
-backup purposes (checkpoints are for replay speed, not safety), no
-snapshot schedule, no RPO math beyond the ack mode. The serverful backup
-runbook from the pre-log era survives only as the belt-and-braces block
-snapshot, optional.
+Nothing here schedules backups. Checkpoints exist for replay speed;
+retention (10's `gc`) is the backup policy; PITR is the vector math.
+Resident deployments may add block snapshots as belt-and-braces, not as
+the story.
