@@ -161,12 +161,19 @@ fn publish_inner(
                 drop(raw.take());
             }
             PublishStep::SyncStagingFiles => {
+                // The first half of the publish durability boundary
+                // (proposals/one-representation/10-measurement.md): the
+                // staging-file fsync sweep, one span per publish.
+                let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 sync_staging_files(staging.as_ref().expect("staging lives until Rename"))?;
             }
             PublishStep::Rename => {
                 std::fs::rename(staging.as_ref().expect("staging lives until Rename"), dest)?;
             }
             PublishStep::SyncParent => {
+                // The second half of the durability boundary: the
+                // destination dirent-chain fsync after the rename.
+                let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 if fail_parent_sync {
                     return Err(Error::PublishedButUnsynced {
                         path: dest.to_path_buf(),
@@ -281,8 +288,14 @@ fn write_from_catalog<C: CatalogRead>(
     let meta = env.create_database(&mut wtxn, Some("_meta"))?;
     let data = env.create_database(&mut wtxn, Some("_data"))?;
     let dict = env.create_database(&mut wtxn, Some("_dict"))?;
-    copy_map(catalog, data, &mut wtxn, CatalogMap::Data)?;
-    copy_map(catalog, dict, &mut wtxn, CatalogMap::Dictionary)?;
+    // The publish data copy, spanned at collection granularity with the
+    // copied key+value bytes as the payload
+    // (proposals/one-representation/10-measurement.md).
+    let mut copy_span = crate::obs::span(crate::obs::names::PUBLISH_COPY);
+    let data_bytes = copy_map(catalog, data, &mut wtxn, CatalogMap::Data)?;
+    let dict_bytes = copy_map(catalog, dict, &mut wtxn, CatalogMap::Dictionary)?;
+    copy_span.set_count(data_bytes + dict_bytes);
+    copy_span.end();
     write_fresh_meta(
         &meta,
         &mut wtxn,
@@ -294,17 +307,21 @@ fn write_from_catalog<C: CatalogRead>(
     Ok(())
 }
 
+/// Copies one map and returns the key+value bytes moved — the
+/// `PUBLISH_COPY` span's payload.
 fn copy_map<C: OrderedRead>(
     catalog: &C,
     dest: Database<Bytes, Bytes>,
     wtxn: &mut heed::RwTxn<'_>,
     map: CatalogMap,
-) -> Result<()> {
+) -> Result<u64> {
+    let mut bytes = 0u64;
     let mut range = catalog.range(map, Bounds::all())?;
     while let Some(entry) = range.next()? {
+        bytes += (entry.key.len() + entry.value.len()) as u64;
         dest.put(wtxn, entry.key, entry.value)?;
     }
-    Ok(())
+    Ok(bytes)
 }
 
 fn sync_staging_files(staging: &Path) -> Result<()> {

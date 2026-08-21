@@ -242,6 +242,28 @@ trace_points! {
     PARAM_WORD_MEMO => "param_word_memo", Execute,
     /// A `str` literal latched.
     LITERAL_LATCH => "literal_latch", Execute,
+    /// One bridge collection marshal. (rows)
+    /// (proposals/one-representation/10-measurement.md; wired by the
+    /// accepted-collection lane — the primerlane's component table
+    /// already maps it.)
+    MARSHAL_FACTS => "marshal_facts", Commit,
+    /// One dynamic collection's shape parse. (rows)
+    /// (10-measurement.md; wired by the accepted-collection lane.)
+    DYN_PARSE => "dyn_parse", Commit,
+    /// One collection's intern+encode loop. (rows)
+    /// (10-measurement.md; wired by the accepted-collection lane.)
+    DYN_ENCODE => "dyn_encode", Commit,
+    /// One collection's backend-apply loop on the store path. (rows)
+    /// (10-measurement.md; wired by the accepted-collection lane.)
+    DELTA_APPLY => "delta_apply", Commit,
+    /// One heap-stage collection load on the builder path. (rows)
+    /// (10-measurement.md; wired by the accepted-collection lane.)
+    BUILDER_LOAD => "builder_load", Commit,
+    /// Aggregate dictionary probing of one collection — an event, never
+    /// per-string spans (a per-string span would cost more than the
+    /// probe). (probes, hits)
+    /// (10-measurement.md; wired by the string-ownership lane.)
+    INTERN_PROBE => "intern_probe", Commit,
     /// One state-changing commit.
     COMMIT => "commit", Commit,
     /// A commit that netted to nothing.
@@ -268,6 +290,11 @@ trace_points! {
     CREATE_DURABLE => "create_durable", Commit,
     /// One `Db::write`, closure plus commit.
     WRITE_TXN => "write_txn", Commit,
+    /// `Environment::publish`'s catalog data copy. (bytes)
+    PUBLISH_COPY => "publish_copy", Storage,
+    /// Publish's durability boundary: the staging fsync sweep, then the
+    /// destination dirent-chain fsync — one span each.
+    PUBLISH_SYNC => "publish_sync", Storage,
     /// The whole `Db::verify_store` sweep.
     VERIFY_STORE => "verify_store", Storage,
     /// The `F` (fact) namespace pass.
