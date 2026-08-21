@@ -90,7 +90,7 @@ fn admitted_instance_prepares_executes_gets_and_scans() {
 
     assert!(instance.contains(&acct).expect("contains"));
     assert_eq!(instance.get(id).expect("get"), Some(acct));
-    assert_eq!(instance.row_count(Account::RELATION).expect("count"), 1);
+    assert_eq!(instance.count(Account::RELATION).expect("count"), 1);
 
     let scanned: Vec<Account<'_>> = instance
         .scan_facts::<Account>()
@@ -123,6 +123,51 @@ fn admitted_instance_prepares_executes_gets_and_scans() {
     assert!(matches!(out.get(0, 0), AnswerValue::String("ada")));
     assert!(matches!(out.get(0, 1), AnswerValue::I64(10)));
     assert!(instance.peek_image(Account::RELATION).is_some());
+}
+
+/// The exact-count law on the heap surface (one-representation PRD 40):
+/// after mixed loads and deletes, `count` equals the scan length — the
+/// admitted-instance twin of the storage pin
+/// (`storage/read/tests.rs::row_count_equals_scan_count_after_mixed_commits`).
+/// Both reads observe the one frozen catalog, so agreement is by
+/// construction; pinned anyway.
+#[test]
+fn count_equals_scan_length_after_mixed_loads_and_deletes() {
+    let mut builder = InstanceBuilder::new(Ledger).expect("valid");
+    let ids: Vec<AccountId> = (0..3)
+        .map(|_| {
+            builder
+                .reserve::<AccountId>(1)
+                .expect("reserve")
+                .start()
+                .expect("nonempty")
+        })
+        .collect();
+    let account = |id: AccountId, holder: &'static str| Account {
+        id,
+        holder,
+        balance: 0,
+    };
+    builder
+        .load([
+            &account(ids[0], "ada"),
+            &account(ids[1], "grace"),
+            &account(ids[2], "kurt"),
+        ])
+        .expect("load");
+    builder.delete([&account(ids[1], "grace")]).expect("delete");
+    let instance = builder.admit().expect("admit").expect("accepted");
+    let mut scanned = 0u64;
+    for row in instance.scan(Account::RELATION).expect("scan") {
+        row.expect("row");
+        scanned += 1;
+    }
+    assert_eq!(
+        instance.count(Account::RELATION).expect("count"),
+        scanned,
+        "count is the scan length"
+    );
+    assert_eq!(scanned, 2);
 }
 
 #[test]
@@ -193,7 +238,11 @@ fn closed_relation_scans_without_building_an_image() {
         .admit()
         .expect("admit")
         .expect("accepted");
-    assert_eq!(instance.row_count(KIND).expect("count"), 1);
+    assert_eq!(
+        instance.count(KIND).expect("count"),
+        1,
+        "a closed relation's count IS its sealed extension length"
+    );
     let kinds: Vec<Vec<Value>> = instance
         .scan(KIND)
         .expect("scan")

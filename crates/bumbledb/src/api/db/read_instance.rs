@@ -23,18 +23,35 @@ impl<S> ReadInstance<'_, S> {
         )
     }
 
-    /// Exact live row count of `relation`.
+    /// Exact cardinality of `relation` at this lease's snapshot — THE
+    /// public spelling for stored cardinality (one-representation PRD 40):
+    /// a structural read of the maintained counter (`StatKind::RowCount`,
+    /// folded transactionally at every commit since format 8, O(1) to
+    /// read, pinned equal to the scan count —
+    /// `row_count_equals_scan_count_after_mixed_commits`) — never a scan,
+    /// never an estimate, no allocation. The read runs inside the lease's
+    /// one `ReadTxn`, so `count` and [`ReadInstance::scan`] observe the
+    /// same snapshot by construction. A **closed** relation answers its
+    /// sealed extension length (virtual storage — the stored counter
+    /// never exists for it), the same arm as
+    /// [`crate::OwnedInstance::count`].
     ///
     /// # Errors
     ///
     /// `UnknownRelation`; `Corruption` on a malformed counter.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn row_count(&self, relation: RelationId) -> Result<u64> {
-        let Some(_) = self.core.schema.relation_checked(relation) else {
+    ///
+    /// # Panics
+    ///
+    /// Never: a sealed extension is schema data admitted at declaration —
+    /// its length always fits `u64`.
+    pub fn count(&self, relation: RelationId) -> Result<u64> {
+        let Some(rel) = self.core.schema.relation_checked(relation) else {
             return Err(DynIdError::UnknownRelation { relation }.into());
         };
-        let catalog = self.core.source.catalog();
-        crate::plan::selectivity::relation_rows_on(&catalog, self.core.schema.as_ref(), relation)
+        match rel.body().closed_rows() {
+            Some(rows) => Ok(u64::try_from(rows.len()).expect("bounded extension")),
+            None => self.core.source.catalog().row_count(relation),
+        }
     }
 
     /// Executes a prepared query with positional parameters into the

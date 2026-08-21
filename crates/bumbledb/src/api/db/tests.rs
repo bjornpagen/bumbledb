@@ -1074,7 +1074,7 @@ fn read_instance_prepares_executes_and_gets() {
         .expect("accepted");
 
     db.read(|instance| {
-        assert_eq!(instance.row_count(ENTRY)?, 1);
+        assert_eq!(instance.count(ENTRY)?, 1);
         assert_eq!(
             instance.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("ada".into())])?,
             Some(entry("ada", 10))
@@ -1086,6 +1086,58 @@ fn read_instance_prepares_executes_and_gets() {
         Ok(())
     })
     .expect("read");
+}
+
+/// The exact-count law on the store surface (one-representation PRD 40):
+/// after mixed inserts and deletes across commits, `count` equals the
+/// scan length in the SAME lease — the API twin of the storage pin
+/// (`storage/read/tests.rs::row_count_equals_scan_count_after_mixed_commits`).
+/// A closed relation answers its sealed extension length: the extension
+/// IS its rows (virtual storage — no stored counter exists to read).
+#[test]
+fn count_equals_scan_length_after_mixed_commits_and_reads_the_sealed_extension() {
+    let dir = TempDir::new("db-count");
+    let db = Db::create(dir.path(), entry_schema())
+        .expect("create")
+        .expect("accepted");
+    db.write(|tx| {
+        tx.insert_dyn(ENTRY, [&entry("a", 1), &entry("b", 2), &entry("c", 3)])
+            .map(|_| ())
+    })
+    .expect("seed")
+    .unwrap();
+    db.write(|tx| {
+        tx.delete_dyn(ENTRY, [&entry("b", 2)])?;
+        tx.insert_dyn(ENTRY, [&entry("d", 4)]).map(|_| ())
+    })
+    .expect("mixed commit")
+    .unwrap();
+    db.read(|instance| {
+        let mut scanned = 0u64;
+        for row in instance.scan(ENTRY)? {
+            row?;
+            scanned += 1;
+        }
+        assert_eq!(instance.count(ENTRY)?, scanned, "count is the scan length");
+        assert_eq!(scanned, 3);
+        Ok(())
+    })
+    .expect("read");
+
+    let closed_dir = TempDir::new("db-count-closed");
+    let closed = Db::create(closed_dir.path(), closed_schema())
+        .expect("create")
+        .expect("accepted");
+    closed
+        .read(|instance| {
+            assert_eq!(
+                instance.count(RelationId(0))?,
+                2,
+                "a closed relation's count IS its sealed extension length"
+            );
+            Ok(())
+        })
+        .expect("read");
 }
 
 fn mint_witness<S>(instance: &ReadInstance<'_, S>) -> Result<Witness<S>> {
