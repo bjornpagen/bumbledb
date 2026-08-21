@@ -29,6 +29,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Curves(args) => lanes::curves::run(args),
         cli::Cmd::Churn(args) => driver::cmd_churn(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
+        cli::Cmd::Primerlane(args) => bumbledb_bench::primerlane::run(args),
     }
 }
 

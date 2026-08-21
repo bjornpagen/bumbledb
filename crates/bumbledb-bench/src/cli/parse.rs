@@ -5,8 +5,8 @@ use crate::duralane::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
-    BenchArgs, ChurnArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, ScenarioArgs, StorageArgs,
-    SweepArgs, WritesArgs,
+    BenchArgs, ChurnArgs, Cmd, CorpusArgs, CurvesArgs, HeapArgs, PrimerlaneArgs, ScenarioArgs,
+    StorageArgs, SweepArgs, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -365,6 +365,43 @@ fn parse_heap(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Heap(args))
 }
 
+fn parse_primerlane(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = PrimerlaneArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--facts" => {
+                args.facts = parse_u64(&flag, tokens.value(&flag)?)?;
+                if args.facts == 0 {
+                    return Err(format!("`{flag}` rejects 0 — the lane measures facts"));
+                }
+            }
+            "--relations" => {
+                args.relations = parse_u32(&flag, tokens.value(&flag)?)?;
+                if args.relations < 2 {
+                    return Err(format!(
+                        "`{flag}` needs at least 2 — the containment chain and the \
+                         capacity statement need a parent and a child"
+                    ));
+                }
+            }
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--trace" => args.trace = true,
+            "--alloc" => args.alloc = true,
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("primerlane", &flag)),
+        }
+    }
+    if args.trace && args.alloc {
+        return Err(
+            "`primerlane` rejects `--trace` with `--alloc` — they are mutually exclusive passes (the obs doctrine)"
+                .to_owned(),
+        );
+    }
+    Ok(Cmd::Primerlane(args))
+}
+
 fn parse_churn(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = ChurnArgs::default();
     while let Some(flag) = tokens.next() {
@@ -420,6 +457,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "curves" => parse_curves(&mut tokens),
         "churn" => parse_churn(&mut tokens),
         "heap" => parse_heap(&mut tokens),
+        "primerlane" => parse_primerlane(&mut tokens),
         "merge" => {
             let mut dirs = Vec::new();
             while let Some(token) = tokens.next() {

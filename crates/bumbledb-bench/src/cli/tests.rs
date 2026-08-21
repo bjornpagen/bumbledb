@@ -339,6 +339,47 @@ fn heap_parses_the_lane_flags() {
 }
 
 #[test]
+fn primerlane_parses_the_lane_flags() {
+    let cmd = parse(&argv(&[
+        "primerlane",
+        "--facts",
+        "5000",
+        "--relations",
+        "6",
+        "--seed",
+        "2",
+        "--dir",
+        "/tmp/p",
+        "--trace",
+        "--out",
+        "artifacts",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Primerlane(PrimerlaneArgs {
+            facts: 5000,
+            relations: 6,
+            seed: 2,
+            dir: PathBuf::from("/tmp/p"),
+            trace: true,
+            alloc: false,
+            out: Some(PathBuf::from("artifacts")),
+        })
+    );
+    assert_eq!(
+        parse(&argv(&["primerlane"])),
+        Ok(Cmd::Primerlane(PrimerlaneArgs::default()))
+    );
+    let err = parse(&argv(&["primerlane", "--relations", "1"])).unwrap_err();
+    assert!(err.contains("at least 2"), "{err}");
+    let err = parse(&argv(&["primerlane", "--facts", "0"])).unwrap_err();
+    assert!(err.contains("rejects 0"), "{err}");
+    let err = parse(&argv(&["primerlane", "--trace", "--alloc"])).unwrap_err();
+    assert!(err.contains("mutually exclusive"), "{err}");
+}
+
+#[test]
 fn churn_parses_its_flags() {
     let cmd = parse(&argv(&[
         "churn",
@@ -534,6 +575,7 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["curves"],
         vec!["churn"],
         vec!["heap"],
+        vec!["primerlane"],
     ] {
         let cmd = parse(&argv(&tokens)).expect("parses");
         assert!(cmd.runs_measurements(), "{tokens:?} runs measurements");

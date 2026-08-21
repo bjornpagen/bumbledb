@@ -28,6 +28,9 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 churn    long-lived churn: degradation time series, both engines\n\
     \x20 heap     heap-arm ladder: frozen-vs-LMDB point reads, admission\n\
     \x20          A/I/R/F/J prefixes (report-class)\n\
+    \x20 primerlane  the Primer-shaped attribution lane: builder/delta\n\
+    \x20          write lanes + the scan read lane over the synthetic\n\
+    \x20          Primer corpus (report-class)\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -145,6 +148,17 @@ pub fn help() -> String {
          \x20 --prefixes a,b  posting-count admit prefixes\n\
          \x20                 (default 256,1024,4096,16384)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-heap)\n\
+         \n\
+         PRIMERLANE:\n\
+         \x20 --facts N       total generated facts    (default 200000)\n\
+         \x20 --relations N   ordinary relation count  (default 12, min 2)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --trace         one capture over the lanes: chrome+folded\n\
+         \x20                 artifacts + the component span fold (needs\n\
+         \x20                 obs; exclusive with --alloc)\n\
+         \x20 --alloc         per-phase alloc windows (needs obs)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-primerlane)\n\
          \n\
          SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
          \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\

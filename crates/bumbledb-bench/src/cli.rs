@@ -112,6 +112,10 @@ pub enum Cmd {
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
     /// $A,I,R,F,J$ (report-class).
     Heap(HeapArgs),
+    /// The Primer-shaped attribution lane: builder/delta write lanes +
+    /// the scan read lane over the synthetic Primer corpus
+    /// (report-class; proposals/one-representation/10-measurement.md).
+    Primerlane(PrimerlaneArgs),
 }
 
 impl Cmd {
@@ -135,7 +139,8 @@ impl Cmd {
             | Self::Writes(_)
             | Self::Curves(_)
             | Self::Churn(_)
-            | Self::Heap(_) => true,
+            | Self::Heap(_)
+            | Self::Primerlane(_) => true,
             Self::Help
             | Self::Queries
             | Self::Gen(_)
@@ -333,6 +338,40 @@ impl Default for ChurnArgs {
             vacuum_every: DEFAULT_VACUUM_EVERY,
             analyze_every: DEFAULT_ANALYZE_EVERY,
             runs: None,
+            out: None,
+        }
+    }
+}
+
+/// `primerlane`'s knobs ([`crate::primerlane`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrimerlaneArgs {
+    /// Total generated facts across the roster — the scale flag.
+    pub facts: u64,
+    /// Ordinary relation count (≥ 2 — the containment chain and the
+    /// capacity statement need a parent and a child).
+    pub relations: u32,
+    pub seed: u64,
+    /// Scratch root for the twin stores.
+    pub dir: PathBuf,
+    /// One capture over the lanes: chrome+folded artifacts plus the
+    /// component span fold (needs the obs build; a separate pass from
+    /// `--alloc` and mutually exclusive with it — the obs doctrine).
+    pub trace: bool,
+    /// Per-phase allocation windows (needs the obs build).
+    pub alloc: bool,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for PrimerlaneArgs {
+    fn default() -> Self {
+        Self {
+            facts: 200_000,
+            relations: 12,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            trace: false,
+            alloc: false,
             out: None,
         }
     }
