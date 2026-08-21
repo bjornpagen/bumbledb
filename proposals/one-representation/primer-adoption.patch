@@ -1,0 +1,358 @@
+primer-spec adoption of @bjornpagen/bumbledb 0.16.0 — the one-representation
+release (bumbledb proposals/one-representation/, deletion ledger entries
+D10/D11/D12; see primer-adoption.md alongside this file).
+
+Base commit: d4f1efd0c98b13f6fecb1b4e2c3f2143274a2009
+("Centralize every vendor model id in one seat registry.")
+
+Apply from the primer-spec root:
+
+    git apply primer-adoption.patch
+
+D10 — the packing shim dies: runtime.ts's columnBatch/loadColumns/
+loadBatchSize/isFactArray/isStringRecord/isCompleteColumnBatch and the
+local ColumnBatch/CollectionWrite column arm; the oracle backend's
+RelationColumnBatch/isRelationColumnBatch/loadColumns (renamed to `load`,
+rows judged by the same isRelationFacts law as every other load); the
+normalization witness writer's column buffers and 16_384 batch capacity.
+The admit load becomes the plain nativeBuilder.load(relation, facts).
+D11 — countRelations reads the engine's maintained exact count:
+counts[name] = instance.count(relation), bigint, one lease, no scan.
+D12 — vacuous at this commit: primer-spec carries no @ts-expect-error,
+@ts-ignore, or biome-ignore anywhere in src/, scripts/, or packages/.
+
+diff --git a/package.json b/package.json
+index 607fc4981df8..7cd5a4af99ec 100644
+--- a/package.json
++++ b/package.json
+@@ -26,7 +26,7 @@
+ 	"dependencies": {
+ 		"@ai-sdk/deepseek": "^3.0.30",
+ 		"@anthropic-ai/sdk": "0.78.0",
+-		"@bjornpagen/bumbledb": "0.15.0",
++		"@bjornpagen/bumbledb": "0.16.0",
+ 		"@effect/platform-node": "4.0.0-rc.111",
+ 		"@google/genai": "2.18.0",
+ 		"@lancedb/lancedb": "0.37.1",
+diff --git a/src/oracle/bumbledb/backend.ts b/src/oracle/bumbledb/backend.ts
+index 5ebab86d9076..70fb042a2b9a 100644
+--- a/src/oracle/bumbledb/backend.ts
++++ b/src/oracle/bumbledb/backend.ts
+@@ -68,10 +68,6 @@ type OracleValue =
+ export type OracleRow = Readonly<Record<string, OracleValue>>
+ export type OracleWorkspace = Readonly<Record<string, readonly object[]>>
+ 
+-type RelationColumnBatch<R extends AnyRelation> = {
+-	readonly [Name in keyof Fact<R> & string]: readonly Fact<R>[Name][]
+-}
+-
+ export interface OracleQueryObservation {
+ 	readonly name: string
+ 	readonly lawName: string
+@@ -1070,29 +1066,6 @@ const rowsFor = (
+ 	return rows
+ }
+ 
+-const isRelationColumnBatch = (
+-	columns: Readonly<Record<string, readonly unknown[]>>,
+-	named: NamedRelation,
+-	symbols: Symbols
+-): columns is RelationColumnBatch<typeof named.handle> => {
+-	const names = Object.keys(columns)
+-	const heading = named.declaration.heading
+-	const first = heading[0]
+-	const rowCount = first === undefined ? 0 : columns[first.name]?.length
+-	return (
+-		rowCount !== undefined &&
+-		names.length === heading.length &&
+-		heading.every((attribute) => {
+-			const column = columns[attribute.name]
+-			return (
+-				column !== undefined &&
+-				column.length === rowCount &&
+-				column.every((value) => isAttributeValue(value, attribute, symbols))
+-			)
+-		})
+-	)
+-}
+-
+ const execute = (
+ 	instance: object,
+ 	compiled: CompiledQuery,
+@@ -1139,10 +1112,10 @@ export interface BumbledbOracleBackend {
+ 		builder: BumbledbCollectionBuilder<SchemaRelations>,
+ 		workspace: OracleWorkspace
+ 	) => void
+-	readonly loadColumns: (
++	readonly load: (
+ 		builder: BumbledbCollectionBuilder<SchemaRelations>,
+ 		relationIdentity: string,
+-		columns: Readonly<Record<string, readonly unknown[]>>
++		rows: readonly OracleRow[]
+ 	) => void
+ 	readonly constructStrictWorkspace: (
+ 		carrier: OracleWorkspace,
+@@ -1201,15 +1174,15 @@ export const compileBumbledbOracle = (
+ 		loadCarrier: (builder, workspace) => loadRelations(builder, workspace, baseRelations, symbols),
+ 		loadMaterialized: (builder, workspace) => loadRelations(builder, workspace, relations, symbols),
+ 		loadStrict: (builder, workspace) => loadRelations(builder, workspace, relations, symbols),
+-		loadColumns: (builder, identity, columns) => {
++		load: (builder, identity, rows) => {
+ 			const named = symbols.relations.get(identity)
+ 			if (named === undefined) {
+ 				throw new TypeError(`Unknown Oracle relation ${identity}`)
+ 			}
+-			if (!isRelationColumnBatch(columns, named, symbols)) {
+-				throw new TypeError(`Column batch for ${identity} violates its declared heading`)
++			if (!isRelationFacts(rows, named, symbols)) {
++				throw new TypeError(`Rows for ${identity} violate their declared heading`)
+ 			}
+-			builder.load(named.handle, columns)
++			builder.load(named.handle, rows)
+ 		},
+ 		constructStrictWorkspace: (carrier, derived) =>
+ 			record(
+diff --git a/src/stages/normalization/witness.ts b/src/stages/normalization/witness.ts
+index 818e645133a8..932d74bcfb13 100644
+--- a/src/stages/normalization/witness.ts
++++ b/src/stages/normalization/witness.ts
+@@ -32,96 +32,48 @@ export const normalizationWitnessRows = (
+ 	})
+ }
+ 
+-const batchCapacity = 16_384
+-
+ export class NormalizationWitnessWriter {
+ 	readonly #builder: BumbledbCollectionBuilder<SchemaRelations>
+-	#inputs: bigint[] = []
+-	#requiredInputs: bigint[] = []
+-	#outputs: bigint[] = []
+-	#directOutputs: bigint[] = []
+-	#witnessOutputs: bigint[] = []
+-	#witnessInputs: bigint[] = []
++	#inputs: { readonly input: bigint }[] = []
++	#requiredInputs: { readonly input: bigint }[] = []
++	#outputs: { readonly output: bigint }[] = []
++	#directOutputs: { readonly output: bigint }[] = []
++	#witnesses: { readonly output: bigint; readonly input: bigint }[] = []
+ 
+ 	constructor(builder: BumbledbCollectionBuilder<SchemaRelations>) {
+ 		this.#builder = builder
+ 	}
+ 
+ 	input(reference: number, required: boolean): void {
+-		const value = BigInt(reference)
+-		this.#inputs.push(value)
++		const fact = { input: BigInt(reference) }
++		this.#inputs.push(fact)
+ 		if (required) {
+-			this.#requiredInputs.push(value)
+-		}
+-		if (this.#inputs.length >= batchCapacity) {
+-			this.#flushInputs()
++			this.#requiredInputs.push(fact)
+ 		}
+ 	}
+ 
+ 	output(reference: number, direct: boolean): void {
+-		const value = BigInt(reference)
+-		this.#outputs.push(value)
++		const fact = { output: BigInt(reference) }
++		this.#outputs.push(fact)
+ 		if (direct) {
+-			this.#directOutputs.push(value)
+-		}
+-		if (this.#outputs.length >= batchCapacity) {
+-			this.#flushOutputs()
++			this.#directOutputs.push(fact)
+ 		}
+ 	}
+ 
+ 	witness(output: number, input: number): void {
+-		this.#witnessOutputs.push(BigInt(output))
+-		this.#witnessInputs.push(BigInt(input))
+-		if (this.#witnessOutputs.length >= batchCapacity) {
+-			this.#flushWitnesses()
+-		}
++		this.#witnesses.push({ output: BigInt(output), input: BigInt(input) })
+ 	}
+ 
+ 	close(): void {
+-		this.#flushInputs()
+-		this.#flushOutputs()
+-		this.#flushWitnesses()
+-	}
+-
+-	#flushInputs(): void {
+-		if (this.#inputs.length > 0) {
+-			normalizationWitnessOracle.loadColumns(this.#builder, InputFact, {
+-				input: this.#inputs
+-			})
+-			this.#inputs = []
+-		}
+-		if (this.#requiredInputs.length > 0) {
+-			normalizationWitnessOracle.loadColumns(this.#builder, MustBeMappedInput, {
+-				input: this.#requiredInputs
+-			})
+-			this.#requiredInputs = []
+-		}
+-	}
+-
+-	#flushOutputs(): void {
+-		if (this.#outputs.length > 0) {
+-			normalizationWitnessOracle.loadColumns(this.#builder, OutputFact, {
+-				output: this.#outputs
+-			})
+-			this.#outputs = []
+-		}
+-		if (this.#directOutputs.length > 0) {
+-			normalizationWitnessOracle.loadColumns(this.#builder, DirectOutput, {
+-				output: this.#directOutputs
+-			})
+-			this.#directOutputs = []
+-		}
+-	}
+-
+-	#flushWitnesses(): void {
+-		if (this.#witnessOutputs.length === 0) {
+-			return
+-		}
+-		normalizationWitnessOracle.loadColumns(this.#builder, Witness, {
+-			output: this.#witnessOutputs,
+-			input: this.#witnessInputs
+-		})
+-		this.#witnessOutputs = []
+-		this.#witnessInputs = []
++		normalizationWitnessOracle.load(this.#builder, InputFact, this.#inputs)
++		normalizationWitnessOracle.load(this.#builder, MustBeMappedInput, this.#requiredInputs)
++		normalizationWitnessOracle.load(this.#builder, OutputFact, this.#outputs)
++		normalizationWitnessOracle.load(this.#builder, DirectOutput, this.#directOutputs)
++		normalizationWitnessOracle.load(this.#builder, Witness, this.#witnesses)
++		this.#inputs = []
++		this.#requiredInputs = []
++		this.#outputs = []
++		this.#directOutputs = []
++		this.#witnesses = []
+ 	}
+ }
+diff --git a/src/storage/bumbledb/runtime.ts b/src/storage/bumbledb/runtime.ts
+index 16bbf56a48f3..bdecb8a78f5d 100644
+--- a/src/storage/bumbledb/runtime.ts
++++ b/src/storage/bumbledb/runtime.ts
+@@ -4,7 +4,6 @@ import {
+ 	lower,
+ 	lowerQuery,
+ 	type Admission,
+-	type AnyRelation,
+ 	type Fact,
+ 	type MemberRelation,
+ 	type MutationReport,
+@@ -36,12 +35,6 @@ export class BumbledbFailure extends Data.TaggedError("BumbledbFailure")<{
+ }> {}
+ 
+ type Database<Rels extends SchemaRelations> = Awaited<ReturnType<typeof Db.open<Rels>>>
+-type ColumnBatch<R extends AnyRelation> = {
+-	readonly [K in keyof Fact<R> & string]: readonly Fact<R>[K][]
+-}
+-type CollectionWrite<R extends AnyRelation> = readonly Fact<R>[] | ColumnBatch<R>
+-
+-const loadBatchSize = 16_384
+ 
+ const storeValue = Symbol("BumbledbStore")
+ const storeTheory = Symbol("BumbledbStoreTheory")
+@@ -74,73 +67,10 @@ interface BumbledbPrepared<Rels extends SchemaRelations, Row, Params extends Par
+ interface BumbledbCollectionBuilder<Rels extends SchemaRelations> {
+ 	readonly load: <R extends MemberRelation<Rels>>(
+ 		relation: R,
+-		facts: CollectionWrite<R>
++		facts: Iterable<Fact<R>>
+ 	) => MutationReport
+ }
+ 
+-const isFactArray = <R extends AnyRelation>(
+-	facts: CollectionWrite<R>
+-): facts is readonly Fact<R>[] => Array.isArray(facts)
+-
+-const isStringRecord = (value: object): value is Readonly<Record<string, unknown>> =>
+-	typeof value === "object" || typeof value === "function"
+-
+-const isCompleteColumnBatch = <R extends AnyRelation>(
+-	relation: R,
+-	columns: Record<string, unknown[]>,
+-	rowCount: number
+-): columns is Record<string, unknown[]> & ColumnBatch<R> =>
+-	relation.data.fields.every((field) => columns[field.name]?.length === rowCount)
+-
+-const columnBatch = <R extends AnyRelation>(
+-	relation: R,
+-	facts: readonly Fact<R>[],
+-	start: number,
+-	end: number
+-): ColumnBatch<R> => {
+-	const columns: Record<string, unknown[]> = {}
+-	for (const field of relation.data.fields) {
+-		Object.defineProperty(columns, field.name, { value: [], enumerable: true })
+-	}
+-	for (let index = start; index < end; index += 1) {
+-		const fact = facts[index]
+-		if (fact === undefined || !isStringRecord(fact)) {
+-			throw new TypeError(`Missing fact ${index.toString()} for relation ${relation.name}`)
+-		}
+-		for (const field of relation.data.fields) {
+-			const column = columns[field.name]
+-			const value = fact[field.name]
+-			if (column === undefined || value === undefined) {
+-				throw new TypeError(
+-					`Fact ${index.toString()} for relation ${relation.name} is missing ${field.name}`
+-				)
+-			}
+-			column.push(value)
+-		}
+-	}
+-	if (!isCompleteColumnBatch(relation, columns, end - start)) {
+-		throw new TypeError(`Column batch construction failed for relation ${relation.name}`)
+-	}
+-	return columns
+-}
+-
+-const loadColumns = <R extends AnyRelation>(
+-	relation: R,
+-	facts: readonly Fact<R>[],
+-	load: (batch: ColumnBatch<R>) => MutationReport
+-): MutationReport => {
+-	let submitted = 0n
+-	let changed = 0n
+-	for (let start = 0; start < facts.length; start += loadBatchSize) {
+-		const report = load(
+-			columnBatch(relation, facts, start, Math.min(start + loadBatchSize, facts.length))
+-		)
+-		submitted += report.submitted
+-		changed += report.changed
+-	}
+-	return { submitted, changed }
+-}
+-
+ const wrapStore = <Rels extends SchemaRelations>(
+ 	database: Database<Rels>,
+ 	theory: Schema<Rels>
+@@ -229,7 +159,7 @@ const countRelations = <
+ 			return database.read((instance) => {
+ 				const counts: Record<string, bigint> = {}
+ 				for (const [name, relation] of Object.entries(relations)) {
+-					counts[name] = BigInt(instance.scan(relation).length)
++					counts[name] = instance.count(relation)
+ 				}
+ 				return counts
+ 			})
+@@ -253,10 +183,7 @@ const admitOwned = <Rels extends SchemaRelations>(
+ 			Effect.tryPromise({
+ 				try: async () => {
+ 					load({
+-						load: (relation, facts) =>
+-							isFactArray(facts)
+-								? loadColumns(relation, facts, (batch) => nativeBuilder.load(relation, batch))
+-								: nativeBuilder.load(relation, facts)
++						load: (relation, facts) => nativeBuilder.load(relation, facts)
+ 					})
+ 					const admission = await nativeBuilder.admit()
+ 					return admission.tag === "accepted"
