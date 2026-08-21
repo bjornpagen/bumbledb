@@ -76,18 +76,19 @@ pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
 
 /// The storage-front forward probe: blake3 here, then [`lookup_by_hash`].
 /// Readers: the string front above; the sweeper's committed-only
-/// selection encoding. (The delta's intern path hashes for its
-/// committed-hit memo first and enters at [`lookup_by_hash`] directly.)
+/// selection encoding; [`LmdbReadCatalog::dict_lookup`], the polymorphic
+/// catalog surface's raw-bytes spelling. (The delta's intern path hashes
+/// for its committed-hit memo first and enters at [`lookup_by_hash`]
+/// directly.)
 pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
     lookup_by_hash(txn, blake3::hash(raw).as_bytes())
 }
 
-/// Forward lookup with the blake3 already in hand — the committed-probe
-/// arm of `WriteDelta::resolve`, whose memo key IS the forward hash, so
-/// the one hash the memo computed pays for the LMDB get too. The get and
-/// decode are [`LmdbReadCatalog::dict_lookup`]'s, hash-first: the catalog
-/// method stays the raw-bytes spelling for the polymorphic catalog
-/// surface.
+/// THE forward get: one LMDB get plus one stored-id decode, with the
+/// blake3 already in hand — the committed-probe arm of
+/// `WriteDelta::resolve`, whose memo key IS the forward hash, so the one
+/// hash the memo computed pays for the LMDB get too; every raw-bytes
+/// caller enters through [`lookup`].
 pub(crate) fn lookup_by_hash(txn: &ReadTxn<'_>, hash: &[u8; 32]) -> Result<Option<InternId>> {
     match txn
         .env()

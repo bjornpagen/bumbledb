@@ -27,20 +27,16 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
 
     /// Dictionary lookup against this catalog's transaction. The handle
     /// is `Copy`; the answer is owned, so a temporary catalog is fine.
+    /// One forward-get implementation in the tree: this raw-bytes
+    /// spelling hashes and delegates to the storage front
+    /// ([`crate::storage::dict::lookup`] → `lookup_by_hash`, the get and
+    /// decode every forward probe shares).
     #[allow(
         clippy::trivially_copy_pass_by_ref,
         reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
     )]
     pub(crate) fn dict_lookup(&self, raw: &[u8]) -> Result<Option<InternId>> {
-        match self
-            .txn
-            .env()
-            .dict()
-            .get(self.txn.raw(), &crate::storage::dict::forward_key(raw))?
-        {
-            None => Ok(None),
-            Some(bytes) => crate::storage::dict::intern_id_from_stored(bytes).map(Some),
-        }
+        crate::storage::dict::lookup(self.txn, raw)
     }
 
     /// Reverse resolve. Lifetime is the catalog's transaction, not the
