@@ -40,7 +40,7 @@ import { decodeAnswers, wireParams } from "#query/run.ts"
 import { type ParamsRecord, v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained } from "#statements.ts"
+import { contained, key } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -361,10 +361,16 @@ describe("ψ query atoms over closed relations", function suite() {
 		// A construction-only theory (never opened): the containment puts
 		// Course.level and Grade.rank in ONE generator-less class — a
 		// payload column of a closed vocabulary is class-typed by the laws
-		// exactly like an ordinary column (the option-2 dividend).
+		// exactly like an ordinary column (the option-2 dividend). The
+		// closed side is the SOURCE (a closed target is addressed by its
+		// synthetic id only — the target-key wall), and the keyed ordinary
+		// face is the target the containment resolves.
 		const Grade = closed("Grade", { rank: u64 }, { Failed: { rank: 1n }, Passed: { rank: 2n } })
 		const Course = relation("Course", { id: u64.fresh, level: u64 })
-		const Rubric = schema("Rubric", { Grade, Course }, [contained(on(Course, "level"), on(Grade, "rank"))])
+		const Rubric = schema("Rubric", { Grade, Course }, [
+			key(Course, ["level"]),
+			contained(on(Grade, "rank"), on(Course, "level"))
+		])
 		type PayloadClassPin = Expect<
 			Equal<(typeof Rubric)["classes"]["Grade"]["rank"], (typeof Rubric)["classes"]["Course"]["level"]>
 		>

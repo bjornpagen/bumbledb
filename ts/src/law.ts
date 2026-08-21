@@ -29,7 +29,11 @@
  * named, self-locating {@link ClassWall}: which generator coordinates
  * collided, through which paired slots) with a construction-time runtime
  * twin (`computeClasses` throws with the same content, naming the exact
- * statement).
+ * statement). The TARGET-KEY WALL ({@link TargetKeyWall},
+ * 60-containment-parity) rides the same constraint seam: a containment/
+ * mirrors/capacity target projection that resolves no key of its relation
+ * is the same kind of schema-level compile error, with `schema()`'s
+ * `verifyTargetKeys` as its authoritative runtime twin.
  *
  * Every paired face of the statement tuple unions its positionwise field
  * slots: containment (ψ-selected targets included — a selection changes
@@ -256,16 +260,145 @@ type WallScan<Comps extends readonly string[], Gens extends string, Pairs extend
 		: WallScan<T, Gens, Pairs>
 	: unknown
 
+// ————————————————————————————————————————————————————————————————————————
+// The target-key wall, type tier (60-containment-parity).
+// ————————————————————————————————————————————————————————————————————————
+
+/** Set equality of two string-literal unions: mutual subset (duplicate-safe — a union already dedupes). */
+type SetEq<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+
+/** One declared `key()` read off the tuple: owner name, projection field set (as a union). */
+type KeyEntry = readonly [string, string]
+
 /**
- * The one-generator-per-class law as a constraint: resolves to `unknown`
+ * Every declared `key()` of a statements tuple as {@link KeyEntry} rows —
+ * the declared half of the target-key roster (the implied half is read off
+ * each target face's own relation value: fresh marks, closed ids). A
+ * widened key owner contributes nothing; a widened key PROJECTION rides
+ * through as `string` and {@link DeclaredKeyMatch} treats it as
+ * unjudgeable — degrade silent, never a false wall.
+ */
+type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly KeyEntry[] = []> = Stmts extends readonly [
+	infer H extends Statement,
+	...infer T extends readonly Statement[]
+]
+	? H["data"] extends {
+			readonly kind: "key"
+			readonly owner: infer O extends AnyRelation
+			readonly projection: infer P extends readonly string[]
+		}
+		? string extends O["name"]
+			? DeclaredKeysOf<T, Acc>
+			: DeclaredKeysOf<T, readonly [...Acc, readonly [O["name"], P[number]]]>
+		: DeclaredKeysOf<T, Acc>
+	: Acc
+
+/**
+ * The named, self-locating compile verdict of the target-key wall: the
+ * target relation whose projection resolves no key, and the projection's
+ * field set. Intersected into `schema()`'s statements parameter exactly as
+ * {@link ClassWall}; the runtime twin (`schema.ts`'s `verifyTargetKeys`)
+ * throws the same judgment naming the exact statement, and stays
+ * authoritative — this tier degrades to silent on any widened shape.
+ */
+interface TargetKeyWall<Target extends string, Projection extends string> {
+	readonly "schema target-key wall — a containment/mirrors/capacity target projection matches no key of the target relation (declare the key() it resolves, or project an existing one)": {
+		readonly target: Target
+		readonly projection: Projection
+	}
+}
+
+/** Whether the projection set matches some declared key of relation `N` — `true`, or the wall. */
+type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly KeyEntry[]> = Keys extends readonly [
+	infer H extends KeyEntry,
+	...infer T extends readonly KeyEntry[]
+]
+	? SetEq<H[0], N> extends true
+		? string extends H[1]
+			? true
+			: SetEq<PU, H[1]> extends true
+				? true
+				: DeclaredKeyMatch<N, PU, T>
+		: DeclaredKeyMatch<N, PU, T>
+	: TargetKeyWall<N, PU>
+
+/**
+ * Whether the projection set is exactly one fresh-implied key of the
+ * ordinary owner `O` — every fresh field implies the singleton key
+ * `R(field) -> R`, so the match is: a single (non-union) literal inside
+ * the fresh-name union.
+ */
+type FreshKeyMatch<PU extends string, O extends AnyRelation> = [PU] extends [FreshFieldNames<RelationFields<O>>]
+	? true extends IsMulti<PU>
+		? false
+		: true
+	: false
+
+/**
+ * One target face's judgment: silent on any widened shape (owner name or
+ * projection no longer literal — the value tier stays authoritative);
+ * closed owner ⇒ the projection set is exactly the synthetic `id` (the
+ * engine's `ClosedTargetNotHandle` rule — closedness, not key absence);
+ * ordinary owner ⇒ a fresh-implied singleton or a declared `key()`
+ * set-match (the engine's `matching_functionality` — permutations
+ * resolve, subsets/supersets refuse).
+ */
+type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = string extends F["owner"]["name"]
+	? true
+	: string extends F["projection"][number]
+		? true
+		: F["owner"] extends AnyClosed
+			? SetEq<F["projection"][number], "id"> extends true
+				? true
+				: TargetKeyWall<F["owner"]["name"], F["projection"][number]>
+			: F["owner"] extends AnyRelation
+				? FreshKeyMatch<F["projection"][number], F["owner"]> extends true
+					? true
+					: DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
+				: true
+
+/**
+ * One statement's judgment: two-faced statements judge their WRITTEN
+ * target face; a `key()` judges nothing. The type of a `contained()` and
+ * a `mirrors()` value is one shape (`ContainedStatement` carries the
+ * containment|mirrors data union), so a mirrors' REVERSE orientation is
+ * not statically distinguishable from a plain containment's source —
+ * judging it would fire false walls on lawful containments. The reverse
+ * face is the value tier's (best effort degrades; the runtime twin judges
+ * both orientations, always).
+ */
+type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St["data"] extends {
+	readonly source: FaceData
+	readonly target: infer Tg extends FaceData
+}
+	? JudgeTargetFace<Tg, Keys>
+	: true
+
+/** Folds the judgment over the tuple: `unknown` (lawful/unjudgeable) or the first {@link TargetKeyWall}. */
+type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly KeyEntry[]> = Stmts extends readonly [
+	infer H extends Statement,
+	...infer T extends readonly Statement[]
+]
+	? [JudgeStatement<H, Keys>] extends [true]
+		? TargetKeyScan<T, Keys>
+		: JudgeStatement<H, Keys>
+	: unknown
+
+/**
+ * The schema-level statement laws as one constraint: resolves to `unknown`
  * (a no-op intersection into the statements parameter) when the statement
- * list is lawful, and to the named {@link ClassWall} otherwise.
+ * list is lawful, to the named {@link ClassWall} on a two-generator class,
+ * and to the named {@link TargetKeyWall} on a containment target that
+ * resolves no key (60-containment-parity, type tier). Both walls degrade
+ * to silent on a widened `Statement[]`; their runtime twins are
+ * authoritative.
  */
 type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = WallScan<
 	BuildComps<PairsOf<Stmts>>,
 	GeneratorsOf<Rels>,
 	PairsOf<Stmts>
->
+> &
+	TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>>
 
 /**
  * One coordinate's class per the three laws, at the TYPE tier: its
@@ -517,5 +650,14 @@ function classesComplete<Classes extends SchemaClasses>(
 	})
 }
 
-export type { ClassesOf, ClassLookup, ClassRecordOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses }
+export type {
+	ClassesOf,
+	ClassLookup,
+	ClassRecordOf,
+	ClassWall,
+	LawfulStatements,
+	RelationClasses,
+	SchemaClasses,
+	TargetKeyWall
+}
 export { classesComplete, computeClasses }

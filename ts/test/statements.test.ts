@@ -120,7 +120,7 @@ function buildSeverity() {
 		}
 	)
 	const Limit = relation("Limit", { level: u64, cap: u64 })
-	const statements = [contained(on(Sev, "level"), on(Limit, "level"))]
+	const statements = [key(Limit, ["level"]), contained(on(Sev, "level"), on(Limit, "level"))]
 	const Severity = schema("Severity", { Sev, Limit }, statements)
 	return { Sev, Limit, statements, Severity }
 }
@@ -247,6 +247,7 @@ describe("the Ledger example", function describeLedger() {
 				}
 			],
 			statements: [
+				{ kind: "fd", relation: "Limit", projection: ["level"] },
 				{
 					kind: "containment",
 					source: { relation: "Sev", projection: ["level"], selection: [] },
@@ -644,7 +645,10 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	test("the paste-back law: a handle selection needs its resolving containment declared", function probePasteBack() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
 		assert.throws(function unresolvedHandleSelection() {
+			// The key keeps the mirrors target lawful under the target-key
+			// wall, so exactly the paste-back law is the broken thing.
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
+				key(SavingsTerms, ["account"]),
 				mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 			])
 		}, /no declared containment resolves the closed reference/)

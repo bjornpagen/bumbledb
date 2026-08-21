@@ -3,9 +3,13 @@
  * data (`#spec.ts`), which the napi bridge marshals verbatim. Lowering is
  * TOTAL on well-typed inputs — no validation lives here beyond what the
  * types and the construction boundaries already guarantee — and it is the
- * only place statement internals are read for the wire. Ordering is
- * declaration order throughout, and every output object is built with one
- * fixed key order, so serialization is deterministic (byte-stable).
+ * only place statement internals are read for the wire. In particular,
+ * lowering never emits an engine-refused containment target: it accepts
+ * only `schema()` outputs, and `schema()`'s target-key wall already
+ * refused any non-key target projection (60-containment-parity —
+ * totality INHERITED, not re-checked). Ordering is declaration order
+ * throughout, and every output object is built with one fixed key order,
+ * so serialization is deterministic (byte-stable).
  */
 
 import * as errors from "@superbuilders/errors"

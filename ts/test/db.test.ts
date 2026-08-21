@@ -113,15 +113,40 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal(db.schema, Ledger)
 	})
 
+	test("a non-key containment target refuses at schema() assembly, in names — the value-tier target-key wall", function targetKeyWall() {
+		/**
+		 * Formerly the two-boundary split's gap: domains pair structurally
+		 * (rate and score are both unlabeled i64, so this containment
+		 * COMPILES), and the old boundary let it through to the ENGINE's
+		 * refusal at create, in id-speak. The target-key wall
+		 * (60-containment-parity) now judges the same rule at schema()
+		 * assembly — Audit(score) keys nothing, and the refusal names it.
+		 */
+		assert.throws(function badSchema() {
+			// @ts-expect-error — the TargetKeyWall verdict: Audit(score) resolves no key of Audit (the type tier of the same wall)
+			schema("Broken", { SavingsTerms, Audit }, [contained(on(SavingsTerms, "rate"), on(Audit, "score"))])
+		}, /schema Broken: SavingsTerms\(rate\) <= Audit\(score\): target projection \(score\) matches no declared key of Audit — available keys: \(id\)/)
+	})
+
 	test("create surfaces the engine's schemaError with the message intact", async function schemaError() {
 		/**
-		 * The two-boundary split: domains pair structurally (rate and score are
-		 * both unlabeled i64, so this containment COMPILES), but whether the
-		 * target face resolves a declared key of its relation is a property of
-		 * the whole statement set no face type can see — Audit(score) keys
-		 * nothing, and the ENGINE's schema judgment refuses it at create.
+		 * The engine stays the final authority for the laws the SDK does not
+		 * judge (the target-key rule moved to schema(); key-INTERNAL legality
+		 * did not): eight bytes<64> positions make a 512-byte determinant,
+		 * past the engine's 496-byte key ceiling — accepted by every SDK
+		 * wall, refused by the engine's typed SchemaError at create.
 		 */
-		const Broken = schema("Broken", { SavingsTerms, Audit }, [contained(on(SavingsTerms, "rate"), on(Audit, "score"))])
+		const Wide = relation("Wide", {
+			b0: bytes(64),
+			b1: bytes(64),
+			b2: bytes(64),
+			b3: bytes(64),
+			b4: bytes(64),
+			b5: bytes(64),
+			b6: bytes(64),
+			b7: bytes(64)
+		})
+		const Broken = schema("Broken", { Wide }, [key(Wide, ["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])])
 		await assert.rejects(
 			async function badCreate() {
 				await Db.create(path.join(tmpRoot, "broken"), Broken)

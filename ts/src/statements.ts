@@ -25,13 +25,16 @@
  * statements themselves are what define the equivalence classes, and the
  * domain wall lives where they aggregate — `schema()` (the
  * one-generator-per-class law) and query joins (class names off the schema
- * type). What is only a SEMANTIC property — the target side of a
- * containment resolving a declared key of its relation — is DELIBERATELY
- * not (and cannot be) stated here: whether `B(y)` is a key of `B` depends
- * on which `key()` statements the surrounding `schema()` collects, a set no
- * face type can see; it stays the engine's typed `SchemaError` judgment at
- * `Db.create`/`Db.open` (the two-boundary split, engine as final
- * authority).
+ * type). The target side of a containment resolving a key of its relation
+ * is likewise a property of the whole statement set — whether `B(y)` is a
+ * key of `B` depends on which `key()` statements the surrounding
+ * `schema()` collects, a set no face type can see — so it is judged where
+ * the statements aggregate: the two-tier target-key wall
+ * (60-containment-parity) — `law.ts`'s `TargetKeyWall` at the type tier
+ * (best effort, statically known tuples) and `schema()`'s
+ * `verifyTargetKeys` at the value tier (authoritative, the engine's exact
+ * rule) — with the engine's `SchemaError` at `Db.create`/`Db.open` as the
+ * final authority for every caller that never passes through this SDK.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -241,9 +244,11 @@ function key<
  * between the two faces is a type error ({@link SameArity}); a structurally
  * mismatched pair is a type error ({@link SameShapes} — positionwise
  * equality of the projected kind/width/element triples). The target side
- * must resolve a declared key of B — a SEMANTIC property of the whole
- * statement set that no face type can state, DELIBERATELY judged by the
- * engine at `Db.create`/`Db.open` (`SchemaError`), never re-checked here.
+ * must resolve a declared key of B — a property of the whole statement
+ * set that no face type can state, so it is judged where the statements
+ * aggregate: `schema()`'s target-key wall (both tiers,
+ * 60-containment-parity), with the engine's `SchemaError` at
+ * `Db.create`/`Db.open` as the final authority.
  */
 function contained<A extends AnyFace, B extends AnyFace>(
 	source: A,

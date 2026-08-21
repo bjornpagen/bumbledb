@@ -39,7 +39,7 @@ import type { ClassWall, LawfulStatements } from "#law.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { capacity, contained, mirrors, renderStatement } from "#statements.ts"
+import { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -53,6 +53,7 @@ describe("the three class laws", function laws() {
 		const A = relation("A", { x: Vocab.id, note: str })
 		const B = relation("B", { y: Vocab.id })
 		const Chain = schema("Chain", { Vocab, A, B }, [
+			key(B, ["y"]),
 			contained(on(A, "x"), on(B, "y")),
 			contained(on(B, "y"), on(Vocab, "id"))
 		])
@@ -81,7 +82,11 @@ describe("the three class laws", function laws() {
 		// so a type-level least-member pick would drift), the runtime name a
 		// member of it by construction, both slots the identical set (the
 		// join judgment is the same at both tiers).
-		const Pairing = schema("Pairing", { Second, First }, [mirrors(on(First, "a"), on(Second, "b"))])
+		const Pairing = schema("Pairing", { Second, First }, [
+			key(First, ["a"]),
+			key(Second, ["b"]),
+			mirrors(on(First, "a"), on(Second, "b"))
+		])
 		const probeFirst: Equal<(typeof Pairing)["classes"]["First"]["a"], "First.a" | "Second.b"> = true
 		const probeSecond: Equal<(typeof Pairing)["classes"]["Second"]["b"], "First.a" | "Second.b"> = true
 		const probeSameClass: Equal<(typeof Pairing)["classes"]["First"]["a"], (typeof Pairing)["classes"]["Second"]["b"]> =
@@ -114,6 +119,7 @@ describe("the three class laws", function laws() {
 		const Booking = relation("Booking", { id: u64.fresh, room: u64 })
 		const CalendarEntry = relation("CalendarEntry", { booking: u64, label: str })
 		const Calendar = schema("Calendar", { Booking, CalendarEntry }, [
+			key(CalendarEntry, ["booking"]),
 			mirrors(on(CalendarEntry.where({ label: "hold" }), "booking"), on(Booking, "id"))
 		])
 		// Pinned exactly: the σ-selected SOURCE column lands in the TARGET's
@@ -199,6 +205,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 		const Account = relation("Account", { id: u64.fresh, holder: u64, kind: Vocab.id, note: str })
 		const Terms = relation("Terms", { account: u64 })
 		return schema("Agreement", { Vocab, Holder, Account, Terms }, [
+			key(Terms, ["account"]),
 			contained(on(Account, "holder"), on(Holder, "id")),
 			contained(on(Account, "kind"), on(Vocab, "id")),
 			mirrors(on(Account, "id"), on(Terms, "account")),
@@ -229,6 +236,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 	test("the manifest golden: statements in == statements out — nothing synthesized, order preserved, count equal", function manifestGolden() {
 		const fixture = buildFixture()
 		const written = [
+			"Terms(account) -> Terms",
 			"Account(holder) <= Holder(id)",
 			"Account(kind) <= Vocab(id)",
 			"Account(id) == Terms(account)",

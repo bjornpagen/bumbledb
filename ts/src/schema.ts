@@ -1,12 +1,18 @@
 /**
  * `schema()` — assembles relations and statements into a theory value (the
  * `Theory` analog; what `Db.create`/`Db.open` take). Construction-time
- * validation is the macro-EXPANSION-boundary analog and nothing more:
- * membership, implied-key duplicates, duplicate statements, and a
- * belt-and-braces handle re-verification. Everything semantically deeper
- * (containment targets resolving declared keys, fresh-on-u64, …) is
- * DELIBERATELY left to the engine's `SchemaError` at `Db.create` — the
- * same judge, the same two-boundary split as Rust.
+ * validation is the macro-EXPANSION-boundary analog: membership,
+ * implied-key duplicates, duplicate statements, a belt-and-braces handle
+ * re-verification — and the TARGET-KEY WALL ({@link verifyTargetKeys}),
+ * the value tier of the two-tier containment law
+ * (60-containment-parity): every containment/mirrors/capacity target
+ * projection must set-match a key of its relation, judged HERE with the
+ * engine's exact rule so `lower()` never emits an engine-refused
+ * containment. The type tier is `law.ts`'s `TargetKeyWall` (best effort,
+ * statically known tuples); every OTHER semantic judgment (key-internal
+ * legality, fresh-on-u64, …) stays the engine's `SchemaError` at
+ * `Db.create` — the engine is the final authority for every boundary,
+ * this wall just makes the SDK agree with it first.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -20,15 +26,28 @@ import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 import { isStatement, renderStatement, type Statement } from "#statements.ts"
 
 /**
+ * The implied keys of one walk over the relation record, carried in BOTH
+ * spellings its two consumers read: `rendered` — each key in the canonical
+ * statement rendering, for the explicit-duplicate check (string identity
+ * with the renderer as the single spelling authority) — and `roster` — the
+ * same keys as PROJECTIONS per relation, the implied half of the
+ * target-key wall's key population ({@link verifyTargetKeys}).
+ */
+interface ImpliedKeys {
+	readonly rendered: ReadonlySet<string>
+	readonly roster: ReadonlyMap<string, ReadonlyArray<readonly string[]>>
+}
+
+/**
  * Validates the relation record and collects the implied keys: the
  * fresh-implied `R(field) -> R` per minted field and the closed auto-key
- * `R(id) -> R` per closed relation, each rendered canonically so an
- * explicit duplicate is caught by string identity with the renderer as the
- * single spelling authority.
+ * `R(id) -> R` per closed relation — one walk, both consumers' spellings
+ * ({@link ImpliedKeys}).
  */
-function collectImplied(name: string, relations: SchemaRelations): Set<string> {
+function collectImplied(name: string, relations: SchemaRelations): ImpliedKeys {
 	assertDeclarationRecord(`schema ${name} relations`, relations)
-	const implied = new Set<string>()
+	const rendered = new Set<string>()
+	const roster = new Map<string, ReadonlyArray<readonly string[]>>()
 	for (const [recordKey, member] of Object.entries(relations)) {
 		assertDeclarationOrderKey(`schema ${name} relation`, recordKey)
 		if (member.name !== recordKey) {
@@ -36,17 +55,22 @@ function collectImplied(name: string, relations: SchemaRelations): Set<string> {
 				`schema ${name}: record key ${recordKey} holds relation ${member.name} — the key must equal the relation's declared name`
 			)
 		}
+		const projections: Array<readonly string[]> = []
 		if (isClosedMember(member)) {
-			implied.add(`${member.name}(id) -> ${member.name}`)
-			continue
-		}
-		for (const declared of member.data.fields) {
-			if ("fresh" in declared.field && declared.field.fresh === true) {
-				implied.add(`${member.name}(${declared.name}) -> ${member.name}`)
+			projections.push(Object.freeze(["id"]))
+		} else {
+			for (const declared of member.data.fields) {
+				if ("fresh" in declared.field && declared.field.fresh === true) {
+					projections.push(Object.freeze([declared.name]))
+				}
 			}
 		}
+		for (const projection of projections) {
+			rendered.add(`${member.name}(${projection.join(", ")}) -> ${member.name}`)
+		}
+		roster.set(member.name, Object.freeze(projections))
 	}
-	return implied
+	return { rendered, roster }
 }
 
 /** The relation values a statement addresses, for membership checking. */
@@ -217,6 +241,112 @@ function verifyClosedReferenceBinding(
 	}
 }
 
+/**
+ * THE TARGET-KEY WALL, value tier (60-containment-parity — the runtime
+ * twin of `law.ts`'s `TargetKeyWall`, the engine's `resolve_target_key` /
+ * `resolve_capacity_target` mirrored exactly): every `contained`/
+ * `mirrors`/`capacity` statement's target projection must resolve a key
+ * of the target relation, judged over the SAME key population the engine
+ * materializes — the fresh-implied and closed auto-keys
+ * ({@link collectImplied}'s roster) first, then the declared `key()`
+ * statements in written order (a key may be declared after its probe, so
+ * this wall runs over the COMPLETE list, never inside the statement
+ * loop). `mirrors` materializes as two containments source-first, so both
+ * orientations judge their own target. SOUNDNESS BAR: the set-match +
+ * closed-id rule below is the engine's COMPLETE rule for this law
+ * (`matching_functionality` compares field SETS — permutations resolve,
+ * subsets/supersets refuse), so this wall never rejects what the engine
+ * accepts; every other schema judgment stays engine-first.
+ */
+function verifyTargetKeys(
+	name: string,
+	statements: readonly Statement[],
+	implied: ReadonlyMap<string, ReadonlyArray<readonly string[]>>
+): void {
+	const declared = new Map<string, Array<readonly string[]>>()
+	for (const statement of statements) {
+		const data = statement.data
+		if (data.kind !== "key") {
+			continue
+		}
+		const keys = declared.get(data.owner.name)
+		if (keys === undefined) {
+			declared.set(data.owner.name, [data.projection])
+		} else {
+			keys.push(data.projection)
+		}
+	}
+	for (const statement of statements) {
+		const data = statement.data
+		if (data.kind === "key") {
+			continue
+		}
+		const rendered = renderStatement(statement)
+		// A containment or capacity judges its one target face; `mirrors`
+		// materializes as the two adjacent containments (source-first —
+		// macro parity), so the written target's face judges first, then
+		// the reverse orientation's target (the written source).
+		const faces = data.kind === "mirrors" ? [data.target, data.source] : [data.target]
+		for (const face of faces) {
+			verifyTargetKeyFace(name, face, implied, declared, rendered)
+		}
+	}
+}
+
+/**
+ * One target face's key resolution (the {@link verifyTargetKeys} leaf).
+ * Closed target: the handle id is the ONE probe-able identity of a closed
+ * relation, so the projection must be exactly `["id"]` — its own refusal
+ * (the engine's `ClosedTargetNotHandle`): the rule is CLOSEDNESS, not key
+ * absence. Ordinary target: the projection's field-name SET must equal
+ * some roster member's set (the engine's `matching_functionality` —
+ * permutations resolve, subsets and supersets do not). The refusal speaks
+ * the engine's shape in NAMES, with the engine's pointwise hint verbatim
+ * when the projection carries an interval position.
+ */
+function verifyTargetKeyFace(
+	name: string,
+	face: FaceData,
+	implied: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
+	declared: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
+	rendered: string
+): void {
+	if (isClosedMember(face.owner)) {
+		if (face.projection.length === 1 && face.projection[0] === "id") {
+			return
+		}
+		throw errors.new(
+			`schema ${name}: ${rendered}: closed target ${face.owner.name} is addressed by its synthetic id only — projection (${face.projection.join(", ")}) must be exactly (id) (rewrite the target side as on(${face.owner.name}, "id"))`
+		)
+	}
+	const roster = [...(implied.get(face.owner.name) ?? []), ...(declared.get(face.owner.name) ?? [])]
+	const want = new Set(face.projection)
+	const matched = roster.some(function sameFieldSet(key) {
+		const keySet = new Set(key)
+		if (keySet.size !== want.size) {
+			return false
+		}
+		for (const field of keySet) {
+			if (!want.has(field)) {
+				return false
+			}
+		}
+		return true
+	})
+	if (matched) {
+		return
+	}
+	const available = roster.length === 0 ? "none" : roster.map((key) => `(${key.join(", ")})`).join("; ")
+	const pointwise = face.projection.some(function carriesInterval(fieldName) {
+		const descriptor = sealedFieldOf(face.owner, fieldName)
+		return descriptor !== undefined && descriptor.kind === "interval"
+	})
+	const hint = pointwise ? "; hint: declare the exact pointwise key `R(prefix…, interval) -> R`" : ""
+	throw errors.new(
+		`schema ${name}: ${rendered}: target projection (${face.projection.join(", ")}) matches no declared key of ${face.owner.name} — available keys: ${available}${hint}`
+	)
+}
+
 /** One member of a schema's relation record. */
 type SchemaRelation = AnyRelation | AnyClosed
 
@@ -271,10 +401,13 @@ type EvaluatedClasses<C extends SchemaClasses> = C extends SchemaClasses
  * "redundant here — and rejected as a duplicate"); a duplicate statement
  * (two statements rendering to one canonical utterance ARE one judgment);
  * a handle selection that its roster does not hold (belt-and-braces —
- * the type level already blocks it); and a handle selection whose closed
+ * the type level already blocks it); a handle selection whose closed
  * reference no declared containment resolves (the engine's canonical
  * renderer would print the raw row id where `renderStatement` prints the
- * handle — the paste-back law demands the two spellings agree).
+ * handle — the paste-back law demands the two spellings agree); and a
+ * containment/mirrors/capacity target projection resolving no key of its
+ * relation ({@link verifyTargetKeys} — the value tier of the two-tier
+ * target-key wall, the engine's rule judged at assembly in names).
  *
  * The fresh-implied and closed auto-keys are NOT added to the statement
  * list: the engine materializes them itself, in its own pinned order
@@ -311,7 +444,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 		}
 		const rendered = renderStatement(statement)
 		verifyMembership(name, relations, statement, rendered)
-		if (implied.has(rendered)) {
+		if (implied.rendered.has(rendered)) {
 			throw errors.new(
 				`schema ${name}: ${rendered} is redundant here (the fresh mark or closedness already implies it) — and rejected as a duplicate`
 			)
@@ -323,6 +456,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 		verifyHandles(name, statement, rendered)
 	}
 	verifyClosedReferences(name, statements)
+	verifyTargetKeys(name, statements, implied.roster)
 	const classes = computeClasses(name, relations, statements)
 	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, relations)) {
 		throw errors.new(`schema ${name}: class-map construction incomplete`)
