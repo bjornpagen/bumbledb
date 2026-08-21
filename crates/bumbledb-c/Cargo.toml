@@ -6,7 +6,7 @@
 # in the host or in the bumbledb engine itself.
 [package]
 name = "bumbledb-c"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 publish = false
 

@@ -11,6 +11,23 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+`0.16.0` is the one-representation release over `0.15.0` — one collection
+representation from host to delta (the accepted collection: an arena-backed
+shape-proved batch parsed once at the bridge; the column transport is GONE —
+`Iterable<Fact<R>>` is the one collection spelling), one cardinality read
+(`count` on `ReadInstance`/`OwnedInstance` with the `db.count` symmetry
+sugar, `bigint` by wire law, the maintained format-8 counter — never a
+scan), the generic full-binding law (`match(relation, v(relation))` at every
+site), and containment target-key parity at every boundary (`schema()`
+refuses in names what the engine refuses in names-beside-ids). Storage stays
+format **8** — no migration: `count` reads a stat every format-8 store
+already maintains, so existing stores open unchanged. The C ABI stays **3**
+— `bdb_abi_version()` is unchanged; `bumbledb-c` rides the lockstep with no
+surface change. The one breaking change is TypeScript-only: `ColumnBatch`
+and the column write transport are removed; the replacement is the same
+`insert`/`load` call with fact objects, now the fastest path. Engine crates,
+`bumbledb-c`, the napi crate, and both npm packages share one spelling.
+
 `0.15.0` is the admitted-instance / ABI-3 / format-8 release over `0.14.0` —
 one public engine: **the store** (`Db`, leased `ReadInstance` / `WriteTx`)
 and **the value** (`OwnedInstance`, `InstanceBuilder`, `Admission`).
@@ -135,7 +152,7 @@ unsupported-platform error everywhere else.
 
 ## Version lockstep
 
-The version lives in ONE place conceptually: `0.15.0` is the identity of the
+The version lives in ONE place conceptually: `0.16.0` is the identity of the
 layout. The build (`assertVersionLockstep` in `scripts/build.ts`) fails if
 any of these diverge:
 
@@ -161,24 +178,24 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.15.0` in this tree; `pnpm run build` asserts the lockstep
+spellings are `0.16.0` in this tree; `pnpm run build` asserts the lockstep
 on every run.
 
-## Runbook (0.15.0, darwin-arm64 host, owner)
+## Runbook (0.16.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.15.0 (the build asserts it — the
+# 1. The lockstep is already set to 0.16.0 (the build asserts it — the
 #    platform pin is NOT a repo field, it injects at pack time):
-#    - ts/package.json                    "version": "0.15.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.15.0"
-#    - ts/crate/Cargo.toml                version = "0.15.0"
-#    - crates/bumbledb/Cargo.toml         version = "0.15.0"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.15.0"
+#    - ts/package.json                    "version": "0.16.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.16.0"
+#    - ts/crate/Cargo.toml                version = "0.16.0"
+#    - crates/bumbledb/Cargo.toml         version = "0.16.0"
+#    - crates/bumbledb-c/Cargo.toml       version = "0.16.0"
 #    - workspace members (bench, macros, query, query-macros, theory)
-#    bdb_abi_version() is 3 (layout generation).
+#    bdb_abi_version() stays 3 (layout generation).
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -200,12 +217,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.15.0 version
-pnpm view @bjornpagen/bumbledb@0.15.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.16.0 version
+pnpm view @bjornpagen/bumbledb@0.16.0 version
 
 # 6. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.15.0 <release-commit> -m "bumbledb 0.15.0" && git push origin v0.15.0
+#    git tag -a v0.16.0 <release-commit> -m "bumbledb 0.16.0" && git push origin v0.16.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,

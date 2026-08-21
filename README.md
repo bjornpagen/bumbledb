@@ -76,8 +76,8 @@ The Rust crates can be used from the current release tag:
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.15.0" }
-bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.15.0" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.16.0" }
+bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.16.0" }
 ```
 
 The TypeScript package ships with a native binary for macOS on Apple Silicon:
@@ -535,7 +535,7 @@ results with the engine.
 
 ## Current release
 
-Version **0.15.0** covers the Rust engine, C ABI, and
+Version **0.16.0** covers the Rust engine, C ABI, and
 `@bjornpagen/bumbledb` TypeScript package. The C ABI version is **3**.
 Storage format is **8**.
 

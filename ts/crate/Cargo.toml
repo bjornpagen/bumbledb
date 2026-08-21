@@ -8,7 +8,7 @@ name = "bumbledb-node"
 # bakes CARGO_PKG_VERSION into the shipped binary. Lockstep with the npm
 # manifests, the engine crate, and `bumbledb-c` — `scripts/build.ts`
 # asserts the match.
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 publish = false
 
