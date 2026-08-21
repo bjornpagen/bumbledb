@@ -27,9 +27,17 @@ pub(crate) const FORWARD: u8 = 0x00;
 pub(crate) const REVERSE: u8 = 0x01;
 
 pub(crate) fn forward_key(raw: &[u8]) -> [u8; 33] {
+    forward_key_from_hash(blake3::hash(raw).as_bytes())
+}
+
+/// [`forward_key`] with the blake3 already in hand — the hashing split
+/// out so a caller that computed the hash for its own key (the delta's
+/// committed-hit memo, `storage/delta/intern.rs`) pays exactly one
+/// blake3 per occurrence instead of re-hashing here on the memo miss.
+pub(crate) fn forward_key_from_hash(hash: &[u8; 32]) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = FORWARD;
-    key[1..].copy_from_slice(blake3::hash(raw).as_bytes());
+    key[1..].copy_from_slice(hash);
     key
 }
 
@@ -66,11 +74,29 @@ pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
     lookup(txn, value.as_bytes())
 }
 
-/// Thin delegate of [`LmdbReadCatalog::dict_lookup`]. Readers: the string
-/// front above; the delta's pending-intern path; the sweeper's
-/// committed-only selection encoding.
+/// The storage-front forward probe: blake3 here, then [`lookup_by_hash`].
+/// Readers: the string front above; the sweeper's committed-only
+/// selection encoding. (The delta's intern path hashes for its
+/// committed-hit memo first and enters at [`lookup_by_hash`] directly.)
 pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
-    LmdbReadCatalog::new(txn).dict_lookup(raw)
+    lookup_by_hash(txn, blake3::hash(raw).as_bytes())
+}
+
+/// Forward lookup with the blake3 already in hand — the committed-probe
+/// arm of `WriteDelta::resolve`, whose memo key IS the forward hash, so
+/// the one hash the memo computed pays for the LMDB get too. The get and
+/// decode are [`LmdbReadCatalog::dict_lookup`]'s, hash-first: the catalog
+/// method stays the raw-bytes spelling for the polymorphic catalog
+/// surface.
+pub(crate) fn lookup_by_hash(txn: &ReadTxn<'_>, hash: &[u8; 32]) -> Result<Option<InternId>> {
+    match txn
+        .env()
+        .dict()
+        .get(txn.raw(), &forward_key_from_hash(hash))?
+    {
+        None => Ok(None),
+        Some(bytes) => intern_id_from_stored(bytes).map(Some),
+    }
 }
 
 /// Thin delegate of [`LmdbWriteCatalog::dict_put_pending`].

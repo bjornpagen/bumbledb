@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{ValueRef, encode_fact, encode_u64};
+use crate::encoding::{InternId, ValueRef, encode_fact, encode_u64};
 use crate::error::Error;
 use crate::schema::KeyId;
 use crate::schema::ValidateDescriptor as _;
@@ -301,6 +301,123 @@ fn resolve_never_mints_and_sees_both_id_sources() {
             .is_some()
     );
     assert_eq!(fresh.dict_next(), None);
+}
+
+/// Seeds one committed dictionary entry through the PRODUCTION writer —
+/// the delta's provisional mint flushed by `dict::put_pending` plus one
+/// advanced next-id, exactly the commit's phase-4 discipline
+/// (`storage/commit/write.rs::flush_counters`); the dict suite's seeding
+/// idiom (`storage/dict.rs`).
+fn seed_committed(env: &Environment, schema: &Schema, value: &str) -> InternId {
+    let view = env.read_txn().expect("txn");
+    let mut seeder = WriteDelta::new(schema);
+    let id = seeder.intern_str(&view, value).expect("intern");
+    drop(view);
+    let mut wtxn = env.write_txn().expect("txn");
+    for (raw, pending) in seeder.pending_interns() {
+        crate::storage::dict::put_pending(&mut wtxn, raw, pending).expect("flush");
+    }
+    wtxn.put_dict_next_id(seeder.dict_next().expect("minted"))
+        .expect("advance");
+    wtxn.commit().expect("commit");
+    id
+}
+
+#[test]
+fn a_committed_string_interned_twice_probes_the_dict_once() {
+    // D7 (`proposals/one-representation/30-string-ownership.md`): the
+    // committed-hit memo. The first occurrence pays the one dict probe
+    // and memoizes the hit; every repeat — intern or resolve — is
+    // answered in memory. Ids are the committed id byte-for-byte, and a
+    // committed hit still mints nothing.
+    let dir = TempDir::new("delta-memo-committed");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let committed = seed_committed(&env, &schema, "hello");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    assert_eq!(delta.committed_dict_probes(), 0);
+    assert_eq!(delta.intern_str(&view, "hello").expect("intern"), committed);
+    assert_eq!(
+        delta.committed_dict_probes(),
+        1,
+        "first sight pays the probe"
+    );
+    assert_eq!(delta.committed_memo_hits(), 0);
+    assert_eq!(delta.intern_str(&view, "hello").expect("intern"), committed);
+    assert_eq!(delta.committed_dict_probes(), 1, "the memo answered");
+    assert_eq!(delta.committed_memo_hits(), 1);
+    // The delete path shares the read: resolve is the same probe order.
+    assert_eq!(
+        delta.resolve_str(&view, "hello").expect("resolve"),
+        Some(committed)
+    );
+    assert_eq!(delta.committed_dict_probes(), 1);
+    assert_eq!(delta.committed_memo_hits(), 2);
+    assert_eq!(delta.dict_next(), None, "a committed hit mints nothing");
+}
+
+#[test]
+fn a_pending_string_answers_before_the_memo() {
+    // Pending-first order unchanged: a novel string's first intern pays
+    // exactly the mint-licensing committed probe, and its repeats are
+    // answered by the pending map — the memo never sees the string, so
+    // its provisional id can never shadow or be shadowed.
+    let dir = TempDir::new("delta-memo-pending-first");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let minted = delta.intern_str(&view, "novel").expect("intern");
+    assert_eq!(
+        delta.committed_dict_probes(),
+        1,
+        "the mint-licensing committed miss"
+    );
+    assert_eq!(delta.intern_str(&view, "novel").expect("intern"), minted);
+    assert_eq!(delta.committed_dict_probes(), 1, "pending answered");
+    assert_eq!(delta.committed_memo_hits(), 0, "the memo never saw it");
+    assert_eq!(delta.dict_next(), Some(minted.raw() + 1), "one mint");
+}
+
+#[test]
+fn committed_misses_are_never_memoized() {
+    // Hits only (the conservative call — resolve's comment prices the
+    // alternative): the memo caches answers, not absences, so a
+    // non-minting resolve of a never-interned string stays a live dict
+    // question on every ask.
+    let dir = TempDir::new("delta-memo-miss");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let delta = WriteDelta::new(&schema);
+    assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
+    assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
+    assert_eq!(delta.committed_dict_probes(), 2, "a miss is re-asked");
+    assert_eq!(delta.committed_memo_hits(), 0);
+    assert_eq!(delta.dict_next(), None, "resolve minted nothing");
+}
+
+#[test]
+fn a_dropped_deltas_memo_leaves_no_trace() {
+    // The memo is transaction-local transport: nothing shared, nothing
+    // persisted — a later delta starts cold and re-pays the one probe.
+    let dir = TempDir::new("delta-memo-drop");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let committed = seed_committed(&env, &schema, "hello");
+    let view = env.read_txn().expect("txn");
+    {
+        let mut delta = WriteDelta::new(&schema);
+        delta.intern_str(&view, "hello").expect("intern");
+        assert_eq!(delta.committed_dict_probes(), 1);
+        // Abort = drop: the memo dies with the delta.
+    }
+    let mut later = WriteDelta::new(&schema);
+    assert_eq!(later.committed_dict_probes(), 0, "a fresh delta is cold");
+    assert_eq!(later.intern_str(&view, "hello").expect("intern"), committed);
+    assert_eq!(later.committed_dict_probes(), 1, "its own probe, re-paid");
+    assert_eq!(later.committed_memo_hits(), 0);
 }
 
 #[test]

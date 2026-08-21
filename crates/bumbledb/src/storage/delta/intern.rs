@@ -40,25 +40,51 @@ impl WriteDelta<'_> {
 
     /// The non-minting sibling of [`Self::intern`], for the delete path:
     /// a pending-map hit returns the provisional id (insert-then-delete
-    /// cancels byte-exactly), a committed-dict hit returns the committed
-    /// id, and a double miss proves the fact absent from base *and*
-    /// delta — its bytes would embed an id that was never minted — so
-    /// the delete is a no-op and the dictionary stays untouched.
-    /// (Additional reader: the commit path's selection-literal encoding,
+    /// cancels byte-exactly), a committed hit returns the committed id —
+    /// answered by the transaction's memo when the string was already
+    /// witnessed, else by one dictionary probe whose hit is memoized —
+    /// and a double miss proves the fact absent from base *and* delta —
+    /// its bytes would embed an id that was never minted — so the delete
+    /// is a no-op and the dictionary stays untouched. (Additional
+    /// reader: the commit path's selection-literal encoding,
     /// `storage::commit::judgment`.)
     pub(crate) fn resolve(&self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
         if let Some(id) = self.interns.as_ref().and_then(|interns| interns.get(raw)) {
             return Ok(Some(id));
         }
-        crate::storage::dict::lookup(view, raw)
+        // Pending missed, so the answer is committed-side — frozen for
+        // the transaction under the single-writer mutex, so askable
+        // through the memo. This blake3 is the occurrence's ONLY hash:
+        // the memo key and the dictionary's forward key are the same 32
+        // bytes, and a memo miss hands it straight to the LMDB get
+        // (`dict::lookup_by_hash`) instead of re-hashing in
+        // `forward_key`.
+        let hash = *blake3::hash(raw).as_bytes();
+        if let Some(id) = self.committed_memo.get(&hash) {
+            return Ok(Some(id));
+        }
+        self.committed_memo.count_probe();
+        let found = crate::storage::dict::lookup_by_hash(view, &hash)?;
+        // Hits only. Memoizing a MISS would be equally sound — committed
+        // state is frozen, and a later mint of these bytes lands in the
+        // pending map, which is probed FIRST — but the intern lane mints
+        // on its first miss, so the pending map already memoizes it;
+        // what remains is the cold delete/judgment probing of
+        // never-interned strings, not worth a second entry kind.
+        if let Some(id) = found {
+            self.committed_memo.record(hash, id);
+        }
+        Ok(found)
     }
 
     fn intern(&mut self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<InternId> {
-        // Pending first: a pending value was proven absent from the
+        // Pending first, then the committed memo, then one dict probe
+        // (memoized on hit): a pending value was proven absent from the
         // committed dict at mint time, and the single-writer discipline
         // freezes the committed dict for the transaction's lifetime — so
-        // a repeat intern costs one in-memory probe, not an LMDB get plus
-        // a blake3.
+        // a repeat intern of a pending string costs one in-memory probe
+        // and of a committed string one blake3 plus one in-memory probe,
+        // never a second LMDB get.
         if let Some(id) = self.resolve(view, raw)? {
             return Ok(id);
         }

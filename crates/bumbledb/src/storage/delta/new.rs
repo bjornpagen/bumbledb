@@ -20,6 +20,7 @@ impl<'s> WriteDelta<'s> {
             marks: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
             interns: None,
+            committed_memo: super::CommittedMemo::default(),
         }
     }
 }
