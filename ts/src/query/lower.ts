@@ -80,7 +80,16 @@ import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/ato
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
-import type { AnyVar, ClassedField, Flatten, InferredOf, ParamEntry, ParamsRecord, ShapeOf } from "#query/scope.ts"
+import type {
+	AnyVar,
+	ClassedField,
+	Flatten,
+	InferredOf,
+	ParamEntry,
+	ParamsRecord,
+	ShapeOf,
+	VarsOf
+} from "#query/scope.ts"
 import {
 	fieldJoins,
 	inferred,
@@ -191,6 +200,20 @@ interface TermOps {
 
 /** The rule builder a `query(S).rule(...)` callback receives (`Classes` — the join judge's authority). */
 interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, stated as a signature so it holds for GENERIC R too
+	 * (VarsOf unifies with itself by identity; the general form's deferred
+	 * conditionals cannot). The mint invariant — a variable's mint slot IS its
+	 * position slot, same owner, same column — discharges the join judgment by
+	 * construction (proposals/one-representation/50-generic-binding.md, "The
+	 * ruling"); an all-var record contributes no params, so the chain starts
+	 * paramless.
+	 */
+	match<R extends QueryRelation<Rels>>(
+		relation: R,
+		bindings: VarsOf<R>
+	): QueryRuleChain<Rels, Record<never, never>, Classes>
 	/** The first EDB atom of the rule: fields bind variables, params, ∈-sets, or bare literals; absence is the wildcard. */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -214,6 +237,14 @@ interface QueryRuleChain<
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 */
+	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): QueryRuleChain<Rels, P, Classes>
 	/** One more positive EDB atom — variable reuse joins, class-equal by the mint-slot judgment. */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -235,6 +266,17 @@ interface QueryRuleChain<
 /** The rule builder an `interior("mid", ...)` callback receives. */
 interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses>
 	extends TermOps {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params, so the chain starts paramless.
+	 */
+	match<R extends QueryRelation<Rels>>(
+		relation: R,
+		bindings: VarsOf<R>
+	): InteriorRuleChain<Rels, Record<never, never>, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
@@ -251,6 +293,14 @@ interface InteriorRuleChain<
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 */
+	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): InteriorRuleChain<Rels, P, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
@@ -267,6 +317,17 @@ interface InteriorRuleChain<
 
 /** The rule builder a `.reach("reach", { base, rec })` arm receives. */
 interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params, so the chain starts paramless.
+	 */
+	match<R extends QueryRelation<Rels>>(
+		relation: R,
+		bindings: VarsOf<R>
+	): RecRuleChain<Rels, Record<never, never>, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
@@ -288,6 +349,14 @@ interface RecRuleChain<
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
+	/**
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 */
+	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): RecRuleChain<Rels, P, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
