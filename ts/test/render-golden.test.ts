@@ -332,13 +332,13 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 		assert.ok(certificate, "the manifest names Certificate")
 
 		const landed = native.dbWrite(handle, function write(passing) {
-			assert.deepEqual(native.txInsert(passing, certificate.id, [[1n, 1n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(passing, certificate.id, [1n, 1n]), { submitted: 1n, changed: 1n })
 			return true
 		})
 		assert.equal(landed.tag, "accepted", "a certificate over a ψ-member grade commits")
 
 		const rejected = native.dbWrite(handle, function write(violating) {
-			assert.deepEqual(native.txInsert(violating, certificate.id, [[2n, 0n]]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(violating, certificate.id, [2n, 0n]), { submitted: 1n, changed: 1n })
 			return true
 		})
 		assert.equal(rejected.tag, "rejected", "a certificate over a non-member grade is rejected")

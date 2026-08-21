@@ -2,11 +2,16 @@
 //!
 //! Direction and shape law (docs/graph-builder-rebirth/prd-04-ffi-surface.md):
 //!
-//! - **Fact rows are natural JS values, schema-directed**: `boolean ⇄ bool`,
+//! - **Fact cells are natural JS values, schema-directed**: `boolean ⇄ bool`,
 //!   `bigint ⇄ u64/i64` (range-checked, the error names relation and field),
 //!   `string ⇄ str`, `Uint8Array ⇄ bytes<N>` (width-checked), a
 //!   `{start, end}` bigint pair ⇄ interval. The expected type always comes
-//!   from the schema descriptor — marshaling never guesses.
+//!   from the resident sealed roster — marshaling never guesses.
+//! - **Collections cross as ONE flat row-major cells array**
+//!   (`proposals/one-representation/20`): rows = `cells.len() / arity`
+//!   against the resident roster, built into one [`AcceptedCollection`]
+//!   in one pass. The single-fact point lanes (`contains`/`get`) keep
+//!   their one-row `Vec<Value>` form.
 //! - **IR, spec, and query params are tagged plain objects mirroring the
 //!   engine's own data types 1:1** (`bumbledb::ir`, `bumbledb::SchemaSpec`):
 //!   there is no anchoring schema position to direct an arbitrary literal, so
@@ -27,11 +32,11 @@ use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, SealedField, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
-    ExecutionStats, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm, Interior, InteriorId, Interval,
-    Manifest, NonEmpty, ParamId, ProjectionRule, Query, Rec, RecRule, RecStep, RelationId,
-    RenderedViolation, Rule, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, StatsBody,
-    Term, Value, VarId,
+    AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
+    CollectionBuilder, Comparison, ConditionTree, ExecutionStats, FieldId, FindTerm, FoldOp,
+    HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule,
+    Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor,
+    SchemaSpec, StatementId, StatementKind, StatsBody, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -164,39 +169,48 @@ fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
         .map_err(|_| err(format!("bumbledb marshal: {ctx}: id {value} exceeds u16")))
 }
 
-/// A half-open interval from a `{start, end}` bigint pair, per element
-/// domain; an empty interval (`start >= end`) is a shape error — the engine
-/// value is nonempty by construction (`bumbledb::Interval`). `ctx` is lazy
-/// as [`req`]'s (`Copy` because both bound reads and the emptiness refusal
+/// A half-open `Interval<u64>` from a `{start, end}` bigint pair; an empty
+/// interval (`start >= end`) is a shape error — the engine value is
+/// nonempty by construction (`bumbledb::Interval`). `ctx` is lazy as
+/// [`req`]'s (`Copy` because both bound reads and the emptiness refusal
 /// name the same position).
+fn interval_u64_in(
+    obj: &Object,
+    ctx: impl std::fmt::Display + Copy,
+) -> napi::Result<Interval<u64>> {
+    let start = u64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
+    let end = u64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
+    Interval::<u64>::new(start, end).ok_or_else(|| {
+        err(format!(
+            "bumbledb marshal: {ctx}: empty interval (start {start} >= end {end})"
+        ))
+    })
+}
+
+/// The `i64` element lane of [`interval_u64_in`].
+fn interval_i64_in(
+    obj: &Object,
+    ctx: impl std::fmt::Display + Copy,
+) -> napi::Result<Interval<i64>> {
+    let start = i64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
+    let end = i64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
+    Interval::<i64>::new(start, end).ok_or_else(|| {
+        err(format!(
+            "bumbledb marshal: {ctx}: empty interval (start {start} >= end {end})"
+        ))
+    })
+}
+
+/// The element-tag dispatch over the two interval lanes, as an owned
+/// [`Value`] (the tagged spec/IR/param lanes and the point-read rows).
 fn interval_in(
     obj: &Object,
     element: IntervalElement,
     ctx: impl std::fmt::Display + Copy,
 ) -> napi::Result<Value> {
     match element {
-        IntervalElement::U64 => {
-            let start = u64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
-            let end = u64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
-            Interval::<u64>::new(start, end)
-                .map(Value::IntervalU64)
-                .ok_or_else(|| {
-                    err(format!(
-                        "bumbledb marshal: {ctx}: empty interval (start {start} >= end {end})"
-                    ))
-                })
-        }
-        IntervalElement::I64 => {
-            let start = i64_in(&req::<BigInt>(obj, "start", ctx)?, ctx)?;
-            let end = i64_in(&req::<BigInt>(obj, "end", ctx)?, ctx)?;
-            Interval::<i64>::new(start, end)
-                .map(Value::IntervalI64)
-                .ok_or_else(|| {
-                    err(format!(
-                        "bumbledb marshal: {ctx}: empty interval (start {start} >= end {end})"
-                    ))
-                })
-        }
+        IntervalElement::U64 => interval_u64_in(obj, ctx).map(Value::IntervalU64),
+        IntervalElement::I64 => interval_i64_in(obj, ctx).map(Value::IntervalI64),
     }
 }
 
@@ -217,6 +231,23 @@ impl std::fmt::Display for CellCtx<'_> {
     }
 }
 
+/// THE cell type-mismatch refusal — one spelling for both fact lanes
+/// ([`schema_value`]'s owned rows and [`push_cell`]'s collection feed),
+/// so the texts cannot fork.
+fn cell_mismatch(ctx: CellCtx<'_>, want: &str, got: JsType) -> napi::Error {
+    err(format!(
+        "bumbledb marshal: {ctx}: expected {want}, got {}",
+        js_type_name(got)
+    ))
+}
+
+/// THE `bytes<N>` width refusal, shared exactly as [`cell_mismatch`] is.
+fn bytes_width_mismatch(ctx: CellCtx<'_>, len: u16, witnessed: usize) -> napi::Error {
+    err(format!(
+        "bumbledb marshal: {ctx}: expected bytes<{len}>, got {witnessed} bytes"
+    ))
+}
+
 /// One natural JS value marshaled against the schema-declared type of its
 /// field — the fact-row lane's one conversion. Error contexts are built
 /// on the error arm only (D3): a succeeding cell allocates nothing here.
@@ -234,12 +265,7 @@ fn schema_value(
 ) -> napi::Result<Value> {
     let ctx = CellCtx { relation, field };
     let got = value.get_type()?;
-    let mismatch = |want: &str| {
-        err(format!(
-            "bumbledb marshal: {ctx}: expected {want}, got {}",
-            js_type_name(got)
-        ))
-    };
+    let mismatch = |want: &str| cell_mismatch(ctx, want, got);
     // SAFETY (each `cast` below): the arm's guard just proved `got` is the
     // exact JS type the cast assumes; a mismatch returned before the cast.
     match expected {
@@ -280,10 +306,7 @@ fn schema_value(
             }
             let bytes = unsafe { value.cast::<Uint8Array>()? };
             if bytes.len() != usize::from(*len) {
-                return Err(err(format!(
-                    "bumbledb marshal: {ctx}: expected bytes<{len}>, got {} bytes",
-                    bytes.len()
-                )));
+                return Err(bytes_width_mismatch(ctx, *len, bytes.len()));
             }
             Ok(Value::FixedBytes(bytes.to_vec().into_boxed_slice()))
         }
@@ -358,85 +381,132 @@ pub(crate) fn fact_row(
     Ok((rel, one_fact_row(&roster.name, &roster.fields, values)?))
 }
 
-/// A collection of dynamic fact rows. The resident roster is borrowed
-/// once. Empty is lawful and still a mutation (the engine observes
-/// poison). Every nonempty row is parsed against the relation's arity —
-/// mixed width is refused before any row enters the delta.
-pub(crate) fn fact_rows(
+/// One shape-proved collection from ONE flat row-major cells array —
+/// THE collection crossing (`proposals/one-representation/20`): rows
+/// derive from the resident sealed roster (`cells.len() / arity`; a
+/// nonzero remainder is the arity mismatch it is, refused in the row
+/// lane's exact error shape), and every cell feeds the engine's one
+/// positional judgment ([`CollectionBuilder`]'s typed pushes) in a single
+/// pass — no per-row container exists anywhere between the caller's array
+/// and the sealed proof `insert_accepted`/`load_accepted`/
+/// `delete_accepted` consume. Empty (length 0) is lawful, constructs
+/// without touching the roster (mirroring the retired `fact_rows`
+/// short-circuit), and still reaches the engine, which answers
+/// `MutationReport::EMPTY`.
+pub(crate) fn accepted_collection(
+    env: Env,
     rosters: &[SealedRoster],
     relation: u32,
-    rows: &Array,
-) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
+    cells: &Array,
+) -> napi::Result<AcceptedCollection> {
+    let mut span = bumbledb::obs::span(bumbledb::obs::names::MARSHAL_FACTS);
     let rel = RelationId(relation);
-    if rows.len() == 0 {
-        return Ok((rel, Vec::new()));
+    if cells.len() == 0 {
+        span.set_count(0);
+        return CollectionBuilder::new(rel, &[])
+            .seal()
+            .map_err(|error| throw_engine(env, &error));
     }
     let roster = roster(rosters, rel)?;
     let name: &str = &roster.name;
-    let mut out = Vec::with_capacity(rows.len() as usize);
-    for index in 0..rows.len() {
-        let row: Array = req_at(rows, index, format_args!("relation `{name}` collection"))?;
-        out.push(one_fact_row(name, &roster.fields, &row)?);
-    }
-    Ok((rel, out))
-}
-
-/// A collection of dynamic fact rows in column-major order: one JS array
-/// per sealed field, every column the same length. The resident roster is
-/// borrowed once. Empty (every column length 0) is lawful. Ragged lengths
-/// and arity drift are refused before any row is built — the same
-/// parse-all-first contract as [`fact_rows`].
-pub(crate) fn fact_columns(
-    rosters: &[SealedRoster],
-    relation: u32,
-    columns: &Array,
-) -> napi::Result<(RelationId, Vec<Vec<Value>>)> {
-    let rel = RelationId(relation);
-    let roster = roster(rosters, rel)?;
-    let name: &str = &roster.name;
-    let fields = &roster.fields;
-    if columns.len() as usize != fields.len() {
+    let arity = roster.fields.len();
+    let len = cells.len() as usize;
+    if arity == 0 || !len.is_multiple_of(arity) {
+        // Any cell against a fieldless roster overflows the zero-width
+        // row; otherwise the remainder is the dangling partial row's
+        // witnessed width.
+        let witnessed = if arity == 0 { len } else { len % arity };
         return Err(err(format!(
-            "bumbledb marshal: relation `{name}`: expected {} columns, got {}",
-            fields.len(),
-            columns.len()
+            "bumbledb marshal: relation `{name}`: expected {arity} values, got {witnessed}"
         )));
     }
-    if fields.is_empty() {
-        return Ok((rel, Vec::new()));
+    let mut builder = CollectionBuilder::new(rel, &roster.fields);
+    for index in 0..cells.len() {
+        let field = &roster.fields[(index as usize) % arity];
+        let value = req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
+        push_cell(env, &mut builder, name, field, &value)?;
     }
-    let mut cols = Vec::with_capacity(fields.len());
-    let mut row_count: Option<u32> = None;
-    for index in 0..columns.len() {
-        let column: Array = req_at(columns, index, format_args!("relation `{name}` columns"))?;
-        match row_count {
-            None => row_count = Some(column.len()),
-            Some(expected) if column.len() != expected => {
-                let field = &fields[index as usize].name;
-                return Err(err(format!(
-                    "bumbledb marshal: relation `{name}`: column `{field}` has length {}, expected {expected}",
-                    column.len()
-                )));
+    let collection = builder.seal().map_err(|error| throw_engine(env, &error))?;
+    span.set_count(collection.rows());
+    Ok(collection)
+}
+
+/// One flat-lane cell: the JS shape judged against its positional field's
+/// declared type with [`schema_value`]'s exact refusals ([`cell_mismatch`]
+/// / [`bytes_width_mismatch`] are the shared spellings), then fed through
+/// the typed pushes — strings and `bytes<N>` land in the collection's
+/// arenas without buying a `Box`ed [`Value`] (D8,
+/// `proposals/one-representation/70`). The builder's own judgments (the
+/// fixed-interval width/ray family the bridge never judged) throw as the
+/// engine errors they always were on the `insert_dyn` lane.
+#[expect(
+    unsafe_code,
+    reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
+              JS type); every cast below is fenced by the `get_type` check in \
+              its own arm"
+)]
+fn push_cell(
+    env: Env,
+    builder: &mut CollectionBuilder<'_>,
+    relation: &str,
+    field: &FieldDescriptor,
+    value: &Unknown,
+) -> napi::Result<()> {
+    let ctx = CellCtx {
+        relation,
+        field: &field.name,
+    };
+    let got = value.get_type()?;
+    // SAFETY (each `cast` below): the arm's guard just proved `got` is the
+    // exact JS type the cast assumes; a mismatch returned before the cast.
+    let landed = match &field.value_type {
+        ValueType::Bool => {
+            if got != JsType::Boolean {
+                return Err(cell_mismatch(ctx, "boolean", got));
             }
-            Some(_) => {}
+            builder.push_bool(unsafe { value.cast::<bool>()? })
         }
-        cols.push(column);
-    }
-    let n = row_count.unwrap_or(0);
-    let mut out = Vec::with_capacity(n as usize);
-    for row in 0..n {
-        let mut values = Vec::with_capacity(fields.len());
-        for (col_index, field) in fields.iter().enumerate() {
-            let value = req_at::<Unknown>(
-                &cols[col_index],
-                row,
-                format_args!("relation `{name}` column `{}`", field.name),
-            )?;
-            values.push(schema_value(&field.value_type, &value, name, &field.name)?);
+        ValueType::U64 => {
+            if got != JsType::BigInt {
+                return Err(cell_mismatch(ctx, "bigint (u64)", got));
+            }
+            builder.push_u64(u64_in(&unsafe { value.cast::<BigInt>()? }, ctx)?)
         }
-        out.push(values);
-    }
-    Ok((rel, out))
+        ValueType::I64 => {
+            if got != JsType::BigInt {
+                return Err(cell_mismatch(ctx, "bigint (i64)", got));
+            }
+            builder.push_i64(i64_in(&unsafe { value.cast::<BigInt>()? }, ctx)?)
+        }
+        ValueType::String => {
+            if got != JsType::String {
+                return Err(cell_mismatch(ctx, "string", got));
+            }
+            let text = unsafe { value.cast::<String>()? };
+            builder.push_str(&text)
+        }
+        ValueType::FixedBytes { len } => {
+            if got != JsType::Object {
+                return Err(cell_mismatch(ctx, "Uint8Array", got));
+            }
+            let bytes = unsafe { value.cast::<Uint8Array>()? };
+            if bytes.len() != usize::from(*len) {
+                return Err(bytes_width_mismatch(ctx, *len, bytes.len()));
+            }
+            builder.push_bytes(&bytes)
+        }
+        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
+            if got != JsType::Object {
+                return Err(cell_mismatch(ctx, "{ start, end } bigint pair", got));
+            }
+            let obj = unsafe { value.cast::<Object>()? };
+            match element {
+                IntervalElement::U64 => builder.push_interval_u64(interval_u64_in(&obj, ctx)?),
+                IntervalElement::I64 => builder.push_interval_i64(interval_i64_in(&obj, ctx)?),
+            }
+        }
+    };
+    landed.map_err(|error| throw_engine(env, &error))
 }
 
 fn one_fact_row(

@@ -1,8 +1,10 @@
 /**
- * Issue 04: the TS builder is the engine verb set — load (objects and
- * columns), delete, reserve, contains, get, admit. A staged fact can be
- * retracted and a fresh range minted before admit. Column load allocates
- * no per-row JS array.
+ * Issue 04 + the one-representation crossing: the TS builder is the engine
+ * verb set — load, delete, reserve, contains, get, admit. A staged fact can
+ * be retracted and a fresh range minted before admit. Collections cross as
+ * ONE flat row-major cells array; the column transport is DELETED
+ * (proposals/one-representation/70, D1/D2) and this suite pins the
+ * spelling's absence at both tiers (@ts-expect-error walls + source greps).
  */
 
 import assert from "node:assert/strict"
@@ -35,14 +37,63 @@ describe("TS builder verb set", function suite() {
 		assert.match(db, /contains<R extends MemberRelation<Rels>>/)
 		assert.match(db, /get<R extends MemberRelation<Rels>>\(relation: R, key: KeyFact<R>\)/)
 		assert.match(db, /admit\(\): Promise<Admission/)
+		assert.match(lib, /\bfn instance_builder_load\b/)
 		assert.match(lib, /\bfn instance_builder_delete\b/)
 		assert.match(lib, /\bfn instance_builder_reserve\b/)
 		assert.match(lib, /\bfn instance_builder_contains\b/)
 		assert.match(lib, /\bfn instance_builder_get\b/)
-		assert.match(lib, /\bfn instance_builder_load_columns\b/)
-		assert.match(lib, /\bfn tx_insert_columns\b/)
+	})
+
+	test("the column transport symbols are gone from the tree (70-deletions D1/D2)", function columnSymbolsDead() {
+		const db = fs.readFileSync(path.join(packageRoot, "src/db.ts"), "utf8")
+		const index = fs.readFileSync(path.join(packageRoot, "src/index.ts"), "utf8")
+		const nativeSurface = fs.readFileSync(path.join(packageRoot, "src/native.ts"), "utf8")
+		const lib = fs.readFileSync(path.join(packageRoot, "crate/src/lib.rs"), "utf8")
 		const marshal = fs.readFileSync(path.join(packageRoot, "crate/src/marshal.rs"), "utf8")
-		assert.match(marshal, /\bfn fact_columns\b/, "column transport is marshal parse-all-first")
+		assert.doesNotMatch(
+			db,
+			/ColumnBatch<|type ColumnBatch|isColumnBatch|columnsOf/,
+			"D1: the public column arm is deleted"
+		)
+		assert.doesNotMatch(index, /ColumnBatch/, "D1: no ColumnBatch export exists")
+		assert.doesNotMatch(
+			nativeSurface,
+			/txInsertColumns|instanceBuilderLoadColumns/,
+			"D2: the paired native crossings are deleted"
+		)
+		assert.doesNotMatch(
+			lib,
+			/tx_insert_columns|instance_builder_load_columns/,
+			"D2: the bridge column verbs are deleted"
+		)
+		assert.doesNotMatch(
+			marshal,
+			/\bfn fact_columns\b|\bfn fact_rows\b/,
+			"D2/D6: the column parse and the nested Vec<Vec<Value>> product are deleted"
+		)
+		assert.match(marshal, /\bfn accepted_collection\b/, "the one replacement: the flat accepted-collection crossing")
+		assert.match(
+			marshal,
+			/\bfn fact_row\b/,
+			"the single-fact point lane survives (20-accepted-collection pins its scope)"
+		)
+	})
+
+	test("the column spelling is unrepresentable — @ts-expect-error walls (70-deletions D1)", async function columnWall() {
+		const builder = InstanceBuilder.create(Ledger)
+		assert.throws(function loadBatch() {
+			// @ts-expect-error — ColumnBatch is deleted: Iterable<Fact<R>> is the ONE collection spelling (20-accepted-collection)
+			builder.load(Holder, { id: [1n], name: ["ada"] })
+		})
+		const owned = accepted(await builder.admit())
+		const db = await Db.fromInstance(path.join(tmpRoot, "column-wall"), owned)
+		db.write(function insertColumns(tx) {
+			assert.throws(function insertBatch() {
+				// @ts-expect-error — the CollectionWrite union lost its ColumnBatch arm (70-deletions D1)
+				tx.insert(Holder, { id: [1n], name: ["ada"] })
+			})
+		})
+		owned[Symbol.dispose]()
 	})
 
 	test("a staged fact can be retracted before admit", async function retractThenAdmit() {
@@ -77,20 +128,15 @@ describe("TS builder verb set", function suite() {
 		owned[Symbol.dispose]()
 	})
 
-	test("bulk load via columns allocates no per-row JS array", async function columnLoad() {
+	test("bulk load crosses as one flat row-major array — no JS array per fact", async function bulkLoad() {
 		const db = fs.readFileSync(path.join(packageRoot, "src/db.ts"), "utf8")
-		assert.match(db, /never a JS array per row/)
-		const columnsFn = db.slice(db.indexOf("function columnsOf"), db.indexOf("function mutateCollection"))
-		assert.doesNotMatch(columnsFn, /\browOf\b/, "the column path never materializes a row array")
+		assert.match(db, /no JS array per fact/)
 		const count = 4_000
-		const ids = Array.from({ length: count }, function idAt(_value, index) {
-			return BigInt(index + 1)
-		})
-		const names = ids.map(function nameAt(id) {
-			return `n${id}`
+		const facts = Array.from({ length: count }, function factAt(_value, index) {
+			return { id: BigInt(index + 1), name: `n${index + 1}` }
 		})
 		const builder = InstanceBuilder.create(Ledger)
-		const report = builder.load(Holder, { id: ids, name: names })
+		const report = builder.load(Holder, facts)
 		assert.equal(report.submitted, BigInt(count))
 		assert.equal(report.changed, BigInt(count))
 		assert.equal(builder.contains(Holder, { id: 1n, name: "n1" }), true)
@@ -100,18 +146,21 @@ describe("TS builder verb set", function suite() {
 		owned[Symbol.dispose]()
 	})
 
-	test("WriteTx.insert accepts the same column transport", async function txInsertColumns() {
+	test("WriteTx.insert rides the same flat crossing", async function txInsertFlat() {
 		const builder = InstanceBuilder.create(Ledger)
 		const owned = accepted(await builder.admit())
-		const db = await Db.fromInstance(path.join(tmpRoot, "tx-cols"), owned)
+		const db = await Db.fromInstance(path.join(tmpRoot, "tx-flat"), owned)
 		const minted = { first: 0n }
-		db.write(function insertColumns(tx) {
+		db.write(function insertFacts(tx) {
 			const range = tx.reserve(Holder, "id", 2n)
 			const first = range.at(0n)
 			const second = range.at(1n)
 			assert.ok(first !== undefined && second !== undefined)
 			minted.first = first
-			const report = tx.insert(Holder, { id: [first, second], name: ["ada", "grace"] })
+			const report = tx.insert(Holder, [
+				{ id: first, name: "ada" },
+				{ id: second, name: "grace" }
+			])
 			assert.equal(report.changed, 2n)
 			assert.equal(tx.contains(Holder, { id: first, name: "ada" }), true)
 		})

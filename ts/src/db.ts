@@ -80,60 +80,47 @@ interface MutationReport {
 }
 
 /**
- * Column-major collection write: one array per declared field, every
- * column the same length. The second transport of `load` / `insert` —
- * objects and columns are two ways to spell the same batch.
+ * The ONE collection-write spelling: typed fact objects, iterable
+ * (proposals/one-representation/20). The column transport (`ColumnBatch`,
+ * the union's second arm) is DELETED (70-deletions D1) — it existed only
+ * because the row spelling was slow, and a transport kept beside its
+ * replacement is a mode; the row spelling is now also the fast one (the
+ * facts cross as one flat row-major cells array).
  */
-type ColumnBatch<R extends AnyRelation> = {
-	readonly [K in keyof Fact<R> & string]: readonly Fact<R>[K][]
-}
-
-type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>> | ColumnBatch<R>
-
-function isColumnBatch(value: object): boolean {
-	return !(Symbol.iterator in value)
-}
-
-function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FactValue[][] {
-	const rows: FactValue[][] = []
-	for (const fact of facts) {
-		rows.push(rowOf(relation.data, recordOf(fact)))
-	}
-	return rows
-}
+type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>>
 
 /**
- * Lowers a column batch to per-field wire arrays in sealed field order.
- * Allocates one array per field — never a JS array per row.
+ * The flat projector: every fact's cells land in ONE row-major
+ * `FactValue` array (length rows×arity) — no JS array per fact exists
+ * anywhere between the caller's objects and the native crossing
+ * (proposals/one-representation/20, V1). The per-cell judgment is
+ * `cellOf` — the one cell judge `rowOf` also speaks (closed handle→id,
+ * well-formedness, interval shape) — and the missing-field refusal is
+ * `rowOf`'s, byte for byte; only the output form differs (flat, never
+ * per-row).
  */
-function columnsOf(relation: AnyRelation, batch: object): FactValue[][] {
-	const record = recordOf(batch)
-	let count: number | undefined
-	return relation.data.fields.map(function marshalColumn(declared) {
-		const raw = record[declared.name]
-		if (!Array.isArray(raw)) {
-			throw errors.new(`relation ${relation.name}: column ${declared.name} is not an array`)
+function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FactValue[] {
+	const data = relation.data
+	const cells: FactValue[] = []
+	for (const fact of facts) {
+		const record = recordOf(fact)
+		for (const declared of data.fields) {
+			const value = record[declared.name]
+			if (value === undefined) {
+				throw errors.new(`relation ${data.name}: fact is missing field ${declared.name}`)
+			}
+			cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
 		}
-		if (count === undefined) {
-			count = raw.length
-		} else if (raw.length !== count) {
-			throw errors.new(`relation ${relation.name}: column ${declared.name} has length ${raw.length}, expected ${count}`)
-		}
-		return raw.map(function marshalCell(value: unknown) {
-			return cellOf(`relation ${relation.name} field ${declared.name}`, declared.field, value)
-		})
-	})
+	}
+	return cells
 }
 
 function mutateCollection<R extends AnyRelation>(
 	relation: R,
 	facts: CollectionWrite<R>,
-	applyRows: (rows: readonly FactValue[][]) => WireMutationReport,
-	applyColumns: (columns: readonly FactValue[][]) => WireMutationReport
+	apply: (cells: readonly FactValue[]) => WireMutationReport
 ): MutationReport {
-	const report = isColumnBatch(facts)
-		? applyColumns(columnsOf(relation, facts))
-		: applyRows(rowsOf(relation, facts as Iterable<Fact<R>>))
+	const report = apply(rowsOf(relation, facts))
 	return Object.freeze({ submitted: report.submitted, changed: report.changed })
 }
 
@@ -1574,20 +1561,11 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
-			return mutateCollection(
-				relation,
-				facts,
-				function applyRows(rows) {
-					return bridged("bumbledb tx insert", function record() {
-						return native.txInsert(txHandle, entry.id, rows)
-					})
-				},
-				function applyColumns(columns) {
-					return bridged("bumbledb tx insert", function recordColumns() {
-						return native.txInsertColumns(txHandle, entry.id, columns)
-					})
-				}
-			)
+			return mutateCollection(relation, facts, function applyCells(cells) {
+				return bridged("bumbledb tx insert", function record() {
+					return native.txInsert(txHandle, entry.id, cells)
+				})
+			})
 		}
 		function remove<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
@@ -2032,20 +2010,11 @@ function wrapBuilder<Rels extends SchemaRelations>(
 		load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
 			assertLive()
 			const entry = ordinaryEntry(tables, theory, relation)
-			return mutateCollection(
-				relation,
-				facts,
-				function applyRows(rows) {
-					return bridged("bumbledb builder load", function loadRows() {
-						return native.instanceBuilderLoad(nativeHandle, entry.id, rows)
-					})
-				},
-				function applyColumns(columns) {
-					return bridged("bumbledb builder load", function loadColumns() {
-						return native.instanceBuilderLoadColumns(nativeHandle, entry.id, columns)
-					})
-				}
-			)
+			return mutateCollection(relation, facts, function applyCells(cells) {
+				return bridged("bumbledb builder load", function loadCells() {
+					return native.instanceBuilderLoad(nativeHandle, entry.id, cells)
+				})
+			})
 		},
 		delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
@@ -2177,7 +2146,6 @@ export type {
 	AbandonedArm,
 	Admission,
 	CapacityViolation,
-	ColumnBatch,
 	Committed,
 	ContainmentViolation,
 	DeclaredKeyFact,

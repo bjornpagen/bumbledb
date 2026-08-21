@@ -1145,32 +1145,23 @@ fn fresh_range_wire(range: FreshRange<u64>) -> FreshRangeWire {
     }
 }
 
+/// One crossing per write verb (`proposals/one-representation/20`): the
+/// flat row-major cells array becomes ONE shape-proved
+/// `AcceptedCollection` in one marshal pass, handed to the engine's
+/// doc-hidden `*_accepted` transport lane. The paired column crossings
+/// this bridge used to carry are D2 in the deletion ledger
+/// (`proposals/one-representation/70`).
 #[napi]
 pub fn tx_insert(
     env: Env,
     tx: &External<TxHandle>,
     relation: u32,
-    rows: Array,
+    cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&tx.sealed.rosters, relation, &rows)?;
+    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, &cells)?;
     let report = tx
         .tx()?
-        .insert_dyn(facts.0, facts.1)
-        .map_err(|e| throw_engine(env, &e))?;
-    Ok(mutation_report_wire(report))
-}
-
-#[napi]
-pub fn tx_insert_columns(
-    env: Env,
-    tx: &External<TxHandle>,
-    relation: u32,
-    columns: Array,
-) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_columns(&tx.sealed.rosters, relation, &columns)?;
-    let report = tx
-        .tx()?
-        .insert_dyn(facts.0, facts.1)
+        .insert_accepted(&collection)
         .map_err(|e| throw_engine(env, &e))?;
     Ok(mutation_report_wire(report))
 }
@@ -1180,12 +1171,12 @@ pub fn tx_delete(
     env: Env,
     tx: &External<TxHandle>,
     relation: u32,
-    rows: Array,
+    cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&tx.sealed.rosters, relation, &rows)?;
+    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, &cells)?;
     let report = tx
         .tx()?
-        .delete_dyn(facts.0, facts.1)
+        .delete_accepted(&collection)
         .map_err(|e| throw_engine(env, &e))?;
     Ok(mutation_report_wire(report))
 }
@@ -1465,30 +1456,18 @@ pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<Bui
     }))
 }
 
+/// The builder twin of [`tx_insert`]'s one crossing: same flat cells
+/// array, same `AcceptedCollection`, the engine's `load_accepted`.
 #[napi]
 pub fn instance_builder_load(
     env: Env,
     builder: &External<BuilderHandle>,
     relation: u32,
-    rows: Array,
+    cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&builder.sealed.rosters, relation, &rows)?;
+    let collection = marshal::accepted_collection(env, &builder.sealed.rosters, relation, &cells)?;
     let report = live_mut(&builder.inner, "builder")?
-        .load_dyn(facts.0, facts.1)
-        .map_err(|error| throw_engine(env, &error))?;
-    Ok(mutation_report_wire(report))
-}
-
-#[napi]
-pub fn instance_builder_load_columns(
-    env: Env,
-    builder: &External<BuilderHandle>,
-    relation: u32,
-    columns: Array,
-) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_columns(&builder.sealed.rosters, relation, &columns)?;
-    let report = live_mut(&builder.inner, "builder")?
-        .load_dyn(facts.0, facts.1)
+        .load_accepted(&collection)
         .map_err(|error| throw_engine(env, &error))?;
     Ok(mutation_report_wire(report))
 }
@@ -1498,11 +1477,11 @@ pub fn instance_builder_delete(
     env: Env,
     builder: &External<BuilderHandle>,
     relation: u32,
-    rows: Array,
+    cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let facts = marshal::fact_rows(&builder.sealed.rosters, relation, &rows)?;
+    let collection = marshal::accepted_collection(env, &builder.sealed.rosters, relation, &cells)?;
     let report = live_mut(&builder.inner, "builder")?
-        .delete_dyn(facts.0, facts.1)
+        .delete_accepted(&collection)
         .map_err(|error| throw_engine(env, &error))?;
     Ok(mutation_report_wire(report))
 }

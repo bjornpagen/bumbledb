@@ -102,11 +102,11 @@ describe("query literals, params & membership arrays over closed references", fu
 		// (Sev: Info 0, Warn 1, Crit 2, Fatal 3; Priority: Crit 0, Low 1) —
 		// the name↔id bijection is the SDK's, above this seam.
 		const committed = native.dbWrite(db, function write(tx) {
-			native.txInsert(tx, INCIDENT_ID, [[1n, 0n, 1n]])
-			native.txInsert(tx, INCIDENT_ID, [[2n, 1n, 1n]])
-			native.txInsert(tx, INCIDENT_ID, [[3n, 2n, 0n]])
-			native.txInsert(tx, INCIDENT_ID, [[4n, 3n, 0n]])
-			native.txInsert(tx, INCIDENT_ID, [[5n, 2n, 1n]])
+			native.txInsert(tx, INCIDENT_ID, [1n, 0n, 1n])
+			native.txInsert(tx, INCIDENT_ID, [2n, 1n, 1n])
+			native.txInsert(tx, INCIDENT_ID, [3n, 2n, 0n])
+			native.txInsert(tx, INCIDENT_ID, [4n, 3n, 0n])
+			native.txInsert(tx, INCIDENT_ID, [5n, 2n, 1n])
 			return true
 		})
 		assert.equal(committed.tag, "accepted", "the seed commit lands")
