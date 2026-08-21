@@ -14,10 +14,11 @@ use std::sync::Arc;
 
 use super::MutationReport;
 use super::apply::ApplyRow;
+use super::collection::{AcceptedCollection, intern_accepted_row};
 use super::{CodecRead, CodecWrite, Fact, Fresh, FreshRange, Probe, codec_seal};
 use super::{encode_dyn, get as get_path};
 use crate::encoding::{FactLayout, InternId, ValueRef, encode_fact};
-use crate::error::{DynIdError, Error, Result};
+use crate::error::{DynIdError, Error, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use crate::schema::FreshField;
 use crate::schema::{KeyId, Schema};
@@ -488,33 +489,91 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         }
     }
 
-    pub(super) fn parse_dyn_collection<'a>(
+    /// Parses the dyn lane's rows into ONE [`AcceptedCollection`], under
+    /// the standing law order: an empty collection is `None` — no engine
+    /// request, judged before any refusal — then poison, closed, unknown
+    /// relation, and the shape parse (arity per row, type-kind per cell).
+    fn accept_dyn(
         &self,
         rel: RelationId,
-        rows: &'a [impl AsRef<[Value]>],
-    ) -> Result<Vec<encode_dyn::ParsedRow<'a>>> {
-        if rows.is_empty() {
-            return Ok(Vec::new());
+        facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
+    ) -> Result<Option<AcceptedCollection>> {
+        let mut rows = facts.into_iter().peekable();
+        if rows.peek().is_none() {
+            return Ok(None);
         }
         self.refuse_poisoned()?;
         self.refuse_closed(rel)?;
         let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        let fields = relation.fields();
-        rows.iter()
-            .map(|row| encode_dyn::parse_dyn_row(rel, row.as_ref(), fields))
-            .collect()
+        AcceptedCollection::from_value_rows(rel, relation.fields(), rows).map(Some)
     }
 
-    pub(super) fn encode_parsed_mint(
+    /// Applies one shape-proved collection under `want` — the one
+    /// consumption of [`AcceptedCollection`], built ON the parse-all-first
+    /// [`Self::apply_collection`] machinery: row indices in, borrowed cell
+    /// views interned and encoded through the reused `refs`/`scratch`
+    /// path, no per-row container anywhere.
+    ///
+    /// Law order preserved exactly: empty is `MutationReport::EMPTY`
+    /// before any refusal; then poison, closed, unknown relation, and the
+    /// arity-vs-roster re-verification — the authoritative second wall.
+    /// The collection's own relation IS the apply target (the transport
+    /// surfaces take only the collection), so relation equality holds by
+    /// construction; the roster re-anchor is the arity check against the
+    /// relation this core sealed.
+    pub(super) fn apply_accepted(
         &mut self,
-        row: &encode_dyn::ParsedRow<'_>,
+        coll: &AcceptedCollection,
+        want: Disposition,
+    ) -> Result<MutationReport> {
+        if coll.rows() == 0 {
+            return Ok(MutationReport::EMPTY);
+        }
+        self.refuse_poisoned()?;
+        let rel = coll.relation();
+        self.refuse_closed(rel)?;
+        let schema = Arc::clone(&self.schema);
+        let Some(relation) = schema.relation_checked(rel) else {
+            return Err(DynIdError::UnknownRelation { relation: rel }.into());
+        };
+        if usize::from(coll.arity()) != relation.fields().len() {
+            return Err(FactShapeError::ArityMismatch {
+                relation: rel,
+                mismatch: Mismatch {
+                    witnessed: usize::from(coll.arity()),
+                    required: relation.fields().len(),
+                },
+            }
+            .into());
+        }
+        let layout = relation.layout();
+        match want {
+            Disposition::Insert => {
+                self.apply_collection(rel, want, 0..coll.rows(), |core, row, bytes| {
+                    core.encode_accepted_mint(coll, row, layout, bytes)
+                })
+            }
+            Disposition::Delete => {
+                self.apply_collection(rel, want, 0..coll.rows(), |core, row, bytes| {
+                    core.encode_accepted_resolve(coll, row, layout, bytes)
+                })
+            }
+        }
+    }
+
+    /// Encodes accepted row `row`, minting novel strings — the insert
+    /// disposition's arm.
+    fn encode_accepted_mint(
+        &mut self,
+        coll: &AcceptedCollection,
+        row: u64,
         layout: &FactLayout,
         bytes: &mut Vec<u8>,
     ) -> Result<ApplyRow> {
         let mut refs = std::mem::take(&mut self.refs);
-        let encoded = encode_dyn::intern_parsed_row(row, &mut refs, |text| {
+        let encoded = intern_accepted_row(coll, row, &mut refs, |text| {
             self.backend
                 .intern_str(self.schema.as_ref(), text)
                 .map(Some)
@@ -522,14 +581,18 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         finish_encode(encoded, refs, self, layout, bytes)
     }
 
-    pub(super) fn encode_parsed_resolve(
+    /// Encodes accepted row `row`, resolve-only — the delete
+    /// disposition's arm: a never-interned string proves the row absent
+    /// ([`ApplyRow::Skip`]) without growing the dictionary.
+    fn encode_accepted_resolve(
         &mut self,
-        row: &encode_dyn::ParsedRow<'_>,
+        coll: &AcceptedCollection,
+        row: u64,
         layout: &FactLayout,
         bytes: &mut Vec<u8>,
     ) -> Result<ApplyRow> {
         let mut refs = std::mem::take(&mut self.refs);
-        let encoded = encode_dyn::intern_parsed_row(row, &mut refs, |text| {
+        let encoded = intern_accepted_row(coll, row, &mut refs, |text| {
             self.backend.resolve_str(self.schema.as_ref(), text)
         });
         finish_encode(encoded, refs, self, layout, bytes)
@@ -543,7 +606,11 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         let parsed = encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
         let layout = relation.layout();
         self.with_scratch(|core, bytes| {
-            match core.encode_parsed_resolve(&parsed, layout, bytes)? {
+            let mut refs = std::mem::take(&mut core.refs);
+            let encoded = encode_dyn::intern_parsed_row(&parsed, &mut refs, |text| {
+                core.backend.resolve_str(core.schema.as_ref(), text)
+            });
+            match finish_encode(encoded, refs, core, layout, bytes)? {
                 ApplyRow::Ready => Ok(true),
                 ApplyRow::Skip => Ok(false),
             }
@@ -713,13 +780,10 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let rows: Vec<_> = facts.into_iter().collect();
-        let parsed = self.parse_dyn_collection(rel, &rows)?;
-        let schema = Arc::clone(&self.schema);
-        self.apply_collection(rel, Disposition::Insert, parsed, |core, row, bytes| {
-            let layout = schema.relation(rel).layout();
-            core.encode_parsed_mint(&row, layout, bytes)
-        })
+        let Some(coll) = self.accept_dyn(rel, facts)? else {
+            return Ok(MutationReport::EMPTY);
+        };
+        self.apply_accepted(&coll, Disposition::Insert)
     }
 
     pub(super) fn delete_dyn(
@@ -727,13 +791,10 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let rows: Vec<_> = facts.into_iter().collect();
-        let parsed = self.parse_dyn_collection(rel, &rows)?;
-        let schema = Arc::clone(&self.schema);
-        self.apply_collection(rel, Disposition::Delete, parsed, |core, row, bytes| {
-            let layout = schema.relation(rel).layout();
-            core.encode_parsed_resolve(&row, layout, bytes)
-        })
+        let Some(coll) = self.accept_dyn(rel, facts)? else {
+            return Ok(MutationReport::EMPTY);
+        };
+        self.apply_accepted(&coll, Disposition::Delete)
     }
 
     pub(super) fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {

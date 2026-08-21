@@ -125,6 +125,11 @@ mod value;
 mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
+/// The accepted-collection transport (`proposals/one-representation/20`):
+/// the bridge crates' parse-once write representation, consumed by the
+/// doc-hidden `*_accepted` verbs. A transport form, not embedding API.
+#[doc(hidden)]
+pub use api::db::{AcceptedCollection, CollectionBuilder};
 pub use api::db::{
     CodecRead, CodecWrite, Db, Fact, Fresh, FreshRange, FreshRangeIter, InstanceBuilder, Key,
     MutationReport, OwnedInstance, Probe, ReadInstance, Witness, WriteTx,

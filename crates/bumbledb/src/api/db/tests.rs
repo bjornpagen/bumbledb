@@ -1152,3 +1152,462 @@ fn write_from_rejects_a_foreign_witness() {
     assert!(matches!(err, Error::ForeignWitness), "{err:?}");
     assert_eq!(db.generation().expect("generation").value(), 0);
 }
+
+// =====================================================================
+// The accepted-collection transport (`proposals/one-representation/20`):
+// the one parse, the doc-hidden `*_accepted` verbs, and the ten-law
+// table's write side re-pointed at the new lane.
+// =====================================================================
+
+// One relation over every value type — the differential fixture: the
+// typed lane (`schema!` facts), the dyn lane (`Value` rows), and the
+// accepted lane (builder-fed) must be three spellings of one write.
+crate::schema! {
+    pub OneRep;
+    relation Sample {
+        flag: bool,
+        count: u64,
+        delta: i64,
+        memo: str,
+        tag: bytes<3>,
+        window: interval<u64>,
+        span: interval<i64>,
+    }
+}
+
+fn sample_facts() -> Vec<Sample<'static>> {
+    let iv_u = |a, b| crate::Interval::<u64>::new(a, b).expect("nonempty");
+    let iv_i = |a, b| crate::Interval::<i64>::new(a, b).expect("nonempty");
+    vec![
+        Sample {
+            flag: true,
+            count: 7,
+            delta: -3,
+            memo: "alpha",
+            tag: [1, 2, 3],
+            window: iv_u(1, 5),
+            span: iv_i(-4, 4),
+        },
+        Sample {
+            flag: false,
+            count: 8,
+            delta: 9,
+            memo: "beta",
+            tag: [9, 9, 9],
+            window: iv_u(0, 2),
+            span: iv_i(-1, 0),
+        },
+        // `memo` repeats deliberately: the interned string must land on
+        // one id whichever lane carried it.
+        Sample {
+            flag: true,
+            count: 7,
+            delta: -3,
+            memo: "alpha",
+            tag: [1, 2, 3],
+            window: iv_u(2, 6),
+            span: iv_i(0, 3),
+        },
+    ]
+}
+
+fn sample_value_rows() -> Vec<Vec<Value>> {
+    sample_facts()
+        .iter()
+        .map(|fact| {
+            vec![
+                Value::Bool(fact.flag),
+                Value::U64(fact.count),
+                Value::I64(fact.delta),
+                Value::String(fact.memo.into()),
+                Value::FixedBytes(Box::from(fact.tag.as_slice())),
+                Value::IntervalU64(fact.window),
+                Value::IntervalI64(fact.span),
+            ]
+        })
+        .collect()
+}
+
+fn sorted_scan(db: &Db<OneRep>) -> Vec<Vec<Value>> {
+    let mut rows: Vec<Vec<Value>> = db
+        .read(|snap| snap.scan(Sample::RELATION)?.collect::<Result<_>>())
+        .expect("scan");
+    rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    rows
+}
+
+fn coherent(db: &Db<OneRep>) {
+    let report = db.verify_store().expect("verify");
+    assert!(
+        matches!(
+            report.verdict,
+            crate::verify_store::StoreVerdict::Coherent { .. }
+        ),
+        "{report:?}"
+    );
+}
+
+/// The differential-equivalence pin (the digest stop-ship proxy, 80):
+/// the same fact set through the typed lane, `insert_dyn`, and
+/// `insert_accepted` into three fresh stores produces identical state —
+/// scans, dictionary population, generation, and a coherent sweep each.
+#[test]
+fn the_three_write_lanes_produce_identical_stores() {
+    let typed_dir = TempDir::new("db-lanes-typed");
+    let dyn_dir = TempDir::new("db-lanes-dyn");
+    let accepted_dir = TempDir::new("db-lanes-accepted");
+    let typed_db = Db::create(typed_dir.path(), OneRep)
+        .expect("create")
+        .expect("accepted");
+    let dyn_db = Db::create(dyn_dir.path(), OneRep)
+        .expect("create")
+        .expect("accepted");
+    let accepted_db = Db::create(accepted_dir.path(), OneRep)
+        .expect("create")
+        .expect("accepted");
+
+    let typed_report = typed_db
+        .write(|tx| tx.insert(&sample_facts()))
+        .expect("typed insert")
+        .unwrap()
+        .value;
+    let dyn_report = dyn_db
+        .write(|tx| tx.insert_dyn(Sample::RELATION, sample_value_rows()))
+        .expect("dyn insert")
+        .unwrap()
+        .value;
+    let accepted_report = accepted_db
+        .write(|tx| {
+            let fields = accepted_db.schema().relation(Sample::RELATION).fields();
+            let mut builder = CollectionBuilder::new(Sample::RELATION, fields);
+            for fact in sample_facts() {
+                builder.push_bool(fact.flag)?;
+                builder.push_u64(fact.count)?;
+                builder.push_i64(fact.delta)?;
+                builder.push_str(fact.memo)?;
+                builder.push_bytes(&fact.tag)?;
+                builder.push_interval_u64(fact.window)?;
+                builder.push_interval_i64(fact.span)?;
+            }
+            tx.insert_accepted(&builder.seal()?)
+        })
+        .expect("accepted insert")
+        .unwrap()
+        .value;
+
+    assert_eq!(typed_report, dyn_report);
+    assert_eq!(typed_report, accepted_report);
+    assert_eq!(typed_report.submitted(), 3);
+    assert_eq!(typed_report.changed(), 3);
+
+    let typed_rows = sorted_scan(&typed_db);
+    assert_eq!(typed_rows.len(), 3);
+    assert_eq!(typed_rows, sorted_scan(&dyn_db));
+    assert_eq!(typed_rows, sorted_scan(&accepted_db));
+    assert_eq!(dict_entries(&typed_db), dict_entries(&dyn_db));
+    assert_eq!(dict_entries(&typed_db), dict_entries(&accepted_db));
+    let generation = typed_db.generation().expect("generation");
+    assert_eq!(generation, dyn_db.generation().expect("generation"));
+    assert_eq!(generation, accepted_db.generation().expect("generation"));
+    coherent(&typed_db);
+    coherent(&dyn_db);
+    coherent(&accepted_db);
+}
+
+/// The collection is `Send` by construction — built on the caller's
+/// thread, consumable on the transaction's (invariant 5 of 20).
+#[test]
+fn accepted_collection_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<AcceptedCollection>();
+}
+
+/// Law 2, accepted lane: an empty collection is `MutationReport::EMPTY`
+/// before ANY refusal — unknown relation, closed relation, and a
+/// poisoned transaction all answer the empty report, exactly as the dyn
+/// lane always has.
+#[test]
+fn an_empty_accepted_collection_is_lawful_before_any_refusal() {
+    let dir = TempDir::new("db-accepted-empty");
+    let db = Db::create(dir.path(), fresh_schema())
+        .expect("create")
+        .expect("accepted");
+    let fields = db.schema().relation(RelationId(0)).fields();
+    // Unknown relation, empty: no engine request, no refusal.
+    let unknown = CollectionBuilder::new(RelationId(99), fields)
+        .seal()
+        .expect("empty seals lawfully");
+    // Poisoned transaction, empty: still no engine request.
+    let outcome = db.write(|tx| {
+        assert_eq!(
+            tx.insert_accepted(&unknown)
+                .expect("empty is no engine request")
+                .submitted(),
+            0
+        );
+        tx.insert_dyn(RelationId(0), [&[Value::U64(u64::MAX), Value::U64(0)]])?;
+        let exhausted = tx.reserve::<SId>(1).expect_err("exhausted");
+        assert!(matches!(exhausted, Error::FreshExhausted { .. }));
+        let empty = CollectionBuilder::new(RelationId(0), fields)
+            .seal()
+            .expect("empty seals lawfully");
+        assert_eq!(
+            tx.insert_accepted(&empty)
+                .expect("empty precedes the poison refusal")
+                .submitted(),
+            0
+        );
+        // Nonempty against the poisoned transaction: typed refusal.
+        let row = AcceptedCollection::from_value_rows(
+            RelationId(0),
+            fields,
+            [&[Value::U64(1), Value::U64(2)]],
+        )
+        .expect("shape-lawful");
+        let err = tx.insert_accepted(&row).expect_err("poisoned");
+        assert!(matches!(err, Error::TransactionPoisoned { .. }), "{err:?}");
+        Ok(())
+    });
+    assert!(matches!(outcome, Err(Error::TransactionPoisoned { .. })));
+}
+
+/// Laws 5 and the roster walls, accepted lane: closed refusal is typed
+/// before the delta; an unknown relation is `UnknownRelation`; a
+/// collection whose sealed arity disagrees with the target roster is the
+/// authoritative second wall's `ArityMismatch`.
+#[test]
+fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
+    let dir = TempDir::new("db-accepted-walls");
+    let db = Db::create(dir.path(), closed_schema())
+        .expect("create")
+        .expect("accepted");
+    let currency = RelationId(0);
+    let sealed_fields = db.schema().relation(currency).fields();
+
+    db.write(|tx| {
+        // Closed refusal, both dispositions.
+        let row = AcceptedCollection::from_value_rows(
+            currency,
+            sealed_fields,
+            [&[Value::U64(0), Value::U64(2)]],
+        )
+        .expect("shape-lawful against the sealed roster");
+        for err in [
+            tx.insert_accepted(&row).expect_err("closed"),
+            tx.delete_accepted(&row).expect_err("closed"),
+        ] {
+            assert!(
+                matches!(err, Error::ClosedRelationWrite { relation } if relation == currency),
+                "{err:?}"
+            );
+        }
+        // Unknown relation: typed, never a panic — ids are data.
+        let foreign = AcceptedCollection::from_value_rows(
+            RelationId(99),
+            sealed_fields,
+            [&[Value::U64(0), Value::U64(2)]],
+        )
+        .expect("the constructor judges shape, not the roster");
+        let err = tx.insert_accepted(&foreign).expect_err("unknown");
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
+            ),
+            "{err:?}"
+        );
+        Ok(())
+    })
+    .expect("walls refuse operations, not the transaction")
+    .unwrap();
+}
+
+/// The arity re-verification (the authoritative second wall): a
+/// collection sealed against a narrower roster than the target's is
+/// refused with the same typed `ArityMismatch` the dyn parse would
+/// raise.
+#[test]
+fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
+    let dir = TempDir::new("db-accepted-arity-wall");
+    let db = Db::create(dir.path(), entry_schema())
+        .expect("create")
+        .expect("accepted");
+    let fields = db.schema().relation(ENTRY).fields();
+    // Sealed against the roster's first column only: shape-lawful for
+    // THAT roster, arity-illegal for the target.
+    let mut builder = CollectionBuilder::new(ENTRY, &fields[..1]);
+    builder.push_str("ada").expect("string column");
+    let narrow = builder.seal().expect("complete against its roster");
+    db.write(|tx| {
+        let err = tx.insert_accepted(&narrow).expect_err("arity wall");
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::ArityMismatch {
+                    relation: ENTRY,
+                    mismatch: Mismatch {
+                        witnessed: 1,
+                        required: 2,
+                    },
+                })
+            ),
+            "{err:?}"
+        );
+        Ok(())
+    })
+    .expect("the wall refuses the operation, not the transaction")
+    .unwrap();
+}
+
+/// Law 3 (`submitted`/`changed` exact) and law 4's dyn-twin semantics on
+/// the accepted lane: a duplicate row within one collection submits 2 and
+/// changes 1; the delete disposition resolves without minting, so a
+/// never-interned string proves absence and grows nothing.
+#[test]
+fn accepted_reports_are_exact_and_delete_never_mints() {
+    let dir = TempDir::new("db-accepted-exact");
+    let db = Db::create(dir.path(), entry_schema())
+        .expect("create")
+        .expect("accepted");
+    let fields = db.schema().relation(ENTRY).fields();
+    db.write(|tx| {
+        let twice = AcceptedCollection::from_value_rows(
+            ENTRY,
+            fields,
+            [&entry("ada", 1), &entry("ada", 1)],
+        )
+        .expect("shape-lawful");
+        let report = tx.insert_accepted(&twice)?;
+        assert_eq!(report.submitted(), 2);
+        assert_eq!(report.changed(), 1);
+        Ok(())
+    })
+    .expect("seed")
+    .unwrap();
+
+    let before = dict_entries(&db);
+    db.write(|tx| {
+        let ghost =
+            AcceptedCollection::from_value_rows(ENTRY, fields, [&entry("never-interned", 9)])
+                .expect("shape-lawful");
+        let report = tx.delete_accepted(&ghost)?;
+        assert_eq!(report.submitted(), 1);
+        assert_eq!(report.changed(), 0, "a dictionary miss proves absence");
+        let real = AcceptedCollection::from_value_rows(ENTRY, fields, [&entry("ada", 1)])
+            .expect("shape-lawful");
+        assert_eq!(tx.delete_accepted(&real)?.changed(), 1);
+        Ok(())
+    })
+    .expect("delete lane")
+    .unwrap();
+    assert_eq!(
+        dict_entries(&db),
+        before,
+        "the delete disposition interned nothing"
+    );
+}
+
+/// The one cell judgment, all feeding surfaces: every typed push checks
+/// its positional roster arm and answers the same `TypeMismatch` (naming
+/// relation and field) the `Value` feed does; the `bytes<N>` width and
+/// interval-family rules hold; a partial row cannot seal. An illegal
+/// collection is unrepresentable — these errors are the proof.
+#[test]
+fn the_collection_builder_is_the_one_shape_judgment() {
+    let schema = crate::schema::ValidateDescriptor::validate(crate::Theory::descriptor(OneRep))
+        .expect("valid");
+    let rel = Sample::RELATION;
+    let fields = schema.relation(rel).fields();
+    let type_mismatch = |err: Error, field: u16| {
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::TypeMismatch { relation, field: f })
+                    if relation == rel && f == FieldId(field)
+            ),
+            "{err:?}"
+        );
+    };
+
+    // Typed pushes against the wrong positional arm, each surface.
+    type_mismatch(
+        CollectionBuilder::new(rel, fields)
+            .push_u64(1)
+            .expect_err("bool column"),
+        0,
+    );
+    let mut builder = CollectionBuilder::new(rel, fields);
+    builder.push_bool(true).expect("flag");
+    type_mismatch(builder.push_i64(-1).expect_err("u64 column"), 1);
+    builder.push_u64(7).expect("count");
+    type_mismatch(builder.push_bool(false).expect_err("i64 column"), 2);
+    builder.push_i64(-3).expect("delta");
+    type_mismatch(builder.push_bytes(&[1, 2, 3]).expect_err("str column"), 3);
+    builder.push_str("alpha").expect("memo");
+    // The length is the type: bytes<3> refuses any other width.
+    type_mismatch(builder.push_bytes(&[1, 2]).expect_err("bytes<3>"), 4);
+    type_mismatch(builder.push_str("not-bytes").expect_err("bytes<3>"), 4);
+    builder.push_bytes(&[1, 2, 3]).expect("tag");
+    // The interval family: the element domain is part of the kind.
+    type_mismatch(
+        builder
+            .push_interval_i64(crate::Interval::<i64>::new(-1, 1).expect("nonempty"))
+            .expect_err("interval<u64> column"),
+        5,
+    );
+    builder
+        .push_interval_u64(crate::Interval::<u64>::new(1, 5).expect("nonempty"))
+        .expect("window");
+    type_mismatch(
+        builder
+            .push_interval_u64(crate::Interval::<u64>::new(1, 5).expect("nonempty"))
+            .expect_err("interval<i64> column"),
+        6,
+    );
+    builder
+        .push_interval_i64(crate::Interval::<i64>::new(-4, 4).expect("nonempty"))
+        .expect("span");
+    // One complete row seals; a dangling partial row is the arity
+    // mismatch it is.
+    builder.push_bool(true).expect("second row opens");
+    let err = builder.seal().expect_err("partial row");
+    assert!(
+        matches!(
+            err,
+            Error::FactShape(FactShapeError::ArityMismatch {
+                relation,
+                mismatch: Mismatch {
+                    witnessed: 1,
+                    required: 7,
+                },
+            }) if relation == rel
+        ),
+        "{err:?}"
+    );
+
+    // The Value feed answers the identical errors — one judgment, two
+    // feeding surfaces (parse-all-first at the source: the first illegal
+    // row refuses the whole collection; no partial proof exists).
+    let ok = sample_value_rows().remove(0);
+    let short = vec![Value::Bool(true)];
+    let err = AcceptedCollection::from_value_rows(rel, fields, [&ok, &short])
+        .expect_err("arity per row first");
+    assert!(
+        matches!(
+            err,
+            Error::FactShape(FactShapeError::ArityMismatch {
+                relation,
+                mismatch: Mismatch {
+                    witnessed: 1,
+                    required: 7,
+                },
+            }) if relation == rel
+        ),
+        "{err:?}"
+    );
+    let mut wrong = ok.clone();
+    wrong[3] = Value::U64(9);
+    let err = AcceptedCollection::from_value_rows(rel, fields, [&ok, &wrong])
+        .expect_err("type-kind per cell");
+    type_mismatch(err, 3);
+}

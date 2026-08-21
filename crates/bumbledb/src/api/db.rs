@@ -43,6 +43,7 @@ use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 mod apply;
 mod builder;
+mod collection;
 mod delete;
 mod delete_dyn;
 mod encode_dyn;
@@ -62,6 +63,10 @@ mod reserve;
 mod write;
 
 pub use builder::InstanceBuilder;
+// The accepted-collection transport (`proposals/one-representation/20`):
+// bridge-facing, doc-hidden at the crate root — the physical form must
+// never become semantic API.
+pub use collection::{AcceptedCollection, CollectionBuilder};
 pub use mutation::{FreshRange, FreshRangeIter, MutationReport};
 pub use owned::OwnedInstance;
 pub use write::Witness;

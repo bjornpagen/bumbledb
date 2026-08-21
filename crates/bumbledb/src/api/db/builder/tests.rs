@@ -604,3 +604,80 @@ fn poisoned_builder_admits_as_err() {
         Ok(_) => panic!("poisoned builder must not admit"),
     }
 }
+
+/// The accepted transport against the empty base
+/// (`proposals/one-representation/20`): `load_accepted` /
+/// `delete_accepted` are the builder-fed twins of `load_dyn` /
+/// `delete_dyn` — same reports, same never-mint delete, same one-parse
+/// law (a shape-illegal row refuses the WHOLE collection at
+/// construction, so nothing an accepted verb can receive ever stages a
+/// prefix).
+#[test]
+fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
+    let mut builder = InstanceBuilder::new(Named).expect("valid");
+    let schema = crate::api::db::CodecRead::schema(&builder);
+    let fields = schema.relation(Label::RELATION).fields().to_vec();
+
+    // Delete before any insert: resolve-only, the dictionary stays empty.
+    let ghost = crate::AcceptedCollection::from_value_rows(
+        Label::RELATION,
+        &fields,
+        [&[Value::String("ghost".into())]],
+    )
+    .expect("shape-lawful");
+    assert_eq!(
+        builder.delete_accepted(&ghost).expect("delete").changed(),
+        0
+    );
+    assert_eq!(builder.intern_count(), 0);
+
+    // The parse-all-first law lives at the constructor now: the illegal
+    // row refuses the whole collection, so no partial proof reaches the
+    // stage.
+    let ok = vec![Value::String("ok".into())];
+    let bad = Vec::<Value>::new();
+    let err =
+        crate::AcceptedCollection::from_value_rows(Label::RELATION, &fields, [ok.clone(), bad])
+            .expect_err("shape");
+    assert!(matches!(err, Error::FactShape(_)), "{err:?}");
+    assert!(
+        !builder
+            .contains_dyn(Label::RELATION, &ok)
+            .expect("nothing staged")
+    );
+
+    // The load disposition mints exactly as `load_dyn`.
+    let real = crate::AcceptedCollection::from_value_rows(Label::RELATION, &fields, [&ok])
+        .expect("shape-lawful");
+    let report = builder.load_accepted(&real).expect("load");
+    assert_eq!(report.submitted(), 1);
+    assert_eq!(report.changed(), 1);
+    assert_eq!(builder.intern_count(), 1);
+    assert!(builder.contains_dyn(Label::RELATION, &ok).expect("staged"));
+
+    // Empty is lawful, both dispositions.
+    let empty = crate::AcceptedCollection::from_value_rows(
+        Label::RELATION,
+        &fields,
+        std::iter::empty::<&[Value]>(),
+    )
+    .expect("empty seals lawfully");
+    assert_eq!(builder.load_accepted(&empty).expect("empty").submitted(), 0);
+    assert_eq!(
+        builder.delete_accepted(&empty).expect("empty").submitted(),
+        0
+    );
+}
+
+/// The closed wall holds on the accepted lane exactly as on `load_dyn`.
+#[test]
+fn closed_relation_accepted_load_is_refused() {
+    let mut builder = InstanceBuilder::new(WithClosed).expect("valid");
+    let schema = crate::api::db::CodecRead::schema(&builder);
+    let fields = schema.relation(WithClosed::KIND).fields().to_vec();
+    let row =
+        crate::AcceptedCollection::from_value_rows(WithClosed::KIND, &fields, [&[Value::U64(0)]])
+            .expect("shape-lawful against the sealed roster");
+    let err = builder.load_accepted(&row).expect_err("closed");
+    assert!(matches!(err, Error::ClosedRelationWrite { .. }), "{err:?}");
+}

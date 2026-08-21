@@ -21,6 +21,14 @@ pub(super) fn shape_mismatch(
 
 /// One arity-correct cell after shape parse. Strings stay `&str` until
 /// apply interns them — the parse is the proof, not a discarded check.
+///
+/// SINGLE-FACT ONLY (`proposals/one-representation/20`): collections
+/// travel as [`super::collection::AcceptedCollection`] — the arena-backed
+/// re-homing of this vocabulary — and the per-row collection loop that
+/// once boxed one of these per member is deleted. What remains here is
+/// the one-row judgment of the point crossings (`contains_dyn` /
+/// `get_dyn` / the read-instance membership probes), which are not
+/// collections and keep their one-row form.
 #[derive(Clone, Copy)]
 pub(super) enum ParsedCell<'a> {
     Bool(bool),
@@ -33,7 +41,7 @@ pub(super) enum ParsedCell<'a> {
 }
 
 /// A dynamic row that passed arity and type-kind. Apply only interns and
-/// encodes.
+/// encodes. One box per point probe — never per collection member.
 pub(super) struct ParsedRow<'a> {
     cells: Box<[ParsedCell<'a>]>,
 }

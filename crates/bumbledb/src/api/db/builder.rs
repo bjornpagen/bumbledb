@@ -7,13 +7,15 @@ use super::OwnedInstance;
 use super::get as get_path;
 use super::mutation_core::{HeapMutation, MutationCore};
 use super::{
-    CodecRead, CodecWrite, Fact, Fresh, FreshRange, Key, MutationReport, Probe, codec_seal,
+    AcceptedCollection, CodecRead, CodecWrite, Fact, Fresh, FreshRange, Key, MutationReport, Probe,
+    codec_seal,
 };
 use crate::encoding::InternId;
 use crate::error::{Admission, FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::FreshField;
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
+use crate::storage::delta::Disposition;
 use crate::storage::read;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
@@ -116,6 +118,34 @@ impl<S> InstanceBuilder<S> {
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
         self.mutation.delete_dyn(rel, facts)
+    }
+
+    /// Records one shape-proved collection against the empty base — the
+    /// bridge transport lane (`proposals/one-representation/20`),
+    /// semantics exactly as [`Self::load_dyn`]. Bridge/harness surface
+    /// (not embedding API).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load_dyn`], minus the per-row shape family the
+    /// constructor already refused.
+    #[doc(hidden)]
+    pub fn load_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
+        self.mutation
+            .apply_accepted(collection, Disposition::Insert)
+    }
+
+    /// The delete disposition of [`Self::load_accepted`] — resolve-only,
+    /// exactly as [`Self::delete_dyn`]. Bridge/harness surface (not
+    /// embedding API).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load_accepted`].
+    #[doc(hidden)]
+    pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
+        self.mutation
+            .apply_accepted(collection, Disposition::Delete)
     }
 
     /// Mints `count` consecutive fresh values. `count == 0` is empty and

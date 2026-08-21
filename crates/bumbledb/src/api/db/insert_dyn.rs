@@ -1,6 +1,7 @@
-use super::{MutationReport, WriteTx};
+use super::{AcceptedCollection, MutationReport, WriteTx};
 use crate::error::Result;
 use crate::ir::Value;
+use crate::storage::delta::Disposition;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
@@ -24,5 +25,22 @@ impl<S> WriteTx<'_, S> {
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
         self.mutation.load_dyn(rel, facts)
+    }
+
+    /// Records one shape-proved collection of inserts — the bridge
+    /// transport lane (`proposals/one-representation/20`): the collection
+    /// was parsed at construction, so only the write-side walls remain
+    /// (poison, closed, roster re-anchor). Semantics and reports exactly
+    /// as [`WriteTx::insert_dyn`]. Bridge/harness surface (not embedding
+    /// API).
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteTx::insert_dyn`], minus the per-row shape family the
+    /// constructor already refused.
+    #[doc(hidden)]
+    pub fn insert_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
+        self.mutation
+            .apply_accepted(collection, Disposition::Insert)
     }
 }
