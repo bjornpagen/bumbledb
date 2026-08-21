@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use super::MutationReport;
 use super::apply::ApplyRow;
-use super::collection::{AcceptedCollection, intern_accepted_row};
+use super::collection::{AcceptedCollection, intern_accepted_row, intern_value_row};
+use super::get as get_path;
 use super::{CodecRead, CodecWrite, Fact, Fresh, FreshRange, Probe, codec_seal};
-use super::{encode_dyn, get as get_path};
 use crate::encoding::{FactLayout, InternId, ValueRef, encode_fact};
 use crate::error::{DynIdError, Error, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
@@ -603,11 +603,10 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         let Some(relation) = schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        let parsed = encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
         let layout = relation.layout();
         self.with_scratch(|core, bytes| {
             let mut refs = std::mem::take(&mut core.refs);
-            let encoded = encode_dyn::intern_parsed_row(&parsed, &mut refs, |text| {
+            let encoded = intern_value_row(rel, relation.fields(), values, &mut refs, |text| {
                 core.backend.resolve_str(core.schema.as_ref(), text)
             });
             match finish_encode(encoded, refs, core, layout, bytes)? {

@@ -46,7 +46,6 @@ mod builder;
 mod collection;
 mod delete;
 mod delete_dyn;
-mod encode_dyn;
 mod get;
 mod insert;
 mod insert_dyn;

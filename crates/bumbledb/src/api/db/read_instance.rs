@@ -201,10 +201,13 @@ impl<S> ReadInstance<'_, S> {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         self.with_scratch(|scratch| {
-            let parsed = super::encode_dyn::parse_dyn_row(rel, values, relation.fields())?;
-            if !super::encode_dyn::intern_parsed_row(&parsed, &mut scratch.refs, |text| {
-                self.core.source.catalog().dict_lookup(text.as_bytes())
-            })? {
+            if !super::collection::intern_value_row(
+                rel,
+                relation.fields(),
+                values,
+                &mut scratch.refs,
+                |text| self.core.source.catalog().dict_lookup(text.as_bytes()),
+            )? {
                 return Ok(false);
             }
             crate::encoding::encode_fact(&scratch.refs, relation.layout(), &mut scratch.bytes);

@@ -31,7 +31,21 @@ use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, RelationId, ValueMismatch, ValueType, value_matches,
 };
 
-use super::encode_dyn::shape_mismatch;
+/// The one [`crate::schema::ValueMismatch`] → [`FactShapeError`] translation,
+/// shared by every dynamic write/read surface (`insert_dyn`/`delete_dyn`/
+/// `contains_dyn`/`get_dyn`, both transaction kinds).
+pub(super) fn shape_mismatch(
+    rel: RelationId,
+    field: FieldId,
+    mismatch: ValueMismatch,
+) -> FactShapeError {
+    match mismatch {
+        ValueMismatch::Type => FactShapeError::TypeMismatch {
+            relation: rel,
+            field,
+        },
+    }
+}
 
 /// One accepted cell: fixed-width tagged, `Copy`, with variable-width
 /// payloads as `(offset, len)` spans into the owning collection's arenas.
@@ -54,9 +68,9 @@ enum Cell {
     },
 }
 
-/// One borrowed cell of an accepted row — the `ParsedCell` vocabulary
-/// re-homed onto the arena spans: `Str`/`FixedBytes` resolve to
-/// `&str`/`&[u8]` borrowed from the collection.
+/// One borrowed cell of an accepted row — the retired `ParsedCell`
+/// vocabulary re-homed onto the arena spans: `Str`/`FixedBytes` resolve
+/// to `&str`/`&[u8]` borrowed from the collection.
 #[derive(Clone, Copy)]
 pub(super) enum CellView<'c> {
     Bool(bool),
@@ -452,9 +466,9 @@ fn arena_span(len: usize) -> u32 {
     u32::try_from(len).expect("arena span fits u32")
 }
 
-/// Intern pending strings of row `row` and fill `refs` — the accepted
-/// twin of the point-probe lane's `intern_parsed_row`. `Ok(false)` = a
-/// resolve miss: the fact cannot exist.
+/// Intern pending strings of row `row` and fill `refs` — the one
+/// judged-row → [`ValueRef`] translation, collection and point-probe
+/// lanes alike. `Ok(false)` = a resolve miss: the fact cannot exist.
 pub(super) fn intern_accepted_row(
     coll: &AcceptedCollection,
     row: u64,
@@ -480,4 +494,24 @@ pub(super) fn intern_accepted_row(
         refs.push(value_ref);
     }
     Ok(true)
+}
+
+/// THE single-row judgment of the point crossings (`contains_dyn` /
+/// `contains_values` / the write path's `encode_dyn`), which are not
+/// collections and keep their one-row form: parses `values` through the
+/// one parse implementation ([`CollectionBuilder`], as a one-row
+/// [`AcceptedCollection`]) and fills `refs` through the caller's resolve
+/// discipline. The whole shape judgment lands before the first string
+/// resolves — exactly the collection lane's parse-all-first order, so a
+/// type-illegal cell refuses even when an earlier string would already
+/// miss. `Ok(false)` = a resolve miss: the fact provably cannot exist.
+pub(super) fn intern_value_row(
+    rel: RelationId,
+    fields: &[FieldDescriptor],
+    values: &[Value],
+    refs: &mut Vec<ValueRef>,
+    resolve_str: impl FnMut(&str) -> Result<Option<InternId>>,
+) -> Result<bool> {
+    let row = AcceptedCollection::from_value_rows(rel, fields, std::iter::once(values))?;
+    intern_accepted_row(&row, 0, refs, resolve_str)
 }

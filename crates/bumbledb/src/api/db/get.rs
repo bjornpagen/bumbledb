@@ -5,7 +5,7 @@
 //! are sound without exposing query machinery to the write path. These are
 //! determinant gets: no images, no plans, no `ReadInstance`.
 
-use super::encode_dyn::shape_mismatch;
+use super::collection::shape_mismatch;
 use super::{Fact, Key, Probe, WriteTx};
 use crate::encoding::encode_u64;
 use crate::error::{DynIdError, FactShapeError, Mismatch, Result};
