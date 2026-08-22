@@ -42,56 +42,56 @@ the two concerns never meet.
 ## The gravestones — law text (the creation quarantine, restated)
 
 * **`fresh` never appears in a rule head.** No minting term exists in
-  the query IR — `Query.Term` has no mint constructor and heads are
-  projected variables; the mint lives here, on the write path, at
-  Level 2. Unrepresentable today, permanent law.
+ the query IR — `Query.Term` has no mint constructor and heads are
+ projected variables; the mint lives here, on the write path, at
+ Level 2. Unrepresentable today, permanent law.
 * **No arithmetic appears in a rule head.** The measure is the one
-  arithmetic the denotation defines, and its legal positions are
-  boundary-only — one side of an order comparison, never a binding,
-  never a head (`Query.Rule.WellTyped`, `Query/Syntax.lean`).
-  Unrepresentable today, permanent law.
+ arithmetic the denotation defines, and its legal positions are
+ boundary-only — one side of an order comparison, never a binding,
+ never a head (`Query.Rule.WellTyped`, `Query/Syntax.lean`).
+ Unrepresentable today, permanent law.
 * When recursion lands, its safety roster (`MeasureInRecursiveHead`
-  and kin) is this same creation-quarantine law restated for fixpoint
-  topology, not a new rule: value invention inside a fixpoint is the
-  Turing-completeness door, and it stays shut
-  (`docs/architecture/20-query-ir.md` § the creation quarantine).
+ and kin) is this same creation-quarantine law restated for fixpoint
+ topology, not a new rule: value invention inside a fixpoint is the
+ Turing-completeness door, and it stays shut
+ § the creation quarantine).
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Ids are `Nat`.** The engine's ids are u64 words; the width — and
-  the typed exhaustion at the ceiling (`FreshExhausted`; an explicit
-  maximal value legally exhausting the generator) — is representation
-  mechanism. The model keeps the mark's evolution and what is
-  observable.
+ the typed exhaustion at the ceiling (`FreshExhausted`; an explicit
+ maximal value legally exhausting the generator) — is representation
+ mechanism. The model keeps the mark's evolution and what is
+ observable.
 * **One `Mint` is ONE (relation, field) sequence.** The per-field
-  family is pointwise — sequences never interact ("fresh ids order
-  within their relation and nowhere else", `10-data-model.md`) — so
-  the model quantifies over one.
+ family is pointwise — sequences never interact ("fresh ids order
+ within their relation and nowhere else", `10-data-model.md`) — so
+ the model quantifies over one.
 * **Deletes are unrepresentable mint events.** No event retreats the
-  mark — deletes never touch the sequence — which is exactly why
-  re-supplying a deleted id is the ordinary `supply` and why
-  never-reissue needs no delete cases.
+ mark — deletes never touch the sequence — which is exactly why
+ re-supplying a deleted id is the ordinary `supply` and why
+ never-reissue needs no delete cases.
 * **The lazy committed-mark read and the dirty-mark flush are
-  mechanism** (`storage/delta/alloc.rs::fresh_mark` reads once per
-  transaction; every transaction writes only its advanced marks —
-  no-op commits and aborts included, via
-  `storage/commit/write.rs::flush_escaped_fresh_ids`). The model's
-  `Mint.run` / `Reachable.txn` keep their semantic content:
-  in-transaction visibility of a transaction's own allocations, and
-  persistence of exactly the final mark whatever the commit's fate.
+ mechanism** (`storage/delta/alloc.rs::fresh_mark` reads once per
+ transaction; every transaction writes only its advanced marks —
+ no-op commits and aborts included, via
+ `storage/commit/write.rs::flush_escaped_fresh_ids`). The model's
+ `Mint.run` / `Reachable.txn` keep their semantic content:
+ in-transaction visibility of a transaction's own allocations, and
+ persistence of exactly the final mark whatever the commit's fate.
 * **The abort burn is best-effort — unconditional modulo I/O
-  failure.** The Rust honors the one `Reachable.txn` transition on
-  every termination: `commit`'s reject/infra exits flush for
-  themselves, and the write region's drop guard
-  (`api/db/write.rs::EscapedIdBurn`) covers the `Err`-returning and
-  the PANICKING closure alike. But each abort flush discards its own
-  result (`let _ =`): a burn whose counters-only commit itself fails
-  on disk silently no-ops, because the abort's error (or unwind)
-  dominates and a `Drop` must never raise a second panic. The model's
-  unconditional persistence is therefore mechanized as
-  unconditional-modulo-I/O-failure — the same class as the dirty-mark
-  flush above; `docs/architecture/10-data-model.md` § fields records
-  the same narrowing.
+ failure.** The Rust honors the one `Reachable.txn` transition on
+ every termination: `commit`'s reject/infra exits flush for
+ themselves, and the write region's drop guard
+ (`api/db/write.rs::EscapedIdBurn`) covers the `Err`-returning and
+ the PANICKING closure alike. But each abort flush discards its own
+ result (`let _ =`): a burn whose counters-only commit itself fails
+ on disk silently no-ops, because the abort's error (or unwind)
+ dominates and a `Drop` must never raise a second panic. The model's
+ unconditional persistence is therefore mechanized as
+ unconditional-modulo-I/O-failure — the same class as the dirty-mark
+ flush above; § fields records
+ the same narrowing.
 -/
 
 namespace Bumbledb
@@ -116,11 +116,11 @@ by `n` — or `supply v` — the host writes the explicit value `v` (ids
 are writable-by-default) and the mark advances past it. -/
 inductive Event where
   /-- The generator: return `[next, next + count)`, advance by `count`.
-  `count = 0` is a no-op. Bridge: `WriteDelta::reserve (storage/delta/alloc.rs)`. -/
+ `count = 0` is a no-op. Bridge: `WriteDelta::reserve (storage/delta/alloc.rs)`. -/
   | reserve (count : Nat)
   /-- An explicit-value write, legal for EVERY `v`. Bridge:
-  `storage/delta/insert.rs::advance_fresh_marks` (the running
-  maximum). -/
+ `storage/delta/insert.rs::advance_fresh_marks` (the running
+ maximum). -/
   | supply (v : Nat)
 
 /-- One event's effect on the mark. `supply` takes the running
@@ -269,8 +269,8 @@ inductive Reachable : Mint → Mint → Prop where
   /-- The trivial chain. -/
   | refl (m : Mint) : Reachable m m
   /-- One more transaction, its fate irrelevant: its final mark
-  persists — a committed mint, a no-op commit's escaped ids, and an
-  aborted attempt's escaped ids are the one same transition. -/
+ persists — a committed mint, a no-op commit's escaped ids, and an
+ aborted attempt's escaped ids are the one same transition. -/
   | txn {m₀ m₁ : Mint} (es : List Event) :
       Reachable m₀ m₁ → Reachable m₀ (m₁.run es)
 
@@ -293,7 +293,7 @@ the persisted mark (`observed_lt_final`), the mark never retreats
 own entry mark (`returned_ge_start`). The mark never retreats across
 the one `txn` transition, abort included. This is the doc sentence "a
 fresh id, once issued, is never issued again" made a theorem
-whole (`docs/architecture/10-data-model.md` § fields);
+whole § fields);
 `never_reissue_observed` is its generator-returns projection. Bridge:
 `WriteDelta::reserve (crates/bumbledb/src/storage/delta/alloc.rs)` +
 `advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs)`. -/
@@ -325,7 +325,7 @@ theorem never_reissue_observed {m : Mint} {es : List Event} {i : Nat}
 /-! ## (b) Explicit re-supply -/
 
 /-- **Explicit re-supply is legal and monotone.** `supply` accepts ANY
-value — a previously deleted id included: deletes never touch the
+value — a deleted id included: deletes never touch the
 sequence, so re-supplying one is the ordinary event — and the mark
 never retreats and lands strictly past the supplied value. The
 correcting write `delete old; insert new with the same id` rides
