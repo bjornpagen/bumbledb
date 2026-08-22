@@ -40,7 +40,6 @@ pub use verify_store::cmd_verify_store;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorpusPaths {
-
     pub root: PathBuf,
     pub db: PathBuf,
     pub oracle: PathBuf,
@@ -54,7 +53,7 @@ const CASES_FILE: &str = "verify.cases";
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
-)] 
+)]
 struct BenchRun<'a> {
     cfg: GenConfig,
     proto: Protocol,
