@@ -4,74 +4,23 @@
 //! every admitted configuration shares a point or abuts) and whose one
 //! side is an outer-binding constant licenses enumerating, per key
 //! group, only the cover positions whose interval pair lies in the
-//! residual's window around that constant — the start-sorted max-end
-//! index (`interval::overlap`) replaces the `Σ n_k²` all-pairs walk
-//! with `~O(log n_k + out)` per outer row.
-//!
-//! The window is the mask made geometry: the INTERSECTS components are
-//! exactly `start < q_end ∧ end > q_start` (the half-open shared-point
-//! law), and the two abutment components each relax one bound by one
-//! word — MEETS (`end == q_start`) is `end > q_start − 1`, `MET_BY`
-//! (`start == q_end`) is `start < q_end + 1` — so a disconnected
-//! composite like `DURING ∪ MEETS` rides the same one-query index with
-//! a ±1-widened window instead of declining to the all-pairs classify.
-//! Multiple qualifying residuals on the same cover word CONJOIN into
-//! one intersected window (`max` of starts, `min` of ends — window
-//! conjunction is bound intersection), so a multi-leg ring against
-//! several outer constants pays one tighter query, not the loosest
-//! residual's candidate set.
-//! No per-component passes, no candidate dedup: the widening admits
-//! only the boundary stabbing sets, and the kernel filters them. The
-//! word-space ±1 is exact because encoded words are order-faithful
-//! (`10-data-model.md`): `end > q_start − 1 ⇔ end ≥ q_start`, with
-//! saturation honest at both extremes (`end == 0` and `start == MAX`
-//! are unrepresentable for non-empty half-open intervals).
-//!
-//! Only the *enumeration* changes representation: the yielded batch
-//! flows through the same probes, residuals, and sink as the generic
-//! iterator, and the driving mask stays data — the uniform classify
-//! kernels still filter the candidates, so completeness is the whole
-//! correctness obligation: `code ∈ mask ⊆ TOUCHES` implies the pair
-//! shares a point (half-open, non-empty by construction — the
-//! point-domain law) or abuts at the exact boundary the widening
-//! admits. Orientation is normalized to `classify(batch, constant)`
-//! via the converse mask (the theory crate's reversal law) — the pure
-//! INTERSECTS gate never needed it, the abutment components do.
 
 use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
 use crate::interval::overlap::Probe;
 
-/// The group-size floor for the index: below it the plain suffix
-/// enumeration + batch classify stays (the n² of a tiny group is
-/// cheaper than the sort + per-query walk it would amortize).
-/// CONSTRAINT: 16 is provisional from the finding's arithmetic (a
-/// 16-group's all-pairs classify ≈ the sort the index pays once); the
-/// measurement rig is `tests/intervals.rs::overlap_profile` (release,
-/// quiet machine, sweep group sizes with this floor lowered to 2) —
-/// re-pin this number from that sweep, never by inspection.
 pub(super) const OVERLAP_CROSSOVER: u64 = 16;
 
-/// The accelerable mask cover: every configuration that shares a point
-/// (INTERSECTS) or abuts (MEETS/`MET_BY`) — exactly the codes a one-query
-/// window over the start-sorted max-end index can bound. BEFORE/AFTER
-/// stay out: their windows are unbounded on the axis the index sorts.
+/// BEFORE/AFTER stay out: their windows are unbounded on the axis the index
+/// sorts.
 fn touches() -> crate::allen::AllenMask {
     use crate::allen::AllenMask;
     AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY
 }
 
 impl Executor {
-    /// Resolves the leaf call's overlap driver and, when it fires,
-    /// fills `self.overlap_hits` with the cover positions inside the
-    /// residual's window around the outer constant (start-ordered).
-    /// Declines — `false`, the generic iterator runs — for unqualified
-    /// residual shapes, non-touching masks (any BEFORE/AFTER
-    /// component), sub-crossover groups, non-scannable cursors
-    /// (pinned rows, forced suffixes), and a group's first probe (the
-    /// amortization gate — the cache builds on the second probe,
-    /// `interval::overlap` module docs).
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -87,19 +36,7 @@ impl Executor {
         bindings: &Bindings,
         allen_sources: &[(Source, Source)],
     ) -> bool {
-        // The driver set: every Allen residual pairing one cover-word
-        // interval against an outer-constant side under a touching
-        // mask, normalized to `classify(batch, constant)` — a
-        // `(Slot, Batch)` residual drives under its converse mask (the
-        // reversal law), because the abutment components are oriented
-        // even though overlap itself is symmetric. Qualifying
-        // residuals on the SAME cover word CONJOIN: every residual
-        // must hold, so a candidate lies in every window, and window
-        // conjunction is bound intersection — `start < min(q_end) ∧
-        // end > max(q_start)`, one query however many legs the ring
-        // has. The first qualifying residual anchors the word;
-        // residuals on other cover words stay post-filters (their
-        // window bounds a different column pair).
+
         let mut driver: Option<(usize, u64, u64)> = None;
         for (r_idx, (lhs, rhs)) in allen_sources.iter().enumerate() {
             let ((Source::Batch(word), Source::Slot(slot))
@@ -116,10 +53,7 @@ impl Executor {
             if mask.bits() & !touches().bits() != 0 {
                 continue;
             }
-            // The mask made geometry: base window `start < q_end ∧
-            // end > q_start`, each abutment component relaxing its one
-            // bound by one order-faithful word (module docs walk the
-            // equivalences).
+
             let meets = mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0;
             let met_by = mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0;
             let q_start = bindings.get(slot);
@@ -151,18 +85,14 @@ impl Executor {
         {
             return false;
         }
-        // Interval endpoints are word columns by construction; the
-        // check is the honest decline for anything else.
+
         let (ColumnView::Words(start_words), ColumnView::Words(end_words)) = (
             colt.suffix_column(cover_level, word),
             colt.suffix_column(cover_level, word + 1),
         ) else {
             return false;
         };
-        // The cache key: the cover occurrence plus the bound words of
-        // its pre-entry trie levels — the exact trie path that minted
-        // this cursor, so equal keys mean the same group within the
-        // execution (the cache resets per execute).
+
         self.overlap_key.clear();
         self.overlap_key
             .push(u64::try_from(cover_occ).expect("occurrence ids are small"));
@@ -174,9 +104,7 @@ impl Executor {
                 }
             }
         }
-        // The amortization gate lives in the cache: the group's first
-        // probe declines (`None` — this parent runs generic, cheaper
-        // than paying the sort for one query), the second builds.
+
         let Probe::Ready(dir) = self.overlap.probe(&self.overlap_key, |triples| {
             let walked = colt.for_each_suffix_run(cover_cursor, |run| match run {
                 SuffixRun::Identity { start, len } => {
@@ -203,9 +131,7 @@ impl Executor {
         }) else {
             return false;
         };
-        // A group grown between build and query would enumerate stale
-        // positions — impossible within an execution (a level forces
-        // whole), and tripwired here.
+
         debug_assert_eq!(
             self.overlap.len_of(dir) as u64,
             colt.key_count(cover_cursor).magnitude(),
@@ -217,8 +143,6 @@ impl Executor {
     }
 }
 
-/// Materializes matched positions as one leaf batch — key words per
-/// level word plus pinned-row children, the exact `iter_batch` shape.
 pub(super) fn overlap_gather(
     colt: &Colt,
     level: usize,
