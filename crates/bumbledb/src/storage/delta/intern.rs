@@ -5,7 +5,6 @@ use crate::storage::env::ReadTxn;
 use super::WriteDelta;
 
 impl WriteDelta<'_> {
-
     /// # Errors
 
     pub fn intern_str(&mut self, view: &ReadTxn<'_>, value: &str) -> Result<InternId> {
@@ -45,7 +44,6 @@ impl WriteDelta<'_> {
     }
 
     fn intern(&mut self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<InternId> {
-
         // never a second LMDB get.
         if let Some(id) = self.resolve(view, raw)? {
             return Ok(id);
