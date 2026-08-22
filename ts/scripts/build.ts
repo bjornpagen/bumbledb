@@ -216,7 +216,6 @@ function linkPlatformPackage(packageRoot: string, localPackageDir: string): void
 }
 
 function smokeLoad(packageRoot: string, release: string): void {
-
 	const requireNative = createRequire(path.join(packageRoot, "scripts", "build.ts"))
 	const platformPackage = `@bjornpagen/bumbledb-${LOCAL_PLATFORM}`
 	const loaded = errors.trySync(() => requireNative(platformPackage))
