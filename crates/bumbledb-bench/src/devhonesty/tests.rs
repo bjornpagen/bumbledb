@@ -107,7 +107,6 @@ mod on_a_live_ram_disk {
     }
 
     /// before a release: `cargo test -p bumbledb-bench
-
     #[test]
     #[ignore = "needs a live ram disk (hdiutil attach); run on bare metal before a release"]
     fn timed_families_refuse_a_live_ram_disk() {
