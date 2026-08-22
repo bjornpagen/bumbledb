@@ -58,13 +58,13 @@ facts are row-denoted — exactly the conformance corpus's world shape.
 ## The premise — acceptance enters as a hypothesis (the tree's rule)
 
 * **`WorldCarriesClosed`** — the world carries each sealed ground
-  roster at its relation (the conformance lane's merge:
-  `Conformance.decodeCase` appends the ground axioms into the world).
-  Under it, `Theory.den` reads every relation through the row lists
-  (`theoryDen_denotes`). A sealed `GroundExtension` is a `Fact` list,
-  not a row list, so its members' equality is not decidable in place;
-  the merge premise is the honest boundary, and it is what the lane
-  already does.
+ roster at its relation (the conformance lane's merge:
+ `Conformance.decodeCase` appends the ground axioms into the world).
+ Under it, `Theory.den` reads every relation through the row lists
+ (`theoryDen_denotes`). A sealed `GroundExtension` is a `Fact` list,
+ not a row list, so its members' equality is not decidable in place;
+ the merge premise is the honest boundary, and it is what the lane
+ already does.
 
 ## The sweep is spent where union coverage demands it
 
@@ -95,29 +95,29 @@ format lives in `lean/conformance/README.md` § judgment cases.
 
 * The row carrier and the merge premise — above.
 * `Txn.judgeB` returns `Option (Bool × List (Statement × Nat))`:
-  `none` accepts; a rejection carries its phase (`true` = key) and the
-  violated statements POSITION-TAGGED from birth — positions in the
-  materialized statement list are the engine's statement ids (the
-  corpus contract, `lean/conformance/README.md` § judgment cases), so
-  the citation indices the conformance lane compares ARE the proved
-  payload's `.2` projection, re-derived nowhere (2026-07-23 audit,
-  finding 143 — the duplicated filter predicates died with the
-  re-derivation). A rejection's list may repeat a statement the theory
-  declares twice, at distinct positions. Agreement with `Txn.judge` is
-  stated as membership equality of the payload's STATEMENT projection
-  with the violation SETS — `Txn.lean`'s own recorded narrowing (a set
-  carries no duplicates or order by construction) applied to the
-  executable face.
+ `none` accepts; a rejection carries its phase (`true` = key) and the
+ violated statements POSITION-TAGGED from birth — positions in the
+ materialized statement list are the engine's statement ids (the
+ corpus contract, `lean/conformance/README.md` § judgment cases), so
+ the citation indices the conformance lane compares ARE the proved
+ payload's `.2` projection, re-derived nowhere (2026-07-23 audit,
+ finding 143 — the duplicated filter predicates died with the
+ re-derivation). A rejection's list may repeat a statement the theory
+ declares twice, at distinct positions. Agreement with `Txn.judge` is
+ stated as membership equality of the payload's STATEMENT projection
+ with the violation SETS — `Txn.lean`'s own recorded narrowing (a set
+ carries no duplicates or order by construction) applied to the
+ executable face.
 * Decidability lands as premise-carrying named `def`s
-  (`decideJudgment`, `decideHolds`), never `instance`s: the premise
-  is a per-theory semantic fact instance resolution cannot see.
+ (`decideJudgment`, `decideHolds`), never `instance`s: the premise
+ is a per-theory semantic fact instance resolution cannot see.
 * The interval checkers are stated per element domain (`U64`/`I64`
-  concretely) — the tree's precedent (`encode_interval_order` and its
-  U64 companion): an abstract order class would buy generality no
-  third domain spends. The two-conjunct shape of `pointsDisjointB`
-  and `coverRowB` (a u64 arm AND an i64 arm, each vacuously true on
-  the other domain) keeps the checkers total with no typing premise —
-  the same totalization move as `Value.points`.
+ concretely) — the tree's precedent (`encode_interval_order` and its
+ U64 companion): an abstract order class would buy generality no
+ third domain spends. The two-conjunct shape of `pointsDisjointB`
+ and `coverRowB` (a u64 arm AND an i64 arm, each vacuously true on
+ the other domain) keeps the checkers total with no typing premise —
+ the same totalization move as `Value.points`.
 -/
 
 namespace Bumbledb
@@ -399,8 +399,7 @@ theorem mem_points_u64 (v : Value) (x : U64) :
     | i64 => exact ⟨fun h => (nomatch h),
         by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | intervalFixed e w =>
-    -- The fixed family reads through its DERIVED interval — the same
-    -- one `Value.intervalU64` answers, so the inversion is unchanged.
+
     cases e with
     | u64 =>
       constructor
