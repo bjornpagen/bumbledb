@@ -1,15 +1,12 @@
 use super::*;
 use crate::ir::WordCmp;
 
-/// The clover query over the paper's Fig. 4 instance: only
-/// (x0, a0, b0, c0) joins.
 #[test]
 fn clover_on_the_papers_instance() {
     let dir = TempDir::new("run-clover");
     let schema = schema(3);
     let n = 20u64;
-    // R = {(x0,a0)} u {(x1,ai_l), (x2,ai_r)}; S, T rotated (Fig. 4).
-    // Encode x0..x3 as 0..3 and the a/b/c values as 100+i / 200+i.
+
     let mut r = vec![(0, 100)];
     let mut s = vec![(0, 200)];
     let mut t = vec![(0, 300)];
@@ -23,7 +20,6 @@ fn clover_on_the_papers_instance() {
     }
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
 
-    // Q(x,a,b,c) :- R(x,a), S(x,b), T(x,c).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -35,7 +31,6 @@ fn clover_on_the_papers_instance() {
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
     let results = run(&plan, &views);
 
-    // Naive oracle: triple loop.
     let mut expected = BTreeSet::new();
     for (rx, ra) in &r {
         for (sx, sb) in &s {
@@ -59,7 +54,6 @@ fn chain_query_matches_the_nested_loop_oracle() {
     let t: Vec<(u64, u64)> = (0..10).map(|i| (i + 2, i + 3)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
 
-    // Q(x,y,z,w) :- R(x,y), S(y,z), T(z,w).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -89,12 +83,10 @@ fn chain_query_matches_the_nested_loop_oracle() {
 fn self_join_grandparent() {
     let dir = TempDir::new("run-grandparent");
     let schema = schema(1);
-    // OrgParent(child, parent): 0->1->2->3 plus a fork 4->1.
+
     let edges = vec![(0u64, 1u64), (1, 2), (2, 3), (4, 1)];
     let views = views_of(&dir, &schema, std::slice::from_ref(&edges));
 
-    // Grandparent(c, g) :- OrgParent(c, p), OrgParent(p, g) — two
-    // occurrences of relation 0.
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -103,8 +95,7 @@ fn self_join_grandparent() {
         vec![],
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
-    // Both occurrences read relation 0: views vector must be indexed by
-    // occurrence, not relation — build colts by occurrence's relation.
+
     let results = run(&plan, &views);
 
     let mut expected = BTreeSet::new();
@@ -116,14 +107,14 @@ fn self_join_grandparent() {
         }
     }
     assert_eq!(results, expected);
-    assert_eq!(results.len(), 3); // 0->1->2, 1->2->3, 4->1->2
+    assert_eq!(results.len(), 3); 
 }
 
 #[test]
 fn triangle_is_wcoj_honest() {
     let dir = TempDir::new("run-triangle");
     let schema = schema(3);
-    // R(x,y), S(y,z), T(z,x) over a small dense instance.
+
     let r: Vec<(u64, u64)> = (0..6).flat_map(|x| (0..6).map(move |y| (x, y))).collect();
     let s: Vec<(u64, u64)> = (0..6).map(|y| (y, (y + 1) % 6)).collect();
     let t: Vec<(u64, u64)> = (0..6).map(|z| (z, (z + 2) % 6)).collect();
@@ -159,7 +150,7 @@ fn zero_binding_atom_gates_the_query() {
     let dir = TempDir::new("run-gate");
     let schema = schema(2);
     let r = vec![(1u64, 2u64), (3, 4)];
-    // Gate nonempty: results flow; gate empty: nothing.
+
     for (gate_rows, expect_rows) in [(vec![(9u64, 9u64)], 2usize), (vec![], 0)] {
         let dir2 = TempDir::new(&format!("run-gate-{expect_rows}"));
         let views = views_of(&dir2, &schema, &[r.clone(), gate_rows]);
@@ -194,8 +185,7 @@ fn empty_relations_yield_empty_results() {
 fn duplicate_heavy_skew_collapses_to_the_distinct_binding_set() {
     let dir = TempDir::new("run-skew");
     let schema = schema(2);
-    // Heavy duplication in the join column (post-collapse the binding
-    // set is small).
+
     let r: Vec<(u64, u64)> = (0..50).map(|i| (i % 2, i % 3)).collect();
     let s: Vec<(u64, u64)> = (0..50).map(|i| (i % 3, i % 5)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
@@ -226,7 +216,7 @@ fn residuals_filter_across_atoms() {
     let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, 9 - i)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
-    // R(x, a), S(x, b), a < b.
+
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -249,22 +239,16 @@ fn residuals_filter_across_atoms() {
         }
     }
     assert_eq!(results, expected);
-    assert_eq!(results.len(), 5); // i in 0..=4: i < 9-i
+    assert_eq!(results.len(), 5); 
 }
 
-/// The randomized differential family (docs/architecture/60-validation.md):
-/// random instances and join orders over three query shapes, the whole
-/// production lowering (binary2fj + factor + validate), compared against
-/// a brute-force nested-loop oracle at batch sizes {1, 7, 128}. This is
-/// the harness that catches plan/executor bugs hand-picked fixtures
-/// miss — the cover-rebind bug needed only mild skew.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "one differential harness, generator to oracle — clearer kept together"
 )]
 fn randomized_differential_against_the_nested_loop_oracle() {
-    // Deterministic LCG (no rand dependency; reproducible failures).
+
     let mut state = 0x1234_5678_9ABC_DEF0_u64;
     let mut next = move || {
         state = state
@@ -275,8 +259,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
 
     let schema = schema(3);
     for case in 0..60u32 {
-        // Random small instances with skew: values in 0..=domain where
-        // a small domain forces duplicates and multi-position chunks.
+
         let domain = 1 + next() % 8;
         let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
         for _ in 0..3 {
@@ -292,10 +275,6 @@ fn randomized_differential_against_the_nested_loop_oracle() {
         let dir = TempDir::new(&format!("run-differential-{case}"));
         let views = views_of(&dir, &schema, &data);
 
-        // Three shapes over vars x=0, y=1, z=2:
-        //   chain:    R0(x,y), R1(y,z)
-        //   triangle: R0(x,y), R1(y,z), R2(x,z)
-        //   clover:   R0(x,y), R1(x,z) (self-shaped star)
         let shape = case % 3;
         let occurrences = match shape {
             0 => vec![
@@ -314,15 +293,13 @@ fn randomized_differential_against_the_nested_loop_oracle() {
         };
         let n = occurrences.len();
         let normalized = normalized(occurrences, vec![]);
-        // Random join order (a permutation drawn by rejection).
+
         let mut order: Vec<u16> = (0..u16::try_from(n).expect("small")).collect();
         for i in (1..order.len()).rev() {
             let j = usize::try_from(next()).expect("64-bit") % (i + 1);
             order.swap(i, j);
         }
-        // The PRODUCTION lowering tail, GJ split included (009): the
-        // differential covers the plans prepare actually builds, not
-        // just the binary2fj + factor prefix.
+
         let plan = {
             let join_order = JoinOrder {
                 order: order.iter().map(|o| OccId(*o)).collect(),
@@ -334,7 +311,6 @@ fn randomized_differential_against_the_nested_loop_oracle() {
             validate(&fj, &normalized, &schema, &BTreeSet::new()).expect("valid plan")
         };
 
-        // The oracle: brute-force nested loops over the shape.
         let mut expected = BTreeSet::new();
         match shape {
             0 => {
@@ -369,7 +345,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
         }
 
         for batch in [1usize, 7, 128] {
-            // Slot order follows the join order; reorder each row into
+
             // VarId order before comparing with the oracle.
             let got: BTreeSet<Vec<u64>> = run_at(&plan, &views, batch)
                 .into_iter()
