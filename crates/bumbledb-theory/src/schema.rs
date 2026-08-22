@@ -1,51 +1,9 @@
 //! The schema as declared: descriptors, the shared value/type vocabulary,
-//! and the ids the declaration order mints
-//! (`docs/architecture/10-data-model.md`,
-//! `docs/architecture/30-dependencies.md`).
-//!
+//! .
 //! This is the theory half of the schema surface: plain data a host (or
 //! the `schema!` macro's expansion) constructs, and the pure judgments
 //! over it — [`SchemaDescriptor::materialized_statements`] and
 //! [`value_matches`]. The admission boundary stays engine-side: the only
-//! way to obtain the sealed `Schema` witness is the engine's
-//! `SchemaDescriptor::validate`, and everything downstream trusts it.
-//!
-//! # What a descriptor can hold — the parity roster (normative)
-//!
-//! [`SchemaDescriptor`] is the one schema representation: the `schema!`
-//! macro emits it directly, the runtime [`spec::SchemaSpec`] path
-//! (`docs/architecture/70-api.md` § the `SchemaSpec` bindings contract)
-//! lowers to it, and both are judged by the same engine-side
-//! `SchemaDescriptor::validate`. Exhaustively, a descriptor holds:
-//!
-//! - **Relations** ([`RelationDescriptor`]): name plus ordered fields.
-//!   Field types ([`ValueType`]): `bool`, `u64`, `i64`, `str`
-//!   ([`ValueType::String`]), `bytes<N>` ([`ValueType::FixedBytes`],
-//!   N ∈ 1..=64), and the interval family ([`ValueType::Interval`]
-//!   general `interval<i64|u64>`, or [`ValueType::FixedInterval`]
-//!   `interval<T, w>`). Field generation ([`Generation`]): `fresh` marks
-//!   on the mint fields.
-//! - **Closed relations** — both tiers through one shape:
-//!   `extension: Some(rows)` marks the relation closed (the option IS
-//!   the kind); each [`Row`] is a ground axiom (handle + one [`Value`]
-//!   per declared payload column, bare-handle vocabularies carrying zero
-//!   columns). Validation prepends the synthetic (`id`, `u64`) handle
-//!   field, so sealed statement ids address [`FieldId`] 0 as the handle.
-//! - **Statements** ([`StatementDescriptor`]), the three forms:
-//!   `Functionality` (the FD key form `R(X) -> R` — no selection, by
-//!   representation), `Containment` (`A(X | φ) <= B(Y | ψ)`; `==` is the
-//!   two adjacent containments, `A <= B` first — no bidirectional
-//!   variant exists), and `Capacity` (the capacity statement
-//!   `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` — [`Weight`] the measure, an
-//!   absent bracket the unit (count) instance, [`Bound`] the ceiling's
-//!   vocabulary, `hi: None` the `*` spelling).
-//!   [`Side`] selections σ bind fields to literals or literal SETS
-//!   ([`LiteralSet`], read disjunctively) over the one [`Value`] sum —
-//!   scalar literals, interval literals, and closed-relation handles
-//!   (lowered to their declaration-order row-id words).
-//!
-//! Nothing else exists: no field-level constraint vocabulary, no order
-//! statements, no relation-kind enum, no per-statement names.
 
 pub mod spec;
 
@@ -78,42 +36,26 @@ pub enum IntervalElement {
 
 /// A structural value type: the description *is* the identity — structural
 /// equality of the description is type equality, and there is no name field
-/// anywhere (`docs/architecture/10-data-model.md`).
+/// anywhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueType {
     Bool,
     U64,
     I64,
     String,
-    /// `bytes<N>`: exactly `len` raw bytes, identity-shaped — stored
-    /// inline in the fact, word-padded, never interned (*intern what
-    /// repeats; inline what identifies* —
-    /// `docs/architecture/10-data-model.md`). The length is part of the
-    /// type: `bytes<16>` and `bytes<32>` are different types, and the
-    /// fingerprint feeds the length (a width change is a new theory).
-    /// `len` is validated to `1..=64` at declaration.
+
     FixedBytes {
         len: u16,
     },
-    /// A half-open `[start, end)` over the element domain, strictly
-    /// `start < end` — a finite set of points, written as its bounds
-    /// (`docs/architecture/10-data-model.md`). General encoding is
-    /// 16-byte `start ‖ end`; rays are representable. Fingerprint
-    /// tag 6.
+
     Interval {
         element: IntervalElement,
     },
-    /// `interval<E, w>` — the width is the type (the `bytes<N>`
-    /// precedent). Encoding stores ONLY the start (8 bytes; the end
-    /// derives as `start + w`); wide values are unrepresentable, and
-    /// the Q2 bound `start + w < MAX_END` bars ray-hood by
+
     /// construction (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
-    /// Admitted under the admission rule: a type parameter is
-    /// admitted iff it changes the encoding — `w` does; a parameter
+
     /// that merely checks is a CHECK constraint, refused
-    /// (`docs/architecture/10-data-model.md` § the admission rule).
-    /// The width is a fingerprint input — a width change is a new
-    /// theory. `w ≥ 1`, validated at declaration. Fingerprint tag 7.
+
     FixedInterval {
         element: IntervalElement,
         width: u64,
@@ -121,11 +63,7 @@ pub enum ValueType {
 }
 
 impl ValueType {
-    /// Encoded width in bytes: 1 for `Bool`, 16 for a general
-    /// [`ValueType::Interval`] and 8 for [`ValueType::FixedInterval`] (the
-    /// width halving — the end is the type's to derive, so storing it
-    /// would be transcription), the word-padded `⌈len/8⌉ × 8` for
-    /// `FixedBytes`, 8 for everything else.
+
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
@@ -136,13 +74,11 @@ impl ValueType {
         }
     }
 
-    /// Either arm of the interval family.
     #[must_use]
     pub const fn is_interval(self) -> bool {
         matches!(self, Self::Interval { .. } | Self::FixedInterval { .. })
     }
 
-    /// Element domain of an interval-family type.
     #[must_use]
     pub const fn interval_element(self) -> Option<IntervalElement> {
         match self {
@@ -153,13 +89,12 @@ impl ValueType {
 }
 
 /// Field generation: a storage behavior, not a type
-/// (`docs/architecture/10-data-model.md`).
+/// .
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generation {
-    /// Ordinary field: the application supplies every value.
+
     None,
-    /// The database mints values: monotonic per (relation, field), never
-    /// re-issuing a value observable in a committed state. Must be `U64`.
+
     Fresh,
 }
 
@@ -171,13 +106,12 @@ pub struct FieldDescriptor {
     pub generation: Generation,
 }
 
-/// How a [`Value`] failed to match an expected [`ValueType`] — the shared
 /// vocabulary of the checking boundaries (query literals, bound params,
 /// dynamic facts, statement selections). UTF-8 is [`Value::String`]'s
 /// type, not a match failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueMismatch {
-    /// Wrong structural kind.
+
     Type,
 }
 
@@ -188,9 +122,7 @@ pub enum ValueMismatch {
 /// against an `Interval` field is a kind mismatch to this check, and the
 /// IR validation boundary owns that bivalence (the engine's
 /// `ir::validate`, the bivalent-anchor resolution).
-///
 /// # Errors
-///
 /// [`ValueMismatch::Type`] on a wrong structural kind (including the
 /// width rules).
 pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMismatch> {
@@ -211,12 +143,9 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
                 element: IntervalElement::I64,
             },
         ) => Ok(()),
-        // The interval family: the general type takes any checked
-        // interval of its element; a fixed-width type takes exactly the
-        // declared width, never a ray (Q2: `start + w < MAX_END` — the
-        // ray end IS `MAX_END`, so `!is_ray()` is the bound;
+
         // `lean/Bumbledb/Values.lean: FixedU64.not_ray`). A wide or
-        // narrow value is a kind mismatch — the width is the type.
+
         (
             Value::IntervalU64(interval),
             ValueType::FixedInterval {
@@ -231,8 +160,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
                 width,
             },
         ) if interval.end().abs_diff(interval.start()) == *width && !interval.is_ray() => Ok(()),
-        // The length is the type: a bytes<N> literal of any other width
-        // is a kind mismatch.
+
         (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
             if raw.len() == usize::from(*len) {
                 Ok(())
@@ -245,32 +173,27 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
 }
 
 /// One σ binding's literal set — the disjunctive selection fragment
-/// (`lean/Bumbledb/Schema.lean: Selection`): the selected field's value is
 /// a MEMBER of the spelled set, bindings read conjunctively. The singleton
 /// arm is today's equality by representation
-/// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and
 /// stays zero-cost — no per-literal indirection on the one-literal path.
 /// The `Many` arm's canonical form is sorted and duplicate-free with at
 /// least two literals; validation canonicalizes the order and rejects the
-/// degenerate spellings (`docs/architecture/30-dependencies.md`
-/// § validation roster).
+/// degenerate spellings.
+/// (`lean/Bumbledb/Schema.lean: Selection`): the selected field's value is
+/// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiteralSet {
-    /// One literal: the equality binding — the whole accepted σ fragment
+
     /// before the disjunctive extension, unchanged in meaning.
     One(Value),
-    /// Two or more literals, read disjunctively. The sets are first-class,
-    /// not per-literal sugar: a window over a disjunctive selection is not
-    /// any conjunction of per-literal windows
+
     /// (`lean/Bumbledb/Countermodels.lean:
-    /// disjunctive_window_not_literal_conjunction`).
+
     Many(Box<[Value]>),
 }
 
 impl LiteralSet {
-    /// The literals, one or more — the `One` arm borrows in place
-    /// (`std::slice::from_ref`), so the singleton path allocates and
-    /// indirects nothing.
+
     #[must_use]
     pub fn literals(&self) -> &[Value] {
         match self {
@@ -279,7 +202,6 @@ impl LiteralSet {
         }
     }
 
-    /// The singleton reading, when this binding is today's equality.
     #[must_use]
     pub fn as_equality(&self) -> Option<&Value> {
         match self {
@@ -296,17 +218,13 @@ impl From<Value> for LiteralSet {
 }
 
 /// One side of a containment: the single-atom query `R(X | φ)`
-/// (`docs/architecture/30-dependencies.md`).
+/// .
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Side {
     pub relation: RelationId,
-    /// π — ordered, the statement's written order.
+
     pub projection: Box<[FieldId]>,
-    /// σ — a set of (field, literal-set) bindings read conjunctively,
-    /// each binding a disjunction over its spelled set; empty =
-    /// unselected. Literals are the one shared [`Value`] sum
-    /// (`docs/architecture/30-dependencies.md` — any type's literal binds
-    /// in σ; dependencies and queries share one representation).
+
     pub selection: Box<[(FieldId, LiteralSet)]>,
 }
 
@@ -314,24 +232,18 @@ pub struct Side {
 /// TOTAL three-case sum (ruled 2026-07-24, C4: `Unit` is a case, not an
 /// absence, so the wire, the descriptor encoding, and this type agree
 /// that unit weight crosses explicitly;
-/// `lean/Bumbledb/Schema.lean: Weight`). `Unit` is the count instance
 /// (`<={lo..hi}` — the utterance survives character for character);
 /// `Field` reads a u64-encoded SOURCE position (signed encodings are
 /// gate-refused — polarity: a negative weight would let an insert lower
 /// a sum); `DurationOf` reads a SOURCE interval position's measure (the
-/// R5 machinery — calendar capacity). The vocabulary is closed at the
-/// row (ruled 2026-07-24, ruling 6): joined weights are supported by
-/// statement composition — the pinned-column idiom — never by a path in
-/// the bracket, so a path is unrepresentable here (the spec surface
-/// refuses the spelling as `SpecIssue::WeightPathRefused`).
+/// `lean/Bumbledb/Schema.lean: Weight`). `Unit` is the count instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Weight {
-    /// Absent bracket: unit weight — the count instance.
+
     Unit,
-    /// `[field]`: a u64-encoded field of the SOURCE row.
+
     Field(FieldId),
-    /// `[Duration(field)]`: the interval measure of a SOURCE interval
-    /// position.
+
     DurationOf(FieldId),
 }
 
@@ -339,62 +251,48 @@ pub enum Weight {
 /// TARGET's row (per-group capacity — `{0..supply}`; ruled 2026-07-24,
 /// C1: the ident resolves by NAME against the target's whole field
 /// roster, never through the projection tuple;
-/// `lean/Bumbledb/Schema.lean: Bound`). `TargetDuration` is the
 /// interval measure of a target interval position — the calendar law's
 /// `{0..Duration(span)}` ceiling. The floor is not a `Bound`: dependent
 /// bounds are hi-slot only (ruled 2026-07-24, C6 — a dependent floor
 /// has no use case, and inversion with idents is statically
-/// undecidable), so the shape is unrepresentable rather than
-/// gate-refused.
+/// `lean/Bumbledb/Schema.lean: Bound`). `TargetDuration` is the
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bound {
-    /// An integer literal — the degenerate constant case.
+
     Lit(u64),
-    /// A u64-encoded field of the TARGET's row.
+
     TargetField(FieldId),
-    /// `Duration(field)`: the interval measure of a TARGET interval
-    /// position.
+
     TargetDuration(FieldId),
 }
 
 /// One dependency statement: a judgment about queries
-/// (`docs/architecture/30-dependencies.md`). Statements are anonymous —
+/// . Statements are anonymous —
 /// their identity is their materialized-order [`StatementId`]. There is no
 /// bidirectional variant: `==` is lowered to two `Containment` statements
 /// with the sides swapped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementDescriptor {
-    /// `R(X) -> R`: πX is injective on R. X is ordered (the order defines
-    /// the determinant key), non-empty, duplicate-free.
+
     Functionality {
         relation: RelationId,
         projection: Box<[FieldId]>,
     },
-    /// `A(X | φ) <= B(Y | ψ)`: πX(σφ(A)) ⊆ πY(σψ(B)) as sets of tuples.
+
     Containment { source: Side, target: Side },
-    /// `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` (B-family, target-left — the
-    /// left side is `target`): the capacity statement — per selected
-    /// target fact, the MEASURE of the selected source facts sharing its
-    /// projected tuple (Σ [`Weight`] over the deduplicated group; absent
-    /// bracket = unit weight = count) lies in the window, whose ceiling
-    /// resolves against the target's own row
+
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`;
     /// `lean/Bumbledb/Schema.lean: Statement.capacity`). Field order is
-    /// the operator's — target, weight, window, source — ruled
+
     /// 2026-07-24, C2: the corpus JSON, the FFI marshal, the descriptor
-    /// codec, and the fingerprint encoding pin this same order.
-    /// `hi = None` is the `*` spelling — the only spelling of "no upper
-    /// bound"; `lo = hi` (literal) is the `{n}` exact-measure spelling
-    /// (`{0}` the exclusion).
+
     Capacity {
         target: Side,
-        /// The measure of one source fact; [`Weight::Unit`] is the count
-        /// instance.
+
         weight: Weight,
-        /// The inclusive lower measure bound — a literal by
-        /// representation (C6: dependent floors are unrepresentable).
+
         lo: u64,
-        /// The inclusive upper measure bound; `None` is `*`.
+
         hi: Option<Bound>,
         source: Side,
     },
@@ -402,14 +300,12 @@ pub enum StatementDescriptor {
 
 /// The extension-row cap: a vocabulary larger than 256 is policy data
 /// wearing a vocabulary costume, and the cap keeps every compiled word-set
-/// a fixed 4×u64 bitset (`docs/architecture/10-data-model.md`, the refusal —
-/// *trigger* for lifting it: a census sighting).
+/// a fixed 4×u64 bitset.
 pub const MAX_EXTENSION_ROWS: usize = 256;
 
 /// One ground axiom of a closed relation: the handle — the row's identity,
 /// NOT a column — plus one value per declared intrinsic column, in
-/// field-declaration order (`docs/architecture/10-data-model.md` § closed
-/// relations). The row id is the declaration index, exactly the
+/// field-declaration order. The row id is the declaration index, exactly the
 /// declaration-order rule relations, fields, and statements already obey.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
@@ -423,7 +319,7 @@ pub type Extension = Box<[Row]>;
 /// One declared relation. `Some(extension)` declares it **closed** — its
 /// rows are ground axioms, frozen by the fingerprint, virtual in storage,
 /// write-refused; `None` is ordinary. No relation-kind enum exists: the
-/// option *is* the kind (`docs/architecture/10-data-model.md`).
+/// option *is* the kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationDescriptor {
     pub name: Box<str>,
@@ -439,14 +335,14 @@ pub struct RelationDescriptor {
 /// descriptor.
 #[derive(Debug, Clone, Copy)]
 pub enum SealedField<'a> {
-    /// Closed-relation handle: name `"id"`, type [`ValueType::U64`].
+
     SyntheticId,
-    /// A field the descriptor named.
+
     Declared(&'a FieldDescriptor),
 }
 
 impl<'a> SealedField<'a> {
-    /// Field name: `"id"` on the synthetic handle.
+
     #[must_use]
     pub fn name(self) -> &'a str {
         match self {
@@ -455,7 +351,6 @@ impl<'a> SealedField<'a> {
         }
     }
 
-    /// Field type: [`ValueType::U64`] on the synthetic handle.
     #[must_use]
     pub fn value_type(self) -> &'a ValueType {
         const SYNTHETIC_ID_TYPE: &ValueType = &ValueType::U64;
@@ -467,21 +362,7 @@ impl<'a> SealedField<'a> {
 }
 
 impl RelationDescriptor {
-    /// The SEALED field roster in sealed-ordinal order (index =
-    /// [`FieldId`]): an ordinary relation's declared fields; a closed
-    /// relation's synthetic (`id`, u64) handle field first, declared
-    /// fields shifted by one. THE descriptor-side READ of the
-    /// synthetic-id law — the manifest renderer, the
-    /// materialized-statement ordinals
-    /// ([`SchemaDescriptor::materialized_statements`]), and the node
-    /// bridge's row marshaling all read the sealed shape through this
-    /// accessor, never through re-derived offset arithmetic. The law is
-    /// otherwise stated exactly where a descriptor cannot serve: the
-    /// spec path's name resolution (`spec.rs: Resolver::slot`, this
-    /// accessor's structural peer over [`spec::RelationSpec`] — the
-    /// spec carries the newtypes a descriptor deliberately drops), the
-    /// engine seal that MATERIALIZES the synthetic field
-    /// (`bumbledb::schema::validate`).
+
     pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
         self.extension
             .is_some()
@@ -500,28 +381,14 @@ pub struct SchemaDescriptor {
 }
 
 impl SchemaDescriptor {
-    /// The materialized statement list — the one owner of the ordering rule
-    /// pinned by the fingerprint (`docs/architecture/10-data-model.md`,
-    /// § fingerprint inputs): one auto-`Functionality` per `Fresh` field
-    /// (relation declaration order, then field order; projection = the one
-    /// fresh field), then one closed auto-key `R(id) -> R` per closed
-    /// relation (declaration order; projection = the synthetic id field),
-    /// then the declared statements in declaration order. Fresh before
-    /// closed is a fingerprint input, pinned here and never revisited
-    /// (`docs/architecture/30-dependencies.md`). [`StatementId`] = index
-    /// into this list, schema-global.
-    ///
+
     /// # Panics
-    ///
-    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
-    /// — impossible for a descriptor the acceptance gate admitted.
+
     #[must_use]
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
-            // The sealed roster carries the synthetic-id shift (a closed
-            // relation's declared fields sit at declared idx + 1), so the
-            // enumeration index IS the sealed ordinal — no offset math.
+
             for (sealed_idx, slot) in relation.sealed_fields().enumerate() {
                 if let SealedField::Declared(field) = slot
                     && field.generation == Generation::Fresh
@@ -537,10 +404,7 @@ impl SchemaDescriptor {
                 }
             }
         }
-        // Closedness materializes `R(id) -> R` exactly as `fresh` does:
-        // the handle is the identity, and the auto-key is the statement
-        // containments target when a plain-u64 reference declares its
-        // containment against a closed relation.
+
         for (rel_idx, relation) in self.relations.iter().enumerate() {
             if relation.extension.is_some() {
                 statements.push(StatementDescriptor::Functionality {
@@ -555,21 +419,20 @@ impl SchemaDescriptor {
 }
 
 /// The statement-form tag, as plain data — the kind a bindings layer
-/// reads off a manifest entry or a rendered violation without matching
 /// the payload-carrying enums ([`StatementDescriptor`] / the engine's
 /// `Violation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatementKind {
-    /// `R(X) -> R` — the FD key form.
+
     Functionality,
-    /// `A(X | φ) <= B(Y | ψ)`.
+
     Containment,
-    /// `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` — the capacity statement.
+
     Capacity,
 }
 
 impl StatementDescriptor {
-    /// The form tag of this statement.
+
     #[must_use]
     pub const fn kind(&self) -> StatementKind {
         match self {
