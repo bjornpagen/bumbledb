@@ -22,19 +22,8 @@ use crate::storage::catalog::CatalogRead;
 use crate::storage::env::{CatalogIdentity, ReadTxn};
 use std::sync::Arc;
 
-/// Prepares a query: the one-time pipeline, allocation-sanctioned.
-/// Validation and normalization see the whole query; everything after —
-/// statistics, the DP, lowering, plan validation — runs **per rule**, and
-/// the prepared query carries one [`PreparedRule`] per rule under one
-/// head-owned sink configuration.
-///
 /// # Errors
-///
-/// `Validation` at the IR boundary; planner caps; `Lmdb`/`Corruption` from
-/// the statistics reads.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (`binary2fj` + `factor` +
 /// `fold_split` + `gj_split` construct valid plans by construction).
 pub(crate) fn prepare<S>(
@@ -107,8 +96,6 @@ pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
     )
 }
 
-/// Prepared rec between the sealed witness and [`PreparedPipeline`].
-/// `Cq` carries no driver; `Reach` carries it by value.
 enum PreparedReach {
     Cq,
     Reach {
@@ -118,10 +105,9 @@ enum PreparedReach {
     },
 }
 
-/// The pipeline after interiors and rec are prepared — normalize → ground
-/// → per-rule prepare → sink and binding artifacts, over an already-sealed
-/// witness. Params are query-global (one binding surface,
-/// `docs/architecture/20-query-ir.md` § engine recursion).
+/// The pipeline after interiors and rec are prepared — normalize → ground →
+/// per-rule prepare → sink and binding artifacts, over an already-sealed
+/// witness.
 #[expect(
     clippy::too_many_lines,
     clippy::too_many_arguments,
@@ -145,20 +131,13 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
 
     let survivors = ground_main(normalized, witness, &schema);
 
-    // The signature the query defines, sealed at validation (the ONE
-    // signature derivation) — it exists even when every rule below dies,
-    // so the empty query still types its result columns.
     let signature = witness.signature().clone();
     let mut rules = Vec::with_capacity(survivors.len());
-    // Written-rule provenance per surviving rule (R2): the sink regime
-    // splits on it below. The first survivor's witness index feeds the
-    // dense group domains (049).
+
     let mut written = Vec::with_capacity(survivors.len());
     let mut first_rule_idx = None;
     for (rule_idx, normalized_rule) in survivors {
-        // Rule death (ir/normalize/fold.rs): a statically-empty rule is
-        // deleted here — no statistics read, no DP, no plan; the union
-        // loses nothing because the rule denotes the empty set.
+
         if normalized_rule.dead.is_some() {
             continue;
         }
@@ -177,22 +156,11 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     }
     let params = param_specs(witness);
 
-    // The one sink configuration — head-owned shape (projection vs
-    // aggregate, arity, distinctness), built aimed at rule 0's layout
-    // and re-aimed per rule by the rule loop. Presized against the
-    // rules' worst estimate (one sink hears every rule). A single-rule
-    // aggregate may elide its seen-set under the plan's distinct-bindings
-    // proof. Every multi-rule sink keeps one seen-set spanning all rules
-    // — that map is the union representation — keyed by provenance
-    // (R2): the head projection for a hand-written rule set, the shared
-    // slot arrays for a DNF-derived one.
     let output_hint = output_hint(&rules);
     if rules.len() > 1 && dnf_derived(&written) {
         seal_dnf_spans(&mut rules);
     }
-    // The dense group domains (finding 049), single-rule sinks only: a
-    // hand-written sibling need not share the domain proof, and the
-    // re-aim path never reshapes the table.
+
     let dense_groups = if rules.len() == 1 {
         first_rule_idx.map_or_else(Vec::new, |idx| group_radixes(&witness.rule(idx)))
     } else {
@@ -469,8 +437,6 @@ fn ground_rules(
         .collect()
 }
 
-/// The shared sink's capacity hint, derived only from the already-frozen
-/// rule plans.
 fn output_hint(rules: &[PreparedRule]) -> usize {
     rules
         .iter()
@@ -494,15 +460,10 @@ fn free_join_hint(rule: &super::FreeJoinRule) -> usize {
     .expect("clamped")
 }
 
-/// The rule's `str` literals awaiting dictionary words — the latch
-/// counter's initial value ([`super::Latch`]).
-/// `KeyProbePlan` values resolve their key constants per probe and stay outside
-/// the latch (the templates the latch rewrites are Free Join plan
-/// arrays). Discharged occurrences count nothing: an eliminated one
-/// carries no conditions, and a folded one's retained filters are
-/// plan-constant by the fold's own conditions (`plan/ground/evaluate.rs`)
-/// and never resolved — a fold must not block the fully-latched fast
-/// path.
+/// Discharged occurrences count nothing: an eliminated one carries no
+/// conditions, and a folded one's retained filters are plan-constant by the
+/// fold's own conditions (`plan/ground/evaluate.rs`) and never resolved — a
+/// fold must not block the fully-latched fast path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
     match rule {
         PreparedRule::FreeJoin(rule) => plan_pending_literals(&rule.plan),
@@ -510,7 +471,6 @@ fn pending_literals(rule: &PreparedRule) -> u32 {
     }
 }
 
-/// One Free Join plan's `str` literals awaiting dictionary words.
 fn plan_pending_literals(plan: &crate::plan::fj::ValidatedPlan) -> u32 {
     let pending = |value: &crate::image::view::Const| {
         matches!(value, crate::image::view::Const::PendingIntern { .. })
@@ -536,8 +496,6 @@ fn plan_pending_literals(plan: &crate::plan::fj::ValidatedPlan) -> u32 {
         .sum()
 }
 
-/// Dense bind contracts (validation rejected gaps). A value param
-/// becomes exactly one scalar/set variant carrying its point-domain bit.
 fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::ParamSpec> {
     let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
         witness.param_types().collect();
@@ -559,28 +517,16 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 
 /// The theory's query rewrite (`plan/ground.rs`): the
 /// elimination-and-evaluation fixpoint per rule, independently — after
-/// normalization and before statistics and the DP
-/// (docs/architecture/40-execution.md planner placement), with no
-/// cross-rule state; a rule shrinking below its cover requirements
-/// re-validates like any rule (the per-rule pipeline re-runs plan
-/// validation regardless). Eliminated and folded occurrences keep
-/// their ids and are skipped by every downstream path through the one
-/// participates-in-planning predicate (and its execution-side sibling
-/// `Role::discharged`). The evaluator may also kill a rule outright
-/// (`folded to ∅` — the fold's `dead` channel, read by the survivors
-/// loop below exactly like a normalize-time death). Then rule
-/// subsumption: a rule whose post-elimination body a sibling contains
-/// modulo eliminated filters is deleted — the union loses nothing.
-/// Returns the surviving rules with their lowered-rule indices.
+/// normalization and before statistics and the DP, with no cross-rule state; a
+/// rule shrinking below its cover requirements re-validates like any rule (the
+/// per-rule pipeline re-runs plan validation regardless).
 fn ground_main(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
     schema: &Schema,
 ) -> Vec<(usize, NormalizedQuery)> {
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
-        // A statically-empty rule (ir/normalize/fold.rs) is deleted at
-        // prepare — nothing to rewrite; the subsumption pass skips it
-        // symmetrically (`plan/ground.rs`).
+
         if normalized_rule.dead.is_some() {
             continue;
         }
@@ -605,11 +551,6 @@ fn ground_main(
         .collect()
 }
 
-/// The per-rule pipeline tail: classify → statistics → DP → lowering →
-/// plan validation — the conjunctive query's pipeline, with zero
-/// changes, over one already-grounded rule. Returns the rule's prepared
-/// artifact; result types are the query's signature ([`super::Signature`]),
-/// never re-derived here.
 fn prepare_rule<C: CatalogRead, I: ImageBind>(
     catalog: &C,
     images: &I,
@@ -624,8 +565,8 @@ fn prepare_rule<C: CatalogRead, I: ImageBind>(
     )
 }
 
-/// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta`
-/// and every other self-read as `RecAcc` before statistics run.
+/// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta` and
+/// every other self-read as `RecAcc` before statistics run.
 #[expect(
     clippy::too_many_arguments,
     reason = "the rec-arm pipeline's inputs are clearer unpacked"
@@ -685,9 +626,6 @@ fn stamp_rec_bind(
     }
 }
 
-/// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
-/// statistics → DP → lowering → plan validation. Rec-arm bind roles
-/// are already stamped on the occurrences.
 fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     catalog: &C,
     images: &I,
@@ -698,7 +636,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
-    // Classification first: a key probe needs no statistics or planning.
+
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY);
         classify(normalized, schema)
@@ -709,24 +647,13 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
             plan,
             distinct_witness,
             finds,
-            // Written by `seal_dnf_spans` iff the query is a
-            // DNF-derived union; empty (and never read) otherwise.
+
             dedup_spans: Box::default(),
         }));
     }
 
-    // The staleness pin record (`staleness.rs`): the statistics below,
-    // kept instead of dropped. Stays empty for key probes — they read
-    // no statistics, so there is nothing to drift.
     let mut pins = Vec::new();
-    // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
-    // shaped by the selectivity ladder — key-exact counts,
-    // resident-image distinct counts (peek only: prepare never
-    // builds an image for statistics), documented bounds and floors.
-    // Participating occurrences only: negated occurrences enter no
-    // DP state and grounding-eliminated occurrences left planning
-    // entirely, so neither earns a statistics read — and, by the
-    // same token, neither earns a pin.
+
     let mut stats_span = obs::span(obs::names::STATS);
     let mut stats = Vec::with_capacity(normalized.occurrences.len());
     for occurrence in normalized
@@ -734,13 +661,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         .iter()
         .filter(|o| o.role.participates())
     {
-        // A derived occurrence pins nothing (20-query-ir.md § engine
-        // recursion's consumer table): its row count is prepare-
-        // unknowable, so it reads no row counter and costs on the
-        // selectivity ladder's floors — the occurrence's bind role
-        // picks delta vs accumulated. The staleness surface already
-        // knows the shape (negated and grounding-discharged
-        // occurrences carry no pin today).
+
         if occurrence.bind.edb().is_none() {
             stats.push(crate::plan::selectivity::occurrence_stats_on(
                 catalog, images, schema, occurrence, 0,
@@ -772,10 +693,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     let lower_span = obs::span(obs::names::LOWER);
     let mut fj = binary2fj(normalized, &order);
     factor(&mut fj);
-    // The fold-aware level split, aggregate heads only (a projection
-    // has no fold to push down): group variables form their own prefix
-    // levels so leaf scan runs are group-constant and the aggregate
-    // sink's scan-fold pushdown can fire (`plan/fj/fold_split.rs`).
+
     if rule.rule().finds.iter().any(|term| {
         matches!(
             term,
@@ -794,9 +712,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         fold_split(&mut fj, &group_key);
     }
     gj_split(&mut fj);
-    // Group key for projections; every variable for aggregates —
-    // skip-illegality under a fold is encoded in the bits themselves
-    // (`RuleWitness::sink_vars`).
+
     let sink_vars = rule.sink_vars();
     let plan =
         crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
@@ -807,9 +723,6 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     let executor = Executor::new(&plan);
     let occurrence_count = plan.occurrences().len();
 
-    // BUILD_COLTS is pure column-schema construction since the unbound-
-    // views cutover: prepare provably never touches an image (the stats
-    // phase peeks, never builds), so a prepared query pins nothing.
     let memo = {
         let _s = obs::span(obs::names::BUILD_COLTS);
         build_view_memo(&plan)
@@ -818,8 +731,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         plan,
         executor,
         finds,
-        // Written by `seal_dnf_spans` iff the query is a DNF-derived
-        // union; empty (and never read) otherwise.
+
         dedup_spans: Box::default(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
@@ -829,19 +741,12 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     }))
 }
 
-/// COLT sources with their fixed column schemas over [`View::Unbound`]:
-/// prepare touches no image — the first execution binds every view via
-/// the ordinary memo-miss path ([`Binding::Unbound`] never matches),
-/// paying the image build exactly where a cold execution already pays
-/// it. Pure column-schema construction; nothing here can fail.
 fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     let mut memo = ViewMemo::new();
     for occurrence in plan.occurrences() {
-        // Field→column through the span map (docs/architecture/
-        // 50-storage.md image layout): a multi-word field contributes its
-        // whole column run (interval start/end pair, a bytes<N> field's
+
         // ⌈N/8⌉ words), and every field after one is shifted — spans,
-        // never raw field indices.
+
         let columns_of = |field: bumbledb_theory::schema::FieldId| -> Vec<usize> {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);
@@ -864,13 +769,7 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
                     .collect()
             })
             .collect();
-        // Selection levels: columns plus set-ness — a `ParamSet` value
-        // marks a set-bound level, probed once per element with the
-        // survivor union (docs/architecture/40-execution.md, § selection
-        // levels; set-ness is a plan fact, never per-execution data). A
-        // plan-constant `WordSet` (the grounding-evaluator's fold,
-        // `plan/ground/evaluate.rs`) is the same level shape with the
-        // elements already resolved — one machinery, two producers.
+
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
             .iter()
@@ -899,12 +798,6 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     memo
 }
 
-/// Derives one rule's per-find output specs (slot spans) from its
-/// witness slice and classified plan. Slots and widths both come
-/// from the rule's binding-slot layout (`slot_of`/`width_of` — the
-/// `SlotWidth` map): an interval variable's find spans two words, and no
-/// consumer assumes width 1. Result types are NOT derived here — they
-/// are the query's signature (`ir/validate`); the specs are this rule's.
 trait SlotLayout {
     fn slot_of(&self, var: crate::ir::VarId) -> usize;
     fn width_of(&self, var: crate::ir::VarId) -> usize;
@@ -931,17 +824,11 @@ impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
 }
 
 /// Seals the DNF-derived union regime's shared-slot dedup keys (ruled
-/// 2026-07-23, R2): per rule, the `VarId`-ordered spans of the vars
-/// EVERY clone's plan binds — the disjuncts of one written rule share
-/// one variable scope, so the `VarId` order reads the same binding
-/// tuple through every clone's own layout, and the re-keyed union folds
-/// the written rule's distinct full bindings
-/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`). Grounding
-/// may eliminate a **functionally determined** variable from one
-/// clone's plan and not another's — its value is 1:1 with the surviving
-/// binding either way (`plan/ground.rs`, aggregate safety), so keying
-/// the intersection never merges two distinct full bindings and every
-/// rule's key reads one shared vocabulary at one shared arity.
+/// 2026-07-23, R2): per rule, the `VarId`-ordered spans of the vars EVERY
+/// clone's plan binds — the disjuncts of one written rule share one variable
+/// scope, so the `VarId` order reads the same binding tuple through every
+/// clone's own layout, and the re-keyed union folds the written rule's distinct
+/// full bindings (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 fn seal_dnf_spans(rules: &mut [PreparedRule]) {
     let inventory = |rule: &PreparedRule| -> Vec<(crate::ir::VarId, usize, usize)> {
         match rule {
@@ -1013,9 +900,6 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
         .collect()
 }
 
-/// Seal a CQ pipeline: a no-interior single key-probe with variable finds
-/// is the [`PreparedPipeline::PointProbe`] arm. Aggregate and measure key
-/// probes stay on Cq and run through the shared sink.
 fn seal_cq_pipeline(
     interiors: Vec<PreparedInterior>,
     mut rules: Vec<PreparedRule>,
@@ -1036,9 +920,6 @@ fn seal_cq_pipeline(
     PreparedPipeline::Cq { interiors, rules }
 }
 
-/// The key-probe fast lane's find table: `Some` for key-probe plans whose finds
-/// are all plain variables. Types come from the signature's columns —
-/// find order IS column order.
 fn key_probe_find_table(
     key_probe: &crate::exec::dispatch::KeyProbePlan,
     finds: &[FindSpec],
@@ -1061,11 +942,6 @@ fn key_probe_find_table(
         .collect::<Option<Vec<_>>>()
 }
 
-/// The multi-rule provenance judgment (ruled 2026-07-23, R2): a
-/// surviving rule set minted wholly by ONE written rule is DNF-derived
-/// — [`seal_dnf_spans`] writes its shared-slot dedup keys and the union
-/// re-keys on them; any other set is hand-written, keying the head
-/// projection.
 fn dnf_derived(written: &[Option<u16>]) -> bool {
     written
         .first()
@@ -1074,11 +950,6 @@ fn dnf_derived(written: &[Option<u16>]) -> bool {
         .is_some_and(|minting| written.iter().all(|rule| *rule == Some(minting)))
 }
 
-/// The dense group domains (finding 049): per group position in find
-/// order, the schema-proven radix — every group word must prove one (a
-/// closed reference or bool; single-word by construction, so interval
-/// and measure group keys stay open) and the product must fit the dense
-/// cap, or the sink keeps the open-domain map. Empty = open.
 fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
     let mut radixes = Vec::new();
     for term in &rule.rule().finds {
@@ -1104,12 +975,6 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
     radixes
 }
 
-/// Builds the sink matching the head shape (the variant is fixed per
-/// prepared query — an enum, not `dyn`), aimed at rule 0's binding
-/// layout. The query regime structurally selects single-rule binding
-/// dedup, witnessed elision, or the mandatory union seen-set — keyed by
-/// provenance (R2). `dense_groups` is the single-rule dense group
-/// domain proof (049); empty keeps the open-domain map.
 fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
@@ -1121,10 +986,7 @@ fn make_sink(
         .iter()
         .all(|spec| matches!(spec, FindSpec::Var { .. }));
     if all_plain {
-        // Word-level source expansion through the layout map: an
-        // interval find contributes its two consecutive slots and a
-        // measure find one computed word, so the projection sink's rows
-        // are word rows the finalize pass re-assembles by find type.
+
         EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
     } else {
         let sink = match regime {
@@ -1146,9 +1008,8 @@ fn make_sink(
 #[derive(Debug, Clone, Copy)]
 enum SinkRegime<'r> {
     SingleRule(Option<DistinctWitness>),
-    /// Hand-written multi-rule: the head-projection union key.
+
     Union,
-    /// DNF-derived multi-rule (R2): the shared-slot union key — rule
-    /// 0's `VarId`-ordered spans.
+
     DnfUnion(&'r [(usize, usize)]),
 }
