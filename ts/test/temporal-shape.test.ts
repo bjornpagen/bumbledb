@@ -1,10 +1,3 @@
-/**
- * Issue 02: an `async` SDK method is a napi AsyncTask — one temporal
- * shape. The control plane (create / open / fromInstance / admit)
- * never awaits a sync `#[napi]` fn; a large publish does not block a
- * ticking JS timer; dispose-during-publish is a typed spent-handle refusal.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
