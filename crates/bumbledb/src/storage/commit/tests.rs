@@ -25,12 +25,6 @@ mod plan;
 mod sealed_checks;
 mod target;
 
-// ---------- shared fixture vocabulary ----------
-//
-// Shared shorthands live here; schemas stay per-file because each
-// judgment matrix wants its own statement shapes.
-
-/// A plain (non-fresh) field.
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
@@ -39,14 +33,12 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-/// The one interval type the fixtures use.
 fn interval() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
     }
 }
 
-/// An unselected statement side.
 fn side(relation: RelationId, projection: &[u16]) -> Side {
     Side {
         relation,
@@ -55,7 +47,6 @@ fn side(relation: RelationId, projection: &[u16]) -> Side {
     }
 }
 
-/// A selected statement side.
 fn selected(relation: RelationId, projection: &[u16], selection: &[(u16, Value)]) -> Side {
     Side {
         relation,
@@ -72,16 +63,12 @@ fn selected(relation: RelationId, projection: &[u16], selection: &[(u16, Value)]
     }
 }
 
-/// Encodes one fact of `rel` — the one encode stanza behind every
-/// per-file fact shorthand.
 fn fact(schema: &Schema, rel: RelationId, values: &[ValueRef]) -> Vec<u8> {
     let mut b = Vec::new();
     encode_fact(values, schema.relation(rel).layout(), &mut b);
     b
 }
 
-/// Records `deletes` then `inserts` into one delta and commits (order is
-/// semantically irrelevant — the delta is set arithmetic).
 fn apply_delta(
     env: &Environment,
     schema: &Schema,
@@ -100,19 +87,12 @@ fn apply_delta(
     super::commit(delta, env).map(|admission| admission.map(|_| ()))
 }
 
-/// Derives a delta's commit plan exactly as `commit` does: selection
-/// literals encoded against the committed dictionary plus the delta's
-/// pending interns, then the pure derivation.
 fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> {
     let view = env.read_txn().expect("txn");
     let selections = super::judgment::Selections::encode(delta, &view).expect("encode selections");
     super::plan::plan_commit(delta, selections).expect("derive plan")
 }
 
-/// Target(id fresh) + Keyed(x u64, y i64; key x) +
-/// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
-/// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
-/// Target's key a dependent, so its determinants feed the target-side check.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -169,10 +149,6 @@ const KEYED: RelationId = RelationId(1);
 const BOOKING: RelationId = RelationId(2);
 const CLAIM: RelationId = RelationId(3);
 
-/// Materialized statement order: Target's fresh auto-key first (statement
-/// 0, unaddressed here — the one id allocator makes the fresh id the row
-/// id, no `U` tree to probe, R16), then the declared statements in
-/// declaration order.
 const KEYED_KEY: StatementId = StatementId(1);
 const BOOKING_KEY: StatementId = StatementId(2);
 const CLAIM_TARGET: StatementId = StatementId(3);
@@ -189,8 +165,6 @@ fn claim_fact(schema: &Schema, holder: u64) -> Vec<u8> {
     fact(schema, CLAIM, &[ValueRef::U64(holder)])
 }
 
-/// A Booking fact: `during = [start, end)`; `tag` distinguishes facts
-/// sharing a key determinant (an exact-duplicate key on distinct facts).
 fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
     fact(
         schema,
