@@ -1,5 +1,4 @@
 //! (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`) over the Tiny
-
 use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 
