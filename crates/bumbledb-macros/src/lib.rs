@@ -1,9 +1,8 @@
-//! The `schema!` proc-macro (docs/architecture/70-api.md): bumbledb's declarative schema
+//! The `schema!` proc-macro: bumbledb's declarative schema
 //! surface. A small, rigid grammar — this is Rust-side declaration, not a
 //! query language — hand-parsed over the raw token stream (no `syn`, no
 //! `quote`: the grammar is not Rust syntax and the dependency would buy
 //! nothing).
-//!
 //! ```text
 //! schema! {
 //!     pub Ledger;
@@ -22,78 +21,12 @@
 //!     SavingsTerms(account) -> SavingsTerms;
 //! }
 //! ```
-//!
 //! The header `pub Ledger;` is the invocation's first item and names the
 //! schema: it expands to `pub struct Ledger;` implementing
 //! `bumbledb::Theory`, the value `Db::create(path, Ledger)` takes and
 //! the typestate `Db<Ledger>` carries. Multiple schemas coexist in one
 //! module — their headers disambiguate.
-//!
 //! Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the
-//! width is mandatory; bare `bytes` does not exist), `interval<i64>`,
-//! `interval<u64>`, and the fixed-width interval family
-//! `interval<u64, w>` / `interval<i64, w>` (w ≥ 1 an integer literal —
-//! the width is the type, the encoding stores only the start; `w = 0`
-//! and a trailing comma with no width are expansion errors naming the
-//! field); a vocabulary is a closed relation, never a type. `as NewType` generates the host-side nominal newtype
-//! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
-//! auto-materializes `R(field) -> R` at schema resolution, and its
-//! newtype implements the engine's `Key`: the auto key's `StatementId`
-//! is computed here at expansion (the fresh field's ordinal in the
-//! materialized order's first block), so `tx.get(id)` / `snap.get(id)`
-//! read through the key value's type — every fresh field of every
-//! ordinary relation gets one, several keys over one relation being
-//! several distinct Rust types. Every DECLARED key statement on an
-//! ordinary relation gets the same treatment: `Task(kind, subject) ->
-//! Task;` emits the generated **key struct** `TaskByKindSubject { kind,
-//! subject }` (`{R}By{Fields}`, each snake segment Pascal-cased; fields
-//! cloned from the relation's declaration, newtypes preserved, `str`
-//! borrowed) implementing `Key` with its `StatementId` computed here
-//! from the same materialized order — key structs join the newtypes,
-//! host enums, and fact structs in the emission roster, so a keyed
-//! `snap.get(..)` / `tx.get(..)` through a wrong column, wrong newtype,
-//! or wrong relation is a compile error, never a runtime shape check.
-//! **There are no field-level constraint modifiers** — everything
-//! relational is a dependency statement between the relation blocks
-//! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality —
-//! read as the functional dependency it spells: the key projection
-//! DETERMINES the tuple, and the arrow closing over its own relation is
-//! what makes a key a key; a right side naming any other relation is a
-//! spanned teaching error, not a key statement),
-//! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
-//! adjacent containments, `A <= B` first;
-//! `B(Y | ψ) <=[w]{lo..hi} A(X | σ)` (the capacity statement —
-//! B-family, target-left: per selected B fact, the MEASURE of selected
-//! A facts sharing its projected tuple — Σ weight over the group — lies
-//! in the window; an absent bracket is the unit weight, so the count
-//! utterance `<={lo..hi}` survives character for character). The weight
-//! bracket names a u64 SOURCE field (`[watts]`) or an interval
-//! position's measure (`[Duration(booked)]`); bounds are non-negative
-//! integer literals, `*` (hi only), or TARGET-row fields — hi slot only
-//! (ruled 2026-07-24, C6), with `Duration(field)` bounding by a target
-//! interval's measure. The window
-//! vocabulary is closed under the canonical-utterance law
-//! (docs/architecture/70-api.md, per-aggregate where weight-sensitive):
-//! `{n}` is THE exact-measure spelling
-//! (`{0}` the exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors
-//! (unit instance: lo ≥ 2 — the weighted `{1..*}` is legal), `{0..hi}`
-//! ceilings — every other spelling (`{n..n}`,
-//! `{0..0}`, unit `{1..*}`, `{0..*}`, inverted literal bounds, open
-//! shorthands) is an expansion error naming the canonical form. Weight
-//! and dependent-bound TYPING is judged at expansion too (the
-//! `fresh`-typing precedent): a signed weight names the polarity rule,
-//! a path weight (`[a.b]`) names the pinned-column composition idiom. Selection literals are typed
-//! against the selected field in the macro (a bare handle resolves through
-//! the selected field's newtype to its closed relation's row id); interval
-//! literals are written `start..end`, half-open; a binding may carry a
-//! literal SET — `field == {A, B}`, read disjunctively (a one-element
-//! set is the bare literal — `{L}` and `{}` are expansion errors naming
-//! the bare spelling).
-//!
-//! **Closed relations** declare their extension in the schema — rows are
-//! ground axioms, handle = declaration-order row id
-//! (`docs/architecture/70-api.md` § the `schema!` grammar):
-//!
 //! ```text
 //! closed relation Status as StatusId = { Open, Frozen, Closed };
 //! closed relation Kind as KindId {
@@ -103,40 +36,12 @@
 //!     Failed     { mastered: false },
 //! };
 //! ```
-//!
 //! `as NewType` is required (the handle needs a host type); the column
 //! block is optional; the extension block is non-empty, each row carrying
 //! every declared column exactly once (missing/extra/duplicate columns,
 //! duplicate handles, and type-mismatched literals are expansion panics
 //! naming the offender). The emission per closed relation: the **host
 //! enum** (an emission, not a type — the engine's vocabulary is
-//! relational; the macro projects it into a Rust enum so rustc's pattern
-//! checking keeps working, welded to the row ids by const `id`/`from_id`
-//! and pinned by an emitted weld test), per declared column a **const
-//! accessor** on the host enum (ruled 2026-07-23, R14 — rendered from
-//! the lowered extension, so host and engine cannot drift), the handle
-//! newtype through the ordinary newtype machinery, and the descriptor's
-//! extension. **No fact
-//! struct and no `Fact` impl** — closed relations are unwritable. A bare
-//! handle in a statement selection (`| status == Frozen`) resolves through
-//! the selected field's newtype to its owning closed relation's row id.
-//!
-//! Generated fact structs borrow their one variable-width field kind
-//! (`str` → `&'a str`): a struct with any `str` field gains one lifetime.
-//! `bytes<N>` fields are `[u8; N]` — owned, `Copy`, lifetime-free (the
-//! fixed-width law) — so all-fixed-width structs stay lifetime-free.
-//!
-//! The macro judges its own grammar and literal typing (expansion
-//! errors at the call site; the token→`Value` conversion is where a
-//! literal that does not fit its field dies). Name→id resolution and the
-//! canonical-utterance ban table are NOT the macro's: the parse builds a
-//! [`bumbledb_theory::schema::spec::SchemaSpec`] plus a span table and
-//! runs the ONE shared lowering (`SchemaSpec::descriptor`) at expansion —
-//! the macro and the runtime spec path cannot drift — and every
-//! `SpecIssue` lands as a `compile_error!` at the offending token. The
-//! lowered `SchemaDescriptor` is then emitted as const construction.
-//! Everything semantic beyond names surfaces as the typed `SchemaError`
-//! from `Db::create`/`Db::open`, where the descriptor is validated.
 
 use bumbledb_theory::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec,
@@ -153,7 +58,6 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::iter::Peekable;
 
-/// The Rust scalar type an interval element ranges over.
 fn element_rust(element: IntervalElement) -> &'static str {
     match element {
         IntervalElement::U64 => "u64",
@@ -161,7 +65,6 @@ fn element_rust(element: IntervalElement) -> &'static str {
     }
 }
 
-/// The engine-side variant-name suffix (`IntervalU64` / `IntervalI64`).
 fn element_suffix(element: IntervalElement) -> &'static str {
     match element {
         IntervalElement::U64 => "U64",
@@ -175,12 +78,9 @@ enum FieldTy {
     U64,
     I64,
     Str,
-    /// `bytes<N>` — the width is part of the type (mandatory in the
-    /// grammar; range-validated at `Db::create`/`open`).
+
     FixedBytes(u64),
-    /// `interval<E>` or `interval<E, w>` (`w ≥ 1` — the width is the type;
-    /// the grammar rejects `w = 0` here, and `Db::create`/`open` re-validates
-    /// the range).
+
     Interval(IntervalElement),
     FixedInterval(IntervalElement, u64),
 }
@@ -196,79 +96,52 @@ struct Field {
 #[derive(Debug, Clone)]
 struct Relation {
     name: String,
-    /// The sealed field list: for a closed relation the synthetic
-    /// (`id`, `u64 as Handle`) field is materialized at index 0 at parse,
-    /// so statement field ids, id constants, and the newtype emission all
-    /// see the sealed shape (`FieldId(0)` = the handle's row id). The
-    /// spec built for the lowering carries declared columns only —
-    /// `validate()` prepends its own synthetic field.
+
     fields: Vec<Field>,
-    /// The handle newtype token's span of a closed relation — where a
-    /// `DuplicateHandleNewtype` issue points.
+
     newtype_span: Option<Span>,
-    /// `Some` declares the relation **closed**: its extension is the row
-    /// list, ground axioms in declaration order. The option is the kind,
-    /// mirroring `RelationDescriptor.extension`.
+
     closed: Option<Closed>,
 }
 
-/// A closed relation's parsed extension.
 #[derive(Debug, Clone)]
 struct Closed {
     rows: Vec<ClosedRow>,
 }
 
-/// One ground axiom as written: the handle plus (column, literal) pairs
-/// reordered to column-declaration order at parse (coverage checked there
-/// — every declared column exactly once).
 #[derive(Debug, Clone)]
 struct ClosedRow {
     handle: String,
     values: Vec<(String, Literal)>,
 }
 
-/// A selection literal as written — classified by its own syntax, typed
-/// against the selected field's declaration at the token→`Value` seam
-/// ([`typed_literal`]), where a literal that does not fit dies at
-/// expansion.
 #[derive(Debug, Clone)]
 enum Literal {
     Bool(bool),
-    /// `[-] int`.
+
     Int {
         negative: bool,
         text: String,
     },
-    /// A bare ident: a closed relation's handle, resolved to its
-    /// declaration-order row id through the selected field's newtype by
-    /// the shared lowering. The span is the ident's — where the
-    /// handle-shaped issues point.
+
     Handle(String, Span),
-    /// A string literal's raw token text, quotes included.
+
     Str(String),
-    /// A byte-string literal's raw token text.
+
     Bytes(String),
-    /// `start..end`, half-open — each bound `[-] int`.
+
     Interval {
         start: (bool, String),
         end: (bool, String),
     },
 }
 
-/// One σ binding's right side: a single literal (`f == L`, the equality
-/// spelling) or a braced literal set (`f == {A, B}`, the disjunctive
-/// spelling — `docs/architecture/30-dependencies.md`). The degenerate
-/// sets (`{L}`, `{}`) parse and are banned by the shared lowering
-/// (`DegenerateLiteralSet`), the error naming the canonical form.
 #[derive(Debug, Clone)]
 enum Literals {
     One(Literal),
     Many(Vec<Literal>),
 }
 
-/// One σ binding as written: the selected field, its ident's span, the
-/// right side, and — for the braced set spelling — the brace group's
-/// span (where a `DegenerateLiteralSet` issue points).
 #[derive(Debug, Clone)]
 struct Binding {
     field: String,
@@ -277,9 +150,6 @@ struct Binding {
     set_span: Option<Span>,
 }
 
-/// One side of a dependency statement:
-/// `R(fields [ | field == literal-or-set, .. ])`. Name spans ride along
-/// for the lowering's span table.
 #[derive(Debug, Clone)]
 struct Side {
     relation: String,
@@ -288,9 +158,6 @@ struct Side {
     selection: Vec<Binding>,
 }
 
-/// One parsed dependency statement, one per [`StatementSpec`] — `==` is
-/// the `bidirectional` containment spelling, lowered to the two adjacent
-/// descriptors (`A <= B` first) by the shared lowering, not here.
 #[derive(Debug, Clone)]
 enum Statement {
     Functionality {
@@ -303,13 +170,7 @@ enum Statement {
         target: Side,
         bidirectional: bool,
     },
-    /// `B(Y | ψ) <=[weight]{window} A(X | σ);` — B-family, target-left:
-    /// the LEFT side is the statement's target (the per-group parent),
-    /// the right side the weighed source. The spelling survives as
-    /// written — the shared lowering owns the ban table — the brace
-    /// group's span is where a banned spelling's error points, and the
-    /// bracket group's span (`None` for the unit instance) is where a
-    /// weight issue points.
+
     Capacity {
         source: Side,
         weight: WeightSpec,
@@ -320,10 +181,8 @@ enum Statement {
     },
 }
 
-/// The whole parsed invocation: the header's schema name, relation blocks,
-/// and dependency statements, each list in source order.
 struct SchemaAst {
-    /// The `pub Name;` header's name — the emitted `Theory` unit struct.
+
     name: String,
     relations: Vec<Relation>,
     statements: Vec<Statement>,
@@ -335,7 +194,6 @@ fn expect_ident(tokens: &mut Tokens, what: &str) -> String {
     spanned_ident(tokens, what).0
 }
 
-/// An expected ident plus its span — the span table's raw material.
 fn spanned_ident(tokens: &mut Tokens, what: &str) -> (String, Span) {
     match tokens.next() {
         Some(TokenTree::Ident(ident)) => (ident.to_string(), ident.span()),
@@ -361,10 +219,6 @@ fn peek_punct(tokens: &mut Tokens, ch: char) -> bool {
     matches!(tokens.peek(), Some(TokenTree::Punct(p)) if p.as_char() == ch)
 }
 
-/// Whether the next token is a LONE `.` — the path spelling's dot. The
-/// range operator's first dot tokenizes `Joint` (`..` is two puncts,
-/// joined), so this peek distinguishes `{a.b..}` from `{a..b}` without
-/// consuming anything.
 fn peek_path_dot(tokens: &mut Tokens) -> bool {
     matches!(
         tokens.peek(),
@@ -379,9 +233,6 @@ fn take_group(tokens: &mut Tokens, delimiter: Delimiter, what: &str) -> TokenStr
     }
 }
 
-/// The deleted field-modifier vocabulary never parses, anywhere
-/// (docs/architecture/30-dependencies.md — everything relational is a
-/// statement).
 fn reject_deleted_word(word: &str) {
     assert!(
         !matches!(word, "unique" | "fk"),
@@ -396,9 +247,6 @@ fn reject_deleted_word(word: &str) {
     );
 }
 
-/// Parses a comma-separated identifier list.
-/// Parses one relation body: fields only — everything relational is a
-/// statement outside the block.
 fn parse_relation(name: String, body: TokenStream) -> Relation {
     let mut relation = Relation {
         name,
@@ -419,7 +267,6 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     relation
 }
 
-/// Parses a field's type, optional `as NewType`, and optional `, fresh`.
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
     let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes<N>/interval)");
     reject_deleted_word(&ty_name);
@@ -428,9 +275,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         "u64" => FieldTy::U64,
         "i64" => FieldTy::I64,
         "str" => FieldTy::Str,
-        // The width is mandatory: bare `bytes` is not a type — the
-        // variable-width binary type is deleted (identity-shaped values
-        // are bytes<N>; reuse-shaped text is str).
+
         "bytes" => {
             assert!(
                 peek_punct(tokens, '<'),
@@ -482,11 +327,10 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
-    // Trailing modifier: `, fresh` — distinguished from the next field
-    // (an ident followed by `:`) by lookahead.
+
     if peek_punct(tokens, ',') {
         let mut lookahead = tokens.clone();
-        lookahead.next(); // the comma
+        lookahead.next(); 
         if let Some(TokenTree::Ident(ident)) = lookahead.peek() {
             let word = ident.to_string();
             lookahead.next();
@@ -498,10 +342,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     word, "fresh",
                     "schema!: unknown field modifier `{word}` (the only modifier is `fresh`)"
                 );
-                // Judged here, not deferred: the emitted `Fresh`/`Key`
-                // impls are u64-shaped, so a deferral to `Db::create`
-                // could never arrive — the generated code would die as
-                // rustc type errors in invisible code first.
+
                 assert!(
                     matches!(field.ty, FieldTy::U64),
                     "schema!: fresh field `{}` must be u64 — fresh is the mint \
@@ -517,17 +358,14 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     field.name
                 );
                 field.fresh = true;
-                tokens.next(); // the comma
-                tokens.next(); // `fresh`
+                tokens.next(); 
+                tokens.next(); 
             }
         }
     }
     field
 }
 
-/// The optional interval width: `interval<u64, w>` — the fixed-width
-/// family, w ≥ 1 an integer literal. A trailing comma with no width and
-/// w = 0 are grammar errors naming the field.
 fn parse_interval_width(name: &str, tokens: &mut Tokens) -> Option<u64> {
     if !peek_punct(tokens, ',') {
         return None;
@@ -552,23 +390,14 @@ fn parse_interval_width(name: &str, tokens: &mut Tokens) -> Option<u64> {
     Some(width)
 }
 
-/// Whether the next token is a brace-delimited group.
 fn peek_brace(tokens: &mut Tokens) -> bool {
     matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace)
 }
 
-/// A `[...]` group next — the capacity weight bracket riding `<=`.
 fn peek_bracket(tokens: &mut Tokens) -> bool {
     matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
 }
 
-/// Parses one closed relation, `closed relation` already consumed:
-/// `Name as Handle [ { columns } ] = { rows };`. The `as NewType` is
-/// required (the handle needs a host type); the column block is optional;
-/// the extension block is required and non-empty. The returned relation's
-/// field list opens with the synthetic (`id`, `u64 as Handle`) field —
-/// the sealed shape, materialized here so statement field ids, id
-/// constants, and the newtype emission all address it uniformly.
 fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
     let name = expect_ident(tokens, "a relation name");
     assert_eq!(
@@ -615,12 +444,8 @@ fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
     relation
 }
 
-/// Parses the extension block: each row is `Handle` or
-/// `Handle { column: literal, ... }` with every declared column present
-/// exactly once — duplicate handles and missing/extra/duplicate columns
-/// panic naming the offender. `declaration` still holds declared columns
-/// only (the synthetic id lands after this returns). Row values are
-/// reordered to column-declaration order.
+/// `declaration` still holds declared columns only (the synthetic id lands
+/// after this returns).
 fn parse_extension(declaration: &Relation, body: TokenStream) -> Closed {
     let mut tokens = body.into_iter().peekable();
     let mut rows: Vec<ClosedRow> = Vec::new();
@@ -688,15 +513,10 @@ fn parse_extension(declaration: &Relation, body: TokenStream) -> Closed {
     Closed { rows }
 }
 
-/// The integer-literal token shape: digits first, no float dot. Shared
-/// between [`parse_int`] and [`parse_literal`]'s bare-literal fallback.
 fn is_int_text(text: &str) -> bool {
     text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
 }
 
-/// Parses one `[-] int`, returning the sign and the raw token text —
-/// range and radix are judged at the token→`Value` seam, against the
-/// field's declared type.
 fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
     let negative = peek_punct(tokens, '-');
     if negative {
@@ -715,8 +535,6 @@ fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
     }
 }
 
-/// An integer already begun: either a scalar or, on `..`, the start of a
-/// half-open `start..end` interval literal.
 fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
     if peek_punct(tokens, '.') {
         tokens.next();
@@ -731,8 +549,6 @@ fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
     }
 }
 
-/// Parses one selection literal: `int`, `-int`, `true`/`false`, a bare
-/// handle ident, a string/byte-string literal, or `start..end`.
 fn parse_literal(tokens: &mut Tokens) -> Literal {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -765,11 +581,6 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
     }
 }
 
-/// Parses one binding's right side: a braced literal set (`{A, B}`) or a
-/// single literal. The degenerate sets (`{L}`, `{}`) parse here and are
-/// banned by the shared lowering (the canonical-utterance law's
-/// `DegenerateLiteralSet`, its error naming the canonical form) — the
-/// returned span is the brace group's, where that error points.
 fn parse_literals(tokens: &mut Tokens) -> (Literals, Option<Span>) {
     if !peek_brace(tokens) {
         return (Literals::One(parse_literal(tokens)), None);
@@ -789,8 +600,6 @@ fn parse_literals(tokens: &mut Tokens) -> (Literals, Option<Span>) {
     (Literals::Many(literals), Some(span))
 }
 
-/// Parses `fields [ | field == literal-or-set, .. ]` out of one side's
-/// parens.
 fn parse_side(relation: String, relation_span: Span, group: TokenStream) -> Side {
     let mut tokens = group.into_iter().peekable();
     let mut projection = Vec::new();
@@ -827,29 +636,17 @@ fn parse_side(relation: String, relation_span: Span, group: TokenStream) -> Side
     }
 }
 
-/// Parses `Rel(...)` — the right-hand side of `<=` / `==`.
 fn parse_statement_side(tokens: &mut Tokens) -> Side {
     let (relation, relation_span) = spanned_ident(tokens, "a relation name");
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
     parse_side(relation, relation_span, group)
 }
 
-/// A parse-stage teaching error: the offending token's span plus the
-/// message. `schema()` lands it as a `compile_error!` at the token —
-/// the same landing the lowering's `SpecIssue`s take — for the grammar
-/// mistakes that carry MEANING worth teaching (today: the key arrow's
-/// right side, the duplicated determinant field), where an expansion
-/// panic at the invocation would bury the lesson.
 struct ParseError {
     span: Span,
     message: String,
 }
 
-/// Parses one dependency statement, `relation` being its left relation
-/// name (already consumed, its span in hand). `==` survives as the
-/// `bidirectional` containment spelling — the shared lowering lowers it
-/// to two adjacent `Containment`s, `A <= B` first
-/// (docs/architecture/30-dependencies.md).
 #[expect(
     clippy::too_many_lines,
     reason = "one arm per operator spelling — clearer kept together \
@@ -864,12 +661,9 @@ fn parse_statement(
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
     let left = parse_side(relation, relation_span, group);
     match tokens.next() {
-        // `->`: functionality. The right side is the side's own relation
-        // — the arrow closing over it is the dependency-theoretic reading
+
         // (OWNER RULING 2026-07-18: the arrow is canon, never respelled) —
-        // and the FD form takes no selection: the engine descriptor
-        // carries none by construction (the shape is unrepresentable, not
-        // rejected downstream), so the grammar is the judge here.
+
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
             expect_punct(tokens, '>');
             let (right, right_span) = spanned_ident(tokens, "the FD's relation name");
@@ -907,13 +701,7 @@ fn parse_statement(
                 projection: left.projection,
             });
         }
-        // `<=`: containment — or, with a brace group riding the operator
-        // (`<={lo..hi}`, optionally weighted `<=[w]{lo..hi}`), the
-        // capacity statement: B-family, target-left — the LEFT side is
-        // the statement's target (the per-group parent), the right side
-        // the weighed source. ONE parse arm with an optional bracket:
-        // the count spelling and the weighted spelling are the same
-        // statement, never an old-arm/new-arm pair.
+
         Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
             expect_punct(tokens, '=');
             let (weight, weight_span) = if peek_bracket(tokens) {
@@ -956,7 +744,7 @@ fn parse_statement(
                 });
             }
         }
-        // `==`: set equality — the bidirectional containment spelling.
+
         Some(TokenTree::Punct(p)) if p.as_char() == '=' => {
             expect_punct(tokens, '=');
             let right = parse_statement_side(tokens);
@@ -966,9 +754,7 @@ fn parse_statement(
                 bidirectional: true,
             });
         }
-        // The deleted `in lo..hi per` window spelling never parses —
-        // the window is B-family, target-left (the canonical-utterance
-        // law: one meaning, one spelling).
+
         Some(TokenTree::Ident(ident)) if ident.to_string() == "in" => {
             panic!(
                 "schema!: the `in lo..hi per` window form is deleted — a window is \
@@ -985,12 +771,6 @@ fn parse_statement(
     Ok(())
 }
 
-/// The FD determinant's duplicate check — a determinant is a field SET,
-/// duplicate-free (docs/architecture/30-dependencies.md). Judged at the
-/// parse, where the second occurrence's span is in hand: the projection
-/// is reified into the generated key struct, so a duplicate deferred to
-/// the engine would die first as rustc's E0124 on a field the author
-/// never wrote.
 fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
     for (idx, (field, span)) in side.projection.iter().enumerate() {
         if side.projection[..idx]
@@ -1017,16 +797,9 @@ fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
     None
 }
 
-/// One capacity bound out of the brace group: a non-negative integer
-/// literal (parsed here, not spliced — the canonical-utterance law
-/// compares bounds at expansion), a bare ident (the dependent bound: a
-/// field of TARGET's row, resolved by the shared lowering), or
-/// `Duration(field)` (a target interval's measure). `Duration` commits
-/// only when the paren group FOLLOWS — `parse_weight`'s peek, mirrored:
-/// a field literally named `Duration` is an ordinary dependent bound. A
-/// path spelling (`{lo..a.b}` — the LONE dot; the range operator's
-/// first dot is Joint) is the pinned-column refusal, the same verdict
-/// as the weight's, the TS surface's, and the spec resolver's.
+/// A path spelling (`{lo..a.b}` — the LONE dot; the range operator's first dot
+/// is Joint) is the pinned-column refusal, the same verdict as the weight's,
+/// the TS surface's, and the spec resolver's.
 fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
     if matches!(tokens.peek(), Some(TokenTree::Ident(_))) {
         let (name, _) = spanned_ident(tokens, what);
@@ -1061,13 +834,6 @@ fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
     )
 }
 
-/// Parses the `<=[…]` bracket group into the weight as written — the
-/// measure of one source fact: `[field]` a u64 SOURCE field,
-/// `[Duration(field)]` an interval position's measure. The path
-/// spelling `[a.b]` is an expansion panic spelling the pinned-column
-/// composition idiom (ruled 2026-07-24, ruling 6: the weight vocabulary
-/// is closed at the row — the runtime spec surface refuses the same
-/// shape as `SpecIssue::WeightPathRefused`).
 fn parse_weight(body: TokenStream) -> WeightSpec {
     let mut tokens = body.into_iter().peekable();
     assert!(
@@ -1112,13 +878,6 @@ fn parse_weight(body: TokenStream) -> WeightSpec {
     weight
 }
 
-/// Parses the `<={…}` brace group into the spelling as written — the
-/// shared lowering's [`CapacityWindowSpec`], judged by its ban table,
-/// never here (dependent bounds included: the hi-only rule, C6, is the
-/// lowering's `CapacityDependentFloor`). The open shorthands are not
-/// spellable in the spec vocabulary, so the grammar itself refuses
-/// them: `{..hi}` and `{lo..}` are expansion panics naming the explicit
-/// form.
 fn parse_window(body: TokenStream) -> CapacityWindowSpec {
     let mut tokens = body.into_iter().peekable();
     assert!(
@@ -1157,10 +916,6 @@ fn parse_window(body: TokenStream) -> CapacityWindowSpec {
     spelling
 }
 
-/// Parses the whole `schema!` body: the `pub Name;` header first, then
-/// relation blocks and dependency statements in any order. `Err` is a
-/// parse teaching error (the key arrow's foreign right side, the
-/// duplicated determinant field), spanned at the offending token.
 fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
     let mut tokens = input.into_iter().peekable();
     match tokens.next() {
@@ -1192,10 +947,7 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
             let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
             schema.relations.push(parse_relation(name, body));
         } else if ident == "order" {
-            // The order-mark form left the vocabulary whole
-            // (`docs/architecture/30-dependencies.md` § refused: order
-            // marks) — the old spelling is unrepresentable, rejected by
-            // the grammar itself, never the validator.
+
             panic!(
                 "schema!: `order` statements no longer exist — order is a derivation, \
                  not a dependency: use fractional indexing over a keyed position, or \
@@ -1211,19 +963,13 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
 
 /// The declarative schema surface: expands to the header's `Theory`
 /// unit struct, host-side newtypes and host enums, one typed fact struct
-/// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
 /// boundaries, and one generated key struct per declared key statement
 /// on an ordinary relation (`{R}By{Fields}`, implementing `Key`). The
 /// expansion builds a `SchemaSpec` plus a span table, runs
 /// the ONE shared lowering (`SchemaSpec::descriptor` — name→id resolution
 /// and the canonical-utterance ban table, the same pass the runtime spec
 /// path runs), and emits the lowered `SchemaDescriptor` as const
-/// construction. Semantic validation beyond names runs where the
-/// definition is consumed (`Db::create`/`Db::open`, as the typed
-/// `SchemaError`).
-///
 /// # Panics
-///
 /// On malformed `schema!` grammar or a literal that does not fit its
 /// field's declared type — a compile error at the macro call site.
 /// Lowering issues (unresolvable names, banned spellings) are not panics:
@@ -1247,19 +993,11 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations, &descriptor);
-    // The running fresh-field ordinal across ALL relations in declaration
-    // order (field order within) — exactly the first block of
-    // `SchemaDescriptor::materialized_statements`, so each fresh field's
-    // ordinal IS its auto-key `StatementId`, computed here at expansion,
-    // never discovered at runtime.
+
     let mut fresh_ordinal = 0usize;
     for (index, relation) in schema.relations.iter().enumerate() {
         let fresh_count = relation.fields.iter().filter(|field| field.fresh).count();
-        // No fact struct and no `Fact`/`Fresh` impls for a closed relation:
-        // its rows are ground axioms and the relation is unwritable — a
-        // writable struct would be a lie the type system tells. Reads go
-        // through queries and the dyn surface
-        // (`docs/architecture/70-api.md`).
+
         if relation.closed.is_some() {
             fresh_ordinal += fresh_count;
             continue;
@@ -1271,38 +1009,24 @@ pub fn schema(input: TokenStream) -> TokenStream {
     out.parse().expect("schema!: generated code parses")
 }
 
-/// The parse's span table: every issue the shared lowering can return
-/// maps through here to the offending token. Handle-shaped issues carry
-/// their own key — the structural [`LiteralAt`] address — and the
-/// duplicate-newtype issue carries relation indices; the name-keyed
-/// multimaps serve the rest, and every span under a matched key is
-/// offending (the key carries enough context that no innocent token
-/// shares it), so all are marked.
 #[derive(Default)]
 struct SpanTable {
-    /// (statement, relation name) → the relation ident's spans.
+
     relations: BTreeMap<(usize, String), Vec<Span>>,
-    /// (statement, relation name, field name) → the field idents' spans,
-    /// projection and selection occurrences alike.
+
     fields: BTreeMap<(usize, String, String), Vec<Span>>,
-    /// statement → its capacity window brace group's span.
+
     capacities: BTreeMap<usize, Span>,
-    /// statement → its capacity weight bracket group's span.
+
     weights: BTreeMap<usize, Span>,
-    /// (statement, field name, set len) → literal-set brace spans.
+
     sets: BTreeMap<(usize, String, usize), Vec<Span>>,
-    /// A handle literal's structural address → its ident's span.
+
     literals: BTreeMap<LiteralAt, Span>,
-    /// relation index → its handle newtype ident's span (closed only).
+
     newtypes: BTreeMap<usize, Span>,
 }
 
-/// The typing seam's lookup: the declared type of `relation.field`, if
-/// both names resolve. Name→id RESOLUTION is the shared lowering's — this
-/// lookup only types literal tokens, and an unknown name yields `None`
-/// (the literal gets a placeholder and the lowering reports the name).
-/// Closed relations are searched in their sealed shape — the synthetic
-/// `id` field is in the AST's list, so `| id == 1` types as `u64`.
 fn declared_type<'ast>(
     schema: &'ast SchemaAst,
     relation: &str,
@@ -1318,11 +1042,6 @@ fn declared_type<'ast>(
         .map(|f| &f.ty)
 }
 
-/// One selection literal into the spec: handles pass through by name
-/// (the lowering resolves them), everything else runs the token→`Value`
-/// seam against the field's declared type — or a placeholder when the
-/// name itself is unresolvable, which the lowering reports (a nonempty
-/// issue list fails the whole expansion, so placeholders never escape).
 fn typed_or_placeholder(
     schema: &SchemaAst,
     relation: &str,
@@ -1338,12 +1057,6 @@ fn typed_or_placeholder(
     }
 }
 
-/// The token→`Value` seam — the macro's half of the two-boundary split:
-/// literal TYPING stays an expansion error here (a literal that does not
-/// fit its field's declared type never degrades to a `Db::create`
-/// error), while name resolution and the ban table are the shared
-/// lowering's. One machine for statement selections and closed rows —
-/// same errors, both call sites.
 fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -> LiteralSpec {
     let value = match (ty, literal) {
         (_, Literal::Handle(name, _)) => return LiteralSpec::Handle(name.as_str().into()),
@@ -1359,9 +1072,7 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
         ),
         (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text)),
-        // The width is the type: a `bytes<N>` literal of any other
-        // length is a typing mismatch, judged here (the theory's
-        // judgment, `bumbledb-theory/src/schema.rs: value_inhabits`).
+
         (FieldTy::FixedBytes(len), Literal::Bytes(text)) => {
             let bytes = unescape_bytes(text);
             if u64::try_from(bytes.len()) != Ok(*len) {
@@ -1391,8 +1102,7 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             let start = u64_text(start).unwrap_or_else(|| literal_mismatch(relation, field));
             let end = u64_text(end).unwrap_or_else(|| literal_mismatch(relation, field));
             let interval = nonempty_interval(relation, field, Interval::<u64>::new(start, end));
-            // `interval<E, w>`: the spelled width must be exactly `w`
-            // and never the unbounded ray — the theory's judgment.
+
             if interval.end() - interval.start() != *w || interval.is_ray() {
                 literal_mismatch(relation, field);
             }
@@ -1428,8 +1138,6 @@ fn literal_mismatch(relation: &str, field: &str) -> ! {
     )
 }
 
-/// Interval literals are nonempty by the width law — judged here at the
-/// seam (an empty literal is a typing error, not a `Db::create` one).
 fn nonempty_interval<T>(relation: &str, field: &str, interval: Option<T>) -> T {
     interval.unwrap_or_else(|| {
         panic!(
@@ -1439,13 +1147,6 @@ fn nonempty_interval<T>(relation: &str, field: &str, interval: Option<T>) -> T {
     })
 }
 
-/// An integer literal's magnitude out of its token text: underscores
-/// dropped, the `0x`/`0o`/`0b` radix prefixes honored (the seam parses
-/// what rustc would have; type suffixes are not part of the grammar).
-/// THE literal parser — every integer position (selection and row
-/// literals, `bytes<N>` and interval widths, window bounds) judges its
-/// text here, no position with a private dialect (ruled 2026-07-23, R8;
-/// `docs/architecture/20-query-ir.md` § integer literals).
 fn int_magnitude(text: &str) -> Option<u128> {
     let text = text.replace('_', "");
     let (digits, radix) = match text.as_bytes() {
@@ -1457,19 +1158,15 @@ fn int_magnitude(text: &str) -> Option<u128> {
     u128::from_str_radix(digits, radix).ok()
 }
 
-/// A `u64` literal value, or `None` when the text is not one.
 fn u64_text(text: &str) -> Option<u64> {
     u64::try_from(int_magnitude(text)?).ok()
 }
 
-/// An `i64` literal value from sign + magnitude, or `None`.
 fn i64_text(negative: bool, text: &str) -> Option<i64> {
     let magnitude = i128::try_from(int_magnitude(text)?).ok()?;
     i64::try_from(if negative { -magnitude } else { magnitude }).ok()
 }
 
-/// Decodes a cooked string literal's token text (quotes included) to its
-/// UTF-8 text.
 fn unescape_str(text: &str) -> Box<str> {
     let body = text
         .strip_prefix('"')
@@ -1480,8 +1177,6 @@ fn unescape_str(text: &str) -> Box<str> {
         .into_boxed_str()
 }
 
-/// Decodes a cooked byte-string literal's token text (`b"…"`) to its
-/// bytes.
 fn unescape_bytes(text: &str) -> Vec<u8> {
     let body = text
         .strip_prefix("b\"")
@@ -2258,8 +1953,6 @@ fn value_tokens(value: &Value) -> String {
     }
 }
 
-/// Renders one binding's lowered literal set as a `LiteralSet`
-/// expression.
 fn literal_set_tokens(set: &LiteralSet) -> String {
     match set {
         LiteralSet::One(value) => format!(
@@ -2276,7 +1969,6 @@ fn literal_set_tokens(set: &LiteralSet) -> String {
     }
 }
 
-/// Renders one lowered side as a `Side` expression.
 fn side_tokens(side: &SideDescriptor) -> String {
     let projection = side
         .projection
@@ -2302,7 +1994,6 @@ fn side_tokens(side: &SideDescriptor) -> String {
     )
 }
 
-/// Renders one lowered statement as its `StatementDescriptor` expression.
 fn statement_tokens(statement: &StatementDescriptor) -> String {
     match statement {
         StatementDescriptor::Functionality {
@@ -2358,7 +2049,6 @@ fn statement_tokens(statement: &StatementDescriptor) -> String {
     }
 }
 
-/// Renders one lowered capacity bound as its `Bound` expression.
 fn bound_tokens(bound: bumbledb_theory::schema::Bound) -> String {
     let path = "::bumbledb::schema::Bound";
     match bound {
@@ -2374,8 +2064,6 @@ fn bound_tokens(bound: bumbledb_theory::schema::Bound) -> String {
     }
 }
 
-/// Renders the LOWERED descriptor as const construction — ids already
-/// minted by the shared lowering, nothing resolved here.
 fn descriptor_tokens(descriptor: &SchemaDescriptor) -> String {
     let mut relations = String::new();
     for relation in &descriptor.relations {
@@ -2453,11 +2141,10 @@ fn emit_schema_def(out: &mut String, name: &str, descriptor: &SchemaDescriptor) 
     );
 }
 
-/// A declaration name as a `SCREAMING_SNAKE` constant name:
-/// `SavingsTerms` → `SAVINGS_TERMS`, `rate_bps` → `RATE_BPS` — an
-/// underscore lands before an uppercase letter that starts a new word
-/// (after a lowercase/digit, or heading a lowercase run after an
-/// uppercase run).
+/// A declaration name as a `SCREAMING_SNAKE` constant name: `SavingsTerms` →
+/// `SAVINGS_TERMS`, `rate_bps` → `RATE_BPS` — an underscore lands before an
+/// uppercase letter that starts a new word (after a lowercase/digit, or heading
+/// a lowercase run after an uppercase run).
 fn screaming_snake(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::new();
@@ -2477,18 +2164,8 @@ fn screaming_snake(name: &str) -> String {
     out
 }
 
-/// The declaration-order id constants on the theory
-/// (docs/architecture/70-api.md § id constants — named data, not
-/// ergonomics): per relation `Theory::BUSY: RelationId`, per field
-/// `Theory::BUSY_PERSON: FieldId`), so the Rust host never
-/// writes a magic number into an `ir::Query` — and the downstream
-/// `query!` macro resolves names through ordinary rustc name resolution
-/// (proc macros cannot see each other's output; paths to these constants
-/// are how a typo'd relation becomes a compile error).
 fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
-    // name → what it names; a collision (`Busy.person` vs a relation
-    // `BusyPerson`, say) is diagnosed here with both claimants named,
-    // not left to rustc's duplicate-item error.
+
     let mut claimed: BTreeMap<String, String> = BTreeMap::new();
     let mut claim = |name: String, names: String| {
         if let Some(existing) = claimed.get(&name) {
@@ -2535,24 +2212,16 @@ fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
 }
 
 fn emit_newtypes(out: &mut String, relations: &[Relation]) {
-    // name -> (declared encoding, inner Rust type, wraps an Interval).
-    // Intervals deliberately carry no order (an encoding accident, not
-    // semantics — the `Interval` doc), so their newtypes derive none
-    // either.
+
     let mut newtypes: BTreeMap<String, (String, String, bool)> = BTreeMap::new();
     for relation in relations {
         for field in &relation.fields {
             let Some(name) = &field.newtype else {
                 continue;
             };
-            // The bool marks order-free newtypes: intervals carry no
-            // order (an encoding accident, not semantics) and bytes<N>
-            // deliberately none either — a digest's lexicographic order
+
             // is an encoding artifact (the order-on-bytes refusal).
-            // The first string is the declared ENCODING — the duplicate
-            // check's key, because the rendered Rust type is lossy
-            // exactly where the width is the type: `interval<u64, 7>`
-            // and `interval<u64>` share one host `Interval<u64>`.
+
             let inner = match field.ty {
                 FieldTy::U64 => ("u64".to_owned(), "u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), "i64".to_owned(), false),
@@ -2591,21 +2260,6 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
     }
 }
 
-/// The per-closed-relation emission (`docs/architecture/70-api.md`): the
-/// **host enum** — an emission, not a type. The engine's vocabulary is
-/// relational; the macro projects it into a Rust enum so rustc's pattern
-/// checking keeps working — one vocabulary, two checkers, zero drift: the
-/// ids are the same declaration-order numbers on both sides, welded by
-/// const `id`/`from_id` (explicit matches, no `as` casts — the mapping is
-/// the declaration order stated, not a repr accident) and pinned by an
-/// EMITTED weld test per closed relation, so the weld cannot be forgotten
-/// for a new theory. Declared columns project too (ruled 2026-07-23,
-/// R14): per column, a `const` accessor in the `id()` style — an
-/// explicit match per handle, rendered from the LOWERED extension (the
-/// same typed ground-axiom literals that seed the engine's, handles
-/// resolved to row ids), so host and engine cannot drift by construction
-/// and no query-backed weld is needed. The host enum is the constant
-/// namespace: no separate per-handle constants exist.
 fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDescriptor) {
     for (rel_idx, relation) in relations.iter().enumerate() {
         let Some(extension) = &relation.closed else {
@@ -2636,11 +2290,7 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
             );
         }
         // The column accessors (ruled 2026-07-23, R14): one const fn per
-        // declared column, arms rendered from the lowered extension —
-        // handles already resolved to row ids, every value typed by the
-        // literal seam. Ground-axiom values are expansion-time
-        // constants; a runtime query for one is the workaround these
-        // delete.
+
         let lowered = descriptor.relations[rel_idx]
             .extension
             .as_deref()
@@ -2653,9 +2303,7 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
                  the emitted handle weld owns that name"
             );
             // `str` columns are refused on closed relations at
-            // validation (the handle IS the label) — the accessor type
-            // exists only so the expansion stays total on the way to
-            // that typed error.
+
             let ty = if matches!(field.ty, FieldTy::Str) {
                 "&'static str".to_owned()
             } else {
@@ -2717,11 +2365,6 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
     }
 }
 
-/// One lowered ground-axiom value as the HOST-TYPED const expression its
-/// column accessor returns (newtyped columns wrap — the newtype, exactly
-/// as `rust_field_ty` decides the host face). Intervals construct
-/// through the theory's ground-axiom seam: nonemptiness was judged at
-/// the literal seam, and the generic checked `new` is not const.
 fn const_value_tokens(value: &Value, field: &Field) -> String {
     let raw = match value {
         Value::Bool(v) => format!("{v}"),
@@ -2746,15 +2389,10 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
     }
 }
 
-/// A declaration name as a `snake_case` module name (`SavingsTerms` →
-/// `savings_terms`) — the emitted weld-test module's.
 fn snake(name: &str) -> String {
     screaming_snake(name).to_ascii_lowercase()
 }
 
-/// Whether the field is variable-width — borrowed in the generated struct
-/// (`&'a str`), the reason its struct gains a lifetime. `bytes<N>` is
-/// fixed-width and owned (`[u8; N]`, `Copy`) — no borrow surface.
 fn is_borrowed(field: &Field) -> bool {
     matches!(field.ty, FieldTy::Str)
 }
@@ -2775,14 +2413,8 @@ fn rust_field_ty(field: &Field) -> String {
     }
 }
 
-/// The expression context one boundary set encodes against: the
-/// relation-id expression and the write/delete/read context bindings.
-/// The fact structs pass `<Self as Fact<'a>>::RELATION` (the impl block
-/// knows its own relation); the generated key structs pass the literal
-/// `::bumbledb::schema::RelationId({rel_idx})` — a `Key` impl has no
-/// `Fact` supertrait to read the id through.
 struct EncodeCx<'s> {
-    /// The `RelationId` expression the width-checked boundaries cite.
+
     relation: &'s str,
 }
 
@@ -2806,8 +2438,6 @@ fn value_type_expr(field: &Field) -> String {
     }
 }
 
-/// Per-field [`ValueRef`] expression for insert (mints) or probe (lookup,
-/// miss → [`Probe::ProvablyAbsent`]).
 fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> String {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
@@ -2843,9 +2473,6 @@ fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> S
     }
 }
 
-/// The struct-literal arm decoding one field out of canonical fact bytes
-/// through [`CodecRead`]'s typed entry points — no match, no panic branch
-/// in generated code.
 fn decode_arm(field: &Field, idx: usize) -> String {
     let wrap = |expr: &str| -> String {
         match &field.newtype {
@@ -2881,10 +2508,7 @@ fn emit_fact_struct(
     fresh_base: usize,
 ) {
     let name = &relation.name;
-    // A struct with any variable-width field gains one lifetime: those
-    // fields are borrowed (`&'a str` / `&'a [u8]`) — from the host at
-    // insert, from the resolver at decode. All-fixed-width structs stay
-    // lifetime-free and implement `Fact<'a>` for every `'a`.
+
     let borrowed = relation.fields.iter().any(is_borrowed);
     let (struct_params, self_ty) = if borrowed {
         ("<'a>", format!("{name}<'a>"))
@@ -2945,15 +2569,6 @@ fn emit_fact_struct(
          }}\n",
     );
 
-    // Fresh-minting newtypes: `tx.reserve::<NewType>(1).start()` knows its field,
-    // and each newtype is a typed point-read key (`::bumbledb::Key`) —
-    // the value reads through its auto-materialized `R(field) -> R`,
-    // whose `StatementId` is this fresh field's ordinal among ALL fresh
-    // fields (relation declaration order, then field order): the first
-    // block of `SchemaDescriptor::materialized_statements`, replayed
-    // here at expansion. EVERY fresh field of an ordinary relation gets
-    // one — several fresh keys over one relation are several distinct
-    // Rust types, so no single-fresh restriction exists.
     let mut auto_key_id = fresh_base;
     for (field_idx, field) in relation.fields.iter().enumerate() {
         let (true, Some(newtype)) = (field.fresh, &field.newtype) else {
@@ -2985,9 +2600,6 @@ fn emit_fact_struct(
     }
 }
 
-/// A `snake_case` declaration name as a Pascal-cased key-struct segment:
-/// each `_`-separated segment capitalized (`grp` → `Grp`,
-/// `source_unit_id` → `SourceUnitId`) — the `{R}By{Fields}` naming rule.
 fn pascal(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for segment in name.split('_') {
@@ -3000,26 +2612,8 @@ fn pascal(name: &str) -> String {
     out
 }
 
-/// One generated key struct per declared `R(x, ..) -> R` on an ORDINARY
-/// (non-closed) relation: the FD law given a value-level inhabitant — the
-/// statement's projection IS the struct's field list (named fields, so a
-/// wrong column, wrong newtype, wrong order, or wrong relation is a
-/// compile error, not a runtime shape check), and the statement id is a
-/// const computed here at expansion by EXACTLY
-/// `SchemaDescriptor::materialized_statements`' rule: the implied prefix
-/// (one auto-`Functionality` per fresh field in relation declaration
-/// order, then one closed auto-key per closed relation) followed by the
-/// declared statements in declaration order, a bidirectional `==`
-/// occupying TWO materialized slots (it lowers to the two adjacent
-/// containments). Closed relations get no key struct — they are
-/// unwritable and their handle reads go through queries and the dyn
-/// surface. A name collision with a host declaration surfaces as rustc's
-/// duplicate-definition error.
 fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
-    // The implied prefix's total width, replaying the materialized
-    // order's first two blocks: fresh fields across ALL relations in
-    // declaration order (field order within), then one auto-key per
-    // closed relation.
+
     let implied_total: usize = schema
         .relations
         .iter()
@@ -3030,8 +2624,7 @@ fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
         .sum();
     let mut offset = 0usize;
     for statement in &schema.statements {
-        // A bidirectional `==` lowers to two adjacent containments —
-        // two materialized slots; every other declared statement is one.
+
         let width = match statement {
             Statement::Containment {
                 bidirectional: true,
@@ -3062,13 +2655,6 @@ fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
     }
 }
 
-/// The one key struct: `{R}By{Pascal(field)..}` in statement projection
-/// order, `pub` fields cloned from the relation's declared `Field`s
-/// (newtypes preserved; `str` → `&'a str`, so a borrowed determinant
-/// gives the struct a lifetime), implementing [`::bumbledb::Key`] with
-/// the statement id in hand. The determinant boundaries run the same
-/// per-field encode expressions the fact struct's delete/read boundaries
-/// run — resolve, never mint — against the literal `RelationId`.
 fn emit_key_struct(
     out: &mut String,
     schema_name: &str,
@@ -3117,11 +2703,7 @@ fn emit_key_struct(
             rust_field_ty(field)
         );
     }
-    // The determinant boundaries: per projected field in projection
-    // order, the read-context / delete-context boundary expression
-    // (resolve, never mint), each produced `ValueRef` appended as one
-    // canonical key field. The context bindings go underscored when no
-    // projected field is interned — nothing references them.
+
     let relation_expr = format!("::bumbledb::schema::RelationId({rel_idx})");
     let cx = EncodeCx {
         relation: &relation_expr,
