@@ -215,7 +215,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
-        )] 
+        )]
         let slab_mb = (m.nbuckets * m.stride() * 8) as f64 / 1e6;
 
         let mut keys = Vec::new();
@@ -224,7 +224,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
             let mut ratios = Vec::new();
             for rep in 0..REPS {
                 gen_probe_keys(rep, hit_pct, n_rows, PROBES, &mut keys, &mut hashes);
-                let mut ns = [0f64; 2]; 
+                let mut ns = [0f64; 2];
 
                 for arm_slot in 0..2 {
                     let shipped_arm = (rep % 2 == 0) == (arm_slot == 0);
@@ -247,7 +247,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
                         ns[usize::from(!shipped_arm)] = nanos as f64 / PROBES as f64;
                     }
                 }
-                ratios.push(ns[0] / ns[1]); 
+                ratios.push(ns[0] / ns[1]);
             }
             ratios.sort_by(f64::total_cmp);
             let median = ratios[ratios.len() / 2];
@@ -275,7 +275,6 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn bucketized_force_stays_at_parity_with_the_linear_build() {
-
     fn linear_build(keys: &[u64]) -> (Vec<u8>, Vec<u64>) {
         let mut capacity = ((keys.len() / 8).max(16)).next_power_of_two();
         let mut ctrl = vec![0u8; capacity];
@@ -284,7 +283,6 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         let mut dense: Vec<u32> = Vec::with_capacity(keys.len());
         for (pos, &k) in keys.iter().enumerate() {
             if (len + 1) * 4 >= capacity * 3 {
-
                 let new_capacity = capacity * 2;
                 let mut new_ctrl = vec![0u8; new_capacity];
                 let mut new_rows = vec![0u64; new_capacity * 2];
@@ -321,7 +319,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
                     break;
                 }
                 if c == wanted && rows[2 * idx] == k {
-                    break; 
+                    break;
                 }
                 idx = (idx + 1) & mask;
             }
@@ -359,7 +357,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
     #[expect(
         clippy::cast_precision_loss,
         reason = "reporting accepts lossy integer-to-float conversion"
-    )] 
+    )]
     let ratio = linear_ns as f64 / bucket_ns as f64;
     println!("force build: bucket {bucket_ns} ns, linear-ref {linear_ns} ns, ratio {ratio:.2}");
     assert!(
