@@ -1,14 +1,6 @@
-//! The metric lanes: four REPORT-class subcommands — `storage`,
-//! `writes`, `curves`, `heap`.
-//!
-//! The charter: each lane produces a report artifact and exits 0 on
-//! success; non-zero only on refusal, setup failure, oracle
-//! disagreement, or post-state mismatch. Gate-class membership is
-//! structurally impossible: the lane reports are their own plain-data
-//! types that never construct the budget-gated run-report type in
-//! [`crate::report`], never join ALL-WIN, and never touch the verdict
-//! or the p99 budget gates. Numbers are claimed only from the owner's
-//! measurement sessions — this tool run never times for publication.
+//! The charter: each lane produces a report artifact and exits 0 on success;
+//! non-zero only on refusal, setup failure, oracle disagreement, or post-state
+//! mismatch.
 
 pub mod curves;
 pub mod heap;
@@ -20,13 +12,8 @@ use std::fmt::Write as _;
 use crate::harness::Stats;
 use crate::report::GhzReport;
 
-// The provenance object emitter is `report.json`'s own
-// (`crate::report::push_provenance`) — one spelling, so the lane
-// reports and the ledger report can never drift, shared-machine stamp
-// included.
 pub(crate) use crate::report::push_provenance;
 
-/// Appends one stats object — the exact `report/json_out.rs` shape.
 pub(crate) fn push_stats(out: &mut String, stats: &Stats) {
     let _ = write!(
         out,
@@ -35,7 +22,6 @@ pub(crate) fn push_stats(out: &mut String, stats: &Stats) {
     );
 }
 
-/// Appends a stats object or `null`.
 pub(crate) fn push_opt_stats(out: &mut String, stats: Option<&Stats>) {
     match stats {
         Some(stats) => push_stats(out, stats),
@@ -43,8 +29,6 @@ pub(crate) fn push_opt_stats(out: &mut String, stats: Option<&Stats>) {
     }
 }
 
-/// Appends `,"ghz":{…}` or `,"ghz":null` — the exact
-/// `report/json_out.rs` shape.
 pub(crate) fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
     out.push_str(",\"ghz\":");
     match ghz {
@@ -59,8 +43,6 @@ pub(crate) fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
     }
 }
 
-/// Bytes per unit as a report float; a zero denominator reads 0.0
-/// (an empty world has no per-fact claim to make).
 #[expect(
     clippy::cast_precision_loss,
     reason = "reporting accepts lossy integer-to-float conversion"
@@ -78,10 +60,8 @@ mod tests {
     use crate::json::{self, Value};
     use crate::report::{Provenance, SharedMachine};
 
-    /// The one provenance emitter every lane report shares: boost-on
-    /// stamps `shared_machine`/`boost`/`load_start`/`load_end` (the
     /// owner's 2026-07-20 shared-machine ruling), boost-off emits the
-    /// pre-boost block byte-identically.
+
     #[test]
     fn the_shared_machine_stamp_shape_is_pinned() {
         let base = Provenance {
