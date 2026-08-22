@@ -1,5 +1,4 @@
 //! LMDB environment lifecycle, `_meta` contents, and transaction wrappers
-
 #[cfg(test)]
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
@@ -177,7 +176,6 @@ impl Environment {
 
 impl Environment {
     /// LMDB pieces; the escaped-fresh maps start empty (a reopen has
-
     pub(super) fn assemble(
         env: heed::Env<WithoutTls>,
         meta: Database<Bytes, Bytes>,
@@ -252,7 +250,6 @@ pub struct WriteTxn<'env> {
 
 impl<'env> WriteTxn<'env> {
     /// The underlying heed transaction (reader: `storage::dict` — LMDB
-
     pub(crate) fn raw(&self) -> &RoTxn<'_, AnyTls> {
         &self.txn
     }
