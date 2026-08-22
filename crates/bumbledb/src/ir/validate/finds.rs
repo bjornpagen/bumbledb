@@ -1,5 +1,4 @@
 //! Find-list rules: Datalog safety and the aggregate roster
-//! (`docs/architecture/20-query-ir.md` § aggregation) — and the
 //! query's signature derivation, the ONE place result-column types
 //! come from.
 
@@ -11,10 +10,7 @@ use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Signature {
-    /// Derives the signature from one rule's find terms and resolved
-    /// typing — called exactly once, at validation, on rule 0 (the
-    /// per-rule alignment already proved every rule derives the same
-    /// signature). No other derivation of the answer tuple exists.
+
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
         let columns = rule
@@ -56,9 +52,9 @@ impl Context {
         rule: &LoweredRule,
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
-        // Pack admits no companions but the group variables, and at most
+
         // one Pack per head (the multi-Pack product is refused with its
-        // trigger on the error).
+
         let mut fold_seen = false;
         let mut pack_seen = false;
         for (find_idx, term) in rule.finds.iter().enumerate() {
