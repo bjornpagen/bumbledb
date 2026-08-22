@@ -1,19 +1,3 @@
-//! Literal query semantics by nested loops
-//! (`docs/architecture/20-query-ir.md`, normative). The model evaluates a
-//! *validated* query — a union of conjunctive rules — **from the definition: the
-//! query denotes the set union of its rules' denotations.** Per rule:
-//! params substituted first (params are query-global; variables are
-//! rule-scoped), then the cross product of the positive atoms enumerated
-//! fact by fact, bindings built from scalar occurrences, membership
-//! evaluated as a per-binding test (a point value must lie in the fact's
-//! interval), predicate trees evaluated **directly from the definition**
-//! (`And` = every child, `Or` = any child, a leaf via the endpoint
-//! formulas — the model never distributes to DNF; the engine's lowering
-//! is proven *against* this evaluation), negated atoms as
-//! plain anti-joins, full bindings deduplicated into a `BTreeSet`, and
-//! finds projected or folded per the aggregation rules (Sum in i128,
-//! empty-input global aggregates yielding the empty set).
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::{
@@ -24,31 +8,17 @@ use bumbledb::{
 use super::tuple::{cmp_value, endpoints, point, point_in};
 use super::{NaiveDb, Tuple};
 
-/// One positional parameter, scalar or set — the model's mirror of the
-/// engine's `ParamArg`, owned so op streams (and the family rotations)
-/// can store it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamValue {
     Scalar(Value),
     Set(Vec<Value>),
 }
 
-/// The runtime query errors the semantics define: an aggregate's final
-/// value out of its result type's range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryError {
     Overflow { find: usize },
 }
 
-/// One rule's DNF width, **from the definition**: the number of
-/// conjunctive rules its predicate trees would distribute to — a leaf
-/// is one disjunct, `And` multiplies its children's widths (the empty
-/// conjunction is true: one disjunct), `Or` sums them (the empty
-/// disjunction is false: zero), and the rule's conjoined trees
-/// multiply. Deliberately independent of the engine's structural count
-/// (`ir::normalize`): the verify error-parity lane compares the two —
-/// the cap-exceeder verdict must carry the same `produced` on both
-/// sides, typed identity included.
 #[must_use]
 pub fn dnf_width(rule: &Rule) -> usize {
     fn width(tree: &ConditionTree) -> usize {
@@ -61,17 +31,6 @@ pub fn dnf_width(rule: &Rule) -> usize {
     rule.conditions.iter().map(width).product()
 }
 
-/// `Pack` from the definition (`docs/architecture/20-query-ir.md`
-/// § aggregation): the union of the claims' point sets as **maximal
-/// disjoint half-open segments** — sort the endpoint pairs, then merge
-/// while `next.start <= frontier` (equality merges: half-open segments
-/// sharing a boundary leave no hole — the adjacency law). The model's
-/// own arithmetic over logical endpoint values, deliberately independent
-/// of the engine's word sweep (the differential oracle would otherwise
-/// test a function against itself). A ray's `end` is the element
-/// domain's `MAX`, so it is simply the frontier no later claim exceeds —
-/// the packed ray is a ray, no case needed. Identical claims merge like
-/// any overlap.
 fn pack_segments(claims: &[&Value]) -> Vec<Value> {
     let mut segments: Vec<(i128, i128)> = claims.iter().map(|value| endpoints(value)).collect();
     segments.sort_unstable();
@@ -102,7 +61,6 @@ fn pack_segments(claims: &[&Value]) -> Vec<Value> {
     merged.into_iter().map(rebuild).collect()
 }
 
-/// The head's one `Pack` position, if any (validation: at most one).
 fn pack_position(finds: &[FindTerm]) -> Option<(usize, VarId)> {
     finds.iter().enumerate().find_map(|(index, find)| {
         if let FindTerm::Pack { over } = find {
@@ -121,63 +79,49 @@ enum Substituted {
     Set(Vec<Value>),
 }
 
-/// A predicate tree after parameter substitution — the input grammar's
-/// shape, kept: the model evaluates it recursively, exactly as written.
+/// A predicate tree after parameter substitution — the input grammar's shape,
+/// kept: the model evaluates it recursively, exactly as written.
 enum SubstitutedTree {
     Leaf(CmpOp, Substituted, Substituted),
     And(Vec<SubstitutedTree>),
     Or(Vec<SubstitutedTree>),
 }
 
-/// Finished derived tables — interiors in declaration order, then the
-/// rec's accumulating table — beside their column typing. A derived
-/// table's facts ARE its answer tuples, read positionally: `FieldId(i)`
-/// is head position `i`
-/// (`lean/Bumbledb/Query/Denotation.lean: tupleFact` — the positional
-/// addressing interiors and rec share). A plain query reads no
-/// derived tables: the empty world.
+/// A derived table's facts ARE its answer tuples, read positionally:
+/// `FieldId(i)` is head position `i` (`lean/Bumbledb/Query/Denotation.lean:
+/// tupleFact` — the positional addressing interiors and rec share).
 pub(super) struct DerivedWorld<'a> {
-    /// Per derived table, the accumulated answer-tuple set.
+
     sets: &'a [BTreeSet<Tuple>],
-    /// Per derived table, per head position: interval-typed? — the
-    /// membership typing rule read through sealed interior columns.
+
     interval: &'a [Vec<bool>],
 }
 
-/// A resolved atom source: an index into the stored relations or into
-/// the finished derived tables.
 enum Src {
     Edb(usize),
     Derived(usize),
 }
 
-/// One atom over substituted terms, each binding pre-tagged with whether
-/// its column is interval-typed (the membership rule's trigger).
 struct FlatAtom {
     src: Src,
     bindings: Vec<(usize, bool, Substituted)>,
 }
 
-/// Everything enumeration reads.
 struct Env<'a> {
     relations: &'a [BTreeSet<Tuple>],
-    /// The derived tables an `Interior` occurrence reads (empty for a plain query).
+
     interiors: &'a [BTreeSet<Tuple>],
     atoms: Vec<FlatAtom>,
     negated: Vec<FlatAtom>,
-    /// The rule's predicate trees, conjoined — evaluated directly.
+
     conditions: Vec<SubstitutedTree>,
-    /// Per variable: bound on some non-interval field of a positive atom,
-    /// hence a scalar (an occurrence on an interval field is then point
-    /// membership; without a scalar anchor the variable is interval-typed
-    /// and interval occurrences are value equality).
+
     scalar_anchored: Vec<bool>,
     var_count: usize,
 }
 
 impl Env<'_> {
-    /// The fact set one source reads: a stored relation, or a
-    /// derived table's accumulated answers.
+
     fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
         match src {
             Src::Edb(relation) => &self.relations[*relation],
@@ -187,27 +131,11 @@ impl Env<'_> {
 }
 
 impl NaiveDb {
-    /// Evaluates a validated query with positional parameters, from the
-    /// definition: the **set union of the rules' denotations**. Per rule,
-    /// the set of distinct full bindings is projected and folded per its
-    /// find list; a one-rule query is exactly the conjunctive query.
-    ///
-    /// A multi-rule aggregate head folds over the union of the rules'
-    /// binding sets projected to the head (the rules-IR definition; the
-    /// executor's spanning seen-set implements the same dedup —
-    /// `docs/architecture/40-execution.md` § the rule loop). The
-    /// single-rule fold domain stays the rule's distinct **full**
-    /// binding set — the normative aggregation rule, unchanged.
-    ///
+
     /// # Errors
-    ///
-    /// [`QueryError::Overflow`] when an aggregate's final value exceeds
-    /// its result type.
-    ///
+
     /// # Panics
-    ///
-    /// On malformed input — the model evaluates queries the engine's
-    /// validation boundary has accepted, with matching parameters.
+
     pub fn query(
         &self,
         query: &Query,
@@ -264,8 +192,6 @@ impl NaiveDb {
         self.rows_for(head, rules, params, &derived)
     }
 
-    /// Naive full-T(I) least fixpoint: re-evaluate base ∪ rec each
-    /// iteration until the rec table stops growing. The derived-table
     /// index is assigned here before the empty table is pushed.
     fn rec_lfp(
         &self,
@@ -297,9 +223,6 @@ impl NaiveDb {
         Ok(())
     }
 
-    /// One named interior / rec's column interval flags, sealed from
-    /// the first rule against already-sealed prior tables. Rec seals
-    /// from `base` (base never reads the rec).
     fn seal_intervals(&self, head: &[HeadTerm], rules: &[Rule], prior: &[Vec<bool>]) -> Vec<bool> {
         let Some(rule) = rules.first() else {
             return vec![false; head.len()];
@@ -329,10 +252,6 @@ impl NaiveDb {
             .collect()
     }
 
-    /// One derived table's denotation against a derived world — the
-    /// query dispatch (single rule / union fold / union of
-    /// projections), source-generalized. [`NaiveDb::query`] is the
-    /// empty-world reading; the fixpoint calls it per round.
     fn rows_for(
         &self,
         head: &[HeadTerm],
@@ -350,8 +269,7 @@ impl NaiveDb {
         if aggregated {
             return self.union_fold(rules, params, derived);
         }
-        // Projection head: the union of the per-rule projected sets —
-        // one union, set semantics.
+
         let mut rows = BTreeSet::new();
         for rule in rules {
             let bindings = self.rule_bindings(rule, params, derived);
@@ -360,10 +278,6 @@ impl NaiveDb {
         Ok(rows)
     }
 
-    /// One rule's distinct full binding set — the conjunctive semantics
-    /// over the rule's own variable scope, occurrences read through the
-    /// source world (stored relations, plus the derived tables when a
-    /// fixpoint is running).
     fn rule_bindings(
         &self,
         rule: &Rule,
@@ -409,11 +323,6 @@ impl NaiveDb {
         bindings
     }
 
-    /// The multi-rule aggregate fold: each rule's binding set projected
-    /// to the head (per position: the variable's value, or the
-    /// aggregate's fold-input value — the nullary `Count` contributes a
-    /// constant filler), unioned as a set, then grouped and folded per
-    /// position. Pack is relation-shaped and stays on its own path.
     fn union_fold(
         &self,
         rules: &[Rule],
@@ -431,16 +340,14 @@ impl NaiveDb {
                         FindTerm::Var(var)
                         | FindTerm::Aggregate { over: var, .. }
                         | FindTerm::Pack { over: var } => Ok(binding.0[usize::from(var.0)].clone()),
-                        // Nullary Count: no fold input — a constant
-                        // filler keeps positions stable.
+
                         FindTerm::Count => Ok(Value::Bool(false)),
                     })
                     .collect();
                 domain.insert(Tuple(row?));
             }
         }
-        // Group by the variable positions; fold each aggregate position
-        // over its group's projected tuples.
+
         let mut groups: BTreeMap<Tuple, Vec<&Tuple>> = BTreeMap::new();
         for row in &domain {
             let key = Tuple(
@@ -455,11 +362,7 @@ impl NaiveDb {
         let pack = pack_position(head);
         let mut rows = BTreeSet::new();
         for group in groups.values() {
-            // A Pack head folds the union: the domain rows carry the raw
-            // claims at the Pack position (per rule, deduplicated as a
-            // set above), and the group coalesces them — ∪ then maximal
-            // segments, one row per segment. Every other position is a
-            // group-key position (validation).
+
             if let Some((position, _)) = pack {
                 let claims: Vec<&Value> = group.iter().map(|row| &row.0[position]).collect();
                 for segment in pack_segments(&claims) {
@@ -484,9 +387,7 @@ impl NaiveDb {
                 .iter()
                 .enumerate()
                 .map(|(index, term)| match term {
-                    // The domain rows already hold measure values at the
-                    // measure positions, so the union fold reads them
-                    // exactly like plain positions.
+
                     FindTerm::Var(_) => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
@@ -531,8 +432,6 @@ impl NaiveDb {
             .is_interval()
     }
 
-    /// The membership trigger per source: a stored field's declared
-    /// type, or a derived column's.
     fn source_field_is_interval(
         &self,
         atom: &Atom,
@@ -592,9 +491,6 @@ fn count_vars(rule: &Rule) -> usize {
     count
 }
 
-/// Substitutes params through a predicate tree, keeping its shape. A
-/// param mask substitutes like any param — the model sees only literal
-/// masks past this point.
 fn substitute_tree(tree: &ConditionTree, params: &[ParamValue]) -> SubstitutedTree {
     match tree {
         ConditionTree::Leaf(Comparison { op, lhs, rhs }) => {
@@ -630,10 +526,6 @@ fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
     }
 }
 
-/// Nested loops over the positive atoms: place a fact for the atom at
-/// `index`, extend the assignment, recurse; at the leaf judge the deferred
-/// membership tests, the predicates, and the negated atoms — `Holds`
-/// records the full binding, `Fails` drops.
 fn enumerate(
     env: &Env<'_>,
     index: usize,
@@ -648,9 +540,7 @@ fn enumerate(
                     (0..env.var_count)
                         .map(|var| match &assignment[var] {
                             Some(value) => value.clone(),
-                            // An id below the maximum that no term uses: a
-                            // constant filler keeps positions stable and is
-                            // never projected (an unused id occurs nowhere).
+
                             None => Value::Bool(false),
                         })
                         .collect(),
@@ -689,10 +579,6 @@ fn enumerate(
     }
 }
 
-/// One binding position against one fact value: literals and set elements
-/// by the membership-or-equality rule; variables bind scalar occurrences,
-/// equality-check repeat occurrences, and defer membership occurrences
-/// until their scalar anchor binds them.
 fn admit(
     env: &Env<'_>,
     fact_value: &Value,
@@ -729,9 +615,6 @@ fn admit(
     }
 }
 
-/// The membership typing rule for a constant against a field value: an
-/// element-typed constant on an interval field is point membership;
-/// everything else is value equality.
 fn constrains(fact_value: &Value, field_is_interval: bool, term_value: &Value) -> bool {
     if field_is_interval && let Some(t) = point(term_value) {
         return point_in(endpoints(fact_value), t);
@@ -739,11 +622,6 @@ fn constrains(fact_value: &Value, field_is_interval: bool, term_value: &Value) -
     term_value == fact_value
 }
 
-/// One complete binding's verdict: the deferred membership tests, the
-/// predicate trees, and the negated atoms conjoined in the Kleene
-/// lattice. Memberships and negations are two-valued (no measure can
-/// reach them), so their `Fails` absorbs any `Ray` a condition tree
-/// renders — exactly `andFold`'s law.
 fn leaf_verdict(
     env: &Env<'_>,
     assignment: &mut [Option<Value>],
@@ -776,10 +654,6 @@ fn leaf_verdict(
         })
 }
 
-/// Does a fact match a negated atom under a complete assignment? One
-/// matching rule serves both polarities: every negated-atom variable is
-/// positively bound (the safety rule), so [`admit`] can only take its
-/// already-bound arms here — it binds nothing and defers nothing.
 fn negated_matches(
     env: &Env<'_>,
     atom: &FlatAtom,
@@ -809,8 +683,6 @@ fn negated_matches(
     matched
 }
 
-/// Two-valued verdict of one condition evaluation: `Fails` absorbs
-/// `and`, `Holds` absorbs `or`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict3 {
     Holds,
@@ -837,12 +709,6 @@ impl Verdict3 {
     }
 }
 
-/// One predicate tree under a complete assignment, from the definition:
-/// a leaf is its comparison's verdict, `And` folds children with
-/// `Verdict3::and` (the empty conjunction holds), `Or` with
-/// `Verdict3::or` (the empty disjunction fails). No DNF, no
-/// distribution, no short circuit — the tree is the semantics and the
-/// lattice makes child order unobservable.
 fn tree_verdict(tree: &SubstitutedTree, assignment: &[Option<Value>]) -> Verdict3 {
     match tree {
         SubstitutedTree::Leaf(op, lhs, rhs) => leaf_comparison(*op, lhs, rhs, assignment),
@@ -874,7 +740,7 @@ fn leaf_comparison(
             Substituted::Set(_) => None,
         }
     };
-    // A set is legal on one side of Eq only: "any element" — value in set.
+
     if let (CmpOp::Eq, Substituted::Set(values), other)
     | (CmpOp::Eq, other, Substituted::Set(values)) = (op, lhs, rhs)
     {
@@ -910,11 +776,6 @@ fn leaf_comparison(
     })
 }
 
-/// One Allen basic's point-set definition over half-open intervals,
-/// written directly as its endpoint characterization — the model's own
-/// arithmetic, deliberately **independent** of the engine's classifier
-/// (the differential oracle would otherwise test a function against
-/// itself).
 fn basic_holds(basic: Basic, a: (i128, i128), b: (i128, i128)) -> bool {
     let ((a_s, a_e), (b_s, b_e)) = (a, b);
     match basic {
@@ -934,10 +795,6 @@ fn basic_holds(basic: Basic, a: (i128, i128), b: (i128, i128)) -> bool {
     }
 }
 
-/// One group's `Pack` rows: relation-shaped — one row per maximal
-/// segment of the group's claim union ([`pack_segments`], the point-set
-/// definition); every other position is a group-key position
-/// (validation: Pack mixes with no other aggregate).
 fn pack_group_rows(
     finds: &[FindTerm],
     position: usize,
@@ -966,10 +823,6 @@ fn pack_group_rows(
     Ok(())
 }
 
-/// Projects and folds the distinct full bindings per the find list: group
-/// key = the values of the plain-variable finds; every aggregate folds
-/// over its group's binding set. No bindings means no groups — the empty
-/// set, global aggregates included.
 fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tuple>, QueryError> {
     let mut groups: BTreeMap<Tuple, Vec<&Tuple>> = BTreeMap::new();
     for binding in bindings {
@@ -1008,8 +861,6 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
     Ok(rows)
 }
 
-/// One fold aggregate over a group of head-projected tuples (the
-/// multi-rule union fold): the position's values are the fold inputs.
 fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |row| &row.0[index]);
     match op {
@@ -1043,7 +894,6 @@ fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, Qu
     }
 }
 
-/// One fold aggregate over a group's binding set.
 fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |b| &b.0[usize::from(over.0)]);
     match op {
