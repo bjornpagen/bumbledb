@@ -72,7 +72,6 @@ pub fn schema() -> &'static bumbledb::Schema {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DispSizes {
-
     pub hubs: u64,
 
     pub spokes: u64,
@@ -81,7 +80,6 @@ pub struct DispSizes {
 }
 
 impl DispSizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
@@ -210,7 +208,6 @@ pub struct ForeignStream {
 }
 
 impl ForeignStream {
-
     /// # Panics
 
     #[must_use]
@@ -514,7 +511,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, 
+            exec: None,
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });
