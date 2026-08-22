@@ -1,7 +1,7 @@
 /**
- * The KERN-01 self-check: reference-identity variables, the `v()` mint, and
- * `find()`. Pins the atomic src kernel flip before the wider suites are
- * ported — variables minted by `v()` are fresh objects joined by REFERENCE
+ * The KERN-01 self-check: reference-identity variables, the `v` mint, and
+ * `find`. Pins the atomic src kernel flip before the wider suites are
+ * ported — variables minted by `v` are fresh objects joined by REFERENCE
  * (reuse is the join, name collision is unrepresentable), the head is a
  * `find` record whose keys name the answer columns, params stay
  * string-named, and SEMANTIC PARITY holds (the same dense per-rule first-use
@@ -27,10 +27,8 @@ import { contained } from "#statements.ts"
 import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/** Pins a probe to `true` at compile time. */
 type Expect<T extends true> = T extends true ? true : never
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-destructure-"))
@@ -40,17 +38,11 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/**
- * THE LAWS TYPE THE COLUMNS: the containments below put `Account.holder`,
- * `Parent.child`, and `Parent.parent` in the `"Holder.id"` generator class
- * and `Account.kind` in `"Kind.id"`, while `Account.id` generates
- * `"Account.id"`; `Holder.rank` and `Account.window` are in no law: BARE.
- */
 const Kind = closed("Kind", ["Checking", "Savings"])
 const Holder = relation("Holder", { id: u64.fresh, name: str, rank: u64 })
 const Account = relation("Account", { id: u64.fresh, holder: u64, kind: Kind.id, window: interval(u64) })
 const Parent = relation("Parent", { child: u64, parent: u64 })
-/** Declared nowhere in the theory — the foreign-mint probe's owner. */
+
 const Foreign = relation("Foreign", { id: u64.fresh, weight: u64 })
 
 const Theory = schema("T", { Kind, Holder, Account, Parent }, [
@@ -62,11 +54,9 @@ const Theory = schema("T", { Kind, Holder, Account, Parent }, [
 
 type Rels = (typeof Theory)["relations"]
 
-/** Relation ids = record declaration order (the law `lowerQuery` rides). */
 const HOLDER_ID = 1
 const ACCOUNT_ID = 2
 
-/** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
 	return [...values].sort(function asc(left, right) {
 		if (left < right) {
