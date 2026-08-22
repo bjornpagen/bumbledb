@@ -1,17 +1,8 @@
 //! The typed error crossing: the opaque [`bdb_error`] owns a rendered
 //! engine or bridge failure. Theory rejection is not an error — it lives
 //! on [`bdb_violations`], the owning handle of an admission rejected arm.
-//!
 //! The kind table is the FOURTH spelling of the engine taxonomy (Rust
-//! enum, TypeScript union, tags.json, this C header). The sync mechanism
-//! is mechanical: the engine's [`Error::family`] table is exhaustive over
-//! `Error`, and [`kind_of`] matches [`ErrorFamily`] 1:1 — no wildcard arm
-//! anywhere — so a new engine variant breaks the engine crate, and a new
-//! family arm breaks this crate. `BDB_ERROR_KIND_PARAM` covers the six
-//! bind-time parameter variants; `BDB_ERROR_KIND_PANIC` is
-//! bridge-synthesized, never engine-originated. Bridge refusals
-//! (`BusyHandle`, `Marshal`) carry [`bdb_error_origin::Bridge`] and never
-//! impersonate engine kinds.
+//! enum, TypeScript union, tags.json, this C header).
 
 use bumbledb::{
     Direction, Error, ErrorFamily, SchemaDescriptor, StatementKind, Violations, render_rejection,
@@ -225,7 +216,7 @@ impl bdb_violations {
 }
 
 impl bdb_error {
-    /// An engine error rendered for the boundary.
+
     #[expect(
         clippy::needless_pass_by_value,
         reason = "an engine error is SPENT by its rendering"
@@ -238,7 +229,6 @@ impl bdb_error {
         }
     }
 
-    /// A caught panic rendered to the poisoned-store error.
     pub(crate) fn from_panic(payload: &(dyn std::any::Any + Send)) -> Self {
         let detail = payload
             .downcast_ref::<&'static str>()
@@ -260,13 +250,11 @@ impl bdb_error {
     }
 }
 
-/// An engine failure as a [`Fail`].
 pub(crate) fn fail_engine(error: Error) -> Fail {
     Fail::Error(Box::new(bdb_error::from_engine(error)))
 }
 
-/// A marshal shape refusal: data-shaped input the engine cannot
-/// represent. Bridge origin, never an impersonated `FactShape`.
+/// A marshal shape refusal: data-shaped input the engine cannot represent.
 pub(crate) fn fail_shape(message: &str) -> Fail {
     Fail::Error(Box::new(bdb_error::bridge(
         bdb_error_kind::Marshal,
@@ -274,8 +262,6 @@ pub(crate) fn fail_shape(message: &str) -> Fail {
     )))
 }
 
-/// Handle already in a callback or execute. Bridge origin, never an
-/// impersonated `EnvironmentLocked`.
 pub(crate) fn fail_busy(message: &str) -> Fail {
     Fail::Error(Box::new(bdb_error::bridge(
         bdb_error_kind::BusyHandle,
@@ -283,8 +269,6 @@ pub(crate) fn fail_busy(message: &str) -> Fail {
     )))
 }
 
-/// Schema-spec lowering failure, still the engine `Schema` kind with
-/// bridge origin — the message is the engine's issue list.
 pub(crate) fn fail_schema_message(message: &str) -> Fail {
     Fail::Error(Box::new(bdb_error::bridge(
         bdb_error_kind::Schema,
