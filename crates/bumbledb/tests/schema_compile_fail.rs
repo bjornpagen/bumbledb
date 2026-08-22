@@ -314,7 +314,7 @@ fn schema_compile_fail_fixtures() {
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 40,
-        "the schema compile-fail roster has forty fixtures"
+        seen, 41,
+        "the schema compile-fail roster has forty-one fixtures"
     );
 }

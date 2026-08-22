@@ -1671,6 +1671,7 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         | SpecIssue::CapacityVacuous { statement }
         | SpecIssue::CapacityContainmentRespelled { statement }
         | SpecIssue::CapacityDependentFloor { statement }
+        | SpecIssue::CapacityUnitFloor { statement }
         | SpecIssue::BoundPathRefused { statement, .. } => one(spans.capacities.get(statement)),
         SpecIssue::WeightPathRefused { statement, .. } => one(spans.weights.get(statement)),
         SpecIssue::DegenerateLiteralSet {
@@ -1787,6 +1788,11 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
             "schema!: a dependent bound in the floor slot — dependent bounds are hi-slot \
              only (ruled 2026-07-24, C6): a dependent floor has no use case; write a \
              literal floor"
+                .to_owned()
+        }
+        SpecIssue::CapacityUnitFloor { .. } => {
+            "schema!: `{N..*}` on the unit instance — a bare count floor is refused; \
+             weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
                 .to_owned()
         }
         SpecIssue::WeightPathRefused { path, .. } => format!(

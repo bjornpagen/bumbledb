@@ -401,6 +401,8 @@ function banTableIsUnwritable(): unknown[] {
 		within(0n, "*"),
 		// @ts-expect-error — `{1..*}` on the UNIT instance says only what the bare containment says: write contained(source, target)
 		capacity(on(Pool, "id"), within(1n, "*"), on(Device, "pool")),
+		// @ts-expect-error — `{N..*}` on the UNIT instance: bare count floors are refused whole (K16); the weighted floor stays legal
+		capacity(on(Pool, "id"), within(2n, "*"), on(Device, "pool")),
 		// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the duration() bound is banned on the UNIT instance
 		capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room")),
 		// @ts-expect-error — a path weight is refused: the vocabulary is closed at the row — pin the column

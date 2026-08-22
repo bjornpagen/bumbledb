@@ -131,7 +131,9 @@ type UnitWindowBan<W extends CapacityWindow> = W["window"] extends {
 	readonly lo: { readonly kind: "lit"; readonly value: 1n }
 }
 	? BannedWindow<"`{1..*}` on the unit instance says only what the bare containment says — write contained(source, target)">
-	: unknown
+	: W["window"] extends { readonly kind: "floor" }
+		? BannedWindow<"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound">
+		: unknown
 
 /**
  * The C18 dimension gate's ban row, unit instance (the engine's

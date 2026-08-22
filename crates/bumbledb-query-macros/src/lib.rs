@@ -915,9 +915,19 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
         let mut ahead = tokens.clone();
         ahead.next();
         if continues_as_term(&mut ahead) {
+            if name.text == "Duration" {
+                return fail(
+                    name.span,
+                    "query!: Duration is gone — compute end − start on the host",
+                );
+            }
             return fail(
                 name.span,
-                "query!: Duration is gone — compute end − start on the host",
+                format!(
+                    "query!: `{}(…)` cannot be compared — no parenthesized \
+                     term exists",
+                    name.text
+                ),
             );
         }
         return Ok(Item::Atom(parse_atom(tokens, name)?));

@@ -321,6 +321,12 @@ pub enum SpecIssue {
         statement: usize,
     },
 
+    /// Unit floors are refused whole (K16): a bare count floor `{N..*}`
+    /// has no user; floors are legal only on weighted measures.
+    CapacityUnitFloor {
+        statement: usize,
+    },
+
     /// vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
     WeightPathRefused {
         statement: usize,
@@ -443,6 +449,12 @@ impl std::fmt::Display for SpecIssue {
                 "statement {statement}: a dependent bound in the floor slot — \
                  dependent bounds are hi-slot only (ruled 2026-07-24, C6): a \
                  dependent floor has no use case; write a literal floor"
+            ),
+            Self::CapacityUnitFloor { statement } => write!(
+                f,
+                "statement {statement}: `{{N..*}}` on the unit instance — a \
+                 bare count floor is refused; weigh the source (`<=[w]{{N..*}}` \
+                 stays legal) or drop the bound"
             ),
             Self::WeightPathRefused { statement, path } => write!(
                 f,
@@ -816,6 +828,11 @@ impl<'spec> Resolver<'spec> {
                     self.issues
                         .push(SpecIssue::CapacityContainmentRespelled { statement });
                     (1, None)
+                }
+                Some(lo) if unit => {
+                    self.issues
+                        .push(SpecIssue::CapacityUnitFloor { statement });
+                    (lo, None)
                 }
                 Some(lo) => (lo, None),
                 None => (0, None),

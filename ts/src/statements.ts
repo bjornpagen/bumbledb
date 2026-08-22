@@ -263,6 +263,11 @@ function capacity(
 			"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
 		)
 	}
+	if (weight.kind === "unit" && window.kind === "floor") {
+		throw errors.new(
+			"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
+		)
+	}
 
 	// CapacityDimensionMixing twin — ruled 2026-07-24): a count of facts
 

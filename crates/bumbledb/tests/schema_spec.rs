@@ -41,7 +41,7 @@ bumbledb::schema! {
     Account(id | status == Frozen) == SavingsTerms(account);
     Holder(id | name == {"alpha", "beta"}) <= Holder(id);
     Holder(id) <={0..3} Account(holder);
-    Holder(id) <={2..*} Account(holder | status == Frozen);
+    Holder(id) <=[balance]{2..*} Account(holder | status == Frozen);
     Holder(id) <={1} Account(holder | status == Open);
     Holder(id) <={0} Account(holder | kind == Failed);
     Holder(id) <={1..4} Account(holder | kind == DirectPass);
@@ -255,7 +255,7 @@ fn everything_spec() -> SchemaSpec {
             },
             StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                weight: WeightSpec::Unit,
+                weight: WeightSpec::Field("balance".into()),
                 window: CapacityWindowSpec::Floor(BoundSpec::Lit(2)),
                 source: side_selected("Account", &["holder"], "status", "Frozen"),
             },

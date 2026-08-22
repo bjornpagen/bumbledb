@@ -1151,7 +1151,7 @@ mod extension_forms {
         }
 
         Parent(id) <={1..3} Task(parent | state == {1, 2});
-        Parent(id) <={2..*} Task(parent);
+        Parent(id) <=[state]{2..*} Task(parent);
         Parent(id) <={4} Task(parent | state == 3);
         Parent(id) <={0} Task(parent | state == 9);
     }
@@ -1183,7 +1183,7 @@ mod extension_forms {
         let star = &schema.capacities()[1];
         assert_eq!(star.lo, 2);
         assert_eq!(star.hi.to_bound(), None);
-        assert_eq!(star.weight.to_weight(), Weight::Unit);
+        assert_eq!(star.weight.to_weight(), Weight::Field(Tracker::TASK_STATE));
         let exact = &schema.capacities()[2];
         assert_eq!(exact.lo, 4);
         assert_eq!(exact.hi.to_bound(), Some(Bound::Lit(4)));
