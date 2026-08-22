@@ -9,22 +9,17 @@ use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
 use super::BenchRun;
 
-/// One read family's identity, decoupled from its registry: the ledger
-/// families and the calendar families measure through the same core
-/// (one mechanism, two corpora), differing only in the store pair and
-/// the SQL provider.
 pub(super) struct ReadSpec<'a> {
     pub name: &'a str,
     pub kind: Kind,
     pub query: Query,
     pub sets: Vec<Draw>,
-    /// Per-draw SQL — the translator for the ledger and paired calendar
-    /// families, the hand-written coalesce for `free_busy`.
+
     pub sql_for: &'a dyn Fn(&Query, &Draw) -> Result<Translated, String>,
 }
 
 impl BenchRun<'_> {
-    /// One read family on both engines — the ledger registry entry.
+
     pub(super) fn read_family(
         &mut self,
         family: &families::Family,
@@ -41,7 +36,6 @@ impl BenchRun<'_> {
         self.measure_read(db, conn, &spec)
     }
 
-    /// One calendar family on both engines.
     pub(super) fn read_cal_family(
         &mut self,
         family: &calendar::families::CalFamily,
@@ -59,9 +53,8 @@ impl BenchRun<'_> {
         self.measure_read(db, conn, &spec)
     }
 
-    /// The shared measurement core: warm both engines under the exact
     /// protocol, frequency-checked, traced and profiled where the modes
-    /// ask.
+
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,
@@ -94,8 +87,7 @@ impl BenchRun<'_> {
             proxy_per_rep: self.proxy_per_rep,
         };
         let proto = self.proto;
-        // Process-start warm discipline: the first
-        // family absorbs the start-band beyond its own warmups.
+
         if !self.first_family_warmed {
             for _ in 0..32 {
                 run_ours(&mut prepared)?;
@@ -105,8 +97,7 @@ impl BenchRun<'_> {
         let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
             harness::measure_batched(proto, modes, 1, || run_ours(&mut prepared))
         })?;
-        // The quantum check: a gated p50 below 12 timer ticks would be
-        // quantization, not measurement — batch executes and divide.
+
         let batch = if ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             16
         } else {
@@ -135,11 +126,6 @@ impl BenchRun<'_> {
         }
         let exec = None;
 
-        // One prepared statement per draw: scalar families re-render to
-        // identical SQL; set-bound families genuinely differ per draw
-        // (element lists as literals — prepared-statement parity is not
-        // claimed for them, `60-validation.md`). Every statement is
-        // prepared once and reused across the rotation's cycles.
         let mut sqlite_families = Vec::with_capacity(sets.len());
         for draw in &sets {
             let translated =
