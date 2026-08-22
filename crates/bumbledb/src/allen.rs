@@ -4,7 +4,6 @@
 //! order, and the one-instruction converse — lives in `bumbledb-theory`
 //! and is re-exported here as this crate's own surface. What stays
 //! engine-side is classification: [`classify`], the total scalar
-
 use bumbledb_theory::Interval;
 
 pub use bumbledb_theory::allen::{AllenMask, Basic};
