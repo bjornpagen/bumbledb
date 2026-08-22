@@ -98,17 +98,16 @@ describe("the marshal bijection over closed rosters", function suite() {
 		assert.throws(function misspelled() {
 			db.write(function tryInsert(tx) {
 				/**
- * Ruling 5: a wrong string is a compile error AND a marshal
- * refusal — the expect-error pins the compile half, the throw
- * (before the engine ever sees a row) pins the runtime half.
- */
+				 * Ruling 5: a wrong string is a compile error AND a marshal
+				 * refusal — the expect-error pins the compile half, the throw
+				 * (before the engine ever sees a row) pins the runtime half.
+				 */
 				// @ts-expect-error — "DirectPas" is not in Kind's handle union
 				tx.insert(Account, [{ id: 1n, kind: "DirectPas" }])
 			})
 		}, /"DirectPas" is not a handle of Kind — the roster is Checking, Savings/)
 		assert.throws(function bigintShape() {
 			db.write(function tryInsert(tx) {
-
 				// @ts-expect-error — a bigint is not a handle name
 				tx.insert(Account, [{ id: 1n, kind: 1n }])
 			})
@@ -141,7 +140,6 @@ describe("the marshal bijection over closed rosters", function suite() {
 	test("an out-of-roster id in a LAWLESS store is a pointed read throw, never a fallback", async function lawlessRead() {
 		const writer = accepted(await Db.create(lawlessDir, LawlessWriter))
 		const seeded = writer.write(function seedRaw(tx) {
-
 			put(tx, RawLawlessAccount, { kind: 7n })
 		})
 		assert.equal(seeded.tag, "accepted", "the lawless writer commits a raw out-of-roster id")
