@@ -133,7 +133,6 @@ impl<S> Db<S> {
     /// Read-only, one LMDB snapshot, O(store) — seconds at the
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn verify_store(&self) -> Result<StoreReport> {
         let txn = self.env().read_txn()?;
