@@ -827,7 +827,6 @@ pub enum Admission<T> {
 
 impl<T> Admission<T> {
     /// # Panics
-
     #[track_caller]
     pub fn unwrap(self) -> T {
         match self {
@@ -837,7 +836,6 @@ impl<T> Admission<T> {
     }
 
     /// # Panics
-
     #[track_caller]
     pub fn expect(self, msg: &str) -> T {
         match self {
@@ -890,7 +888,6 @@ pub enum ConditionalWrite<R> {
 
 impl<R> ConditionalWrite<R> {
     /// # Panics
-
     #[track_caller]
     pub fn unwrap(self) -> Committed<R> {
         match self {
@@ -905,7 +902,6 @@ impl<R> ConditionalWrite<R> {
     }
 
     /// # Panics
-
     #[track_caller]
     pub fn expect(self, msg: &str) -> Committed<R> {
         match self {
