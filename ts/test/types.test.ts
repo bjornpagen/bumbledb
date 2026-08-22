@@ -56,7 +56,6 @@ test("the minimal kernel loads and the roster is pure data at runtime", function
 })
 
 type Cases = [
-
 	Expect<
 		Equal<
 			Fact<typeof Account>,
@@ -87,14 +86,12 @@ type Cases = [
 	Expect<Equal<FreshKeys<typeof Account>, "id">>,
 	Expect<Equal<FreshKeys<typeof Pair>, never>>,
 	Expect<Equal<Fact<typeof Holder>["id"], Fact<typeof Account>["holder"]>>,
-
 	Expect<Equal<typeof i64, { readonly kind: "i64" }>>,
 	Expect<Equal<typeof bool, { readonly kind: "bool" }>>,
 	Expect<Equal<typeof str, { readonly kind: "str" }>>,
 	Expect<Equal<(typeof u64)["fresh"], { readonly kind: "u64"; readonly fresh: true }>>,
 	Expect<Equal<typeof Tag, { readonly kind: "bytes"; readonly width: 32 }>>,
 	Expect<Equal<typeof Stay, { readonly kind: "interval"; readonly element: "u64"; readonly width: 7n }>>,
-
 	Expect<Equal<Infer<typeof bool>, boolean>>,
 	Expect<Equal<Infer<typeof str>, string>>,
 	Expect<Equal<Infer<typeof u64>, bigint>>,
@@ -104,21 +101,17 @@ type Cases = [
 	Expect<Equal<Infer<typeof RawBytes>, Uint8Array>>,
 	Expect<Equal<Infer<typeof ActiveDuring>, IntervalValue>>,
 	Expect<Equal<Infer<typeof Stay>, IntervalValue>>,
-
 	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
 	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Failed">>,
-
 	Expect<Equal<(typeof u64.fresh)["fresh"], true>>,
 	Expect<Equal<typeof u64.fresh extends { fresh: true } ? true : false, true>>,
 	Expect<Equal<typeof u64 extends { fresh: true } ? true : false, false>>,
-
 	Expect<Equal<(typeof Tag)["width"], 32>>,
 	Expect<Equal<(typeof RawBytes)["width"], 4>>,
 	Expect<Equal<(typeof Stay)["width"], 7n>>,
 	Expect<Equal<(typeof Stay)["element"], "u64">>,
 	Expect<Equal<(typeof ActiveDuring)["width"], undefined>>,
 	Expect<Equal<(typeof ActiveDuring)["element"], "i64">>,
-
 	Expect<Equal<"domain" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof u64.fresh ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof i64 ? true : false, false>>,
@@ -127,7 +120,6 @@ type Cases = [
 	Expect<Equal<"domain" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof RawInterval ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof Kind.id ? true : false, false>>,
-
 	Expect<Equal<"as" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof RawBytes ? true : false, false>>,
@@ -135,7 +127,6 @@ type Cases = [
 	Expect<Equal<"as" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof str ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof Kind.id ? true : false, false>>,
-
 	Expect<Equal<"fresh" extends keyof typeof u64 ? true : false, true>>,
 	Expect<Equal<"fresh" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
@@ -143,12 +134,10 @@ type Cases = [
 	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
 	Expect<Equal<"fresh" extends keyof typeof Kind.id ? true : false, false>>,
-
 	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
-
 	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
 	Expect<Equal<(typeof Kind.data.handles)[number], string>>,
 	Expect<
@@ -161,7 +150,6 @@ type Cases = [
 		>
 	>,
 	Expect<Equal<typeof Grade.axioms.DirectPass.mastered, boolean>>,
-
 	Expect<Equal<typeof Kind extends AnyRelation ? true : false, false>>,
 	Expect<Equal<typeof Grade extends AnyRelation ? true : false, false>>,
 	Expect<Equal<typeof Account extends AnyRelation ? true : false, true>>,
