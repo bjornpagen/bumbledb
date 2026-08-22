@@ -67,7 +67,6 @@ test("CONTROL: pointIn() accepts a point literal with an interval var", function
 })
 
 test("pointIn() with a literal interval operand lowers to PointIn (interval-left, point-right)", function pointInLiteralInterval() {
-
 	const q = query(Probe).rule((r) => {
 		const { holder, at } = v(Session)
 		return r
@@ -88,7 +87,6 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 })
 
 test("a param value no rule places never registers — the query lowers under its inferred Params", function unusedParam() {
-
 	const used = query(Probe).rule((r) => {
 		const { id } = v(Holder)
 		return r
@@ -106,7 +104,6 @@ test("a param value no rule places never registers — the query lowers under it
 	assert.equal(typeof usedParams.wanted, "bigint")
 
 	const q = query(Probe).rule((r) => {
-
 		const ghost = r.param("ghost")
 		assert.equal(ghost.name, "ghost")
 		const { id } = v(Holder)
@@ -121,7 +118,6 @@ test("a param value no rule places never registers — the query lowers under it
 })
 
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {
-
 	const handles = ["Alpha", "__proto__"] as const
 	const K = closed("K", handles)
 	assert.deepEqual(K.data.handles, handles, "the roster carries every handle in declaration order")
