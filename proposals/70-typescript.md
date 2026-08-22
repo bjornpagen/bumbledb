@@ -9,15 +9,22 @@ engine surface duplicated — the replica hands out the SDK's own `Db`.
 ## Surface
 
 ```ts
-import { openReplica, openWriter, openTenants, braidsOf } from "@bjornpagen/bumbledb-log"
+import {
+	openReplica, openWriter, openTenants,
+	braidsOf, footprintOf, encodeBatch, decodeBatch,   // the pure protocol trio (+1)
+} from "@bjornpagen/bumbledb-log"
 
 // ── Replica ───────────────────────────────────────────────────────────────
-const replica = await openReplica({ store: s3(env), dir: "/tmp/store", theory: Ledger })
+const replica = await openReplica({ store: s3(env), prefix: "prod/main", dir: "/tmp/store", theory: Ledger })
 replica.db                                  // the SDK's Db<Rels>; reads are engine verbs
 replica.vector                              // ReadonlyMap<Braid, bigint>
 await replica.refresh()                     // all braids, round-robin → vector
 await replica.refresh(braid)                // one braid
-await replica.waitFor(braid, g)             // cross-instance read-your-writes
+await replica.waitFor(vector)               // session vector: pointwise dominance —
+                                            // read-your-writes across a split, monotone
+                                            // reads across instances, one call; a
+                                            // singleton map IS the single-braid form
+                                            // (one verb, one question — no overload)
 await replica[Symbol.asyncDispose]()
 
 // ── Writer (serverless mode) ──────────────────────────────────────────────
@@ -28,14 +35,18 @@ const out = await writer.commit((batch) => {
 	const ids = batch.reserve(Booking, "id", 5n)   // draws on the id lease; never logged
 	return ids
 })
-// out: { tag: "accepted", value, braid, generation }
+// out: { tag: "accepted", value, braid, generation, durability }
 //    | { tag: "rejected", violations: readonly Violation<Rels>[] }
-//    | { tag: "split", parts: readonly PerBraidOutcome[] }   // spanning batch, auto-split
-// Contention is absorbed by the loser algebra; bounded retries surface as
-// ErrContention (an operational signal, not an outcome arm).
+// durability: "published" | "local-pending" — the ack mode is part of the
+// value, not a constructor secret. A spanning batch is a typed refusal on
+// commit; writer.commitSplit(body) is the explicit verb, returning the
+// per-braid outcome vector — splitness is chosen at the call site, never
+// inferred. Contention is absorbed by the loser algebra; bounded retries
+// surface as ErrContention carrying the raw determinant values of the hot
+// key (an operational signal, not an outcome arm).
 
 // ── Tenants ───────────────────────────────────────────────────────────────
-const tenants = openTenants({ store, root, budgetBytes: 400 * MiB, maxOpen: 32 })
+const tenants = openTenants({ store, root, budgetBytes: 400_000_000, maxOpen: 32 })  // 50's 400 MB gate
 const t = await tenants.get(tenantId)       // a Replica; "_shared" pinned
 
 // ── Introspection (pure; no I/O) ──────────────────────────────────────────
@@ -43,10 +54,11 @@ braidsOf(Ledger)                            // ReadonlyMap<RelationName, Braid> 
                                             // schema's own shard map, as data
 ```
 
-One discriminant (`tag`); the SDK's `Violation<Rels>` in the rejected arm;
-`split` present only when the recorded ops genuinely span braids (its
-parts are semantically independent by L9 — the docs say so where the type
-is declared, because every reader will ask).
+One discriminant (`tag`); the SDK's `Violation<Rels>` in the rejected
+arm. `commitSplit`'s parts are semantically independent by L9 — the docs
+say so where the type is declared, because every reader will ask — and
+partial completion is visible by design: the host asked for it by
+choosing the verb.
 
 ## Temporal law
 
@@ -77,9 +89,10 @@ if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
 ```
 
 The recipe documents the `/tmp` budget gate (≤ 400 MB), `waitFor` for
-cross-instance read-your-writes, and the `ErrContention` runbook (it means
-a hot key — check the braid map, consider escrow). No Next.js wrapper is
-shipped; a wrapper would be a second way to write three lines.
+cross-instance read-your-writes, and the `ErrContention` runbook (the
+error names the hot determinant; the remedies are a reservation relation
+on the hot capacity, or resident mode). No Next.js wrapper is shipped; a
+wrapper would be a second way to write three lines.
 
 ## Dependency ruling
 
@@ -91,7 +104,14 @@ blake3 dependency; that exposure rides the SDK, not the engine crate).
 
 ## Error identity
 
-Exported values on the SDK idiom: `ErrRefused` (version/fingerprint/
-manifest, typed per cause), `ErrGapDetected`, `ErrReplayDiverged`,
-`ErrFootprintMismatch`, `ErrContention`, `ErrStore` (the vendor channel).
-No message-string matching anywhere.
+Exported values on the SDK idiom: `ErrRefused` (version, fingerprint,
+manifest shape, checkpoint braid-set drift — typed per cause),
+`ErrSpanningCommit` (naming the braids; the `commit`-vs-`commitSplit`
+boundary), `ErrGapDetected`, `ErrReplayDiverged`, `ErrFootprintMismatch`,
+`ErrChainMismatch` (cause: `"prev" | "slot" | "timestamp"` — one
+identity, three proved causes, mirroring 20), `ErrContention` (cause sum
+mirroring 60: `{ kind: "hot-key", statement, determinants }` when
+conflicts exhausted the bound, `{ kind: "slot-race", tip }` when
+fully-disjoint racers did), `ErrStore` (the vendor channel). There is deliberately no `ErrAlreadyApplied` — the state it
+would name is absorbed by idempotent replay (20) and never surfaces. No
+message-string matching anywhere.

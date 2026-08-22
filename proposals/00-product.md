@@ -17,7 +17,7 @@ enumeration on every commit today and throws it away. This design keeps
 it: **published, it is a commutativity certificate**. Two commits whose
 footprints don't collide provably cannot invalidate each other, in either
 order. Concurrency is not managed here; it is *extracted from the theory,
-with the extraction machine-checked* (15, Lean L6–L9).
+with the extraction machine-checked* (15, Lean L6–L10).
 
 Not a CRDT: CRDTs weaken to always-commuting operations and therefore
 cannot express an FD, an IND, or a ceiling. This keeps every invariant and
@@ -31,19 +31,29 @@ There is no server in the architecture. A resident writer is a deployment
 ## The laws
 
 1. **The log is the write-ahead truth.** A commit is acknowledged when its
-   log object exists. Local LMDB state is a materialized view.
-2. **Index = generation, per braid.** The schema's statement graph
-   decomposes into connected components (braids); each braid has its own
-   chain, and within it the engine's `GenerationId` is the log index.
-   Statements never span braids, so braids never conflict — by
+   log object exists. Local LMDB state is a materialized view. (The
+   `ack = local` resident mode trades this law for 1 ms acks, visibly —
+   the outcome says `durability: LocalPending`, and the loss window is
+   capped by `max_pending`; 60.)
+2. **Index = applied count, per braid; generation = the sum.** The
+   schema's statement graph decomposes into connected components
+   (braids); each braid has its own chain, indexed by its applied count,
+   and the engine's single `GenerationId` equals the counts' sum —
+   exactly, because only state-changing batches are ever published (law
+   7). Statements never span braids, so braids never conflict — by
    construction (L9).
 3. **Footprints are carried and checked.** Every batch publishes the
    footprint the driver computed from raw values and the descriptor;
    every replica recomputes it during replay and refuses a mismatch.
-4. **Losers keep their work.** A CAS loser with a disjoint footprint
-   republishes without re-judging (L7 — footprint stability). Only a
-   genuine conflict cell forces re-judgment, and the re-judged rejection
-   is exactly what serial execution would have said.
+4. **Losers keep their work.** A CAS loser whose effects the winner
+   already performed reports the winner's success (subsumption); a
+   *fully key-disjoint* loser republishes without re-judging (L7 —
+   footprint stability, whose hypothesis is strict on purpose, 15);
+   everything else re-judges the recorded ops, and the re-judged
+   rejection is exactly what **a** serial execution — the one the log
+   realized — would have said. Which racer
+   wins is run-dependent; that the outcome equals some serial history,
+   with violations as data, is not.
 5. **Replay is deterministic.** Same checkpoint + same braid prefixes ⇒
    byte-identical catalog content (`catalog_digest`), any interleaving of
    braid application (L8).
@@ -51,6 +61,34 @@ There is no server in the architecture. A resident writer is a deployment
    log key. Tip discovery: forward probing. Checkpoint publication:
    manifest CAS. Conflict detection: the four matrices of 15. Nothing
    else.
+7. **The empty commit is not a commit.** A batch is published only if its
+   local application advanced the generation; the log never contains a
+   no-op slot. Consequence: `engine generation ≡ Σ vector` on every
+   honest store — the identity recovery leans on.
+8. **Recovery is replay.** Set-semantic net-disposition makes
+   re-application of an applied batch a proven no-op (L10), so every
+   crash window heals by replaying forward through the ordinary catch-up
+   loop. There is no recovery procedure, no intent field, no forced-case
+   table; the one residual instrument is the wholeness identity
+   `generation ≡ Σ vector + |applied pending|` (50), which decides
+   phantom detection, subsumption forks, born-no-op pendings, and
+   no-op-slot refusals alike — one compare, every verdict; its failure
+   is a discard, never a repair.
+9. **Every read is a serial prefix.** A replica at any vector serves a
+   real admitted state satisfying every declared statement — the thing
+   CRDT locals cannot promise (their reads are unconstrained by their own
+   literature's admission). Freshness is the only staleness dimension:
+   cross-instance read-your-writes and monotone reads ride `wait_for`
+   with a session vector; watermark facts ("braid c reached g") are the
+   only observables stable without it.
+
+Honesty about the residue: commits are not coordination-free in the
+CALM/Bailis sense and are not meant to be — every commit pays one
+conditional PUT on its braid slot, and disjoint concurrent writers on one
+braid still serialize their slot claims. What the algebra removes is
+re-judgment, fork-discard, and every cross-braid interaction; what it
+keeps is a total order per braid, which is exactly what makes verdicts
+serial and replay deterministic. Reads and rejections touch nothing.
 
 ## The four deployment cases (each names its consumer)
 
@@ -76,18 +114,29 @@ Standard S3 PUT p50 ≈ 20–60 ms; S3 Express One Zone single-digit ms, up to
 the same conditionals with zero-egress pulls. Reads are always local.
 Commit throughput = per-braid serialization × braid count × group-commit
 batching; contention costs one intersection + one PUT when disjoint (the
-common case), one local re-judgment when not.
+common case), and a cache-warm re-open plus one local re-judgment on a
+true conflict (checkpoints are content-addressed, so the re-open
+revalidates the local `.mdb` instead of re-downloading it).
 
 ## Non-goals (v1)
 
-- No consensus, no leases-as-truth (escrow and id-leases are avoidance
-  layers; correctness never depends on them).
+- No consensus, no leases-as-truth (id-leases are an avoidance layer;
+  correctness never depends on them; capacity reservations are ordinary
+  rows judged by the ordinary theory — 15).
 - No schema migration (fingerprint mismatch refuses; migration is its own
   future PRD). Add/delete only.
 - No cross-braid atomicity: statements cannot relate braids, so partial
-  application across braids is *semantically invisible to the theory*;
-  `commit` auto-splits spanning batches and returns per-braid outcomes
-  (60). A host invariant spanning unrelated relations is, by definition,
-  not in the theory — declare it and the braids merge.
-- No compression (reserved flag byte), no frozen-value shipping, no
+  application across braids is *semantically invisible to the theory* —
+  though not to the application, which is why spanning writes are a
+  separate verb (`commit_split`, 60) chosen at the call site, never
+  inferred. A host invariant spanning unrelated relations is, by
+  definition, not in the theory — declare it and the braids merge.
+- No compression (reserved flag bit, 20), no frozen-value shipping, no
   per-obligation partial revalidation (recorded v2 optimization).
+
+The demand curve for exactly this shape is measured, not believed: across
+67 production Rails codebases, declared invariants outnumber transactions
+37 to 1, and the declared set is almost entirely our three families —
+while feral enforcement of them leaks (70–6,300 duplicate keys, 6,400
+orphans in Bailis's experiments) precisely on the cells our matrices mark
+CONFLICT (`docs/research/replication-prior-art/feral-sigmod15/`).

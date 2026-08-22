@@ -15,19 +15,32 @@ flags        u16 LE     0        (bit 0 reserved for zstd; must be 0)
 fingerprint  32 bytes            (schema fingerprint; refuse mismatch)
 braid        u32 LE              (braid id = smallest RelationId in the component)
 braid_gen    u64 LE              (this batch produces braid-generation braid_gen;
-                                  applies only when the replica's vector[braid] == braid_gen − 1)
-timestamp    u64 LE              (unix millis, informational only — PITR-by-time
+                                  must equal the slot number in the object key)
+prev         32 bytes            (blake3 of the predecessor log object's bytes;
+                                  32 zero bytes at braid genesis. The chain as
+                                  representation: a wrong-base or out-of-sequence
+                                  slot is refusable before any apply — Aurora's
+                                  backlink, at one hash per batch)
+writer       u64 LE              (writer instance id, minted at writer open;
+                                  provenance + the field that makes "corruption-
+                                  class, naming both writers" constructible)
+timestamp    u64 LE              (unix millis; the writer clamps at encode:
+                                  ts = max(now, predecessor's ts), so the braid's
+                                  timestamps are monotone by construction and
+                                  apply refuses violations. PITR-by-time
                                   convenience; never identity, never ordering)
 op_count     u32 LE
 ops          …
 fp_count     u32 LE
-footprint    fp_count × entry    (sorted ascending by (class, key); duplicates refused)
+footprint    fp_count × entry    (sorted ascending by (class, statement, key,
+                                  mode); duplicate tuples refused)
 ```
 
 One batch = one engine write transaction = one braid-generation advance.
 Group commit packs many host writes into one batch; the batch is the
 commit unit. Every op's relation must belong to `braid` — a spanning
-batch is unencodable by construction (the writer auto-splits, 60).
+batch is unencodable by construction (the writer refuses spanning
+commits; `commit_split` is the explicit verb, 60).
 
 ## Ops
 
@@ -46,9 +59,13 @@ Field values are `tag u8` + payload, tags mirroring `ValueType`:
 0 Bool          u8 (0|1; other bytes refuse)
 1 U64           u64 LE
 2 I64           i64 LE
-3 String        u32 LE len + UTF-8 (validated at decode; parse, don't validate)
-4 FixedBytes    u32 LE len + raw (len must equal the declared width)
-5 Interval      2 × u64 LE (start, end; engine validates the half-open law at apply)
+3 String        u32 LE len + UTF-8 (refused at decode if invalid; parse, don't validate)
+4 FixedBytes    raw, exactly the layout's declared width (no length field —
+                the layout already answers it; a length would be a second
+                answer that could disagree)
+5 Interval      2 × u64 LE (start, end; `start ≥ end` refuses at decode —
+                the engine's half-open law, `start < end`, enforced at the
+                wire boundary the way the engine enforces it at its own)
 6 FixedInterval u64 LE (start; width from the layout)
 ```
 
@@ -56,49 +73,111 @@ Row tags must match the relation's layout exactly; decode refuses with a
 typed error naming relation, row, and field. Decode is a full parse before
 any apply.
 
-## Footprint entries (fixed-size; the algebra's keys from 15)
+## Footprint entries (the algebra's keys from 15; per-class shapes)
+
+Common prefix, then a class-determined suffix — the illegal combinations
+(a delta on an F entry, a mode on a K entry) are unencodable, not refused:
 
 ```
-class        u8      1 = F (fact), 2 = K (key), 3 = C (containment), 4 = W (capacity)
-statement    u16 LE  (StatementId; 0 for class F)
-key          32 bytes (fid for F; fkey otherwise — blake3 over raw values per 15)
-mode         u8      F: 1 insert / 2 delete
-                     K: 1 write
-                     C: 1 need / 2 support+ / 3 support−
-                     W: 1 childΔ / 2 parent+ / 3 parent−
-delta        i64 LE  (class W, mode 1 only: signed weight sum; 0 otherwise)
+class        u8       1 = F (fact), 2 = K (key), 3 = C (containment), 4 = W (capacity)
+suffix       F: key 32 bytes (fid) + mode u8 (1 insert / 2 delete) — no
+                statement field exists for F, so "an F entry with a
+                statement" is unparseable, not refused
+             K: statement u16 LE + key 32 bytes (fkey) — no mode; a K
+                entry means "this determinant is written", and there is
+                no second thing it could mean
+             C: statement u16 LE + key 32 bytes + mode u8 (1 need /
+                2 support+ / 3 support−)
+             W: statement u16 LE + key 32 bytes + mode u8 (1 childΔ /
+                2 parent+ / 3 parent−); delta i64 LE follows iff mode = 1
+                (the one place a number exists, the only place one is
+                representable). The delta is an op-derived bound, never
+                an effect claim — set semantics can evaporate ops against
+                the final base, so 15's intersection consumes it as an
+                interval widened by the batch's own F entries on weighted
+                children
 ```
+
+One entry per (class, statement, key, mode), which is also the sort
+tuple (F sorts under its class with statement absent): a batch legally
+emits `need` and `support+` at one containment key (insert a source and
+its target together), so mode disambiguates the order. W child deltas at
+one key merge into a single signed sum at encode.
 
 The section is **derivable**: `footprint(descriptor, ops)` is a pure
 function both implementations expose; encoders call it, replicas recompute
 it during replay and refuse a mismatch (`FootprintMismatch`,
-corruption-class). Publishing a derivable section is deliberate — the CAS
-loser must intersect against the winner's footprint *without applying the
-winner first*, and the recompute-on-replay keeps it honest.
+corruption-class). Publishing a derivable section is deliberate, and its
+consumer is the **tripwire, not the loser**: no consumer ever *acts* on
+the carried section (the loser recomputes the winner's footprint from
+the ops it fetched — 15's carried-and-checked law), but carrying it
+makes every batch a cross-implementation oracle — an encoder whose
+footprint function drifts from the decoder's is caught at the very next
+replay, on every replica, as a typed refusal instead of a silent
+disagreement about commutativity.
 
 ## Apply
 
-`apply(db, vector, batch)`:
+`apply(db, chain, batch)` — `chain` is the replica's per-braid position
+`(g, prev_hash, prev_ts)` from the sidecar (50):
 
 1. Refuse version ≠ 2, flags ≠ 0, fingerprint mismatch, unsorted or
-   duplicate footprint entries, op relation outside `braid`.
-2. `vector[braid] > braid_gen − 1` → `AlreadyApplied` (idempotent replay);
-   `<` → `GapDetected`. Equality proceeds.
-3. Recompute the footprint from ops; mismatch → `FootprintMismatch`.
-4. One `db.write` applying ops in listed order (rows in listed order).
-5. The engine verdict must be `Accepted`; `Rejected` during replay is
-   `ReplayDiverged` (writers publish only accepted batches; determinism
-   guarantees agreement). Bump `vector[braid]` under the sidecar
-   discipline (50).
+   duplicate footprint entries, op relation outside `braid` — and the
+   chain discipline, one identity with three proved causes:
+   `ChainMismatch{Slot}` when `header.braid_gen ≠` the slot number in
+   the key the object was fetched from; `ChainMismatch{Prev}` when
+   `header.prev ≠ chain.prev_hash`; `ChainMismatch{Timestamp}` when
+   `header.timestamp < chain.prev_ts`. All corruption-class: the chain
+   itself proves which writer misbehaved (the header carries its id).
+2. Recompute the footprint from ops; mismatch → `FootprintMismatch`.
+3. One `db.write` applying ops in listed order (rows in listed order).
+4. The engine verdict must be `Accepted`; `Rejected` during steady-state
+   replay is `ReplayDiverged` (writers publish only accepted batches;
+   determinism guarantees agreement). Advance the chain to
+   `(header.braid_gen, blake3(batch bytes), header.timestamp)`, under
+   the sidecar law (50).
+
+**A first-applied slot must change state.** The publish law guarantees
+every log slot is a state-changing commit, and apply enforces it: a
+net-no-op apply that leaves `generation` *below* the post-advance
+`Σ vector + |pending|` identity is a publish-law violation in the log —
+corruption-class, naming the slot's writer. The legitimate no-op — a
+crash-window re-absorption, where the store was already one generation
+ahead — lands the identity exact and passes. One instrument, both
+verdicts.
+
+**There is no `AlreadyApplied`.** Apply is idempotent by set semantics:
+re-applying a batch whose effects are already present net-disposes every
+op (insert-of-present and delete-of-absent are engine no-ops), the delta
+is empty, and the engine takes its no-op arm — judgment never runs, no
+LMDB commit happens, and the generation does not advance
+(`crates/bumbledb/src/storage/commit/write.rs`: "The empty delta is the
+*only* no-op commit shape … the tx id does not advance"). The crash
+window between an engine commit and its sidecar bump therefore needs no
+detection state at all: recovery re-applies the slot, the engine absorbs
+it, the vector catches up. The one state machine deleted here is the one
+every page-image WAL (SQLite frames, Aurora LSNs) is forced to carry —
+salts, checksums, and applied-watermarks exist downstream of a
+representation whose replay is not idempotent. Ours is.
+
+`GapDetected` is not a codec outcome either — the replica layer decides
+tip-vs-hole from the manifest's current checkpoint before any fetch (50).
 
 ## The determinism laws (engine properties this format leans on; pinned in 80)
 
 1. Canonical commit order — host op order cannot influence stored bytes.
 2. Deterministic intern minting in first-use apply order (30's written
    law).
-3. Deterministic row ids; fresh ids ride in the commands as plain values.
+3. Deterministic row ids; fresh ids ride in the commands as plain values —
+   replay never calls engine reserve.
 4. Judgment is a pure function of (state, batch) — Lean-pinned.
 5. Cross-braid apply order is irrelevant to final content (L8/L9).
+6. **Replay idempotence (L10).** Applying a batch whose effects the store
+   already contains is the engine's no-op commit: empty net delta, no
+   judgment, no LMDB commit, no generation advance. Corollary: after full
+   catch-up, `db.generation() == Σ vector` on every honest store at rest
+   (50 adds the applied-pending term for writers mid-commit) — the
+   equality is the phantom detector, not a bookkeeping aspiration.
 
 ## Refused alternatives (recorded ruling — reopen triggers only)
 

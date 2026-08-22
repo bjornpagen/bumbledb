@@ -35,21 +35,24 @@ additions. **Spec:** [15](15-conflict-algebra.md) §Lean obligations.
 L6 (footprint soundness over the raw-value keys), L7 (footprint
 stability — the strengthening of `DeltaRestriction`), L8 (commutativity,
 set-level; representation half delegated to Lane 0's pins + Lane 2's
-executable oracle), L9 (component independence, corollary). Named
-exactly L6–L9 in the census. This lane's completion unblocks Lane E's
-optimism path.
+executable oracle), L9 (component independence, corollary), L10 (replay
+idempotence — the recovery design's theorem). Named exactly L6–L10 in
+the census. This lane's completion unblocks Lane E's optimism path and
+Lane D's no-forced-cases recovery.
 
 ## Lane A — the protocol trio, Rust
 
 **Owns:** `crates/bumbledb-log/src/{codec.rs, footprint.rs, braids.rs}` +
 tests + `conformance/corpus/*`. **Spec:** [20](20-command-codec.md),
 [15](15-conflict-algebra.md), [10](10-protocol.md) §Braids.
-Batch encode/decode (v2 header: braid, braid_gen, timestamp, sorted
-footprint section; kind-3 refusal); `footprint(descriptor, ops)` — every
-class, every mode, the W deltas, closed-statement emptiness; the
-intersection function returning the CONFLICT verdict per the matrices;
-`braids(descriptor)`; the golden corpora for all three; the decoder fuzz
-target; alloc windows (output buffers only).
+Batch encode/decode (v2 header: braid, braid_gen, prev chain hash,
+writer id, clamped timestamp; per-class footprint suffixes; kind-3 and
+`ChainMismatch{Prev|Slot|Timestamp}` refusals); `footprint(descriptor,
+ops)` — every class, every mode, the W deltas and per-key merging,
+closed-statement emptiness; the intersection function returning
+subsumed/disjoint/conflict per the matrices; `braids(descriptor)`; the
+golden corpora for all three; the decoder fuzz target; alloc windows
+(output buffers only).
 
 ## Lane B — the store capability
 
@@ -67,34 +70,45 @@ files byte-exactly; `aws4fetch` store (s3/r2/fs); replica/writer/tenants
 with the exact unions of 70; the temporal gate; the Vercel recipe;
 packaging in the 0.15.x lockstep; exported `Err*` values.
 
-## Lane D — replica + vector sidecar (after A + B)
+## Lane D — replica + chain sidecar (after A + B)
 
 **Owns:** `crates/bumbledb-log/src/{replica.rs, sidecar.rs, tenants.rs,
 gc.rs}`. **Spec:** [50](50-replica.md), [10](10-protocol.md).
-The vector sidecar with its two forced recoveries; open/catch-up
-round-robin across braids; footprint recompute-and-refuse on replay;
-`refresh`/`wait_for`; tenant LRU with the pinned `_shared`; `gc` per the
-retention law.
+The chain sidecar (floor cache; no intent field, no forced recoveries —
+recovery is the catch-up loop plus 50's wholeness identity);
+tip-vs-hole decided from the manifest checkpoint vector before probing;
+the gc-safety manifest heartbeat; open/catch-up round-robin across
+braids; footprint + chain recompute-and-refuse on replay;
+`refresh`/`wait_for` (session vectors); tenant LRU with the pinned
+`_shared`; `gc` per the retention law; checkpoint backlink walk for PITR.
 
 ## Lane E — writer + loser algebra (after A + B + D; optimism gated on Lane L)
 
 **Owns:** `crates/bumbledb-log/src/writer.rs` + tests. **Spec:**
 [60](60-writer.md), [15](15-conflict-algebra.md).
-Auto-split by braid with the `Split` outcome; serverless mode with the
-loser algebra (disjoint → apply-winner + republish, **cites L7/L8 at the
-site the way the engine cites DeltaRestriction**; conflict →
-fork-discard + re-run); resident mode with the pending slot and its two
-forced recoveries; `ack` modes; group commit with one-by-one rejection
-fallback; id-lease draw; checkpoint duty; bounded-retry `ErrContention`.
+One commit discipline for both modes over the shared pending slot;
+`commit` (single braid, `Err::SpanningCommit` on spanning) +
+`commit_split` (the explicit verb, `BraidOutcome` vector); the publish
+law (`COMMIT_NOOP` ⇒ nothing published); the loser algebra (subsumed →
+report winner, engine-decided survive-or-discard; disjoint →
+apply-winner + republish, **cites L7/L8 at the site the way the engine
+cites DeltaRestriction**; conflict → discard + re-judge recorded ops,
+never a body re-run); one-rule pending recovery; `ack` modes with
+`durability` in the outcome and `max_pending`; group commit with the
+drain-is-one-transaction law and one-by-one fallback;
+`Batch::reserve_capacity` sugar (the idiom is 15's); id-lease draw;
+checkpoint duty off the loop; bounded-retry `Err::Contention` with raw
+determinants.
 
 ## Lane F — integration and conformance (last)
 
 **Owns:** `crates/bumbledb-log/src/conformance/`, census wiring, bench
 pins. **Spec:** [80](80-conformance.md), lanes 1–9 in order, then the law
 gates (dyn census extension, TS temporal gate, alloc windows, census
-tokens incl. L6–L9), then the performance pins. Full verification before
-the final commit: engine suites, `ts` + `ts-log` suites, `bumbledb-log`
-suites, `lake build`, `spec-census.sh` — all green.
+tokens incl. L6–L10 and the one-owner law census), then the performance
+pins. Full verification before the final commit: engine suites, `ts` +
+`ts-log` suites, `bumbledb-log` suites, `lake build`, `spec-census.sh` —
+all green.
 
 ## Order
 
@@ -109,17 +123,17 @@ Lane C ────────────────────────�
 ## Acceptance checklist (receipts land here)
 
 - [ ] 0: `catalog_digest` both arms; three law pins
-- [ ] L: L6–L9 named, proven, census-wired
+- [ ] L: L6–L10 named, proven, census-wired
 - [ ] A: codec v2 + footprint + braids + intersection + goldens + fuzz + alloc windows
 - [ ] B: five verbs + FsStore + S3Store + retry law + gated smoke
 - [ ] C: TS trio parity + store + replica/writer/tenants + temporal gate + recipe + packaging
-- [ ] D: vector sidecar (two forced recoveries) + catch-up + recompute-refuse + tenants + gc
-- [ ] E: auto-split + loser algebra (L7/L8 cited) + resident pending + group commit + leases + `ErrContention`
+- [ ] D: chain sidecar (recovery = catch-up + wholeness check) + tip-vs-hole rule + gc heartbeat + recompute-refuse + tenants + gc + checkpoint backlink walk
+- [ ] E: commit/commit_split + publish law + loser algebra (subsume/republish/re-judge; L7/L8/L10 cited) + one-rule pending recovery + group commit + reserve_capacity sugar + leases + `Err::Contention`
 - [ ] F1: three-way determinism (≥100 worlds)
 - [ ] F2: commutativity oracle (disjoint pairs + braid interleavings)
 - [ ] F3: conflict matrix, every cell, serial-verdict equality
-- [ ] F4: all three crash matrices, every prefix
-- [ ] F5: contention lane (disjoint-never-re-judges pinned; ambiguity resolution; livelock → `ErrContention`)
+- [ ] F4: both crash-step enums, both writer ack modes, every prefix
+- [ ] F5: contention lane (subsumed both arms; disjoint-never-re-judges pinned; wholeness identity asserted; ambiguity resolution; livelock → `Err::Contention`)
 - [ ] F6: PITR by vector and by time; gc retention
 - [ ] F7: Rust⇄TS parity goldens (codec, footprint, braids)
 - [ ] F8: engine-guarantee pins

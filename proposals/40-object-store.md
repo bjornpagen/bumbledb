@@ -52,11 +52,20 @@ in our code (dependency internals exempt, per the engine's census law).
 ## Protocol consumers of the five verbs (nothing else is permitted)
 
 Log slots: `put_create`. Manifest: `get` + `put_swap` (+ `put_create` at
-birth). Tip probing: `get` per braid. Manifest polling: `get_if_changed`.
-Id-lease counters (`ids/…`): `get` + `put_swap` (read n, swap n+4096;
-`Moved` ⇒ re-read and retry — the counter is coordination, not truth).
-Escrow grants (v2): `put_create` with TTL-bearing bodies. `gc`: `delete`.
-A sixth verb appearing in a review is a design error somewhere upstream.
+birth). Tip probing: `get` per braid. Manifest polling: `get_if_changed`
+(the replica's gc-safety heartbeat, 50). Checkpoints: `put_create` for
+both the `.mdb` and the checkpoint json (content-addressed keys make
+`Exists` a benign duplicate, not a race). Id-lease counters (`ids/…`):
+`put_create` at counter birth (body = the first lease's end, claiming
+`[0, width)` — 10 owns the width), then `get` + `put_swap` (read n, swap
+n + width; `Moved` ⇒ re-read and retry — unbounded on purpose, with the
+recorded reason in 10: lease traffic is width-times rarer than slot
+traffic, so the counter has no contention to valve). `gc`: `delete`.
+Capacity
+reservations consume **no verbs** — they are rows in the log (15). This
+map is exhaustive on purpose; a consumer missing from it (the original
+draft omitted checkpoint uploads) is the same design error as a sixth
+verb.
 
 ## Implementations shipped in v1
 
@@ -66,6 +75,22 @@ A sixth verb appearing in a review is a design error somewhere upstream.
    for case-2 local sync. No network dependency in the test suite.
 2. **`S3Store`** — S3/Express/R2/OCI via one implementation, since all
    four speak SigV4 + the conditional headers.
+
+## Storage-class and availability ruling
+
+The `S3Store` constructor takes two targets: a hot class for `log/*`
+(Express One Zone directory bucket or R2) and a standard class for
+`ckpt/*` + `manifest.json`. Express's trade is recorded honestly: 11-nines
+durability but **single-AZ availability (99.95 % SLA)** — a zone event
+pauses writes (acks stall; nothing is lost; replicas keep serving). Both
+per-verb targets speak the same five verbs, so the split is configuration,
+not code. Write availability through a zone event is a **recorded v2**
+(dual-PUT to a second zone's bucket, cost ≈ one standard PUT), refused
+for v1 because it is not yet a design: the second bucket has no named
+reader, no failover read rule, and an async second write whose silent
+failure is a representable divergence — exactly the unspecified-machinery
+shape this file exists to refuse. Trigger: a deployment that measures a
+zone event it cannot ride out on pause-and-resume.
 
 ## The dependency ruling
 
@@ -91,6 +116,17 @@ buys nothing but cold-start weight on Vercel.
 outcomes (a timeout after the request may have landed): the follow-up is a
 GET of the target key — if the body matches what we tried to write, the
 operation succeeded (content-addressed comparison for log objects; etag
-re-read for the manifest). 5xx/network on reads retry with jittered
-backoff (base 50 ms, cap 2 s, 6 attempts) then surface as `Err`. This law
-is what makes the crash matrix (80) total.
+re-read for the manifest). The same comparison is the first move on every
+`Exists` (10) — ambiguity absorption and slot loss are one rule, not two.
+5xx/network on reads retry with jittered backoff (base 50 ms, cap 2 s,
+6 attempts — chosen constants of the ordinary exponential shape; the
+gated vendor smoke re-sizes them if a vendor's tail demands it) then
+surface as `Err`. This law is what makes the crash matrix (80) total.
+
+One access pattern deserves a named smoke test per vendor:
+probe-404 → create → immediate probe. GET-before-PUT on the same key is
+the shape S3's negative caching historically poisoned (Delta Lake fought
+it in production); strong consistency covers it on paper today, and the
+conformance smoke proves it per vendor row rather than trusting the
+label — the Feral lesson (PostgreSQL shipped years of "serializable" that
+wasn't) applied to storage.
