@@ -15,7 +15,6 @@ pub enum Value {
     FixedBytes(Box<[u8]>),
 
     /// ```compile_fail
-
     /// ```
     IntervalU64(crate::Interval<u64>),
 
