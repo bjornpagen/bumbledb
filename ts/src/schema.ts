@@ -269,7 +269,6 @@ function verifyTargetKeyFace(
 	const roster = [...(implied.get(face.owner.name) ?? []), ...(declared.get(face.owner.name) ?? [])]
 	const want = new Set(face.projection)
 	const matched = roster.some(function sameFieldSet(key) {
-
 		// engine's FieldSet refuses (duplicates are refused at the key()
 
 		if (key.length !== face.projection.length || want.size !== face.projection.length) {
@@ -325,7 +324,6 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	const implied = collectImplied(name, relations)
 	const seen = new Set<string>()
 	for (const statement of statements) {
-
 		if (!isStatement(statement)) {
 			throw errors.new(
 				`schema ${name}: a statement is minted only by key/contained/mirrors/capacity — a structural literal skips the construction-time arity and roster walls`
