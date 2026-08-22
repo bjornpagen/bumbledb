@@ -47,9 +47,8 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
 #[expect(
     clippy::needless_pass_by_value,
     reason = "consuming the delta is the commit boundary contract"
-)] 
+)]
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<Admission<CommitReport>> {
-
     // irrelevant (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
 
     if delta.is_empty() {
