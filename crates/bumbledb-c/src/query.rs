@@ -2,7 +2,6 @@
 //! The C view structs mirror `bumbledb::ir` 1:1 — relations, fields, and
 //! interiors by numeric id. The engine's IR validator
 //! remains the trust boundary at `bdb_db_prepare`.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::{
