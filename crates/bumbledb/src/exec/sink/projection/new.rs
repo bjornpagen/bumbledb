@@ -3,7 +3,6 @@ use crate::exec::sink::{FindSpec, ProjectionSink, ProjectionSources, SinkSpec, s
 use crate::exec::wordmap::WordMap;
 
 impl ProjectionSink {
-
     #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
