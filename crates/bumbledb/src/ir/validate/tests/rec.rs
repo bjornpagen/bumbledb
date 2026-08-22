@@ -1,7 +1,3 @@
-//! Rec roster: one linear SCC. Empty/missing-self/negation
-//! shapes are unrepresentable on [`Rec`]; remaining checks are DNF
-//! emptiness, self-in-base, nonlinearity, head alignment, and the pool cap.
-
 use super::*;
 use crate::error::{FindIndex, RuleIndex};
 use crate::ir::{
