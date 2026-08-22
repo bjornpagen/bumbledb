@@ -60,7 +60,6 @@ fn the_chrome_writer_is_golden_and_structurally_valid() {
 
 #[test]
 fn every_registered_name_is_escape_free_ascii() {
-
     assert!(FlameSummary::compute(&[]).rows.is_empty());
     let names = [
         bumbledb::obs::names::PREPARE,
