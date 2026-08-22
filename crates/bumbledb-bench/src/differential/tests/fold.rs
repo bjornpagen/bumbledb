@@ -1,15 +1,3 @@
-//! The dual-run fold differential (PRD 07; the grounding.rs dual-run
-//! precedent): the grounding-evaluator's folds — positive membership,
-//! payload-dead, ψ-selected, the |S| == 0 rule death, and the negated
-//! COMPLEMENT fold — run through the engine twice (rewrite on and off
-//! via `with_grounding_disabled`, which covers the evaluator inside the
-//! same fixpoint) and three-way compare with the naive model, across
-//! randomized corpus draws. The profile surface proves the runs are not
-//! vacuously equal: the fold-on plan carries `Role::Folded` marks, the
-//! unfolded plan none. A randomized generator slice over the target
-//! theory (PRD 06's fold-shaped family among every other shape) closes
-//! the loop broad-spectrum.
-
 use std::path::Path;
 
 use bumbledb::schema::{
@@ -29,9 +17,6 @@ use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target;
 use crate::querygen::{params_for, random_query};
 
-/// Reading(id fresh, kind u64, value i64) referencing the closed
-/// Kind(rank u64; ranks 10/20/20/30) through Reading(kind) <= Kind(id)
-/// — the containment doubles as the complement fold's domain witness.
 fn descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -89,8 +74,6 @@ fn descriptor() -> SchemaDescriptor {
 const READING: RelationId = RelationId(0);
 const KIND: RelationId = RelationId(1);
 
-/// One randomized corpus: every kind witnessed at least once, then
-/// random draws — the fold's set must matter on every round.
 fn corpus(rng: &mut Rng, rows: u64) -> Vec<(RelationId, Vec<Value>)> {
     (0..rows)
         .map(|id| {
@@ -129,8 +112,6 @@ fn stores(
     (db, naive)
 }
 
-/// The dual run: folded, unfolded, and the model must produce one
-/// result set. Plan-mark proof died with K23's profile stack.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, _marks: usize, tag: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_grounding_disabled(|| engine_query(db, query, &[]));
@@ -139,7 +120,6 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, _marks: 
     assert_eq!(on, model, "engine and model disagree ({tag})");
 }
 
-/// `Q(id, value) :- Reading(id, kind = x, value), Kind(id = x, rank == r)`.
 fn selected(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -152,8 +132,6 @@ fn selected(rank: u64) -> Query {
     })
 }
 
-/// The aggregate twin: `Q(x, Count) :- Reading(id, kind = x),
-/// Kind(id = x, rank == r)` — the fold is sink-independent.
 fn selected_count(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Count],
@@ -166,8 +144,6 @@ fn selected_count(rank: u64) -> Query {
     })
 }
 
-/// The dead-payload shape (PRD 06's pattern class (c) verbatim): the
-/// closed atom binds `rank` but nothing reads it.
 fn dead_payload() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
@@ -180,9 +156,6 @@ fn dead_payload() -> Query {
     })
 }
 
-/// Two closed atoms over one join variable: both fold, and the sibling
-/// ends up carrying TWO plan-constant sets on the same field — two
-/// set-bound selection levels composing by intersection at execution.
 fn double_closed() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -200,8 +173,6 @@ fn double_closed() -> Query {
     })
 }
 
-/// The complement shape: `Q(id, value) :- Reading(id, kind = x, value),
-/// !Kind(id = x, rank == r)` — the negated subset atom.
 fn negated_subset(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -214,9 +185,6 @@ fn negated_subset(rank: u64) -> Query {
     })
 }
 
-/// The complement's degenerate: `!Kind(id = x)` — S is the whole
-/// extension, the complement is empty, the rule is statically dead
-/// (every reference is a real handle by the containment).
 fn negated_whole() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -226,10 +194,6 @@ fn negated_whole() -> Query {
     })
 }
 
-/// The fold family across randomized corpus draws, three-way with the
-/// marks pinned: ψ-selected folds (both sinks), the dead-payload class,
-/// the |S| == 0 rule death, the negated complement — byte-identical
-/// folded vs unfolded on every round (the fold is never semantic).
 #[test]
 fn the_fold_family_agrees_three_ways_across_randomized_draws() {
     let descriptor = descriptor();
@@ -256,18 +220,13 @@ fn the_fold_family_agrees_three_ways_across_randomized_draws() {
             );
         }
         three_way(&db, &naive, &dead_payload(), 1, "dead payload");
-        // Two folds over one join variable: two plan-constant sets on
-        // one field, intersecting at the sibling's selection levels.
+
         three_way(&db, &naive, &double_closed(), 2, "double closed");
-        // |S| == 0, positive: the rule dies at prepare on the fold-on
-        // side and scans to nothing on the unfolded side — no marks (a
-        // dead rule plans nothing), same empty result three ways.
+
         three_way(&db, &naive, &selected(99), 0, "S = ∅ (dead rule)");
-        // |S| == 0, negated: the anti-probe never rejects — the atom
-        // deletes and every reading survives.
+
         three_way(&db, &naive, &negated_subset(99), 1, "negated S = ∅");
-        // Complement = ∅: the rule dies; the model agrees (every
-        // reference is a real handle, so the probe always rejects).
+
         three_way(
             &db,
             &naive,
@@ -278,9 +237,6 @@ fn the_fold_family_agrees_three_ways_across_randomized_draws() {
     }
 }
 
-/// The non-vacuousness spot check the loop above relies on: the
-/// ψ-selected corpus actually produces rows (kinds 0..=3 are all
-/// witnessed), so the byte-identity is over non-empty sets.
 #[test]
 fn the_fold_fixtures_produce_answers() {
     let descriptor = descriptor();
@@ -300,11 +256,6 @@ fn the_fold_fixtures_produce_answers() {
     );
 }
 
-/// The broad-spectrum slice: the randomized generator over the target
-/// theory (PRD 06's fold-shaped family drawn among every other shape),
-/// each draw dual-run against the evaluator's off switch and compared
-/// with the model — the fold composes with dressing, negation, sets,
-/// and every sink without changing a byte.
 #[test]
 fn randomized_generator_queries_agree_folded_and_unfolded() {
     const CFG: GenConfig = GenConfig {
