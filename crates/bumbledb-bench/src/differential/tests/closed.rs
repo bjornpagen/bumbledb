@@ -1,14 +1,3 @@
-//! The closed-relation differential (PRD 06): the three write-scenario
-//! classes over the generator's target theory — attempted
-//! closed-relation writes (verdict parity on the typed
-//! `ClosedRelationWrite`), subset-violating inserts (in-range-but-
-//! ψ-excluded AND out-of-range ids, statement id and direction compared
-//! whole), and domain-quantification deletes against
-//! `Currency(id) <= CurrencyBacking(currency)` — plus a randomized
-//! query slice so closed atoms are read-compared engine-vs-model over
-//! the same store (the `SQLite` third lane runs in verify's randomized
-//! lane over the same theory).
-
 use bumbledb::{Direction, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -24,12 +13,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-/// The unit world: two holders, three accounts, one backing per
-/// currency (the domain quantification holds from the first delta
-/// onward), the ψ-member cash rounding, and two non-import entries
-/// (sources 0/2 keep the DU pair silent). One delta — the final state
-/// is judged whole on both sides. `pub(super)`: the fold differential
-/// (`fold.rs`) seeds its randomized-query slice with the same world.
 pub(super) fn base_delta() -> Delta {
     Delta {
         deletes: vec![],
@@ -98,11 +81,6 @@ fn case_delta(case: &ClosedWriteCase) -> Delta {
     }
 }
 
-/// The full closed-relation stream: seed, the generated judgment
-/// writes, the domain-quantification delete matrix, committing control
-/// writes, and a randomized query slice — engine and model must agree
-/// on every verdict (typed, statement ids included) and every result
-/// set.
 #[test]
 fn the_closed_write_classes_agree_with_the_engine() {
     let dir = TempDir::new("differential-closed");
@@ -145,9 +123,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
 
     let mut ops = vec![Op::Write(base_delta())];
     ops.extend(cases.iter().map(|case| Op::Write(case_delta(case))));
-    // Domain quantification: stranding a currency aborts; a same-delta
-    // replacement re-establishes the key tuple and commits; dropping a
-    // ψ-subset SOURCE row is an ordinary delete and commits.
+
     ops.push(Op::Write(strand.clone()));
     ops.push(Op::Write(replace));
     ops.push(Op::Write(Delta {
@@ -157,7 +133,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
         )],
         inserts: vec![],
     }));
-    // A committing control write: an in-vocabulary reference.
+
     ops.push(Op::Write(Delta {
         deletes: vec![],
         inserts: vec![(
@@ -165,9 +141,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
             vec![Value::U64(3), Value::U64(1), Value::U64(1)],
         )],
     }));
-    // The randomized read slice: closed atoms are ordinary atoms on
-    // both sides (the generator draws the closed shapes among the
-    // rest), compared per draw.
+
     for _ in 0..25 {
         let query = random_query(&mut rng, CFG);
         for draw in params_for(&query, &mut rng, CFG) {
@@ -197,9 +171,6 @@ fn the_closed_write_classes_agree_with_the_engine() {
     assert_eq!(summary.commits, 4, "seed, replacement, drop, control");
     assert_eq!(summary.queries, 100, "25 queries x 4 draws");
 
-    // `run` proved verdict parity; pin the typed identities themselves
-    // against the generator's hand-derived expectations (aborts left
-    // the state untouched, so replay is exact).
     for case in &cases {
         assert_eq!(
             naive.apply(&case_delta(case)),
