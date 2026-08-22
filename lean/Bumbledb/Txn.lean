@@ -1,7 +1,7 @@
 import Bumbledb.Query.Denotation
 
 /-!
-# Txn — the lifecycle (Level 2, PRD 09)
+# Txn — the lifecycle (Level 2, 
 
 The transaction state machine: op-order invariance, final-state
 judgment, generation witnesses, snapshot isolation, the ETL identity.
@@ -13,11 +13,11 @@ that axis whole; this level models committed-state transitions only.
 
 ## The FinalStateView seam, as a signature
 
-`judge : Theory → Instance → Result` — dependency judgment's ONLY
+`judge: Theory → Instance → Result` — dependency judgment's ONLY
 input is a theory and one final instance. Operation order is not in
 the signature, so it cannot influence a verdict: the constitution made
 judgment's input a type (`storage/commit/judgment.rs::FinalStateView`,
-"operation order is no longer representable here"), and this file
+"operation order is representable here"), and this file
 gives that type its theorems (`final_state_judgment_order_free`).
 `Delta` is a SET pair and `apply` is set algebra — order-free BY
 CONSTRUCTION; the sequential write surface (`Op` lists) exists exactly
@@ -39,46 +39,46 @@ critical section (the `ConditionalWrite::Moved` return) is
 ## Bridges
 
 * `judge` / `commit` — `storage/commit/judgment.rs::judge` over
-  `FinalStateView` (phases 1–2 applied the plan; read-your-writes is
-  exactly `base + delta` in final set semantics).
+ `FinalStateView` (phases 1–2 applied the plan; read-your-writes is
+ exactly `base + delta` in final set semantics).
 * `violationSet` / `rejection_is_complete` —
-  `crate::error::Violations`: one rejected commit's complete violation
-  set OF THE FAILING PHASE — the violated key statements when any key
-  fails (`storage/commit/apply.rs::apply` seals them before the
-  judgment phase runs), else the statement phase's violated
-  statements. The engine's statement phase judges both non-key
-  forms (`storage/commit/judgment.rs::judge`: the containment sides,
-  the capacity checks — each scan-complete), so one sealed rejection
-  can mix containment and capacity citations in materialized
-  statement order — the 2026-07-14 vocabulary campaign's enforcement
-  stage, discharged (the delta-restriction ledger rows,
-  `Bridge.lean`).
+ `crate::error::Violations`: one rejected commit's complete violation
+ set OF THE FAILING PHASE — the violated key statements when any key
+ fails (`storage/commit/apply.rs::apply` seals them before the
+ judgment phase runs), else the statement phase's violated
+ statements. The engine's statement phase judges both non-key
+ forms (`storage/commit/judgment.rs::judge`: the containment sides,
+ the capacity checks — each scan-complete), so one sealed rejection
+ can mix containment and capacity citations in materialized
+ statement order — the 2026-07-14 vocabulary campaign's enforcement
+ stage, discharged (the delta-restriction ledger rows,
+ `Bridge.lean`).
 * `completeKeyViolations` / `completeStatementViolations` — the
-  instance-dependent complete roster over a raw `Instance` (L1): the
-  citation sets restricted to statements that still depend on
-  ordinary facts. Closed functionality, closed-to-closed containment,
-  and closed-constant capacity are `Statement.closedConstant` and
-  are skipped. On a theory whose validation witness holds, the roster
-  agrees with the citation sets phase for phase (L2,
-  `completeKeyViolations_eq`, `completeStatementViolations_eq`).
-  `obligation_partition` (L4) composes that witness with an empty
-  complete roster into `holds`. On a theory whose validation witness
-  holds, that composition is the roster bridge (L3):
-  `completeRosterPasses T I ↔ holds T I`
-  (`completeRosterPasses_iff_holds`). Complete admission of a raw
-  instance is the two-phase judge over that instance
-  (`completeAdmission`, `completeAdmissionB`): the incremental
-  lane's closed-source fence is a delta-restriction artifact and
-  does not apply — generated worlds including closed-source
-  containments run through `judgeB` on the candidate (L5).
+ instance-dependent complete roster over a raw `Instance` (L1): the
+ citation sets restricted to statements that still depend on
+ ordinary facts. Closed functionality, closed-to-closed containment,
+ and closed-constant capacity are `Statement.closedConstant` and
+ are skipped. On a theory whose validation witness holds, the roster
+ agrees with the citation sets phase for phase (L2,
+ `completeKeyViolations_eq`, `completeStatementViolations_eq`).
+ `obligation_partition` (L4) composes that witness with an empty
+ complete roster into `holds`. On a theory whose validation witness
+ holds, that composition is the roster bridge (L3):
+ `completeRosterPasses T I ↔ holds T I`
+ (`completeRosterPasses_iff_holds`). Complete admission of a raw
+ instance is the two-phase judge over that instance
+ (`completeAdmission`, `completeAdmissionB`): the incremental
+ lane's closed-source fence is a delta-restriction artifact and
+ does not apply — generated worlds including closed-source
+ containments run through `judgeB` on the candidate (L5).
 * `writeFrom` / `writeWitnessed` — `api/db/write.rs`'s `Db::write_from`
-  / `Db::write` sharing one body; the witness is the `ReadInstance` the
-  host read its premises on, consumed for its generation alone.
+ / `Db::write` sharing one body; the witness is the `ReadInstance` the
+ host read its premises on, consumed for its generation alone.
 * the lease read — `api/db/read_instance.rs`: every read runs against one
-  parked read transaction, one generation.
+ parked read transaction, one generation.
 * `scanLoad` — cookbook recipe 28 (migration is ETL): `ReadInstance::scan`
-  exports under one generation, the host transforms, `Db::write` +
-  `insert` imports under the new theory's ordinary final-state judgment.
+ exports under one generation, the host transforms, `Db::write` +
+ `insert` imports under the new theory's ordinary final-state judgment.
 
 ## The two-phase judge (the F2 alignment — deliberate behavior, modeled)
 
@@ -102,45 +102,45 @@ when a key fails, and both the engine and the naive model preempt
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Which convicting fact a citation carries is representation.** The
-  engine's citation payload names one offending fact per violated
-  statement, selected first-in-scan-order — witness SELECTION is
-  representation mechanism (spec-fidelity report 03 D2), like the
-  seal's sort; the model's rejection payload is the statement set,
-  and the witness theorems quantify over all convicting facts.
+ engine's citation payload names one offending fact per violated
+ statement, selected first-in-scan-order — witness SELECTION is
+ representation mechanism (spec-fidelity report 03 D2), like the
+ seal's sort; the model's rejection payload is the statement set,
+ and the witness theorems quantify over all convicting facts.
 * **`ClosedRelationWrite` is write-surface mechanism.** The engine
-  refuses a write that touches a closed relation before any final
-  state is formed — a preempting singleton OUTSIDE this model:
-  `Delta` here is already a write the surface admitted, and the
-  closed roster never reaches `judge`.
+ refuses a write that touches a closed relation before any final
+ state is formed — a preempting singleton OUTSIDE this model:
+ `Delta` here is already a write the surface admitted, and the
+ closed roster never reaches `judge`.
 * **`violationSet` is a `Set Statement`.** The Rust `Violations` seal
-  (stable sort by citation, dedup, per-direction citations) is list
-  REPRESENTATION mechanism; a set carries no duplicates and no order
-  by construction. What the model keeps is the semantic content:
-  membership completeness within the failing phase, membership
-  soundness, and nonemptiness — `rejection_is_complete`, all three.
+ (stable sort by citation, dedup, per-direction citations) is list
+ REPRESENTATION mechanism; a set carries no duplicates and no order
+ by construction. What the model keeps is the semantic content:
+ membership completeness within the failing phase, membership
+ soundness, and nonemptiness — `rejection_is_complete`, all three.
 * **`Generation` is an opaque tag with decidable equality only** —
-  the protocol is one compare ("unmoved or moved"), never arithmetic;
-  mirrors `Witness` exposing no `generation()` accessor.
+ the protocol is one compare ("unmoved or moved"), never arithmetic;
+ mirrors `Witness` exposing no `generation` accessor.
 * **`writeWitnessed` models the protocol, not the environment**: the
-  `ForeignWitness` environment-identity check and the writer mutex
-  are mechanism outside the model.
+ `ForeignWitness` environment-identity check and the writer mutex
+ are mechanism outside the model.
 * **`scanLoad` bulk-judges the transformed instance as ONE final
-  state.** A host that splits a load across several `Db::write`s is
-  a SEQUENCE of ordinary commits, each judged
-  (`committed_states_model` covers every prefix) — that loop is not
-  an API. Recipe 28's first law — load containment targets first —
-  is host-facing when the host chunks its own writes. Recipe 28's
-  second law (fresh identity survives, the mint catches up) is
-  id-allocation mechanism, not modeled; the third law is
-  `etl_lands_valid`.
+ state.** A host that splits a load across several `Db::write`s is
+ a SEQUENCE of ordinary commits, each judged
+ (`committed_states_model` covers every prefix) — that loop is not
+ an API. Recipe 28's first law — load containment targets first —
+ is host-facing when the host chunks its own writes. Recipe 28's
+ second law (fresh identity survives, the mint catches up) is
+ id-allocation mechanism, not modeled; the third law is
+ `etl_lands_valid`.
 * **Engine-only query resource errors.** `Error::Overflow(OriginCapacity)`
-  and `Error::ResultBytesOverflow` abort a well-typed query whose Lean
-  denotation is still a finite tuple set. They are representation
-  ceilings, not Lean `eval_sound` constructors (`70-api.md`,
-  `40-execution.md`).
+ and `Error::ResultBytesOverflow` abort a well-typed query whose Lean
+ denotation is still a finite tuple set. They are representation
+ ceilings, not Lean `eval_sound` constructors (`70-api.md`,
+ `40-execution.md`).
 * **The transform is one partial map `Fact → Option Fact`** applied
-  uniformly (dropping facts is expressible; per-relation retargeting
-  is host plumbing the model does not restate).
+ uniformly (dropping facts is expressible; per-relation retargeting
+ is host plumbing the model does not restate).
 -/
 
 namespace Bumbledb
@@ -255,7 +255,7 @@ theorem delete_is_fold (I : Instance) (R : RelId) (fs : List Fact) :
 
 /-! ## The complete violation set and its two phases -/
 
-/-- The violated statements of one final state — PRD 03's violation
+/-- The violated statements of one final state — violation
 predicate (the negated `Statement.judgment`), collected over the
 theory's declared statements. The phase sets below restrict it by
 `Statement.isKey`; a sealed `crate::error::Violations` is one PHASE's
@@ -667,11 +667,11 @@ inductive WriteResult (T : Theory) where
   /-- The transaction committed. -/
   | ok (s : State T)
   /-- Dependency failure: the complete violated-statement set — the
-  transaction ran and its final state was judged wanting. -/
+ transaction ran and its final state was judged wanting. -/
   | violations (V : Set Statement)
   /-- Witness conflict: a state-changing commit landed after the
-  witness — the transaction body NEVER RAN and nothing was judged.
-  Retry is host policy; the engine ships the value, never a loop. -/
+ witness — the transaction body NEVER RAN and nothing was judged.
+ Retry is host policy; the engine ships the value, never a loop. -/
   | generationMoved (witnessed current : Generation)
 
 /-- Lift a commit verdict into the witnessed-write sum — the success
@@ -782,7 +782,7 @@ theorem witness_conflict_distinct {T : Theory}
 
 /-! ## Item 5 — a snapshot reads one state -/
 
-/-- A read through a snapshot: PRD 04's answer denotation, evaluated
+/-- A read through a snapshot: answer denotation, evaluated
 at the snapshot's state — the whole read surface. -/
 def Snapshot.read {T : Theory} (snap : Snapshot T)
     (C : Query.Classify) (r : Query.Rule) (ρ : Query.ParamEnv) :
@@ -838,7 +838,7 @@ property of any committed state: no dependency statement can demand
 that the derived relation has caught up, and
 `Countermodels.stale_but_sound` is the committed state carrying a
 stale-but-sound derived relation — the host-discipline gap, formal.
-Bridge: constitution PRD 20's maintenance protocol (the engine judges
+Bridge: constitution maintenance protocol (the engine judges
 soundness at commit; recomputation timing is the host's witness-loop
 discipline, `Db::write_from`). -/
 theorem derived_soundness_vs_freshness {T : Theory} {s₀ s : State T}
