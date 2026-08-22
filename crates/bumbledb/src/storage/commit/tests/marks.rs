@@ -49,7 +49,6 @@ fn capacity_schema() -> Schema {
                 fields: vec![
                     field("holder", ValueType::U64),
                     field("kind", ValueType::U64),
-
                     field("num", ValueType::U64),
                 ],
             },
@@ -216,7 +215,6 @@ fn capacity_set_selection_measures_the_union() {
             (ACCOUNT, account(&schema, 7, 2, 1)),
         ],
         &[],
-
         &[(ACCOUNT, account(&schema, 7, 2, 2))],
     );
     assert_capacity_violation(&schema, result, ANY_KIND_CAPACITY, &h, 4);
@@ -235,7 +233,6 @@ fn capacity_set_selection_misses_do_not_count() {
             (ACCOUNT, account(&schema, 7, 2, 1)),
         ],
         &[],
-
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
     result
@@ -420,7 +417,6 @@ fn weighted_schema() -> Schema {
                 fields: vec![
                     field("pool", ValueType::U64),
                     field("watts", ValueType::U64),
-
                     field("num", ValueType::U64),
                 ],
             },
@@ -539,7 +535,6 @@ fn capacity_sum_ceiling_convicts_with_the_full_measure() {
     let result = base_then_delta(
         "cap-sum-ceiling",
         &schema,
-
         &[
             (POOL, p.clone()),
             (DEVICE, device(&schema, 1, 50, 0)),
@@ -771,7 +766,6 @@ fn capacity_duration_weight_sums_the_measures() {
             (BOOKING, booking(&schema, 1, (10, 14), 1)),
         ],
         &[],
-
         &[(BOOKING, booking(&schema, 1, (20, 24), 2))],
     );
     assert_capacity_violation(&schema, result, BOOKED_CAPACITY, &r, 12);
@@ -791,7 +785,6 @@ fn capacity_duration_bound_reads_the_target_span() {
             (BOOKING, booking(&schema, 1, (4, 8), 1)),
         ],
         &[],
-
         &[(BOOKING, booking(&schema, 1, (8, 12), 2))],
     );
     assert_capacity_violation(&schema, result, BOOKED_CAPACITY, &r, 12);
@@ -1028,7 +1021,6 @@ fn key_violation_preempts_the_capacity_judgment() {
         &[],
         &[],
         &[
-
             (
                 HOLDER,
                 fact(&schema, HOLDER, &[ValueRef::U64(7), ValueRef::U64(0)]),
@@ -1062,7 +1054,6 @@ fn statement_phase_cites_containments_and_capacities_together() {
         &[],
         &[
             // Holder 8 lands childless (capacity floor) and account 9→
-
             (HOLDER, h8.clone()),
             (ACCOUNT, orphan.clone()),
         ],
