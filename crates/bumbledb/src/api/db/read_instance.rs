@@ -7,11 +7,9 @@ use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> ReadInstance<'_, S> {
-    /// Prepares a query against this lease's catalog and statistics.
-    ///
+
     /// # Errors
-    ///
-    /// As [`crate::OwnedInstance::prepare`].
+
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         let catalog = self.core.source.catalog();
         crate::api::prepared::prepare_on(
@@ -23,27 +21,10 @@ impl<S> ReadInstance<'_, S> {
         )
     }
 
-    /// Exact cardinality of `relation` at this lease's committed view —
-    /// THE public spelling for stored cardinality (one-representation PRD
-    /// 40): a structural read of the maintained counter
-    /// (`StatKind::RowCount`, folded transactionally at every commit
-    /// since format 8, O(1) to read, pinned equal to the scan count —
-    /// `row_count_equals_scan_count_after_mixed_commits`) — never a scan,
-    /// never an estimate, no allocation. The read runs inside the lease's
-    /// one `ReadTxn`, so `count` and [`ReadInstance::scan`] observe the
-    /// same committed view by construction. A **closed** relation answers
-    /// its sealed extension length (virtual storage — the stored counter
-    /// never exists for it), the same arm as
-    /// [`crate::OwnedInstance::count`].
-    ///
     /// # Errors
-    ///
-    /// `UnknownRelation`; `Corruption` on a malformed counter.
-    ///
+
     /// # Panics
-    ///
-    /// Never: a sealed extension is schema data admitted at declaration —
-    /// its length always fits `u64`.
+
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
             return Err(DynIdError::UnknownRelation { relation }.into());
@@ -54,14 +35,8 @@ impl<S> ReadInstance<'_, S> {
         }
     }
 
-    /// Executes a prepared query with positional parameters into the
-    /// caller's reusable buffer (the zero-alloc path).
-    ///
     /// # Errors
-    ///
-    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time; `Overflow`
-    /// from aggregate finalization; `Lmdb`/`Corruption` from storage. A
-    /// query error aborts the query; the instance remains usable.
+
     pub fn execute<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -71,11 +46,8 @@ impl<S> ReadInstance<'_, S> {
         prepared.execute(self.txn(), self.cache(), params, out)
     }
 
-    /// Convenience path: a fresh buffer per call.
-    ///
     /// # Errors
-    ///
-    /// As [`ReadInstance::execute`].
+
     pub fn execute_collect<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -84,16 +56,8 @@ impl<S> ReadInstance<'_, S> {
         prepared.execute_collect(self.txn(), self.cache(), params)
     }
 
-    /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
-    /// and returns the answers alongside the rendered report. Takes the
-    /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
-    /// [`ReadInstance::execute`] binds, introspection binds.
-    ///
-    /// Harness-only (not embedding API).
-    ///
     /// # Errors
-    ///
-    /// As [`ReadInstance::execute`].
+
     #[doc(hidden)]
     pub fn introspect(
         &self,
@@ -103,15 +67,8 @@ impl<S> ReadInstance<'_, S> {
         prepared.introspect(self.txn(), self.cache(), params)
     }
 
-    /// The export surface (`70-api.md` ETL story): a full-relation scan
-    /// yielding decoded dynamic facts (strings resolved; bytes<N> values
-    /// are inline) in `row_id` order — a storage stream, not a query
-    /// result set.
-    ///
     /// # Errors
-    ///
-    /// `Lmdb` on cursor open; per-item `Corruption` is a hard error — stop
-    /// at the first.
+
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         let Some(_relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
@@ -130,18 +87,9 @@ impl<S> ReadInstance<'_, S> {
 }
 
 impl<S> ReadInstance<'_, S> {
-    /// Committed-state membership of a typed fact — the store sibling
-    /// of [`super::WriteTx::contains`], completing the point-operation
-    /// matrix (typed/dyn × write/read, `docs/architecture/70-api.md`
-    /// § point reads): the fact encodes through [`Fact::encode_probe`] —
-    /// the committed dictionary, never minting — so a string or bytes
-    /// value the dictionary does not know proves the fact absent and the
-    /// probe short-circuits to `false`. A **closed** relation answers
-    /// from its sealed extension (virtual storage — no `M` rows exist).
-    ///
+
     /// # Errors
-    ///
-    /// `Lmdb` on the membership probe or dictionary reads.
+
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.with_scratch(|scratch| {
             if matches!(
@@ -164,20 +112,8 @@ impl<S> ReadInstance<'_, S> {
         })
     }
 
-    /// Committed-state membership of a dynamic fact — the store
-    /// sibling of [`super::WriteTx::contains_dyn`], completing the
-    /// schema-generic read surface (`docs/architecture/70-api.md` § the
-    /// dyn lane): one [`Value`] per field in declaration order, probed
-    /// against this lease's one consistent state. Never interns: a
-    /// string value the committed dictionary does not know proves the
-    /// fact absent. A **closed** relation answers from its sealed
-    /// extension (virtual storage — no `M` rows exist).
-    ///
     /// # Errors
-    ///
-    /// `FactShape` on an unknown relation id or an arity/type/UTF-8
-    /// mismatch (typed, never a panic — ids at this surface are data);
-    /// `Lmdb` on the probe or dictionary reads.
+
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         let Some(relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
@@ -207,19 +143,8 @@ impl<S> ReadInstance<'_, S> {
         })
     }
 
-    /// Point lookup of the full fact through any key statement of
-    /// `relation`, against committed state — the committed-state sibling of
-    /// [`super::WriteTx::get_dyn`]: `key_values` are the key statement's
-    /// projected fields in statement projection order, type-checked
-    /// against the projection; the decoded fact comes back as owned
-    /// [`Value`]s (strings resolved through the committed dictionary). A
-    /// **closed** relation resolves against its sealed extension.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` when `relation` is unknown, `key` is not one of its
-    /// `Functionality` statements, or `key_values` mismatch the
-    /// projection in arity or type; `Lmdb`/`Corruption` from storage.
+
     pub fn get_dyn(
         &self,
         relation: RelationId,
@@ -232,17 +157,8 @@ impl<S> ReadInstance<'_, S> {
             .then_some(out))
     }
 
-    /// [`ReadInstance::get_dyn`] into a caller-provided buffer — the pooled
-    /// point-read lane (docs/architecture/70-api.md § point reads): the
-    /// values `Vec` is the caller's, its capacity retained across gets,
-    /// so a warm keyed get's allocator traffic shrinks to the
-    /// variable-width payload boxes alone (the key-encode scratch was
-    /// already pooled, R15). `Ok(true)` = hit, `out` holds the fact's
-    /// fields in declaration order; `Ok(false)` = no fact, `out` empty.
-    ///
     /// # Errors
-    ///
-    /// As [`ReadInstance::get_dyn`].
+
     pub fn get_dyn_into(
         &self,
         relation: RelationId,
@@ -316,24 +232,8 @@ impl<S> ReadInstance<'_, S> {
         Ok(hit)
     }
 
-    /// Point lookup of the full fact through a typed key value ([`Key`]),
-    /// against committed state — the committed-state sibling of
-    /// [`super::WriteTx::get`]: the key value's TYPE carries the relation
-    /// and the key statement (`K::STATEMENT`, computed at `schema!`
-    /// expansion), so which key FD a read goes through is never a runtime
-    /// question. A **closed** relation resolves against its sealed
-    /// extension. No `Db`-level sugar fronts this — the Rust read scope IS
-    /// `db.read(|instance| instance.get(key))` (recorded decision: the freeze
-    /// keeps `Db` minimal; the TS surface carries the symmetry sugar).
-    ///
-    /// Variable-width fields of the returned fact borrow from the
-    /// lease's dictionary at the lease lifetime — copy
-    /// (`to_owned()`) what must outlive it.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` when a manual `Key` impl lies about its statement
-    /// (typed, never a panic); `Lmdb`/`Corruption` from storage.
+
     #[expect(
         clippy::needless_pass_by_value,
         reason = "a key value is the read's input, spelled `instance.get(id)`: fresh \
@@ -397,17 +297,8 @@ impl<S> ReadInstance<'_, S> {
         result
     }
 
-    /// The typed sibling of [`ReadInstance::scan`]: decodes each fact into its
-    /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
-    /// is the ETL pairing for [`crate::WriteTx::insert_dyn`] under
-    /// [`crate::Db::write`]; this one is for hosts that want their own
-    /// types back. Variable-width fields borrow from the lease's
-    /// dictionary at the lease lifetime — copy (`to_owned()`) what
-    /// must outlive it.
-    ///
     /// # Errors
-    ///
-    /// As [`ReadInstance::scan`].
+
     pub fn scan_facts<'lease, F: Fact<'lease, Schema = S>>(
         &'lease self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
