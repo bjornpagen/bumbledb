@@ -2,13 +2,11 @@ use super::{BoundView, Colt, Cursor, NodeState, Positions, Slot, SuffixRun, View
 use crate::image::ColumnView;
 
 impl Colt {
-
     #[must_use]
     #[expect(
         clippy::inline_always,
         reason = "measured kernel inlining is machine-checked and load-bearing"
     )]
-
     #[inline(always)]
     pub fn any_position_matches(&self, cursor: Cursor, checks: &[(usize, usize, u64)]) -> bool {
         let check = |position: u32| {
