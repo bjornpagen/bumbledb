@@ -74,7 +74,6 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
     let domains = Domains::of(cfg.scale);
     let shape = shape_of(rng);
     if shape == Shape::Rules {
-
         let (query, variant) = rules(rng, &domains);
         let tags = GenTags {
             rules: Some(variant),
@@ -118,7 +117,6 @@ enum QueryClass {
 
 impl QueryClass {
     fn draw(rng: &mut Rng) -> Self {
-
         if rng.range(8) == 0 {
             Self::Derived
         } else {
