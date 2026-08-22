@@ -1,5 +1,4 @@
 //! Field, layout, and statement-index accessors on a validated relation.
-
 use super::{
     CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, RelationBody,
     ValueType,
