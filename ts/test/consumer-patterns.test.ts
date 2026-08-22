@@ -170,7 +170,6 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		const dir = path.join(tmpRoot, "held")
 		const { report, child } = await spawnChild("hold", dir)
 		try {
-
 			await assert.rejects(async function openHeld() {
 				await Db.open(dir, runStoreSchema)
 			}, /another live handle holds this environment's lock/)
