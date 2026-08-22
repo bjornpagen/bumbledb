@@ -6,7 +6,6 @@ use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
     /// # Errors
-
     pub fn delete_dyn(
         &mut self,
         rel: RelationId,
@@ -16,7 +15,6 @@ impl<S> WriteTx<'_, S> {
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
         self.mutation
