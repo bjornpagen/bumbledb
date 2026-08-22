@@ -1,23 +1,8 @@
-//! The bumbledb ↔ `SQLite` mapping (`docs/architecture/60-validation.md`
-//! § value mapping, normative): DDL from the schema descriptors and the
-//! typed value mapping. One mapping, used by the loader, the translator,
-//! and the runner — it cannot drift apart.
-//!
-//! Value mapping: Bool→INTEGER 0/1, U64→INTEGER
-//! (asserted < 2⁶³ — the generator's axiom), I64→INTEGER, String→TEXT,
-//! Bytes→BLOB, and `Interval(E)` → **two INTEGER columns**
-//! `<name>_start` / `<name>_end`. The halves cross the boundary as the
-//! raw typed endpoints — never the engine's sign-flipped word encoding —
-//! and the comparison decode reassembles `Value::IntervalU64` /
-//! `Value::IntervalI64` from the pair ([`interval_from_sql`]).
-
 use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, Relation, StatementId, StatementView, ValueType,
 };
 use bumbledb::{Schema, Value};
 
-/// The SQL storage class of one scalar type. Intervals never reach here:
-/// they split into two INTEGER columns first ([`field_columns`]).
 fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
         ValueType::Bool
@@ -30,11 +15,6 @@ fn sql_type(ty: &ValueType) -> &'static str {
     }
 }
 
-/// The SQL column(s) of one field: scalars map to one column of the same
-/// name; an `Interval` field splits into `<name>_start`, `<name>_end`.
-/// `pub(crate)`: the keyed-get twin rendering
-/// ([`crate::translate::keyed_get`]) walks the same naming — one
-/// mapping, it cannot drift apart.
 pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     match &field.value_type {
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => vec![
@@ -45,11 +25,6 @@ pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static st
     }
 }
 
-/// The rowid-alias column: the relation's first `Fresh` field — or, for
-/// a **closed** relation, the synthetic id (the sealed field list opens
-/// with it, and the closed auto-key `R(id) -> R` is its statement). The
-/// auto-key statement becomes the table's PRIMARY KEY — no separate
-/// index exists or is expected.
 fn rowid_alias(relation: &Relation) -> Option<&str> {
     if relation.body().closed_rows().is_some() {
         return relation.fields().first().map(|field| &*field.name);
@@ -61,25 +36,14 @@ fn rowid_alias(relation: &Relation) -> Option<&str> {
         .map(|field| &*field.name)
 }
 
-/// One index the fairness contract expects, beyond the PRIMARY KEY.
 struct IndexSpec {
     table: String,
     name: String,
-    /// A scalar key statement's index enforces its one-row rule (the SQL
-    /// `UNIQUE` kind); everything else is a plain probe index.
+
     key: bool,
     columns: Vec<String>,
 }
 
-/// The statement-derived index plan — one walk shared by [`schema_ddl`]
-/// and [`expected_indexes`], so the DDL and the contract cannot drift
-/// apart. A scalar key statement (functionality) gets a UNIQUE index
-/// (the lone-fresh auto-key is covered by the PRIMARY KEY and skipped);
-/// a pointwise key gets the composite `(scalars..., start, end)` index —
-/// the best SQL can do, the judgment itself being the naive lane's
-/// ([`crate::translate::sqlite_expressible`]); a containment source gets
-/// a plain index over its projection. Index names carry the statement id
-/// (statements are anonymous — materialized order is their identity).
 fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
     let mut plan = Vec::new();
     let statement_count =
@@ -89,9 +53,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
         match schema.statement(id) {
             StatementView::Key(_, statement) => {
                 let rel = schema.relation(statement.relation);
-                // A closed auto-key (`R(id) -> R`) is the mirrored
-                // table's PRIMARY KEY, exactly like a fresh auto-key —
-                // both fall to the rowid-coverage skip below.
+
                 let covered_by_rowid = statement.projection.len() == 1
                     && rowid_alias(rel)
                         == Some(&*rel.fields()[usize::from(statement.projection[0].0)].name);
@@ -116,9 +78,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
             }
             StatementView::Containment(_, statement) => {
                 let rel = schema.relation(statement.source.relation);
-                // A closed source (domain quantification) draws no probe
-                // index: the mirrored extension table is ≤256 rows and
-                // its id is already the PRIMARY KEY.
+
                 if rel.body().closed_rows().is_some() {
                     continue;
                 }
@@ -138,21 +98,13 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                         .collect(),
                 });
             }
-            // The capacity form is the naive lane's alone — SQL has no
-            // measure-window judgment, and no index accelerates a
-            // verdict SQLite never renders
-            // (`crate::translate::sqlite_expressible`).
+
             StatementView::Capacity(..) => {}
         }
     }
     plan
 }
 
-/// Every statement-derived index the fairness contract requires, as
-/// `(table, index)` pairs — the same walk [`schema_ddl`] emits
-/// (`FairnessCheck`, `docs/architecture/60-validation.md`). The
-/// family-owned composites live beside the families
-/// (`crate::families::expected_indexes`).
 #[must_use]
 pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
     index_plan(schema)
@@ -161,9 +113,6 @@ pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The ledger DDL: [`schema_ddl`] plus the family-owned index registry
-/// (`crate::families::index_ddl` — the honest opponent gets every index
-/// the query families reward).
 #[must_use]
 pub fn ddl(schema: &Schema) -> Vec<String> {
     let mut statements = schema_ddl(schema);
@@ -171,17 +120,6 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// The index-free table surface: one STRICT table per relation (NOT
-/// NULL everywhere — no nulls exist; interval fields split into their
-/// half columns), a PRIMARY KEY on the lone fresh auto-key (or the
-/// closed synthetic id). This is exactly [`schema_ddl`]'s opening — the
-/// table-only storage lane measures this representation with no
-/// secondary structure at all ([`crate::lanes::storage`]). A **closed**
-/// relation is an ordinary mirrored table — INTEGER id (the synthetic
-/// handle, PRIMARY KEY) plus its payload columns — whose rows come from
-/// the sealed extension at mirror-build time ([`extension_ddl`], part
-/// of the schema surface, never the corpus: a closed relation is never
-/// empty).
 #[must_use]
 pub fn table_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
@@ -209,13 +147,6 @@ pub fn table_ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// The schema-derived DDL: the index-free tables ([`table_ddl`]), then
-/// the statement-derived indexes ([`index_plan`]). Closed atoms are
-/// ordinary tables on the `SQLite` side; the ψ-subset WRITE judgments
-/// stay naive-only (the recorded division of labor — `SQLite` does not
-/// express commit-time CINDs, [`crate::translate::Inexpressible`]). The
-/// scenario loaders enter here (each scenario carries its own
-/// predicate-column indexes).
 #[must_use]
 pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = table_ddl(schema);
@@ -236,14 +167,7 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// One extension value as a SQL literal (the normative mapping's
-/// literal form — extension rows are schema data, so they ride with the
-/// DDL as literal INSERTs, no placeholders anywhere).
-///
 /// # Panics
-///
-/// On a `u64` at or above 2⁶³ (the mapping axiom) or a mask value —
-/// neither exists in a validated extension.
 fn sql_literal(value: &Value) -> String {
     match value {
         Value::Bool(v) => format!("{}", i64::from(*v)),
@@ -269,9 +193,6 @@ fn sql_literal(value: &Value) -> String {
     }
 }
 
-/// The mirrored rows of one closed relation's extension, in the sealed
-/// field space: the synthetic id (the row's declaration index) followed
-/// by the declared payload values.
 #[must_use]
 pub fn extension_rows(relation: &bumbledb::schema::RelationDescriptor) -> Vec<Vec<Value>> {
     let Some(extension) = &relation.extension else {
@@ -288,14 +209,7 @@ pub fn extension_rows(relation: &bumbledb::schema::RelationDescriptor) -> Vec<Ve
         .collect()
 }
 
-/// The extension INSERTs of every closed relation, as literal SQL — the
-/// second half of the mirror's schema surface ([`schema_ddl`] creates
-/// the tables; this fills the ground axioms). Rendered off the declared
-/// descriptor: the sealed schema holds the rows pre-encoded, and the
-/// mirror must never consume engine encodings (the value mapping is
-/// normative, `docs/architecture/60-validation.md`). Every mirror-build
-/// site appends these to its DDL — empty-store pairs included, because
-/// a closed relation is never empty.
+/// mirror must never consume engine encodings.
 #[must_use]
 pub fn extension_ddl(descriptor: &bumbledb::schema::SchemaDescriptor) -> Vec<String> {
     let mut statements = Vec::new();
@@ -326,8 +240,6 @@ pub fn extension_ddl(descriptor: &bumbledb::schema::SchemaDescriptor) -> Vec<Str
     statements
 }
 
-/// The positional INSERT for one relation — the placeholder count
-/// follows the split column count (an interval field contributes two).
 #[must_use]
 pub fn insert_sql(relation: &Relation) -> String {
     let count: usize = relation
@@ -345,13 +257,7 @@ pub fn insert_sql(relation: &Relation) -> String {
     )
 }
 
-/// One scalar value into `SQLite`'s dynamic form (the normative mapping).
-///
 /// # Panics
-///
-/// On a `u64` at or above 2⁶³ — the generator's axiom guarantees the
-/// corpus never produces one — and on an interval, which maps to two
-/// columns ([`to_sql_row`] / [`interval_halves`] own the split).
 #[must_use]
 pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as Sql;
@@ -369,13 +275,7 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     }
 }
 
-/// An interval's two INTEGER halves — the raw typed endpoints, never the
-/// engine's sign-flipped word encoding (u64 halves under the same `< 2⁶³`
-/// axiom as scalar u64).
-///
 /// # Panics
-///
-/// On a scalar value, or a u64 endpoint at or above 2⁶³.
 #[must_use]
 pub fn interval_halves(value: &Value) -> (rusqlite::types::Value, rusqlite::types::Value) {
     use rusqlite::types::Value as Sql;
@@ -395,8 +295,6 @@ pub fn interval_halves(value: &Value) -> (rusqlite::types::Value, rusqlite::type
     }
 }
 
-/// One decoded fact row into positional SQL values — the insert path's
-/// side of the interval split (pairs with [`insert_sql`]).
 #[must_use]
 pub fn to_sql_row(fact: &[Value]) -> Vec<rusqlite::types::Value> {
     let mut out = Vec::with_capacity(fact.len());
@@ -413,15 +311,7 @@ pub fn to_sql_row(fact: &[Value]) -> Vec<rusqlite::types::Value> {
     out
 }
 
-/// One `SQLite` value back into the typed scalar form, guided by the
-/// expected column type (INTEGER is width-ambiguous without it).
-///
 /// # Errors
-///
-/// A message naming the mismatch (wrong storage class, negative INTEGER
-/// for a `u64` column, non-UTF-8 TEXT, an
-/// interval type — which spans two columns and decodes through
-/// [`interval_from_sql`]).
 pub fn from_sql_value(
     value: &rusqlite::types::Value,
     expected: &ValueType,
@@ -446,14 +336,8 @@ pub fn from_sql_value(
     }
 }
 
-/// The comparison decode's interval reassembly: the two INTEGER half
-/// columns back into the typed value.
-///
 /// # Errors
-///
-/// A message naming the mismatch (non-INTEGER storage class, a negative
 /// half for a U64 element, or `start >= end` — the stored invariant, so
-/// a violating pair is corrupt data, not a value).
 pub fn interval_from_sql(
     start: &rusqlite::types::Value,
     end: &rusqlite::types::Value,
@@ -489,12 +373,6 @@ mod tests {
     use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor};
     use bumbledb::{FieldId, RelationId};
 
-    /// A miniature of the ledger's statement shapes: fresh auto-keys
-    /// (the PRIMARY KEYs), a declared scalar key, two containments, a
-    /// pointwise key over an i64 interval, a keyless relation with a
-    /// u64 interval for the round trip, and a closed vocabulary with a
-    /// payload column plus a containment into it (the mirrored-table
-    /// shape: INTEGER id PRIMARY KEY + payload, extension INSERTs).
     fn mini_schema() -> Schema {
         mini_descriptor()
             .validate()
@@ -504,7 +382,7 @@ mod tests {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // the fixture roster, one relation per block
+    )] 
     fn mini_descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -593,9 +471,7 @@ mod tests {
                     relation: RelationId(2),
                     projection: Box::new([FieldId(0), FieldId(2)]),
                 },
-                // The closed reference: Span(id) <= Kind(id) — the
-                // compiled subset on the engine, an ordinary containment
-                // source index on the mirror.
+
                 StatementDescriptor::Containment {
                     source: Side {
                         relation: RelationId(3),
@@ -612,13 +488,6 @@ mod tests {
         }
     }
 
-    /// The DDL golden, byte-pinned: split interval columns, the PRIMARY
-    /// KEY on the fresh auto-key (s0/s1 emit no index) and on the closed
-    /// synthetic id (s2, the closed auto-key — same rowid coverage), the
-    /// closed vocabulary as an ordinary mirrored table, a UNIQUE index
-    /// for the declared scalar key, plain indexes for the containment
-    /// sources (the closed reference included), and the pointwise key's
-    /// composite `(scalar, start, end)`.
     #[test]
     fn ddl_is_golden() {
         let schema = mini_schema();
@@ -637,9 +506,7 @@ mod tests {
                 "CREATE INDEX \"ix_Span_s7\" ON \"Span\" (\"id\")",
             ]
         );
-        // The extension INSERTs, byte-pinned: the second half of the
-        // mirror's schema surface — row id = declaration index, then
-        // the payload values as literals.
+
         assert_eq!(
             extension_ddl(&mini_descriptor()),
             vec![
@@ -647,7 +514,7 @@ mod tests {
                 "INSERT INTO \"Kind\" VALUES (1, 0)",
             ]
         );
-        // The contract walk agrees with the DDL walk by construction.
+
         assert_eq!(
             expected_indexes(&schema)[..5],
             [
@@ -665,12 +532,6 @@ mod tests {
         );
     }
 
-    /// The representational split ([`table_ddl`] / [`schema_ddl`]):
-    /// `table_ddl` is exactly the CREATE TABLE prefix of `schema_ddl`,
-    /// the remainder is exactly the CREATE [UNIQUE ]INDEX statements,
-    /// and the lengths add up — applied to the real ledger schema, so
-    /// the storage lane's table-only fork can never be a string filter
-    /// over the indexed DDL.
     #[test]
     fn table_ddl_is_the_index_free_prefix() {
         let schema = crate::schema::schema();
@@ -715,10 +576,10 @@ mod tests {
             let back = from_sql_value(&sql, &ty).expect("round trip");
             assert_eq!(back, value);
         }
-        // Mismatches are typed errors, not silent passes.
+
         assert!(from_sql_value(&rusqlite::types::Value::Integer(-1), &ValueType::U64).is_err());
         assert!(from_sql_value(&rusqlite::types::Value::Integer(9), &ValueType::Bool).is_err());
-        // An interval type never decodes from one column.
+
         assert!(
             from_sql_value(
                 &rusqlite::types::Value::Integer(0),
@@ -750,8 +611,7 @@ mod tests {
             };
             assert_eq!(interval_from_sql(&start, &end, element), Ok(value));
         }
-        // Corrupt pairs are named errors: reversed bounds, a negative
-        // half under a U64 element, a wrong storage class.
+
         assert!(
             interval_from_sql(&Sql::Integer(5), &Sql::Integer(5), IntervalElement::I64).is_err()
         );
@@ -768,10 +628,6 @@ mod tests {
         );
     }
 
-    /// The boundary round trip: interval facts inserted through the DDL
-    /// split re-read as equal `Value::IntervalU64`/`IntervalI64` —
-    /// boundary endpoints, negative starts, and `start + 1 == end`
-    /// minimal intervals included.
     #[test]
     fn intervals_round_trip_through_sqlite() {
         let schema = mini_schema();
