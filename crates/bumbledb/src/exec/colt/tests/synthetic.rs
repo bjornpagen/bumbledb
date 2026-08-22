@@ -1,6 +1,5 @@
 //! with the 2026-07-20 hard-delete): `TransientImage::refill` builds a
 //! the LMDB-backed fixtures beside it keep out of Miri's reach.
-
 use super::*;
 use crate::image::TransientImage;
 use bumbledb_theory::schema::ValueType;
