@@ -9,14 +9,12 @@ use super::ops::PostingBody;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqliteSync {
-
     Full,
 
     Nosync,
 }
 
 impl SqliteSync {
-
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -27,7 +25,6 @@ impl SqliteSync {
 }
 
 pub struct OursLane {
-
     pub db: Db<Ledger>,
 
     pub last_minted: u64,
@@ -135,7 +132,6 @@ pub fn apply_ours(
         .write(|tx| {
             for removal in removals {
                 if tx.delete([removal])?.changed() == 0 {
-
                     return Err(bumbledb::Error::from(std::io::Error::other(
                         "the churn cycle must be delete-bearing: a removal target was absent",
                     )));
