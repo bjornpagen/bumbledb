@@ -1658,7 +1658,6 @@ mod tests {
     }
 
     /// Regenerates `lean/conformance/cases/` in place. Ignored: run it
-
     #[test]
     #[ignore = "regenerates the checked-in corpus; run deliberately"]
     fn regenerate_the_conformance_corpus() {
@@ -1698,7 +1697,6 @@ mod tests {
     }
 
     /// `scripts/lean.sh` runs it with `--ignored` after the corpus
-
     #[test]
     #[ignore = "needs the Lean toolchain (elan/lake) on PATH; scripts/lean.sh runs it"]
     fn three_way_conformance_over_the_checked_in_corpus() {
