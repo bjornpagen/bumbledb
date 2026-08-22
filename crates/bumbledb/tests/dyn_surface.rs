@@ -1,23 +1,3 @@
-//! The schema-generic (dyn) surface and the rejection wire, pinned from
-//! the public API (`docs/architecture/70-api.md` § the dyn lane;
-//! `docs/architecture/30-dependencies.md` § rendering the rejection):
-//!
-//! - **The no-panic sweep over the dyn write/read surface** — malformed
-//!   arity, wrong value types, unknown relation ids,
-//!   mis-aimed key-statement ids, and out-of-roster closed handles are
-//!   all typed [`bumbledb::FactShapeError`]s (or honest misses), never
-//!   panics: ids at this surface are data.
-//! - **The dyn fresh-mint lane** — `Db::fresh_field` + `reserve_at`
-//!   returns minted ids to the caller; explicit re-supply preserves
-//!   identity (the delete+insert idiom).
-//! - **The violation wire** — a rejected commit carries decoded cited
-//!   facts (str fields minted by the REJECTED transaction included) and
-//!   renders, via public API only, into
-//!   `[{statement id, canonical spelling, kind, offending facts as named
-//!   decoded values}]` — one commit violating a containment and a capacity law
-//!   (one rejection, both cited), one violating an FD (keys preempt the
-//!   statement phase, so an FD violation is always its own rejection).
-
 mod common;
 
 use bumbledb::schema::ValidateDescriptor as _;
@@ -56,8 +36,6 @@ bumbledb::schema! {
     Node(id) <={0..2} Edge(src);
 }
 
-/// Materialized statement ids of the `Graph` theory (fresh auto-keys,
-/// closed auto-keys, then declared statements in declaration order).
 const NODE_KEY: StatementId = StatementId(0);
 const KIND_KEY: StatementId = StatementId(1);
 const EDGE_DST_CONTAINMENT: StatementId = StatementId(3);
@@ -75,9 +53,6 @@ fn edge_row(src: u64, dst: u64) -> Vec<Value> {
     vec![Value::U64(src), Value::U64(dst)]
 }
 
-/// A database seeded entirely through the dyn lane: resolve the fresh
-/// witness once, mint per row, insert dynamically — the ETL access
-/// pattern, ids returned to the caller.
 fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>) {
     let db = bumbledb::Db::create(dir.path(), Graph)
         .expect("create")
@@ -109,7 +84,7 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
     let dir = common::TempDir::new("dyn-fresh-mint");
     let (db, ids) = seeded(&dir, 2);
     assert_eq!(ids.len(), 2);
-    // Explicit re-supply: the delete+insert identity idiom, entirely dyn.
+
     db.write(|tx| {
         assert_eq!(
             tx.delete_dyn(
@@ -138,7 +113,7 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
         .value
         .expect("the row survived under its identity");
     assert_eq!(renamed[1], Value::String(Box::from("renamed")));
-    // Minting is monotone past explicit values: the next mint is fresh.
+
     let next = db
         .write(|tx| {
             let fresh = tx
@@ -170,9 +145,6 @@ fn a_non_fresh_field_earns_no_witness() {
     ));
 }
 
-/// The adversarial sweep over every dyn WRITE entry: unknown relation
-/// ids, malformed arity, wrong value types — each a typed error, never
-/// a panic, on both the insert and delete lanes.
 #[test]
 fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
     let dir = common::TempDir::new("dyn-write-sweep");
@@ -196,7 +168,7 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
                 Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
             ));
         }
-        // A closed relation refuses writes at entry, typed.
+
         let closed = tx
             .insert_dyn(Graph::KIND, [&[Value::U64(0)]])
             .expect_err("ground axioms are never written");
@@ -207,11 +179,6 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
     .unwrap();
 }
 
-/// The same sweep over every dyn READ entry, write-transaction side and
-/// snapshot side: point reads take ids as data and answer typed errors
-/// or honest misses — including out-of-roster closed handles, which are
-/// ABSENT, not errors (an unknown word is a miss; the roster is the
-/// relation's extension).
 #[test]
 fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
     let dir = common::TempDir::new("dyn-read-sweep");
@@ -222,7 +189,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             Graph::NODE,
             &node_row(ids[0], "never-interned", Kind::Lesson.id())
         )?);
-        // Closed relations answer from the sealed extension.
+
         assert!(tx.contains_dyn(Graph::KIND, &[Value::U64(Kind::Assessment.id().0)])?);
         assert!(
             !tx.contains_dyn(Graph::KIND, &[Value::U64(7)])?,
@@ -235,8 +202,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             unknown,
             Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
         ));
-        // get_dyn: a mis-aimed statement id is typed — out of range, a
-        // containment, or another relation's key.
+
         for statement in [StatementId(40), EDGE_DST_CONTAINMENT, KIND_KEY] {
             let err = tx
                 .get_dyn(Graph::NODE, statement, &[Value::U64(ids[0])])
@@ -280,7 +246,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             unknown,
             Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
         ));
-        // The snapshot point read: committed state, decoded values out.
+
         let row = snap
             .get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])])?
             .expect("seeded row");
@@ -289,7 +255,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
             snap.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(555)])?,
             None
         );
-        // A closed relation's key resolves against the sealed extension.
+
         let kind = snap
             .get_dyn(Graph::KIND, KIND_KEY, &[Value::U64(1)])?
             .expect("Assessment is row 1");
@@ -309,12 +275,6 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
     .expect("snapshot sweep");
 }
 
-/// One commit violating a containment AND a capacity law: ONE rejection, both
-/// cited (the statement phase is scan-complete), every offending fact
-/// decoded — including the parent node whose `title` was interned BY the
-/// rejected transaction (the provisional-id case that forces decode at
-/// rejection time), and the whole set rendered through
-/// [`render_rejection`] with canonical spellings and named values.
 #[test]
 fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     let dir = common::TempDir::new("dyn-rejection-render");
@@ -345,8 +305,7 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
             && violations.get(1).unwrap().statement_id(&graph_schema()) == OUTDEGREE_CAPACITY,
         "both statements cited, in citation order: {cited:?}"
     );
-    // The decoded cited facts: the dangling edge, and the hub node whose
-    // title only the rejected transaction ever interned.
+
     let edge = &violations.cited_facts(0)[0];
     assert_eq!(edge.relation(), Graph::EDGE);
     assert_eq!(edge.values()[1], Value::U64(9999));
@@ -382,10 +341,6 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     );
 }
 
-/// The FD form's rendering. Key violations preempt the statement phase
-/// (the containment probes are defined over the keyed final state), so
-/// an FD conviction is always its own rejection — one commit per phase,
-/// all three forms covered between this test and the one above.
 #[test]
 fn an_fd_rejection_renders_the_key_form() {
     let dir = common::TempDir::new("dyn-rejection-fd");
@@ -421,10 +376,6 @@ fn an_fd_rejection_renders_the_key_form() {
     );
 }
 
-/// The manifest carries every statement's id, kind, and canonical
-/// spelling — the name→id tables a binding caches at open now cover
-/// statements, so a foreign host cites any statement id without a Rust
-/// renderer in reach.
 #[test]
 fn the_manifest_names_every_statement_in_canonical_spelling() {
     let manifest = Graph.manifest();
@@ -446,7 +397,7 @@ fn the_manifest_names_every_statement_in_canonical_spelling() {
         assert_eq!(statements[idx].kind, kind, "statement {idx}");
         assert_eq!(statements[idx].spelling, spelling, "statement {idx}");
     }
-    // The extension table still rides per relation — handles as data.
+
     let rows = manifest.relations[0]
         .extension
         .as_ref()
