@@ -1,21 +1,3 @@
-//! The lawful orchestration: device honesty first, then per durability
-//! lane — load the twin pair, run the untimed window setup (only when
-//! `law_reject_window` is selected), time the selected families in
-//! registry order (one clock-proxy stamp bracketing each family's
-//! engine+`SQLite` pair), then the post-state fold over ALL FIVE
-//! ordinary relations (rejections must have committed nothing; legal
-//! lanes must have landed identically on both twins).
-//!
-//! **No oracle gate runs here: this world has no queries** — law 3 of
-//! the standing run binds queries, and the lawful world declares none.
-//! The write families' oracle is the post-state fold
-//! ([`crate::poststate`]) plus LAW-1's naive verdict parity (the
-//! differential test over the full law roster, verdicts and citations
-//! compared whole).
-//!
-//! REPORT-class, never gated: the artifacts land and nothing else — no
-//! budget gate ever reads a lawful row (the standing report-class law).
-
 use std::path::Path;
 
 use crate::corpus_gen::Scale;
@@ -26,8 +8,6 @@ use crate::{clockproxy, poststate, trace_out};
 
 use super::{LawFamily, LawSizes, families, ids, lanes, load, render, schema};
 
-/// One lawful report row — the crud row's fields, defined locally (the
-/// worlds stay independent; nothing here imports from `crud`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LawRow {
     pub family: &'static str,
@@ -35,25 +15,16 @@ pub struct LawRow {
     pub about: &'static str,
     pub ours: Stats,
     pub theirs: Stats,
-    /// ours p50 / theirs p50 (below 1.0 means we are faster) — the
-    /// read-family ratio convention.
+
     pub ratio_p50: f64,
-    /// The measured samples' summed work (identical on both engines by
-    /// the shared-stream representation, asserted per family).
+
     pub work: u64,
     pub ghz: GhzReport,
-    /// The traced twin sample's flame top-10 (+ phase table), when
-    /// `--trace` ran — the artifacts sit under
-    /// `<out>/trace/lawful/<lane>/`.
+
     pub flame: Option<String>,
 }
 
-/// The timed entry point at the standing bench scale: delegates to
-/// [`run_with`] under `LawSizes::of(Scale::S)`.
-///
 /// # Errors
-///
-/// Everything [`run_with`] refuses, verbatim.
 pub fn run(
     dir: &Path,
     seed: u64,
@@ -64,17 +35,15 @@ pub fn run(
     run_with(dir, seed, LawSizes::of(Scale::S), samples, only, trace_root)
 }
 
-/// The full lawful run: returns `(markdown, json)` — the two artifacts
-/// as strings ([`render`]), produced only after every lane's post-state
-/// fold passed. `samples` overrides each registered protocol's sample
-/// count (warmups stay registered); `only` selects families by
-/// registry name (unknown names are refused before anything loads).
-///
+/// The full lawful run: returns `(markdown, json)` — the two artifacts count
+/// (warmups stay registered); `only` selects families by as strings
+/// ([`render`]), produced only after every lane's post-state fold passed.
+/// `samples` overrides each registered protocol's sample registry name (unknown
+/// names are refused before anything loads).
 /// # Errors
-///
-/// The device-honesty refusal (the timed lawful lanes are fsync-bound);
-/// an unknown `--only` name; loader, runner, and post-state failures,
-/// stringified with the lane named.
+/// The device-honesty refusal (the timed lawful lanes are fsync-bound); an
+/// unknown `--only` name; loader, runner, and post-state failures, stringified
+/// with the lane named.
 pub fn run_with(
     dir: &Path,
     seed: u64,
@@ -84,8 +53,7 @@ pub fn run_with(
     trace_root: Option<&Path>,
 ) -> Result<(String, String), String> {
     // Device honesty FIRST, before creating anything: every legal
-    // sample is one durable commit, so a RAM-backed volume would report
-    // a number physics never signed.
+
     crate::devhonesty::assert_disk_backed(dir, "the timed lawful lanes")
         .map_err(|refusal| refusal.to_string())?;
     if let Some(names) = only {
@@ -120,8 +88,8 @@ pub fn run_with(
     Ok((render::markdown(seed, &rows), render::json(seed, &rows)))
 }
 
-/// The registered protocol with the sample override applied (warmups
-/// stay registered — the override trims measurement, never readiness).
+/// The registered protocol with the sample override applied (warmups stay
+/// registered — the override trims measurement, never readiness).
 fn proto_of(family: &LawFamily, samples: Option<u32>) -> Protocol {
     Protocol {
         warmups: family.protocol.warmups,
@@ -129,7 +97,6 @@ fn proto_of(family: &LawFamily, samples: Option<u32>) -> Protocol {
     }
 }
 
-/// The read-family ratio convention: ours p50 over theirs p50.
 #[expect(
     clippy::cast_precision_loss,
     reason = "reporting accepts lossy integer-to-float conversion"
@@ -138,10 +105,6 @@ fn ratio(ours: u64, theirs: u64) -> f64 {
     ours as f64 / theirs.max(1) as f64
 }
 
-/// One durability lane, whole: load, window setup, the selected
-/// families in registry order (each timed pair followed by its traced
-/// twin sample when `--trace` ran — [`trace_out::traced_twin`]), the
-/// post-state fold.
 #[expect(
     clippy::too_many_lines,
     reason = "one match arm per registered family: the registry IS the run order"
@@ -159,19 +122,14 @@ fn run_lane(
     let (db, conn) = load::load_stores(&dir.join(lane.label()), seed, sizes, lane)?;
     let mut ours_cursor = lanes::LawCursor::at_base(sizes);
     let mut theirs_cursor = lanes::LawCursor::at_base(sizes);
-    // The untimed window setup — run ONLY when the window rejection is
+
     // selected (both engines, cursors advanced in lockstep, before any
-    // timing starts).
+
     if selected("law_reject_window") {
         lanes::fill_window_target_engine(&db, sizes, &mut ours_cursor)?;
         lanes::fill_window_target_sqlite(&conn, sizes, &mut theirs_cursor)?;
     }
-    // ONE legal op stream covering both legal families, sliced in
-    // registry order — the per-task n counters continue across the
-    // slice boundary, so no (task, n) key is ever minted twice. Under
-    // --trace each selected legal family carries ONE spare op: the
-    // traced twin sample is the stream's continuation, never a
-    // re-derivation (a re-minted (task, n) would refuse).
+
     let count_for = |name: &str| -> usize {
         families()
             .iter()
@@ -239,9 +197,7 @@ fn run_lane(
                         lanes::reject_key_sqlite(&conn, proto)?,
                     ))
                 })?;
-                // The rejection lanes' traced samples restart their
-                // sacrificial-id counters — legal: every such commit
-                // refuses, so no id is ever committed on either side.
+
                 let flame = trace_out::traced_twin(
                     trace_dir,
                     family.name,
@@ -316,9 +272,6 @@ fn run_lane(
         });
     }
 
-    // The post-state fold over ALL FIVE ordinary relations: rejections
-    // must have committed nothing; legal lanes must have landed
-    // identically — the run's oracle (this world has no queries).
     for rel in [
         ids::TASK,
         ids::ATTEMPT,
