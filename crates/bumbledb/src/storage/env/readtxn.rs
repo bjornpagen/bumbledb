@@ -6,7 +6,6 @@ use super::read_meta::{read_dict_next_id, read_u64};
 use super::{GenerationId, META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
-
     /// # Errors
 
     pub fn generation(&self) -> Result<GenerationId> {
