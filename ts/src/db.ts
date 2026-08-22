@@ -8,7 +8,7 @@
  * A store read is one callback: `db.read((instance, witness) => …)`. The
  * instance is invalid the moment the callback returns; the witness is a
  * cloneable token and may escape. There is no handle-shaped read and no
- * `using snap = db.read()`. Builder, owned instance, and witness
+ * `using snap = db.read`. Builder, owned instance, and witness
  * implement `Symbol.dispose`. Prepared plans are plain values whose
  * engine-side half is reclaimed by a GC finalizer — reclamation only,
  * never correctness.
@@ -63,41 +63,15 @@ import type { AnyRelation, Fact, FreshKeys } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
 
-/**
- * The ordinary (writable, scannable) relations of a schema's record — the
- * only values the runtime methods accept: closed relations lack the
- * relation shape entirely, so passing one is a type error.
- */
 type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
 
-/**
- * Facts consumed vs facts that changed the in-memory final-state view.
- * The length-1 report is `{ submitted: 1n, changed: 0n | 1n }`.
- */
 interface MutationReport {
 	readonly submitted: bigint
 	readonly changed: bigint
 }
 
-/**
- * The ONE collection-write spelling: typed fact objects, iterable
- * (proposals/one-representation/20). The column transport (`ColumnBatch`,
- * the union's second arm) is DELETED (70-deletions D1) — it existed only
- * because the row spelling was slow, and a transport kept beside its
- * replacement is a mode; the row spelling is now also the fast one (the
- * facts cross as one flat row-major cells array beside the explicit row
- * count — {@link FlatCollection}).
- */
 type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>>
 
-/**
- * One projected collection as it crosses the bridge: the exact row count
- * beside the flat cells. `rows` is EXPLICIT because the cells alone
- * cannot state it — a nullary relation's N facts project to 0 cells, so
- * any bridge-side `cells.length / arity` derivation would silently
- * collapse them to an empty write (nullary relations are LEGAL; the
- * engine pins them) — and the JS side is the ONE side that knows N.
- */
 interface FlatCollection {
 	readonly rows: bigint
 	readonly cells: readonly FactValue[]
@@ -143,10 +117,6 @@ function mutateCollection<R extends AnyRelation>(
 	return Object.freeze({ submitted: report.submitted, changed: report.changed })
 }
 
-/**
- * Half-open fresh-id range from one `reserve`. Empty cannot yield a
- * minted id — `start` exists only on the nonempty arm.
- */
 type FreshRange =
 	| {
 			readonly empty: true
@@ -198,80 +168,36 @@ function freshRangeOf(wire: WireFreshRange): FreshRange {
 	})
 }
 
-/**
- * The key object of a key-statement-selected `get`: exactly the selected
- * `key()` statement's projection fields, each at the relation's own BARE
- * structural value type — the {@link KeyFact} rule generalized from the
- * primary key to ANY declared key statement.
- */
 type DeclaredKeyFact<R extends AnyRelation, Projection extends readonly string[]> = {
 	readonly [K in Projection[number] & keyof Fact<R>]: Fact<R>[K]
 }
 
-/**
- * One offending fact of a violation: the cited relation's name (a member
- * of the schema's record) and the fact decoded to a named natural-value
- * object — partial exactly as the engine cites it. Closed-referencing
- * cells arrive as handle NAMES (the marshal bijection's read half), so the
- * record and the violation's `canonical` string — which the engine already
- * renders with handle names — agree on the one spelling.
- */
 interface OffendingFact<Rels extends SchemaRelations> {
 	readonly relation: keyof Rels & string
 	readonly fact: Readonly<Record<string, FactValue>>
 }
 
-/**
- * Shared body of every violation arm: the engine's canonical rendering and
- * the cited facts. `statement` is NOT here — its presence is the
- * discriminant. Implied auto-keys have no SDK spelling (`statement` is
- * the value `undefined`); every declared form carries the IDENTICAL
- * statement value the schema declared (consumers `===`-match it).
- */
 type ViolationBody<Rels extends SchemaRelations> = {
 	readonly canonical: string
 	readonly facts: readonly OffendingFact<Rels>[]
 }
 
-/**
- * A functionality violation of an engine-materialized fresh-implied or
- * closed auto-key. These slots have no declared spelling (`schema()`
- * rejects an explicit duplicate); `statement` is present and `undefined`.
- */
 type ImpliedKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly kind: "functionality"
 	readonly statement: undefined
 }
 
-/**
- * A functionality violation of a declared `key()` statement. `statement`
- * is the IDENTICAL SDK value the schema declared.
- */
 type DeclaredKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly kind: "functionality"
 	readonly statement: Statement
 }
 
-/**
- * A containment violation of a declared `contained()` statement (no
- * `orientation` — that property exists exactly on {@link MirrorViolation}).
- */
 type ContainmentViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly kind: "containment"
 	readonly statement: Statement
 	readonly direction: "sourceUnsatisfied" | "targetRequired"
 }
 
-/**
- * A containment violation of one slot of a declared `mirrors()` statement.
- * BOTH materialized slots render as the one `==` utterance in the written
- * orientation (identical `canonical` strings; the engine's `render.rs`
- * never emits a bare `<=` for a mirrored pair). `direction` is relative
- * to the violated SLOT's own orientation, so it alone cannot say which
- * side of the `==` was violated: `written` is the `source <= target` slot
- * as the statement was spelled, `mirrored` the engine-materialized
- * `target <= source` partner.
- */
 type MirrorViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly kind: "containment"
 	readonly statement: Statement
@@ -279,25 +205,12 @@ type MirrorViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly orientation: "written" | "mirrored"
 }
 
-/**
- * A capacity violation of a declared `capacity()` statement. `measure` is
- * the engine's witnessed group total — u128-wide, crossing whole as
- * bigint (C3: truncation is unrepresentable).
- */
 type CapacityViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
 	readonly kind: "capacity"
 	readonly statement: Statement
 	readonly measure: bigint
 }
 
-/**
- * One violated statement of a rejected commit, as a typed value. The
- * arms are a true discriminant: `statement === undefined` is exactly the
- * implied-auto-key arm; every declared form carries `Statement` (not
- * `Statement | undefined`, not an omit-optional). `canonical` is the
- * ENGINE's rendering. `direction` / `measure` pass through from the
- * engine VERBATIM.
- */
 type Violation<Rels extends SchemaRelations> =
 	| ImpliedKeyViolation<Rels>
 	| DeclaredKeyViolation<Rels>
@@ -314,7 +227,6 @@ type Violation<Rels extends SchemaRelations> =
  */
 type AbandonedArm<R> = R extends Abandon<infer P> ? { readonly tag: "abandoned"; readonly abandoned: P } : never
 
-/** A callback return that is not Promise-like. TypeScript `never` is not a runtime boundary. */
 type SyncResult<R> = R extends PromiseLike<unknown> ? never : R
 
 interface Committed<T> {
@@ -326,10 +238,6 @@ type Admission<Rels extends SchemaRelations, T> =
 	| { readonly tag: "accepted"; readonly value: T }
 	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
 
-/**
- * A write's domain outcome. One discriminant: narrow on `tag`. The
- * abandoned arm is present exactly when the callback can abandon.
- */
 type WriteOutcome<Rels extends SchemaRelations, R> =
 	| { readonly tag: "accepted"; readonly value: Committed<Exclude<R, Abandon<unknown>>> }
 	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
@@ -339,19 +247,8 @@ type WriteFromOutcome<Rels extends SchemaRelations, R> =
 	| WriteOutcome<Rels, R>
 	| { readonly tag: "moved"; readonly witnessed: bigint; readonly current: bigint }
 
-/**
- * The delta-building callback of a write: runs synchronously against the
- * live transaction. Returning {@link abandon}`(payload)` rolls the
- * transaction back (R10) — the result type carries the payload arm exactly
- * then.
- */
 type DeltaBuild<Rels extends SchemaRelations, R = void> = (tx: WriteTx<Rels>) => R
 
-/**
- * The runtime discriminant of {@link Abandon} values — a property probe is
- * how `write`/`writeFrom` distinguish "abort without committing" from an
- * ordinary callback result, never a guess about the host's own value shapes.
- */
 const abandonMark: unique symbol = Symbol("bumbledb.abandon")
 
 /**
@@ -366,43 +263,16 @@ interface Abandon<P> {
 	readonly payload: P
 }
 
-/**
- * Wraps a payload in the {@link Abandon} sentinel — the one way a write
- * callback declines to commit: `return abandon(payload)` aborts the delta
- * (nothing is committed, not even an empty commit) and the write resolves
- * to `{ tag: "abandoned", abandoned: payload }`, from `write` and `writeFrom`
- * alike (R10).
- */
 function abandon<P>(payload: P): Abandon<P> {
 	return Object.freeze({ [abandonMark]: true as const, payload })
 }
 
-/**
- * The abandon payload type a write callback's return type implies: the
- * payload of its `Abandon` arm, `never` when the callback can never
- * abandon (the `abandoned` outcome is then statically unreachable and
- * {@link AbandonedArm} erases it from the sum).
- */
 type AbandonedPayload<R> = R extends Abandon<infer P> ? P : never
 
-/**
- * Narrows a write callback result to the abandon sentinel. The probe is
- * the private {@link abandonMark} symbol only {@link abandon} sets, and
- * `R`'s `Abandon` arm is the only way a sentinel can flow out of the
- * callback — so the narrowed payload type is sound by construction.
- */
 function isAbandon<R>(value: R): value is R & Abandon<AbandonedPayload<R>> {
 	return typeof value === "object" && value !== null && abandonMark in value
 }
 
-/**
- * The abandon outcome's trusted admission seam: the value's shape is the
- * checkable half (the sentinel mark only {@link abandon} mints, and the
- * outcome carrying that sentinel's own payload), and the sentinel's
- * existence IS the proof `R` carries an `Abandon` arm — so the outcome is
- * admitted at the conditional {@link AbandonedArm} face the type tier
- * cannot resolve over an open `R`.
- */
 function isAbandonedOutcome<Rels extends SchemaRelations, R>(
 	outcome: { readonly tag: "abandoned"; readonly abandoned: AbandonedPayload<R> },
 	sentinel: Abandon<AbandonedPayload<R>>
@@ -410,7 +280,6 @@ function isAbandonedOutcome<Rels extends SchemaRelations, R>(
 	return isAbandon(sentinel) && outcome.abandoned === sentinel.payload
 }
 
-/** Builds the abandoned write outcome from the callback's own sentinel (the R10 arm's one mint). */
 function abandonedOutcome<Rels extends SchemaRelations, R>(
 	sentinel: Abandon<AbandonedPayload<R>>
 ): WriteOutcome<Rels, R> {
@@ -421,37 +290,16 @@ function abandonedOutcome<Rels extends SchemaRelations, R>(
 	return outcome
 }
 
-/**
- * One live write transaction: the submitted delta with the engine's
- * FINAL-STATE point-read view (base + pending delta — the exact state the
- * commit judgment judges, so check-then-act is race-free by construction).
- * Spent when its owning `write`/`writeFrom` call resolves the attempt;
- * any later use throws.
- */
 interface WriteTx<Rels extends SchemaRelations> {
-	/**
-	 * Records a collection of inserts. Singleton is `[fact]`. Empty is
-	 * lawful. Returns how many facts were consumed and how many changed
-	 * the in-memory final-state view. Every fact is complete — omitted
-	 * fresh cells are a type error; mint first with {@link WriteTx.reserve}.
-	 */
+
 	insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
-	/**
-	 * Records a collection of deletes. Singleton is `[fact]`. Returns
-	 * how many facts were consumed and how many changed the view.
-	 */
+
 	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
-	/**
-	 * Mints `count` consecutive fresh values for a `.fresh` field.
-	 * `count === 0n` is empty and does not yield a start.
-	 */
+
 	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
-	/** Final-state membership of one complete fact. */
+
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-	/**
-	 * Final-state twin of {@link ReadInstance.get}: primary key or a
-	 * declared `key()` statement, against the commit judgment's view.
-	 */
+
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
@@ -462,74 +310,32 @@ interface WriteTx<Rels extends SchemaRelations> {
 
 const witnessTypes: unique symbol = Symbol("bumbledb.witness.types")
 
-/**
- * Cloneable generation evidence from one store read. May cross `await`.
- * Disposal is idempotent; later use throws {@link ErrSpentHandle}.
- */
 interface Witness<Rels extends SchemaRelations> extends Disposable {
 	readonly [witnessTypes]?: Rels
 }
 
-/**
- * The borrowed instance one `db.read((instance, witness) => …)` callback
- * receives. Invalid the moment the callback returns. A stashed value
- * throws {@link ErrUseAfterScope}. Not a handle: there is no `db.read()`.
- */
 interface ReadInstance<Rels extends SchemaRelations> {
-	/**
-	 * The committed generation this instance witnessed — read inside the
-	 * lease's own transaction.
-	 */
+
 	readonly generation: bigint
-	/** Full-relation export in row-id order, decoded to bare structural facts. */
+
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
-	/**
-	 * Exact cardinality of `relation` at this lease's snapshot — a
-	 * structural read of the engine's maintained counter (folded
-	 * transactionally at every commit, pinned equal to the scan count),
-	 * never a scan, never an estimate. `bigint` by the wire law: engine
-	 * cardinality is u64, which is not a JavaScript safe integer by
-	 * construction. `count` and `scan` run inside the lease's one read
-	 * transaction, so both observe the same snapshot. Closed relations
-	 * are a type error, exactly as `scan` — a sealed extension is schema
-	 * data whose length the caller already declared.
-	 */
+
 	count<R extends MemberRelation<Rels>>(relation: R): bigint
-	/**
-	 * Committed-state point lookup through the relation's primary key
-	 * (the {@link KeyFact} rule); `undefined` on a miss.
-	 */
+
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	/**
-	 * Committed-state point lookup through a DECLARED `key()` statement of
-	 * this schema — the key object is typed by the statement's own
-	 * projection; `undefined` on a miss.
-	 */
+
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
 		keyStatement: KeyStatement<R, P>,
 		key: DeclaredKeyFact<R, P>
 	): Fact<R> | undefined
-	/** Committed-state membership of one complete fact. */
+
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-	/**
-	 * Executes a prepared query against this instance with the typed
-	 * params object; returns the answer SET as plain rows with bare
-	 * structural values (no order — the host sorts). This is the ONE
-	 * execution spelling ({@link Prepared} carries no `execute`).
-	 */
+
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
 }
 
-/**
- * The module-private inference slot of {@link Prepared}: an optional symbol
- * property (never set at runtime) that keeps the prepared value's `Row` and
- * `Params` type arguments load-bearing, so `execute` infers the typed rows
- * and the typed params object from the value alone — the query module's
- * `inferred` pattern, local to this module. A type-level carrier only:
- * values stay bare, nothing is asserted.
- */
 const preparedTypes: unique symbol = Symbol("bumbledb.prepared.types")
 
 /**
@@ -545,50 +351,32 @@ interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecor
 	readonly [preparedTypes]?: { readonly rels: Rels; readonly row: Row; readonly params: Params }
 }
 
-/**
- * An open store. There is no close: read through `read`,
- * write through `write`/`writeFrom`, and let the process own the
- * environment's lifetime (the engine fsyncs every commit, so durability
- * never waits on a close). A second `open`/`create` of the same path
- * while this handle lives is the engine's `EnvironmentLocked`.
- */
 interface Db<Rels extends SchemaRelations> {
-	/** The theory this store was opened with (fingerprint-verified by the engine). */
+
 	readonly schema: Schema<Rels>
-	/**
-	 * One store read: runs `body` SYNCHRONOUSLY inside the engine lease
-	 * and returns its result. The {@link ReadInstance} is invalidated
-	 * when `body` returns — a stashed use throws {@link ErrUseAfterScope}.
-	 * The {@link Witness} is a clone and may escape. A thenable return
-	 * throws {@link ErrAsyncCallback}.
-	 */
+
 	read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R>
 	/**
-	 * One delta transaction: builds the delta synchronously through `fn`,
-	 * commits, and returns the domain outcome. A throw from `fn` aborts
-	 * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
-	 * commit by returning {@link abandon}`(payload)`: the transaction rolls
-	 * back — nothing is committed, not even an empty commit — and the
-	 * outcome is `{ tag: "abandoned", abandoned: payload }`.
-	 */
+ * One delta transaction: builds the delta synchronously through `fn`,
+ * commits, and returns the domain outcome. A throw from `fn` aborts
+ * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
+ * commit by returning {@link abandon}`(payload)`: the transaction rolls
+ * back — nothing is committed, not even an empty commit — and the
+ * outcome is `{ tag: "abandoned", abandoned: payload }`.
+ */
 	write<R>(fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteOutcome<Rels, SyncResult<R>>
-	/**
-	 * Witnessed write: commits only if no state-changing commit landed
-	 * since `witness` was minted. A moved generation is
-	 * `{ tag: "moved" }` — retry is host policy; this method never loops.
-	 */
+
 	writeFrom<R>(witness: Witness<Rels>, fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteFromOutcome<Rels, SyncResult<R>>
 	/**
-	 * Prepares a query value built against THIS schema (identity is the
-	 * membership rule): lowers it to the engine IR, pins the plan, and
-	 * returns the typed {@link Prepared} value. Every IR roster refusal —
-	 * rule caps, rec roster, type rules — is the ENGINE's typed
-	 * judgment and throws here carrying its message intact.
-	 */
+ * Prepares a query value built against THIS schema (identity is the
+ * membership rule): lowers it to the engine IR, pins the plan, and
+ * returns the typed {@link Prepared} value. Every IR roster refusal —
+ * rule caps, rec roster, type rules — is the ENGINE's typed
+ * judgment and throws here carrying its message intact.
+ */
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
 }
 
-/** One relation's runtime tables: engine id, the identical schema member, field ids, primary key. */
 interface RelationEntry {
 	readonly id: number
 	readonly member: SchemaRelation
@@ -596,19 +384,11 @@ interface RelationEntry {
 	readonly primaryKey: PrimaryKey | undefined
 }
 
-/** One relation's primary candidate key: its materialized statement id and projection. */
 interface PrimaryKey {
 	readonly statementId: number
 	readonly projection: readonly string[]
 }
 
-/**
- * One materialized-statement slot as the SDK mirrors it. Implied auto-keys
- * omit `statement` (the engine owns those slots); every declared form
- * carries the SDK value that lowered to it. Functionality forms also
- * carry the key's owner and projection (what keyed point reads resolve
- * through).
- */
 type ImpliedKeyEntry = {
 	readonly kind: "functionality"
 	readonly owner: string
@@ -695,17 +475,6 @@ function violationFromEntry<Rels extends SchemaRelations>(
 	})
 }
 
-/**
- * Mirrors the engine's materialized statement order
- * (`SchemaDescriptor::materialized_statements`, pinned by the fingerprint):
- * one auto-key per fresh field (relation declaration order, then field
- * order), one closed auto-key per closed relation (declaration order),
- * then the declared statements in declaration order — a `mirrors`
- * statement occupying TWO adjacent slots (the engine lowers `==` to two
- * containments, `source <= target` first), both owned by the one SDK
- * value. This positional match is how statement ids resolve back to SDK
- * statement values without the engine ever learning a wire format.
- */
 function materializedEntries(theory: AnySchema): StatementEntry[] {
 	const entries = impliedKeyEntries(theory)
 	for (const statement of theory.statements) {
@@ -714,13 +483,6 @@ function materializedEntries(theory: AnySchema): StatementEntry[] {
 	return entries
 }
 
-/**
- * The engine-materialized implied keys, in the engine's pinned order: one
- * auto-key per fresh field (relation declaration order, then field order),
- * then one closed auto-key `R(id) -> R` per closed relation (declaration
- * order). These slots carry no SDK statement value — the engine owns them
- * (`schema()` rejects an explicit duplicate).
- */
 function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 	const entries: StatementEntry[] = []
 	for (const member of Object.values(theory.relations)) {
@@ -749,12 +511,6 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 	return entries
 }
 
-/**
- * One declared statement's materialized slots: a key or capacity statement
- * occupies one, a `mirrors` occupies two adjacent slots (the engine lowers
- * `==` to two containments, `source <= target` first), both owned by the
- * one SDK value.
- */
 function declaredEntries(statement: Statement): StatementEntry[] {
 	const data = statement.data
 	switch (data.kind) {
@@ -793,27 +549,12 @@ function isThenable(value: unknown): boolean {
 	return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function"
 }
 
-/**
- * Narrows a keyed-get middle argument to a statement value (vs a key
- * object) through the statement module's admission brand — a
- * REPRESENTATION, never a shape probe: fact cell shapes are structurally
- * OPEN (an interval value carrying an excess `kind` property is a legal
- * cell), so no property probe could ever be sound here, but no host-built
- * key object can spell the module-private brand symbol.
- */
 function isStatementValue<R extends AnyRelation, P extends readonly string[]>(
 	value: KeyFact<R> | KeyStatement<R, P>
 ): value is KeyStatement<R, P> {
 	return isStatement(value)
 }
 
-/**
- * THE one selector dispatch of the `get` overload pair (primary-key vs
- * key-statement, `docs/architecture/70-api.md` § the freeze): judges the
- * middle argument once and hands the narrowed pieces to the chosen
- * continuation. Every keyed get on a read scope, write tx, and builder
- * dispatches through here, so the two mismatch refusals speak with one voice.
- */
 function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
 	keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
 	declaredKey: DeclaredKeyFact<R, P> | undefined,
@@ -832,22 +573,11 @@ function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
 	return byPrimary(keyOrStatement)
 }
 
-/** The id-resolution tables one open builds: relation entries by name, statement slots by id. */
 interface Tables {
 	readonly relations: ReadonlyMap<string, RelationEntry>
 	readonly statements: readonly StatementEntry[]
 }
 
-/**
- * Builds the id-resolution tables from the manifest, verifying the SDK's
- * positional mirror against the engine's reported order — any drift
- * (count, kind, id, or membership) is a construction-time failure, never a
- * silent misattribution of a violation to the wrong statement value. The
- * declaration-ordinal law the query lowering leans on is verified in the
- * same walks: relation ids and sealed field ids both equal declaration
- * order, so a constructed `Tables` IS the proof and `prepare` inherits it
- * structurally — never a silently misaddressed query.
- */
 function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 	const entries = materializedEntries(theory)
 	if (entries.length !== manifest.statements.length) {
@@ -931,16 +661,11 @@ function tablesFromTheory(theory: AnySchema): Tables {
 	return Object.freeze({ relations, statements: Object.freeze(entries) })
 }
 
-/** The point-read half a transaction and a read scope share, over their own handle. */
 interface PointReads {
 	contains(relationId: number, row: readonly FactValue[]): boolean
 	get(relationId: number, statementId: number, key: readonly FactValue[]): FactValue[] | null
 }
 
-/**
- * One borrowed instance's PRIVATE lifetime record. Held in
- * {@link instanceStates} — the native handle is never a public value.
- */
 interface InstanceState {
 	readonly handle: InstanceHandle
 	live: boolean
@@ -966,12 +691,6 @@ const witnessReclaimer = new FinalizationRegistry<WitnessHandle>(function reclai
 	}
 })
 
-/**
- * One prepared value's PRIVATE engine half: the pinned plan handle, the
- * owning store's identity token, and the query's marshaling tables (params
- * in declaration order, select columns in head order). Held in
- * {@link preparedPlans} — the plan handle is never a public value.
- */
 interface PreparedPlan {
 	readonly handle: PreparedHandle
 	readonly owner: object
@@ -979,15 +698,8 @@ interface PreparedPlan {
 	readonly finds: readonly FindColumn[]
 }
 
-/** The private engine halves of this module's prepared values. */
 const preparedPlans = new WeakMap<object, PreparedPlan>()
 
-/**
- * Reclaims the engine-side plan of a garbage-collected {@link Prepared}
- * value. RECLAMATION ONLY, never correctness: a plan the collector never
- * visits is idle engine memory until process exit, and a failure to close
- * is swallowed (there is no one left to care — the owning value is gone).
- */
 const planReclaimer = new FinalizationRegistry<PreparedHandle>(function reclaimPlan(handle) {
 	const closed = errors.trySync(function closePlan() {
 		native.preparedClose(handle)
@@ -1007,11 +719,6 @@ const ErrUseAfterScope = errors.new(
 const ErrForeignPrepared = errors.new("bumbledb foreignPrepared: a prepared query met a foreign instance")
 const ErrForeignWitness = errors.new("bumbledb foreignWitness: a witness met a foreign store")
 
-/**
- * The shared typed read surface: store leases and owned instances both
- * expose scan/count/get/contains/execute/prepare. The native ops are the only
- * difference — one way to read, two handle kinds.
- */
 interface CatalogNative {
 	scan(relationId: number): FactValue[][]
 	count(relationId: number): bigint
@@ -1152,7 +859,6 @@ function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation)
 	return entry
 }
 
-/** Resolves a key-statement-selected read: identity is the membership rule. */
 function declaredKeyOf(tables: Tables, theory: AnySchema, relation: AnyRelation, statement: Statement): PrimaryKey {
 	const statementId = tables.statements.findIndex(function byIdentity(candidate) {
 		return "statement" in candidate && candidate.statement === statement
@@ -1278,12 +984,6 @@ function createReadInstance<Rels extends SchemaRelations>(
 	return instance
 }
 
-/**
- * Constructs one open `Db` over an already-admitted handle: builds the
- * id-resolution tables once and closes over them — the `Db` owns handle
- * and tables and nothing else. Handle lifetime is the process's: the store
- * cache holds the environment handle until the exit hook closes it.
- */
 function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<Rels>, manifest: Manifest): Db<Rels> {
 	const tables = tablesOf(theory, manifest)
 	/** This store's identity token: read scopes and prepared values carry it, so cross-store use is a typed refusal. */
@@ -1316,7 +1016,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			const entry = ordinaryEntry(tables, theory, relation)
 			return reads.contains(entry.id, rowOf(relation.data, recordOf(fact)))
 		}
-		/** One keyed point read through an already-resolved key, decoded to a fact (`undefined` on a miss). */
+
 		function readThroughKey<R extends MemberRelation<Rels>>(
 			relation: R,
 			entry: RelationEntry,
@@ -1613,16 +1313,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	})
 }
 
-/**
- * The engine twin of the schema-level class wall, as a matchable value
- * (`errors.is`): the shared lowering rejected a spec whose statement pairs
- * faces with disagreeing newtype labels — the faces of a dependency agree
- * on their newtype, or neither carries one. UNREACHABLE through the typed
- * builder (the SDK computes every label from the laws, so its lowered
- * specs cohere by construction); a raw spec handed to the bridge is the
- * one road here, and the runtime referee that proves the engine judges
- * what the types claim.
- */
 const ErrNewtypeMismatch = errors.new(
 	"bumbledb newtypeMismatch: a statement pairs faces whose newtypes disagree — the faces of a dependency agree on their newtype, or neither carries one"
 )
@@ -1721,7 +1411,7 @@ interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	count<R extends MemberRelation<Rels>>(relation: R): bigint
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-	/** Same keyed surface as {@link ReadInstance.get}, against the frozen catalog. */
+
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
@@ -1735,7 +1425,7 @@ interface InstanceBuilder<Rels extends SchemaRelations> extends Disposable {
 	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
 	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-	/** Same keyed surface as {@link WriteTx.get}, against the unproved heap. */
+
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
@@ -1944,18 +1634,14 @@ const InstanceBuilder = Object.freeze({
  * hold the `Db` this process opened.
  */
 const Db = Object.freeze({
-	/** Creates a fresh durable store at `path` from the schema. */
+
 	async create<Rels extends SchemaRelations>(
 		storePath: string,
 		theory: Schema<Rels>
 	): Promise<Admission<Rels, Db<Rels>>> {
 		return createStore(storePath, theory)
 	},
-	/**
-	 * Opens an existing durable store at `path` with the same theory.
-	 * Format 8 open never back-fills a descriptor. A second open of a
-	 * still-live path is `EnvironmentLocked`.
-	 */
+
 	async open<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Promise<Db<Rels>> {
 		return openStore(storePath, theory)
 	},
