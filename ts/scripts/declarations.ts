@@ -2,37 +2,12 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
 
-/**
- * Published-declaration isolation, extracted from `build.ts` so the
- * rewrite and the packed-imports contract are units the test suite pins
- * without executing the build (`test/declaration-isolation.test.ts`).
- *
- * `tsc` preserves in-repo `#foo.ts` specifiers (`rewriteRelativeImportExtensions`
- * only rewrites RELATIVE imports). A `#` specifier in a `.d.ts` is resolved
- * through `package.json#imports`. Pointing that `types` condition at
- * `src/*.ts` made every consumer typecheck the implementation — `skipLibCheck`
- * skips `.d.ts`, not `.ts`. The published contract is therefore:
- *
- * - `imports["#*.ts"].types` → `./dist/*.d.ts`
- * - `imports["#*.ts"].default` → `./dist/*.js`
- * - `imports["#*.ts"].bumbledb-src` → `./src/*.ts` (this repo's
- *   `customConditions` only)
- * - every emitted `.d.ts` is rewritten to a relative `.js` specifier, so
- *   the published type graph does not consult `imports` at all
- */
-
-/** The packed `imports["#*.ts"]` map — key order is the TypeScript condition order. */
 const PUBLISHED_HASH_IMPORTS = {
 	"bumbledb-src": "./src/*.ts",
 	types: "./dist/*.d.ts",
 	default: "./dist/*.js"
 } as const
 
-/**
- * `#query/atom.ts` from `dist/db.d.ts` → `./query/atom.js`. TypeScript's
- * published-ESM convention: the specifier names the `.js`; the `.d.ts`
- * sits next to it.
- */
 function relativeFromHash(fromFile: string, hashSpecifier: string, distDir: string): string {
 	if (!hashSpecifier.startsWith("#") || !hashSpecifier.endsWith(".ts")) {
 		throw errors.new(`declaration rewrite expected a #*.ts specifier, got ${hashSpecifier}`)
@@ -42,7 +17,6 @@ function relativeFromHash(fromFile: string, hashSpecifier: string, distDir: stri
 	return relative.startsWith(".") ? relative : `./${relative}`
 }
 
-/** Rewrites every `from "#foo.ts"` in emitted `.d.ts` files to a relative `.js` specifier. */
 function rewriteDeclarationImports(distDir: string): void {
 	for (const file of declarationFiles(distDir)) {
 		const source = fs.readFileSync(file, "utf8")
