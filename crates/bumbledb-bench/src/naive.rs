@@ -168,7 +168,6 @@ impl NaiveDb {
     }
 
     /// refuses those before any final state is formed).
-
     /// # Panics
     pub fn load_candidate(&mut self, facts: &[(RelationId, Vec<Value>)]) {
         for (rel, fact) in facts {
@@ -296,7 +295,6 @@ impl NaiveDb {
     }
 
     /// order; source before target within one statement), deduplicated.
-
     /// states): a delta op naming a closed relation is refused before
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
@@ -332,7 +330,6 @@ impl NaiveDb {
     }
 
     /// The plan-phase ray refusal (C17's write-time strengthening of
-
     /// weight position is a ray refuses the whole commit before a
     fn ray_weight_refusal(&self, delta: &Delta) -> Option<Violation> {
         for (rel, fact) in &delta.inserts {
