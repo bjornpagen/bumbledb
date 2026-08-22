@@ -301,6 +301,71 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		const admitted = schema("UnionTuple", { Source, Target }, pick(true))
 		assert.equal(lower(admitted).statements.length, 2)
 	})
+
+	test("a projection UNION inside one key element degrades the whole type-tier wall — the projection is judged whole, never per-arm", function projectionUnion() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		// A ternary between two `as const` projections infers ONE
+		// KeyStatement whose projection is a UNION of tuples — each arm
+		// individually a lawful key() of Target. A naked-parameter
+		// LiteralProjection would distribute over the arms and answer true
+		// per-arm while DeclaredKeysOf rosters the MERGED field set
+		// ("scope" | "value"), a roster entry matching NO runtime key — a
+		// false wall on a containment the value tier admits. The whitelist
+		// (law.ts, LiteralProjection): a projection is judgeable only as a
+		// single non-union fixed-length tuple of string literals, so the
+		// whole wall degrades silent — this call COMPILES (no expect-error)
+		// and the value tier judges the actual projection value (here
+		// ["value"] — the containment target matches it, admitted).
+		function pickProjection(flag: boolean) {
+			return flag ? (["scope", "value"] as const) : (["value"] as const)
+		}
+		const unionProjectionKey = key(Target, pickProjection(false))
+		const admitted = schema("ProjectionUnion", { Source, Target }, [
+			unionProjectionKey,
+			contained(on(Source, "value"), on(Target, "value"))
+		])
+		assert.equal(lower(admitted).statements.length, 2)
+	})
+
+	test("a REST-TAIL statement tuple degrades the whole type-tier wall — the roster cannot see past the tail", function restTail() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		const head = contained(on(Source, "value"), on(Target, "value"))
+		// `readonly [typeof head, ...Statement[]]` — the head literal, the
+		// tail widened: a head-peeling roster read answers its base case
+		// after one step and judges the head against a roster blind to
+		// EVERY key in the tail (here key(Target, ["value"]), the very key
+		// that admits the head) — a false wall on a schema whose value the
+		// value tier admits. The whitelist (law.ts, DecidableRoster): a
+		// rest tail means the tuple's length is not a literal, so the whole
+		// wall degrades silent — this call COMPILES (no expect-error) and
+		// the value tier judges the full list — admitted.
+		const restTailed: readonly [typeof head, ...Statement[]] = [head, key(Target, ["value"])]
+		const admitted = schema("RestTail", { Source, Target }, restTailed)
+		assert.equal(lower(admitted).statements.length, 2)
+	})
+
+	test("an INTERSECTION of statement tuples stays silent — one non-union type, no distributed judgment", function intersectionTuple() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		const tupleA = [
+			key(Target, ["scope", "value"]),
+			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
+		] as const
+		const tupleB = [key(Target, ["value"]), contained(on(Source, "value"), on(Target, "value"))] as const
+		// An intersection of two individually-lawful tuples is a SINGLE
+		// non-union type (IsMulti answers false — nothing distributes), so
+		// the whitelist judges it whole; whatever the impossible
+		// positionwise intersections resolve to, the tier's one forbidden
+		// verdict stays unspellable — no TargetKeyWall fires on it. A
+		// degenerate spelling no value inhabits (probed at the type level,
+		// the typeTier idiom).
+		type Verdict = LawfulStatements<{ Source: typeof Source; Target: typeof Target }, typeof tupleA & typeof tupleB>
+		type Fired = Verdict extends TargetKeyWall<infer T, infer P> ? readonly [T, P] : "silent"
+		const probeSilent: Equal<Fired, "silent"> = true
+		assert.ok(probeSilent)
+	})
 })
 
 // ————————————————————————————————————————————————————————————————————————

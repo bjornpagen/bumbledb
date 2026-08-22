@@ -296,23 +296,27 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 	: Acc
 
 /**
- * Whether every element of a projection type is a single string literal
- * and the tuple's length is itself literal — the projection is statically
- * a concrete field set. A non-tuple (`string[]`), a widened element
- * (`string`), or a union element (`"a" | "b"` in one slot) all fail.
+ * Whether a projection type is PROVABLY a concrete field set — the
+ * whitelist judgment, every check tuple-bracketed against distribution: a
+ * single non-union type, a fixed-length tuple (no rest tail, no
+ * `string[]`), every element a single string literal. A projection UNION
+ * (`flag ? ["scope","value"] as const : ["value"] as const` inside one
+ * `key()`) is judged WHOLE and fails here — a naked-parameter recursion
+ * would distribute over the arms and answer true per-arm while
+ * {@link DeclaredKeysOf} rosters the MERGED field set, a roster entry
+ * matching no runtime key.
  */
-type LiteralProjection<P extends readonly string[]> = P extends readonly [
-	infer H extends string,
-	...infer T extends readonly string[]
-]
-	? string extends H
+type LiteralProjection<P extends readonly string[]> = [true] extends [IsMulti<P>]
+	? false
+	: [number] extends [P["length"]]
 		? false
-		: true extends IsMulti<H>
-			? false
-			: LiteralProjection<T>
-	: number extends P["length"]
-		? false
-		: true
+		: [P] extends [readonly [infer H extends string, ...infer T extends readonly string[]]]
+			? [string] extends [H]
+				? false
+				: [true] extends [IsMulti<H>]
+					? false
+					: LiteralProjection<T>
+			: true
 
 /**
  * Whether one statement's `data` is statically a SINGLE concrete
@@ -327,56 +331,69 @@ type DecidableKeyData<D> = [D] extends [
 		readonly projection: infer P extends readonly string[]
 	}
 ]
-	? true extends IsMulti<D>
+	? [true] extends [IsMulti<D>]
 		? false
-		: string extends O["name"]
+		: [string] extends [O["name"]]
 			? false
-			: true extends IsMulti<O["name"]>
+			: [true] extends [IsMulti<O["name"]>]
 				? false
 				: LiteralProjection<P>
 	: false
 
 /**
  * THE total decidability detector of the type-tier target-key judgment —
- * one answer to "is the roster statically complete and SINGULAR": the
- * tier judges ONLY a single, non-union, statically-complete tuple. Two
- * clauses, one verdict:
+ * a strict WHITELIST of provably-judgeable shapes, never a blocklist of
+ * known-bad spellings (representation over control flow: the detector is
+ * total by construction, so a spelling nobody has met yet degrades
+ * instead of firing). It answers `true` ONLY when ALL hold, each check
+ * tuple-bracketed against distribution:
  *
- * - SINGULAR — `Stmts` itself must not be a UNION of tuples (a ternary
- *   between two individually-lawful `as const` statement lists). A naked
- *   `Stmts` distributes through every conditional below it, so the scan
+ * - SINGULAR — `Stmts` itself is a single non-union type (a ternary
+ *   between two individually-lawful `as const` statement lists infers a
+ *   UNION of tuples; a naked `Stmts` would distribute the scan
  *   ({@link TargetKeyScan}) and the roster ({@link DeclaredKeysOf})
- *   would distribute INDEPENDENTLY — cross-judging one arm's containment
- *   faces against the other arm's declared keys and firing a false wall
- *   on a schema whose every runtime value the value tier admits. The
- *   union test is the house device ({@link IsMulti}), and this guard's
- *   own conditionals are tuple-bracketed so no naked-parameter
- *   distribution path survives into the scan.
- * - COMPLETE — every tuple element whose `data["kind"]` type INCLUDES
- *   `"key"` must be a single concrete `KeyData` with a literal owner
- *   name and a literal projection tuple ({@link DecidableKeyData}). A
- *   bare `Statement` element, a `Statement` union, a `KeyStatement`
- *   union, a widened owner, a widened projection each make the whole
- *   declared-key roster UNKNOWABLE: the wall would judge literal
- *   containment faces against a roster missing a key the value tier can
- *   see, and refuse what the engine admits.
+ *   INDEPENDENTLY, cross-judging one arm's faces against the other
+ *   arm's keys). The union test is the house device ({@link IsMulti}).
+ * - FIXED-LENGTH — `Stmts` is a literal tuple with no rest tail:
+ *   `[number] extends [Stmts["length"]]` detects a rest/array length. A
+ *   rest-tail tuple (`readonly [typeof stmt, ...Statement[]]`) peels its
+ *   literal head and hides EVERY key in the tail from a head-peeling
+ *   roster read — the scan would judge the head against a roster blind
+ *   to keys the value tier can see.
+ * - CONCRETE ELEMENTS — every element is a single non-union statement
+ *   (per-element {@link IsMulti}), and every element whose
+ *   `data["kind"]` type INCLUDES `"key"` is a single concrete `KeyData`
+ *   with a literal owner name and a projection that is itself a single
+ *   non-union fixed-length tuple of string literals
+ *   ({@link DecidableKeyData}, {@link LiteralProjection}). A bare
+ *   `Statement` element, a `Statement` union, a `KeyStatement` union, a
+ *   widened owner, a widened or union projection each make the roster
+ *   UNKNOWABLE.
  *
- * Either failure is the tier's one forbidden verdict in waiting — a
- * false wall — so anything less than singular-and-complete degrades the
- * WHOLE {@link TargetKeyWall} to silent (the degradation law: best
- * effort degrades to silent, never to a wrong judgment), exactly as a
- * widened FACE already silences its own judgment; the value tier stays
- * authoritative.
+ * Any failure is the tier's one forbidden verdict in waiting — a false
+ * wall — so anything outside the whitelist degrades the WHOLE
+ * {@link TargetKeyWall} to silent (the degradation law: best effort
+ * degrades to silent, never to a wrong judgment), exactly as a widened
+ * FACE already silences its own judgment; the value tier stays
+ * authoritative. ONE recorded limit, pre-existing and outside this
+ * detector's reach: a generic type parameter CONSTRAINED to a union of
+ * tuples hangs tsc in the deferred-scan machinery before any verdict is
+ * reached — a degenerate spelling no shipped surface writes, recorded
+ * here as the tier's known boundary, not fixed.
  */
 type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMulti<Stmts>]
 	? false
-	: Stmts extends readonly [infer H extends Statement, ...infer T extends readonly Statement[]]
-		? "key" extends H["data"]["kind"]
-			? [DecidableKeyData<H["data"]>] extends [true]
-				? DecidableRoster<T>
-				: false
-			: DecidableRoster<T>
-		: true
+	: [number] extends [Stmts["length"]]
+		? false
+		: [Stmts] extends [readonly [infer H extends Statement, ...infer T extends readonly Statement[]]]
+			? [true] extends [IsMulti<H>]
+				? false
+				: "key" extends H["data"]["kind"]
+					? [DecidableKeyData<H["data"]>] extends [true]
+						? DecidableRoster<T>
+						: false
+					: DecidableRoster<T>
+			: true
 
 /**
  * The named, self-locating compile verdict of the target-key wall: the
@@ -475,11 +492,12 @@ type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly Key
  * list is lawful, to the named {@link ClassWall} on a two-generator class,
  * and to the named {@link TargetKeyWall} on a containment target that
  * resolves no key (60-containment-parity, type tier). Both walls degrade
- * to silent on a widened `Statement[]`, and the target-key wall ALSO
- * degrades whole on a statement-tuple UNION or any undecidable key
- * element in the tuple ({@link DecidableRoster} — a distributed scan or
- * a partial roster would fire false walls on literal faces); their
- * runtime twins are authoritative.
+ * to silent on a widened `Statement[]`, and the target-key wall runs
+ * ONLY inside the {@link DecidableRoster} whitelist — a single non-union
+ * fixed-length tuple of single concrete statements with fully-literal
+ * key data (a distributed scan, a rest-blind roster, or a partial roster
+ * would each fire false walls on literal faces); their runtime twins are
+ * authoritative.
  */
 type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = WallScan<
 	BuildComps<PairsOf<Stmts>>,
