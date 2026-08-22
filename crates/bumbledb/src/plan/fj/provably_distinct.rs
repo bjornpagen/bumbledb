@@ -26,7 +26,6 @@ pub(crate) fn provably_distinct(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .all(|occurrence| {
-
             let OccBind::Edb(stored) = OccBind::of_occurrence(occurrence) else {
                 return false;
             };
