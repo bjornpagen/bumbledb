@@ -44,7 +44,6 @@ pub(crate) fn drain_typed(
                     column += 1;
                 }
                 ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
-
                     for half in [column, column + 1] {
                         let value = row.get_ref(half)?;
                         std::hint::black_box(value.as_i64()?);
