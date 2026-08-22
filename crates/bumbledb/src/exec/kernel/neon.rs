@@ -1,6 +1,4 @@
 //! The hand-NEON residue: the configuration kernel trio, the kernels
-//! the portable_simd experiment REFUSED (the crucible packet (git ecec1dc3)
-//! 03-portable-simd.md — the verdict matrix records the arbitrating
 //! evidence; the filter/fold/gather kernels adopted `std::simd` and
 //! left this module).
 
@@ -9,48 +7,29 @@ use std::arch::aarch64::{
     vst1q_u8,
 };
 
-/// The configuration kernel's 64-byte signature → basic-code nibble
-/// table (held in q registers via `tbl` — the Allen decision tree as
-/// in-register data). The 6-bit signature packs the 8 predicate lanes:
-///
-/// - bit 0: `a.s == b.s` — bit 1: `a.s > b.s`
-/// - bit 2: `a.e == b.e` — bit 3: `a.e > b.e`
-/// - bit 4: `a.e == b.s  OR  b.e == a.s` (the meets-type adjacency)
-/// - bit 5: `a.e > b.s  AND  b.e > a.s` (strict nonempty intersection)
-///
-/// Strict nonemptiness (`start < end`, the [`crate::Interval`] parse)
-/// admits exactly 13 valid signatures; every other index is
-/// unreachable and filled with `0xFF` (past the mask table's range, so
-/// a table bug drops rows in the bit-identity tests instead of passing
-/// silently). The entries are the [`crate::allen::Basic`]
-/// discriminants — the property tests cross-check this table against
-/// PRD 03's `classify` decision tree, bit for bit.
 const ALLEN_SIG_TABLE: [u8; 64] = {
     let mut table = [0xFFu8; 64];
-    table[0b00_0000] = 0; // before:        a.e < b.s, no adjacency
-    table[0b01_0000] = 1; // meets:         a.e == b.s
-    table[0b10_0000] = 2; // overlaps:      s <, e <, strict ∩
-    table[0b10_0001] = 3; // starts:        s ==, e <
-    table[0b10_0010] = 4; // during:        s >, e <
-    table[0b10_0110] = 5; // finishes:      s >, e ==
-    table[0b10_0101] = 6; // equals:        s ==, e ==
-    table[0b10_0100] = 7; // finished-by:   s <, e ==
-    table[0b10_1000] = 8; // contains:      s <, e >
-    table[0b10_1001] = 9; // started-by:    s ==, e >
-    table[0b10_1010] = 10; // overlapped-by: s >, e >, strict ∩
-    table[0b01_1010] = 11; // met-by:        b.e == a.s
-    table[0b00_1010] = 12; // after:         b.e < a.s, no adjacency
+    table[0b00_0000] = 0; 
+    table[0b01_0000] = 1; 
+    table[0b10_0000] = 2; 
+    table[0b10_0001] = 3; 
+    table[0b10_0010] = 4; 
+    table[0b10_0110] = 5; 
+    table[0b10_0101] = 6; 
+    table[0b10_0100] = 7; 
+    table[0b10_1000] = 8; 
+    table[0b10_1001] = 9; 
+    table[0b10_1010] = 10; 
+    table[0b01_1010] = 11; 
+    table[0b00_1010] = 12; 
     table
 };
 
-/// Two lanes' signatures from the 8 predicate lanes (4 `cmhi`/`cmeq`
-/// pairs over the endpoint words), packed by masked constant bits.
 #[expect(
     clippy::inline_always,
     reason = "measured kernel inlining is machine-checked and load-bearing"
 )]
-// the window loops exist to keep this
-// arithmetic in registers; an outlined call per two lanes would spill it
+
 #[inline(always)]
 unsafe fn allen_sig2(
     a_s: uint64x2_t,
@@ -74,9 +53,6 @@ unsafe fn allen_sig2(
     }
 }
 
-/// One 8-pair window: 4×2 signature lanes narrowed to 8 index bytes,
-/// mapped through the 64-byte table in q registers via `tbl`, stored as
-/// 8 code bytes.
 #[inline(always)]
 unsafe fn allen_code_window(
     table: std::arch::aarch64::uint8x16x4_t,
@@ -85,8 +61,7 @@ unsafe fn allen_code_window(
     a_e: *const u64,
     codes: *mut u8,
 ) {
-    // SAFETY (caller's contract): all four streams hold ≥ 8 words at
-    // the given pointers; `codes` holds ≥ 8 bytes.
+
     unsafe {
         use std::arch::aarch64::{vcombine_u16, vcombine_u32, vmovn_u16, vmovn_u32, vmovn_u64};
         let sig = |lane: usize| {
@@ -102,15 +77,13 @@ unsafe fn allen_code_window(
     }
 }
 
-/// The 64-byte nibble table, loaded into four q registers.
 #[expect(
     clippy::inline_always,
     reason = "measured kernel inlining is machine-checked and load-bearing"
-)] // as `allen_sig2`
+)] 
 #[inline(always)]
 unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
-    // SAFETY (caller's contract): four 16-byte loads within the 64-byte
-    // table.
+
     unsafe {
         std::arch::aarch64::uint8x16x4_t(
             vld1q_u8(ALLEN_SIG_TABLE.as_ptr()),
@@ -121,15 +94,6 @@ unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
     }
 }
 
-/// The configuration code kernel over four endpoint streams (`super::
-/// allen_code_batch`'s NEON core; the dispatch guarantees `len ≥ 8`).
-/// The tail is the overlapped last window — codes are idempotent per
-/// position, so re-classifying up to 7 pairs is free of both branches
-/// and a scalar tail; `(n − 1) / 8` full windows (`sub`+`lsr`, no flag
-/// writer) make the overlap zero when `n` is lane-aligned instead of a
-/// whole duplicated window — and the loops are countdown-shaped so no
-/// `cmp` reaches the back edge: this symbol is the asm gate's flag-free
-/// subject (`scripts/check-asm.sh`), never inlined away.
 #[inline(never)]
 pub(super) fn allen_code_batch_neon(
     a_starts: &[u64],
@@ -144,9 +108,7 @@ pub(super) fn allen_code_batch_neon(
         a_starts.len() == n && a_ends.len() == n && b_starts.len() == n && b_ends.len() == n
     );
     // SAFETY: every window reads 8 words from within the four n-length
-    // streams and writes 8 bytes into `codes` — (n-1)/8 full windows at
-    // k*8 with k*8+8 <= n, plus one overlapped window at n-8 (n >= 8;
-    // the overlap is empty exactly when n is lane-aligned).
+
     unsafe {
         let (a_s, a_e) = (a_starts.as_ptr(), a_ends.as_ptr());
         let (b_s, b_e) = (b_starts.as_ptr(), b_ends.as_ptr());
@@ -156,9 +118,7 @@ pub(super) fn allen_code_batch_neon(
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-            // The opaque back edge (as `allen_filter_batch_neon`): the
-            // empty register-pinned asm identity keeps LLVM from fusing
-            // the countdown into a flag-writing `subs` trip count.
+
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,
@@ -194,10 +154,6 @@ pub(super) fn allen_code_batch_neon(
     }
 }
 
-/// [`allen_code_batch_neon`] with a broadcast constant right operand —
-/// the filter-position shape (per-atom `Allen` against a literal/param
-/// interval). Same window walk, the b-side lanes `dup`ed once; a gated
-/// flag-free symbol like its sibling.
 #[inline(never)]
 pub(super) fn allen_code_batch_const_neon(
     starts: &[u64],
@@ -219,7 +175,7 @@ pub(super) fn allen_code_batch_const_neon(
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-            // The opaque back edge, as the four-stream form above.
+
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,
@@ -245,21 +201,12 @@ pub(super) fn allen_code_batch_const_neon(
     }
 }
 
-/// The membership kernel (`super::allen_filter_batch`'s NEON core; the
-/// dispatch guarantees `len ≥ 16`): the mask's 13 per-code keep bits
-/// expand once into a 16-byte table — **the mask broadcast in a vector
-/// register for the whole batch** — and every 16 codes map through one
-/// `tbl1` to their keep bytes. Overlapped tail, countdown loop: the
-/// asm gate's second flag-free subject.
 #[inline(never)]
 pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
     let n = codes.len();
     debug_assert!(n >= 16, "the dispatch owns the small-batch fallback");
     debug_assert_eq!(keep.len(), n);
-    // The broadcast mask table: byte c is code c's keep bit (1/0);
-    // indices 13..=15 are unreachable codes and keep nothing. The
-    // expansion is a fixed 13-step shift-and-mask — fully unrolled,
-    // flag-free.
+
     let mut table = [0u8; 16];
     let mut code = 0usize;
     while code < 13 {
@@ -267,18 +214,7 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         code += 1;
     }
     // SAFETY: every window reads 16 bytes from within `codes` and
-    // writes 16 within `keep` — (n-1)/16 full windows plus one
-    // overlapped window at n-16 (n >= 16; the overlap is empty exactly
-    // when n is lane-aligned); keep bytes are idempotent per position. The
-    // countdown passes through an empty register-pinned `asm!` identity
-    // so LLVM keeps the flag-free `sub`+`cbnz` back edge instead of
-    // re-deriving a `cmp`-shaped trip count while unrolling (the gate
-    // is the machine code — `scripts/check-asm.sh`). `black_box` would
-    // do the same opaquing but routes the counter through a stack slot
-    // — a spill+reload per 16-code window, 2 extra memory µops in a
-    // 5-µop payload (m2max.core.scalar-memory-rename: the renamed
-    // round trip is bimodal, medians ~4.8 cy); the empty asm keeps the
-    // counter in its register and emits zero instructions.
+
     unsafe {
         use std::arch::aarch64::vqtbl1q_u8;
         let mask_table = vld1q_u8(table.as_ptr());
@@ -288,8 +224,7 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
-            // The opaque back edge: an empty asm block whose only
-            // effect is that `left`'s value is no longer known to LLVM.
+
             std::arch::asm!(
                 "/* {c} */",
                 c = inout(reg) left,
@@ -309,13 +244,11 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
     }
 }
 
-/// The T7 falsifier's arm A: [`allen_filter_batch_neon`] verbatim as it
-/// shipped before the counter-spill fix, its countdown routed through
-/// `std::hint::black_box` — which LLVM materializes as a stack
-/// spill+reload of the counter per 16-code window (`str x,[sp,#8]` /
-/// `ldr x,[sp,#8]` inside the 5-µop loop). Test-only: it exists so the
-/// `allen_filter_counter_spill_ab` timing pin can interleave the two
-/// back-edge shapes inside one process forever.
+/// The T7 falsifier's arm A: [`allen_filter_batch_neon`] verbatim as it shipped
+/// before the counter-spill fix, its countdown routed through
+/// `std::hint::black_box` — which LLVM materializes as a stack spill+reload of
+/// the counter per 16-code window (`str x,[sp,#8]` / `ldr x,[sp,#8]` inside the
+/// 5-µop loop).
 #[cfg(test)]
 #[inline(never)]
 pub(super) fn allen_filter_batch_neon_spill_arm(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
@@ -329,7 +262,7 @@ pub(super) fn allen_filter_batch_neon_spill_arm(codes: &[u8], mask_bits: u16, ke
         code += 1;
     }
     // SAFETY: as `allen_filter_batch_neon` — same windows, same
-    // overlapped tail; only the countdown's opaquing differs.
+
     unsafe {
         use std::arch::aarch64::vqtbl1q_u8;
         let mask_table = vld1q_u8(table.as_ptr());
