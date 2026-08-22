@@ -8,24 +8,14 @@ use crate::{corpus, verify};
 use super::corpus::gen_config;
 use super::{CASES_FILE, ensure_corpus};
 
-/// `gen`.
-///
 /// # Errors
-///
-/// As [`ensure_corpus`].
 pub fn cmd_gen(corpus: &CorpusArgs) -> Result<(), String> {
     let paths = ensure_corpus(&corpus.dir, gen_config(corpus))?;
     println!("corpus ready: {}", paths.root.display());
     Ok(())
 }
 
-/// `verify`: the oracle against the digest directory, stamp inside it.
-/// Returns the process exit code (1 on mismatch).
-///
 /// # Errors
-///
-/// Setup errors as messages (mismatches are an exit code, not an error —
-/// the bundles are the artifact).
 pub fn cmd_verify(corpus: &CorpusArgs, cases: u32) -> Result<i32, String> {
     let cfg = gen_config(corpus);
     let paths = ensure_corpus(&corpus.dir, cfg)?;
