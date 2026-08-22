@@ -20,7 +20,6 @@ use super::judgment::{SelectionCheck, Selections, capacity_child_image, child_we
 use crate::error::{Check, Direction, Result, Violation};
 
 pub(crate) struct CommitPlan<'d> {
-
     pub(crate) selections: Selections<'d>,
 
     pub(crate) deletes: Box<[DeleteOp<'d>]>,
@@ -32,12 +31,10 @@ pub(crate) struct CommitPlan<'d> {
     pub(crate) target_checks: Box<[DeterminantCheck]>,
 
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one
-
     pub(crate) capacity_checks: Box<[CapacityCheck]>,
 }
 
 impl CommitPlan<'_> {
-
     pub(crate) fn incremental_obligations(&self) -> IncrementalObligations<'_, '_> {
         IncrementalObligations { plan: self }
     }
@@ -92,7 +89,6 @@ impl<'p, 'd> IncrementalObligations<'p, 'd> {
 }
 
 pub(crate) struct CapacityCheck {
-
     pub(crate) capacity: CapacityId,
 
     pub(crate) parent: DeterminantImage,
@@ -220,14 +216,12 @@ pub(crate) enum MarkWeight {
 
 #[derive(Clone, Copy)]
 pub(crate) struct FreshRowOp {
-
     pub(crate) statement: StatementId,
 
     pub(crate) row_id: u64,
 }
 
 pub(crate) enum DeterminantOp {
-
     Scalar {
         statement: StatementId,
         determinant: DeterminantImage,
@@ -259,7 +253,6 @@ pub(crate) struct MembershipOp {
 }
 
 pub(crate) struct DeterminantCheck {
-
     pub(crate) key: KeyId,
 
     pub(crate) determinant: DeterminantImage,
@@ -268,7 +261,6 @@ pub(crate) struct DeterminantCheck {
 }
 
 pub(crate) struct DependentCheck {
-
     pub(crate) containment: ContainmentId,
 
     pub(crate) owed: Owed,
@@ -649,7 +641,6 @@ fn target_checks(
     deleted_determinants: BTreeSet<(KeyId, DeterminantImage)>,
     inserted_determinants: &BTreeSet<(KeyId, DeterminantImage)>,
 ) -> Box<[DeterminantCheck]> {
-
     let mut checks = Vec::with_capacity(deleted_determinants.len());
     let mut dependents: Vec<DependentCheck> = Vec::new();
     for entry in deleted_determinants {
