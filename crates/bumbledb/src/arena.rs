@@ -40,7 +40,6 @@ impl Arena {
 
     pub fn alloc(&mut self, bytes: &[u8]) -> ArenaSlice {
         let chunk_idx = if bytes.len() > CHUNK_CAPACITY {
-
             self.chunks.push(Vec::with_capacity(bytes.len()));
             self.chunks.len() - 1
         } else {
@@ -96,8 +95,8 @@ mod tests {
         let mut arena = Arena::new();
         let (a, b, c) = (
             vec![1u8; 40 * 1024],
-            vec![2u8; 40 * 1024],  
-            vec![3u8; 200 * 1024], 
+            vec![2u8; 40 * 1024],
+            vec![3u8; 200 * 1024],
         );
         let first = arena.alloc(&a);
         let second = arena.alloc(&b);
