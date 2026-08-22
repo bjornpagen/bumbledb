@@ -1,7 +1,6 @@
 use super::{CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words};
 
 impl Colt {
-
     pub fn select(&mut self, keys: &[Vec<u64>]) -> Option<Cursor> {
         debug_assert_eq!(
             keys.len(),
@@ -27,7 +26,6 @@ impl Colt {
 
     /// invariant `union_positions` reads.
     fn select_union(&mut self, cursor: Cursor, level: usize, words: &[u64]) -> Option<Cursor> {
-
         let arity = self.arity_at(level);
         debug_assert_eq!(words.len() % arity, 0, "flat element-major rows");
         debug_assert!(
@@ -75,7 +73,6 @@ impl Colt {
                 );
                 let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
                 for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
-
                     let start =
                         u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
                     self.chunk_positions.extend_from_slice(segment);
