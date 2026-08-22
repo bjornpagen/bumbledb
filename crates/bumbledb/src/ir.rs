@@ -52,7 +52,6 @@ pub const MAX_CONDITION_DEPTH: usize = 64;
 pub struct InteriorId(pub u32);
 
 impl InteriorId {
-
     /// # Panics
 
     /// is 64-bit only; this is a programmer invariant, not an IR
@@ -77,7 +76,6 @@ pub enum AtomSource {
 }
 
 impl AtomSource {
-
     #[must_use]
     pub fn edb(self) -> Option<RelationId> {
         match self {
@@ -139,11 +137,9 @@ pub struct Atom {
 /// vocabulary — with the fold-free nullary `Count` refused there (R1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggOp {
-
     Sum,
 
     /// (ruled 2026-07-23, R3: `Min` over bool is **All**); intervals and
-
     Min,
 
     Max,
@@ -165,7 +161,6 @@ pub enum FoldOp {
 }
 
 impl FoldOp {
-
     #[must_use]
     pub fn head_op(self) -> HeadOp {
         match self {
@@ -186,18 +181,12 @@ pub enum FindTerm {
 
     Count,
 
-    Aggregate {
-        op: FoldOp,
-        over: VarId,
-    },
+    Aggregate { op: FoldOp, over: VarId },
 
-    Pack {
-        over: VarId,
-    },
+    Pack { over: VarId },
 }
 
 impl FindTerm {
-
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
@@ -222,7 +211,6 @@ pub enum HeadOp {
 }
 
 impl AggOp {
-
     #[must_use]
     pub fn head_op(self) -> HeadOp {
         match self {
@@ -281,7 +269,6 @@ pub enum WordCmp {
 }
 
 impl WordCmp {
-
     #[cfg(test)]
     #[must_use]
     pub(crate) fn from_cmp(op: CmpOp) -> Option<Self> {
@@ -362,7 +349,6 @@ pub enum ConditionTree {
 /// resolve to different types). Params, by contrast, are query-global.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
-
     pub finds: Vec<FindTerm>,
 
     pub atoms: Vec<Atom>,
@@ -373,7 +359,6 @@ pub struct Rule {
 }
 
 impl Rule {
-
     #[must_use]
     pub fn head(&self) -> Vec<HeadTerm> {
         self.finds.iter().map(FindTerm::head_term).collect()
@@ -388,7 +373,6 @@ pub struct NonEmpty<T> {
 }
 
 impl<T> NonEmpty<T> {
-
     #[must_use]
     pub fn one(first: T) -> Self {
         Self {
@@ -466,7 +450,6 @@ pub struct ProjectionRule {
 }
 
 impl ProjectionRule {
-
     #[must_use]
     pub fn to_rule(&self) -> Rule {
         Rule {
@@ -489,12 +472,10 @@ impl ProjectionRule {
 /// **once**, not an lfp (`lean/Bumbledb/Query/Syntax.lean: Interior`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interior {
-
     pub rules: Vec<ProjectionRule>,
 }
 
 impl Interior {
-
     #[must_use]
     pub fn head(&self) -> Vec<HeadTerm> {
         self.rules
@@ -514,7 +495,6 @@ pub struct RecRule {
 }
 
 impl RecRule {
-
     #[must_use]
     pub fn to_rule(&self) -> Rule {
         Rule {
@@ -538,7 +518,6 @@ pub struct RecStep {
 }
 
 impl RecStep {
-
     /// [`crate::ir::normalize::OccId`](0) after lowering.
     #[must_use]
     pub fn to_rule(&self, rec_id: InteriorId) -> Rule {
@@ -585,7 +564,6 @@ pub struct Rec {
 }
 
 impl Rec {
-
     #[must_use]
     pub fn head(&self) -> Vec<HeadTerm> {
         ProjectionRule::projection_head(&self.base.first.finds)
@@ -603,7 +581,6 @@ impl Rec {
 /// (`lean/Bumbledb/Query/Denotation.lean: evalQuery`). Set semantics
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
-
     pub interiors: Vec<Interior>,
 
     pub head: Vec<HeadTerm>,
@@ -614,7 +591,6 @@ pub struct Query {
 }
 
 impl Query {
-
     #[must_use]
     pub fn cq(interiors: Vec<Interior>, head: Vec<HeadTerm>, rules: Vec<Rule>) -> Self {
         Self {
@@ -686,7 +662,6 @@ mod tests {
 
     #[test]
     fn point_lookup_by_fresh_key() {
-
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {
@@ -705,7 +680,6 @@ mod tests {
 
     #[test]
     fn containment_walk_join_with_range_condition() {
-
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(1))],
             atoms: vec![
@@ -735,7 +709,6 @@ mod tests {
 
     #[test]
     fn aggregate_balance_by_account() {
-
         let query = Query::single(Rule {
             finds: vec![
                 FindTerm::Var(VarId(0)),
@@ -776,7 +749,7 @@ mod tests {
                 },
                 Atom {
                     source: crate::ir::AtomSource::Edb(RelationId(7)),
-                    bindings: vec![], 
+                    bindings: vec![],
                 },
             ],
             negated: vec![],
@@ -787,7 +760,6 @@ mod tests {
 
     #[test]
     fn anti_join_with_param_set_shape() {
-
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
@@ -808,7 +780,6 @@ mod tests {
 
     #[test]
     fn value_covers_every_data_model_type() {
-
         let values = [
             Value::Bool(true),
             Value::U64(u64::MAX),
@@ -828,7 +799,6 @@ mod tests {
 
     #[test]
     fn interval_converts_through_the_checked_type() {
-
         let iv = Interval::<i64>::new(-5, 9).expect("valid bounds");
         assert_eq!(
             Value::from(iv),
