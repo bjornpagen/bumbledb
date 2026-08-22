@@ -62,7 +62,6 @@ pub struct Mass {
 }
 
 impl Mass {
-
     pub const BENCH: Self = Self {
         parents: 4_096,
         children_per_parent: 8,
@@ -90,7 +89,6 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
             Box::new((0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(parent_kind(i))]))
         }
         ids::CHILD => Box::new((0..mass.parents * mass.children_per_parent).map(move |i| {
-
             vec![
                 Value::U64(i),
                 Value::U64(i / mass.children_per_parent),
