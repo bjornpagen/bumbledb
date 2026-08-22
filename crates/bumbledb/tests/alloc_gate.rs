@@ -1,8 +1,6 @@
 //! The allocation gate: the doc's protocol as a contract of warm
 //! INVARIANT: this binary holds exactly ONE test function, and check.sh
-
 #![cfg(feature = "alloc-counter")]
-
 use bumbledb::alloc_counter;
 use bumbledb::ir::{
     Atom, AtomSource, CmpOp, Comparison, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, ParamId,
