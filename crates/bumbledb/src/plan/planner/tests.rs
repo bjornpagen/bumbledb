@@ -12,8 +12,6 @@ use bumbledb_theory::schema::{
 };
 use std::collections::BTreeMap;
 
-/// Builds a schema of `n` relations, each with `arity` U64 fields; the
-/// first field of each relation is fresh (its auto-key).
 fn schema(n: usize, arity: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..n)
@@ -53,9 +51,6 @@ fn occurrence(occ: u16, relation: u32, vars: Vec<(u16, u16)>) -> Occurrence {
     }
 }
 
-/// Assembles a `NormalizedQuery` around hand-built occurrences (scalar
-/// slot widths; no residuals or anti-probes — the planner reads none of
-/// them).
 fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
@@ -78,21 +73,19 @@ fn stats(rows: &[u64]) -> Vec<OccStats> {
         .map(|(i, r)| OccStats {
             occ_id: OccId(u16::try_from(i).expect("small")),
             rows: *r,
-            // Hand-built stats: unit fanout (no distinct info).
+
             var_distincts: Vec::new(),
         })
         .collect()
 }
 
-/// Cost of a specific order under the same estimator (for brute-force
-/// comparison in tests).
 fn order_cost(
     normalized: &NormalizedQuery,
     schema: &Schema,
     stats: &[OccStats],
     order: &[usize],
 ) -> u64 {
-    // Re-plan restricted: walk the order, applying the estimator.
+
     let occ = |i: usize| &normalized.occurrences[i];
     let rows = |i: usize| {
         stats
@@ -137,10 +130,7 @@ fn order_cost(
     let mut cost = est;
     let mut prefix_vars = var_set(order[0]);
     for &next in &order[1..] {
-        // Mirror of the production estimator (docs/architecture/40-execution.md): key
-        // coverage pins the fanout to 1; hand-built stats carry no
-        // distinct counts, so everything else is the pessimistic
-        // product.
+
         let join_vars = var_set(next) & prefix_vars;
         let step = if join_vars != 0 && key_sets(next).iter().any(|s| s & join_vars == *s) {
             est
@@ -156,9 +146,7 @@ fn order_cost(
 
 #[test]
 fn selective_filtered_occurrence_leads_a_reference_walk() {
-    // Occ 0: Posting-like, 10_000 rows. Occ 1: Account-like with a
-    // filter measured to 1 survivor; the walk joins on occ 1's fresh
-    // key (var 0). The planner must iterate the 1-row side first.
+
     let schema = schema(2, 2);
     let mut occ1 = occurrence(1, 1, vec![(0, 0)]);
     occ1.filters.push(FilterPredicate::Compare {
@@ -167,23 +155,18 @@ fn selective_filtered_occurrence_leads_a_reference_walk() {
         value: Const::Word(7),
     });
     let query = normalized(vec![occurrence(0, 0, vec![(1, 0), (0, 1)]), occ1]);
-    // The Posting-like side records its join field's distinct count
-    // (5_000 accounts over 10_000 postings — a fanout of 2); the old
-    // prefix-side-covered rule priced this walk at min(1, 10_000) = 1,
-    // exactly the dishonesty docs/architecture/40-execution.md killed.
+
     let mut occ_stats = stats(&[10_000, 1]);
     occ_stats[0].var_distincts = vec![(VarId(0), 5_000), (VarId(1), 10_000)];
     let order = plan(&query, &schema, &occ_stats);
     assert_eq!(order.order, vec![OccId(1), OccId(0)]);
-    // Step estimates: 1 survivor, then 1 x fanout(10_000 / 5_000) = 2.
+
     assert_eq!(order.estimates, vec![1, 2]);
 }
 
 #[test]
 fn non_key_join_is_priced_pessimistically_and_pushed_last() {
-    // Occs 0-1 join on occ 1's fresh key; occ 2 joins occ 0 on a
-    // genuinely non-key shared var (occ 0 field 2 = var 3, occ 2 field
-    // 1 = var 3). Pessimism must order occ 2 last.
+
     let schema = schema(3, 3);
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0), (1, 1), (2, 3)]),
@@ -192,7 +175,7 @@ fn non_key_join_is_priced_pessimistically_and_pushed_last() {
     ]);
     let order = plan(&query, &schema, &stats(&[100, 50, 40]));
     assert_eq!(*order.order.last().expect("nonempty"), OccId(2));
-    // The last step is the pessimistic product.
+
     let last = *order.estimates.last().expect("nonempty");
     assert_eq!(last, order.estimates[1].saturating_mul(40).min(last));
     assert!(last >= 40, "non-key join priced as a product");
@@ -200,9 +183,7 @@ fn non_key_join_is_priced_pessimistically_and_pushed_last() {
 
 #[test]
 fn key_coverage_fires_through_the_fresh_auto_key() {
-    // Two occurrences joined on var 0 = occ 1's fresh field: joining
-    // occ 1 INTO occ 0 must estimate |occ 0| (a reference walk), not a
-    // product.
+
     let schema = schema(2, 2);
     let query = normalized(vec![
         occurrence(0, 0, vec![(1, 0)]),
@@ -213,9 +194,6 @@ fn key_coverage_fires_through_the_fresh_auto_key() {
     assert_eq!(order.estimates, vec![70, 70]);
 }
 
-/// D(acct), Cover(acct, period interval — the pointwise key
-/// Cover(acct, period) -> Cover); the driver relation optionally binds
-/// the interval by value too.
 fn pointwise_schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
@@ -264,25 +242,16 @@ fn pointwise_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Stats for the pointwise fixtures: a 5-row driver into a 1000-row
-/// Cover with 100 distinct accounts (general fanout 10) and 250
-/// distinct periods (general fanout 4).
 fn pointwise_stats() -> Vec<OccStats> {
     let mut occ_stats = stats(&[5, 1000]);
     occ_stats[1].var_distincts = vec![(VarId(0), 100), (VarId(1), 250)];
     occ_stats
 }
 
-/// The pointwise-key determinant, direction one (PRD 15 criterion): a join
-/// binding only the scalar prefix of a pointwise key does NOT certify
-/// fanout 1 — two facts may share the prefix with disjoint intervals —
-/// so the step takes the general per-binding fanout.
 #[test]
 fn pointwise_prefix_join_takes_the_general_fanout() {
     let schema = pointwise_schema();
-    // Driver shares only acct (var 0); Cover binds acct and period by
-    // value, so the key's full var set exists — but the join covers
-    // just the prefix.
+
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0)]),
         occurrence(1, 1, vec![(0, 0), (1, 1)]),
@@ -294,9 +263,6 @@ fn pointwise_prefix_join_takes_the_general_fanout() {
     assert_ne!(est, 5, "the scalar prefix must not certify fanout 1");
 }
 
-/// The pointwise-key determinant, direction two: binding the FULL projection —
-/// the interval field by value included — covers the key and pins the
-/// fanout to 1.
 #[test]
 fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
     let schema = pointwise_schema();
@@ -308,8 +274,7 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
     let (occs, _) = densify(&query, &positive, &schema, &pointwise_stats());
     let est = estimate(5, occs[0].vars, &occs, &[], 1);
     assert_eq!(est, 5, "full key coverage: the reference-walk bound");
-    // Control: without the key the same join would price at the general
-    // fanout min(1000/100, 1000/250) = 4 per binding.
+
     let no_key = OccInfo {
         key_var_sets: Vec::new(),
         vars: occs[1].vars,
@@ -328,15 +293,12 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
     assert_eq!(estimate(5, occs_no_key[0].vars, &occs_no_key, &[], 1), 20);
 }
 
-/// A membership-bound interval field never enters `vars` (normalization
-/// lowers it to a filter), so the pointwise key's var set does not exist
-/// and coverage cannot fire — the other face of the same determinant.
 #[test]
 fn membership_bound_interval_disables_key_coverage() {
     let schema = pointwise_schema();
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0)]),
-        // Cover's period is membership-bound: absent from vars.
+
         occurrence(1, 1, vec![(0, 0)]),
     ]);
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
@@ -347,13 +309,9 @@ fn membership_bound_interval_disables_key_coverage() {
     assert_eq!(estimate(5, occs[0].vars, &occs, &[], 1), 50);
 }
 
-/// A compound key with one field Eq-pinned certifies fanout 1 when the
-/// join covers the var-bound remainder — the pinned field is covered
-/// with no variable bit (the shared pinned-field vocabulary that
-/// `provably_distinct` and the key-probe classifier already count).
 #[test]
 fn eq_pinned_key_fields_count_toward_key_coverage() {
-    // Posting keyed (acct, day): the key is the compound projection.
+
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -407,7 +365,6 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
         "pinned day + joined acct exhaust the key: fanout 1, not rows/64"
     );
 
-    // Control: a set pin covers nothing — the general fanout returns.
     let mut set_pinned = query.occurrences[1].clone();
     set_pinned.filters = vec![FilterPredicate::Compare {
         field: FieldId(1).into(),
@@ -424,9 +381,6 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
     );
 }
 
-/// Negated occurrences are excluded from the DP state entirely: the
-/// order covers the positive occurrences and nothing else, and no stats
-/// are consulted for the negated one.
 #[test]
 fn negated_occurrences_enter_no_dp_state() {
     let schema = schema(3, 2);
@@ -439,8 +393,7 @@ fn negated_occurrences_enter_no_dp_state() {
         ..occurrence(2, 2, vec![(1, 0)])
     });
     let query = normalized(occurrences);
-    // Stats cover the positive occurrences only — the planner must not
-    // ask about occ 2.
+
     let order = plan(&query, &schema, &stats(&[70, 500]));
     assert_eq!(order.order, vec![OccId(0), OccId(1)]);
     assert_eq!(order.estimates.len(), 2);
@@ -448,15 +401,13 @@ fn negated_occurrences_enter_no_dp_state() {
 
 #[test]
 fn dp_beats_greedy_on_a_constructed_counterexample() {
-    // A(x big), B(fresh x, y), C(y), D(y): greedy grabs the cheapest
-    // immediate pair (C x D, a small product) and pays for it; the DP
-    // routes through B's fresh key.
+
     let schema = schema(4, 2);
     let query = normalized(vec![
-        occurrence(0, 0, vec![(1, 0)]),         // A: x, non-key
-        occurrence(1, 1, vec![(0, 0), (1, 1)]), // B: fresh x, y
-        occurrence(2, 2, vec![(1, 1)]),         // C: y, non-key
-        occurrence(3, 3, vec![(1, 1)]),         // D: y, non-key
+        occurrence(0, 0, vec![(1, 0)]),         
+        occurrence(1, 1, vec![(0, 0), (1, 1)]), 
+        occurrence(2, 2, vec![(1, 1)]),         
+        occurrence(3, 3, vec![(1, 1)]),         
     ]);
     let occ_stats = stats(&[10, 10, 2, 2]);
 
@@ -464,7 +415,6 @@ fn dp_beats_greedy_on_a_constructed_counterexample() {
     let planned_order: Vec<usize> = planned.order.iter().map(|o| usize::from(o.0)).collect();
     let planned_cost = order_cost(&query, &schema, &occ_stats, &planned_order);
 
-    // Brute force: the DP result must be a global optimum.
     let mut best = u64::MAX;
     let mut permutations = vec![];
     permute(&mut vec![0, 1, 2, 3], 0, &mut permutations);
@@ -473,8 +423,6 @@ fn dp_beats_greedy_on_a_constructed_counterexample() {
     }
     assert_eq!(planned_cost, best, "DP finds the optimum");
 
-    // Greedy (min immediate estimate at each step) is provably worse on
-    // this fixture — the counterexample is real.
     let greedy = greedy_order(&query, &schema, &occ_stats);
     let greedy_cost = order_cost(&query, &schema, &occ_stats, &greedy);
     assert!(
@@ -495,8 +443,6 @@ fn permute(items: &mut Vec<usize>, k: usize, out: &mut Vec<Vec<usize>>) {
     }
 }
 
-/// The strawman: start from the smallest relation, repeatedly append
-/// the occurrence with the smallest immediate estimate.
 fn greedy_order(
     normalized: &NormalizedQuery,
     schema: &Schema,
@@ -544,11 +490,7 @@ fn deterministic_across_shuffled_stats_input() {
 
 #[test]
 fn the_dp_accepts_large_inputs_under_the_cap() {
-    // The over-cap rejection lives at the validation boundary
-    // (ir::validate); the planner's contract is that anything under
-    // the cap plans. 16 occurrences (a 2^16-state table) keeps the
-    // debug-build suite fast; the full 2^20 cap is exercised by the
-    // same code path with a bigger constant.
+
     let schema = schema(1, 2);
     let occurrences: Vec<Occurrence> = (0..16)
         .map(|i| occurrence(u16::try_from(i).expect("small"), 0, vec![(0, 0)]))
