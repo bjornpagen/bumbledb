@@ -1297,7 +1297,6 @@ mod tests {
     use super::*;
 
     /// (`lean/Main.lean: RVerdict` derives `BEq` — order-sensitive), and
-
     #[test]
     fn lane_verdict_orders_and_dedups_the_citation_list() {
         let both_directions = Verdict::Aborted(vec![
@@ -1416,7 +1415,6 @@ mod tests {
     /// containment's holds-before premise fails on a store whose
 
     /// § "Domain quantification, worked"). Demonstrated 2026-07-15:
-
     #[test]
     fn domain_quantification_judgments_are_outside_the_lane() {
         const SEVERITY: RelationId = RelationId(0);
