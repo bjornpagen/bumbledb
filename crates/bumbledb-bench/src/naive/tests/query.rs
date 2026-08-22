@@ -91,7 +91,6 @@ fn rows(raw: Vec<Vec<Value>>) -> BTreeSet<Tuple> {
 
 #[test]
 fn duplicate_witnesses_collapse() {
-
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 100),
@@ -111,7 +110,6 @@ fn duplicate_witnesses_collapse() {
 
 #[test]
 fn aggregation_footgun_triples_the_sum() {
-
     let db = db(vec![posting(1, 7, 100), tag(1, 0), tag(1, 1), tag(1, 2)]);
     let plain = Query::single(Rule {
         finds: vec![
@@ -152,7 +150,6 @@ fn aggregation_footgun_triples_the_sum() {
 
 #[test]
 fn empty_input_global_aggregate_is_the_empty_set() {
-
     let db = db(vec![]);
     let query = Query::single(Rule {
         finds: vec![
@@ -171,7 +168,6 @@ fn empty_input_global_aggregate_is_the_empty_set() {
 
 #[test]
 fn membership_boundaries_are_half_open() {
-
     let db = db(vec![mandate(1, 10, 20)]);
     for (point, expect_hit) in [(9u64, false), (10, true), (19, true), (20, false)] {
         let query = Query::single(Rule {
@@ -194,7 +190,6 @@ fn membership_boundaries_are_half_open() {
 
 #[test]
 fn point_variable_membership_uses_the_scalar_anchor() {
-
     let db = db(vec![
         posting(1, 12, 5),
         posting(2, 25, 5),
@@ -217,7 +212,6 @@ fn point_variable_membership_uses_the_scalar_anchor() {
 
 #[test]
 fn interval_variable_on_interval_fields_is_value_equality() {
-
     let db = db(vec![
         mandate(1, 10, 20),
         mandate(2, 10, 20),
@@ -244,7 +238,6 @@ fn interval_variable_on_interval_fields_is_value_equality() {
 
 #[test]
 fn negation_rejects_once_regardless_of_multiplicities() {
-
     let db = db(vec![
         posting(1, 7, 100),
         posting(3, 8, 5),
@@ -377,7 +370,6 @@ fn sum_overflow_is_the_one_runtime_error() {
 
 #[test]
 fn a_query_denotes_the_set_union_of_its_rules_denotations() {
-
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 250),
@@ -408,7 +400,6 @@ fn a_query_denotes_the_set_union_of_its_rules_denotations() {
 
 #[test]
 fn variables_are_rule_scoped_in_the_model_too() {
-
     let db = db(vec![posting(1, 7, 100), posting(2, 8, 250)]);
     let first = Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -443,7 +434,6 @@ fn variables_are_rule_scoped_in_the_model_too() {
 
 #[test]
 fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
-
     // and 8 contribute {100, 250} ∪ {100} = {100, 250} → 350 (the
 
     let db = db(vec![
