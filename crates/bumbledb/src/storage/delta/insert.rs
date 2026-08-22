@@ -22,7 +22,6 @@ impl WriteDelta<'_> {
     /// and marks never retreat (`mark.max(value + 1)`; deletes do not
 
     /// # Errors
-
     pub fn apply(
         &mut self,
         view: &ReadTxn<'_>,
