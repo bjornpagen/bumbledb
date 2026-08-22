@@ -1,10 +1,3 @@
-//! The pointwise-key matrix (PRD 07 criteria): per-cell tests of the
-//! ordered-neighbor probe, each in one delta and across deltas, plus the
-//! ray (`end == MAX` = `[s, ∞)`) and delete-then-reinsert cases.
-//!
-//! The incumbent everywhere is `Booking(room 1, [10, 20), tag 0)`; each
-//! cell inserts one contender and asserts the judgment.
-
 use super::*;
 
 use crate::error::{Admission, Conflict, Result, Violation};
@@ -13,7 +6,6 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::{TempDir, expect_rejected};
 
-/// Applies both facts as inserts in one delta against an empty base.
 fn in_delta(name: &str, a: &[u8], b: &[u8]) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
@@ -25,13 +17,12 @@ fn in_delta(name: &str, a: &[u8], b: &[u8]) -> Result<Admission<()>> {
     drop(view);
     let result = commit(delta, &env).map(|admission| admission.map(|_| ()));
     if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
-        // An aborted commit leaves the base state untouched.
+
         assert!(committed_data(&env).is_empty());
     }
     result
 }
 
-/// Commits `first`, then inserts `second` in a fresh delta.
 fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> Result<Admission<()>> {
     let dir = TempDir::new(name);
     let schema = schema();
@@ -55,8 +46,6 @@ fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> Result<Admission<()>>
     result
 }
 
-/// In-delta violation: application order follows fact-hash order, so
-/// either fact may be the incumbent — assert the pair, not the roles.
 fn assert_in_delta_violation(result: Result<Admission<()>>, a: &[u8], b: &[u8]) {
     let violations = expect_rejected(result);
     let [
@@ -80,8 +69,6 @@ fn assert_in_delta_violation(result: Result<Admission<()>>, a: &[u8], b: &[u8]) 
     );
 }
 
-/// Cross-delta violation: the committed fact is the incumbent, the new
-/// fact the offender — the roles are deterministic.
 fn assert_cross_delta_violation(result: Result<Admission<()>>, first: &[u8], second: &[u8]) {
     let violations = expect_rejected(result);
     let [
@@ -102,8 +89,6 @@ fn assert_cross_delta_violation(result: Result<Admission<()>>, first: &[u8], sec
     assert_eq!(**fact, *second);
     assert_eq!(&**incumbent, first);
 }
-
-// ---------- the matrix: violating cells ----------
 
 #[test]
 fn overlap_left_in_delta_aborts() {
@@ -155,8 +140,7 @@ fn containment_cross_delta_aborts() {
 
 #[test]
 fn exact_duplicate_interval_in_delta_aborts() {
-    // Distinct facts (the tag differs) sharing one exact determinant: caught
-    // by the put-conflict, not the neighbor probe.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 10, 20, 1);
@@ -171,11 +155,9 @@ fn exact_duplicate_interval_cross_delta_aborts() {
     assert_cross_delta_violation(cross_delta("fd-exact-dup-cross", &a, &b), &a, &b);
 }
 
-// ---------- the matrix: passing cells ----------
-
 #[test]
 fn adjacent_left_in_delta_passes() {
-    // `pe == s`: half-open adjacency shares no point.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 5, 10, 1);
@@ -196,7 +178,7 @@ fn adjacent_left_cross_delta_passes() {
 
 #[test]
 fn adjacent_right_in_delta_passes() {
-    // `ns == e`: the successor may start exactly where the insert ends.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 20, 25, 1);
@@ -237,7 +219,7 @@ fn disjoint_cross_delta_passes() {
 
 #[test]
 fn same_interval_different_prefix_in_delta_passes() {
-    // The scalar prefix is the group: another room, same interval.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 2, 10, 20, 1);
@@ -256,11 +238,9 @@ fn same_interval_different_prefix_cross_delta_passes() {
         .unwrap();
 }
 
-// ---------- final-state judgment ----------
-
 #[test]
 fn delete_then_reinsert_overlapping_in_one_delta_passes() {
-    // Judged against the final state: the delete frees the window, so
+
     // the overlapping replacement lands — deletes apply before inserts.
     let dir = TempDir::new("fd-delete-reinsert");
     let schema = schema();
@@ -285,13 +265,9 @@ fn delete_then_reinsert_overlapping_in_one_delta_passes() {
         .expect("admitted");
 }
 
-// ---------- rays (`end == MAX` denotes `[s, ∞)`; no special code) ----------
-
 #[test]
 fn two_rays_in_one_group_abort() {
-    // `[5, ∞)` and `[9, ∞)`: two rays share every point past the later
-    // start, so a pointwise key can never hold both — the ordinary strict
-    // comparisons judge the overlap, since ∞ is just the largest end.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, u64::MAX, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
@@ -300,7 +276,7 @@ fn two_rays_in_one_group_abort() {
 
 #[test]
 fn bounded_interval_adjacent_to_ray_passes() {
-    // `[5, 9)` then `[9, ∞)`: adjacency at the ray's start.
+
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, 9, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
@@ -308,12 +284,6 @@ fn bounded_interval_adjacent_to_ray_passes() {
         .expect("adjacency at the ray's start is legal")
         .unwrap();
 }
-
-// ---------- the fresh-row auto-key: the F put-conflict (R16) ----------
-//
-// Doc(id fresh, body u64): the payload distinguishes facts sharing an
-// explicit fresh id, so the auto-key's judgment — the `F` put-conflict
-// itself, no `U` tree — is reachable.
 
 fn doc_schema() -> Schema {
     SchemaDescriptor {
@@ -336,16 +306,13 @@ fn doc_schema() -> Schema {
 }
 
 const DOC: RelationId = RelationId(0);
-/// Materialized order: the fresh auto-key alone.
+
 const DOC_KEY: StatementId = StatementId(0);
 
 fn doc_fact(schema: &Schema, id: u64, body: u64) -> Vec<u8> {
     fact(schema, DOC, &[ValueRef::U64(id), ValueRef::U64(body)])
 }
 
-/// One recorded Functionality citing the fresh auto-key, incumbent
-/// unnamed (the scalar-arm convention), the offending fact one of the
-/// pair.
 fn assert_fresh_row_violation(violations: &crate::error::Violations, facts: &[&[u8]]) {
     let [
         (
@@ -379,8 +346,7 @@ fn duplicate_fresh_id_in_one_delta_aborts_with_the_auto_key() {
     drop(view);
     let violations = expect_rejected(commit(delta, &env));
     assert_fresh_row_violation(&violations, &[&a, &b]);
-    // The abort left no data — only the burned Q high-water (the
-    // never-reissue law persists escaped fresh marks on every abort).
+
     assert!(
         committed_data(&env)
             .iter()
@@ -415,9 +381,7 @@ fn duplicate_fresh_id_across_deltas_aborts_with_the_auto_key() {
 
 #[test]
 fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
-    // Final-state judgment: the delete frees the row id, so the explicit
-    // re-supply lands — the documented correction idiom
-    // (`10-data-model.md`).
+
     let dir = TempDir::new("fresh-row-reinsert");
     let schema = doc_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -443,8 +407,7 @@ fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
 
 #[test]
 fn scan_order_is_fresh_order_not_insertion_order() {
-    // The one id allocator (R16): the F key embeds the fresh value, so
-    // the sequential scan yields fresh order whatever the commit order.
+
     let dir = TempDir::new("fresh-row-scan-order");
     let schema = doc_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -471,8 +434,6 @@ fn scan_order_is_fresh_order_not_insertion_order() {
     assert_eq!(scanned, vec![3, 6, 9], "scan order is fresh order");
 }
 
-/// Fresh auto-key plus a second unique key: an occupied `F` must still
-/// walk the other determinants so the sealed set is scan-complete.
 fn person_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -575,9 +536,7 @@ fn a_short_cited_f_value_is_typed_corruption_not_a_panic() {
 
 #[test]
 fn a_decode_failure_on_decoration_keeps_commit_rejected() {
-    // Correct-width but invalid interval in the incumbent F: judging
-    // records the pointwise citation (the U key is intact); decoration
-    // cannot decode the incumbent. The sealed set must survive.
+
     let dir = TempDir::new("decoration-keeps-rejected");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -587,7 +546,7 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
         .expect("admitted");
     {
         let mut corrupted = incumbent.clone();
-        // Interval words sit at bytes 8..24; start == end is invalid.
+
         corrupted[8..16].copy_from_slice(&10u64.to_be_bytes());
         corrupted[16..24].copy_from_slice(&10u64.to_be_bytes());
         let mut wtxn = env.write_txn().expect("txn");
