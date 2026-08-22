@@ -1,5 +1,4 @@
 //! different discriminator literals do not collide, and the fold-free
-
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadOp, HeadTerm};
