@@ -1,23 +1,9 @@
 //! The pipelined Free Join executor (the architecture docs) —
 //! vectorized execution is the default and only path;
 //! batch size 1 is merely its degenerate setting, never a mode
-//! (`docs/architecture/40-execution.md` D4, post-mortem §31).
-//!
-//! Everything is a monomorphized generic — no `dyn` anywhere in the hot
+//! .
 //! path. Middle nodes pump: pending binding rows + carried cursor sets
 //! flow node to node, each node expanding pending entries into shared
-//! probe batches (dynamic cover choice per entry; flush on cover
-//! change), two-phase-probing every sibling ACROSS parents (phase 1
-//! hashes — pure ALU; phase 1.5 prefetches; phase 2 issues all bucket
-//! loads — independent chains the out-of-order window overlaps),
-//! compacting survivors branchlessly, and routing them onward. The last
-//! node runs per parent: leaf fast paths (pinned-row elision, scan-fold
-//! pushdown) or the generic leaf batch, emitting to the sink whole.
-//! D2 suffix skips cancel origins — the subtree of one absorb-node
-//! element — as pure work-skipping: a late cancel re-emits rows the
-//! seen-set already holds (set semantics make cancellation
-//! correctness-free). The paper's "cross-node-entry accumulation is
-//! future work" caveat is retired: deep nodes see full batches.
 
 use std::num::NonZeroUsize;
 
@@ -43,31 +29,28 @@ pub enum Flow {
 /// (everything else — bound by ancestor nodes, constant across the
 /// batch).
 pub struct LeafBatch<'a> {
-    /// Cover-entry key words, entry-major (`entry * arity + word`).
+
     pub keys: &'a [u64],
     pub arity: usize,
-    /// Surviving entry indices into `keys` (post probe/residual
-    /// compaction).
+
     pub survivors: &'a [u32],
-    /// Binding slot of each cover key word, in word order.
+
     pub key_slots: &'a [usize],
-    /// Outer bindings; slots not in `key_slots` are already bound.
+
     pub bindings: &'a Bindings,
 }
 
 /// Where a leaf-batch output slot's value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeafSource {
-    /// The batch's cover keys, at this word index.
+
     Key(usize),
-    /// The outer bindings (constant across the batch).
+
     Outer,
 }
 
 impl LeafBatch<'_> {
-    /// Resolves one slot's source — a linear scan over the (tiny) cover
-    /// arity; sinks call this once per batch per output slot, never per
-    /// row.
+
     #[must_use]
     pub fn source_of(&self, slot: usize) -> LeafSource {
         self.key_slots
@@ -76,7 +59,6 @@ impl LeafBatch<'_> {
             .map_or(LeafSource::Outer, LeafSource::Key)
     }
 
-    /// The key word for a surviving entry at a word index.
     #[must_use]
     pub fn key(&self, entry: u32, word: usize) -> u64 {
         self.keys[entry as usize * self.arity + word]
@@ -84,66 +66,43 @@ impl LeafBatch<'_> {
 }
 
 /// A fused leaf scan: the last node's suffix
-/// positions handed to the sink as runs over live column views — no key
 /// batch is materialized at all. The sink reads leaf words through
 /// [`Colt::suffix_column`] and outer slots through `bindings`.
 pub struct LeafScan<'a> {
     pub colt: &'a Colt,
-    /// The leaf join level (the occurrence's last).
+
     pub level: usize,
-    /// Binding slot of each leaf key word, in word order.
+
     pub key_slots: &'a [usize],
     pub bindings: &'a Bindings,
 }
 
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
-/// `output()`).
+/// `output`).
 pub trait Sink {
-    /// Emits one complete binding — the key-probe path (single row by
-    /// construction) and tests; the join executor's leaf path is
-    /// [`Sink::emit_batch`].
+
     fn emit(&mut self, bindings: &Bindings) -> Flow;
 
-    /// Consumes every surviving element of a leaf batch. Empty batch
-    /// returns `Continue`. Used when the node is `Forbidden` (rows are
-    /// sink-relevant) or the sink cannot skip.
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
 
-    /// Licensed projection only: stop at the first row whose per-row
-    /// emit would have signaled [`Flow::SkipSuffix`]. Default is
-    /// [`Sink::emit_batch`] — aggregates inherit; they never skip.
     fn emit_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.emit_batch(batch)
     }
 
-    /// Whether this sink can ever signal [`Flow::SkipSuffix`]. D2 is
-    /// legal for projections only; aggregate plans additionally mark
-    /// every node sink-relevant, so a skip under a
-    /// fold is absorbed at the node that produced it — this method
-    /// backs the debug tripwire that a skip never *crosses* a node
-    /// unless the sink is allowed to skip at all.
     fn skip_capability(&self) -> SkipCapability {
         SkipCapability::Forbidden
     }
 
-    /// Opens a fused leaf scan. [`ScanOffer::Declined`] — the
-    /// default, and an honest capability report, not a shim — sends the
-    /// executor to the batch path. [`ScanOffer::Open`] is followed by any
-    /// number of [`Sink::scan_run`] calls and exactly one
-    /// [`Sink::end_scan`].
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         let _ = scan;
         ScanOffer::Declined
     }
 
-    /// Folds one position run of an open scan.
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: crate::exec::colt::SuffixRun<'_>) {
         let _ = (scan, run);
         unreachable!("scan_run without ScanOffer::Open");
     }
 
-    /// Closes an open scan (accumulator write-back). Returns the number
-    /// of rows the scan consumed (introspection's `emits` accounting).
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let _ = scan;
         unreachable!("end_scan without ScanOffer::Open");
@@ -157,9 +116,6 @@ pub enum ScanOffer {
     Open,
 }
 
-/// Emits a leaf batch under the two existing sums: Licensed suffix AND
-/// Licensed skip capability stop at first `SkipSuffix`; otherwise the
-/// whole batch is sink-relevant and must be consumed.
 fn emit_node_batch<S: Sink>(
     sink: &mut S,
     suffix_skip: crate::plan::fj::SuffixSkip,
@@ -183,84 +139,62 @@ pub enum SkipCapability {
 }
 
 /// One executor phase, for per-(node, phase) time attribution
-/// (docs/architecture/60-validation.md): the sequential segments of
+/// : the sequential segments of
 /// a node entry's batch loop. `Descend` wraps the per-survivor recursion
 /// loop, so its exclusive time (total minus the next node's phases) is
 /// the per-row bookkeeping — binds, journal restores, and leaf emits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinPhase {
-    /// Drawing a cover batch (`iter_batch`).
+
     Iter,
-    /// Phase 1: gather probe keys + compute hashes (pure ALU).
+
     Hash,
-    /// Phase 2: bucket loads + survivor compaction.
+
     Probe,
-    /// Residual comparisons + compaction.
+
     Residual,
-    /// The per-survivor recursion loop (contains deeper nodes' phases).
+
     Descend,
-    /// Sibling map construction (`ensure_forced`) ahead of a probe pass —
-    /// separated because a force ingests every position under the
-    /// sibling's cursor: the single biggest non-amortized cost a node
-    /// entry can pay.
+
     Force,
-    /// The pipeline's gather/assembly segments: `pump`'s per-entry cover
-    /// choice + batch draw + probe-batch identity fill, and
-    /// `probe_pass`'s batch setup between the timed phases — the
-    /// formerly phase-unattributed half of a deep plan's join time
-    /// (Gap B). Windows close around every `probe_pass`/flush, so
-    /// deeper nodes' phases never run inside a Gather window.
+
     Gather,
 }
 
 /// Execution observability seam (40-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
-/// introspection entry point (docs/architecture/40-execution.md) instantiates the counting variant.
+/// introspection entry point instantiates the counting variant.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
-    /// One cover batch was drawn (`len` entries) — introspection's "batching
-    /// engaged" observable: at batch size B over N tuples this fires
-    /// ~N/B times, not N times.
+
     fn batch(&mut self, node: usize, len: usize);
-    /// A cover was chosen: which subatom, and its [`KeyCount`] (Exact vs
-    /// Estimate — the tag, with magnitude unused by stats).
+
     fn cover_choice(&mut self, node: usize, subatom: usize, count: KeyCount);
-    /// Phase 1 computed one probe hash (ordering assertions: every hash of
-    /// a batch precedes its first probe).
+
     fn probe_hash(&mut self, node: usize, subatom: usize);
     fn probe(&mut self, node: usize, subatom: usize, hit: bool);
     fn residual(&mut self, node: usize, pass: bool);
-    /// One anti-probe ran for a surviving binding (docs/architecture/
-    /// 40-execution.md, § anti-probe filters): `hit` means a matching
-    /// fact exists in the negated occurrence and the binding is
-    /// rejected; a miss survives.
+
     fn anti_probe(&mut self, node: usize, hit: bool);
     fn emit(&mut self);
-    /// Bindings emitted so far (the rule loop's union accounting:
-    /// per-rule emitted = the delta across one rule's run; absorbed =
-    /// emitted − newly-seen). Zero on uncounted paths — the default is
-    /// the honest report of a counter that does not exist.
+
     fn emits(&self) -> u64 {
         0
     }
-    /// A D2 subtree skip propagated through this node.
+
     fn skip(&mut self, node: usize);
-    /// One derived table's frontier rows entering a reach round's delta
-    /// image (`api/prepared/reach.rs`): fires once per round ≥ 1,
+
     /// before the round's rec arms run. Default no-op.
     #[inline]
     fn fixpoint_delta(&mut self, rows: u64) {
         let _ = rows;
     }
-    /// A reach round closed: the bindings the round's runs emitted and
-    /// the re-derivations the spanning seen-set absorbed. Round 0 is
-    /// the base arms; its `fixpoint_delta` count is zero. Default no-op.
+
     #[inline]
     fn fixpoint_round(&mut self, emitted: u64, absorbed: u64) {
         let _ = (emitted, absorbed);
     }
-    /// A timed phase segment opens/closes (default no-op: only the trace
-    /// harness's [`PhaseTimers`] implements these; hot-path cost when
+
     /// unimplemented is exactly zero after monomorphization).
     #[inline]
     fn phase_start(&mut self, node: usize, phase: JoinPhase) {
@@ -278,28 +212,22 @@ pub trait Counters {
 #[cfg(feature = "trace")]
 pub const PHASE_NODE_CAP: usize = 8;
 
-/// The trace-mode phase accumulator (docs/architecture/60-validation.md):
+/// The trace-mode phase accumulator:
 /// per (node, phase) tick totals via the obs fast clock, flushed as
 /// `Category::Phase` point events at capture end. Never in a timing
 /// path — the prepared-query execute path selects it only under an
 /// active obs capture.
 #[cfg(feature = "trace")]
 pub struct PhaseTimers {
-    /// `[node][phase] -> (accumulated ticks, calls)`.
+
     acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-    /// `[node][phase] -> open segment's start tick`.
+
     open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-    /// `[node][phase] -> open-window nesting depth`. Only the overflow
-    /// bucket can nest: recursion advances strictly by node index, so an
+
     /// in-cap (node, phase) never reopens before it closes — but every
-    /// node past the cap shares one bucket, and their Descend windows
-    /// DO nest. Nested windows merge into the outermost one (a naive
-    /// restamp clobbered the outer open stamp: the inner span counted
-    /// twice and the outer prefix vanished) — coarse attribution, never
-    /// a lie, exactly like the shared `nX` name.
+
     depth: [[u32; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-    /// Bindings emitted (the RULE span's union accounting — trace-mode
-    /// only; the release path's [`NoopCounters`] counts nothing).
+
     emits: u64,
 }
 
@@ -309,7 +237,7 @@ pub struct NoopCounters;
 
 /// The phase accumulator's inert twin (the `trace` feature is off): a
 /// ZST with empty bodies, so the execute path's capture branch is
-/// written once, `#[cfg]`-free — the obs.rs law. `obs::capturing()` is
+/// written once, `#[cfg]`-free — the obs.rs law. `obs::capturing` is
 /// a compile-time `false` off, so this arm is dead code the optimizer
 /// drops; the timing path monomorphizes [`NoopCounters`] exactly as
 /// before.
@@ -324,7 +252,6 @@ impl PhaseTimers {
         Self
     }
 
-    /// Flushes nothing (no capture can exist with `trace` off).
     #[expect(
         clippy::unused_self,
         clippy::trivially_copy_pass_by_ref,
@@ -361,9 +288,7 @@ impl Counters for PhaseTimers {
 #[derive(Debug)]
 pub struct Bindings {
     slots: Vec<u64>,
-    /// Staleness tracking exists only to power the `debug_assert` in
-    /// [`Bindings::get`]; the release path pays no epoch store in the
-    /// innermost loop.
+
     #[cfg(debug_assertions)]
     epochs: Vec<u64>,
     #[cfg(debug_assertions)]
@@ -376,43 +301,24 @@ pub struct Bindings {
 /// README) — this is the one place it lives.
 pub const BATCH: usize = 128;
 
-/// Where a value read during batched probing comes from: a word of the
-/// current batch's cover keys (varying per element) or an already-bound
-/// outer slot (constant across the batch). Word-indexed on both sides:
-/// an interval variable occupies two consecutive batch key words exactly
-/// as it occupies two consecutive binding slots (the [`crate::ir::
-/// normalize::SlotWidth`] layout), so every consumer resolves one
-/// `Source` per key **word**, never per variable.
 #[derive(Debug, Clone, Copy)]
 enum Source {
     Batch(usize),
     Slot(usize),
 }
 
-/// Where a probed occurrence's cursor comes from within one pass —
-/// resolved once per (pass, occurrence), never a per-element subatom
-/// search (the instruction diet). The membership-probe loops and the
-/// routing arm consult the same resolution.
 #[derive(Debug, Clone, Copy)]
 enum CursorSrc {
-    /// The cover subatom's child (per element).
+
     Cover,
-    /// A sibling probe's child at this subatom index (per element).
+
     Sibling(usize),
-    /// The element's parent entry's carried column (pipeline only).
+
     Carried(usize),
-    /// A batch-constant cursor, hoisted (a never-advanced start, or the
-    /// leaf pass's outer cursor).
+
     Const(Cursor),
 }
 
-/// One whole-value residual compare over a variable's slot words: width
-/// 1 is the scalar compare; any wider span — an interval pair or a
-/// `bytes<N>` block — compares **word-wise** under `Eq`/`Ne` only
-/// (`docs/architecture/20-query-ir.md` — interval-pair predicates travel
-/// as Allen mask residuals, point membership as word residuals, and
-/// order over multi-word values is a validation-typed refusal, so a wide
-/// residual is whole-value identity only).
 fn compare_wide(
     op: crate::ir::WordCmp,
     width: usize,
@@ -429,25 +335,18 @@ fn compare_wide(
     }
 }
 
-/// Grow-only scratch sizing (the pooled high-water contract): the
-/// buffer zero-fills only above its high-water mark, never per pass —
-/// `clear` + `resize(n, 0)` re-memset the full window every pass
-/// (`_platform_memset`, 3.7% of `meets_chain`) though every element of
-/// `[..n]` is written before it is read. Callers confine reads to
-/// `[..n]` (the compaction kernel slices internally); the tail above
-/// `n` is stale by contract. Shared by both line-parallel passes and
-/// the anti-probe — the contract is behavior, not the refused pass
-/// extraction.
+/// Grow-only scratch sizing (the pooled high-water contract): the buffer
+/// zero-fills only above its high-water mark, never per pass — `clear` +
+/// `resize(n, 0)` re-memset the full window every pass (`_platform_memset`,
+/// 3.7% of `meets_chain`) though every element of `[..n]` is written before it
+/// is read. Shared by both line-parallel passes and the anti-probe — the
+/// contract is behavior, not the refused pass extraction.
 fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
     if v.len() < n {
         v.resize(n, T::default());
     }
 }
 
-/// The batch key word offset of `target` inside a cover's variable list
-/// — `None` when the variable is not bound by this cover (read its
-/// outer slot instead). Word offsets accumulate slot widths, so an
-/// interval cover variable's pair lands at `base` and `base + 1`.
 fn word_base(
     cover_vars: &[crate::ir::VarId],
     target: crate::ir::VarId,
@@ -463,137 +362,72 @@ fn word_base(
     None
 }
 
-/// A leaf-scan residual operand, resolved once per residual per hoisted
-/// run: a live column view or the outer binding's constant word.
-/// Small runs resolve per position; [`SCAN_HOIST_THRESHOLD`]
-/// splits the arms.
 #[derive(Clone, Copy)]
 enum Operand<'a> {
     Col(crate::image::ColumnView<'a>),
     Const(u64),
 }
 
-/// Minimum survivors for a phase-1.5 pass — the ONLY prefetch gate:
-/// the pass measured at ~12 ns fixed + ~0.3 ns/probe, so a
-/// 4-survivor pass amortizes it and smaller ones are pure overhead.
-/// The former footprint tier (2 MiB, retuned to 256 KiB) was ablated
-/// at the bucket-layout probe floor and measured NOTHING at family
-/// level (every family within ±2%, spread −2.9%) —
-/// covering an at-floor map costs ~nothing at today's 5.7 ns/probe,
-/// and the gate's comparison was the last of its complexity.
-/// Re-ablated on the displaced lanes (2026-07-17, twin-binary
-/// interleaved A/B, min-of-3 DVFS-normalized p50s, ephemeral) once
-/// they made the DRAM/displaced regime measurable: the 256 KiB tier
-/// re-armed at both gate sites is decision-free past L2 by
-/// construction (the lanes' forced map is ~34 MiB, the tier always
-/// passes) and measured so — twin/width-only 1.025/0.985/0.977 on
-/// `disp_probe`/`_d24`/`_d96` (mixed signs inside the lane's recorded
-/// cross-block wobble) and 0.999/0.998/1.015 on the probe-free
-/// stream ladder. NEUTRAL: no regime gives the tier's comparison
-/// anything to decide — width-only stays.
 const PREFETCH_WIDTH_FLOOR: usize = 4;
 
-/// Per-node reusable scratch: each node's frame is active at most once in
-/// the recursion (frames advance strictly by node index), so scratch is
-/// indexed by node and allocated once per executor construction. Fields
-/// group by lifecycle, marked by the dividers below (named sub-structs
-/// were refused: the grouping buys no new invariant — every field is
-/// already private to the executor — and would rename every access in
-/// the two hot passes for it).
+/// Fields group by lifecycle, marked by the dividers below (named sub-structs
+/// were refused: the grouping buys no new invariant — every field is already
+/// private to the executor — and would rename every access in the two hot
+/// passes for it).
 #[derive(Default)]
 struct NodeScratch {
-    // — Pass scratch: valid within one probe/leaf pass, overwritten per
-    //   batch (capacity retained across executions). —
-    /// Cover-entry key words, entry-major (`entry * arity + word`).
+
     entry_keys: Vec<u64>,
-    /// Cover-entry child cursors.
+
     children: Vec<Cursor>,
-    /// Surviving batch-entry indices (branchlessly compacted).
+
     survivors: Vec<u32>,
-    /// Phase-1 gathered probe keys, entry-major per sibling pass.
+
     probe_keys: Vec<u64>,
-    /// Phase-1 hashes, aligned with `survivors`.
+
     hashes: Vec<u64>,
-    /// Per subatom, per entry: the probed child cursor.
+
     sibling_children: Vec<Vec<Cursor>>,
-    /// Per sibling-var value sources, recomputed per node entry (the
-    /// runtime cover choice decides what comes from the batch).
+
     sources: Vec<Vec<Source>>,
-    /// Residual operand sources, aligned with the node's residual list.
+
     residual_sources: Vec<(Source, Source)>,
-    /// Word-residual operand sources, aligned with the node's
-    /// `word_residuals` list — one source per side, already offset to
-    /// the compared interval word (docs/architecture/20-query-ir.md,
-    /// § normalization).
+
     word_residual_sources: Vec<(Source, Source)>,
-    /// Allen-residual operand sources, aligned with the node's
-    /// `allen_residuals` list — one source per side at the interval
-    /// variable's word **base**; evaluation reads the pair at offsets
-    /// 0/1 (batch key words and binding slots lay intervals out
-    /// identically — the `SlotWidth` layout).
+
     allen_sources: Vec<(Source, Source)>,
-    /// Allen-residual endpoint gather scratch: the four per-survivor
-    /// endpoint streams `[a.start | a.end | b.start | b.end]`, each of
-    /// the survivor count, gathered per residual pass and classified
-    /// whole by the configuration kernel (pooled — capacity retained).
+
     allen_gather: Vec<u64>,
-    /// Allen-residual configuration codes, aligned with the survivor
-    /// set (pooled — capacity retained).
+
     allen_codes: Vec<u8>,
-    /// Anti-probe key sources, aligned with the node's anti-probe list
-    /// (one inner vec per anti-probe, one source per key **word**) —
-    /// resolved per pass against the runtime cover choice, exactly like
-    /// `sources`.
+
     anti_sources: Vec<Vec<Source>>,
-    /// Membership-check scratch: one (start column, end column, point
-    /// word) triple per point filter of the spec under evaluation,
-    /// rebuilt per element (capacity retained).
+
     point_checks: Vec<(usize, usize, u64)>,
-    /// Membership point-word sources, resolved once per (pass, spec)
-    /// against the runtime cover choice — the per-element half above
-    /// reads through these (capacity retained).
+
     point_sources: Vec<(usize, usize, Source)>,
-    /// The membership probe's pinned-row split (`probe_pass`'s point
-    /// loop): positions of the survivors whose probed cursor is a
-    /// pinned row — batch-evaluated per part over gathered interval
-    /// columns instead of the per-element position walk (capacity
-    /// retained).
+
     point_rows: Vec<u32>,
-    /// Survivor indices aligned with `point_rows` (the mask writeback).
+
     point_row_ks: Vec<u32>,
-    /// Occ-indexed cursor sources for this pass, resolved once per pass
-    /// — the membership loops and the routing arm read cursors through
-    /// this table instead of re-searching subatoms per element.
+
     cursor_srcs: Vec<CursorSrc>,
-    /// Per-entry survivor mask for the compaction kernel.
+
     mask: Vec<u8>,
-    // — Probe-batch identity (pipeline): per element of the CURRENT
-    //   cross-parent batch, aligned with `entry_keys`; cleared at the
-    //   end of each `probe_pass`. —
-    /// Pipeline probe-batch parent indices: the
-    /// pending entry each batch element expanded from.
+
     parents: Vec<u32>,
-    /// Per probe-batch element: the origin (aligned with `parents`).
+
     element_origins: Vec<u32>,
-    // — Pending buffers (pipeline): rows awaiting this node, appended by
-    //   the parent node's routing and drained whole by `pump`; live
-    //   across passes, reset per execution. —
-    /// Pending binding rows awaiting this node, entry-major
-    /// (stride = slot count).
+
     pending_bindings: Vec<u64>,
-    /// Pending carried cursors, entry-major (stride = the node's carried
-    /// occurrence count).
+
     pending_cursors: Vec<Cursor>,
-    /// Entries in the pending buffers.
+
     pending_len: usize,
-    /// Per pending entry: the D2 origin it descends from — minted at
-    /// the absorb node's routing, inherited below.
+
     pending_origins: Vec<u32>,
 }
 
-/// Whole-value residual: operator, vars, slots, and compared width.
-/// Plan-derivable — extracted so `NodePrecompute` never clones a
-/// [`crate::image::view::FilterPredicate`].
 #[derive(Clone, Copy)]
 struct ResidualSpec {
     op: crate::ir::WordCmp,
@@ -604,7 +438,6 @@ struct ResidualSpec {
     width: usize,
 }
 
-/// Word residual: operator, already-offset sides, and slots.
 #[derive(Clone, Copy)]
 struct WordResidualSpec {
     op: crate::ir::WordCmp,
@@ -614,9 +447,6 @@ struct WordResidualSpec {
     rhs_slot: usize,
 }
 
-/// Allen residual sides, slots, and the construction-time literal mask.
-/// [`NodePrecompute::allen_masks`] is the per-execution copy
-/// [`Executor::bind_allen_masks`] rewrites in place.
 #[derive(Clone, Copy)]
 struct AllenResidualSpec {
     lhs: crate::ir::VarId,
@@ -626,17 +456,11 @@ struct AllenResidualSpec {
     mask: crate::allen::AllenMask,
 }
 
-/// Per-node executor precompute: residual slot layouts, resolved Allen
-/// masks, and probe specs for the node they describe. Construction
-/// derives each field from that node's plan lists; nothing here is a
-/// parallel vector on [`Executor`]. Residual metadata is plain data —
-/// the plan's kind-grouped `FilterPredicate` lists stay on the plan.
 struct NodePrecompute {
     residual_slots: Vec<ResidualSpec>,
     word_residual_slots: Vec<WordResidualSpec>,
     allen_residual_slots: Vec<AllenResidualSpec>,
-    /// This execution's resolved Allen masks — literal masks are fixed
-    /// at construction; param masks would be rewritten in place by
+
     /// [`Executor::bind_allen_masks`] before every execution.
     allen_masks: Vec<crate::allen::AllenMask>,
     point_probes: Vec<PointProbeSpec>,
@@ -649,49 +473,36 @@ struct NodePrecompute {
 /// (the prepared query owns both, the 40-execution doc).
 pub struct Executor {
     batch: usize,
-    /// Per occurrence: (current cursor, current trie level).
+
     cursors: Vec<(Cursor, usize)>,
-    /// Per subatom slot maps, precomputed: `slot_map[node][subatom][i]` is
-    /// the binding slot of that subatom's i-th variable.
+
     slot_map: Vec<Vec<Vec<usize>>>,
-    /// Per-node residual layouts and probe specs.
+
     precompute: Vec<NodePrecompute>,
-    /// Per occurrence: some node's membership probe reads this
-    /// occurrence's advanced cursor (`PointProbe::occ`), so its
-    /// per-position children are semantically live and the zero-arity
-    /// cover collapse (`pump`/`run_node`: one entry stands for the whole
+
     /// suffix) must not fire on it.
     point_probed: Vec<bool>,
-    /// Every variable's slot width in words — the word-level source
-    /// resolution's lookup (tiny; linear scan).
+
     var_widths: Vec<(crate::ir::VarId, usize)>,
     scratch: Vec<NodeScratch>,
-    /// The leaf fast paths apply when the last node is classified
-    /// [`LeafPrecompute::Fast`] — its cover is fixed, so the per-entry
-    /// source resolution is precomputed here once.
+
     leaf: LeafPrecompute,
-    /// Residual-surviving positions of one scan run (leaf residuals
+
     /// filter positions before the sink folds them).
     scan_filter: Vec<u32>,
-    /// One-node vs multi-node execution, structural at construction.
+
     drive: Drive,
-    /// D2 origin cancellation, epoch-stamped:
-    /// `cancelled[origin] == cancel_epoch` marks a dead subtree. Grows
-    /// to the per-execution origin high-water and is never cleared.
+
     cancelled: Vec<u32>,
     cancel_epoch: u32,
     next_origin: u32,
-    /// Running / root-skip / typed poison — one stop, one reason.
+
     drive_state: DriveState,
-    /// The leaf overlap enumeration's per-execution index cache
-    /// (`overlap_leaf.rs`; reset per `execute` — group positions are
-    /// only stable within one execution).
+
     overlap: crate::interval::overlap::OverlapCache,
-    /// The current leaf call's matched cover positions, start-ordered
-    /// (pooled — capacity retained).
+
     overlap_hits: Vec<u32>,
-    /// The overlap cache-key scratch: cover occurrence + bound prefix
-    /// words (pooled).
+
     overlap_key: Vec<u64>,
 }
 
@@ -701,55 +512,35 @@ enum DriveState {
     Poisoned(Poison),
 }
 
-/// A typed condition that stops the whole execution early — the poison
-/// shape: one flag write on the cold path, no `Result` on the per-tuple
-/// path. `execute` drains it into the typed error; adding a kind here
-/// forces the drain's `match` to answer for it.
 enum Poison {
-    /// The origin mint space would cross u32 (checked at mint
-    /// granularity in `probe_pass`):
-    /// [`crate::error::Error::Overflow`].
+
     OriginOverflow,
 }
 
-/// One-node vs multi-node drive. Construction mints the arm; execute
-/// matches once. `Rc` shares the immutable tables with `pump`/`probe_pass`
-/// so the arm stays Pipeline — no take/put.
 enum Drive {
     Leaf,
     Pipeline(std::rc::Rc<PipeTables>),
 }
 
-/// The pipelined executor's static shape tables:
-/// levels and carried-cursor columns are plan facts, derived once.
 struct PipeTables {
-    /// `[node][occ]` — the join level an occurrence's cursor sits at when
-    /// the node begins (= its appearances in earlier nodes).
+
     entry_level: Vec<Vec<usize>>,
-    /// `[node]` — occurrences whose cursors pending entries carry INTO
-    /// the node (advanced by an earlier node, used at this node or
-    /// later). Column order is the reverse index: occ → column is a
-    /// search over this tiny list.
+
     carried: Vec<Vec<usize>>,
-    /// The D2 absorb: deepest Forbidden node, or Root when every node
-    /// is Licensed — a leaf skip then ends the whole execution. Skips
-    /// only exist under sinks carrying `SkipCapability::Licensed`;
-    /// cancellation is an optimization — a late cancel re-emits rows
-    /// the seen-set already holds.
+
     absorb: SkipAbsorb,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SkipAbsorb {
-    /// Every node is Licensed — a leaf skip ends the execution.
+
     Root,
-    /// Deepest Forbidden node; skip at/below it cancels that origin.
+
     Node(usize),
 }
 
-/// Three anti-probe forms: emptiness gate, keyed trie probe.
 enum AntiProbeForm {
-    /// Zero key words — emptiness or keyless membership.
+
     Gate,
     Keyed {
         parts: Vec<(crate::ir::VarId, usize, usize)>,
@@ -757,18 +548,10 @@ enum AntiProbeForm {
     },
 }
 
-/// One anti-probe resolved for execution (docs/architecture/
-/// 40-execution.md, § anti-probe filters): the negated occurrence's
-/// index and its probe form — gate vs keyed trie.
 struct AntiProbeSpec {
     occ: usize,
     form: AntiProbeForm,
-    /// The negated occurrence's var-sourced membership filters, per
-    /// filter: (start column, end column, point variable, point slot).
-    /// Evaluated inside the probe: a binding is rejected only if a fact
-    /// matching the keys **also** satisfies every membership — the
-    /// existential reading over the negated occurrence's facts
-    /// (docs/architecture/20-query-ir.md, § param sets / membership).
+
     point_parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
 }
 
@@ -781,19 +564,12 @@ impl AntiProbeSpec {
     }
 }
 
-/// One membership probe resolved for execution ([`crate::plan::fj::
-/// PointProbe`]): the positive occurrence whose remaining positions are
-/// scanned, and per filter the interval field's column pair with the
-/// bound point variable's slot. A binding survives iff one position
-/// satisfies **every** part (the conjunction quantifies over one fact).
 struct PointProbeSpec {
     occ: usize,
-    /// Per filter: (start column, end column, point variable, point slot).
+
     parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
 }
 
-/// The single-subatom-leaf precompute: everything
-/// the leaf fast paths would otherwise re-derive per node entry.
 enum LeafPrecompute {
     Generic,
     Fast {
