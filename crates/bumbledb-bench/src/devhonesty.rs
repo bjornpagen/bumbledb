@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VolumeIdentity {
-
     pub mount_point: PathBuf,
 
     pub fstype: String,
