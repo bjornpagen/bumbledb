@@ -44,7 +44,6 @@ pub struct InstanceBuilder<S> {
 
 impl<S: Theory> InstanceBuilder<S> {
     /// # Errors
-
     pub fn new(theory: S) -> Result<Self> {
         let schema = std::sync::Arc::new(theory.descriptor().validate()?);
         Ok(Self {
@@ -66,7 +65,6 @@ impl<S> InstanceBuilder<S> {
     /// # Errors
 
     /// `TransactionPoisoned` if a prior apply failed after a prefix
-
     pub fn load<'f, F: Fact<'f, Schema = S> + 'f>(
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
@@ -75,7 +73,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn delete<'f, F: Fact<'f, Schema = S> + 'f>(
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
@@ -86,7 +83,6 @@ impl<S> InstanceBuilder<S> {
     /// parsed before any member is staged.
 
     /// # Errors
-
     pub fn load_dyn(
         &mut self,
         rel: RelationId,
@@ -96,7 +92,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn delete_dyn(
         &mut self,
         rel: RelationId,
@@ -114,7 +109,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
         self.mutation
@@ -122,19 +116,16 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {
         self.mutation.reserve(count)
     }
 
     /// # Errors
-
     pub fn reserve_at(&mut self, field: FreshField<S>, count: u64) -> Result<FreshRange<u64>> {
         self.mutation.reserve_at(field, count)
     }
 
     /// # Errors
-
     pub fn fresh_field(
         &self,
         relation: RelationId,
@@ -145,19 +136,16 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.mutation.contains(fact)
     }
 
     /// # Errors
-
     pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.mutation.contains_dyn(rel, values)
     }
 
     /// # Errors
-
     #[expect(
         clippy::needless_pass_by_value,
         reason = "a key value is the read's input, spelled `builder.get(id)`"
@@ -185,7 +173,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn get_dyn(
         &mut self,
         relation: RelationId,
@@ -199,7 +186,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     pub fn get_dyn_into(
         &mut self,
         relation: RelationId,
@@ -218,7 +204,6 @@ impl<S> InstanceBuilder<S> {
     /// # Errors
 
     /// `TransactionPoisoned` if a prior apply failed after a prefix
-
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
         self.mutation.refuse_poisoned()?;
         let (schema, stage) = self.mutation.into_heap();
