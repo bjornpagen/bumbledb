@@ -2,10 +2,6 @@ use std::path::Path;
 
 use super::{Provenance, SharedMachine};
 
-/// Resolves provenance from the environment (best-effort fields fall
-/// back to "unknown"). Every lane builds its provenance here when the
-/// report is assembled — lane end — so the shared-machine stamp's
-/// `load_end` sample is the lane-end reading by construction.
 #[must_use]
 pub fn provenance(repo_dir: &Path) -> Provenance {
     Provenance {
@@ -17,11 +13,6 @@ pub fn provenance(repo_dir: &Path) -> Provenance {
     }
 }
 
-/// The boost→provenance bridge, pure over its input for testing: an
-/// engaged boost stamps the shared-machine block, `load_end` sampled at
-/// call time (provenance is built when the report is — lane end); no
-/// boost stamps nothing, keeping the artifact byte-identical to the
-/// pre-boost shape.
 pub(super) fn shared_stamp(engaged: Option<crate::boost::Engaged>) -> Option<SharedMachine> {
     engaged.map(|engaged| SharedMachine {
         boost: engaged.boost,
@@ -45,21 +36,18 @@ fn command_line(program: &str, args: &[&str], dir: Option<&Path>) -> Option<Stri
     (!line.is_empty()).then(|| line.to_owned())
 }
 
-/// The engine git rev at runtime; "unknown" outside a repo.
 #[must_use]
 pub fn git_rev(repo_dir: &Path) -> String {
     command_line("git", &["rev-parse", "HEAD"], Some(repo_dir))
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-/// Best-effort host description (`sysctl -n machdep.cpu.brand_string`).
 #[must_use]
 pub fn host_description() -> String {
     command_line("sysctl", &["-n", "machdep.cpu.brand_string"], None)
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-/// Civil-from-days (Howard Hinnant's algorithm) — hand-rolled ISO-8601.
 pub(super) fn civil(secs: u64) -> String {
     let days = i64::try_from(secs / 86_400).expect("epoch days fit");
     let rem = secs % 86_400;
@@ -80,7 +68,6 @@ pub(super) fn civil(secs: u64) -> String {
     )
 }
 
-/// The current UTC time, ISO-8601.
 #[must_use]
 pub fn timestamp_iso8601() -> String {
     let secs = std::time::SystemTime::now()
