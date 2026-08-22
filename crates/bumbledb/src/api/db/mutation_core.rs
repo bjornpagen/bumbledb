@@ -5,7 +5,6 @@
 //! [`InstanceBuilder`] uses [`HeapMutation`]. [`WriteTx`] wraps
 //! [`StoreMutation`].
 //! scratch, construction phase, and parse-all-first collection protocol.
-
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
@@ -499,7 +498,6 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
     }
 
     /// before any refusal; then poison, closed, unknown relation, and the
-
     pub(super) fn apply_accepted(
         &mut self,
         coll: &AcceptedCollection,
