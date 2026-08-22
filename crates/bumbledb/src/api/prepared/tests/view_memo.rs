@@ -1,5 +1,4 @@
 #![cfg(feature = "trace")]
-
 use super::*;
 use crate::ir::Rec;
 
