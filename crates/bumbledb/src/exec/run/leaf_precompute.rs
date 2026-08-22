@@ -1,5 +1,4 @@
 //! The single-subatom-leaf precompute.
-
 use super::{LeafPrecompute, NodePrecompute, Source, ValidatedPlan};
 
 impl LeafPrecompute {
