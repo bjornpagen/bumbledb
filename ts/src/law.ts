@@ -273,11 +273,12 @@ type KeyEntry = readonly [string, string]
 /**
  * Every declared `key()` of a statements tuple as {@link KeyEntry} rows —
  * the declared half of the target-key roster (the implied half is read off
- * each target face's own relation value: fresh marks, closed ids). Any
- * undecidable key element degrades the WHOLE wall to silent before this
- * roster is ever consulted ({@link HasUndecidableKey}) — the skip arm here
- * is the same judgment stated locally, kept as belt, as is
- * {@link DeclaredKeyMatch}'s unjudgeable-projection arm.
+ * each target face's own relation value: fresh marks, closed ids). A
+ * statement-tuple union or any undecidable key element degrades the WHOLE
+ * wall to silent before this roster is ever consulted
+ * ({@link DecidableRoster}) — the skip arm here is the same judgment
+ * stated locally, kept as belt, as is {@link DeclaredKeyMatch}'s
+ * unjudgeable-projection arm.
  */
 type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly KeyEntry[] = []> = Stmts extends readonly [
 	infer H extends Statement,
@@ -336,31 +337,46 @@ type DecidableKeyData<D> = [D] extends [
 	: false
 
 /**
- * THE total undecidability detector of the declared-key roster: whether
- * any tuple element's `data["kind"]` type INCLUDES `"key"` without being
- * a single concrete `KeyData` with a literal owner name and a literal
- * projection tuple ({@link DecidableKeyData}) — a bare `Statement`
- * element, a `Statement` union, a `KeyStatement` union, a widened owner,
- * a widened projection. ONE undecidable key element makes the whole
- * declared-key roster UNKNOWABLE: the wall would judge literal
- * containment faces against a roster missing a key the value tier can
- * see, and refuse what the engine admits — a false wall, the tier's one
- * forbidden verdict (the degradation law: best effort degrades to
- * silent, never to a wrong judgment). So the whole {@link TargetKeyWall}
- * degrades, exactly as a widened FACE already silences its own judgment;
- * the value tier stays authoritative. The type tier judges ONLY when the
- * key roster is statically COMPLETE.
+ * THE total decidability detector of the type-tier target-key judgment —
+ * one answer to "is the roster statically complete and SINGULAR": the
+ * tier judges ONLY a single, non-union, statically-complete tuple. Two
+ * clauses, one verdict:
+ *
+ * - SINGULAR — `Stmts` itself must not be a UNION of tuples (a ternary
+ *   between two individually-lawful `as const` statement lists). A naked
+ *   `Stmts` distributes through every conditional below it, so the scan
+ *   ({@link TargetKeyScan}) and the roster ({@link DeclaredKeysOf})
+ *   would distribute INDEPENDENTLY — cross-judging one arm's containment
+ *   faces against the other arm's declared keys and firing a false wall
+ *   on a schema whose every runtime value the value tier admits. The
+ *   union test is the house device ({@link IsMulti}), and this guard's
+ *   own conditionals are tuple-bracketed so no naked-parameter
+ *   distribution path survives into the scan.
+ * - COMPLETE — every tuple element whose `data["kind"]` type INCLUDES
+ *   `"key"` must be a single concrete `KeyData` with a literal owner
+ *   name and a literal projection tuple ({@link DecidableKeyData}). A
+ *   bare `Statement` element, a `Statement` union, a `KeyStatement`
+ *   union, a widened owner, a widened projection each make the whole
+ *   declared-key roster UNKNOWABLE: the wall would judge literal
+ *   containment faces against a roster missing a key the value tier can
+ *   see, and refuse what the engine admits.
+ *
+ * Either failure is the tier's one forbidden verdict in waiting — a
+ * false wall — so anything less than singular-and-complete degrades the
+ * WHOLE {@link TargetKeyWall} to silent (the degradation law: best
+ * effort degrades to silent, never to a wrong judgment), exactly as a
+ * widened FACE already silences its own judgment; the value tier stays
+ * authoritative.
  */
-type HasUndecidableKey<Stmts extends readonly Statement[]> = Stmts extends readonly [
-	infer H extends Statement,
-	...infer T extends readonly Statement[]
-]
-	? "key" extends H["data"]["kind"]
-		? DecidableKeyData<H["data"]> extends true
-			? HasUndecidableKey<T>
-			: true
-		: HasUndecidableKey<T>
-	: false
+type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMulti<Stmts>]
+	? false
+	: Stmts extends readonly [infer H extends Statement, ...infer T extends readonly Statement[]]
+		? "key" extends H["data"]["kind"]
+			? [DecidableKeyData<H["data"]>] extends [true]
+				? DecidableRoster<T>
+				: false
+			: DecidableRoster<T>
+		: true
 
 /**
  * The named, self-locating compile verdict of the target-key wall: the
@@ -460,16 +476,17 @@ type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly Key
  * and to the named {@link TargetKeyWall} on a containment target that
  * resolves no key (60-containment-parity, type tier). Both walls degrade
  * to silent on a widened `Statement[]`, and the target-key wall ALSO
- * degrades whole on any undecidable key element in the tuple
- * ({@link HasUndecidableKey} — a partial roster would fire false walls
- * on literal faces); their runtime twins are authoritative.
+ * degrades whole on a statement-tuple UNION or any undecidable key
+ * element in the tuple ({@link DecidableRoster} — a distributed scan or
+ * a partial roster would fire false walls on literal faces); their
+ * runtime twins are authoritative.
  */
 type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = WallScan<
 	BuildComps<PairsOf<Stmts>>,
 	GeneratorsOf<Rels>,
 	PairsOf<Stmts>
 > &
-	(HasUndecidableKey<Stmts> extends true ? unknown : TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>>)
+	([DecidableRoster<Stmts>] extends [true] ? TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>> : unknown)
 
 /**
  * One coordinate's class per the three laws, at the TYPE tier: its

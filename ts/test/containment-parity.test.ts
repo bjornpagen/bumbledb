@@ -245,7 +245,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		// states {kind: "key"}, so a per-element roster read would MISS it and
 		// judge the containment's literal faces against a partial roster — a
 		// false wall on a schema the value tier admits. The total detector
-		// (law.ts, HasUndecidableKey): a data["kind"] that INCLUDES "key"
+		// (law.ts, DecidableRoster): a data["kind"] that INCLUDES "key"
 		// without being one concrete KeyData degrades the WHOLE wall to
 		// silent, so this call COMPILES (no expect-error) and the value tier
 		// (which reads the key off the VALUE) admits.
@@ -275,6 +275,30 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 			unionKey,
 			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
 		])
+		assert.equal(lower(admitted).statements.length, 2)
+	})
+
+	test("a statement-tuple UNION degrades the whole type-tier wall — the tier judges one singular tuple only", function statementTupleUnion() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		// A ternary between two INDIVIDUALLY-LAWFUL `as const` statement
+		// lists infers a UNION of tuples. A naked Stmts parameter would
+		// distribute the scan and the declared-key roster INDEPENDENTLY,
+		// cross-judging tupleA's containment (scope, value) against tupleB's
+		// roster (value) — a false wall on a schema whose every runtime
+		// value the value tier admits. The total detector (law.ts,
+		// DecidableRoster): the type tier judges ONLY a single, non-union,
+		// statically-complete tuple, so this call COMPILES (no expect-error)
+		// and the value tier judges the actual list (here tupleA — admitted).
+		const tupleA = [
+			key(Target, ["scope", "value"]),
+			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
+		] as const
+		const tupleB = [key(Target, ["value"]), contained(on(Source, "value"), on(Target, "value"))] as const
+		function pick(flag: boolean) {
+			return flag ? tupleA : tupleB
+		}
+		const admitted = schema("UnionTuple", { Source, Target }, pick(true))
 		assert.equal(lower(admitted).statements.length, 2)
 	})
 })
