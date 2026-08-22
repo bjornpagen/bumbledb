@@ -121,7 +121,6 @@ fn overlapping_arms(rng: &mut Rng, domains: &Domains) -> Query {
             let finds = if wide_head {
                 vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))]
             } else {
-
                 vec![FindTerm::Var(VarId(0))]
             };
             posting_arm(finds, floor)
@@ -134,14 +133,12 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
     let arms = 2 + rng.range(2);
     let span = i64::try_from(domains.postings).expect("fits") * target::AT_STEP;
     let aggregate = match rng.range(3) {
-
         0 => FindTerm::Aggregate {
             op: FoldOp::Sum,
             over: VarId(1),
         },
 
         // the typed `CountAcrossRules` refusal now (ruled 2026-07-23,
-
         1 => FindTerm::Aggregate {
             op: FoldOp::Min,
             over: VarId(1),
@@ -157,7 +154,6 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
             let floor = target::AT_BASE + i64::try_from(arm).expect("small") * (span / 6);
             let mut rule = posting_arm(vec![FindTerm::Var(VarId(0)), aggregate.clone()], floor);
             if over_amount {
-
                 rule.atoms[0]
                     .bindings
                     .push((ids::posting::AMOUNT, Term::Var(VarId(1))));
