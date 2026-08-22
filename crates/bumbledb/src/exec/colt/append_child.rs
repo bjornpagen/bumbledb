@@ -3,8 +3,7 @@ use super::{
 };
 
 impl Colt {
-    /// Reserves one chunk frame of `cap` positions at the slab tail,
-    /// returning its index.
+
     fn alloc_chunk(&mut self, cap: usize) -> u32 {
         let idx = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
         let start = u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
@@ -19,15 +18,10 @@ impl Colt {
         idx
     }
 
-    /// Appends a position to an occupied slot's child: singleton inline
-    /// first, a chunked node from the second position on — the first
-    /// chunk small ([`super::FIRST_CHUNK_CAP`] — the graded geometry:
-    /// small fanouts fit whole), later chunks full [`CHUNK_LEN`].
-    /// `child_at` indexes the bucket slab's packed child word.
     pub(super) fn append_child(&mut self, child_at: usize, position: u32) {
         match unpack_child(self.buckets[child_at]) {
             Slot::Single(first_position) => {
-                // Second position: allocate the chunked child node now.
+
                 let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap));
                 let c = self.chunks[chunk_idx as usize];
                 self.chunk_positions[c.start as usize] = first_position;
