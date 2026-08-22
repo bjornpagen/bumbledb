@@ -19,7 +19,6 @@ use bumbledb_theory::schema::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// A sink collecting distinct full binding tuples (set semantics).
 #[derive(Default)]
 struct CollectSink {
     rows: BTreeSet<Vec<u64>>,
@@ -48,7 +47,6 @@ impl Sink for CollectSink {
     }
 }
 
-/// Counters recording cover choices for the skew assertion.
 #[derive(Default)]
 struct RecordingCounters {
     cover_choices: Vec<(usize, usize, bool)>,
@@ -72,7 +70,6 @@ impl Counters for RecordingCounters {
     fn skip(&mut self, _: usize) {}
 }
 
-/// Builds a schema of binary U64 relations R0..Rn(a, b).
 fn schema(relations: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
@@ -99,7 +96,6 @@ fn schema(relations: usize) -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits word rows into each relation and returns unfiltered views.
 fn views_of(
     dir: &TempDir,
     schema: &Schema,
@@ -131,17 +127,10 @@ fn views_of(
         .collect()
 }
 
-/// COLT sources for a plan: schema columns from each occurrence's trie
-/// schema and var-to-field map, over the occurrence's filtered view
-/// (production shape: a negated occurrence's constants are its filter
-/// list, evaluated at the source — docs/architecture/40-execution.md,
-/// § anti-probe filters).
 fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
     colts_with_params(plan, images, &[])
 }
 
-/// [`colts_for`] with a bind-time param slice for filter evaluation
-/// (set-carrying negated filters resolve through it in these fixtures).
 fn colts_with_params(
     plan: &ValidatedPlan,
     images: &[Arc<crate::image::RelationImage>],
@@ -151,8 +140,7 @@ fn colts_with_params(
         .iter()
         .map(|occurrence| {
             // Field→column through the span map (production shape —
-            // interval fields cover two columns and shift their
-            // successors).
+
             let columns: Vec<Vec<usize>> = occurrence
                 .trie_schema
                 .iter()
@@ -201,7 +189,6 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     }
 }
 
-/// A negated occurrence: joins no node, probed through its anti-probe.
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
@@ -209,9 +196,6 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     }
 }
 
-/// Assembles a `NormalizedQuery` the way `normalize` would: anti-probe
-/// descriptors derived from the negated occurrences, every variable one
-/// slot wide (these fixtures are scalar-only).
 fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<FilterPredicate>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
@@ -240,8 +224,6 @@ fn planned(normalized: &NormalizedQuery, schema: &Schema, order: &[u16]) -> Vali
     planned_with_sinks(normalized, schema, order, &BTreeSet::new())
 }
 
-/// A plan with explicit sink vars — all-vars sets make every node
-/// sink-relevant, i.e. skip-free: the pipelined executor's shapes.
 fn planned_with_sinks(
     normalized: &NormalizedQuery,
     schema: &Schema,
@@ -257,7 +239,6 @@ fn planned_with_sinks(
     validate(&plan, normalized, schema, sinks).expect("valid plan")
 }
 
-/// All the query's vars — the skip-free sink set.
 fn all_vars(normalized: &NormalizedQuery) -> BTreeSet<VarId> {
     normalized
         .occurrences
@@ -283,7 +264,6 @@ fn run(plan: &ValidatedPlan, views: &[Arc<crate::image::RelationImage>]) -> BTre
     sink.rows
 }
 
-/// Counters recording D2 skips (pipeline flavor).
 #[derive(Default)]
 struct SkipCounterRun {
     skips: usize,
@@ -303,7 +283,6 @@ impl Counters for SkipCounterRun {
     }
 }
 
-/// The real projection sink, re-exported for pipeline D2 tests.
 use crate::exec::sink::ProjectionSink as ProjectionSinkForTest;
 
 trait FirstCol {
@@ -315,9 +294,6 @@ impl FirstCol for ProjectionSinkForTest {
     }
 }
 
-// ---------- the 40-execution doc: vectorized execution ----------
-
-/// Runs a plan at a given batch size.
 fn run_batched(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
@@ -339,7 +315,6 @@ fn run_batched(
     sink.rows
 }
 
-/// Counters recording the phase-1/phase-2 event order.
 #[derive(Default)]
 struct PhaseOrderCounters {
     events: Vec<(&'static str, usize, usize)>,
@@ -361,7 +336,6 @@ impl Counters for PhaseOrderCounters {
     fn skip(&mut self, _: usize) {}
 }
 
-/// Runs a plan at a given batch size, collecting the full binding set.
 fn run_at(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
