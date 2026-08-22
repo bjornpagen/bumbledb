@@ -1,14 +1,6 @@
 use super::Stats;
 
-/// Sorts the samples in place and takes **nearest-rank** percentiles:
-/// `idx = ceil(p/100 × n) - 1` over the ascending sort (so p50 of
-/// `[10, 20]` is 10, p99 of 100 samples is the 99th). `mean_ns` is the
-/// integer mean. Reproducible by hand — no interpolation.
-///
 /// # Panics
-///
-/// On an empty sample vector (a programmer error — protocols demand at
-/// least one sample).
 #[must_use]
 pub fn stats(samples: &mut [u64]) -> Stats {
     assert!(!samples.is_empty(), "stats over zero samples");
@@ -29,15 +21,7 @@ pub fn stats(samples: &mut [u64]) -> Stats {
     }
 }
 
-/// The per-rep normalization: each sample's elapsed
-/// time is rescaled to the cohort's best observed clock
-/// (`ns × ghz / ghz_ref`), so a sample that ran slow only because the
-/// clock was low stops hiding structural findings — and a sample that
-/// is genuinely slow stays slow. Returns the normalized p50.
-///
 /// # Panics
-///
-/// On mismatched lengths (a programmer error).
 #[must_use]
 pub fn normalized_p50(samples_ns: &[u64], ghz: &[f64]) -> u64 {
     assert_eq!(samples_ns.len(), ghz.len());
