@@ -4,7 +4,6 @@
 //! judgment-violating deltas (one per statement family: room exclusion, `==`
 //! totality, `==` arm validity, working-hours second corpus joins the stamp's
 //! evidence **before any timing** —
-
 use super::{Case, Db, Run, VerifyConfig};
 
 use bumbledb::{RelationId, Value};
