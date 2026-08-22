@@ -5,7 +5,6 @@ use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::row_id_value::row_id_value;
 
-/// Byte width of the `U | relation | statement` header a composed
 /// determinant key carries before its determinant bytes.
 pub const DETERMINANT_KEY_HEADER: usize = 1 + 4 + 2;
 
@@ -27,9 +26,7 @@ pub fn begin_determinant_key(out: &mut Vec<u8>, rel: RelationId, statement: Stat
 /// caller-encoded determinant bytes) — the one determinant probe: every
 /// reader owns a reusable buffer, so no fixed-size variant exists to
 /// re-zero one.
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
 pub fn determinant_row_for_key(txn: &ReadTxn<'_>, key: &[u8]) -> Result<Option<u64>> {
     row_id_value(txn.env().data().get(txn.raw(), key)?)
