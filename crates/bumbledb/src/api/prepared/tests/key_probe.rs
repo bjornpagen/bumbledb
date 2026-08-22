@@ -4,16 +4,13 @@ use crate::ir::ParamId;
 use crate::storage::dict;
 use bumbledb_theory::schema::{IntervalElement, StatementDescriptor};
 
-/// The key-probe fast lane — hit, miss, and a
-/// param-type error, with an interned find exercising the resolving
-/// column beside the word blits.
 #[test]
 fn key_probe_fast_lane_hits_misses_and_type_errors() {
     let dir = TempDir::new("prepared-key_probe-lane");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "memo-a", 41), (2, 8, "memo-b", 42)]);
-    // Q(account, memo, amount) :- Posting(id = ?0, account, memo, amount).
+
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -45,7 +42,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
         "PointProbe stores KeyProbeRule, not a tagged PreparedRule"
     );
     let mut out = Answers::new();
-    // Hit: every cell decoded straight from the fact.
+
     prepared
         .execute(&txn, &cache, &[BindValue::U64(2)], &mut out)
         .expect("hit");
@@ -53,7 +50,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     assert_eq!(out.get(0, 0), AnswerValue::U64(8));
     assert_eq!(out.get(0, 1), AnswerValue::String("memo-b"));
     assert_eq!(out.get(0, 2), AnswerValue::I64(42));
-    // Miss: clean empty buffer.
+
     prepared
         .execute(&txn, &cache, &[BindValue::U64(999)], &mut out)
         .expect("miss is empty, not an error");
@@ -65,10 +62,6 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     assert!(matches!(err, Error::ParamTypeMismatch { .. }), "{err:?}");
 }
 
-/// The key-probe lane is stats-free end to end: a
-/// key-probe preparation + execute builds NO image — and the lazy distinct
-/// counts live on images, so no image means no stats walk, ever.
-/// This is the isolation gate in its strongest form.
 #[test]
 fn a_key_probe_prepare_and_execute_build_no_image() {
     let dir = TempDir::new("prepared-key_probe-statsfree");
@@ -120,7 +113,7 @@ fn key_probe_queries_flow_through_the_same_surface() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(5, 7, "found", 42)]);
     let cache = ImageCache::new(&schema);
-    // Q(amount) :- Posting(id = 5, amount) — the fresh key: key probe.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -150,11 +143,6 @@ fn key_probe_queries_flow_through_the_same_surface() {
     assert!(report.contains("query:"), "{report}");
 }
 
-// ---------- PRD 19 criteria: statement-derived point lookups ----------
-
-/// Booking(room u64, span interval<u64>, label u64) with the declared
-/// pointwise key `Booking(room, span) -> Booking` (statement 0 — no
-/// fresh ids exist).
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -189,7 +177,6 @@ fn booking_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits `(room, [start, end), label)` bookings.
 fn insert_bookings(env: &Environment, schema: &Schema, rows: &[(u64, (u64, u64), u64)]) {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
@@ -212,8 +199,6 @@ fn insert_bookings(env: &Environment, schema: &Schema, rows: &[(u64, (u64, u64),
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// Q(label) :- Booking(room = 1, span <op> ?span-term) with the span term
-/// supplied by the caller — the by-value/membership twin queries.
 fn booking_query(span_term: Term) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -230,9 +215,6 @@ fn booking_query(span_term: Term) -> Query {
     })
 }
 
-/// A point lookup through the pointwise key with the interval bound **by
-/// value**: one `U` get on the exact `scalar ‖ 16-byte interval` determinant,
-/// answered post-commit cold — no image build (cache-state inspection).
 #[test]
 fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let dir = TempDir::new("prepared-key_probe-pointwise");
@@ -278,10 +260,6 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     assert_eq!(cache.resident(), (0, 0));
 }
 
-/// A membership-bound single-atom query does NOT take the fast path — the
-/// span binding is a point, not the key's interval value (validation's
-/// typing, consumed through the lowered filter kind) — and executes
-/// correctly via scan+filter; the path is asserted via profile stats.
 #[test]
 fn a_membership_bound_single_atom_query_stays_free_join() {
     let dir = TempDir::new("prepared-key_probe-membership");
@@ -294,9 +272,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     );
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // span ∋ 7 — a U64 *point* literal on the interval field is a
-    // membership binding (validation's typing, by the literal's shape),
-    // not a key cover.
+
     let query = booking_query(Term::Literal(Value::U64(7)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
@@ -310,7 +286,6 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), AnswerValue::U64(100));
 
-    // Correct across points: 25 hits the other booking, 15 hits none.
     let query = booking_query(Term::Literal(Value::U64(25)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -326,13 +301,10 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     assert_eq!(out.len(), 0);
 }
 
-/// The full-fact `M` lookup with an interval field: no key statement
-/// exists, every field is bound by value, and the existence check runs as
-/// one membership get — post-commit cold, no image build.
 #[test]
 fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     let dir = TempDir::new("prepared-key_probe-m-interval");
-    // Stay(owner u64, span interval<u64>), no statements — no keys.
+
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -376,7 +348,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
 
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // Q(count()) :- Stay(owner = 2, span = [5, 10)) — the existence shape.
+
     let count_stay = |span: (u64, u64)| {
         Query::single(Rule {
             finds: vec![FindTerm::Count],
@@ -417,8 +389,6 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         "post-commit cold: the M path builds no image"
     );
 
-    // A different interval value is a different fact: the empty set (a
-    // global aggregate over nothing emits no row, 20-query-ir).
     let mut absent = prepare(&txn, &cache, &schema, &count_stay((5, 11))).expect("prepare");
     let out = absent
         .execute_collect(&txn, &cache, &[] as &[BindValue])
@@ -426,9 +396,6 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     assert_eq!(out.len(), 0);
 }
 
-/// Execute and profile of a single-rule aggregate key probe share the
-/// sink path (plain-var finds only take the direct lane) and agree on
-/// answers. Pins engine-008's converged predicate.
 #[test]
 fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     let dir = TempDir::new("prepared-key_probe-agg-parity");
@@ -506,13 +473,10 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     assert_eq!(executed.len(), 1);
 }
 
-/// An intern-miss param on the fast path: the key resolves to the
-/// never-minted sentinel id, the `U` probe misses, the result is empty —
-/// no error, and nothing is interned by the read path.
 #[test]
 fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     let dir = TempDir::new("prepared-key_probe-intern-miss");
-    // Doc(name str, val u64) with the declared key `Doc(name) -> Doc`.
+
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -553,7 +517,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
 
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // Q(val) :- Doc(name = ?0, val).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -582,7 +546,6 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         "the read path never interns"
     );
 
-    // The same prepared query hits once the key resolves.
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("alice")])
         .expect("execute");
@@ -590,12 +553,6 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     assert_eq!(out.get(0, 0), AnswerValue::U64(7));
 }
 
-/// A hand-corrupted fixed-width start through the key-probe path is a
-/// CORRUPTION conviction — never a panic, never a classification. Both
-/// corrupt shapes convict: the at-bound start (`start + w = MAX_END`,
-/// whose derived end is the ray sentinel, unconstructible in the fixed
-/// family) and the overflowing start. Same conviction, same decoder as
-/// the image lane (`encoding::decode_fixed_interval_start`).
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -606,7 +563,6 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
     use crate::storage::keys;
     use crate::storage::read;
 
-    // Slot(room u64, span interval<u64, 5>, label u64) keyed by room.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -661,7 +617,6 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         commit(delta, &env).expect("commit").expect("admitted");
     }
 
-    // Q(span, label) :- Slot(room = 1, span, label) — the key-probe fast lane.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -677,7 +632,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
     });
     let cache = ImageCache::new(&schema);
     {
-        // Sanity: the healthy fact answers through the fast lane.
+
         let txn = env.read_txn().expect("txn");
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         assert!(
@@ -691,10 +646,6 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         assert_eq!(out.get(0, 1), AnswerValue::U64(100));
     }
 
-    // Hand-corrupt the stored F value's span start (one stored word) —
-    // the `U` determinant key is untouched, so the probe still HITS and
-    // the fetched fact carries the corrupt start. Both corrupt shapes
-    // must convict as Corruption.
     let layout = schema.relation(RelationId(0)).layout();
     let offset = layout.field_offset(1);
     let victim = {
@@ -712,8 +663,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
             .bytes()
             .to_vec()
     };
-    // At-bound (`u64::MAX - 5 + 5 = u64::MAX`, the ray sentinel) and
-    // past-bound (overflowing) starts.
+
     for corrupt_start in [u64::MAX - 5, u64::MAX] {
         let mut corrupt = healthy.clone();
         corrupt[offset..offset + 8].copy_from_slice(&corrupt_start.to_be_bytes());
@@ -738,11 +688,6 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         );
     }
 
-    // The IMAGE lane's twin: the same corrupt bytes driven through the
-    // Free Join path (no key coverage — the image build decodes every
-    // stored fact). Same decoder, same conviction, different lane —
-    // this pins the routing, since the shared decoder's boundary
-    // behavior is already unit-pinned in `encoding/tests.rs`.
     let scan = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
