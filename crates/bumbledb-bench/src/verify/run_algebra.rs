@@ -1,27 +1,5 @@
-//! The algebra oracle rows of the naive lane (one obligation per landed
-//! representation, judged before anything is timed):
-//!
-//! - **Rules**: multi-rule queries replayed engine-vs-naive — the
-//!   naive model evaluates the rules *directly* (union of per-rule
-//!   binding sets, no engine sink mechanics) — disjoint vocabulary-selected
-//!   arms, overlapping arms with duplicate head answers,
-//!   and the multi-rule aggregate union fold.
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
-//!   model evaluates the *input tree*; the engine evaluates the lowered
-//!   rules. The differential is the lowering proof, now inside every
-//!   verify run — and the tree grammar meets the engine OUTSIDE the
-//!   degenerate corner (finding 085): Allen, `PointIn`, params, and
-//!   ray-bearing measure leaves under 1–2 atoms, optional negation,
-//!   and aggregate heads over overlapping disjuncts (R2's re-keyed
-//!   union fold).
-//! - **`Pack`**: `SQLite` cannot express the coalescing fold
-//!   ([`crate::translate::Inexpressible::PackAggregate`]) — these rows
-//!   run **naive-only by decision**, counted and reported, never
-//!   silently dropped.
-//! - **Error parity** ([`error_parity`]): cap-exceeding DNF, the
-//!   vanished query (every disjunct empty), and the vacuous masks
-//!   (EMPTY and FULL) — the engine's typed validation verdict compared
-//!   against the naive model's own from-the-definition computation.
+//! representation, judged before anything is timed):
 
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, FoldOp, Query, Rule,
@@ -40,7 +18,6 @@ fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> ConditionTree {
     ConditionTree::Leaf(Comparison { op, lhs, rhs })
 }
 
-/// `Mandate(account = v0, active = v1)`.
 fn mandate_atom() -> Atom {
     Atom {
         source: bumbledb::AtomSource::Edb(ids::MANDATE),
@@ -51,7 +28,6 @@ fn mandate_atom() -> Atom {
     }
 }
 
-/// `Posting(account = v0, at = v1)`.
 fn posting_atom() -> Atom {
     Atom {
         source: bumbledb::AtomSource::Edb(ids::POSTING),
@@ -66,8 +42,6 @@ fn query(query: Query) -> Op {
     }
 }
 
-/// The multi-rule rows: the naive model's rule-union evaluation against
-/// the engine's one-sink union.
 fn rules_ops(sizes: &Sizes) -> Vec<Op> {
     let entry_arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -99,20 +73,16 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         rec: None,
     };
     vec![
-        // Disjoint arms (distinct vocabulary selections),
-        // two and three wide.
+
         query(assemble(vec![entry_arm(0), entry_arm(2)])),
         query(assemble(vec![entry_arm(0), entry_arm(1), entry_arm(2)])),
-        // Overlapping arms: nested `at` floors — every later arm's head
-        // rows duplicate earlier ones (the union's teeth).
+
         query(assemble(vec![
             posting_arm(AT_BASE, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 4, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 2, vec![FindTerm::Var(VarId(0))]),
         ])),
-        // The union fold: a valued fold over the head projection. The
-        // nullary-Count twin this row once carried is definitionally
-        // constant 1 under the head-projection law and REFUSES now
+
         // (ruled 2026-07-23, R1 — `CountAcrossRules`); the flipped
         // refusal row lives in [`error_parity`].
         query(assemble(vec![
@@ -140,12 +110,6 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
     ]
 }
 
-/// The DNF rows: seeded random trees to depth 3 over one `Posting`
-/// scope — the naive model evaluates the tree, the engine the lowered
-/// rules. Child counts stay ≥ 1: the vanished-query shapes (empty
-/// disjunctions) are [`error_parity`]'s, where both sides *reject*.
-/// A random tree to `depth`, every node with ≥ 1 child (the vanished
-/// shapes are constructed deliberately, never drawn).
 fn tree(
     rng: &mut Rng,
     depth: u64,
@@ -198,9 +162,7 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 negated: vec![],
                 conditions,
             };
-            // The generated tree must stay under the cap — width control
-            // is the generator's duty; the exceeders are constructed
-            // deliberately in `error_parity`.
+
             if dnf_width(&rule) > bumbledb::MAX_RULES || dnf_width(&rule) == 0 {
                 let mut trimmed = rule;
                 trimmed.conditions = vec![tree_leaf(&mut rng)];
@@ -214,15 +176,6 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     ops
 }
 
-/// The OR-tree grammar OUT of its degenerate corner (finding 085): the
-/// leaf pool widens to the full vocabulary the spec admits under a tree
-/// — Allen with a literal interval, `PointIn`, params and param sets,
-/// and the MEASURE over the ray-bearing mandate lane (the Kleene
-/// verdict engine-vs-naive, ruled R6, quantified over trees for the
-/// first time) — while the rule template varies over 1–2 atoms, an
-/// optional negated atom, and aggregate heads over deliberately
-/// overlapping disjuncts (Count/Max under Or — R2's re-keyed union
-/// fold, the class the known divergence lived in).
 #[expect(
     clippy::too_many_lines,
     reason = "one OR-tree grammar, every leaf shape in one place — clearer kept together"
@@ -243,9 +196,7 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     };
     (0..12)
         .map(|round| {
-            // The scope: Mandate(account = v0, active = v1), half the
-            // rounds joined through Posting(account = v0, at = v2), a
-            // quarter carrying a negated per-account Posting probe.
+
             let joined = rng.chance(1, 2);
             let mut atoms = vec![mandate_atom()];
             if joined {
@@ -262,8 +213,7 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
             } else {
                 vec![]
             };
-            // One optional param, referenced by a dedicated conjunct so
-            // a supplied binding is never dangling.
+
             let (param_leaf, params) = match rng.range(3) {
                 0 => (None, vec![]),
                 1 => (
@@ -313,9 +263,7 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 .map(|_| tree(&mut rng, 3, &mut rich_leaf))
                 .collect();
             conditions.extend(param_leaf);
-            // The head: projection, or an aggregate over the Or tree —
-            // the fold-transparency class (R2): the disjuncts overlap
-            // by construction (random bands over eight accounts).
+
             let finds = match round % 3 {
                 0 if joined => vec![
                     FindTerm::Var(VarId(0)),
@@ -349,8 +297,6 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         .collect()
 }
 
-/// The trim fallback's param conjunct: re-derived from the params the
-/// op carries, so a trimmed rule never dangles its binding.
 fn param_leaf_of(params: &[crate::naive::ParamValue]) -> Option<ConditionTree> {
     match params.first() {
         None => None,
@@ -365,7 +311,6 @@ fn param_leaf_of(params: &[crate::naive::ParamValue]) -> Option<ConditionTree> {
     }
 }
 
-/// A uniformly drawn scalar comparison operator.
 fn op_of(rng: &mut Rng) -> CmpOp {
     match rng.range(6) {
         0 => CmpOp::Eq,
@@ -377,10 +322,6 @@ fn op_of(rng: &mut Rng) -> CmpOp {
     }
 }
 
-/// A uniformly drawn order operator (the measure's roster).
-/// The `Pack` rows (naive-only by decision).
-/// Returns the ops and the count of `SQLite`-inexpressible cases, each
-/// one asserted to be exactly the enumerated `PackAggregate` routing.
 fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     let pack = |rules: Vec<Rule>| Query {
         interiors: vec![],
@@ -401,7 +342,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         conditions: vec![],
     }]);
     // The multi-rule Pack: per-org arms whose claims union before the
-    // coalesce — the union fold's relation-shaped form.
+
     let org_arm = |org: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
@@ -429,9 +370,6 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     (ops, naive_only)
 }
 
-/// Every algebra op for the naive differential slice, plus the count of
-/// naive-only (`SQLite`-inexpressible) cases the caller reports —
-/// enumerated, never silently skipped.
 pub(super) fn algebra_ops(seed: u64, sizes: &Sizes) -> (Vec<Op>, u64) {
     let mut ops = rules_ops(sizes);
     ops.extend(dnf_ops(seed, sizes));
@@ -440,27 +378,20 @@ pub(super) fn algebra_ops(seed: u64, sizes: &Sizes) -> (Vec<Op>, u64) {
     (ops, naive_only)
 }
 
-/// One error-parity expectation: the engine's typed validation verdict
-/// against the naive model's own from-the-definition computation.
 enum Expected {
-    /// `DnfExceedsRules { produced, cap }` where `produced` equals the
-    /// naive width and exceeds the cap.
+
     DnfCap { naive_width: usize },
-    /// Every disjunct vanished (the naive width is zero): the empty
-    /// union is not a query.
+
     Vanished,
-    /// The vacuous "never" (the naive twin: `mask.is_empty()`).
+
     EmptyMask,
-    /// The vacuous "always" (the naive twin: `mask.is_full()`).
+
     FullMask,
-    /// The fold-free nullary Count across 2+ written rules —
-    /// definitionally constant 1 under the head-projection law, a
+
     /// typed refusal since R1 (the flipped acceptance row).
     CountAcrossRules { rules: usize },
 }
 
-/// The parity cases: the invalid shapes the roster owns, each paired
-/// with the naive side's expectation.
 fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
     let posting_rule = |conditions: Vec<ConditionTree>| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -489,20 +420,19 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
     };
     vec![
         {
-            // One Or of 17 arms: width 17 > 16.
+
             let q = Query::single(posting_rule(vec![wide_or(17)]));
             let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (wide Or)", q, Expected::DnfCap { naive_width })
         },
         {
-            // Conjoined Ors multiply: 5 × 4 = 20 > 16.
+
             let q = Query::single(posting_rule(vec![wide_or(5), wide_or(4)]));
             let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (product)", q, Expected::DnfCap { naive_width })
         },
         (
-            // The empty disjunction is false; conjoined with anything the
-            // rule vanishes, and a one-rule query vanishes whole.
+
             "vanished query (empty Or)",
             Query::single(posting_rule(vec![
                 ConditionTree::Or(vec![]),
@@ -521,8 +451,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             Expected::FullMask,
         ),
         {
-            // The flipped R1 row: the once-accepted multi-rule nullary
-            // Count (one Count per disjunct is the modeling answer).
+
             let count_head = || vec![FindTerm::Var(VarId(0)), FindTerm::Count];
             let arm = |floor: i64| Rule {
                 finds: count_head(),
@@ -546,12 +475,6 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
     ]
 }
 
-/// Cap-exceeding DNF, the vanished query, and the vacuous masks:
-/// both sides must reject, verdict identity included
-/// (`docs/architecture/60-validation.md` § error parity). The engine's
-/// verdict is its typed `ValidationError`; the naive side computes the
-/// width / the mask population from the definition and must agree on
-/// the payload, not just the kind.
 pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
     for (label, q, expected) in parity_cases() {
         run.cases += 1;
@@ -572,7 +495,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                 bumbledb::error::ValidationError::DnfExceedsRules { exceeded }
                     if exceeded.observed == naive_width && naive_width > exceeded.ceiling
             ),
-            // The vanished query surfaces as the empty union.
+
             Expected::Vanished => {
                 dnf_width(&q.rules()[0]) == 0
                     && matches!(verdict, bumbledb::error::ValidationError::EmptyRuleSet)
