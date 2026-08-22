@@ -38,7 +38,6 @@ pub struct CalFamily {
 }
 
 impl CalFamily {
-
     /// # Errors
 
     pub fn sql_for(
@@ -88,7 +87,6 @@ fn busy_scan_params(_: &GenConfig) -> Vec<Draw> {
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 16, width)]),
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 4, width)]),
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 2, width)]),
-
         scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
     ]
 }
@@ -157,7 +155,6 @@ fn rsvp_union_query() -> Query {
 }
 
 fn rsvp_union_params(_: &GenConfig) -> Vec<Draw> {
-
     vec![scalar_draw(vec![])]
 }
 
@@ -190,7 +187,7 @@ fn conflict_pairs_query() -> Query {
 fn conflict_pairs_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
     vec![
-        scalar_draw(vec![Value::U64(0)]), 
+        scalar_draw(vec![Value::U64(0)]),
         scalar_draw(vec![Value::U64(1)]),
         scalar_draw(vec![Value::U64(sizes.accounts / 2)]),
         scalar_draw(vec![Value::U64(sizes.accounts + 1_000_000)]),
@@ -294,7 +291,6 @@ fn slot_scan_params(cfg: &GenConfig) -> Vec<Draw> {
         scalar_draw(vec![window(CAL_BASE + span / 2, width)]),
         scalar_draw(vec![window(CAL_BASE + span * 7 / 8, width)]),
         // The pre-epoch miss: no slot starts before CAL_BASE, and the
-
         scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
     ]
 }
@@ -322,7 +318,7 @@ fn slot_booking_overlap_query() -> Query {
 fn slot_booking_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
     vec![
-        scalar_draw(vec![Value::U64(0)]), 
+        scalar_draw(vec![Value::U64(0)]),
         scalar_draw(vec![Value::U64(1)]),
         scalar_draw(vec![Value::U64(sizes.rooms / 2)]),
         scalar_draw(vec![Value::U64(sizes.rooms + 1_000_000)]),
@@ -592,7 +588,6 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
             window(rng, ACTIVE_SPAN / 4),
         ])),
         "slot_scan" => {
-
             let span = grid_span(&sizes);
             let start = CAL_BASE - HOUR
                 + i64::try_from(rng.range(u64::try_from(span + 2 * HOUR).expect("positive")))
