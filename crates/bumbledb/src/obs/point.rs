@@ -21,7 +21,6 @@ pub enum TraceArgs {
 }
 
 impl TraceArgs {
-
     #[must_use]
     pub const fn a0(self) -> u64 {
         match self {
