@@ -18,7 +18,6 @@ impl<S> Db<S> {
     }
 
     /// that must not exist): one [`crate::storage::env::PublishStep`]
-
     /// # Errors
     pub fn compact(&self, dest: &Path) -> Result<()> {
         let catalog = crate::storage::env::PublishCatalog::store(&self.env, self.schema.as_ref())?;
