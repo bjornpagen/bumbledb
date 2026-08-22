@@ -4,7 +4,6 @@
 //! 1-2 execute it in canonical order (all deletes, then all inserts),
 //! statement: scalar keys by `U` put-conflict, pointwise keys by the
 //! ordered-neighbor probe.
-
 use std::collections::BTreeMap;
 
 use heed::types::Bytes;
