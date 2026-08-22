@@ -130,12 +130,10 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
         .map(|pair| pair[0].end)
         .expect("gapped boundaries exist by construction");
     vec![
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::BOOKING, vec![Value::U64(0), Value::U64(1), overlap])],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -148,7 +146,6 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                 ],
             )],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -161,7 +158,6 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                 ],
             )],
         }),
-
         {
             let source = sizes.ooo_source_base() + sizes.claims + 100;
             Op::Write(Delta {
@@ -199,12 +195,10 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
             })
         },
         // A write naming the closed `Rsvp` vocabulary: refused before
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::RSVP, vec![Value::U64(7)])],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
