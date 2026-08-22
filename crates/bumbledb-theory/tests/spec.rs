@@ -4,7 +4,6 @@
 //! The macro/spec fingerprint parity pin lives engine-side
 //! (`crates/bumbledb/tests/schema_spec.rs`); this file pins the
 //! theory-crate laws alone.
-
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::spec::{
     ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
