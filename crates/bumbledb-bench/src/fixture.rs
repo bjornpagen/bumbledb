@@ -65,7 +65,6 @@ pub(crate) struct TempDir(std::path::PathBuf);
 #[cfg(test)]
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
-
         // a concurrent or wedged prior run collide on the LMDB flock.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
