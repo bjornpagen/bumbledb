@@ -5,7 +5,7 @@
 /// `u8::from(bool)` (the probe/residual/anti-probe masks) or an Allen
 /// keep bit — `(mask >> code) & 1` in the scalar and `std::simd`
 /// forms, a 0/1 table byte through the NEON `tbl` — and the debug
-/// build asserts it. The contract buys the triad diet: `mask[read]
+/// build asserts it. The contract buys the triad diet: a nonzero `mask[read]`
 /// The cursor store is unchecked under the module's unsafe law (safe
 /// most 1 per iteration — but the invariant is invisible to LLVM, so
 /// # Panics
