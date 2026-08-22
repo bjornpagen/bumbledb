@@ -27,9 +27,7 @@ fn insert_lands_exactly_the_expected_key_set() {
 
         let t_hash = crate::encoding::fact_hash(&t);
         let k_hash = crate::encoding::fact_hash(&k);
-        // Target is fresh-keyed: its row id IS the fresh value (the one
-        // id allocator, R16), and its auto-key writes no U entry — the
-        // F put-conflict is that key's judgment.
+
         let expected: BTreeSet<Vec<u8>> = [
             keys::fact_key(TARGET, 5).to_vec(),
             keys::membership_key(TARGET, &t_hash).to_vec(),
@@ -41,9 +39,6 @@ fn insert_lands_exactly_the_expected_key_set() {
         .collect();
         assert_eq!(all_data_keys(&applied.txn, &env), expected);
 
-        // Bookkeeping: nothing deleted, so the plan's target-side check
-        // set is empty; the insert-side determinant and edge material is pinned
-        // byte-level by the plan derivation tests (`tests/plan.rs`).
         assert!(plan.target_checks.is_empty());
         // Abort: drop the txn without committing.
     }
@@ -52,10 +47,7 @@ fn insert_lands_exactly_the_expected_key_set() {
 
 #[test]
 fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
-    // Craft the M/F disagreement: commit a fact, raw-delete its F row
-    // behind the codec's back, then delta-delete it. The write path
-    // must raise the hard corruption error, never silently scrub the
-    // M entry (docs/architecture/50-storage.md).
+
     let dir = TempDir::new("commit-desync");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -73,8 +65,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
             .commit()
             .expect("commit");
     }
-    // Scrub the F row (row id 5 — the fresh value IS the row id, R16)
-    // directly.
+
     {
         let mut wtxn = env.write_txn().expect("wtxn");
         let key = keys::fact_key(TARGET, 5);
@@ -100,10 +91,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
 
 #[test]
 fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
-    // The same desync class on a 16-byte-field determinant: scrub the Booking
-    // key's U entry (scalar prefix ‖ whole interval) and delta-delete
-    // the fact — the determinant re-derivation must land on the missing key
-    // and hard-error.
+
     let dir = TempDir::new("commit-desync-interval-determinant");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -154,17 +142,12 @@ fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
 
 #[test]
 fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
-    // The delta proves its net dispositions against committed state at op
-    // time, and the single-writer mutex keeps that proof valid — so base
-    // state contradicting an entry at apply time is unambiguously
-    // corruption. Craft both directions by committing behind the delta's
-    // back (exactly the discipline violation the probe names).
+
     let dir = TempDir::new("commit-disposition-desync");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let t5 = target_fact(&schema, 5);
 
-    // Insert direction: the delta proved t5 absent; land it underneath.
     let mut insert_delta = WriteDelta::new(&schema);
     {
         let view = env.read_txn().expect("txn");
@@ -192,7 +175,6 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
         Error::Corruption(CorruptionError::DispositionDesync { relation: TARGET })
     ));
 
-    // Delete direction: the delta proved t5 present; scrub its M entry.
     let mut delete_delta = WriteDelta::new(&schema);
     {
         let view = env.read_txn().expect("txn");
@@ -223,7 +205,7 @@ fn delete_removes_exactly_its_entries() {
     let t5 = target_fact(&schema, 5);
     let t6 = target_fact(&schema, 6);
     let k = keyed_fact(&schema, 9, 4);
-    // Commit a base state: two targets and one keyed fact.
+
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
@@ -241,7 +223,6 @@ fn delete_removes_exactly_its_entries() {
     }
     let before = committed_data(&env);
 
-    // Delete the keyed fact: exactly its F/M/U entries disappear.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, KEYED, &k).expect("delete");
@@ -263,7 +244,7 @@ fn delete_removes_exactly_its_entries() {
         .filter(|k| !removed.contains(k))
         .collect();
     assert_eq!(all_data_keys(&applied.txn, &env), expected);
-    // Keyed's key has no containment dependents; no check set.
+
     assert!(plan.target_checks.is_empty());
 }
 
@@ -313,9 +294,6 @@ fn inserting_a_source_fact_writes_its_reverse_edge() {
     let plan = plan_for(&delta, &env);
     let applied = apply(&plan, &env).expect("apply").expect("accepted");
 
-    // R | statement | key_bytes | source_rel | source_row: key_bytes is
-    // the claim's projection in Target's determinant order, the source row is
-    // the claim's own row id (0, first fact of its relation).
     let r = key(|b| keys::reverse_key(b, CLAIM_TARGET, &encode_u64(5), CLAIM, 0));
     assert!(all_data_keys(&applied.txn, &env).contains(&r));
 }
@@ -345,8 +323,6 @@ fn deleting_a_source_fact_removes_the_same_reverse_edge() {
     let r = key(|b| keys::reverse_key(b, CLAIM_TARGET, &encode_u64(5), CLAIM, 0));
     assert!(before.iter().any(|(k, _)| *k == r));
 
-    // The delete re-derives the identical key bytes: exactly the claim's
-    // F/M/R entries disappear (Claim has no key statements, so no U).
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, CLAIM, &c).expect("delete");
@@ -389,7 +365,7 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
             .expect("commit");
     }
     // The "wrong" user order: insert the replacement before deleting the
-    // old fact. Commit-time semantics make order irrelevant.
+
     let new = keyed_fact(&schema, 1, 20);
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -398,7 +374,7 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     drop(view);
     let plan = plan_for(&delta, &env);
     let applied = apply(&plan, &env).expect("apply").expect("accepted");
-    // The determinant key survives, now pointing at the new row.
+
     let u = key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
     assert!(all_data_keys(&applied.txn, &env).contains(&u));
 }
@@ -418,9 +394,6 @@ fn rederived_determinant_keys_match_independent_computation() {
     let plan = plan_for(&delta, &env);
     let applied = apply(&plan, &env).expect("apply").expect("accepted");
 
-    // The scalar determinant is the canonical encoding of `x`; the pointwise
-    // determinant is `room ‖ during` with the interval's whole 16 bytes —
-    // computed here independently of the applier's slicing.
     let keys_present = all_data_keys(&applied.txn, &env);
     assert!(keys_present.contains(&key(|b| keys::determinant_key(
         b,
