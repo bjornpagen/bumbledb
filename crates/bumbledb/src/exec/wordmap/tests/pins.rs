@@ -1,24 +1,9 @@
 use super::*;
 
-/// The const-arity pin (measured): the K=4
-/// monomorphic insert beats the dyn arm on a
-/// 16 MB miss-heavy fill. The headline 1.9× was measured against a
-/// dyn reconstruction which still carried the general-length
-/// compare ladder; the shipped dyn arm was already
-/// dieted (manual word loops, no `bcmp`), so the honest in-tree
-/// margin is 1.16–1.25× (16 MB / 2 MB tiers). The pin protects the
-/// MECHANISM — monomorph strictly beats dyn — at a ≥ 10% floor that
-/// survives tier noise. Both arms probe OPAQUE runtime slices (flat
-/// buffer, black-boxed arity) — the shipped sink shape — so the
-/// compiler cannot const-prop the key width into either arm from the
-/// test itself; the monomorph arm's width knowledge comes only from
-/// the internal dispatch. Ignored: a microbenchmark, run explicitly
-/// for the Result section.
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn const_arity_k4_insert_beats_the_dyn_arm() {
-    // 128k arity-4 keys: capacity (128k×3).next_pow2 = 512k slots,
-    // 512k × 32 B keys = 16 MiB — the DRAM-tier miss-heavy fill.
+
     const N: usize = std::hint::black_box(128) * 1024;
     let arity = std::hint::black_box(4usize);
     let flat: Vec<u64> = {
@@ -53,8 +38,7 @@ fn const_arity_k4_insert_beats_the_dyn_arm() {
         assert_eq!(map.len(), N);
         elapsed
     };
-    // Interleaved min-of-5 (min-of-N
-    // absorbs DVFS and residency noise without a proxy dependency).
+
     let mut core_best = std::time::Duration::MAX;
     let mut dyn_best = std::time::Duration::MAX;
     for _ in 0..5 {
@@ -66,7 +50,7 @@ fn const_arity_k4_insert_beats_the_dyn_arm() {
     #[expect(
         clippy::cast_precision_loss,
         reason = "reporting accepts lossy integer-to-float conversion"
-    )] // both far below 2^52
+    )] 
     let ratio = dyn_ns as f64 / core_ns as f64;
     println!("const-arity K=4 fill: core {core_ns} ns, dyn {dyn_ns} ns, ratio {ratio:.2}");
     assert!(
