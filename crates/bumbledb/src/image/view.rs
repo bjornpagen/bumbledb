@@ -1,6 +1,6 @@
-//! Filtered views (docs/architecture/40-execution.md): per-atom filter evaluation producing
+//! Filtered views: per-atom filter evaluation producing
 //! survivor-position vectors over images. Views are query-local and never
-//! cached (`docs/architecture/50-storage.md`); COLT roots iterate the view,
+//! cached; COLT roots iterate the view,
 //! and view positions index the image.
 
 use std::sync::Arc;
@@ -31,48 +31,24 @@ pub use build_with_filters::build_with_filters;
 /// are per-operator: an `Eq` miss empties the whole query on this
 /// snapshot (the evaluator never sees it); any other operator resolves
 /// to the never-minted sentinel id, which `Ne` matches everywhere —
-/// ordinary word comparison carries the semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     Word(u64),
     Byte(u8),
-    /// A multi-word `bytes<N>` constant (N > 8): its `⌈N/8⌉` encoded
-    /// column words, in column order — the padded canonical bytes read as
-    /// big-endian words, exactly what the image's word columns hold. A
-    /// bytes<N ≤ 8> constant is one padded word and rides [`Const::Word`]
-    /// like every other scalar. Compared word-wise under `Eq`/`Ne` only.
+
     Words(Box<[u64]>),
-    /// An interval constant as its two encoded column words (each half
-    /// byte-order-normalized exactly like a `Word`, so u64 word order is
-    /// value order). Compared pairwise under `Eq`, and the constant side
-    /// of `FieldAllen` and `FieldWithin`.
+
     Interval {
         start: u64,
         end: u64,
     },
-    /// Bind-time symbolic constant; the evaluator indexes the param slice.
+
     Param(crate::ir::ParamId),
-    /// A param bound as a *set* at execution (`Term::ParamSet`): resolves
-    /// to a sorted, deduplicated word list ([`Const::WordSet`] in the param
-    /// slice); an `Eq` compare against it matches any element. The plan's
-    /// selection machinery carries the set through the probe path
-    /// (`docs/architecture/20-query-ir.md`, § param sets; executor side is
-    /// PRD 17).
+
     ParamSet(crate::ir::ParamId),
-    /// A set's bind-time resolution: the sorted, deduplicated column words
-    /// of the bound elements, in pooled storage — the `Vec` is reused
-    /// across binds (warm re-binds of a differently-sized set reuse its
-    /// capacity, docs/architecture/40-execution.md § allocation contract).
-    /// Flat element-major rows: each element contributes its column-word
-    /// span (1 word for every scalar, `⌈N/8⌉` for a `bytes<N>` element —
-    /// the anchored field's span names the width), sorted and
-    /// deduplicated span-wise. Lives in the evaluator's param slice and
-    /// in resolved filters — a `ParamSet` marker resolves to one of
-    /// these.
+
     WordSet(Vec<u64>),
-    /// A raw String literal awaiting per-execution intern resolution —
-    /// the dictionary is str-only, so no type tag exists
-    /// (docs/architecture/50-storage.md).
+
     PendingIntern {
         bytes: Box<[u8]>,
     },
@@ -106,14 +82,10 @@ pub enum IntervalConst {
 
 /// Where a lowered point word comes from, per execution: an encoded
 /// literal word (resolved at lowering), a bound param's word (resolved at
-/// bind), or a bound variable's slot word (a membership binding whose
-/// point variable is bound by another occurrence — evaluated once the
-/// variable is bound; the point-membership scan of
-/// `docs/architecture/40-execution.md`). A `Var` source never reaches the
+/// bind), or a bound variable's slot word. A `Var` source never reaches the
 /// view evaluator: plan validation routes occurrence `point_vars` into
 /// the executor's membership probes (`PlanNode::point_probes` for
 /// positive occurrences, the anti-probe's point checks for negated ones),
-/// because a view is built per execution while a variable binds per join
 /// row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
@@ -133,7 +105,6 @@ pub enum ResolvedWordSource {
 pub type MaskConst = bumbledb_theory::allen::AllenMask;
 
 /// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
-///
 /// The membership kinds are **fixed word-comparison compositions** over
 /// the interval field's two encoded column words; the `Allen` kinds carry
 /// the mask with the four endpoint operands — the configuration kernel's
@@ -142,71 +113,43 @@ pub type MaskConst = bumbledb_theory::allen::AllenMask;
 /// the representation-over-control-flow answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {
-    /// `field <op> constant`. An interval field appears here only under
-    /// `Eq` (a value-equality binding); every interval-pair *predicate*
-    /// is an `Allen` kind below.
+
     Compare {
         field: OperandAddr,
         op: crate::ir::WordCmp,
         value: Const,
     },
-    /// Same-fact comparison between two fields of one atom: `Eq` is the
-    /// lowering of a repeated in-atom variable; any operator is the
-    /// lowering of a same-atom var-vs-var comparison (residuals are
-    /// cross-atom only — `docs/architecture/20-query-ir.md`). Both fields
-    /// have the same structural type by validation, hence the same column
-    /// kind, and word comparison is value-faithful (biased I64, ordinal
-    /// bytes, injective intern ids; interval fields compare pairwise over
-    /// their two-word span — repeated-variable `Eq` only: interval
-    /// comparisons canonicalize to masks).
+
     FieldsCompare {
         left: OperandAddr,
         right: OperandAddr,
         op: crate::ir::WordCmp,
     },
-    /// Point membership in the interval field: `start ≤ p AND p < end`
-    /// over the field's two column words (the lowering of a membership
-    /// binding, and of `PointIn(field, point-constant)`).
+
     PointIn {
         field: OperandAddr,
         point: ViewWordSource,
     },
-    /// Point-set membership in the interval field: any element of the
-    /// bound set lies in the interval (`Term::ParamSet` on an interval
-    /// field — `docs/architecture/20-query-ir.md`, § param sets). `set`
-    /// is [`SetConst::ParamSet`] in the lowered template and resolves to a
-    /// [`SetConst::WordSet`] per execution, exactly like a `Compare`
-    /// constant.
+
     AnyPointIn { field: OperandAddr, set: SetConst },
-    /// Same-atom `Allen` over two interval fields:
-    /// `classify(left, right) ∈ mask` — four endpoint words and the mask,
-    /// the whole algebra as one shape.
+
     FieldsAllen {
         left: OperandAddr,
         right: OperandAddr,
         mask: MaskConst,
     },
-    /// `Allen` between an interval field (always the **left** operand —
-    /// the mirrored form is pre-encoded in the mask, [`MaskConst`]) and
-    /// an interval constant (`Interval`/`Param` by construction):
-    /// `classify(field, other) ∈ mask`.
+
     FieldAllen {
         field: OperandAddr,
         other: IntervalConst,
         mask: MaskConst,
     },
-    /// Same-atom `PointIn` with a point field (the predicate form of the
-    /// membership rule, and the lowering of a same-atom membership-var
-    /// binding): `interval.start ≤ point AND point < interval.end`.
+
     FieldsPointIn {
         interval: OperandAddr,
         point: OperandAddr,
     },
-    /// A scalar field's point within a constant interval — the reversed
-    /// point membership `PointIn(constant, field)`:
-    /// `outer.start ≤ f AND f < outer.end`. `outer` is `Interval`/`Param`
-    /// by construction; the field is scalar by construction (an interval
-    /// field under a constant is [`FilterPredicate::FieldAllen`]).
+
     FieldWithin {
         field: OperandAddr,
         outer: IntervalConst,
@@ -214,7 +157,7 @@ pub enum FilterPredicate {
 }
 
 impl FilterPredicate {
-    /// Whole-value or word residual sides — kind-grouped lists only.
+
     pub(crate) fn compare_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::WordCmp) {
         match *self {
             Self::FieldsCompare { left, right, op } => (left, right, op),
@@ -222,7 +165,6 @@ impl FilterPredicate {
         }
     }
 
-    /// Allen residual sides — kind-grouped lists only.
     pub(crate) fn allen_sides(&self) -> (OperandAddr, OperandAddr, MaskConst) {
         match *self {
             Self::FieldsAllen { left, right, mask } => (left, right, mask),
@@ -235,9 +177,9 @@ impl FilterPredicate {
 /// Prepare stores [`View::Unbound`]; the executor holds this after bind.
 #[derive(Debug)]
 pub enum BoundView {
-    /// Every position `0..row_count`.
+
     All(Arc<RelationImage>),
-    /// The survivor positions, in ascending order.
+
     Survivors {
         image: Arc<RelationImage>,
         positions: Vec<u32>,
@@ -245,7 +187,7 @@ pub enum BoundView {
 }
 
 impl BoundView {
-    /// The underlying image.
+
     #[must_use]
     pub fn image(&self) -> &Arc<RelationImage> {
         match self {
@@ -253,7 +195,6 @@ impl BoundView {
         }
     }
 
-    /// Number of positions the bound view exposes.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -262,11 +203,8 @@ impl BoundView {
         }
     }
 
-    /// The image position at view index `idx` (reader: COLT root
-    /// iteration, the 40-execution doc).
-    ///
     /// # Panics
-    ///
+
     /// On a programmer-invariant violation: `idx` out of the view's range.
     #[must_use]
     pub fn position_at(&self, idx: usize) -> u32 {
@@ -283,17 +221,14 @@ impl BoundView {
 /// A three-variant representation, not a sentinel vector.
 #[derive(Debug)]
 pub enum View {
-    /// No image at all: the view has not been bound to a generation.
-    /// Unrepresentable as data that pins anything — a prepared query
-    /// holds only `Unbound` views until it executes.
+
     Unbound,
-    /// Bound to a generation — every position, or the filter's survivors.
+
     Bound(BoundView),
 }
 
 impl View {
-    /// Number of positions the view exposes (an unbound view exposes
-    /// none).
+
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -307,7 +242,6 @@ impl View {
         self.len() == 0
     }
 
-    /// The bound view, if this view has been bound to a generation.
     #[must_use]
     pub fn bound(&self) -> Option<&BoundView> {
         match self {
@@ -316,10 +250,6 @@ impl View {
         }
     }
 
-    /// Clones the view into caller-owned storage: the image `Arc` bumps,
-    /// survivor positions copy into `buffer` (capacity retained — the
-    /// occurrence-dedup path's storage discipline: the prepared query's
-    /// spare buffer circulates through here exactly as through `apply`).
     #[must_use]
     pub fn clone_in(&self, mut buffer: Vec<u32>) -> Self {
         buffer.clear();
@@ -336,8 +266,6 @@ impl View {
         }
     }
 
-    /// Reclaims the survivor buffer for reuse (the caller-owned storage
-    /// discipline: buffers belong to the prepared query, the 40-execution doc).
     #[must_use]
     pub fn recycle(self) -> Vec<u32> {
         match self {
