@@ -1,7 +1,7 @@
 import Bumbledb.Values
 
 /-!
-# Schema — theories, instances, ground facts (Level 0, PRD 03)
+# Schema — theories, instances, ground facts (Level 0, 
 
 The substrate the dependency judgments quantify over: headers
 (relation signatures), facts, projections over field sets,
@@ -12,99 +12,99 @@ relations as instance-independent sealed constants.
 ## The acceptance boundary is part of the model
 
 * **Selections are membership-to-literal-set BY REPRESENTATION
-  (E3, disjunctive selections).** `Selection` is a finite list of
-  (field, literal-set) bindings read conjunctively, each binding a
-  disjunction over its spelled set — no richer predicate is writable
-  at this level. The ENGINE's accepted σ fragment is this same
-  representation: `Side.selection` carries (field, literal-set)
-  bindings (`LiteralSet` in `crates/bumbledb-theory/src/schema.rs`; the
-  macro's `parse_side` parses `f == L` and `f == {A, B}`). A
-  singleton set is exactly the equality binding
-  (`Selection.singleton_satisfies_iff`) and stays the engine's
-  zero-cost `One` arm, so the wider representation re-reads every
-  previously accepted σ unchanged; the sets are first-class rather
-  than per-literal sugar because counts over a union do not decompose
-  (`Countermodels.disjunctive_window_not_literal_conjunction`). The
-  decidability-firewall tripwire's recorded edge
-  (`docs/architecture/30-dependencies.md` § the decidability
-  firewall) is the same decision docs-side, executed 2026-07-14.
+ (E3, disjunctive selections).** `Selection` is a finite list of
+ (field, literal-set) bindings read conjunctively, each binding a
+ disjunction over its spelled set — no richer predicate is writable
+ at this level. The ENGINE's accepted σ fragment is this same
+ representation: `Side.selection` carries (field, literal-set)
+ bindings (`LiteralSet` in `crates/bumbledb-theory/src/schema.rs`; the
+ macro's `parse_side` parses `f == L` and `f == {A, B}`). A
+ singleton set is exactly the equality binding
+ (`Selection.singleton_satisfies_iff`) and stays the engine's
+ zero-cost `One` arm, so the wider representation re-reads every
+ accepted σ unchanged; the sets are first-class rather
+ than per-literal sugar because counts over a union do not decompose
+ (`Countermodels.disjunctive_window_not_literal_conjunction`). The
+ decidability-firewall tripwire's recorded edge
+ § the decidability
+ firewall) is the same decision docs-side, executed 2026-07-14.
 * **Statements are the declared judgment forms**: functionality and
-  containment exactly as `StatementDescriptor`, plus the one
-  extension form — the capacity statement (`Capacity.lean`), whose
-  unit instance is the count window (the retired count constructor's
-  whole meaning, absorbed). No constraint kinds, no modes, no
-  triggers.
+ containment exactly as `StatementDescriptor`, plus the one
+ extension form — the capacity statement (`Capacity.lean`), whose
+ unit instance is the count window (the retired count constructor's
+ whole meaning, absorbed). No constraint kinds, no modes, no
+ triggers.
 * **Ground axioms are constants of the THEORY.** A closed relation's
-  extension is sealed at declaration and `Instance`-independent by
-  type (`Theory.den` never consults the instance for it) —
-  `den_closed_constant` is the one-line theorem.
+ extension is sealed at declaration and `Instance`-independent by
+ type (`Theory.den` never consults the instance for it) —
+ `den_closed_constant` is the one-line theorem.
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Discharged (2026-07-14): the literal-SET σ form.** The engine's
-  accepted σ fragment is the (field, literal-set) disjunctive form —
-  `Side.selection` is `Box<[(FieldId, LiteralSet)]>`
-  (`crates/bumbledb-theory/src/schema.rs`), the sealed `CompiledCheck`
-  set arms judge membership among the sealed encodings, and the
-  canonical form is sorted and duplicate-free (validation rejects
-  the degenerate spellings). The singleton `One` arm is
-  byte-identical to the pre-set engine —
-  `Selection.singleton_satisfies_iff` is that agreement, and the
-  `Bridge.lean` row for the set form cites it.
+ accepted σ fragment is the (field, literal-set) disjunctive form —
+ `Side.selection` is `Box<[(FieldId, LiteralSet)]>`
+ (`crates/bumbledb-theory/src/schema.rs`), the sealed `CompiledCheck`
+ set arms judge membership among the sealed encodings, and the
+ canonical form is sorted and duplicate-free (validation rejects
+ the degenerate spellings). The singleton `One` arm is
+ byte-identical to the pre-set engine —
+ `Selection.singleton_satisfies_iff` is that agreement, and the
+ `Bridge.lean` row for the set form cites it.
 * **A fact is a total field-indexed value assignment**
-  (`Fact := FieldId → Value`). Arity and positional typing are the
-  header's concern, and no PRD 03 theorem needs a typing premise —
-  the judgments quantify over whatever fact sets an instance carries.
-  Fields beyond a relation's arity are junk the judgments never read
-  except through fact identity; instances of interest carry
-  arity-respecting facts.
+ (`Fact:= FieldId → Value`). Arity and positional typing are the
+ header's concern, and no theorem needs a typing premise —
+ the judgments quantify over whatever fact sets an instance carries.
+ Fields beyond a relation's arity are junk the judgments never read
+ except through fact identity; instances of interest carry
+ arity-respecting facts.
 * **Finiteness is a named token, never ambient.** `Set.Finite` is the
-  listability token; none of PRD 03's theorems demand it (they are
-  subset and injectivity algebra, finite or not), so it is defined and
-  deliberately unspent here. `den_closed_finite` shows the sealed
-  extension carries it by construction.
+ listability token; none of theorems demand it (they are
+ subset and injectivity algebra, finite or not), so it is defined and
+ deliberately unspent here. `den_closed_finite` shows the sealed
+ extension carries it by construction.
 * **`Point` is the tagged sum of the two interval element domains.**
-  Every pointwise judgment quantifies over `Set Point`, which makes
-  the judgments total without a typing premise: a scalar value denotes
-  no points, and positional typing keeps accepted statements within
-  one tag. **Q1 — element-domain typing at interval positions**: the
-  tag IS the element domain and carries no width, so a fixed-width
-  side against a general (or other-width) side of one element is
-  already well-judged by every theorem in this file and its
-  consumers — the judgments quantified over `Point` all along, so
-  admitting mixed widths is the acceptance gate catching up to the
-  denotation, not a semantic change (`Value.points_one_tag_u64`;
-  Rust: `schema/validate.rs::positional_types_match`). Scalar
-  positions keep exact structural equality.
+ Every pointwise judgment quantifies over `Set Point`, which makes
+ the judgments total without a typing premise: a scalar value denotes
+ no points, and positional typing keeps accepted statements within
+ one tag. **Q1 — element-domain typing at interval positions**: the
+ tag IS the element domain and carries no width, so a fixed-width
+ side against a general (or other-width) side of one element is
+ already well-judged by every theorem in this file and its
+ consumers — the judgments quantified over `Point` all along, so
+ admitting mixed widths is the acceptance gate catching up to the
+ denotation, not a semantic change (`Value.points_one_tag_u64`;
+ Rust: `schema/validate.rs::positional_types_match`). Scalar
+ positions keep exact structural equality.
 * **`Header.intervalSplit` reads the field SET, never the written
-  order** — the FieldSet doctrine: `resolve_target_key` counts
-  interval positions as a set and `key_permutation` bridges statement
-  order to key order, so the engine's pointwise reading is
-  order-canonical and the split matches it.   Exactly one interval-typed
-  field splits to the pointwise shape **when that field is the last
-  written position** (the neighbor probe's scalar prefix). Zero
-  interval fields split to `none` (classical `Functionality`). Two or
-  more interval fields, or a single interval written non-finally, are
-  engine-refused (`FunctionalityMultipleIntervals`,
-  `FunctionalityIntervalNotLast`); `Header.functionalityAdmitted` is
-  the gate, and `Statement.judgment` is `False` on a refused shape —
-  not a scalar-reading default.
+ order** — the FieldSet doctrine: `resolve_target_key` counts
+ interval positions as a set and `key_permutation` bridges statement
+ order to key order, so the engine's pointwise reading is
+ order-canonical and the split matches it. Exactly one interval-typed
+ field splits to the pointwise shape **when that field is the last
+ written position** (the neighbor probe's scalar prefix). Zero
+ interval fields split to `none` (classical `Functionality`). Two or
+ more interval fields, or a single interval written non-finally, are
+ engine-refused (`FunctionalityMultipleIntervals`,
+ `FunctionalityIntervalNotLast`); `Header.functionalityAdmitted` is
+ the gate, and `Statement.judgment` is `False` on a refused shape —
+ not a scalar-reading default.
 * Acceptance's remaining shape checks (duplicate-free projections,
-  arity and positional type match between sides, determinant width,
-  the FD-side interval-finality demand — the neighbor probe's
-  mechanism, not semantics — and the σ shape refusals
-  `SelectedFieldProjected` and `DuplicateSelectionField`,
-  `schema/validate.rs::validate_side_selection` and
-  `::validate_side_shape`, which narrow the accepted σ
-  fragment below `Selection`'s representable shapes, sound direction)
-  are validator mechanism this level does not restate — only the
-  exact-field-set target-key rule is modeled (`Dependencies.lean`),
-  because it is the piece the theorems spend.
+ arity and positional type match between sides, determinant width,
+ the FD-side interval-finality demand — the neighbor probe's
+ mechanism, not semantics — and the σ shape refusals
+ `SelectedFieldProjected` and `DuplicateSelectionField`,
+ `schema/validate.rs::validate_side_selection` and
+ `::validate_side_shape`, which narrow the accepted σ
+ fragment below `Selection`'s representable shapes, sound direction)
+ are validator mechanism this level does not restate — only the
+ exact-field-set target-key rule is modeled (`Dependencies.lean`),
+ because it is the piece the theorems spend.
 -/
 
 namespace Bumbledb
 
-/-! ## Set algebra — the subset order over PRD 02's carrier -/
+/-! ## Set algebra — the subset order over carrier -/
 
 instance : HasSubset (Set α) := ⟨fun s t => ∀ a, a ∈ s → a ∈ t⟩
 
@@ -114,7 +114,7 @@ theorem Set.subset_def {s t : Set α} : s ⊆ t ↔ ∀ a, a ∈ s → a ∈ t :
 
 /-- The named finiteness token: the set is listable. Finiteness is
 NEVER ambient — a theorem needing it demands this token by name
-(none of PRD 03's do; recorded in the module doc). -/
+(none of do; recorded in the module doc). -/
 def Set.Finite (s : Set α) : Prop :=
   ∃ l : List α, ∀ a, a ∈ s ↔ a ∈ l
 
@@ -265,9 +265,7 @@ def Value.points : Value → Set Point
       match p with
       | .i64 x => x ∈ Interval.points iv
       | .u64 _ => False
-  -- A fixed-width value denotes its DERIVED interval's points,
-  -- `[s, s + w)` — the width is the type's, and the judgments read
-  -- the same `Interval.points` the general type feeds them.
+
   | { type := .intervalFixed .u64 _, val := v } => fun p =>
       match p with
       | .u64 x => x ∈ Interval.points v.toInterval
@@ -463,7 +461,7 @@ inductive Weight where
   /-- `[field]`: a u64-encoded field of the SOURCE row. -/
   | field (i : FieldId)
   /-- `[Duration(field)]`: the interval measure of a SOURCE
-  interval position. -/
+ interval position. -/
   | durationOf (i : FieldId)
 
 /-- A capacity bound: a literal, or a DEPENDENT bound read from the
@@ -479,7 +477,7 @@ inductive Bound where
   /-- A u64-encoded field of the TARGET's row. -/
   | targetField (i : FieldId)
   /-- `Duration(field)`: the interval measure of a TARGET interval
-  position. -/
+ position. -/
   | targetDuration (i : FieldId)
 
 /-- The capacity statement's window: the floor is a LITERAL and only
@@ -513,21 +511,21 @@ macro lowers it to two adjacent containments, each judged
 independently. Readings live in `Statement.judgment`. -/
 inductive Statement where
   /-- `R(X) -> R`: functionality, key form only (the acceptance
-  gate refuses non-key and selected FDs — they are relation splits
-  waiting to happen). -/
+ gate refuses non-key and selected FDs — they are relation splits
+ waiting to happen). -/
   | functionality (relation : RelId) (projection : List FieldId)
   /-- `A(X | φ) <= B(Y | ψ)`: containment. -/
   | containment (source target : Atom)
   /-- `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`: the capacity statement —
-  per ψ-selected target fact, the MEASURE of the φ-selected source
-  facts sharing its projected key tuple (Σ weight over the
-  deduplicated group; absent bracket = unit weight = count) lies in
-  the window, whose bounds resolve against the target's own row
-  (`CapacityLaw`, `Capacity.lean`). Field order is the operator's —
-  target, weight, window, source — ruling C2: the corpus JSON, the
-  FFI marshal, the descriptor codec, and the fingerprint encoding pin
-  this same order. Acceptance gate as for `<=`: `Y` must be a key of
-  `B` — an ACCEPTANCE premise, never a conjunct of the denotation. -/
+ per ψ-selected target fact, the MEASURE of the φ-selected source
+ facts sharing its projected key tuple (Σ weight over the
+ deduplicated group; absent bracket = unit weight = count) lies in
+ the window, whose bounds resolve against the target's own row
+ (`CapacityLaw`, `Capacity.lean`). Field order is the operator's —
+ target, weight, window, source — ruling C2: the corpus JSON, the
+ FFI marshal, the descriptor codec, and the fingerprint encoding pin
+ this same order. Acceptance gate as for `<=`: `Y` must be a key of
+ `B` — an ACCEPTANCE premise, never a conjunct of the denotation. -/
   | capacity (target : Atom) (weight : Weight) (window : CapWindow)
       (source : Atom)
 
@@ -558,11 +556,11 @@ and the declared statements (`crate::schema::Schema`, sealed).
 canonical descriptor bytes (`bumbledb-schema-v5`), including
 materialized statement order and C2 capacity field order. `Theory`
 has no hash; two Lean-equal theories can still `SchemaMismatch` if
-encoding order differs (`docs/architecture/10-data-model.md`). -/
+encoding order differs. -/
 structure Theory where
   header : Header
   /-- Closed relations: ground axioms as sealed constants of the
-  THEORY — `Instance`-independent by type. -/
+ THEORY — `Instance`-independent by type. -/
   closed : RelId → Option GroundExtension
   statements : List Statement
 
