@@ -1,17 +1,3 @@
-/**
- * The containment target-key PARITY suite (60-containment-parity): one
- * matrix, each case judged at BOTH boundaries with the verdicts required
- * equal — `schema()` throw ⇔ engine `SchemaError` at create. The
- * schema()-half needs no native module and runs standalone; the engine
- * half drives the SAME shapes through `native.dbCreate` against a real
- * temp store (the db.test.ts store-fixture idiom) — admitted cases as
- * `lower()`d schema values, refused cases as hand-built `SchemaSpec` data
- * (the SDK wall makes a refused schema value unconstructible, which is
- * the parity point; the ffi.test.ts spec idiom is the engine's own front
- * door). The first two rows are the upstream report's shapes verbatim;
- * the diagnostic pins hold both renderers to names-beside-ids.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -29,7 +15,6 @@ import { schema } from "#schema.ts"
 import type { FieldSpec, SchemaSpec, SideSpec, StatementSpec, ValueTypeSpec } from "#spec.ts"
 import { capacity, contained, key, mirrors, type Statement } from "#statements.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-parity-"))
@@ -38,15 +23,9 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-// ————————————————————————————————————————————————————————————————————————
-// The matrix's relation shapes — fresh values per case, declared once.
-// ————————————————————————————————————————————————————————————————————————
-
-/** The report's minimal shape: Target keyed (scope, value), the containment projecting value alone. */
 const ReportSource = relation("Source", { value: str })
 const ReportTarget = relation("Target", { target: u64.fresh, scope: u64, value: str })
 
-/** Primer's shape: keys (entry) and (policyPackage, sourceAddress); the projection (sourceAddress) alone. */
 const Coverage = relation("Coverage", { sourceAddress: str })
 const AnalysisTargetEntry = relation("AnalysisTargetEntry", {
 	entry: u64.fresh,
@@ -140,14 +119,10 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("row 8 sub-case: a declared payload key equal to the projection changes nothing — closedness judges first", function closedPayloadKeyed() {
 		const Sev = closed("Sev", { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
 		const Task = relation("Task", { level: u64 })
-		// The SDK's mint refuses ANY explicit key on a closed relation, so a
-		// "declared payload key on the closed target" can never enter a
-		// schema value here — closedness stands in front of the key roster
-		// by construction (the engine architects the same order: its closed
+
 		// arm refuses BEFORE the key search, so a declared payload key
 		// carrying exactly the refused field set changes nothing —
-		// validate.rs, resolve_target_key). The engine half of this sub-case
-		// drives the declared-fd spec through dbCreate below.
+
 		assert.throws(function mintClosedKey() {
 			// @ts-expect-error — key() takes an ordinary relation; a closed value lacks the relation shape
 			key(Sev, ["level"])
@@ -168,10 +143,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("row 10: mirrors with exactly one face keyed — refused, naming the unkeyed orientation", function mirrorsOneKeyed() {
 		const A = relation("A", { id: u64.fresh, peer: u64 })
 		const B = relation("B", { ref: u64 })
-		// The forward target B(ref) is keyed, so the TYPE tier is silent by
-		// design (a mirrors' reverse orientation is not statically
-		// distinguishable from a containment's source — law.ts,
-		// JudgeStatement); the VALUE tier judges both orientations, always.
+
 		assert.throws(function reverseUnkeyed() {
 			schema("Half", { A, B }, [key(B, ["ref"]), mirrors(on(A, "peer"), on(B, "ref"))])
 		}, /^schema Half: A\(peer\) == B\(ref\): target projection \(peer\) matches no declared key of A — available keys: \(id\)$/)
@@ -208,9 +180,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		const probeTarget: Equal<Located[0], "Target"> = true
 		const probeProjection: Equal<Located[1], "value"> = true
 		assert.ok(probeTarget && probeProjection)
-		// The degradation law: a widened Statement[] silences the type tier
-		// (this call COMPILES — no expect-error); the value tier stays
-		// authoritative and still refuses.
+
 		const widened: Statement[] = [
 			key(ReportTarget, ["scope", "value"]),
 			contained(on(ReportSource, "value"), on(ReportTarget, "value"))
@@ -223,13 +193,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("a widened key OWNER degrades the whole type-tier wall — never a false wall on literal faces", function widenedKeyOwner() {
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
-		// The key's owner is spelled through a widened AnyRelation binding,
-		// so the declared-key roster is UNKNOWABLE at the type tier — a
-		// partial roster would refuse this containment's literal faces while
-		// the value tier (which reads data.owner.name off the VALUE, still
-		// "Target") admits it. The degradation law: the whole TargetKeyWall
-		// goes silent, exactly as a widened face already does — so this call
-		// COMPILES (no expect-error) and the value tier admits.
+
 		const widenedOwner: AnyRelation = Target
 		const admitted = schema("WidenedKeyOwner", { Source, Target }, [
 			key(widenedOwner, ["scope", "value"]),
@@ -241,14 +205,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("a key widened WHOLE to bare Statement degrades the whole type-tier wall — never a false wall", function bareStatementKey() {
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
-		// The key vanishes into a bare Statement binding: its data no longer
-		// states {kind: "key"}, so a per-element roster read would MISS it and
-		// judge the containment's literal faces against a partial roster — a
-		// false wall on a schema the value tier admits. The total detector
-		// (law.ts, DecidableRoster): a data["kind"] that INCLUDES "key"
-		// without being one concrete KeyData degrades the WHOLE wall to
-		// silent, so this call COMPILES (no expect-error) and the value tier
-		// (which reads the key off the VALUE) admits.
+
 		const widenedStmt: Statement = key(Target, ["scope", "value"])
 		const admitted = schema("BareStatementKey", { Source, Target }, [
 			widenedStmt,
@@ -261,12 +218,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
 		const Other = relation("Other", { tag: u64 })
-		// A union of two concrete KeyStatements includes "key" in its kind
-		// but is not ONE concrete KeyData — the declared-key roster cannot
-		// state which key the value carries, so any per-element read is
-		// partial for one of the union's arms. The same total judgment: the
-		// whole wall degrades silent, this call COMPILES, and the value tier
-		// judges the actual key value (here the Target key — admitted).
+
 		function pickKey(flag: boolean) {
 			return flag ? key(Target, ["scope", "value"]) : key(Other, ["tag"])
 		}
@@ -281,15 +233,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("a statement-tuple UNION degrades the whole type-tier wall — the tier judges one singular tuple only", function statementTupleUnion() {
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
-		// A ternary between two INDIVIDUALLY-LAWFUL `as const` statement
-		// lists infers a UNION of tuples. A naked Stmts parameter would
-		// distribute the scan and the declared-key roster INDEPENDENTLY,
-		// cross-judging tupleA's containment (scope, value) against tupleB's
-		// roster (value) — a false wall on a schema whose every runtime
-		// value the value tier admits. The total detector (law.ts,
-		// DecidableRoster): the type tier judges ONLY a single, non-union,
-		// statically-complete tuple, so this call COMPILES (no expect-error)
-		// and the value tier judges the actual list (here tupleA — admitted).
+
 		const tupleA = [
 			key(Target, ["scope", "value"]),
 			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
@@ -305,18 +249,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("a projection UNION inside one key element degrades the whole type-tier wall — the projection is judged whole, never per-arm", function projectionUnion() {
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
-		// A ternary between two `as const` projections infers ONE
-		// KeyStatement whose projection is a UNION of tuples — each arm
-		// individually a lawful key() of Target. A naked-parameter
-		// LiteralProjection would distribute over the arms and answer true
-		// per-arm while DeclaredKeysOf rosters the MERGED field set
-		// ("scope" | "value"), a roster entry matching NO runtime key — a
-		// false wall on a containment the value tier admits. The whitelist
-		// (law.ts, LiteralProjection): a projection is judgeable only as a
-		// single non-union fixed-length tuple of string literals, so the
-		// whole wall degrades silent — this call COMPILES (no expect-error)
-		// and the value tier judges the actual projection value (here
-		// ["value"] — the containment target matches it, admitted).
+
 		function pickProjection(flag: boolean) {
 			return flag ? (["scope", "value"] as const) : (["value"] as const)
 		}
@@ -332,15 +265,9 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		const Source = relation("Source", { scope: u64, value: str })
 		const Target = relation("Target", { scope: u64, value: str })
 		const head = contained(on(Source, "value"), on(Target, "value"))
-		// `readonly [typeof head, ...Statement[]]` — the head literal, the
-		// tail widened: a head-peeling roster read answers its base case
+
 		// after one step and judges the head against a roster blind to
-		// EVERY key in the tail (here key(Target, ["value"]), the very key
-		// that admits the head) — a false wall on a schema whose value the
-		// value tier admits. The whitelist (law.ts, DecidableRoster): a
-		// rest tail means the tuple's length is not a literal, so the whole
-		// wall degrades silent — this call COMPILES (no expect-error) and
-		// the value tier judges the full list — admitted.
+
 		const restTailed: readonly [typeof head, ...Statement[]] = [head, key(Target, ["value"])]
 		const admitted = schema("RestTail", { Source, Target }, restTailed)
 		assert.equal(lower(admitted).statements.length, 2)
@@ -354,13 +281,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
 		] as const
 		const tupleB = [key(Target, ["value"]), contained(on(Source, "value"), on(Target, "value"))] as const
-		// An intersection of two individually-lawful tuples is a SINGLE
-		// non-union type (IsMulti answers false — nothing distributes), so
-		// the whitelist judges it whole; whatever the impossible
-		// positionwise intersections resolve to, the tier's one forbidden
-		// verdict stays unspellable — no TargetKeyWall fires on it. A
-		// degenerate spelling no value inhabits (probed at the type level,
-		// the typeTier idiom).
+
 		type Verdict = LawfulStatements<{ Source: typeof Source; Target: typeof Target }, typeof tupleA & typeof tupleB>
 		type Fired = Verdict extends TargetKeyWall<infer T, infer P> ? readonly [T, P] : "silent"
 		const probeSilent: Equal<Fired, "silent"> = true
@@ -368,33 +289,24 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	})
 })
 
-// ————————————————————————————————————————————————————————————————————————
 // The engine half: the same matrix through native.dbCreate. Refused rows
-// travel as hand-built SchemaSpec data (what lower() would have emitted,
-// were the wall not standing in front of it).
-// ————————————————————————————————————————————————————————————————————————
 
-/** One ordinary relation's spec fragment (the lower() shape, hand-spelled). */
 function ordinary(name: string, fields: readonly FieldSpec[]): SchemaSpec["relations"][number] {
 	return { name, fields, closed: undefined }
 }
 
-/** One bare field's spec fragment. */
 function fieldOf(name: string, valueType: ValueTypeSpec, fresh = false): FieldSpec {
 	return { name, valueType, newtype: undefined, fresh }
 }
 
-/** One selection-free side. */
 function sideOf(relationName: string, projection: readonly string[]): SideSpec {
 	return { relation: relationName, projection, selection: [] }
 }
 
-/** One declared key. */
 function fdOf(relationName: string, projection: readonly string[]): StatementSpec {
 	return { kind: "fd", relation: relationName, projection }
 }
 
-/** One containment (`bidirectional` = the mirrors split). */
 function containmentOf(source: SideSpec, target: SideSpec, bidirectional = false): StatementSpec {
 	return { kind: "containment", source, target, bidirectional }
 }
@@ -421,7 +333,6 @@ describe("the target-key wall at the engine — parity through native.dbCreate",
 		}
 	}
 
-	/** The engine's verdict on an admitted schema value: `accepted`. */
 	async function engineAdmits(spec: SchemaSpec): Promise<void> {
 		const created = await bridge.dbCreate(caseDir(), spec)
 		assert.equal(created.tag, "accepted")
@@ -561,11 +472,9 @@ describe("the target-key wall at the engine — parity through native.dbCreate",
 	})
 
 	test("row 8 sub-case at the engine: a DECLARED payload key whose field set equals the projection — still ClosedTargetNotHandle", async function closedPayloadKeyed() {
-		// The engine architects this exact case (validate.rs,
-		// resolve_target_key's closed arm): a declared payload key may carry
+
 		// exactly the refused field set, and the rule is CLOSEDNESS, not key
-		// absence — the fd on the sealed extension is itself legal (judged
-		// against the axioms once; levels 1 and 5 collide nowhere), so the
+
 		// refusal below can only be the closed target's own.
 		await engineRefuses(
 			{
