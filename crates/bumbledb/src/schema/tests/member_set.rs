@@ -1,14 +1,5 @@
-//! Exhaustive boundary suite for [`MemberSet`] — the closed-target
-//! membership judgment over its typed bitset
-//! (the crucible packet (git ecec1dc3), suite 2): every in-range
-//! index against a structured pattern family, judged against a naive
-//! bit walk that shares none of [`MemberSet::contains`]'s arithmetic.
-
 use crate::schema::{AxiomIndex, MemberSet};
 
-/// The naive oracle: walk all 256 bits by (word, bit) coordinates and
-/// report whether any SET bit's position equals `id`. Out-of-range ids
-/// are absent by construction — the walk never visits a position ≥ 256.
 fn naive_member(members: &[u64; 4], id: u64) -> bool {
     let mut found = false;
     for (word_idx, &word) in members.iter().enumerate() {
@@ -22,8 +13,6 @@ fn naive_member(members: &[u64; 4], id: u64) -> bool {
     found
 }
 
-/// Builds the typed subject through its insertion contract. The oracle
-/// above retains independent word/bit arithmetic.
 fn member_set(words: &[u64; 4]) -> MemberSet {
     let mut members = MemberSet::empty();
     for index in 0..256u16 {
@@ -39,7 +28,6 @@ fn contains(members: &MemberSet, id: u64) -> bool {
     AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index))
 }
 
-/// A splitmix64 step — the repo's no-dependency randomness.
 fn splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
@@ -48,9 +36,6 @@ fn splitmix(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Low `k` bits set, `k ∈ 0..=256`: the prefix family. `k = 0` is the
-/// empty set, `k = 256` all-set, and `k ∈ {63, 64, 65, 127, 128, 129,
-/// 191, 192, 193}` are exactly the word-boundary straddles.
 fn prefix_pattern(k: usize) -> [u64; 4] {
     let mut members = [0u64; 4];
     for (word_idx, word) in members.iter_mut().enumerate() {
@@ -64,9 +49,6 @@ fn prefix_pattern(k: usize) -> [u64; 4] {
     members
 }
 
-/// The ids every pattern is probed with: all 256 in-range ids
-/// exhaustively, plus the out-of-range probes (word-boundary neighbors
-/// beyond the roster cap, the u32/u64 extremes — all must be absent).
 fn probe_ids() -> Vec<u64> {
     let mut ids: Vec<u64> = (0..256).collect();
     ids.extend([
@@ -87,26 +69,13 @@ fn probe_ids() -> Vec<u64> {
     ids
 }
 
-/// Exhaustive: every probe id × the whole structured pattern family,
-/// vectorized-arithmetic membership vs the naive bit walk.
-///
-/// Domain arithmetic — the claimed domain, counted and asserted:
-///   patterns: 257 prefix patterns (low k bits set, k = 0..=256 —
-///     includes empty, all-set, and the 63/64, 127/128, 191/192 word
-///     boundaries), 257 suffix patterns (their bitwise complements,
-///     covering the same boundaries from the other side), 256
-///     singletons (exactly one bit set, every position), and 64
-///     splitmix-filled random words = 834 patterns;
-///   ids: all 256 in-range ids exhaustively + 13 out-of-range probes
-///     = 269 ids.
-/// Cells: 834 × 269 = 224,346, every one judged against the oracle.
 #[test]
 fn exhaustive_member_set_matches_the_naive_bit_walk() {
     let mut patterns: Vec<[u64; 4]> = Vec::new();
     for k in 0..=256 {
         let prefix = prefix_pattern(k);
         patterns.push(prefix);
-        patterns.push(prefix.map(|w| !w)); // the suffix (complement) family
+        patterns.push(prefix.map(|w| !w)); 
     }
     for bit in 0..256usize {
         let mut singleton = [0u64; 4];
@@ -137,9 +106,6 @@ fn exhaustive_member_set_matches_the_naive_bit_walk() {
     assert_eq!(cells, 224_346, "834 × 269 cells enumerated");
 }
 
-/// The Miri-lane representative: the word-boundary prefixes, empty,
-/// all-set, and the corner singletons — every in-range id, plus the
-/// out-of-range probes. 10 patterns × 269 ids = 2,690 cells.
 #[test]
 fn representative_member_set_boundaries() {
     let mut patterns: Vec<[u64; 4]> = [0usize, 63, 64, 128, 192, 256]
