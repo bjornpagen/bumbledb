@@ -124,14 +124,12 @@ impl StoreReport {
 /// intern field, never the miss sentinel as a stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreFinding {
-
     Judgment(Violation),
 
     Corruption(CorruptionError),
 }
 
 impl<S> Db<S> {
-
     /// Read-only, one LMDB snapshot, O(store) — seconds at the
 
     /// # Errors
