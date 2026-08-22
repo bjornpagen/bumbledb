@@ -74,7 +74,6 @@
 //! engine-side; the renderer's functional forms are grammar, so the
 //! named after the field** — projection shorthand, Rust's struct-shorthand
 //! after its referencing field; one named otherwise is written
-
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::fmt::Write as _;
 use std::iter::Peekable;
