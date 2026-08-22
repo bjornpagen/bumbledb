@@ -11,10 +11,6 @@ use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys;
 use bumbledb_theory::schema::RelationId;
 
-/// LMDB read catalog: one owner borrow of the read transaction.
-///
-/// `Copy` so a caller can hold a range cursor on one handle and still
-/// issue point-gets on another — both borrow the same read transaction.
 #[derive(Clone, Copy)]
 pub(crate) struct LmdbReadCatalog<'txn, 'env> {
     txn: &'txn ReadTxn<'env>,
@@ -25,12 +21,6 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
         Self { txn }
     }
 
-    /// Dictionary lookup against this catalog's transaction. The handle
-    /// is `Copy`; the answer is owned, so a temporary catalog is fine.
-    /// One forward-get implementation in the tree: this raw-bytes
-    /// spelling hashes and delegates to the storage front
-    /// ([`crate::storage::dict::lookup`] → `lookup_by_hash`, the get and
-    /// decode every forward probe shares).
     #[allow(
         clippy::trivially_copy_pass_by_ref,
         reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
@@ -39,9 +29,8 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
         crate::storage::dict::lookup(self.txn, raw)
     }
 
-    /// Reverse resolve. Lifetime is the catalog's transaction, not the
     /// borrow of this `Copy` handle — store `CodecRead` can drop the
-    /// temporary and still return the mmap bytes.
+
     #[allow(
         clippy::trivially_copy_pass_by_ref,
         reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
@@ -55,7 +44,6 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
     }
 }
 
-/// LMDB write catalog: one owner borrow of the write transaction.
 pub(crate) struct LmdbWriteCatalog<'txn, 'env> {
     txn: &'txn mut WriteTxn<'env>,
 }
@@ -65,8 +53,6 @@ impl<'txn, 'env> LmdbWriteCatalog<'txn, 'env> {
         Self { txn }
     }
 
-    /// Flush one pending intern: forward put, reverse insert that
-    /// refuses overwrite (ids never reuse).
     pub(crate) fn dict_put_pending(&mut self, raw: &[u8], id: InternId) -> Result<()> {
         debug_assert!(!id.is_sentinel(), "dictionary id space exhausted");
         self.put(
@@ -96,8 +82,6 @@ fn entry_of<'a>(pair: Option<(&'a [u8], &'a [u8])>) -> Option<Entry<'a>> {
     pair.map(|(key, value)| Entry { key, value })
 }
 
-/// Lending range cursor. LMDB copies bound bytes at open; `'bounds` is
-/// retained only so the GAT names both lifetimes.
 pub(crate) struct LmdbRange<'catalog, 'bounds> {
     inner: RoRange<'catalog, Bytes, Bytes>,
     _bounds: UnusedBounds<'bounds>,
@@ -119,7 +103,6 @@ enum Yielded {
     Deleted,
 }
 
-/// Mutable range cursor with a one-shot `del_current` state.
 pub(crate) struct LmdbWriteRange<'catalog, 'bounds> {
     inner: RwRange<'catalog, Bytes, Bytes>,
     yielded: Yielded,
@@ -163,8 +146,6 @@ impl WriteCursor for LmdbWriteRange<'_, '_> {
     }
 }
 
-/// Three-state T8 walker: idle, open-with-optional-pending, or drained.
-/// `(None, Some(_))` of the retired two-Option shape is unrepresentable.
 enum Walk<'a> {
     Idle,
     Open {
@@ -174,7 +155,6 @@ enum Walk<'a> {
     Drained,
 }
 
-/// LMDB implementation of [`SortedGets`].
 pub(crate) struct LmdbSortedGets<'a> {
     txn: &'a RoTxn<'a, AnyTls>,
     data: Database<Bytes, Bytes>,
@@ -508,7 +488,6 @@ impl CatalogWrite for LmdbWriteCatalog<'_, '_> {
     }
 }
 
-/// Read-only catalog over a write transaction's own-writes view.
 /// Incremental judgment only reads; it must not take the mutable
 /// [`LmdbWriteCatalog`] owner borrow.
 #[derive(Clone, Copy)]
