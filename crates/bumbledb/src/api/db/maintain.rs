@@ -20,7 +20,6 @@ impl<S> Db<S> {
     /// that must not exist): one [`crate::storage::env::PublishStep`]
 
     /// # Errors
-
     pub fn compact(&self, dest: &Path) -> Result<()> {
         let catalog = crate::storage::env::PublishCatalog::store(&self.env, self.schema.as_ref())?;
         drop(crate::storage::env::Environment::publish(dest, &catalog)?);
@@ -32,13 +31,11 @@ impl<S> Db<S> {
     }
 
     /// # Errors
-
     pub fn disk_size(&self) -> Result<u64> {
         self.env.disk_size()
     }
 
     /// # Errors
-
     pub fn generation(&self) -> Result<GenerationId> {
         self.env.read_txn()?.generation()
     }
