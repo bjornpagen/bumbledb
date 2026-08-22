@@ -85,7 +85,6 @@ fn order_cost(
     stats: &[OccStats],
     order: &[usize],
 ) -> u64 {
-
     let occ = |i: usize| &normalized.occurrences[i];
     let rows = |i: usize| {
         stats
@@ -130,7 +129,6 @@ fn order_cost(
     let mut cost = est;
     let mut prefix_vars = var_set(order[0]);
     for &next in &order[1..] {
-
         let join_vars = var_set(next) & prefix_vars;
         let step = if join_vars != 0 && key_sets(next).iter().any(|s| s & join_vars == *s) {
             est
@@ -146,7 +144,6 @@ fn order_cost(
 
 #[test]
 fn selective_filtered_occurrence_leads_a_reference_walk() {
-
     let schema = schema(2, 2);
     let mut occ1 = occurrence(1, 1, vec![(0, 0)]);
     occ1.filters.push(FilterPredicate::Compare {
@@ -166,7 +163,6 @@ fn selective_filtered_occurrence_leads_a_reference_walk() {
 
 #[test]
 fn non_key_join_is_priced_pessimistically_and_pushed_last() {
-
     let schema = schema(3, 3);
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0), (1, 1), (2, 3)]),
@@ -183,7 +179,6 @@ fn non_key_join_is_priced_pessimistically_and_pushed_last() {
 
 #[test]
 fn key_coverage_fires_through_the_fresh_auto_key() {
-
     let schema = schema(2, 2);
     let query = normalized(vec![
         occurrence(0, 0, vec![(1, 0)]),
@@ -298,7 +293,6 @@ fn membership_bound_interval_disables_key_coverage() {
     let schema = pointwise_schema();
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0)]),
-
         occurrence(1, 1, vec![(0, 0)]),
     ]);
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
@@ -311,7 +305,6 @@ fn membership_bound_interval_disables_key_coverage() {
 
 #[test]
 fn eq_pinned_key_fields_count_toward_key_coverage() {
-
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -401,13 +394,12 @@ fn negated_occurrences_enter_no_dp_state() {
 
 #[test]
 fn dp_beats_greedy_on_a_constructed_counterexample() {
-
     let schema = schema(4, 2);
     let query = normalized(vec![
-        occurrence(0, 0, vec![(1, 0)]),         
-        occurrence(1, 1, vec![(0, 0), (1, 1)]), 
-        occurrence(2, 2, vec![(1, 1)]),         
-        occurrence(3, 3, vec![(1, 1)]),         
+        occurrence(0, 0, vec![(1, 0)]),
+        occurrence(1, 1, vec![(0, 0), (1, 1)]),
+        occurrence(2, 2, vec![(1, 1)]),
+        occurrence(3, 3, vec![(1, 1)]),
     ]);
     let occ_stats = stats(&[10, 10, 2, 2]);
 
@@ -490,7 +482,6 @@ fn deterministic_across_shuffled_stats_input() {
 
 #[test]
 fn the_dp_accepts_large_inputs_under_the_cap() {
-
     let schema = schema(1, 2);
     let occurrences: Vec<Occurrence> = (0..16)
         .map(|i| occurrence(u16::try_from(i).expect("small"), 0, vec![(0, 0)]))
