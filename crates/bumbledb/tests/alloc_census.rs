@@ -1,20 +1,3 @@
-//! THE ALLOCATION DEEP CENSUS (perf/alloc-census): whole-flow allocation
-//! accounting — counts, bytes, and call-path attribution — across the five
-//! flow families (prepare, open, commit, execute, insert/scan). The release
-//! alloc gate (`tests/alloc_gate.rs`) proves steady-state zero on gated
-//! scenarios; this harness measures EVERYTHING ELSE: the sanctioned cold
-//! paths, the per-commit arena, the per-prepare pipeline, the fixpoint
-//! driver's rounds — so each remaining site can be classified
-//! JUSTIFIED / HOISTABLE / WASTEFUL.
-//!
-//! Run:
-//!   `CARGO_PROFILE_RELEASE_DEBUG=2 cargo test --release --test alloc_census`
-//!   `  -- --ignored --test-threads=1 --nocapture`
-//!
-//! The harness registers its own counting+tracing global allocator, so it
-//! must be built WITHOUT the `alloc-counter` feature (which registers the
-//! lib's). It is `#[ignore]`d: a measurement instrument, not a gate.
-
 #![cfg(not(feature = "alloc-counter"))]
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; the census only counts and delegates.
 #![allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
@@ -37,10 +20,6 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db, NonEmpty, ProjectionRule};
-
-// =====================================================================
-// The census allocator: counting always, backtrace capture when armed.
-// =====================================================================
 
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
 static DEALLOCS: AtomicU64 = AtomicU64::new(0);
@@ -87,7 +66,6 @@ fn record(bytes: u64, realloc: bool) {
 struct CensusAllocator;
 
 // SAFETY: delegates to `System`; the counters and event log are side
-// effects with no aliasing (the event log is reentrancy-guarded).
 unsafe impl GlobalAlloc for CensusAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCS.fetch_add(1, Ordering::Relaxed);
@@ -105,7 +83,7 @@ unsafe impl GlobalAlloc for CensusAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // The gate contract: one alloc event, both byte sides.
+
         ALLOCS.fetch_add(1, Ordering::Relaxed);
         ALLOC_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
@@ -142,8 +120,6 @@ fn window() -> Win {
     }
 }
 
-/// One measured window; `attrib` arms per-event backtrace capture and
-/// prints the aggregated top sites afterward.
 fn measured<R>(flow: &str, label: &str, attrib: bool, f: impl FnOnce() -> R) -> R {
     if attrib {
         EVENTS.lock().expect("events lock").clear();
@@ -164,11 +140,9 @@ fn measured<R>(flow: &str, label: &str, attrib: bool, f: impl FnOnce() -> R) -> 
     out
 }
 
-/// Renders one backtrace into an attribution key: the deepest ≤3
-/// bumbledb-crate frames as `func @ file:line`, or a std/foreign fallback.
 fn attribution_key(bt: &Backtrace) -> String {
     let text = format!("{bt}");
-    let mut frames: Vec<(String, String)> = Vec::new(); // (symbol, loc)
+    let mut frames: Vec<(String, String)> = Vec::new(); 
     let mut current: Option<String> = None;
     for line in text.lines() {
         let t = line.trim_start();
@@ -198,17 +172,13 @@ fn attribution_key(bt: &Backtrace) -> String {
             Some(i) => &l[i..],
             None => l,
         };
-        // Trim the trailing column.
+
         match l.rfind(':') {
             Some(i) if l[..i].contains(':') => l[..i].to_owned(),
             _ => l.to_owned(),
         }
     };
-    // A repo frame: its resolved location is inside the workspace source
-    // (a relative `./src/...` path or an explicit `crates/bumbledb...`),
-    // never the rustlib sources — generic std instantiations like
-    // `RawVec<bumbledb::...>` carry bumbledb in the SYMBOL but resolve to
-    // rustlib, and they are plumbing, not sites.
+
     let ours: Vec<String> = frames
         .iter()
         .filter(|(sym, loc)| {
@@ -230,7 +200,7 @@ fn attribution_key(bt: &Backtrace) -> String {
         return ours.join(" <- ");
     }
     // Foreign allocation (heed/LMDB shim, std machinery): first two
-    // frames past the raw allocation plumbing.
+
     let foreign: Vec<String> = frames
         .iter()
         .filter(|(sym, _)| {
@@ -259,7 +229,7 @@ fn attribution_key(bt: &Backtrace) -> String {
 fn print_sites() {
     let events = std::mem::take(&mut *EVENTS.lock().expect("events lock"));
     let dropped = DROPPED.load(Ordering::Relaxed);
-    let mut agg: HashMap<String, (u64, u64, u64)> = HashMap::new(); // count, bytes, reallocs
+    let mut agg: HashMap<String, (u64, u64, u64)> = HashMap::new(); 
     for e in &events {
         let key = attribution_key(&e.bt);
         let entry = agg.entry(key).or_insert((0, 0, 0));
@@ -282,10 +252,6 @@ fn print_sites() {
         println!("  SITE (event cap hit: {dropped} events untraced)");
     }
 }
-
-// =====================================================================
-// The fixture: the gate's world + a determinant relation + a holder chain.
-// =====================================================================
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
@@ -362,7 +328,7 @@ fn schema() -> SchemaDescriptor {
                 name: "Item".into(),
                 fields: vec![u64_field("doc"), u64_field("pos"), u64_field("note")],
             },
-            // The determinant relation: Profile(account) -> Profile.
+
             RelationDescriptor {
                 extension: None,
                 name: "Profile".into(),
@@ -382,7 +348,7 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-            // The capacity statement: Account(id) <={1..4096} Item(doc).
+
             StatementDescriptor::Capacity {
                 target: Side {
                     relation: ACCOUNT,
@@ -406,8 +372,6 @@ fn schema() -> SchemaDescriptor {
     }
 }
 
-/// A generated schema of `n` relations (3 u64 fields each, one FD each)
-/// for the validate-scaling axis of the open flow.
 fn wide_schema(n: u16) -> SchemaDescriptor {
     SchemaDescriptor {
         relations: (0..n)
@@ -426,8 +390,6 @@ fn wide_schema(n: u16) -> SchemaDescriptor {
     }
 }
 
-/// The holder chain length (accounts 100..100+CHAIN with holder = id+1):
-/// the reach driver's round count rides this.
 const CHAIN: u64 = 64;
 
 fn populate(db: &Db<SchemaDescriptor>) {
@@ -435,7 +397,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
         for account in 0..20u64 {
             tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(account % 5)]])?;
         }
-        // The holder chain for recursion-round scaling.
+
         for id in 100..100 + CHAIN {
             tx.insert_dyn(ACCOUNT, [&[Value::U64(id), Value::U64(id + 1)]])?;
         }
@@ -469,7 +431,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 ]],
             )?;
         }
-        // The capacity floor: every account parents an Item chain.
+
         for doc in (0..20u64).chain(100..100 + CHAIN) {
             for pos in 1..=8u64 {
                 tx.insert_dyn(
@@ -482,7 +444,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 )?;
             }
         }
-        // The determinant rows.
+
         for account in 0..20u64 {
             tx.insert_dyn(PROFILE, [&[Value::U64(account), Value::U64(account * 3)]])?;
         }
@@ -492,10 +454,6 @@ fn populate(db: &Db<SchemaDescriptor>) {
     .unwrap();
 }
 
-// =====================================================================
-// Query shapes.
-// =====================================================================
-
 fn edb(rel: RelationId, bindings: Vec<(FieldId, Term)>) -> Atom {
     Atom {
         source: AtomSource::Edb(rel),
@@ -503,8 +461,6 @@ fn edb(rel: RelationId, bindings: Vec<(FieldId, Term)>) -> Atom {
     }
 }
 
-/// The prepare-scaling family: a chain of `atoms` Account self-joins with
-/// `conds` satisfiable range conditions, duplicated across `rules` rules.
 fn chain_query(atoms: u16, conds: u16, rules: u16) -> Query {
     let rule = |seed: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(atoms))],
@@ -542,8 +498,6 @@ fn chain_query(atoms: u16, conds: u16, rules: u16) -> Query {
     }
 }
 
-/// The DNF axis: one rule whose condition is an Or of `k` conjunctions —
-/// normalization multiplies rules.
 fn dnf_query(k: u16) -> Query {
     let pair = |j: u64| {
         ConditionTree::And(vec![
@@ -575,7 +529,6 @@ fn dnf_query(k: u16) -> Query {
     })
 }
 
-/// Q(holder, amount) :- Posting ⋈ Account, amount >= ?0 — the join shape.
 fn join_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -604,7 +557,6 @@ fn join_query() -> Query {
     })
 }
 
-/// Q(holder, Sum(amount), Count) — the aggregate shape.
 fn aggregate_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -637,7 +589,6 @@ fn aggregate_query() -> Query {
     })
 }
 
-/// Q(holder, memo) with a Ne string literal — the string/byte-heap shape.
 fn string_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
@@ -666,7 +617,6 @@ fn string_query() -> Query {
     })
 }
 
-/// Q(person, Pack(slot)) — the coalescing fold.
 fn pack_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
@@ -682,8 +632,6 @@ fn pack_query() -> Query {
     })
 }
 
-/// Q(a, b) :- Busy(a, s1), Busy(b, s2), s1 INTERSECTS s2, person = ?0 both
-/// sides — the calendar/Allen interval-pair shape.
 fn calendar_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -716,7 +664,6 @@ fn calendar_query() -> Query {
     })
 }
 
-/// Q(pos, note) :- Item(doc = ?0, pos, note) — the windowed (marks) shape.
 fn marks_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -733,8 +680,6 @@ fn marks_query() -> Query {
     })
 }
 
-/// The recursive closure query over the Account holder graph, edge set
-/// capped by `?0` (the gate's recursive family verbatim).
 fn recursive_query() -> Query {
     let account = |a: u16, h: u16| {
         edb(
@@ -836,10 +781,6 @@ fn interiors_only_query() -> Query {
     }
 }
 
-// =====================================================================
-// The typed world for the typed insert/scan lanes.
-// =====================================================================
-
 bumbledb::schema! {
     pub CensusLedger;
     relation CItem {
@@ -848,12 +789,8 @@ bumbledb::schema! {
     }
 }
 
-// =====================================================================
-// Flows.
-// =====================================================================
-
 fn flow_open() {
-    // create / open (the probe battery).
+
     let dir = common::TempDir::new("census-open");
     let db = measured("open", "Db::create(fixture schema)", true, || {
         Db::create(dir.path(), schema())
@@ -866,7 +803,6 @@ fn flow_open() {
     });
     drop(db);
 
-    // Validate/open scaling with schema width.
     for n in [4u16, 16, 64] {
         let wdir = common::TempDir::new(&format!("census-wide-{n}"));
         let db = measured(
@@ -884,8 +820,7 @@ fn flow_open() {
 }
 
 fn flow_prepare(db: &Db<SchemaDescriptor>) {
-    // Scaling axes: atoms, conditions, rules — three prepares each, the
-    // third measured (per-call steady cost, not first-call jitter).
+
     for (label, q) in [
         ("chain a=1 c=0 r=1", chain_query(1, 0, 1)),
         ("chain a=2 c=1 r=1", chain_query(2, 1, 1)),
@@ -906,7 +841,7 @@ fn flow_prepare(db: &Db<SchemaDescriptor>) {
             drop(db.prepare(&q).expect("prepare"));
         });
     }
-    // Attributed representative shapes.
+
     let q = chain_query(4, 2, 2);
     measured("prepare", "chain a=4 c=2 r=2 (attributed)", true, || {
         drop(db.prepare(&q).expect("prepare"));
@@ -925,7 +860,7 @@ fn flow_prepare(db: &Db<SchemaDescriptor>) {
 }
 
 fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u64, attrib: bool) {
-    // Warm twice, measure the third commit.
+
     for round in 0..3 {
         let base = *next_id;
         *next_id += k;
@@ -957,9 +892,6 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
     commit_shape(db, "insert 16 postings", &mut next_id, 16, false);
     commit_shape(db, "insert 512 postings", &mut next_id, 512, true);
 
-    // The window-touching commit (marks machinery live): tail append +
-    // net-nothing head delete/reinsert across 5 window parents, then the
-    // restoring commit.
     for round in 0..3u64 {
         let attrib = round == 2;
         let run = |label: &str,
@@ -999,8 +931,6 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         run("windowed restore", &restore, attrib);
     }
 
-    // The determinant overwrite: delete+reinsert the same determinant
-    // tuple with a new dependent — the recently-fixed clone path.
     for round in 0..3u64 {
         let body = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             for account in 0..8u64 {
@@ -1015,7 +945,7 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
             }
             Ok(())
         };
-        // Keep the dependent moving: seed round 0 from the populate values.
+
         let seeded = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             if round == 0 {
                 for account in 0..8u64 {
@@ -1096,8 +1026,6 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
         false,
     );
 
-    // The reach driver: cold executions at increasing caps — rounds
-    // ride the holder chain, so allocation-per-round is the slope.
     let query = recursive_query();
     for cap in [110u64, 120, 140, 164] {
         db.read(|snap| {
@@ -1130,7 +1058,6 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
         .expect("read");
     }
 
-    // The post-commit rebuild window: warm a prepared query, commit, then
     // measure the first execution after the commit (image rebuild).
     let q = join_query();
     let mut prepared = db.prepare(&q).expect("prepare");
@@ -1177,7 +1104,7 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 
 fn flow_insert_and_scan() {
     use bumbledb::Fresh as _;
-    // One collection insert of 10_000 Item facts into a fresh db.
+
     let dir = common::TempDir::new("census-insert");
     let db = Db::create(dir.path(), schema())
         .expect("create")
@@ -1197,7 +1124,6 @@ fn flow_insert_and_scan() {
         assert_eq!(n, 10_000);
     });
 
-    // The dynamic scan/export lane over the loaded relation.
     db.read(|snap| {
         measured(
             "scan",
@@ -1217,7 +1143,6 @@ fn flow_insert_and_scan() {
     .expect("read");
     drop(db);
 
-    // The typed lanes: collection insert of str-bearing facts + scan_facts.
     let tdir = common::TempDir::new("census-insert-typed");
     let tdb = Db::create(tdir.path(), CensusLedger)
         .expect("create typed")
