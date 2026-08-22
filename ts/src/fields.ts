@@ -175,9 +175,7 @@ const str: StrField = Object.freeze({ kind: "str" })
 
 function bytes<const Width extends number>(width: Width): BytesField<Width> {
 	if (!Number.isInteger(width) || width < 1 || width > 64) {
-		throw errors.new(
-			`bytes width must be an integer in 1..=64 (got ${width}) — the range is pinned at declaration`
-		)
+		throw errors.new(`bytes width must be an integer in 1..=64 (got ${width}) — the range is pinned at declaration`)
 	}
 	return Object.freeze({ kind: "bytes", width })
 }
@@ -193,9 +191,7 @@ function interval(element: U64Field | I64Field, width?: bigint): IntervalField<"
 		throw errors.new(`interval element must be the u64 or i64 field constructor (got ${elementKind})`)
 	}
 	if (width !== undefined && width < 1n) {
-		throw errors.new(
-			`interval width must be >= 1 (got ${width}) — w >= 1 is pinned at declaration`
-		)
+		throw errors.new(`interval width must be >= 1 (got ${width}) — w >= 1 is pinned at declaration`)
 	}
 	return Object.freeze({ kind: "interval", element: elementKind, width })
 }
