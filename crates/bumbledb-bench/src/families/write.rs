@@ -1,8 +1,5 @@
 use crate::families::{Kind, WriteFamily};
 
-/// The write and cold families — all `Kind::Report` (the suite ruling:
-/// "every family must win" is the read set; writes and cold are
-/// described honestly, never gated).
 #[must_use]
 pub fn write_families() -> &'static [WriteFamily] {
     use crate::harness::Protocol;
@@ -15,13 +12,7 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
-        // The witnessed-write row (the PRD-18 spine debt): commit_single
-        // through `Db::write_from` with a fresh snapshot witness per
-        // sample — the delta against commit_single prices the witness
-        // (one generation read + one integer compare). SQLite-unpaired
-        // by decision: SQLite has no snapshot-witness surface, and a
-        // BEGIN-IMMEDIATE + user-version emulation would time the
-        // emulation, not the engine.
+
         WriteFamily {
             name: "commit_witnessed",
             kind: Kind::Report,
@@ -38,12 +29,9 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 32,
             },
         },
-        // The window-judgment rows (the roster extension,
+
         // `crate::windowed`): commit_single's protocol against the twin
-        // worlds — the window-free control, the bounded fan-cap, and
-        // the {0} exclusion. Engine-only by decision (the
-        // commit_witnessed precedent: a trigger emulation would time
-        // the emulation, not the engine).
+
         WriteFamily {
             name: "commit_window_baseline",
             kind: Kind::Report,
@@ -68,11 +56,7 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
-        // The weighted-capacity rows (`crate::capacity`): the power
-        // budget's statement-free control, the dependent-bound weighted
-        // walk, and the calendar Duration shape. Engine-only by the
-        // same decision; the SQLite SUM-trigger twin gates verdicts in
-        // tests, never clocks.
+
         WriteFamily {
             name: "commit_capacity_baseline",
             kind: Kind::Report,
@@ -110,12 +94,7 @@ pub fn write_families() -> &'static [WriteFamily] {
             kind: Kind::Report,
             protocol: Protocol::COLD,
         },
-        // The delete-bearing cold lane (PRD-I2): the same timed walk
-        // behind a delete+reinsert touch (the recipe-20/attemptText
-        // revision shape) — the only row where a delete-induced rebuild
-        // is measurable at all. Report-class like every write/cold row,
-        // and structurally outside the ALL-WIN gate (`RunReport::all_win`
-        // covers the read roster only).
+
         WriteFamily {
             name: "cold_containment_walk_delete",
             kind: Kind::Report,
