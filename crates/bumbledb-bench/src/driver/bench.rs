@@ -221,7 +221,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         },
         corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {
-
             let stamp = std::fs::read_to_string(&paths.stamp)
                 .map_or_else(|_| "UNVERIFIED".to_owned(), |s| s.trim().to_owned());
             let cases = std::fs::read_to_string(paths.root.join(CASES_FILE))
