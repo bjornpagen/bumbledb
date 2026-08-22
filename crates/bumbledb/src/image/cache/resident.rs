@@ -1,5 +1,4 @@
 //! Resident-image observability (feature `trace`).
-
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
