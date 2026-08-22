@@ -91,7 +91,6 @@ enum SubstitutedTree {
 /// `FieldId(i)` is head position `i` (`lean/Bumbledb/Query/Denotation.lean:
 /// tupleFact` — the positional addressing interiors and rec share).
 pub(super) struct DerivedWorld<'a> {
-
     sets: &'a [BTreeSet<Tuple>],
 
     interval: &'a [Vec<bool>],
@@ -121,7 +120,6 @@ struct Env<'a> {
 }
 
 impl Env<'_> {
-
     fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
         match src {
             Src::Edb(relation) => &self.relations[*relation],
@@ -131,7 +129,6 @@ impl Env<'_> {
 }
 
 impl NaiveDb {
-
     /// # Errors
 
     /// # Panics
@@ -362,7 +359,6 @@ impl NaiveDb {
         let pack = pack_position(head);
         let mut rows = BTreeSet::new();
         for group in groups.values() {
-
             if let Some((position, _)) = pack {
                 let claims: Vec<&Value> = group.iter().map(|row| &row.0[position]).collect();
                 for segment in pack_segments(&claims) {
@@ -387,7 +383,6 @@ impl NaiveDb {
                 .iter()
                 .enumerate()
                 .map(|(index, term)| match term {
-
                     FindTerm::Var(_) => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
