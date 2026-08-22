@@ -1,9 +1,3 @@
-//! The coverage contract's evidence collector: one pass per generated
-//! query, counting every construct the n = 1000 test asserts. Structural
-//! facts (negation shapes, membership kinds, the comparison matrix, the
-//! sinks) are re-derived from the query itself; only corpus-content
-//! facts (hit-vs-miss, boundary polarity) come from generation tags.
-
 use bumbledb::ir::Rule;
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
 use bumbledb::{Atom, AtomSource, Basic, CmpOp, FindTerm, FoldOp, Query, Term, VarId};
@@ -15,10 +9,6 @@ use crate::querygen::target::{self, ids};
 use crate::querygen::{ClosedVariant, Coverage, GenTags, GroundVariant, RulesVariant, Shape};
 use crate::walk;
 
-/// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
-/// all six types, order operators over the two integer types only,
-/// `Allen` (any mask) and `PointIn` only at their interval-anchored
-/// shapes.
 #[must_use]
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     match op_idx {
@@ -28,8 +18,6 @@ pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     }
 }
 
-/// The matrix row of an operator — every `Allen` mask shares one row (the
-/// mask is a value of the operator, not a new operator).
 fn op_index(op: CmpOp) -> usize {
     match op {
         CmpOp::Eq => 0,
@@ -54,10 +42,6 @@ fn type_index(ty: &ValueType) -> usize {
     }
 }
 
-/// The typing walk's product: variable and param resolutions mirroring
-/// the validation boundary's bivalent-anchor rule for exactly the
-/// shapes the generator emits (a scalar anchor wins; an interval-field
-/// position with no scalar anchor is interval-valued).
 struct Typing {
     var_types: HashMap<VarId, ValueType>,
     scalar_params: HashSet<u16>,
@@ -68,8 +52,7 @@ struct Typing {
 fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
     match atom.source {
         AtomSource::Edb(relation) => target::schema().relation(relation).field(field).value_type,
-        // Derived columns are positional and scalar in this grammar
-        // (interval-typed derived columns are translator-inexpressible).
+
         AtomSource::Interior(_) => ValueType::U64,
     }
 }
@@ -81,7 +64,7 @@ fn typing(rule: &Rule) -> Typing {
         var_atoms: HashMap::new(),
         var_pos: HashMap::new(),
     };
-    // Pass one: scalar-field positions anchor vars and params.
+
     for (atom_idx, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
@@ -115,8 +98,7 @@ fn typing(rule: &Rule) -> Typing {
             }
         }
     }
-    // Pass two: interval-field var positions with no scalar anchor are
-    // interval-typed (the bivalent default).
+
     for atom in &rule.atoms {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
@@ -138,20 +120,9 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
     ty.interval_element()
 }
 
-/// The equality-spine cost-bound check
-/// (`docs/architecture/60-validation.md` § the generator contract;
-/// `40-execution.md` names the degenerate): every atom carrying a
-/// var-point membership binding or an interval-typed side of a
-/// cross-atom `Allen`/`PointIn` must share an equality join
-/// variable with another atom or carry an equality selection
-/// (literal/param/set) on a scalar field; a negated atom whose only
-/// bindings are memberships is the same Cartesian. Returns the count of
-/// violating atoms — asserted zero by the contract test.
 fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
     use std::collections::BTreeSet;
-    // Equality positions: a var at a scalar field, or an interval-typed
-    // var at an interval field (value equality). A membership position
-    // (element-typed var at an interval field) is not an equality.
+
     let mut eq_atoms: HashMap<VarId, BTreeSet<usize>> = HashMap::new();
     for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
@@ -174,7 +145,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 && matches!(term, Term::Literal(_) | Term::Param(_) | Term::ParamSet(_))
         })
     };
-    // The atoms the rule binds: var-point membership occurrences…
+
     let mut needs: BTreeSet<usize> = BTreeSet::new();
     for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
@@ -188,7 +159,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             }
         }
     }
-    // …and interval-typed sides of cross-atom Allen/PointIn.
+
     for comparison in rule.conditions.iter().map(super::leaf) {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::PointIn) {
             continue;
@@ -198,7 +169,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 .iter()
                 .any(|a| t.var_atoms[rhs].contains(a))
             {
-                continue; // a same-atom pair is a filter, not a join
+                continue; 
             }
             for var in [lhs, rhs] {
                 if t.var_types.get(var).is_some_and(|ty| ty.is_interval()) {
@@ -257,9 +228,6 @@ impl Coverage {
         }
     }
 
-    /// The closed-relation class tallies (`shapes_closed.rs`): the four
-    /// query pattern classes the self-test counts (the fold rides the
-    /// shape count itself — it IS the family knob).
     fn record_closed(&mut self, closed: Option<ClosedVariant>) {
         match closed {
             Some(ClosedVariant::Join) => self.closed_join_plain += 1,
@@ -270,8 +238,6 @@ impl Coverage {
         }
     }
 
-    /// The grounding-variant tallies (`shapes_ground.rs`): eliminable shapes
-    /// (existence walks and both DU `==` directions) vs the two
     /// near-miss refusal classes.
     fn record_ground(&mut self, ground: Option<GroundVariant>) {
         match ground {
@@ -290,9 +256,6 @@ impl Coverage {
         }
     }
 
-    /// Membership bindings in the positive atoms: an interval-typed
-    /// field carrying an element-typed term. Returns whether any exist
-    /// (the composition detector's input).
     fn record_membership(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut any = false;
         for atom in &rule.atoms {
@@ -352,8 +315,7 @@ impl Coverage {
                     } else {
                         self.allen_singleton += 1;
                     }
-                    // Per-basic reach: every literal mask feeds the
-                    // 13-cell roster (all 13 asserted per run).
+
                     for (index, basic) in Basic::ALL.iter().enumerate() {
                         if mask.contains(*basic) {
                             self.allen_basics[index] += 1;
@@ -386,8 +348,6 @@ impl Coverage {
         has_allen
     }
 
-    /// Negated-atom shapes: gate / key-covered / open (with the
-    /// multiply-witnessed relations tracked), and the binding-term mix.
     fn record_negations(&mut self, rule: &Rule, t: &Typing) {
         for atom in &rule.negated {
             self.negations += 1;
@@ -430,8 +390,7 @@ impl Coverage {
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
                     Term::Var(var) => {
-                        // Membership inside negation: an element-typed
-                        // var at an interval field.
+
                         if element_of(&field_type(atom, *field)).is_some()
                             && t.var_types.get(var).is_some_and(|ty| !ty.is_interval())
                         {
@@ -478,16 +437,12 @@ impl Coverage {
             }
         }
         self.multi_aggregate += u64::from(aggregates > 1);
-        // The wide-projection classes (the executor's hoist paths are
-        // width-unbounded; the >8-word class stays oracle-covered).
+
         self.wide_scalar += u64::from(interval_finds == 0 && projected_words > 8);
         self.wide_interval += u64::from(interval_finds >= 4);
         aggregates > 0
     }
 
-    /// The multi-rule bands: arm counts 2–4 and the generator's variant
-    /// intent (the arm count is re-derived from the query, never trusted
-    /// from the tag).
     fn record_rules(&mut self, query: &Query, variant: Option<RulesVariant>) {
         let Some(variant) = variant else { return };
         match query.rules().len() {
@@ -517,8 +472,7 @@ impl Coverage {
             self.ladder[index] += u64::from(*drawn);
         }
         self.allen_random_mask += u64::from(tags.random_mask);
-        // Per-query composition flags, accumulated across rules
-        // (variables are rule-scoped, so the typing walk runs per rule).
+
         let (mut has_membership, mut has_allen, mut has_negation, mut has_aggregate) =
             (false, false, false, false);
         let mut uses_set = false;
@@ -529,7 +483,7 @@ impl Coverage {
                 .filter(|atom| atom.bindings.is_empty())
                 .count() as u64;
             let t = typing(&rule);
-            // Repeated in-atom variables.
+
             for atom in &rule.atoms {
                 let vars: Vec<&Term> = atom
                     .bindings
@@ -545,7 +499,7 @@ impl Coverage {
                     self.repeated_vars += 1;
                 }
             }
-            // Param and param-set binding occurrences (positive + negated).
+
             for atom in rule.atoms.iter().chain(&rule.negated) {
                 for (_, term) in &atom.bindings {
                     match term {
@@ -558,8 +512,7 @@ impl Coverage {
             has_membership |= self.record_membership(&rule, &t);
             has_allen |= self.record_comparisons(&rule, &t);
             self.record_negations(&rule, &t);
-            // The head is one row; rule 0 records it (rules align
-            // positionally by validation).
+
             if rule_idx == 0 {
                 has_aggregate = self.record_finds(&rule, &t);
             }
@@ -575,7 +528,7 @@ impl Coverage {
                 });
             self.spine_violations += spine_violations(&rule, &t);
         }
-        // The structural compositions where bugs hide.
+
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
         self.set_and_negation += u64::from(has_negation && uses_set);
         self.membership_and_allen += u64::from(has_membership && has_allen);
@@ -583,7 +536,6 @@ impl Coverage {
     }
 }
 
-/// Generates `n` queries at the seed and counts every construct.
 #[must_use]
 pub fn coverage(n: u64, seed: u64, cfg: GenConfig) -> Coverage {
     let mut rng = Rng::new(seed);
