@@ -23,16 +23,16 @@ impl<S> ReadInstance<'_, S> {
         )
     }
 
-    /// Exact cardinality of `relation` at this lease's snapshot — THE
-    /// public spelling for stored cardinality (one-representation PRD 40):
-    /// a structural read of the maintained counter (`StatKind::RowCount`,
-    /// folded transactionally at every commit since format 8, O(1) to
-    /// read, pinned equal to the scan count —
+    /// Exact cardinality of `relation` at this lease's committed view —
+    /// THE public spelling for stored cardinality (one-representation PRD
+    /// 40): a structural read of the maintained counter
+    /// (`StatKind::RowCount`, folded transactionally at every commit
+    /// since format 8, O(1) to read, pinned equal to the scan count —
     /// `row_count_equals_scan_count_after_mixed_commits`) — never a scan,
     /// never an estimate, no allocation. The read runs inside the lease's
     /// one `ReadTxn`, so `count` and [`ReadInstance::scan`] observe the
-    /// same snapshot by construction. A **closed** relation answers its
-    /// sealed extension length (virtual storage — the stored counter
+    /// same committed view by construction. A **closed** relation answers
+    /// its sealed extension length (virtual storage — the stored counter
     /// never exists for it), the same arm as
     /// [`crate::OwnedInstance::count`].
     ///
