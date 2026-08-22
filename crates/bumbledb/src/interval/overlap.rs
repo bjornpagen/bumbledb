@@ -4,7 +4,6 @@
 //! `[q_start, q_end)`" enumerates in ~O(log n + out) instead of the
 //! group's full n — the `Σ n_k²` all-pairs walk becomes
 //! `Σ n_k log n_k + out` across a per-key self-join. Small groups skip
-
 use std::num::NonZeroU32;
 
 const FLAT_SWEEP_CEILING: usize = 128;
