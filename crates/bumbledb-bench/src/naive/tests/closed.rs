@@ -129,7 +129,6 @@ fn closed_writes_are_refused_typed() {
             inserts: vec![],
         },
         // A mixed delta: the closed delete is refused even though the
-
         Delta {
             deletes: vec![(SEVERITY, vec![Value::U64(0), Value::Bool(false)])],
             inserts: vec![(ALERT, vec![Value::U64(300)])],
@@ -145,7 +144,6 @@ fn closed_writes_are_refused_typed() {
 
 #[test]
 fn the_psi_subset_judges_from_the_extension() {
-
     let descriptor = schema();
     let extension = descriptor.relations[0].extension.as_ref().expect("closed");
     let psi_rows: Vec<u64> = extension
