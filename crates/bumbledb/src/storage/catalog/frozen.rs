@@ -1,7 +1,6 @@
 //! Packed heap catalog: one [`FrozenMap`] per physical map, no per-entry
 //! nodes. Keys are strictly increasing. Binary search parses only the
 //! compared record headers.
-
 use std::cmp::Ordering;
 use std::marker::PhantomData;
 use std::ops::Bound;
