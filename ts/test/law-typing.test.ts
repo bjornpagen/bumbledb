@@ -15,7 +15,6 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 
 describe("the three class laws", function laws() {
 	test("generators name their classes; a 3-hop chain lands the whole chain in the generator's class; bare stays bare", function chainGolden() {
-
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const A = relation("A", { x: Vocab.id, note: str })
 		const B = relation("B", { y: Vocab.id })
@@ -133,7 +132,6 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 	})
 
 	test("a closed relation's id is a generator too — unifying it with a fresh coordinate refuses (the roster wall fires first, at construction)", function closedWall() {
-
 		// through a closed id — the refusal moved earlier and warmer.
 		assert.throws(function runtimeTwin() {
 			// @ts-expect-error — a fresh u64 mint never pairs the closed [id]: the roster rides the face shape
@@ -154,7 +152,6 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 })
 
 describe("the runtime/type agreement and the wire", function agreement() {
-
 	function buildFixture() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const Holder = relation("Holder", { id: u64.fresh, name: str })
