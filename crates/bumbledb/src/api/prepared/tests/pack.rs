@@ -1,18 +1,8 @@
-//! The `Pack` criteria (20-query-ir § aggregation) at the API boundary:
-//! the coalescing fold end to end — validate → plan → execute → result
-//! carrier. Relation-shaped: one answer per (group, maximal segment);
-//! adjacency merges, duplicates collapse in the sweep, a packed ray is a
-//! ray; `Pack` groups by the non-aggregated head vars exactly as `Sum`
-//! does; and a multi-rule head folds the union (the spanning seen-set
-//! keys (group, claim) pairs).
-
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::ParamId;
 use bumbledb_theory::schema::{Generation, IntervalElement};
 
-/// Busy(id fresh u64, person u64, cap u64, slot interval<u64>);
-/// Shift(id fresh u64, person u64, slot interval<i64>).
 fn pack_schema() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -110,7 +100,6 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// Q(person, Pack(slot)) :- Busy(person, slot).
 fn pack_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
@@ -139,8 +128,6 @@ fn packed_u64_answers(out: &Answers) -> Vec<(u64, u64, u64)> {
     answers
 }
 
-/// Overlap, containment, adjacency, and duplicate claims fold into
-/// maximal segments per group — one answer each, groups scoped.
 #[test]
 fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
     let dir = TempDir::new("pack-coalesce");
@@ -150,13 +137,13 @@ fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
         &env,
         &schema,
         &[
-            (1, 10, 0, (1, 3)),  // overlaps the next
-            (2, 10, 0, (2, 5)),  // meets the next (adjacency merges)
-            (3, 10, 0, (5, 7)),  //
-            (4, 10, 0, (2, 4)),  // nested inside [1, 7)
-            (5, 10, 0, (9, 10)), // the gap: a second segment
-            (6, 20, 0, (4, 6)),  // duplicate claims, distinct fresh ids —
-            (7, 20, 0, (4, 6)),  //   they collapse in the sweep
+            (1, 10, 0, (1, 3)),  
+            (2, 10, 0, (2, 5)),  
+            (3, 10, 0, (5, 7)),  
+            (4, 10, 0, (2, 4)),  
+            (5, 10, 0, (9, 10)), 
+            (6, 20, 0, (4, 6)),  
+            (7, 20, 0, (4, 6)),  
         ],
     );
     let cache = ImageCache::new(&schema);
@@ -171,9 +158,9 @@ fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
     );
 }
 
-/// A ray absorbs everything after its start and the packed ray is a ray
-/// (`end == MAX` is the frontier no later claim exceeds) — the I64
-/// element type, negative spans included.
+/// A ray absorbs everything after its start and the packed ray is a ray (`end
+/// == MAX` is the frontier no later claim exceeds) — the I64 element type,
+/// negative spans included.
 #[test]
 fn pack_absorbs_rays_over_i64_spans() {
     let dir = TempDir::new("pack-rays");
@@ -184,10 +171,10 @@ fn pack_absorbs_rays_over_i64_spans() {
         &schema,
         &[
             (1, 10, (-5, -2)),
-            (2, 10, (-2, 4)),       // adjacency across zero
-            (3, 10, (3, i64::MAX)), // the ray [3, ∞)
-            (4, 10, (100, 200)),    // absorbed by the ray
-            (5, 20, (-10, -9)),     // bounded group stays bounded
+            (2, 10, (-2, 4)),       
+            (3, 10, (3, i64::MAX)), 
+            (4, 10, (100, 200)),    
+            (5, 20, (-10, -9)),     
         ],
     );
     let cache = ImageCache::new(&schema);
@@ -220,9 +207,6 @@ fn pack_absorbs_rays_over_i64_spans() {
     assert_eq!(answers, vec![(10, -5, i64::MAX), (20, -10, -9)]);
 }
 
-/// The group-interaction criterion: `Pack` groups by the non-aggregated
-/// head vars exactly as `Sum` does — one fixture, both queries, the same
-/// group-key set.
 #[test]
 fn pack_groups_exactly_as_sum_does() {
     let dir = TempDir::new("pack-groups-as-sum");
@@ -280,14 +264,10 @@ fn pack_groups_exactly_as_sum_does() {
         .collect();
     pack_groups.dedup();
     assert_eq!(pack_groups, sum_groups);
-    // Every group's claims are disjoint here, so Pack is one answer per
-    // claim — the group scoping is the assertion above.
+
     assert_eq!(pack_out.len(), 4);
 }
 
-/// Q(person, Pack(slot)) :- cap ≥ ?0 ∪ cap ≤ ?1 — the multi-rule head
-/// folds the union: claims derived by both rules dedup through the
-/// spanning seen-set (keyed on (group, claim)), then coalesce.
 #[test]
 fn multi_rule_pack_folds_the_union() {
     let dir = TempDir::new("pack-union");
@@ -297,9 +277,9 @@ fn multi_rule_pack_folds_the_union() {
         &env,
         &schema,
         &[
-            (1, 10, 1, (1, 3)), // low-cap rule only
-            (2, 10, 5, (5, 6)), // both rules — one fold, not two
-            (3, 10, 9, (6, 8)), // high-cap rule only (adjacency merges)
+            (1, 10, 1, (1, 3)), 
+            (2, 10, 5, (5, 6)), 
+            (3, 10, 9, (6, 8)), 
         ],
     );
     let cache = ImageCache::new(&schema);
@@ -334,7 +314,6 @@ fn multi_rule_pack_folds_the_union() {
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(5), BindValue::U64(5)])
         .expect("execute");
-    // The union is all three claims: [1,3) stands alone; [5,6) — derived
-    // by BOTH rules, folded once — meets [6,8).
+
     assert_eq!(packed_u64_answers(&out), vec![(10, 1, 3), (10, 5, 8)]);
 }
