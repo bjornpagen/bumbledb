@@ -13,7 +13,6 @@ use super::{
     ScenarioQuery, ids, schema,
 };
 
-/// The scenario registration.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
