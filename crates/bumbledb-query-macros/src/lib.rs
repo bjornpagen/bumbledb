@@ -1,12 +1,8 @@
 //! The `query!` proc-macro — the blessed Rust query sugar, downstream and
-//! quarantined (docs/architecture/70-api.md § host-side sugar): hosts may
+//! quarantined: hosts may
 //! depend on this crate, the engine never depends back, and the engine's
-//! own surface stays pure-data IR (docs/architecture/20-query-ir.md, the
-//! surface ruling). The notation is the statement grammar's query side,
-//! promoted (docs/architecture/20-query-ir.md § the query notation —
-//! the normative grammar block; `ir::render` emits it, this macro parses
-//! it, round-trip goldens pin the two together):
-//!
+//! own surface stays pure-data IR. The notation is the statement grammar's query side,
+//! promoted:
 //! ```text
 //! query     := cq | reach
 //! cq        := interior* main
@@ -70,71 +66,14 @@
 //!                                        //   `or`, `interior`, and `rec` are
 //!                                        //   reserved
 //! ```
-//!
 //! **Condition trees are notation (ruled 2026-07-23, R9):** `and(...)`/
 //! `or(...)` admit any boolean combination of comparisons as one item —
 //! comparison leaves only, exactly the IR's `ConditionTree` (atoms,
 //! negation, and the binding membership stay items) and an exact mirror
 //! of the TS condition grammar. Validation distributes the trees to DNF
 //! engine-side; the renderer's functional forms are grammar, so the
-//! render→parse round trip closes over the full input grammar.
-//!
-//! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
-//! point-set size `end − start`, and a ray has no measure.
-//!
-//! **Punning law (B, decided; the alternative is ledgered in
-//! docs/architecture/70-api.md):** a bare field name binds a **rule-local variable
 //! named after the field** — projection shorthand, Rust's struct-shorthand
-//! instinct. The same punned name in two atoms of one rule is a compile
-//! error, spanned at the second occurrence ("ambiguous punning — rename
-//! explicitly"); joins are always written `field: v` on both ends.
-//!
-//! **Name checking without schema visibility — the id-constants trick.**
-//! Proc macros cannot see each other's output, so `query!` cannot read the
-//! theory. It does not need to: expansion emits paths to the `schema!`
-//! macro's declaration-order id constants (`Calendar::BUSY`,
-//! `Calendar::BUSY_PERSON`), and ordinary rustc name resolution does the
-//! checking — a typo'd relation or field is a compile error at the query
-//! literal. Mask names resolve the same way (`AllenMask::INTERSECTS` —
-//! the 13 basics and the workload composites). Variable *type*
-//! consistency stays the validation roster's (prepare-time, typed,
-//! rendered) — the same split the foreign surfaces have.
-//!
-//! **Constant text only.** The macro consumes a literal token tree;
-//! dynamic composition stays on the raw IR layer, which exists regardless
-//! — text for the static 90%, data for the dynamic tail, both lowering to
-//! the same IR. Expansion is compile-time lowering: the emitted code
-//! constructs the `ir::Query` value directly; no runtime parser exists.
-//!
-//! Notation corners the schema cannot disambiguate for the macro (each a
-//! consequence of "the macro cannot see the theory"):
-//!
-//! - **Integer literals** type by their own spelling: a bare unsigned
-//!   integer is `u64`, a negative one `i64`, and Rust's `u64`/`i64`
-//!   suffixes force the choice (`5i64` against an `i64` field). Interval
-//!   literals `start..end` follow the same rule over both bounds. The
-//!   magnitude is rustc's (ruled 2026-07-23, R8): an optional
-//!   `0x`/`0o`/`0b` radix prefix and `_` separators, uniformly here and
-//!   in the schema grammar; the renderer normalizes to canonical decimal,
-//!   so the round-trip law is canonical-form, not verbatim.
-//! - **Handle selection values**: a bare handle name (`kind == Focus`)
-//!   resolves through the field-named host enum's welded row id
-//!   (`Kind::Focus.id()`) — exact when the closed relation is named
-//!   after its referencing field; one named otherwise is written
-//!   qualified (`arm == ClaimKind::Busy` → `ClaimKind::Busy.id()`). The
-//!   emitted `const fn id` yields the handle newtype, whose `.0` is a
-//!   plain `u64` constant, and rustc polices the path.
-//! - **Params** are one style per query: named (`?window`, dense ids by
-//!   first occurrence, query-global) or positional (`?0`, the id
-//!   verbatim — the renderer's own spelling, so rendered output reparses).
-//! - **Item-position `in`** is point membership (`PointIn`): the right
-//!   side is the interval — a variable, a `?param`, or a `start..end`
-//!   literal. Set membership is the binding form `field in ?param`.
-//!
-//! Diagnostics carry spans: every parse error points at its token, and
-//! the punning error points at the second occurrence. The refused Datalog
-//! grammar (`head :- body`) does not parse, anywhere, by design — the
-//! statement surface's query side is the one notational family.
+//! after its referencing field; one named otherwise is written
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::fmt::Write as _;
@@ -142,7 +81,6 @@ use std::iter::Peekable;
 
 type Tokens = Peekable<proc_macro::token_stream::IntoIter>;
 
-/// One spanned diagnostic; rendered as a `compile_error!` at the span.
 struct Error {
     span: Span,
     message: String,
@@ -167,8 +105,6 @@ fn datalog_refusal<T>(span: Span) -> Parse<T> {
     )
 }
 
-/// `compile_error!("message")`, every token spanned at the offense so
-/// rustc points at the exact query token.
 fn compile_error(error: &Error) -> TokenStream {
     let mut message = Literal::string(&error.message);
     message.set_span(error.span);
@@ -188,70 +124,57 @@ fn compile_error(error: &Error) -> TokenStream {
     .collect()
 }
 
-// ---------------------------------------------------------------------
 // The surface AST — names and spans, resolved to ids after the parse.
-// ---------------------------------------------------------------------
 
-/// A source name with the span diagnostics point at.
 #[derive(Clone)]
 struct Name {
     text: String,
     span: Span,
 }
 
-/// One `?param`: named (dense ids by first occurrence) or positional
-/// (the id verbatim — the renderer's spelling). Both spellings carry
-/// their token's span: every refusal points at the offending param.
+/// Both spellings carry their token's span: every refusal points at the
+/// offending param.
 enum Param {
     Named(Name),
     Index { index: u16, span: Span },
 }
 
-/// A signed-integer literal's raw token text (suffix included; spliced
-/// verbatim so rustc polices range and form) plus what its spelling
-/// forces: `signed` when negative or `i64`-suffixed.
 struct Int {
     negative: bool,
     text: String,
     signed: bool,
 }
 
-/// One literal, classified by its own syntax (the macro cannot see the
-/// field's declared type; the spelling decides).
 enum Lit {
     Bool(bool),
     Int(Int),
-    /// `start..end`, half-open; signed when either bound is.
+
     Interval {
         start: Int,
         end: Int,
     },
-    /// A string literal's raw token text, quotes included.
+
     Str(String),
-    /// A byte-string literal's raw token text.
+
     Bytes(String),
 }
 
-/// One selection value (the right side of a binding's `==`).
 enum SelValue {
     Lit(Lit),
     Param(Param),
-    /// A closed relation's handle: bare (`Focus`) or qualified
-    /// (`Kind::Focus`) — either way the host enum's welded row id.
+
     Handle {
         qualifier: Option<Name>,
         handle: Name,
     },
 }
 
-/// One term of a comparison, membership, or `Allen` position.
 enum Term {
     Var(Name),
     Param(Param),
     Lit(Lit),
 }
 
-/// One atom binding, per the grammar's four spellings.
 enum Binding {
     Pun(Name),
     Var { field: Name, var: Name },
@@ -264,20 +187,17 @@ struct Atom {
     bindings: Vec<Binding>,
 }
 
-/// The `Allen` mask position: named masks joined by `|`.
 enum Mask {
     Names(Vec<Name>),
 }
 
-/// One comparison — the condition grammar's leaf vocabulary (every
-/// `CmpOp`, the TS mirror's own leaf set).
 enum Leaf {
     Allen {
         lhs: Term,
         mask: Mask,
         rhs: Term,
     },
-    /// `element in container` — point membership, container-side interval.
+
     Membership {
         element: Term,
         container: Term,
@@ -289,24 +209,18 @@ enum Leaf {
     },
 }
 
-/// One condition tree (ruled 2026-07-23, R9): `and`/`or` over comparison
-/// leaves — the IR's `ConditionTree`, spelled. Atoms, negation, and the
-/// binding membership stay items; validation distributes any nested `Or`
-/// to DNF engine-side.
 enum Cond {
     Leaf(Leaf),
     And(Vec<Cond>),
     Or(Vec<Cond>),
 }
 
-/// One body item, in source order.
 enum Item {
     Atom(Atom),
     Negated(Atom),
     Cond(Cond),
 }
 
-/// The aggregate ops admitted by both the head grammar and the IR renderer.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AggOp {
     Sum,
@@ -329,23 +243,18 @@ impl AggOp {
     }
 }
 
-/// One head term. A named position (`total: Sum(x)`) keeps the name at
-/// the call site only — result columns are positional in the IR, and
-/// variable names are a debugging sidecar the engine never stores.
 enum HeadTerm {
     Var(Name),
     Count,
     Agg { op: AggOp, over: Name },
 }
 
-/// How a parsed rule was introduced: a keyword, or a bare main rule.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleKind {
     Interior,
     Rec,
 }
 
-/// One parsed rule: the keyword (or bare main) carries the name.
 enum ParsedRule {
     Bare {
         head: Vec<HeadTerm>,
@@ -379,11 +288,6 @@ impl ParsedRule {
     }
 }
 
-// ---------------------------------------------------------------------
-// The cursor helpers (bumbledb-macros' precedent, Result-shaped: the
-// punning law demands spanned diagnostics, so no helper panics).
-// ---------------------------------------------------------------------
-
 fn peek_span(tokens: &mut Tokens) -> Span {
     tokens.peek().map_or_else(Span::call_site, TokenTree::span)
 }
@@ -413,7 +317,6 @@ fn peek_ident_text(tokens: &mut Tokens) -> Option<String> {
     }
 }
 
-/// The renderer's nameless derived-table atom: `interior 0(…)`.
 fn nameless_interior_atom(tokens: &mut Tokens) -> bool {
     if peek_ident_text(tokens).as_deref() != Some("interior") {
         return false;
@@ -428,8 +331,6 @@ fn nameless_interior_atom(tokens: &mut Tokens) -> bool {
     }
 }
 
-/// Consumes `interior {id}` and synthesizes the local name `{id}` —
-/// the same mapping `parse_derived_name` uses on nameless declarations.
 fn take_nameless_interior(tokens: &mut Tokens) -> Parse<Name> {
     let kw = expect_ident(tokens, "`interior`")?;
     match tokens.next() {
@@ -466,8 +367,8 @@ fn expect_punct(tokens: &mut Tokens, ch: char, what: &str) -> Parse<Span> {
     }
 }
 
-/// Consumes `:` while refusing `:-` — the borrowed grammar must not
-/// parse, anywhere.
+/// Consumes `:` while refusing `:-` — the borrowed grammar must not parse,
+/// anywhere.
 fn expect_colon(tokens: &mut Tokens, what: &str) -> Parse<()> {
     let span = expect_punct(tokens, ':', what)?;
     if peek_punct(tokens, '-') {
@@ -489,17 +390,11 @@ fn take_paren_group(tokens: &mut Tokens, what: &str) -> Parse<(Tokens, Span)> {
     }
 }
 
-/// The integer-literal token shape: digits first, no float dot
-/// (`bumbledb-macros`' rule; a `u64`/`i64` suffix rides in the text).
 fn is_int_text(text: &str) -> bool {
     text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
 }
 
-/// The radix law (ruled 2026-07-23, R8): an integer magnitude is what
-/// rustc lexes — an optional `0x`/`0o`/`0b` prefix and `_` separators —
-/// uniformly at every integer position of both macro grammars
-/// (`bumbledb-macros`' `int_magnitude` is the schema twin). The type
-/// suffix is stripped before this check, so no branch order can invert
+/// The type suffix is stripped before this check, so no branch order can invert
 /// the grammar.
 fn is_int_magnitude(text: &str) -> bool {
     let (radix, digits) = match text.as_bytes() {
@@ -511,12 +406,6 @@ fn is_int_magnitude(text: &str) -> bool {
     digits.chars().any(|c| c != '_') && digits.chars().all(|c| c == '_' || c.is_digit(radix))
 }
 
-/// Parses one `[-] int`, classifying by spelling: negative or
-/// `i64`-suffixed is signed; a `u64` suffix (or none) is unsigned. The
-/// suffix is stripped first, then one magnitude rule judges the rest —
-/// the value sum holds exactly two integer types, and every radix
-/// spelling rustc lexes is notation (the renderer normalizes to
-/// canonical decimal; the round-trip law is canonical-form).
 fn parse_int(tokens: &mut Tokens, what: &str) -> Parse<Int> {
     let negative = peek_punct(tokens, '-');
     if negative {
@@ -565,8 +454,6 @@ fn parse_int(tokens: &mut Tokens, what: &str) -> Parse<Int> {
     }
 }
 
-/// An integer already begun: a scalar, or on `..` the start of a
-/// half-open `start..end` interval literal.
 fn finish_int(tokens: &mut Tokens, start: Int) -> Parse<Lit> {
     if peek_punct(tokens, '.') {
         tokens.next();
@@ -577,7 +464,6 @@ fn finish_int(tokens: &mut Tokens, start: Int) -> Parse<Lit> {
     Ok(Lit::Int(start))
 }
 
-/// Parses a literal whose first token is a `Literal` or a leading `-`.
 fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
     if peek_punct(tokens, '-') {
         let start = parse_int(tokens, "an integer literal")?;
@@ -594,7 +480,7 @@ fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
             } else if text.starts_with("b\"") {
                 Ok(Lit::Bytes(text))
             } else if is_int_text(&text) {
-                // Re-classify through the int rule (suffix policing).
+
                 let mut rewound: Tokens = std::iter::once(TokenTree::Literal(lit))
                     .collect::<TokenStream>()
                     .into_iter()
@@ -613,8 +499,6 @@ fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
     }
 }
 
-/// Parses one `?param` (the `?` already consumed): a name or a
-/// positional index — the renderer's own `?N` spelling.
 fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => Ok(Param::Named(expect_ident(tokens, "a param name")?)),
@@ -634,10 +518,6 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
     }
 }
 
-// ---------------------------------------------------------------------
-// The grammar, production by production.
-// ---------------------------------------------------------------------
-
 const AGG_NAMES: [(&str, AggOp); 5] = [
     ("Sum", AggOp::Sum),
     ("Min", AggOp::Min),
@@ -653,9 +533,6 @@ fn agg_op(name: &str) -> Option<AggOp> {
         .map(|(_, op)| *op)
 }
 
-/// Parses one aggregate's argument group: `(v)` for every unary op,
-/// `(Duration(v))` admitted under `Sum`/`Min`/`Max` only (the measure's
-/// three folds — the grammar's `t := v | Duration(v)`).
 fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if op == AggOp::Count {
         return Ok(HeadTerm::Count);
@@ -675,10 +552,7 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     Ok(HeadTerm::Agg { op, over })
 }
 
-/// Parses one head term: a variable, `Duration(v)`, an aggregate, or a
-/// named aggregate (`name: agg` — the name stays at the call site;
-/// result columns are positional). Params are refused here: a param is
-/// an execution input, not a result column.
+/// Params are refused here: a param is an execution input, not a result column.
 fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     if peek_punct(tokens, '?') {
         let span = peek_span(tokens);
@@ -689,7 +563,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         );
     }
     let name = expect_ident(tokens, "a head term")?;
-    // The optional column name: `name: agg`.
+
     if peek_punct(tokens, ':') {
         expect_colon(tokens, "the head column's `:`")?;
         let agg_name = expect_ident(tokens, "an aggregate")?;
@@ -717,11 +591,6 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     Ok(HeadTerm::Var(name))
 }
 
-/// One comma-separated group list — head terms, atom bindings, tree
-/// conditions. The separator is MANDATORY between items (the grammar's
-/// `x (',' x)*`, exactly): one strictness regime, one loop, so the
-/// parsed language cannot drift into a superset of the notation
-/// (finding 055).
 fn parse_separated<T>(
     mut tokens: Tokens,
     mut item: impl FnMut(&mut Tokens) -> Parse<T>,
@@ -758,7 +627,7 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
             "false" => SelValue::Lit(Lit::Bool(false)),
             _ => {
                 if peek_punct(tokens, ':') {
-                    // Qualified handle: `Enum::Handle`.
+
                     expect_colon(tokens, "the handle path's `::`")?;
                     expect_punct(tokens, ':', "the handle path's `::`")?;
                     let handle = expect_ident(tokens, "a handle name")?;
@@ -778,11 +647,9 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
     Ok(SelValue::Lit(parse_lit(tokens)?))
 }
 
-/// One binding's field label: a field name, or — in an interior/rec atom —
-/// a head position (`2: x`, the sparse/selection spelling; `FieldId(i)`
-/// is positional, never nominal). Which one is legal is the atom's
-/// source's business, decided at emission (the derived-table list exists
-/// only after every rule has parsed — mutual recursion reads forward).
+/// Which one is legal is the atom's source's business, decided at emission (the
+/// derived-table list exists only after every rule has parsed — mutual
+/// recursion reads forward).
 fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
     match tokens.peek() {
         Some(TokenTree::Literal(lit)) => {
@@ -801,7 +668,6 @@ fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
     }
 }
 
-/// Parses one atom binding, per the grammar's four spellings.
 fn parse_binding(tokens: &mut Tokens) -> Parse<Binding> {
     let field = expect_field_label(tokens)?;
     if peek_punct(tokens, ':') {
@@ -838,7 +704,6 @@ fn parse_atom(tokens: &mut Tokens, relation: Name) -> Parse<Atom> {
     })
 }
 
-/// Parses one term: a variable, `Duration(v)`, a `?param`, or a literal.
 fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
     if peek_punct(tokens, '?') {
         let question = expect_punct(tokens, '?', "`?`")?;
@@ -863,10 +728,7 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
     Ok(Term::Lit(parse_lit(tokens)?))
 }
 
-/// Parses the `Allen` mask position: mask names joined by
-/// `|` (set union over the 13 basics; the names are `AllenMask`'s own
-/// constants, so a typo is a compile error). Mask params are refused —
-/// the mask is a literal.
+/// Mask params are refused — the mask is a literal.
 fn parse_mask(tokens: &mut Tokens) -> Parse<Mask> {
     if peek_punct(tokens, '?') {
         let question = expect_punct(tokens, '?', "`?`")?;
@@ -884,7 +746,6 @@ fn parse_mask(tokens: &mut Tokens) -> Parse<Mask> {
     Ok(Mask::Names(names))
 }
 
-/// The comparison operators, longest spelling first.
 fn parse_cmp_op(tokens: &mut Tokens) -> Parse<&'static str> {
     let (first, span) = match tokens.next() {
         Some(TokenTree::Punct(p)) => (p.as_char(), p.span()),
@@ -927,8 +788,6 @@ fn parse_cmp_op(tokens: &mut Tokens) -> Parse<&'static str> {
     Ok(op)
 }
 
-/// Continues a leaf whose left term is already parsed: membership or a
-/// comparison.
 fn finish_term_leaf(tokens: &mut Tokens, lhs: Term) -> Parse<Leaf> {
     if peek_ident_text(tokens).as_deref() == Some("in") {
         tokens.next();
@@ -943,7 +802,6 @@ fn finish_term_leaf(tokens: &mut Tokens, lhs: Term) -> Parse<Leaf> {
     Ok(Leaf::Cmp { op, lhs, rhs })
 }
 
-/// Parses `Allen`'s three positions (the name already consumed).
 fn parse_allen_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
     let (mut group, _) = take_paren_group(tokens, "Allen's three positions")?;
     let lhs = parse_term(&mut group)?;
@@ -957,8 +815,8 @@ fn parse_allen_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
     Ok(Leaf::Allen { lhs, mask, rhs })
 }
 
-/// The condition-tree refusal, one message for every non-comparison
-/// shape under `and`/`or`.
+/// The condition-tree refusal, one message for every non-comparison shape under
+/// `and`/`or`.
 fn tree_refusal<T>(span: Span) -> Parse<T> {
     fail(
         span,
@@ -968,8 +826,6 @@ fn tree_refusal<T>(span: Span) -> Parse<T> {
     )
 }
 
-/// Parses one `and(…)`/`or(…)` node's children (the name already
-/// consumed): one condition at least, comma-separated.
 fn parse_tree_children(tokens: &mut Tokens, name: &Name) -> Parse<Vec<Cond>> {
     let (mut group, span) = take_paren_group(tokens, "the condition tree's conditions")?;
     if group.peek().is_none() {
@@ -985,11 +841,9 @@ fn parse_tree_children(tokens: &mut Tokens, name: &Name) -> Parse<Vec<Cond>> {
     parse_separated(group, parse_cond)
 }
 
-/// Parses one condition of a tree: a comparison leaf or a nested
-/// `and`/`or` node — never an atom, a negation, or a binding.
 fn parse_cond(tokens: &mut Tokens) -> Parse<Cond> {
     if peek_punct(tokens, '!') {
-        // `!=` never begins a leaf; a lone `!` is negation, an item shape.
+
         return tree_refusal(peek_span(tokens));
     }
     let call_shaped = match tokens.peek() {
@@ -1017,9 +871,7 @@ fn parse_cond(tokens: &mut Tokens) -> Parse<Cond> {
     Ok(Cond::Leaf(finish_term_leaf(tokens, lhs)?))
 }
 
-/// Whether the token after a `Name (…)` shape continues a term item —
-/// i.e. the parenthesized form is `Duration(v)` under comparison, not an
-/// atom.
+/// Whether the token after a `Name (…)` shape continues a term item — i.e.
 fn continues_as_term(tokens: &mut Tokens) -> bool {
     match tokens.peek() {
         Some(TokenTree::Punct(p)) => matches!(p.as_char(), '=' | '!' | '<' | '>'),
@@ -1030,7 +882,7 @@ fn continues_as_term(tokens: &mut Tokens) -> bool {
 
 fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     if peek_punct(tokens, '!') {
-        // `!=` never begins an item; a lone `!` is negation.
+
         tokens.next();
         if nameless_interior_atom(tokens) {
             let name = take_nameless_interior(tokens)?;
@@ -1063,16 +915,15 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
         let name = expect_ident(tokens, "an atom or a condition")?;
         match name.text.as_str() {
             "Allen" => return Ok(Item::Cond(Cond::Leaf(parse_allen_leaf(tokens)?))),
-            // The condition grammar's reserved words: a body-position
+
             // `and(…)`/`or(…)` is always a tree (ruled 2026-07-23, R9).
             "and" => return Ok(Item::Cond(Cond::And(parse_tree_children(tokens, &name)?))),
             "or" => return Ok(Item::Cond(Cond::Or(parse_tree_children(tokens, &name)?))),
             _ => {}
         }
-        // `Duration(v) >= …` is a term; everything else call-shaped is an
-        // atom.
+
         let mut ahead = tokens.clone();
-        ahead.next(); // the group
+        ahead.next(); 
         if continues_as_term(&mut ahead) {
             return fail(
                 name.span,
@@ -1085,7 +936,6 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     Ok(Item::Cond(Cond::Leaf(finish_term_leaf(tokens, lhs)?)))
 }
 
-/// A derived-table name: lowercase, not a reserved word.
 fn validate_derived_name(name: &Name) -> Parse<()> {
     if name.text == "and" || name.text == "or" || name.text == "interior" || name.text == "rec" {
         return fail(
@@ -1118,9 +968,6 @@ fn validate_derived_name(name: &Name) -> Parse<()> {
     Ok(())
 }
 
-/// The derived-table name after `interior` / `rec`.
-/// Render's prefixes (`interior {id}` / `rec`) are the nameless spellings:
-/// an integer after `interior`, or the head group immediately after `rec`.
 fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Parse<Name> {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -1156,10 +1003,6 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
     }
 }
 
-/// Parses one rule: `interior derived (head) | body ;`, `rec derived
-/// (head) | body ;`, `rec (head) | body ;`, or a bare `(head) | body ;`.
-/// A named head without the keyword is the former named-head sneak — a
-/// spanned compile error.
 #[expect(
     clippy::too_many_lines,
     reason = "one rule is one grammar production; splitting hides the keyword/head/body sequence"
@@ -1170,7 +1013,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             let ident = expect_ident(tokens, "a rule")?;
             if peek_punct(tokens, ':') {
                 // `derived :- …` must not parse — the refusal fires before
-                // the head-group error would.
+
                 let span = peek_span(tokens);
                 tokens.next();
                 if peek_punct(tokens, '-') {
@@ -1267,9 +1110,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             return fail(Span::call_site(), "query!: a rule ends with `;`");
         }
         items.push(parse_item(tokens)?);
-        // The separator is mandatory between items (finding 055): `,`
-        // continues the body, `;` ends the rule, anything else is the
-        // grammar-superset this parser refuses.
+
         if peek_punct(tokens, ',') {
             tokens.next();
         } else if !peek_punct(tokens, ';') {
@@ -1289,17 +1130,6 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     })
 }
 
-// ---------------------------------------------------------------------
-// Resolution and emission — names to dense ids, the rest to constant
-// paths rustc checks.
-// ---------------------------------------------------------------------
-
-/// A declaration name as a `SCREAMING_SNAKE` constant name — verbatim
-/// `bumbledb-macros`' rule (`SavingsTerms` → `SAVINGS_TERMS`, `rate_bps`
-/// → `RATE_BPS`), so the paths this macro emits land on the constants
-/// that macro emits.
-/// `claim_arm` → `ClaimArm`: the field-to-host-enum name convention for
-/// bare handle selection values.
 fn upper_camel(name: &str) -> String {
     let mut out = String::new();
     for word in name.split('_') {
@@ -1331,9 +1161,6 @@ fn screaming_snake(name: &str) -> String {
     out
 }
 
-/// The query-global param table: one spelling style per query — named
-/// (dense by first occurrence) or positional (`?N`, verbatim — the
-/// renderer's spelling).
 enum ParamStyle {
     Empty,
     Named(Vec<String>),
@@ -1395,9 +1222,6 @@ impl Params {
     }
 }
 
-/// One rule's variable scope: dense ids by first occurrence, plus the
-/// punning ledger (law B: the same punned name twice is ambiguous, and
-/// the error points at the second occurrence).
 #[derive(Default)]
 struct Scope {
     vars: Vec<String>,
@@ -1447,8 +1271,6 @@ impl Scope {
     }
 }
 
-/// An interior/rec atom's binding style. Mixing is unrepresentable —
-/// the second style's first occurrence carries the mixing diagnostic.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BindingStyle {
     Empty,
@@ -1456,9 +1278,6 @@ enum BindingStyle {
     Numeric,
 }
 
-/// Walks an interior/rec atom's bindings into one style. Refuses a bare
-/// digit (a variable is an ident), a named label (derived columns are
-/// positions), and the two styles mixed.
 fn interior_style(atom: &Atom) -> Parse<BindingStyle> {
     let mut style = BindingStyle::Empty;
     for binding in &atom.bindings {
@@ -1526,10 +1345,7 @@ fn interior_style(atom: &Atom) -> Parse<BindingStyle> {
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
-    /// Macro-local derived-table names in `InteriorId` order: interiors
-    /// first, then the rec if present (`InteriorId(interiors.len())`).
-    /// Names never survive expansion — the emitted IR carries bare
-    /// `InteriorId`s. Empty for an all-bare query.
+
     derived: Vec<String>,
 }
 
@@ -1545,9 +1361,6 @@ impl Emitter<'_> {
         ))
     }
 
-    /// One literal as a `Value` expression, typed by its spelling
-    /// (module doc); raw token text spliced verbatim so rustc polices
-    /// the value itself.
     fn lit(lit: &Lit) -> String {
         let value = "::bumbledb::Value";
         let int_text = |int: &Int| {
@@ -1593,12 +1406,6 @@ impl Emitter<'_> {
         })
     }
 
-    /// One selection value as the binding's term expression. A handle
-    /// resolves through the host enum's welded row id: bare through the
-    /// field-named host enum, qualified through the named one (module
-    /// doc — the macro cannot see the theory; rustc checks the path and
-    /// the emitted `const fn id` supplies the newtype, whose `.0` is the
-    /// plain u64 row id).
     fn sel_value(&mut self, field: &Name, value: &SelValue) -> Parse<String> {
         Ok(match value {
             SelValue::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
@@ -1615,15 +1422,8 @@ impl Emitter<'_> {
         })
     }
 
-    /// An interior/rec atom as an `Atom` expression: an `Interior` source
-    /// whose bindings address head positions (`FieldId(i)` is the target's
-    /// column `i` — positional, never nominal). Two spellings, one
-    /// meaning each: bare idents are ORDERED DENSE variable bindings,
-    /// positions assigned left to right from 0 (`reach(m, a)` lowers to
-    /// `[(0, m), (1, a)]`), and indexed labels are the sparse and
-    /// selection forms (`2: x`, `0 == …`, `0 in ?p`). The two never mix,
     /// and an explicitly indexed dense in-order variable list is refused
-    /// — canonical utterance, one spelling per meaning.
+
     fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
         let bindings = self.interior_bindings(scope, atom)?;
         Ok(format!(
@@ -1631,11 +1431,9 @@ impl Emitter<'_> {
         ))
     }
 
-    /// Bindings of an interior/rec atom as `(FieldId, Term)` pairs — the
-    /// rec step's `self_bindings` is this list, not a second Atom.
     fn interior_bindings(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if interior_style(atom)? == BindingStyle::Bare {
-            // Ordered dense: positions assigned left to right from 0.
+
             let mut bindings = String::new();
             for (position, binding) in atom.bindings.iter().enumerate() {
                 let Binding::Pun(name) = binding else {
@@ -1646,9 +1444,9 @@ impl Emitter<'_> {
             }
             return Ok(bindings);
         }
-        // Indexed labels. An explicit dense in-order variable list is the
+
         // ordered form's meaning respelled — refused, one spelling per
-        // meaning.
+
         let dense_explicit = !atom.bindings.is_empty()
             && atom.bindings.iter().enumerate().all(|(index, binding)| {
                 matches!(binding, Binding::Var { field, .. }
@@ -1705,11 +1503,6 @@ impl Emitter<'_> {
         Ok(bindings)
     }
 
-    /// One atom as an `Atom` expression — a derived table of this query by
-    /// macro-local name, else the relation and every field through the
-    /// theory's id constants. The case partition is total (finding 054):
-    /// a lowercase name IS a derived table, so one absent from the table is
-    /// an unknown derived table, never a relation respelled — `parent(…)`
     /// must not resolve to `Parent`'s constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if let Some(interior) = self
@@ -1804,8 +1597,6 @@ impl Emitter<'_> {
         )
     }
 
-    /// One condition tree as a `ConditionTree` expression — nested
-    /// `And`/`Or` verbatim (validation distributes to DNF engine-side).
     fn cond(&mut self, scope: &mut Scope, cond: &Cond) -> Parse<String> {
         Ok(match cond {
             Cond::Leaf(Leaf::Allen { lhs, mask, rhs }) => {
@@ -1815,8 +1606,7 @@ impl Emitter<'_> {
                 let op = format!("::bumbledb::CmpOp::Allen {{ mask: {mask} }}");
                 Self::leaf(&op, &lhs, &rhs)
             }
-            // `PointIn` is stored interval-first; the notation reads
-            // point-first.
+
             Cond::Leaf(Leaf::Membership { element, container }) => {
                 let element = self.term(scope, element)?;
                 let container = self.term(scope, container)?;
@@ -1843,9 +1633,6 @@ impl Emitter<'_> {
         })
     }
 
-    /// One head position as a `FindTerm` expression; every variable must
-    /// already be body-bound. Count and Pack are sibling constructors;
-    /// folds carry [`FoldOp`], never `AggOp` plus `Option`.
     fn find(scope: &Scope, term: &HeadTerm) -> Parse<String> {
         Ok(match term {
             HeadTerm::Var(name) => format!(
@@ -1869,7 +1656,6 @@ impl Emitter<'_> {
         })
     }
 
-    /// Interior / rec heads project bound variables only.
     fn projection_vars(scope: &Scope, head: &[HeadTerm]) -> Parse<String> {
         let mut finds = String::new();
         for term in head {
@@ -1917,9 +1703,6 @@ impl Emitter<'_> {
         Ok((scope, atoms, negated, conditions))
     }
 
-    /// One parsed rule as a `Rule` expression. Items lower in source order;
-    /// the IR buckets them (atoms, negated, conditions) — the renderer's
-    /// normalized order.
     fn rule(&mut self, rule: &ParsedRule) -> Parse<String> {
         let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
         let mut finds = String::new();
@@ -2010,9 +1793,8 @@ impl Emitter<'_> {
     }
 }
 
-/// Parses the leading theory path (`Theory` or `crate::path::Theory`) —
-/// spliced verbatim before every `::CONST` — leaving the brace group as
-/// the next token.
+/// Parses the leading theory path (`Theory` or `crate::path::Theory`) — spliced
+/// verbatim before every `::CONST` — leaving the brace group as the next token.
 fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
     let mut theory = String::new();
     loop {
@@ -2047,7 +1829,6 @@ fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
     Ok(theory)
 }
 
-/// Whether a rule body names `derived` as a positive or negated atom.
 fn names_derived(rule: &ParsedRule, derived: &str) -> bool {
     rule.items().iter().any(|item| match item {
         Item::Atom(atom) | Item::Negated(atom) => atom.relation.text == derived,
@@ -2084,9 +1865,6 @@ enum Phase {
     Main,
 }
 
-/// Groups consecutive same-name interiors / rec lines and splits
-/// rec arms by whether a body atom names the rec. Exhaustive
-/// compile errors for this cut live here.
 #[expect(
     clippy::too_many_lines,
     reason = "phase machine plus exhaustive compile errors for this cut live in one walk"
@@ -2410,13 +2188,11 @@ fn emit_reach(
 }
 
 /// The query notation, lowered at compile time to the `ir::Query` value
-/// (docs/architecture/20-query-ir.md § the query notation — the grammar
-/// is the module doc's block, normative there). Names check through the
+/// . Names check through the
 /// theory's id constants; derived-table names are macro-local and never
 /// survive expansion (the IR carries bare `InteriorId`s); everything
 /// semantic beyond names surfaces as the validation roster's typed
 /// errors at `Db::prepare`.
-///
 /// ```ignore
 /// let unavailable = bumbledb_query::query!(Calendar {
 ///     (person, during) | Busy(person, during), Allen(during, INTERSECTS, ?window);
@@ -2431,10 +2207,7 @@ fn emit_reach(
 ///     (c, a) | reach(c, a);
 /// });
 /// ```
-///
 /// # Panics
-///
-/// Never on malformed input — every diagnostic is a spanned
 /// `compile_error!` at the offending token. The one internal `expect`
 /// ensures the generated code parsing as Rust, a bug in this macro if it
 /// ever fires.
