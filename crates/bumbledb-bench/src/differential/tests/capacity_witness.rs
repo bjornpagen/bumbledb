@@ -1,13 +1,3 @@
-//! The capacity witness tie-break differential (C14's measure parity,
-//! sharpened): when SEVERAL parents violate one capacity statement in
-//! one delta, both twins must report the SAME parent's measure. The
-//! engine walks touched parents in ascending ENCODED determinant-image
-//! order — the target KEY's field order, `str` positions as intern
-//! words — so a permuted key (key order ≠ statement projection order)
-//! and a `str`-typed key (intern allocation order ≠ lexicographic
-//! order) each pick a different winner than the naive decoded
-//! projection-order compare used to.
-
 use bumbledb::schema::{
     Bound, FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
     Weight,
@@ -29,9 +19,6 @@ fn side(relation: RelationId, projection: &[u16]) -> Side {
     }
 }
 
-/// One write through both twins, verdicts compared whole; returns the
-/// agreed verdict so the caller can pin the expected witness too (the
-/// twins agreeing on the WRONG parent would still be a bug).
 fn agreed(db: &Db<SchemaDescriptor>, naive: &mut NaiveDb, delta: &Delta) -> Verdict {
     let engine = engine_write(db, delta);
     let model = match naive.apply(delta) {
@@ -42,12 +29,6 @@ fn agreed(db: &Db<SchemaDescriptor>, naive: &mut NaiveDb, delta: &Delta) -> Verd
     engine
 }
 
-/// Pool(a, b) keyed (b, a) — the PERMUTED key — with
-/// `Pool(a, b) <=[1]{0..1} Device(a, b)`. Two parents violate with
-/// different totals: statement-projection order (a, b) ranks
-/// (1, 9) < (2, 3), determinant order (b, a) ranks (3, 2) < (9, 1) —
-/// the engine walks determinant order, so the witnessed measure is
-/// parent (2, 3)'s.
 #[test]
 fn the_witness_walks_the_permuted_key_order() {
     let descriptor = SchemaDescriptor {
@@ -70,7 +51,7 @@ fn the_witness_walks_the_permuted_key_order() {
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: POOL,
-                // The permutation under test: key order (b, a).
+
                 projection: Box::new([FieldId(1), FieldId(0)]),
             },
             StatementDescriptor::Capacity {
@@ -95,7 +76,7 @@ fn the_witness_walks_the_permuted_key_order() {
         inserts: vec![
             (POOL, vec![Value::U64(1), Value::U64(9)]),
             (POOL, vec![Value::U64(2), Value::U64(3)]),
-            // Parent (1, 9): 2 devices; parent (2, 3): 3 devices.
+
             device(1, 9, 0),
             device(1, 9, 1),
             device(2, 3, 2),
@@ -114,12 +95,6 @@ fn the_witness_walks_the_permuted_key_order() {
     );
 }
 
-/// Pool(name str) keyed (name) with `Pool <=[1]{0..1} Device(pool)`.
-/// "zebra" interns before "apple" (insert order), so the engine's
-/// encoded walk reaches zebra's group first — lexicographic order says
-/// apple. Runs the delta twice: once against committed intern ranks,
-/// once with the mints pending inside the very delta the judgment
-/// rejects.
 #[test]
 fn the_witness_walks_intern_order_not_lexicographic_order() {
     let descriptor = SchemaDescriptor {
@@ -156,13 +131,10 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     let device = |name: &str, id: u64| (DEVICE, vec![Value::String(name.into()), Value::U64(id)]);
     let expected = Verdict::Aborted(vec![Violation::Capacity {
         statement: StatementId(1),
-        // zebra's group (2 devices), NOT apple's (3) — intern order.
+
         measure: 2,
     }]);
 
-    // Committed ranks: the pools land first (zebra minted before
-    // apple), the violating device delta judges against the committed
-    // dictionary.
     let dir = TempDir::new("capacity-witness-interned");
     let db = Db::create(dir.path(), descriptor.clone())
         .expect("create engine store")
@@ -185,9 +157,6 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     };
     assert_eq!(agreed(&db, &mut naive, &overflow), expected);
 
-    // Pending ranks: one rejected delta mints both names provisionally
-    // (insert order: zebra first) — the judgment's ordering must see
-    // those ranks even though the ids die with the abort.
     let dir = TempDir::new("capacity-witness-pending");
     let db = Db::create(dir.path(), descriptor.clone())
         .expect("create engine store")
