@@ -1,11 +1,9 @@
-//! Storage read primitives (docs/architecture/50-storage.md): membership probe, key-determinant probe,
+//! Storage read primitives: membership probe, key-determinant probe,
 //! fact fetch, the sequential relation scan that feeds images and export,
 //! and the planner's row count. All allocation-free with borrowed returns.
-//!
-//! Namespace readers per `docs/architecture/50-storage.md`: `M` serves
+//! Namespace readers per: `M` serves
 //! idempotence and point lookups, `U` functionality judgments and
 //! determinant-probe lookups, `F` image builds / point-lookup fetch / export
-//! scan, `S` the planner.
 
 mod check_width;
 mod determinant_row;
