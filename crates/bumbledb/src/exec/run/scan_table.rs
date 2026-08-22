@@ -6,18 +6,17 @@ use super::{
 };
 
 impl Executor {
-    /// The scan-pushdown arm: positions flow straight from the trie into
-    /// the sink's kernels; no key batch exists. Leaf residuals filter
+
     /// positions per run before the sink sees them; a leaf that could
-    /// skip (D2) stays on the batch path.
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] // the run_node context, unpacked
+    )] 
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // the two measured eval arms are siblings by design
+    )] 
     pub(super) fn run_leaf_scan<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -46,8 +45,7 @@ impl Executor {
             {
                 return None;
             }
-            // Batch-constant residuals (both sides outer) decide the
-            // whole leaf at once.
+
             for (op, lhs, rhs) in const_residuals {
                 if !op.compare(&bindings.get(*lhs), &bindings.get(*rhs)) {
                     counters.node_entry(node_idx);
@@ -76,21 +74,10 @@ impl Executor {
                     sink.scan_run(&scan, run);
                     return;
                 }
-                // Filter positions through the leaf residuals — run-
-                // length-adaptive (see SCAN_HOIST_THRESHOLD): big runs
-                // resolve each residual's operands once; small runs
-                // resolve per position (both directions measured, both
-                // real).
+
                 filtered.clear();
                 if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-                    // Residual-hoisted evaluation (the column-hoisted
-                    // idiom turned on the plan's own list): each leaf
-                    // residual resolves its two operands ONCE per run —
-                    // a live column view or the outer constant — then
-                    // filters positions, survivors compacting in place
-                    // exactly like the batch path's residual passes. No
-                    // fixed-size residual table exists: the witness
-                    // list is iterated directly, at any length.
+
                     for (idx, (op, lhs_src, rhs_src)) in scan_residuals.iter().enumerate() {
                         let side = |src: &Source| match *src {
                             Source::Batch(word) => {
@@ -162,7 +149,6 @@ impl Executor {
     }
 }
 
-/// Appends the positions of `run` that pass `eval` to `out`.
 fn push_surviving(
     run: crate::exec::colt::SuffixRun<'_>,
     out: &mut Vec<u32>,
@@ -187,9 +173,6 @@ fn push_surviving(
     }
 }
 
-/// Compacts `out` in place, keeping the positions that pass `eval` —
-/// [`push_surviving`]'s in-place twin for the residuals past the first
-/// (one residual's survivors are the next one's input).
 fn retain_surviving(out: &mut Vec<u32>, eval: &mut impl FnMut(u32) -> bool) {
     let mut kept = 0;
     for idx in 0..out.len() {
