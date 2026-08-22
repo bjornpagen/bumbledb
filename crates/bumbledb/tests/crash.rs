@@ -1,5 +1,4 @@
 //! consistent committed state — LMDB atomicity exercised, not trusted.
-
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
