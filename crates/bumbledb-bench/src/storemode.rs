@@ -12,7 +12,6 @@ pub enum StoreMode {
 }
 
 impl StoreMode {
-
     /// # Errors
 
     pub fn create<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
