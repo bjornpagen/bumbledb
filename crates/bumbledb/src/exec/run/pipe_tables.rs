@@ -12,10 +12,7 @@ impl PipeTables {
                 appears[usize::from(subatom.occ.0)][node_idx] = true;
             }
         }
-        // Cursor USES extend appearances: a membership probe reads its
-        // occurrence's advanced cursor at the node it attaches to, so
-        // pending entries must carry that cursor there even when the
-        // occurrence's own subatoms all sit earlier.
+
         let mut uses = appears.clone();
         for (node_idx, node) in plan.nodes().iter().enumerate() {
             for probe in &node.point_probes {
@@ -49,8 +46,6 @@ impl PipeTables {
         }
     }
 
-    /// Column of `occ` in this node's carried list, if the occurrence is
-    /// carried here.
     pub(super) fn carried_index(&self, node: usize, occ: usize) -> Option<usize> {
         self.carried[node].iter().position(|&o| o == occ)
     }
