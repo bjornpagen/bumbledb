@@ -29,7 +29,6 @@ pub(super) enum OpenLane {
     reason = "the localized unsafe operations have documented safety invariants"
 )]
 pub(super) fn open_env(path: &Path, lane: OpenLane) -> Result<heed::Env<WithoutTls>> {
-
     let mut options = EnvOpenOptions::new().read_txn_without_tls();
     options
         .map_size(MAP_SIZE)
