@@ -16,7 +16,6 @@ pub(super) fn load_group_key(
 }
 
 impl AggregateSink {
-
     pub(super) fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
         self.cached_outer_slots.clear();
 
