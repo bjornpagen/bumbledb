@@ -4,7 +4,6 @@
 //! statements' `R` prefixes for surviving sources — a scalar survivor is
 //! the violation outright; an interval survivor re-runs the coverage walk
 //! against the final `U` state. LMDB write transactions read their own
-
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
@@ -955,7 +954,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     }
 
     /// This site owns what enters the walk — the LMDB seeks that locate
-
     pub(crate) fn check_coverage(
         &mut self,
         disjoint: DisjointDeterminantProof,
@@ -1008,11 +1006,8 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     }
 
     /// probe — `lean/Bumbledb/Oracle.lean:
-
     /// descents: both arms bind the full target fact before the verdict —
-
     /// manufacture parents (`lean/Bumbledb/Capacity.lean:
-
     pub(crate) fn check_capacity(
         &mut self,
         statement: &CapacityStatement,
@@ -1152,7 +1147,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     }
 
     /// u128 (`lean/Bumbledb/Oracle.lean: capacity_plan_consultations`;
-
     /// (ruled 2026-07-24, C14: the clip serves the verdict, the full sum
     fn measure_children(
         &mut self,
