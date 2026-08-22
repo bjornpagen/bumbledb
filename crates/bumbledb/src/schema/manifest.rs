@@ -71,7 +71,6 @@ pub trait ManifestDescriptor {
 
 impl ManifestDescriptor for SchemaDescriptor {
     /// # Panics
-
     fn manifest(&self) -> Manifest {
         let materialized = self.materialized_statements();
         let mirrors = super::validate::mirror_links(&materialized);
