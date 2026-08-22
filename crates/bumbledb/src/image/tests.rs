@@ -18,7 +18,6 @@ mod stride;
 mod stride_ab;
 mod timing;
 
-/// R(id u64 fresh, flag bool, kind bool, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
