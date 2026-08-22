@@ -63,7 +63,7 @@ fn sequential_readers_share_one_image_instance() {
     drop(txn1);
     let txn2 = env.read_txn().expect("txn");
     let second = cache.get_or_build(&txn2, &schema, R).expect("build");
-    // The v5 regression detector: no intervening write, identical Arc.
+
     assert!(Arc::ptr_eq(&first, &second));
 }
 
@@ -89,10 +89,9 @@ fn concurrent_same_generation_builders_converge_on_one_arc() {
             .map(|h| h.join().expect("thread"))
             .collect::<Vec<_>>()
     });
-    // Both may have built, but insert-if-absent hands every caller a
-    // clone of one shared instance... unless the loser had already
+
     // returned before the winner inserted — impossible: adoption happens
-    // under the same lock as insertion.
+
     assert!(Arc::ptr_eq(&images[0], &images[1]));
     assert_eq!(cache.keys(), vec![(R, gid(1))]);
 }
@@ -110,7 +109,7 @@ fn a_no_op_commit_does_not_invalidate_the_cache() {
     drop(txn);
 
     // Re-inserting an existing fact: changed == false, no eviction runs
-    // (the 60-api doc only wires eviction for changed commits), tx id unmoved.
+
     assert!(!insert_one(&env, &schema, 1));
 
     let txn = env.read_txn().expect("txn");
@@ -118,9 +117,6 @@ fn a_no_op_commit_does_not_invalidate_the_cache() {
     assert!(Arc::ptr_eq(&before, &after), "the cache stayed warm");
 }
 
-/// R(x u64 fresh) plus the closed Currency { `minor_units` } = { Usd(2),
-/// Eur(0) }: the ordinary relation drives generations, the closed one
-/// lives outside them.
 fn closed_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -160,10 +156,6 @@ fn closed_schema() -> Schema {
 
 const CURRENCY: RelationId = RelationId(1);
 
-/// The closed image is synthesized once into its `OnceLock` slot — every
-/// reader shares one Arc, the generation map never sees it, and a
-/// state-changing commit plus eviction leaves it untouched (never
-/// evicted, never rebuilt).
 #[test]
 fn closed_images_synthesize_once_and_survive_eviction() {
     let dir = TempDir::new("cache-closed");
@@ -179,15 +171,12 @@ fn closed_images_synthesize_once_and_survive_eviction() {
     assert_eq!(cache.keys(), vec![], "never in the generation map");
     drop(txn);
 
-    // A state-changing commit + eviction: the slot is untouched by
-    // construction — it is not in the generation-keyed map at all.
     assert!(insert_one(&env, &schema, 1));
     cache.advance(gid(u64::MAX), &[R], &[]);
     let txn = env.read_txn().expect("txn");
     let third = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
     assert!(Arc::ptr_eq(&first, &third), "warm across every generation");
 
-    // `peek` sees the resident slot without a build — same Arc.
     let peeked = cache
         .peek(&txn, &schema, CURRENCY)
         .expect("peek")
@@ -206,8 +195,8 @@ fn counters_track_hit_miss_build_evict_exactly() {
     let txn = env.read_txn().expect("txn");
 
     let base = cache.stats();
-    cache.get_or_build(&txn, &schema, R).expect("build"); // miss + build
-    cache.get_or_build(&txn, &schema, R).expect("hit"); // hit
+    cache.get_or_build(&txn, &schema, R).expect("build"); 
+    cache.get_or_build(&txn, &schema, R).expect("hit"); 
     let after = cache.stats();
     assert_eq!(after.misses - base.misses, 1);
     assert_eq!(after.builds - base.builds, 1);
@@ -223,16 +212,9 @@ fn counters_track_hit_miss_build_evict_exactly() {
     assert_eq!(cache.resident(), (0, 0));
 }
 
-// ---------------------------------------------------------------------
-// The lineage law: advance / carry-forward / append (PRD-I1
-// copy-on-append; docs/architecture/50-storage.md § the image cache).
-// ---------------------------------------------------------------------
-
 const A: RelationId = RelationId(0);
 const B: RelationId = RelationId(1);
 
-/// A(x u64) + B(x u64): two ordinary relations, so one relation's commit
-/// shape can be observed against the other's cache entry.
 fn two_relation_schema() -> Schema {
     let rel = |name: &str| RelationDescriptor {
         extension: None,
@@ -257,9 +239,6 @@ fn rel_fact(schema: &Schema, rel: RelationId, x: u64) -> Vec<u8> {
     b
 }
 
-/// One commit through the exact epilogue `Db::write` runs: the delta's
-/// net-disposition classification, then `commit`, then `advance` — the
-/// tests' mirror of `write_witnessed`'s hook order.
 fn commit_and_advance(
     env: &Environment,
     cache: &ImageCache,
@@ -273,9 +252,6 @@ fn commit_and_advance(
     report.generation()
 }
 
-/// The two images agree through the only read surface — `row_count` and
-/// every column slice byte-for-byte — and on every forced distinct count
-/// (the differential referee's clause at this fixture's width).
 fn assert_images_identical(a: &RelationImage, b: &RelationImage, columns: usize) {
     assert_eq!(a.row_count(), b.row_count());
     for column in 0..columns {
@@ -288,10 +264,6 @@ fn assert_images_identical(a: &RelationImage, b: &RelationImage, columns: usize)
     }
 }
 
-/// The one id allocator's non-tail arm (R16): an explicit fresh
-/// re-supply BELOW a retained base's boundary breaks the prefix
-/// property, so `advance` evicts the base — the next reader full-builds
-/// — while a tail insert keeps the append lineage alive.
 #[test]
 fn a_below_boundary_insert_evicts_the_append_base() {
     let dir = TempDir::new("cache-non-tail-evict");
@@ -299,7 +271,6 @@ fn a_below_boundary_insert_evicts_the_append_base() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let cache = ImageCache::new(&schema);
 
-    // Generation 1: row id 5 (the fresh value), boundary Q = 6.
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
@@ -313,9 +284,6 @@ fn a_below_boundary_insert_evicts_the_append_base() {
     }
     assert_eq!(cache.keys(), vec![(R, gid(1))]);
 
-    // Generation 2 inserts row id 2 — under the base's boundary (6), a
-    // delete-free commit: the base evicts anyway (a tail decode from 6
-    // would silently miss row 2).
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
@@ -336,9 +304,8 @@ fn a_below_boundary_insert_evicts_the_append_base() {
     }
     assert_eq!(cache.keys(), vec![(R, gid(2))]);
 
-    // Generation 3 inserts row id 7 — at or past the rebuilt base's
     // boundary (Q stayed 6 after the below-boundary insert): the base
-    // survives, and the reader appends exactly the tail row.
+
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
@@ -357,8 +324,6 @@ fn a_below_boundary_insert_evicts_the_append_base() {
     assert_eq!(image.column(0), crate::image::ColumnView::Words(&[2, 5, 7]));
 }
 
-/// The one-relation sibling of [`commit_and_advance`] (that helper's
-/// schema fixture differs).
 fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDelta<'_>) {
     let dirty = delta.dirty_relations();
     let floors = delta.inserted_floors();
@@ -367,9 +332,6 @@ fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDel
     cache.advance(report.generation(), &dirty, &floors);
 }
 
-/// `advance` drops the entries of relations the commit deleted from
-/// (their ordinals shifted) and retains every other entry as an append
-/// base — the lineage law's writer half.
 #[test]
 fn advance_drops_dirty_relations_and_retains_the_rest() {
     let dir = TempDir::new("cache-advance");
@@ -394,8 +356,6 @@ fn advance_drops_dirty_relations_and_retains_the_rest() {
     drop(txn);
     assert_eq!(cache.keys(), vec![(A, gid(1)), (B, gid(1))]);
 
-    // Delete from A, insert into B: A's entry drops, B's survives as an
-    // append base at its old generation.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
@@ -409,9 +369,6 @@ fn advance_drops_dirty_relations_and_retains_the_rest() {
     assert_eq!(cache.keys(), vec![(B, gid(1))]);
 }
 
-/// The zero-copy arm: a commit that never touched B carries B's image
-/// forward — the SAME `Arc`, re-keyed at the reader's generation, the
-/// base key removed in the same critical section.
 #[test]
 fn an_untouched_relation_carries_the_same_arc_forward() {
     let dir = TempDir::new("cache-carry");
@@ -434,7 +391,6 @@ fn an_untouched_relation_carries_the_same_arc_forward() {
     let b_before = cache.get_or_build(&txn, &schema, B).expect("build B");
     drop(txn);
 
-    // Touch only A (insert-only): B is untouched, A gains a row.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
@@ -456,10 +412,6 @@ fn an_untouched_relation_carries_the_same_arc_forward() {
     );
 }
 
-/// The append arm across a CHAIN of insert-only commits: the base
-/// survives every delete-free advance, one append covers all the tail
-/// rows, and the appended image is indistinguishable from a from-scratch
-/// rebuild in the same transaction (the differential referee).
 #[test]
 fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
     let dir = TempDir::new("cache-append-chain");
@@ -468,15 +420,12 @@ fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
     let cache = ImageCache::new(&schema);
     insert_one(&env, &schema, 1);
     {
-        // The commit above ran without a cache hook (cache was bare);
-        // align `newest` the way the first reader's world looks.
+
         let txn = env.read_txn().expect("txn");
         let base = cache.get_or_build(&txn, &schema, R).expect("base build");
         assert_eq!(base.row_count(), 1);
     }
 
-    // Three insert-only commits, no reads between: the base survives
-    // every advance and the map never grows past one entry per relation.
     for x in [2, 3, 4] {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
@@ -505,18 +454,10 @@ fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
         "the successor replaced its base"
     );
 
-    // A later same-generation reader hits the appended entry.
     let again = cache.get_or_build(&txn, &schema, R).expect("hit");
     assert!(Arc::ptr_eq(&appended, &again));
 }
 
-/// The commit-epilogue race cannot strand append bases: a reader whose
-/// snapshot opened between `mdb_txn_commit` and the epilogue's `advance`
-/// is AHEAD of `newest`, skips the base probe (no arm matches its
-/// generation), and full-builds — and its insert must still sweep the
-/// relation's surviving base in the same critical section. Remove-by-key
-/// left the base behind here (`replaced = None`), leaking one whole
-/// image per race won, forever, on a never-deleted relation.
 #[test]
 fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
     let dir = TempDir::new("cache-race-sweep");
@@ -524,7 +465,6 @@ fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let cache = ImageCache::new(&schema);
 
-    // Generation 1: read, then the lawful epilogue.
     insert_one(&env, &schema, 1);
     {
         let txn = env.read_txn().expect("txn");
@@ -533,9 +473,8 @@ fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
     cache.advance(gid(1), &[], &[]);
     assert_eq!(cache.keys(), vec![(R, gid(1))]);
 
-    // Generation 2 commits, and the reader wins the race: its snapshot
     // opens BEFORE the epilogue's `advance`, so `newest` is still 1 and
-    // the base probe (newest readers only) never fires — a full build.
+
     insert_one(&env, &schema, 2);
     let racing = env.read_txn().expect("txn");
     let image = cache.get_or_build(&racing, &schema, R).expect("full build");
@@ -546,15 +485,10 @@ fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
         "the racing insert sweeps the stranded base instead of leaking it"
     );
 
-    // The late epilogue arrives and changes nothing.
     cache.advance(gid(2), &[], &[]);
     assert_eq!(cache.keys(), vec![(R, gid(2))]);
 }
 
-/// The hard-error arm: under the lineage law only storage corruption can
-/// shrink a delete-free relation's row count. The fixture violates the
-/// law on purpose — a deleting commit advanced with an empty dirty set —
-/// and the next reader must get typed Corruption, never a silent rebuild.
 #[test]
 fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
     let dir = TempDir::new("cache-append-shrink");
@@ -569,7 +503,6 @@ fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
         assert_eq!(base.row_count(), 2);
     }
 
-    // Delete a row, then LIE to the cache: advance with nothing dirty.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, R, &fact(&schema, 1)).expect("delete");
@@ -594,10 +527,6 @@ fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
     );
 }
 
-/// Trace counters pin the arm selection (feature `trace`): a delete for
-/// R forces R's next read through `builds`; an insert-only commit lands
-/// in `appends`; an untouched relation lands in `carries` — per relation,
-/// in one mixed delta.
 #[cfg(feature = "trace")]
 #[test]
 fn counters_pin_the_per_relation_arm_selection() {
@@ -624,7 +553,6 @@ fn counters_pin_the_per_relation_arm_selection() {
     let seeded = cache.stats();
     assert_eq!((seeded.builds, seeded.appends, seeded.carries), (2, 0, 0));
 
-    // One mixed delta: a delete for A, an insert for B.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
@@ -653,7 +581,6 @@ fn counters_pin_the_per_relation_arm_selection() {
     );
     drop(txn);
 
-    // An insert-only commit for A alone: A appends, B carries.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
