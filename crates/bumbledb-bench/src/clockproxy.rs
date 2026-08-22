@@ -15,10 +15,9 @@ const PROXY_ITERS: u64 = 30_000;
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] 
+)]
 
 fn chain(seed: u64, iters: u64) -> u64 {
-
     let mut x = seed | 1;
     for _ in 0..iters {
         // SAFETY: register-only integer multiplies; no memory access.
@@ -89,7 +88,6 @@ pub struct GhzStamp {
 }
 
 impl GhzStamp {
-
     #[must_use]
     pub fn min(&self) -> f64 {
         self.pre.min(self.post)
@@ -209,7 +207,6 @@ mod tests {
 
     #[test]
     fn a_dirty_bracket_retries_exactly_once_and_reports_honestly() {
-
         let mut calls = 0u32;
         let (out, stamp) = frequency_checked_at(1e9, || {
             calls += 1;
