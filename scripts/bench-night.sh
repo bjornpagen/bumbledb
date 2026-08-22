@@ -1,39 +1,6 @@
 #!/usr/bin/env bash
-# bench-night.sh — the one-command night orchestrator.
-#
-# The night is a TABLE, not a script of branches: an ordered lane registry
-# (id | artifact | command), cheap first, adversarial + churn last.
-# Skip/resume, availability probing, the manifest, and --plan are all folds
-# over that one table.
-#
-# The measurement mutex is measure.sh's, reused verbatim: this script
-# re-execs itself under scripts/measure.sh rather than forking its lock
-# logic; the whole night runs inside ONE hold. Before waiting it REFUSES
-# if the lock is already held (a night must never queue behind another
-# measurement). The lock path is the single overridable parameter
 # BUMBLEDB_MEASURE_LOCK, shared with measure.sh, so the refusal is testable
-# without ever touching the real lock.
-#
-# usage: bench-night.sh <out-dir> [--plan] [--shared]
-#
-#   --plan    print the manifest-style lane table with the statuses the run
-#             WOULD have (RUN / SKIP-EXISTING / SKIP-UNAVAILABLE); no lock,
-#             no build, no lane execution, no viz. Exit 0.
-#
-#   --shared  the shared-machine night (owner ruling, 2026-07-20): the
-#             idle-machine requirement is WAIVED for this run. Every lane
-#             launches with BUMBLEDB_BENCH_BOOST=1, so the binary claims
-#             user-interactive QoS at its dispatch seam (macOS; no-op
-#             elsewhere, never sudo) and stamps shared_machine provenance
-#             (boost + 1/5/15 load averages at lane start/end) into every
-#             report. A loud banner marks the run. Neither this script nor
-#             measure.sh performs an idleness check today, so there is
-#             nothing further to bypass — the flag exists so any future
-#             idleness gate must honor it. The measurement mutex below is
-#             NOT an idleness check and stays MANDATORY, --shared or not.
-#
-# Exit codes: 0 night complete (SKIPs are not failures); 1 at least one
-# lane RUN-FAILed; 2 usage or lock refusal.
+# --shared the shared-machine night (owner ruling, 2026-07-20): the
 set -euo pipefail
 
 print_usage() {
@@ -60,9 +27,7 @@ esac
 [ -n "$1" ] || usage
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-# The binary path must be the dir cargo actually writes. A leftover
-# CARGO_TARGET_DIR (napi rebuild, sandbox cache) used to compile 0.15
-# into one tree and time a stale $REPO/target/release 0.14 binary.
+
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/target}"
 BIN="$TARGET_DIR/release/bumbledb-bench"
 OBS_TARGET="$REPO/target/bench-obs"
@@ -87,21 +52,6 @@ case "$OUT_ARG" in
     *) OUT="$PWD/$OUT_ARG" ;;
 esac
 
-# --- THE LANE TABLE -------------------------------------------------------
-# Fields: id|artifact|command. Order is the law: cheap lanes first,
-# adversarial + churn LAST (their failures cost nothing upstream).
-# SETUP rows (artifact=SETUP) run only when at least one non-SETUP lane
-# will actually RUN — gen is cheap-or-required, verify re-earns the stamp
-# the bench subcommand refuses without.
-#
-# PROBED lanes are the expansion lanes: available iff the binary's help
-# lists the subcommand (token == lane id). Live spellings as of this
-# writing: storage, curves, writes, crud, lawful, churn landed
-# (write-throughput landed as `writes`; the cold/warm/memoized panel
-# landed as `curves --warmth`, so that lane is folded into the curves row
-# rather than kept as a never-landing spelling). `adversarial` has not
-# landed yet and keeps its contract spelling — the probe reports it
-# SKIP-UNAVAILABLE until it does.
 PROBED=" storage curves writes crud lawful adversarial churn heap "
 
 lane_table() {
@@ -134,16 +84,12 @@ is_probed() {
     return 1
 }
 
-# Available iff the binary's help lists the subcommand (the token equals
-# the lane id here). A missing binary makes every probed lane unavailable.
 lane_available() {
     "$BIN" help 2>/dev/null | awk '/^COMMANDS:/,/^$/' \
         | grep -qE "^[[:space:]]+$1([[:space:]]|\$)"
 }
 
-# The planned status of one non-SETUP lane: an existing artifact is never
-# rerun (a crashed night resumes by rerunning the same command).
-nonsetup_status() { # $1=id $2=artifact
+nonsetup_status() { 
     if [ -e "$2" ]; then
         echo "SKIP-EXISTING"
     elif is_probed "$1" && ! lane_available "$1"; then
@@ -154,17 +100,13 @@ nonsetup_status() { # $1=id $2=artifact
 }
 
 # --- MUTEX REFUSAL + ACQUISITION (skipped in --plan) -----------------------
-# Refuse-before-wait: measure.sh would merely queue; the night must not.
-# The refuse-then-exec race window is accepted (measure.sh would wait,
-# and refusal-before-wait is the required semantics). The re-exec'd child
-# runs under our own hold and must not refuse it.
 if [ "$PLAN" -eq 0 ] && [ "${BENCH_NIGHT_UNDER_LOCK:-}" != 1 ]; then
     if [ -d "$LOCK" ]; then
         echo "bench-night: refusing — measurement lock held (holder: $(cat "$LOCK/holder" 2>/dev/null || echo unknown))" >&2
         exit 2
     fi
     export BUMBLEDB_MEASURE_LOCK="$LOCK"
-    # The re-exec'd child must keep the shared-machine mode.
+
     if [ "$SHARED" -eq 1 ]; then
         exec "$REPO/scripts/measure.sh" \
             env BENCH_NIGHT_UNDER_LOCK=1 BUMBLEDB_MEASURE_LOCK="$LOCK" \
@@ -176,8 +118,6 @@ if [ "$PLAN" -eq 0 ] && [ "${BENCH_NIGHT_UNDER_LOCK:-}" != 1 ]; then
 fi
 
 # --- SHARED-MACHINE MODE (owner ruling, 2026-07-20) -------------------------
-# The boost env reaches every lane below; the banner keeps the run honest
-# to whoever reads the log. The mutex hold above is unaffected.
 if [ "$SHARED" -eq 1 ] && [ "$PLAN" -eq 0 ]; then
     export BUMBLEDB_BENCH_BOOST=1
     echo "#############################################################"
@@ -190,14 +130,12 @@ if [ "$SHARED" -eq 1 ] && [ "$PLAN" -eq 0 ]; then
     echo "#############################################################"
 fi
 
-# --- BUILD (building is not measurement; skipped in --plan) ----------------
 if [ "$PLAN" -eq 0 ]; then
     (cd "$REPO" && cargo build --release -p bumbledb-bench)
     (cd "$REPO" && CARGO_TARGET_DIR="$OBS_TARGET" \
         cargo build --release -p bumbledb-bench --features obs)
 fi
 
-# --- PASS 1: does any non-SETUP lane RUN? (decides the SETUP rows) ---------
 ANY_RUN=0
 while IFS='|' read -r id artifact command; do
     if [ "$artifact" = "SETUP" ]; then
@@ -227,7 +165,6 @@ header() {
     echo ""
 }
 
-# --- --plan MODE: the table alone, nothing executed ------------------------
 if [ "$PLAN" -eq 1 ]; then
     header
     while IFS='|' read -r id artifact command; do
@@ -241,7 +178,6 @@ if [ "$PLAN" -eq 1 ]; then
     exit 0
 fi
 
-# --- EXECUTION: one fold over the table ------------------------------------
 mkdir -p "$OUT"
 TAB="$(printf '\t')"
 NL="
@@ -272,7 +208,6 @@ while IFS='|' read -r id artifact command; do
     LANE_LINES="${LANE_LINES}${id}${TAB}${status}${TAB}${artifact}${NL}"
 done < <(lane_table)
 
-# --- VIZ (runs even if some lanes failed; bench_viz SKIPs missing lanes) ---
 set +e
 python3 "$REPO/scripts/bench_viz.py" --night "$OUT" --out "$OUT"
 viz_rc=$?
@@ -282,7 +217,6 @@ if [ "$viz_rc" -ne 0 ]; then
 fi
 CHARTS=$( (ls "$OUT"/*.svg 2>/dev/null || true) | wc -l | tr -d ' ')
 
-# --- MANIFEST ---------------------------------------------------------------
 {
     header
     printf '%s' "$LANE_LINES"
