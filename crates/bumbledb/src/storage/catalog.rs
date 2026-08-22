@@ -1,5 +1,4 @@
 //! Ordered catalog algebra: GAT-bearing map contracts over LMDB first.
-//!
 //! Catalog algorithms stay generic. Bounds live on the method or use
 //! site. No GAT-bearing trait is converted to `dyn` (E0038 on this
 //! nightly). Broad HRTBs on lending items are refused (E0597). Every
@@ -27,20 +26,18 @@ pub(crate) use frozen::FrozenCatalog;
 pub(crate) use heap::HeapStage;
 pub(crate) use lmdb::{LmdbPeekCatalog, LmdbReadCatalog, LmdbSortedGets, LmdbWriteCatalog};
 
-/// One ordered-map entry, borrowed from the catalog.
 pub(crate) struct Entry<'a> {
     pub key: &'a [u8],
     pub value: &'a [u8],
 }
 
-/// Range bounds whose lifetimes are independent of the catalog borrow.
 pub(crate) struct Bounds<'a> {
     pub start: Bound<&'a [u8]>,
     pub end: Bound<&'a [u8]>,
 }
 
 impl<'a> Bounds<'a> {
-    /// Unbounded pair used for raw export.
+
     pub(crate) const fn all() -> Self {
         Self {
             start: Bound::Unbounded,
@@ -53,35 +50,28 @@ impl<'a> Bounds<'a> {
     }
 }
 
-/// The two physical ordered maps. Not a storage backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CatalogMap {
     Data,
     Dictionary,
 }
 
-/// Verdict of [`OrderedWrite::put_no_overwrite`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PutOutcome {
     Inserted,
     Occupied,
 }
 
-/// Lending forward cursor over [`Entry`] values.
 pub(crate) trait ReadCursor {
     fn next(&mut self) -> Result<Option<Entry<'_>>>;
 }
 
-/// Mutable sibling: delete the just-yielded entry.
 pub(crate) trait WriteCursor: ReadCursor {
     /// May run exactly once after a yielded entry and before the next
     /// cursor move. Any other state is a programmer-invariant violation.
     fn del_current(&mut self) -> Result<()>;
 }
 
-/// Reusable monotone exact-key walker. `reset` starts a new group;
-/// `get` requires nondecreasing keys until the next reset (debug builds
-/// assert that).
 pub(crate) trait SortedGets {
     type Value<'a>: AsRef<[u8]>
     where
@@ -92,7 +82,6 @@ pub(crate) trait SortedGets {
     fn get(&mut self, key: &[u8]) -> Result<Option<Self::Value<'_>>>;
 }
 
-/// Byte-ordered map reads. Catalog algorithms are generic over this.
 pub(crate) trait OrderedRead {
     type Value<'a>: AsRef<[u8]>
     where
@@ -125,7 +114,6 @@ pub(crate) trait OrderedRead {
     fn len(&self, map: CatalogMap) -> Result<u64>;
 }
 
-/// Byte-ordered map writes.
 pub(crate) trait OrderedWrite: OrderedRead {
     type WriteRange<'catalog, 'bounds>: WriteCursor
     where
@@ -145,18 +133,15 @@ pub(crate) trait OrderedWrite: OrderedRead {
     ) -> Result<Self::WriteRange<'catalog, 'bounds>>;
 }
 
-/// One fact in a relation scan: row id and stored bytes.
 pub(crate) struct FactEntry<'a> {
     pub row: u64,
     pub bytes: &'a [u8],
 }
 
-/// Lending cursor over [`FactEntry`] values.
 pub(crate) trait FactCursor {
     fn next(&mut self) -> Result<Option<FactEntry<'_>>>;
 }
 
-/// Catalog reads over facts, counters, and the dictionary.
 pub(crate) trait CatalogRead: OrderedRead {
     type Facts<'a>: FactCursor
     where
@@ -238,7 +223,6 @@ pub(crate) trait CatalogRead: OrderedRead {
     fn dict_next_id(&self) -> Result<InternId>;
 }
 
-/// Catalog writes for counters and the dictionary next-id.
 pub(crate) trait CatalogWrite: CatalogRead + OrderedWrite {
     fn set_row_count(&mut self, relation: RelationId, value: u64) -> Result<()> {
         self.put(
@@ -283,9 +267,6 @@ fn stored_counter<V: AsRef<[u8]>>(value: Option<V>, what: &'static str) -> Resul
     }
 }
 
-/// GAT / lending probes that must stay compiling on the pinned nightly:
-/// associated type projections, lending range cursors, and mutable
-/// deletion cursors. Broad HRTBs on lending items are not written.
 #[allow(dead_code)]
 fn _catalog_read_gats<C: OrderedRead>(catalog: &C) -> Result<()> {
     let _ = catalog.get(CatalogMap::Data, b"")?;
@@ -315,5 +296,4 @@ impl<'env> WriteTxn<'env> {
     }
 }
 
-/// Marker so GAT associated types can name an unused bounds lifetime.
 pub(crate) type UnusedBounds<'bounds> = PhantomData<&'bounds [u8]>;
