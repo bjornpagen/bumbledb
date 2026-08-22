@@ -6,7 +6,6 @@ use bumbledb_theory::schema::{FieldId, Generation, RelationId};
 use super::{DeltaEffect, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-
     #[cfg(test)]
     pub fn insert(
         &mut self,
