@@ -2,7 +2,6 @@
 //! A relation image is **all columns** of a relation, decoded once from one
 //! sequential `F`-prefix scan into structure-of-arrays vectors — the bridge
 //! to paper-faithful execution. Immutable once built; `Arc` is the sharing unit.
-
 pub mod cache;
 pub mod view;
 
@@ -164,7 +163,6 @@ impl RelationImage {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: `column` is a 1-byte column
     #[cfg(test)]
     #[must_use]
@@ -176,7 +174,6 @@ impl RelationImage {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: `column` is an 8-byte column.
     #[cfg(test)]
     #[must_use]
