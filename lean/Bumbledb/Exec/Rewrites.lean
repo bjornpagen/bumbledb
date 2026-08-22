@@ -1,7 +1,7 @@
 import Bumbledb.Query.Denotation
 
 /-!
-# Exec/Rewrites — the prepare-time rewrites, proved (Level 1, PRD 08)
+# Exec/Rewrites — the prepare-time rewrites, proved (Level 1, 
 
 Grounding as denotation-preserving partial evaluation, the key-probe
 plan, statically-empty folds, the subsumption deletion, and their
@@ -16,229 +16,229 @@ the identity variable mapping.
 ## The Rust readings (READ-RUST-FIRST, symbol anchors)
 
 * **The grounding loop** — `plan/ground.rs::ground` (elimination and
-  evaluation interleaved, one action per step);
-  `plan/ground.rs::removable` (the deterministic statement-order
-  scan). The elimination conditions:
-  `plan/ground.rs::join_covers_full_key` (condition 1 — including its
-  `shared_vars_pair_positions_only` conjunct),
-  `plan/ground.rs::target_otherwise_unused` (condition 2 —
-  Eq-constant filters within ψ, φ carried literally, non-Y fields
-  dead), `plan/ground.rs::variables_join_or_dead` (condition 3), the
-  `Enforcement::ScalarProbe` screen in `removable` (condition 4 — the
-  interval refusal), and `plan/ground.rs::var_is_dead`. Chains and
-  support: the module doc (§ chains and support) and
-  `plan/ground.rs::chain_reaches` — an ELIMINATED occurrence may
-  source a later elimination so long as its support chain avoids the
-  candidate (`ChainedElimStep`, `chained_elimination_sound` below).
+ evaluation interleaved, one action per step);
+ `plan/ground.rs::removable` (the deterministic statement-order
+ scan). The elimination conditions:
+ `plan/ground.rs::join_covers_full_key` (condition 1 — including its
+ `shared_vars_pair_positions_only` conjunct),
+ `plan/ground.rs::target_otherwise_unused` (condition 2 —
+ Eq-constant filters within ψ, φ carried literally, non-Y fields
+ dead), `plan/ground.rs::variables_join_or_dead` (condition 3), the
+ `Enforcement::ScalarProbe` screen in `removable` (condition 4 — the
+ interval refusal), and `plan/ground.rs::var_is_dead`. Chains and
+ support: the module doc (§ chains and support) and
+ `plan/ground.rs::chain_reaches` — an ELIMINATED occurrence may
+ source a later elimination so long as its support chain avoids the
+ candidate (`ChainedElimStep`, `chained_elimination_sound` below).
 * **The grounding evaluator** —
-  `plan/ground/evaluate.rs::fold_step` (first foldable occurrence per
-  call); `plan/ground/evaluate.rs::fold_positive` (survivors, the
-  membership attachment, the rule-death channel);
-  `plan/ground/evaluate.rs::is_prepare_resolvable` (params, pending
-  interns, and measures refuse);
-  `plan/ground/evaluate.rs::surviving_ids` (the prepare-time σ over
-  sealed rows); `plan/ground/evaluate.rs::fold_negated` (the
-  complement fold — unmodeled here, see the narrowings).
+ `plan/ground/evaluate.rs::fold_step` (first foldable occurrence per
+ call); `plan/ground/evaluate.rs::fold_positive` (survivors, the
+ membership attachment, the rule-death channel);
+ `plan/ground/evaluate.rs::is_prepare_resolvable` (params, pending
+ interns, and measures refuse);
+ `plan/ground/evaluate.rs::surviving_ids` (the prepare-time σ over
+ sealed rows); `plan/ground/evaluate.rs::fold_negated` (the
+ complement fold — unmodeled here, see the narrowings).
 * **The key-probe lowering** —
-  `exec/dispatch/classify.rs::classify` (exactly one positive
-  occurrence, no residuals, no measure or set-valued filters,
-  by-value Eq bindings covering a declared key; non-key per-field
-  filters — order compares, `Ne`, `FieldsCompare`, resolved
-  `PointIn`/Allen — pass into `remaining_filters`, assembled by
-  `exec/dispatch/classify.rs::unconsumed_filters` and applied
-  post-get in `exec/dispatch/key_probe_fact.rs::key_probe_fact`);
-  `exec/dispatch/classify.rs::key_probe_candidate` (the key statement
-  — pointwise interval-final keys included — or the full-fact `M`
-  fallback); `api/prepared/build.rs::prepare_rule_variant`
-  (`PreparedRule::KeyProbe` minted).
+ `exec/dispatch/classify.rs::classify` (exactly one positive
+ occurrence, no residuals, no measure or set-valued filters,
+ by-value Eq bindings covering a declared key; non-key per-field
+ filters — order compares, `Ne`, `FieldsCompare`, resolved
+ `PointIn`/Allen — pass into `remaining_filters`, assembled by
+ `exec/dispatch/classify.rs::unconsumed_filters` and applied
+ post-get in `exec/dispatch/key_probe_fact.rs::key_probe_fact`);
+ `exec/dispatch/classify.rs::key_probe_candidate` (the key statement
+ — pointwise interval-final keys included — or the full-fact `M`
+ fallback); `api/prepared/build.rs::prepare_rule_variant`
+ (`PreparedRule::KeyProbe` minted).
 * **The subsumption sweep** — `plan/ground.rs::subsume` (classical
-  UCQ minimization restricted to the normalized-form witness;
-  `plan/ground.rs::subsumes`, the ordered-pair check), wired after
-  grounding at `api/prepared/build.rs::ground_main`: the deleted
-  rules are filtered out of the prepared pipeline. Modeled:
-  `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
-  sixth rewrite, in the chain (the discharge record below).
+ UCQ minimization restricted to the normalized-form witness;
+ `plan/ground.rs::subsumes`, the ordered-pair check), wired after
+ grounding at `api/prepared/build.rs::ground_main`: the deleted
+ rules are filtered out of the prepared pipeline. Modeled:
+ `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
+ sixth rewrite, in the chain (the discharge record below).
 * **The statically-empty fold** — `ir/normalize/fold.rs::fold`
-  (participating occurrences only — a negated occurrence's
-  contradiction is NOT emptiness); the contradiction rules (a)-(f),
-  one function each from `ir/normalize/fold.rs::range_is_empty` to
-  `ir/normalize/fold.rs::point_outside`, every one judged on
-  constants only.
+ (participating occurrences only — a negated occurrence's
+ contradiction is NOT emptiness); the contradiction rules (a)-(f),
+ one function each from `ir/normalize/fold.rs::range_is_empty` to
+ `ir/normalize/fold.rs::point_outside`, every one judged on
+ constants only.
 * **The literal latch** — `api/prepared/bind.rs::resolve_filters`
-  (`Ok(false)` = a dictionary miss or empty set under an `Eq` filter
-  of a POSITIVE occurrence — per-execution, never a plan verdict);
-  `api/prepared/bind.rs::resolve_selection_into` (the `PendingIntern`
-  hit rewrites the template once; the miss short-circuits THIS
-  execution only).
+ (`Ok(false)` = a dictionary miss or empty set under an `Eq` filter
+ of a POSITIVE occurrence — per-execution, never a plan verdict);
+ `api/prepared/bind.rs::resolve_selection_into` (the `PendingIntern`
+ hit rewrites the template once; the miss short-circuits THIS
+ execution only).
 * **Repeated variables** — `ir/normalize/normalize.rs::lower_atom`
-  (pass 1: the first domain binding per variable; later positions
-  lower to `FieldsCompare` filters, which condition 2 refuses — the
-  `var_functional` premise's anchor).
+ (pass 1: the first domain binding per variable; later positions
+ lower to `FieldsCompare` filters, which condition 2 refuses — the
+ `var_functional` premise's anchor).
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **The fold is modeled as the FULL substitution.** `groundRewrite`
-  replaces a closed atom by the disjunction, over the σ-surviving
-  sealed facts, of its bindings' equalities (`groundCondition`) — the
-  `Const::WordSet` membership generalized. Rust's foldability
-  conditions (at most one live variable, at the id position, payload
-  dead — the foldability roster of `plan/ground/evaluate.rs`'s module
-  doc, enforced by `plan/ground/evaluate.rs::fold_positive`) are
-  plan-shape mechanism: its algebra
-  attaches single-field memberships to siblings, so payload must be
-  dead; the substitution carries payload constraints wholesale and
-  needs no deadness premise. `Atom.foldableB` (vars and literals only)
-  mirrors `is_prepare_resolvable`'s refusals as the modeled acceptance;
-  preservation never spends it — the param refusal is stage discipline
-  (prepared plans carry resolved constants), not semantics.
+ replaces a closed atom by the disjunction, over the σ-surviving
+ sealed facts, of its bindings' equalities (`groundCondition`) — the
+ `Const::WordSet` membership generalized. Rust's foldability
+ conditions (at most one live variable, at the id position, payload
+ dead — the foldability roster of `plan/ground/evaluate.rs`'s module
+ doc, enforced by `plan/ground/evaluate.rs::fold_positive`) are
+ plan-shape mechanism: its algebra
+ attaches single-field memberships to siblings, so payload must be
+ dead; the substitution carries payload constraints wholesale and
+ needs no deadness premise. `Atom.foldableB` (vars and literals only)
+ mirrors `is_prepare_resolvable`'s refusals as the modeled acceptance;
+ preservation never spends it — the param refusal is stage discipline
+ (prepared plans carry resolved constants), not semantics.
 * **The negated complement fold is unmodeled**
-  (`plan/ground/evaluate.rs::fold_negated`): the complement rewrite
-  needs the domain
-  guarantee (`domain_within_ids`) and a negated membership the
-  condition grammar cannot write; the modeled step grounds positive
-  occurrences only.
+ (`plan/ground/evaluate.rs::fold_negated`): the complement rewrite
+ needs the domain
+ guarantee (`domain_within_ids`) and a negated membership the
+ condition grammar cannot write; the modeled step grounds positive
+ occurrences only.
 * **Rule subsumption is MODELED — the sixth rewrite, discharged**
-  (2026-07-15; `plan/ground.rs::subsume`, wired at
-  `api/prepared/build.rs::ground_main`): after grounding, a rule
-  whose normalized body contains a sibling's — identical `finds`,
-  identical participating-atom multiset with the keeper's per-atom
-  filters ⊆ the candidate's, the keeper's residual sets ⊆ the
-  candidate's, and every keeper negated atom present in the candidate
-  — is DELETED from the prepared pipeline. `SubsumeWitness` reads that
-  witness in this level's vocabulary (a per-occurrence Eq filter is a
-  literal binding, residuals are the rule's conditions): every keeper
-  atom pairs with a candidate atom of the same relation whose binding
-  list CONTAINS the keeper's, negated atoms and conditions transfer by
-  membership containment, heads verbatim. Only the keeper→candidate
-  half of the engine's multiset identity is SPENT — the
-  candidate→keeper half only shrinks the candidate's binding set
-  further, which the containment direction never needs, so the
-  engine's stronger check is sound a fortiori. `subsume_containment`
-  proves candidate-answers ⊆ keeper-answers, `RewriteStep.subsume`
-  names the deletion (the keeper's survival, `hk`, the named premise),
-  and `rewrite_composition` carries it in the chain. The general-form
-  refusal (CQ-homomorphism minimization, NP-hard) remains the engine's
-  own recorded fence (`plan/ground.rs`'s module doc): the witness
-  never searches variable mappings, and neither does the model —
-  `VarId`s must already agree, exactly what DNF-cloned rules provide.
-  The ground-off dual-run differential
-  (`crates/bumbledb-bench/src/differential/tests`)
-  and the prepare-level instruments
-  (`the_dnf_residue_subsumes_the_filtered_rule`,
-  `crates/bumbledb/src/plan/ground/tests.rs`;
-  `crates/bumbledb/src/api/prepared/tests/ground.rs`) stay as the
-  empirical arm beside the theorem.
+ (2026-07-15; `plan/ground.rs::subsume`, wired at
+ `api/prepared/build.rs::ground_main`): after grounding, a rule
+ whose normalized body contains a sibling's — identical `finds`,
+ identical participating-atom multiset with the keeper's per-atom
+ filters ⊆ the candidate's, the keeper's residual sets ⊆ the
+ candidate's, and every keeper negated atom present in the candidate
+ — is DELETED from the prepared pipeline. `SubsumeWitness` reads that
+ witness in this level's vocabulary (a per-occurrence Eq filter is a
+ literal binding, residuals are the rule's conditions): every keeper
+ atom pairs with a candidate atom of the same relation whose binding
+ list CONTAINS the keeper's, negated atoms and conditions transfer by
+ membership containment, heads verbatim. Only the keeper→candidate
+ half of the engine's multiset identity is SPENT — the
+ candidate→keeper half only shrinks the candidate's binding set
+ further, which the containment direction never needs, so the
+ engine's stronger check is sound a fortiori. `subsume_containment`
+ proves candidate-answers ⊆ keeper-answers, `RewriteStep.subsume`
+ names the deletion (the keeper's survival, `hk`, the named premise),
+ and `rewrite_composition` carries it in the chain. The general-form
+ refusal (CQ-homomorphism minimization, NP-hard) remains the engine's
+ own recorded fence (`plan/ground.rs`'s module doc): the witness
+ never searches variable mappings, and neither does the model —
+ `VarId`s must already agree, exactly what DNF-cloned rules provide.
+ The ground-off dual-run differential
+ (`crates/bumbledb-bench/src/differential/tests`)
+ and the prepare-level instruments
+ (`the_dnf_residue_subsumes_the_filtered_rule`,
+ `crates/bumbledb/src/plan/ground/tests.rs`;
+ `crates/bumbledb/src/api/prepared/tests/ground.rs`) stay as the
+ empirical arm beside the theorem.
 * **`elimination_sound` is the projection-sink face.** For
-  set-semantics `ruleAnswers`, containment existence plus deadness
-  suffice; the key-ness of Y (condition 1's full-key demand,
-  acceptance-side) is what the AGGREGATE face spends — key-ness keeps
-  a dead non-key variable from multiplying the binding-set fold domain
-  (the aggregate-safety bullet of `plan/ground.rs`'s module doc). The
-  aggregate face lives in `Exec/Dedup.lean`
-  where the fold domains live, as THREE named pieces (2026-07-14,
-  the admission-calculus docket): `elim_extension_exists` (the
-  containment's extension, binding-level) and
-  `elim_extension_unique` (the target key pins it — key-ness and
-  full-key coverage enter there as the `Functionality` and
-  zip-coverage hypotheses) compose into
-  `elimination_agg_fold_domain` (the distinct-full-binding domain of
-  each group fiber projects bijectively onto the surviving slots),
-  spent by `elimination_agg_domain_counts` (the key's payoff: the
-  engine's full-slot-array domain and the surviving-slot domain
-  carry the same counts) beside `elimination_agg_sound` (answer
-  identity fiber for fiber, both folds at the surviving-slot
-  reading — the containment's payoff, no key premise). The recorded
-  scope is Dedup's module doc: no single abstract-fold statement
-  spans both domains (different tuple widths), so "discharged" means
-  exactly this pair, each claim one theorem. Here, only the
-  projection face's full-key premise enters, through the join-value
-  transfer.
+ set-semantics `ruleAnswers`, containment existence plus deadness
+ suffice; the key-ness of Y (condition 1's full-key demand,
+ acceptance-side) is what the AGGREGATE face spends — key-ness keeps
+ a dead non-key variable from multiplying the binding-set fold domain
+ (the aggregate-safety bullet of `plan/ground.rs`'s module doc). The
+ aggregate face lives in `Exec/Dedup.lean`
+ where the fold domains live, as THREE named pieces (2026-07-14,
+ the admission-calculus docket): `elim_extension_exists` (the
+ containment's extension, binding-level) and
+ `elim_extension_unique` (the target key pins it — key-ness and
+ full-key coverage enter there as the `Functionality` and
+ zip-coverage hypotheses) compose into
+ `elimination_agg_fold_domain` (the distinct-full-binding domain of
+ each group fiber projects bijectively onto the surviving slots),
+ spent by `elimination_agg_domain_counts` (the key's payoff: the
+ engine's full-slot-array domain and the surviving-slot domain
+ carry the same counts) beside `elimination_agg_sound` (answer
+ identity fiber for fiber, both folds at the surviving-slot
+ reading — the containment's payoff, no key premise). The recorded
+ scope is Dedup's module doc: no single abstract-fold statement
+ spans both domains (different tuple widths), so "discharged" means
+ exactly this pair, each claim one theorem. Here, only the
+ projection face's full-key premise enters, through the join-value
+ transfer.
 * **`var_functional`**: an eliminable occurrence binds each variable at
-  one field — repeated variables keep their first binding and lower the
-  rest to `FieldsCompare` filters (pass 2 of
-  `ir/normalize/normalize.rs::lower_atom`), which
-  `plan/ground.rs::selections_within_psi` refuses. Without it the
-  witness fact could disagree with itself (two dead fields, one
-  variable), so the premise is load-bearing, not decorative.
+ one field — repeated variables keep their first binding and lower the
+ rest to `FieldsCompare` filters (pass 2 of
+ `ir/normalize/normalize.rs::lower_atom`), which
+ `plan/ground.rs::selections_within_psi` refuses. Without it the
+ witness fact could disagree with itself (two dead fields, one
+ variable), so the premise is load-bearing, not decorative.
 * **The full-fact `M` path is unmodeled** (the fallback arm of
-  `exec/dispatch/classify.rs::key_probe_candidate`):
-  model facts carry junk fields beyond the arity (the PRD 03
-  narrowing), so whole-fact identity is a storage fact below this
-  level; `KeyProbeShape` models the statement-key arm. The
-  closed-relation refusal (the `is_closed` screen in
-  `exec/dispatch/classify.rs::classify`) and the measure/set-filter
-  refusals (the filter screens of the same function) are dispatch
-  mechanism. Residual
-  per-field filters are MODELED: the rule's conditions ride the probe
-  and filter the at-most-one hit (`keyProbeEval`'s condition check =
-  `remaining_filters` applied post-get) — the model's conditions are
-  the general shape, the engine's per-field filters its instances.
+ `exec/dispatch/classify.rs::key_probe_candidate`):
+ model facts carry junk fields beyond the arity (the 
+ narrowing), so whole-fact identity is a storage fact below this
+ level; `KeyProbeShape` models the statement-key arm. The
+ closed-relation refusal (the `is_closed` screen in
+ `exec/dispatch/classify.rs::classify`) and the measure/set-filter
+ refusals (the filter screens of the same function) are dispatch
+ mechanism. Residual
+ per-field filters are MODELED: the rule's conditions ride the probe
+ and filter the at-most-one hit (`keyProbeEval`'s condition check =
+ `remaining_filters` applied post-get) — the model's conditions are
+ the general shape, the engine's per-field filters its instances.
 * **Chained-source eliminations are modeled one link deep.**
-  `chained_elimination_sound` composes a support pair — an ordinary
-  elimination plus one elimination whose pairing source it discharged
-  — into one answer-preserving step, with the acyclic-support premise
-  (`hroot`: the chain roots in a surviving occurrence — exactly what
-  `chain_reaches` forbids the negation of) and the engine's
-  `shared_vars_pair_positions_only` conjunct (`shared_join`) named;
-  `RewriteStep.eliminateChained` makes the pair an instance of the
-  step relation. Deeper support forests (a discharged source whose own
-  source is discharged, or cross-links through other discharged
-  readers) iterate the same existence/uniqueness argument from the
-  roots (`plan/ground.rs`'s module doc, § chains and support) but are
-  not stated — the recorded
-  narrowing. The narrowing also covers the SOURCE-ROLE roster: the
-  engine's `plan/ground.rs::removable` excludes only `Role::Negated`
-  as a pairing source, so a `Role::Folded` occurrence is
-  admissible where the modeled chain step names `Eliminated` sources
-  only. The Folded case is practically unreachable — a folded
-  source's binders all carry the attached `WordSet` membership
-  filter, which condition 2's `selections_within_psi` refuses
-  (Eq-to-ψ-literal filters only,
-  `plan/ground.rs::selections_within_psi`) — recorded, not
-  proved.
+ `chained_elimination_sound` composes a support pair — an ordinary
+ elimination plus one elimination whose pairing source it discharged
+ — into one answer-preserving step, with the acyclic-support premise
+ (`hroot`: the chain roots in a surviving occurrence — exactly what
+ `chain_reaches` forbids the negation of) and the engine's
+ `shared_vars_pair_positions_only` conjunct (`shared_join`) named;
+ `RewriteStep.eliminateChained` makes the pair an instance of the
+ step relation. Deeper support forests (a discharged source whose own
+ source is discharged, or cross-links through other discharged
+ readers) iterate the same existence/uniqueness argument from the
+ roots (`plan/ground.rs`'s module doc, § chains and support) but are
+ not stated — the recorded
+ narrowing. The narrowing also covers the SOURCE-ROLE roster: the
+ engine's `plan/ground.rs::removable` excludes only `Role::Negated`
+ as a pairing source, so a `Role::Folded` occurrence is
+ admissible where the modeled chain step names `Eliminated` sources
+ only. The Folded case is practically unreachable — a folded
+ source's binders all carry the attached `WordSet` membership
+ filter, which condition 2's `selections_within_psi` refuses
+ (Eq-to-ψ-literal filters only,
+ `plan/ground.rs::selections_within_psi`) — recorded, not
+ proved.
 * **`StaticallyEmpty` is the kill rule's soundness spec**: a condition
-  refuted under EVERY environment. The Rust detector judges constants
-  only (`fold.rs`, rules (a)-(f)); its completeness is not claimed.
-  The "every verdict is an instance" claim is read through the
-  FILTERS-TO-CONDITIONS mapping: rules (b)/(d) kill on
-  occurrence-FILTER contradictions (the Eq-pin pass of
-  `ir/normalize/fold.rs::fold_occurrence`), and an
-  occurrence's Eq filter is this model's equality-condition leaf (the
-  shape `groundCondition` writes), so an Eq-conflict kill refutes the
-  corresponding lifted condition — honest emptiness either way; the
-  claim does NOT say every kill site literally inspects
-  `Rule.conditions`.
+ refuted under EVERY environment. The Rust detector judges constants
+ only (`fold.rs`, rules (a)-(f)); its completeness is not claimed.
+ The "every verdict is an instance" claim is read through the
+ FILTERS-TO-CONDITIONS mapping: rules (b)/(d) kill on
+ occurrence-FILTER contradictions (the Eq-pin pass of
+ `ir/normalize/fold.rs::fold_occurrence`), and an
+ occurrence's Eq filter is this model's equality-condition leaf (the
+ shape `groundCondition` writes), so an Eq-conflict kill refutes the
+ corresponding lifted condition — honest emptiness either way; the
+ claim does NOT say every kill site literally inspects
+ `Rule.conditions`.
 * **The range-summary replacement is PROVED at the word level**
-  (`fold.rs`, job 1 — `RangeSummary::narrow` via `fold.rs::narrow`,
-  the splice via `fold.rs::emit`): one slot's conjunction of constant
-  order filters means exactly the folded inclusive `[lo, hi]`
-  summary's at-most-two emitted bounds — `range_summary_replacement`
-  below, over the bounded word domain `[0, max]` (the strict-bound
-  domain edges land as `mark_empty`, case for case) — and an Eq pin
-  inside the summary implies every constituent
-  (`range_pin_subsumes`, the `pinned` arm that drops them all; rule
-  (c) is exactly the in-range premise). **The TRANSPORT is
-  DISCHARGED** (2026-07-16, Item 4c): `filter_fold_transport`
-  composes (1) the value↔word list semantics through the two
-  order-preserving encodings (`encode_u64_order_embedding` /
-  `encode_i64_order_embedding`, PRD 02), (2) the in-place splice
-  discipline (`emit` lands the bounds at the first constituent's
-  position, later constituents vanish), and (3) the per-domain
-  u64/i64 transfer — with `emit`'s two arms, the at-most-two-bounds
-  replacement and the Eq-pinned all-drop, premise for premise. What
-  stays recorded: the untouched filter kinds (`PointIn`, Allen, sets,
-  `Ne`, params) ride the splice as OPAQUE predicates — sound because
-  the splice never moves or rewrites them, so the transport never
-  inspects their semantics; the pass's per-field replacement CHOICE
-  enters as a premise shaped exactly like `emit`'s decision (pinned →
-  drop-all, else the folded summary's bounds), not as recomputed Lean
-  code; and the raise-order half of the filter-order law
-  (`image/view.rs`, the measure guard) is mechanism below the
-  conjunction reading — order filters never raise, so landing them at
-  the first constituent's position unlocks nothing. The engine's
-  test-only fold-preservation differential
-  (`statically_empty.rs::folded_and_unfolded_executions_agree_on_random_single_slot_filters`)
-  stays as the plumbing's empirical arm.
+ (`fold.rs`, job 1 — `RangeSummary::narrow` via `fold.rs::narrow`,
+ the splice via `fold.rs::emit`): one slot's conjunction of constant
+ order filters means exactly the folded inclusive `[lo, hi]`
+ summary's at-most-two emitted bounds — `range_summary_replacement`
+ below, over the bounded word domain `[0, max]` (the strict-bound
+ domain edges land as `mark_empty`, case for case) — and an Eq pin
+ inside the summary implies every constituent
+ (`range_pin_subsumes`, the `pinned` arm that drops them all; rule
+ (c) is exactly the in-range premise). **The TRANSPORT is
+ DISCHARGED** (2026-07-16, Item 4c): `filter_fold_transport`
+ composes (1) the value↔word list semantics through the two
+ order-preserving encodings (`encode_u64_order_embedding` /
+ `encode_i64_order_embedding`, (2) the in-place splice
+ discipline (`emit` lands the bounds at the first constituent's
+ position, later constituents vanish), and (3) the per-domain
+ u64/i64 transfer — with `emit`'s two arms, the at-most-two-bounds
+ replacement and the Eq-pinned all-drop, premise for premise. What
+ stays recorded: the untouched filter kinds (`PointIn`, Allen, sets,
+ `Ne`, params) ride the splice as OPAQUE predicates — sound because
+ the splice never moves or rewrites them, so the transport never
+ inspects their semantics; the pass's per-field replacement CHOICE
+ enters as a premise shaped exactly like `emit`'s decision (pinned →
+ drop-all, else the folded summary's bounds), not as recomputed Lean
+ code; and the raise-order half of the filter-order law
+ (`image/view.rs`, the measure guard) is mechanism below the
+ conjunction reading — order filters never raise, so landing them at
+ the first constituent's position unlocks nothing. The engine's
+ test-only fold-preservation differential
+ (`statically_empty.rs::folded_and_unfolded_executions_agree_on_random_single_slot_filters`)
+ stays as the plumbing's empirical arm.
 -/
 
 namespace Bumbledb.Query
@@ -546,7 +546,7 @@ theorem grounding_preserves_answers {T : Theory} (C : Classify)
         intro f
         simpa [edbEnv, sourceDen, hb] using hax R ext hclosed f
     split
-    · -- no survivor: the rule denotes nothing on any agreeing instance
+    · 
       rename_i heq2
       simp only [groundAnswers]
       constructor
@@ -559,7 +559,7 @@ theorem grounding_preserves_answers {T : Theory} (C : Classify)
           List.mem_filter.mpr ⟨(hag f).mp hf, litSat_of_matches hm⟩
         rw [heq2] at this
         cases this
-    · -- survivors: the folded condition is the atom, exactly
+    · 
       rename_i f₀ fs heq2
       simp only [groundAnswers]
       have hcond : ∀ σ : Assignment,
@@ -634,33 +634,33 @@ structure ElimStep (r r' : Rule) (a b : Atom) (X Y : List FieldId)
   /-- The pairing source survives the drop (`a_idx ≠ b_idx`). -/
   source : a ∈ r'.atoms
   /-- Condition 1 — every X→Y position pair is join-covered by one
-  shared variable (`join_covers_full_key`, the covering half). -/
+ shared variable (`join_covers_full_key`, the covering half). -/
   join_covers : ∀ p, p ∈ X.zip Y →
     ∃ v, (p.1, Term.var v) ∈ a.bindings ∧ (p.2, Term.var v) ∈ b.bindings
   /-- Condition 2 — the source occurrence carries φ literally
-  (`source_carries_phi`): each φ binding's field is pinned by the
-  atom to a MEMBER of the binding's literal set — a literal pin is at
-  least as strong as the disjunction it discharges (singleton sets
-  are the old exact-literal containment), never inference. -/
+ (`source_carries_phi`): each φ binding's field is pinned by the
+ atom to a MEMBER of the binding's literal set — a literal pin is at
+ least as strong as the disjunction it discharges (singleton sets
+ are the old exact-literal containment), never inference. -/
   carries_phi : ∀ s, s ∈ φ.bindings →
     ∃ c, c ∈ s.2 ∧ (s.1, Term.lit c) ∈ a.bindings
   /-- Condition 2 — the target carries only variables and
-  ψ-SINGLETON literals (`selections_within_psi`: any other filter
-  shape fails the containment; a non-singleton ψ binding pins no
-  single witness value, so the shape refuses it). -/
+ ψ-SINGLETON literals (`selections_within_psi`: any other filter
+ shape fails the containment; a non-singleton ψ binding pins no
+ single witness value, so the shape refuses it). -/
   target_bindings : ∀ bd, bd ∈ b.bindings →
     (∃ v, bd.2 = Term.var v) ∨
       (∃ c, bd.2 = Term.lit c ∧ (bd.1, [c]) ∈ ψ.bindings)
   /-- The one-field-per-variable discipline: repeated variables lower
-  to `FieldsCompare` filters (pass 2 of
-  `ir/normalize/normalize.rs::lower_atom`), which condition
-  2 refuses — so an eliminable occurrence binds each variable once. -/
+ to `FieldsCompare` filters (pass 2 of
+ `ir/normalize/normalize.rs::lower_atom`), which condition
+ 2 refuses — so an eliminable occurrence binds each variable once. -/
   var_functional : ∀ i j v, (i, Term.var v) ∈ b.bindings →
     (j, Term.var v) ∈ b.bindings → i = j
   /-- Condition 3 — every variable of `b` joins through a projection
-  pair or is dead in the surviving rule (`variables_join_or_dead` +
-  `var_is_dead`: dead = read by no find, atom, negated atom, or
-  condition that survives). -/
+ pair or is dead in the surviving rule (`variables_join_or_dead` +
+ `var_is_dead`: dead = read by no find, atom, negated atom, or
+ condition that survives). -/
   join_or_dead : ∀ i v, (i, Term.var v) ∈ b.bindings →
     (∃ p, p ∈ X.zip Y ∧ p.2 = i ∧ (p.1, Term.var v) ∈ a.bindings) ∨
       v ∉ r'.allVars
@@ -745,20 +745,20 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
     · exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ h))
   intro t
   constructor
-  · -- the dropped rule's answers are the original's
+  · 
     intro ht
     obtain ⟨σ, ⟨hatoms, hneg, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
-    -- the source fact and its containment witness
+
     obtain ⟨fa, hfa, hma⟩ := hatoms a hs.source
     have hφ : φ.satisfies fa := by
       intro s hsmem
       obtain ⟨c, hcmem, hca⟩ := hs.carries_phi s hsmem
       exact (hma _ hca) ▸ hcmem
     obtain ⟨g, hg, hψ, hgproj⟩ := hcont fa hfa hφ
-    -- the extension: live variables keep σ, dead ones read the witness
+
     have hlive : ∀ v, v ∈ r'.allVars → σ v = elimAssign σ r' b g v :=
       fun v hv => (elimAssign_live hv).symm
-    -- the witness matches the dropped atom under the extension
+
     have hmb : Matches g b (elimAssign σ r' b g) ρ := by
       intro bd hbd
       rcases hs.target_bindings bd hbd with ⟨v, hv⟩ | ⟨c, hc, hcψ⟩
@@ -768,7 +768,7 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
           rw [← hv]
           exact hbd
         rcases hs.join_or_dead bd.1 v hvb with ⟨p, hp, hpi, hpa⟩ | hdead
-        · -- the join pair: σ' v = σ v = fa p.1 = g p.2 = g bd.1
+        · 
           have hvlive : v ∈ r'.allVars := by
             refine mem_allVars.mpr (Or.inr (Or.inl ⟨a, hs.source, ?_⟩))
             exact List.mem_flatMap.mpr
@@ -781,12 +781,12 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
       · rw [hc]
         show c = g bd.1
         exact (Selection.satisfies_singleton hψ hcψ).symm
-    -- the original rule derives under the extension
+
     refine mem_ruleAnswers.mpr ⟨elimAssign σ r' b g, ⟨?_, ?_, ?_⟩, ?_⟩
     · intro x hx
       rw [hr] at hx
       rcases List.mem_append.mp hx with hx' | hx'
-      · -- a survivor from `pre`
+      · 
         have hxr' : x ∈ r'.atoms := by
           rw [hr']
           exact List.mem_append.mpr (Or.inl hx')
@@ -795,7 +795,7 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
         exact hlive v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, hxr', hv⟩)))
       · rcases List.mem_cons.mp hx' with rfl | hx''
         · exact ⟨g, hg, hmb⟩
-        · -- a survivor from `post`
+        · 
           have hxr' : x ∈ r'.atoms := by
             rw [hr']
             exact List.mem_append.mpr (Or.inr hx'')
@@ -814,11 +814,11 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
         fun v hv => ?_).mp (hconds c hc')
       exact hlive v
         (mem_allVars.mpr (Or.inr (Or.inr (Or.inr ⟨c, hc', hv⟩))))
-    · -- the projected tuple is unchanged: finds are live
+    · 
       rw [← hs.finds_eq]
       refine List.map_congr_left fun v hv => ?_
       exact hlive v (mem_allVars.mpr (Or.inl hv))
-  · -- dropping constraints only grows the derivation set
+  · 
     intro ht
     obtain ⟨σ, ⟨hatoms, hneg, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
     refine mem_ruleAnswers.mpr ⟨σ, ⟨fun x hx => hatoms x (hsub x hx),
@@ -884,16 +884,16 @@ structure ChainedElimStep (r r' : Rule) (b c : Atom)
   negated_eq : r'.negated = r.negated
   conditions_eq : r'.conditions = r.conditions
   /-- Condition 1 — every X→Y position pair is join-covered by one
-  variable shared between the discharged source and the target. -/
+ variable shared between the discharged source and the target. -/
   join_covers : ∀ p, p ∈ X.zip Y →
     ∃ v, (p.1, Term.var v) ∈ b.bindings ∧ (p.2, Term.var v) ∈ c.bindings
   /-- Condition 2 — the discharged source carries φ literally: its
-  filter list is a subset of the ψ its witness satisfies, so a φ
-  binding pinned there transfers to the witness. -/
+ filter list is a subset of the ψ its witness satisfies, so a φ
+ binding pinned there transfers to the witness. -/
   carries_phi : ∀ s, s ∈ φ.bindings →
     ∃ w, w ∈ s.2 ∧ (s.1, Term.lit w) ∈ b.bindings
   /-- Condition 2 — the target carries only variables and ψ-singleton
-  literals (`selections_within_psi`). -/
+ literals (`selections_within_psi`). -/
   target_bindings : ∀ bd, bd ∈ c.bindings →
     (∃ v, bd.2 = Term.var v) ∨
       (∃ w, bd.2 = Term.lit w ∧ (bd.1, [w]) ∈ ψ.bindings)
@@ -901,15 +901,15 @@ structure ChainedElimStep (r r' : Rule) (b c : Atom)
   var_functional : ∀ i j v, (i, Term.var v) ∈ c.bindings →
     (j, Term.var v) ∈ c.bindings → i = j
   /-- Condition 3 — every variable of `c` joins through a projection
-  pair to the discharged source, or is dead in the surviving rule
-  (deadness judged with the source already discharged, exactly
-  `var_is_dead`'s skip of discharged occurrences). -/
+ pair to the discharged source, or is dead in the surviving rule
+ (deadness judged with the source already discharged, exactly
+ `var_is_dead`'s skip of discharged occurrences). -/
   join_or_dead : ∀ i v, (i, Term.var v) ∈ c.bindings →
     (∃ p, p ∈ X.zip Y ∧ p.2 = i ∧ (p.1, Term.var v) ∈ b.bindings) ∨
       v ∉ r'.allVars
   /-- Condition 1's second half — `shared_vars_pair_positions_only`:
-  every variable shared between source and target pairs an X position
-  with its corresponding Y position. -/
+ every variable shared between source and target pairs an X position
+ with its corresponding Y position. -/
   shared_join : ∀ i j v, (i, Term.var v) ∈ b.bindings →
     (j, Term.var v) ∈ c.bindings →
     ∃ p, p ∈ X.zip Y ∧ p.1 = i ∧ p.2 = j
@@ -939,10 +939,7 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
     (hcont₁ : Containment (edbEnv I a.source) φ₁ X₁ (edbEnv I b.source) ψ₁ Y₁)
     (hcont₂ : Containment (edbEnv I b.source) φ₂ X₂ (edbEnv I c.source) ψ₂ Y₂) :
     ∀ t, t ∈ ruleAnswers C r₂ (edbEnv I) ρ ↔ t ∈ ruleAnswers C r (edbEnv I) ρ := by
-  -- The replay rules are built inline from `r₂`'s own items so every
-  -- shared field agrees definitionally: drop `c` first (source `b`
-  -- live), then `b` (source `a`, the surviving root).
-  -- membership bookkeeping for the two recorded splits
+
   obtain ⟨pre₁, post₁, hr₁, hr₁'⟩ := hs₁.atoms_split
   obtain ⟨pre₂, post₂, hr₂, hr₂'⟩ := hs₂.atoms_split
   have hmem_r : ∀ x : Atom, x ∈ r.atoms ↔ x = b ∨ x ∈ r₁.atoms := by
@@ -971,13 +968,13 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
       · exact Or.inr (Or.inl rfl)
       · exact Or.inl h
       · exact Or.inr (Or.inr h)
-  -- the shared item equalities, chained through both steps
+
   have hfinds₂ : r₂.finds = r.finds := hs₂.finds_eq.trans hs₁.finds_eq
   have hneg₂ : r₂.negated = r.negated :=
     hs₂.negated_eq.trans hs₁.negated_eq
   have hconds₂ : r₂.conditions = r.conditions :=
     hs₂.conditions_eq.trans hs₁.conditions_eq
-  -- step A: eliminate `c` against the still-live `b`
+
   have stepA : ElimStep
       ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩
       ⟨r₂.finds, b :: r₂.atoms, r₂.negated, r₂.conditions⟩
@@ -996,19 +993,18 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
         rcases hs₂.join_or_dead i v hv with hjoin | hdead
         · exact Or.inl hjoin
         · by_cases hvb : ∃ j, (j, Term.var v) ∈ b.bindings
-          · -- shared with the source: `shared_join` classifies it
+          · 
             obtain ⟨j, hj⟩ := hvb
             obtain ⟨p, hp, hp1, hp2⟩ := hs₂.shared_join j i v hj hv
             exact Or.inl ⟨p, hp, hp2, hp1 ▸ hj⟩
-          · -- read by nothing live and not by `b`: dead in `rB` too
+          · 
             refine Or.inr fun hmem => ?_
             rcases mem_allVars.mp hmem with h1 | ⟨x, hx, hvx⟩ |
               ⟨x, hx, hvx⟩ | ⟨t', ht', hvt⟩
             · exact hdead (mem_allVars.mpr (Or.inl h1))
             · rcases List.mem_cons.mp hx with rfl | hx'
-              · -- the `b` occurrence: its bindings are vars and
-                -- literals (step 1's condition 2), so `v` would be a
-                -- var binding of `b` — refused by `hvb`
+              · 
+
                 obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hvx
                 rcases hs₁.target_bindings bd hbd with ⟨v', hv'⟩ |
                   ⟨w, hw, -⟩
@@ -1026,7 +1022,7 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
                 (Or.inr (Or.inr (Or.inl ⟨x, hx, hvx⟩))))
             · exact hdead (mem_allVars.mpr
                 (Or.inr (Or.inr (Or.inr ⟨t', ht', hvt⟩)))) }
-  -- step B: eliminate `b` against the surviving root `a`
+
   have stepB : ElimStep
       ⟨r₂.finds, b :: r₂.atoms, r₂.negated, r₂.conditions⟩
       r₂ a b X₁ Y₁ φ₁ ψ₁ :=
@@ -1043,7 +1039,7 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
         intro i v hv
         rcases hs₁.join_or_dead i v hv with hjoin | hdead
         · exact Or.inl hjoin
-        · -- dead in `r₁` (more atoms) ⇒ dead in `r₂`
+        · 
           refine Or.inr fun hmem => ?_
           rcases mem_allVars.mp hmem with h1 | ⟨x, hx, hvx⟩ |
             ⟨x, hx, hvx⟩ | ⟨t', ht', hvt⟩
@@ -1055,7 +1051,7 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
               ⟨x, hs₂.negated_eq ▸ hx, hvx⟩))))
           · exact hdead (mem_allVars.mpr (Or.inr (Or.inr (Or.inr
               ⟨t', hs₂.conditions_eq ▸ ht', hvt⟩)))) }
-  -- the chain: r₂ ↔ (b live) ↔ (c and b live) ↔ r
+
   intro t
   have hAr : t ∈ ruleAnswers C
       ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩ (edbEnv I) ρ ↔
@@ -1108,7 +1104,7 @@ structure SubsumeWitness (k d : Rule) : Prop where
   /-- Identical head projection (`keeper_finds == candidate_finds`). -/
   finds_eq : k.finds = d.finds
   /-- Every keeper occurrence pairs with a candidate occurrence of the
-  same relation carrying AT LEAST the keeper's bindings. -/
+ same relation carrying AT LEAST the keeper's bindings. -/
   atoms_within : ∀ a : Atom, a ∈ k.atoms → ∃ a', a' ∈ d.atoms ∧
     a'.source = a.source ∧ ∀ bd, bd ∈ a.bindings → bd ∈ a'.bindings
   /-- Every keeper negated atom present verbatim in the candidate. -/
@@ -1244,7 +1240,7 @@ theorem pinAt_isSome {ρ : ParamEnv} {t : Term} {c : Value} :
       | some c' => rfl
       | none =>
         rcases List.mem_cons.mp hmem with heq | hmem'
-        · -- the head IS the pinned binding: its pin resolves
+        · 
           have : bd.2 = t := (congrArg Prod.snd heq).symm
           rw [this, hpv] at hpv'
           cases hpv'
@@ -1282,12 +1278,12 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
   /-- Positive only — no anti-joins on the fast path. -/
   negated : r.negated = []
   /-- The key resolves against a declared functionality statement
-  (`key_probe_candidate`; fresh auto-keys included). Interior
-  key-probe is unrepresentable — statements name stored relations. -/
+ (`key_probe_candidate`; fresh auto-keys included). Interior
+ key-probe is unrepresentable — statements name stored relations. -/
   declared : ∃ R, a.source = .edb R ∧
     Statement.functionality R K ∈ T.statements
   /-- Every key field is bound by value (`value_of` finds an `Eq`
-  constant for each). -/
+ constant for each). -/
   covered : ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pinned
 
 /-- The point-probe evaluation: ONE determinant get — the first (and,
@@ -1371,7 +1367,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     ∀ t, t ∈ keyProbeEval C facts ρ r a K ↔ t ∈ ruleAnswers C r F ρ := by
   intro t
   constructor
-  · -- the probe's answer derives
+  · 
     intro ht
     unfold keyProbeEval at ht
     cases hfind : facts.find? (probeHitB ρ a K) with
@@ -1407,7 +1403,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
           · intro c hc
             exact (condHoldsB_iff C ρ (totalize σp) c).mp
               (List.all_eq_true.mp hcnd c hc)
-  · -- every deriving answer is the probe's
+  · 
     intro ht
     obtain ⟨σ, ⟨hatoms, -, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
     obtain ⟨f, hfI, hm⟩ := hatoms a (by
@@ -1415,7 +1411,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
       exact List.mem_singleton.mpr rfl)
     have hf : f ∈ facts := (hlist f).mpr hfI
     have hhit := probeHit_of_matches hshape.covered hm
-    -- the one get finds exactly the deriving fact
+
     cases hfind : facts.find? (probeHitB ρ a K) with
     | none => exact absurd hhit (List.find?_eq_none.mp hfind f hf)
     | some g =>
@@ -1426,14 +1422,12 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
         functionality_unique_witness hkey (f.project K) f hfI rfl g
           hgF (probeHit_project hghit hhit)
       subst hgf
-      -- the decode-and-check step succeeds and agrees with σ
+
       obtain ⟨σp, hbind, hagp, -⟩ :=
         bindAtom_complete a.bindings []
           (fun v x hx => by cases hx) (fun bd hbd => hm bd hbd) hnm
       obtain ⟨-, hpins⟩ := bindAtom_sound a.bindings [] σp hbind
-      -- `Safe` pins every rule variable to the one atom, so the
-      -- probe's totalized state agrees with σ everywhere the rule
-      -- reads
+
       have hagree : ∀ v, v ∈ r.allVars → totalize σp v = σ v := by
         intro v hv
         obtain ⟨x, hx, hbound⟩ := mem_positiveVars.mp (hsafe v hv)
@@ -1444,7 +1438,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
         rw [Term.mem_bindingVars.mp hvbd] at hpin
         exact totalize_agrees hagp
           (by rw [show lookupVar σp v = some (g bd.1) from hpin]; rfl)
-      -- the residual conditions transfer from σ to the hit
+
       have hcnd : r.conditions.all (condHoldsB C ρ (totalize σp))
           = true :=
         List.all_eq_true.mpr fun c hc =>
@@ -1482,7 +1476,7 @@ implies exact-tuple functionality, because two facts sharing the
 scalar prefix with IDENTICAL intervals overlap pointwise
 (`interval_nonempty` supplies the shared point), which `PointwiseKey`
 forbids of distinct facts. The typing premise `hpts` — every stored
-fact denotes at least one point at the split position — is PRD 03's
+fact denotes at least one point at the split position — is 
 arity-respecting-facts narrowing made a named hypothesis, discharged
 fieldwise by `Value.points_nonempty` on interval-typed columns. This
 closes `keyprobe_equiv_join`'s `hkey` for interval-final pointwise
@@ -1503,19 +1497,19 @@ theorem keyprobe_pointwise_key_spent {T : Theory} {I : Instance}
   rw [hopen] at hj
   obtain ⟨hfil, hS⟩ := Header.intervalSplit_some hsplit
   intro f g hf hg hproj
-  -- the interval field is a member of the key's field set
+
   have hiK : i ∈ K := by
     have hmem : i ∈ K.filter (fun j => T.header.isInterval R j) := by
       rw [hfil]
       exact List.mem_singleton.mpr rfl
     exact (List.mem_filter.mp hmem).1
-  -- key-tuple agreement restricts to the scalar prefix…
+
   have hSproj : f.project S = g.project S := by
     refine (Fact.project_eq_iff f g S).mpr fun j hj' => ?_
     refine (Fact.project_eq_iff f g K).mp hproj j ?_
     rw [hS] at hj'
     exact (List.mem_filter.mp hj').1
-  -- …and pins the interval position exactly
+
   have hfg : f i = g i := (Fact.project_eq_iff f g K).mp hproj i hiK
   refine Classical.byContradiction fun hne => ?_
   obtain ⟨p, hp⟩ := hpts f hf
@@ -1561,13 +1555,13 @@ instance-independent refutation — the plan itself is
 inductive EmptyAt (C : Classify) (ρ : ParamEnv) (r : Rule)
     (I : Instance) : Prop where
   /-- The per-instance selection miss: one positive atom matches no
-  fact of this instance under any assignment — this execution's `Eq`
-  short-circuit, sound on positive occurrences only (a negated miss
-  just rejects nothing). -/
+ fact of this instance under any assignment — this execution's `Eq`
+ short-circuit, sound on positive occurrences only (a negated miss
+ just rejects nothing). -/
   | selectionMiss (a : Atom) (ha : a ∈ r.atoms)
       (hmiss : ∀ f, f ∈ edbEnv I a.source → ∀ σ, ¬ Matches f a σ ρ)
   /-- The instance-independent refutation: the fold's verdict, which
-  never read `I`. -/
+ never read `I`. -/
   | refuted (h : StaticallyEmpty C r)
 
 /-- Both constructors empty this execution's answers — the shared
@@ -1606,7 +1600,7 @@ constituents on the bounded domain, so swapping one for the other
 never changes which words pass. The word domain is `[0, max]` for an
 arbitrary ceiling (`u64::MAX` at the engine's width — the arithmetic
 is width-generic, and both integer encodings are order-preserving
-maps onto it, PRD 02). The transport to `FilterPredicate` lists is
+maps onto it, The transport to `FilterPredicate` lists is
 Item 4c, the section after this one (`filter_fold_transport`). -/
 
 /-- One constant order bound over encoded words — exactly the shape
@@ -1767,7 +1761,7 @@ the two order-embedding encodings (`valueBounds_encode`,
 (`fold.rs::emit`'s loop: the folded bounds land at the FIRST
 constituent's position and every later constituent vanishes —
 `splice`, `splice_replaces`); (3) the per-domain u64/i64 encoding
-transfer (`elemEncode_lt_iff` / `elemEncode_le_iff`, spending PRD 02's
+transfer (`elemEncode_lt_iff` / `elemEncode_le_iff`, spending 
 embeddings). `filter_fold_transport` composes all three: on every
 typed row, the spliced word-level filter list accepts exactly what the
 value-level list accepted — `emit`'s two arms, the at-most-two-bounds
@@ -1807,7 +1801,7 @@ instance elemDomainLE : (e : Elem) → LE (elemDomain e)
   | .u64 => inferInstanceAs (LE U64)
   | .i64 => inferInstanceAs (LE I64)
 
-/-- The slot's storage encoding per element tag (PRD 02's two
+/-- The slot's storage encoding per element tag ( two
 embeddings, dispatched). -/
 def elemEncode : (e : Elem) → elemDomain e → Word
   | .u64 => encodeU64
@@ -2294,12 +2288,12 @@ containment at execution. -/
 inductive RewriteStep (T : Theory) (C : Classify) :
     List Rule → List Rule → Prop where
   /-- The grounding fold: one rule rewritten
-  (`Role::Folded`, the membership attachment). -/
+ (`Role::Folded`, the membership attachment). -/
   | ground {pre post : List Rule} {r r' : Rule}
       (h : groundRewrite T r = .inl r') :
       RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The grounding refutation: the dead rule deleted at prepare
-  (`folded to ∅`). -/
+ (`folded to ∅`). -/
   | groundDead {pre post : List Rule} {r : Rule}
       {g : Grounded} (h : groundRewrite T r = .inr g) :
       RewriteStep T C (pre ++ r :: post) (pre ++ post)
@@ -2313,9 +2307,9 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (htgt : T.header.intervalSplit Rb Y = none) :
       RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The chained containment elimination — the discharged-source arm
-  (`chain_reaches`, the support forest): the support pair and the
-  elimination it licenses land as ONE composed step, the
-  acyclic-support premise (`hroot`) named. -/
+ (`chain_reaches`, the support forest): the support pair and the
+ elimination it licenses land as ONE composed step, the
+ acyclic-support premise (`hroot`) named. -/
   | eliminateChained {pre post : List Rule} {r r₁ r₂ : Rule}
       {a b c : Atom} {Ra Rb Rc : RelId} {X₁ Y₁ X₂ Y₂ : List FieldId}
       {φ₁ ψ₁ φ₂ ψ₂ : Selection}
@@ -2335,13 +2329,13 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (h : StaticallyEmpty C r) :
       RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
-  `api/prepared/build.rs::ground_main`): a rule the witness proves
-  covered by a KEPT sibling is deleted from the rule list — the sixth
-  denotation-affecting rewrite, in the chain. The keeper's membership
-  (`hk`) is the sweep's own discipline made a premise: a deleted rule
-  neither subsumes nor re-enters, so the keeper of every recorded
-  `Subsumption` survives to the output list. Purely syntactic — no
-  theory premise: the containment holds on EVERY instance. -/
+ `api/prepared/build.rs::ground_main`): a rule the witness proves
+ covered by a KEPT sibling is deleted from the rule list — the sixth
+ denotation-affecting rewrite, in the chain. The keeper's membership
+ (`hk`) is the sweep's own discipline made a premise: a deleted rule
+ neither subsumes nor re-enters, so the keeper of every recorded
+ `Subsumption` survives to the output list. Purely syntactic — no
+ theory premise: the containment holds on EVERY instance. -/
   | subsume {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
       RewriteStep T C (pre ++ d :: post) (pre ++ post)
