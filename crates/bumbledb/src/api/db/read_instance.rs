@@ -20,7 +20,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     /// # Panics
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
