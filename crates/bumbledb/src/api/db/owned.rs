@@ -85,7 +85,6 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         crate::api::prepared::prepare_on(
             &self.core.identity,
@@ -97,7 +96,6 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     pub fn execute(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -114,13 +112,11 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         self.scan_dyn(rel)
     }
 
     /// # Errors
-
     pub fn scan_facts<'a, F: Fact<'a, Schema = S>>(
         &'a self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
@@ -128,19 +124,16 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.contains_fact(fact)
     }
 
     /// # Errors
-
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.contains_values(rel, values)
     }
 
     /// # Errors
-
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the public get takes Key by value to match ReadInstance::get"
@@ -150,7 +143,6 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     pub fn get_dyn(
         &self,
         relation: RelationId,
@@ -166,7 +158,6 @@ impl<S> OwnedInstance<S> {
     /// # Errors
 
     /// # Panics
-
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
             return Err(crate::error::DynIdError::UnknownRelation { relation }.into());
