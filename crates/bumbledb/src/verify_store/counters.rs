@@ -45,7 +45,6 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                         }
                     }
                     StatKind::RowIdHighWater => {
-
                         if s.schema.fresh_mint_field(rel).is_some() {
                             s.malformed(key, "S high-water on a fresh-keyed relation");
                         } else if let Some(tally) = s.tallies.get(&rel)
