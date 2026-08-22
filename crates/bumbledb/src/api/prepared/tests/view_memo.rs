@@ -1,10 +1,8 @@
-#![cfg(feature = "trace")] // every test here reads obs captures
+#![cfg(feature = "trace")] 
 
 use super::*;
 use crate::ir::Rec;
 
-/// The view-memo LRU (docs/architecture/40-execution.md): four rotating residual bindings
-/// all memoize; a fifth evicts exactly the least recently used.
 #[test]
 fn residual_bindings_memoize_under_lru() {
     use crate::obs;
@@ -64,38 +62,31 @@ fn residual_bindings_memoize_under_lru() {
         expected
     };
 
-    // First cycle: every window builds once (differentially checked).
     for floor in windows {
         let (builds, _, rows) = run(floor);
         assert_eq!(builds, 1, "first sight of window {floor} builds");
         assert_eq!(rows, expected(floor));
     }
-    // Second cycle: every window hits — active or parked.
+
     for floor in windows {
         let (builds, hits, rows) = run(floor);
         assert_eq!(builds, 0, "window {floor} memoized");
         assert_eq!(hits, 1);
         assert_eq!(rows, expected(floor));
     }
-    // A fifth window evicts the least recently used (floor -100).
+
     let (builds, _, rows) = run(45);
     assert_eq!(builds, 1, "the fifth binding builds");
     assert_eq!(rows, expected(45));
-    // The most recent of the old four still hits...
+
     let (builds, hits, _) = run(35);
     assert_eq!((builds, hits), (0, 1), "most recent old binding kept");
-    // ...and the least recent was the eviction victim.
+
     let (builds, _, rows) = run(-100);
     assert_eq!(builds, 1, "least recent binding was evicted");
     assert_eq!(rows, expected(-100));
 }
 
-/// The view memo under the rule loop (docs/architecture/40-execution.md
-/// § the rule loop): occurrences of one relation in different rules
-/// share the image Arc by construction — one `IMAGE_BUILD` however many
-/// rules read the relation — and each occurrence's filtered view
-/// memoizes per (generation, resolved filters), so a repeat execution
-/// of the whole query rebuilds nothing in any rule.
 #[test]
 fn rules_share_the_image_and_memoize_every_rules_views() {
     use crate::ir::HeadTerm;
@@ -108,9 +99,6 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Two rules over the SAME relation, each with a residual filter so
-    // real filtered views exist (amount >= literal — resolved filters
-    // coincide across executions).
     let rule = |account: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -135,8 +123,6 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
-    // Cold: the relation's image builds ONCE (the cache shares the Arc
-    // across both rules' occurrences); each occurrence builds its view.
     obs::start_capture();
     let out = prepared
         .execute_collect(&txn, &cache, &[] as &[BindValue])
@@ -158,7 +144,6 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
         "each rule's occurrence builds its filtered view once"
     );
 
-    // Warm: every rule's occurrence hits its memo — no image, no view.
     obs::start_capture();
     prepared
         .execute_collect(&txn, &cache, &[] as &[BindValue])
@@ -174,13 +159,11 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
         2,
         "both rules' views memoized"
     );
-    // The RULE spans mark the loop under the execute span.
+
     assert!(warm_names.contains(&obs::names::RULE[0]), "{warm_names:?}");
     assert!(warm_names.contains(&obs::names::RULE[1]), "{warm_names:?}");
 }
 
-/// A generation bump invalidates every memoized binding, and the
-/// rebuilt view reflects the new fact.
 #[test]
 fn a_generation_bump_invalidates_the_memo() {
     use crate::obs;
@@ -217,7 +200,6 @@ fn a_generation_bump_invalidates_the_memo() {
     );
 }
 
-/// The read-path capture contract (feature `trace`).
 #[test]
 fn read_path_traces_phases_memo_hits_and_key_probe() {
     use crate::obs;
@@ -233,7 +215,6 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
         events.iter().map(|e| e.point()).collect()
     };
 
-    // Prepare: the phase spans, exactly.
     obs::start_capture();
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let events = obs::finish_capture();
@@ -250,7 +231,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     ] {
         assert!(got.contains(&expected), "missing {expected} in {got:?}");
     }
-    // Containment: every phase inside the outer prepare span.
+
     let outer = events
         .iter()
         .find(|e| e.point() == obs::names::PREPARE)
@@ -260,7 +241,6 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
         assert!(e.start_ns() + e.dur_ns() <= outer.start_ns() + outer.dur_ns());
     }
 
-    // First execute: builds views, no memo hits, row count in a0.
     obs::start_capture();
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
@@ -279,7 +259,6 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
         .expect("execute span");
     assert_eq!(exec.a0(), 2, "execute a0 carries the row count");
 
-    // Second execute, same snapshot + params: memo hits only.
     obs::start_capture();
     prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
@@ -293,7 +272,6 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(!second_names.contains(&obs::names::VIEW_BUILD));
     assert!(!second_names.contains(&obs::names::IMAGE_BUILD));
 
-    // A key-probe-shaped query: key_probe, never join.
     let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -324,7 +302,6 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
         .expect("probe");
     assert_eq!(probe.a0(), 1, "hit flag");
 
-    // Nothing records without capture.
     prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("execute");
@@ -332,18 +309,12 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(obs::finish_capture().is_empty());
 }
 
-/// A closed relation's view binds at the sentinel generation
-/// (`view_memo::GENERATION_CLOSED`): bind → commit → bind rebuilds
-/// nothing — the image slot is never evicted, the memo binding is never
-/// reaped (the sentinel is maximal), and the second execution is a pure
-/// memo hit across the storage-generation advance.
 #[test]
 fn closed_relation_views_stay_warm_across_generations() {
     use crate::obs;
 
     let dir = TempDir::new("prepared-closed-memo");
-    // R(x u64 fresh) drives generations; the closed Currency lives
-    // outside them.
+
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -383,7 +354,6 @@ fn closed_relation_views_stay_warm_across_generations() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(id, units) :- Currency(id, units) — one occurrence, no params.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -413,15 +383,10 @@ fn closed_relation_views_stay_warm_across_generations() {
         )
     };
 
-    // First execution: one image synthesis, one view build, both axioms.
     let (builds, _, image_builds, rows) = run(&txn);
     assert_eq!((builds, image_builds, rows), (1, 1, 2));
     drop(txn);
 
-    // A state-changing commit advances the storage generation; evict
-    // everything — the harshest commit hook (the lineage-disabled twin
-    // of the `advance` `Db` wires), which still cannot touch a closed
-    // slot.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let mut bytes = Vec::new();
@@ -436,20 +401,11 @@ fn closed_relation_views_stay_warm_across_generations() {
     assert!(report.changed());
     cache.advance(report.generation(), &[RelationId(0)], &[]);
 
-    // Second execution at the new generation: zero rebuilds — the memo
-    // binding hits at the sentinel and the image Arc never moved.
     let txn = env.read_txn().expect("txn");
     let (builds, hits, image_builds, rows) = run(&txn);
     assert_eq!((builds, hits, image_builds, rows), (0, 1, 0, 2));
 }
 
-/// Lane I2 — the planner and its selectivity ladder, formerly dark under
-/// the single `PLAN_DP`/`STATS` spans: the DP interior records one
-/// densify span and one table-fill span carrying the counted candidate
-/// work (never a span per candidate), and every planner row-count read
-/// and distinct-ladder resolution surfaces as a point event. Presence
-/// AND containment: the DP spans nest inside `PLAN_DP`, the ladder events
-/// inside `STATS`, all inside the outer `PREPARE`.
 #[test]
 fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     use crate::obs;
@@ -457,7 +413,7 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let dir = TempDir::new("prepared-trace-planner");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Four rows, three under account 7 — the row count the reads pin.
+
     insert_postings(
         &env,
         &schema,
@@ -490,9 +446,6 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
         );
     };
 
-    // The DP interior, under PLAN_DP. A single-atom query has one
-    // participating occurrence and a trivial DP — no popcount-≥2
-    // subproblem, so the fill pass honestly counts zero candidate work.
     let plan_dp = one(obs::names::PLAN_DP);
     let densify = one(obs::names::PLAN_DENSIFY);
     let fill = one(obs::names::PLAN_FILL);
@@ -505,10 +458,6 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     within(densify, plan_dp);
     within(fill, plan_dp);
 
-    // The selectivity reads, under STATS. One planner row-count read of
-    // Posting pins the four stored rows; the distinct ladder resolves the
-    // floor rung (no key, no resident image at prepare, no containment)
-    // for every field it touches.
     let stats = one(obs::names::STATS);
     let rows = one(obs::names::RELATION_ROWS);
     assert_eq!(
@@ -534,16 +483,12 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
         within(rung, stats);
     }
 
-    // Everything under the outer PREPARE span.
     let prepare_span = one(obs::names::PREPARE);
     for e in &events {
         within(e, prepare_span);
     }
 }
 
-/// Lane I2 — the normalization sub-passes, formerly dark under the single
-/// `NORMALIZE` span: comparison placement and the statically-empty
-/// constant fold each record their own span, nested inside `NORMALIZE`.
 #[test]
 fn prepare_lights_the_normalization_sub_passes() {
     use crate::obs;
@@ -574,7 +519,7 @@ fn prepare_lights_the_normalization_sub_passes() {
             "{name} nests inside NORMALIZE",
         );
     }
-    // A live single-atom rule folds to nothing dead.
+
     let fold = events
         .iter()
         .find(|e| e.point() == obs::names::NORMALIZE_FOLD)
@@ -582,10 +527,6 @@ fn prepare_lights_the_normalization_sub_passes() {
     assert_eq!(fold.a0(), 0, "the rule is not statically empty");
 }
 
-/// Lane I2 — validation's interior, formerly dark under the single
-/// `VALIDATE` span: the query path records one rule-set lowering span
-/// and one strict per-rule pass span, both nested inside `VALIDATE`,
-/// each charged its rule work; the query-only passes never fire here.
 #[test]
 fn prepare_lights_the_validation_interior() {
     use crate::obs;
@@ -619,8 +560,7 @@ fn prepare_lights_the_validation_interior() {
             "{name} nests inside VALIDATE",
         );
     }
-    // The stratify span is gone. SEAL still runs (declaration-order
-    // interior sealing) even when interiors are empty.
+
     assert!(
         events.iter().all(|e| e.name() != "validate_stratify"),
         "the stratify span must not appear",
@@ -632,8 +572,6 @@ fn prepare_lights_the_validation_interior() {
     assert_eq!(seal.a0(), 0, "no interiors");
 }
 
-/// Lane I2 — a rec query records declaration-order sealing beside the
-/// lowering and strict-rule passes, all nested inside VALIDATE.
 #[test]
 fn rec_prepare_lights_sealing_and_the_rule_passes() {
     use crate::obs;
@@ -706,13 +644,6 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     );
 }
 
-/// Lane I2 — the columnar batch decode (formerly invisible inside
-/// `IMAGE_BUILD`) and the predicate-scan filter kernels (attributable
-/// only as a phase bucket before). The first execution builds Posting's
-/// image: one `DECODE_BATCH` over all four rows, nested inside
-/// `IMAGE_BUILD`; the view build then runs the fixed-width scan kernel
-/// over the whole `account` column — one `KERNEL_FILTER` at batch
-/// granularity, its lane count the row count, never a per-lane event.
 #[test]
 fn execute_lights_the_batch_decode_and_filter_kernel() {
     use crate::obs;
@@ -739,7 +670,7 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("execute");
     let events = obs::finish_capture();
-    // account 7 AND amount >= 0: rows a(100) and d(50).
+
     assert_eq!(out.len(), 2);
 
     let image_build = events
@@ -757,7 +688,6 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
         "the batch decode nests inside IMAGE_BUILD",
     );
 
-    // At least one kernel scan swept the whole column — lanes = rows.
     let full_sweep = events
         .iter()
         .filter(|e| e.point() == obs::names::KERNEL_FILTER)
@@ -765,12 +695,6 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
     assert!(full_sweep, "a fixed-width kernel scanned all four lanes");
 }
 
-/// The occurrence dedup (docs/architecture/40-execution.md): a
-/// self-join whose plan orients two same-relation occurrences
-/// identically rebuilds ONE view — every same-shaped sibling clones the
-/// canonical's bound state (view and forced root, `view_dedup`) instead
-/// of re-scanning the image and re-forcing the same trie — and the
-/// star's answers come out exactly right.
 #[test]
 fn same_shaped_occurrences_dedup_the_cold_rebuild() {
     use crate::obs;
@@ -820,7 +744,7 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
         })
         .collect();
     triples.sort();
-    // Account 7 holds memos {a, b} (2³ triples), account 8 holds {c}.
+
     let mut expected: Vec<(String, String, String)> = Vec::new();
     for m1 in ["a", "b"] {
         for m2 in ["a", "b"] {
@@ -834,11 +758,6 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
     assert_eq!(triples, expected, "the shared-account memo triples");
 }
 
-/// Q(m1, m2, m3) :- Posting(account = x, memo = m1), Posting(account =
-/// x, memo = m2), Posting(account = x, memo = m3) — the star self-join
-/// the occurrence dedup serves: the plan hangs the second and third
-/// occurrences off the shared `x` node with identical orientation, so
-/// their views AND forced tries coincide.
 fn memo_star_query() -> Query {
     let posting = |memo: u16| Atom {
         source: crate::ir::AtomSource::Edb(POSTING),
