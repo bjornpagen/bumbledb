@@ -1,15 +1,3 @@
-/**
- * F5 verification pin: the graph-builder settle idiom (delete the
- * placeholder row by FULL fact value, reinsert with the seat output —
- * dispatch.ts runTaskAttempt / supervisor.ts runSupervisorTurn) against a
- * real store. The finder claims a byte-equality footgun on large text
- * columns; this pin shows the dance is exact when the SAME in-memory
- * string flows through insert and delete (the app's actual shape): the
- * delete reports a state change, the key constraint never fires, and the
- * final state is the single revised row — multi-KB prompt, non-ASCII
- * included, round-tripped byte-for-byte.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -34,9 +22,7 @@ const theory = schema("F5RevisionDance", { F5Attempt: Attempt, F5AttemptText: At
 
 test("settle revision dance: delete-by-full-value hits, keyed reinsert lands", async function run() {
 	const db = accepted(await Db.create(storeDir, theory))
-	/**
-	 * Multi-KB prompt with non-ASCII, matching the app's rendered-prompt scale.
-	 */
+
 	const promptText = `système ▸ curricula — ${"x".repeat(8192)} — 終`
 	const minted: { id?: Fact<typeof Attempt>["id"] } = {}
 	const first = db.write(function insertPlaceholder(tx) {
