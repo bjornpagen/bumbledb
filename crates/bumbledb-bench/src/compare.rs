@@ -238,7 +238,7 @@ mod tests {
             ValueType::Bool,
             ValueType::U64,
             ValueType::U64,
-            ValueType::U64, 
+            ValueType::U64,
             ValueType::String,
             ValueType::FixedBytes { len: 2 },
         ];
