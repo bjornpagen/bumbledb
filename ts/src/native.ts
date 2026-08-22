@@ -255,7 +255,6 @@ type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
 type PrepareKind = "irError"
 
 interface Native {
-
 	engineVersion(): string
 
 	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
@@ -271,10 +270,10 @@ interface Native {
 	dbFromInstance(path: string, instance: OwnedHandle): Promise<DbHandle>
 
 	/**
- * Runs `callback` synchronously inside the engine read lease. The
- * instance handle is invalid after the callback returns; the witness
- * handle is a clone and may escape.
- */
+	 * Runs `callback` synchronously inside the engine read lease. The
+	 * instance handle is invalid after the callback returns; the witness
+	 * handle is a clone and may escape.
+	 */
 	dbRead<R>(db: DbHandle, callback: (instance: InstanceHandle, witness: WitnessHandle) => R): R
 	instanceGeneration(instance: InstanceHandle): bigint
 	instanceScan(instance: InstanceHandle, relationId: number): FactValue[][]
@@ -294,19 +293,19 @@ interface Native {
 
 	dbWriteFrom(db: DbHandle, witness: WitnessHandle, callback: (tx: TxHandle) => boolean): NativeWriteOutcome
 	/**
- * Records a collection of inserts into the delta; returns the engine
- * `{ submitted, changed }` report. `cells` is ONE flat row-major array
- * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
- * row count the caller states — the one collection crossing
- * (proposals/one-representation/20): the JS side alone knows N when the
- * roster is fieldless (N nullary facts project to 0 cells, so no
- * derivation can recover N), and the bridge verifies
- * `cells.length === rows × arity` exactly against its resident sealed
- * roster before building the engine's shape-proved collection in a
- * single pass. Empty (`rows === 0n`, no cells) is lawful and still a
- * mutation. Nothing is judged until commit; shape violations throw
- * typed, naming relation and field.
- */
+	 * Records a collection of inserts into the delta; returns the engine
+	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
+	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
+	 * row count the caller states — the one collection crossing
+	 * (proposals/one-representation/20): the JS side alone knows N when the
+	 * roster is fieldless (N nullary facts project to 0 cells, so no
+	 * derivation can recover N), and the bridge verifies
+	 * `cells.length === rows × arity` exactly against its resident sealed
+	 * roster before building the engine's shape-proved collection in a
+	 * single pass. Empty (`rows === 0n`, no cells) is lawful and still a
+	 * mutation. Nothing is judged until commit; shape violations throw
+	 * typed, naming relation and field.
+	 */
 	txInsert(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
 
 	txDelete(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
