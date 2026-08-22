@@ -1,18 +1,18 @@
 import Bumbledb.Query.Denotation
 
 /-!
-# Aggregates — folds, measure, Pack, Allen (Level 0, PRD 05)
+# Aggregates — folds, measure, Pack, Allen (Level 0, 
 
 The aggregate boundary contracts as theorems: every aggregate folds
 the DISTINCT binding set of its group (grouping is the fibering of
-PRD 04's binding sets over the EVALUATED head values — answers are
+ binding sets over the EVALUATED head values — answers are
 value tuples, and the group key is what each find term PROJECTS, the
 F4 decision recorded at the grouping section), checked sums are the
 `Overflow(Aggregate)` spec, the measure folds inherit the ray refusal
 as `Option`-poisoning, `pack` is the coalescing fold (sort by start,
 coalesce overlapping-or-adjacent, emit maximal segments), and
 `classify` is the DEFINED 13-relation Allen classifier — the
-refinement of PRD 04's abstract `Classify` parameter.
+refinement of abstract `Classify` parameter.
 
 ## The artifact divergence, recorded (empty global aggregates)
 
@@ -50,25 +50,25 @@ categorically.
 ## Narrowings recorded (law 5: narrow and record)
 
 * **`LinearElem` is the order toolkit, as a `Prop`-class.**
-  `PointDomain` (PRD 02) deliberately carries only `le_refl`; the
-  interval algorithms here need the linear-order facts (trichotomy,
-  transitivity, the `≤`/`<` bridge). Rather than widen PRD 02's
-  class, the facts live in a separate `Prop`-class instantiated by
-  the two real element domains (by `omega`) — mirroring `Ord + Copy`
-  on the Rust side. The general `allen_jepd` therefore needed NO
-  two-domain narrowing (the spec's recorded fallback went unspent).
-* **`AggOp` is the head-shape row** (the narrowing PRD 04 recorded:
-  finds degenerate to variables there; the aggregate find shapes
-  arrive here). The theorems are stated over the underlying folds
-  and sets, not by recursion over `AggOp` — one fold law per
-  contract, uniformly quantified where the contract is op-generic
-  (`agg_over_distinct_bindings` holds for EVERY fold, which is
-  exactly "set semantics through aggregation").
+ `PointDomain` ( deliberately carries only `le_refl`; the
+ interval algorithms here need the linear-order facts (trichotomy,
+ transitivity, the `≤`/`<` bridge). Rather than widen 
+ class, the facts live in a separate `Prop`-class instantiated by
+ the two real element domains (by `omega`) — mirroring `Ord + Copy`
+ on the Rust side. The general `allen_jepd` therefore needed NO
+ two-domain narrowing (the spec's recorded fallback went unspent).
+* **`AggOp` is the head-shape row** (the narrowing recorded:
+ finds degenerate to variables there; the aggregate find shapes
+ arrive here). The theorems are stated over the underlying folds
+ and sets, not by recursion over `AggOp` — one fold law per
+ contract, uniformly quantified where the contract is op-generic
+ (`agg_over_distinct_bindings` holds for EVERY fold, which is
+ exactly "set semantics through aggregation").
 * **`measure_fold_laws` models the error as `Option`-poisoning.**
-  The engine raises the typed `crate::Error::MeasureOfRay` and drops
-  the execution (`fold_row.rs`: a poisoned sink folds nothing more);
-  this level has no effect to carry, so a ray in the group makes the
-  whole measure column `none` — erroneous, never a value.
+ The engine raises the typed `crate::Error::MeasureOfRay` and drops
+ the execution (`fold_row.rs`: a poisoned sink folds nothing more);
+ this level has no effect to carry, so a ray in the group makes the
+ whole measure column `none` — erroneous, never a value.
 -/
 
 namespace Bumbledb
@@ -196,11 +196,6 @@ def checkedSum (limit : Nat) : List Nat → Option Nat
     match checkedSum limit xs with
     | none => none
     | some s => checkedAdd limit x s
-
--- `natSum`, the mathematical sum the checked forms are measured
--- against, moved UPSTREAM to `Capacity.lean` (the capacity cutover):
--- the weighted-measure denotation states its folds in unbounded ℕ
--- over the same sum, and one definition serves both altitudes.
 
 /-- Port of the artifact's `checkedAdd_sound`: success is the exact
 sum, within the limit. -/
@@ -456,7 +451,7 @@ def packSorted : List (Interval α) → List (Interval α)
 
 /-- **`pack`** — sort by start, coalesce overlapping-or-adjacent,
 emit maximal segments (`20-query-ir.md` § aggregation; computable —
-PRD 13 evaluates it). Its specs are `pack_canonical`,
+ evaluates it). Its specs are `pack_canonical`,
 `pack_extensional`, `pack_adjacency`, `pack_lattice_closed`. -/
 def pack (l : List (Interval α)) : List (Interval α) :=
   packSorted (sortByStart l)
@@ -1012,7 +1007,7 @@ tree, matching `allen.rs::classify_bounds` case for case: the 3 × 3
 grid on `(cmp start, cmp end)`, with `(lt,lt)`/`(gt,gt)` refined by
 the cross comparison. Total over the in-tree nonempty `Interval` — no
 empty cases exist — and computable (the examples below evaluate it).
-Refines PRD 04's abstract `Classify` (`classifyRefined`). -/
+Refines abstract `Classify` (`classifyRefined`). -/
 def classifyI (a b : Interval α) : AllenRel :=
   match cmp3 a.start b.start, cmp3 a.«end» b.«end» with
   | .eq, .eq => .equals
@@ -1152,7 +1147,7 @@ theorem allen_disjoint {a b : Interval α} {r₁ r₂ : AllenRel}
 /-- **`DISJOINT` is the point statement.** Two nonempty half-open
 intervals share no point exactly when their classification lands in
 the `DISJOINT` composite — before ∪ meets ∪ met-by ∪ after,
-`INTERSECTS`' complement (`docs/architecture/20-query-ir.md` § the
+`INTERSECTS`' complement § the
 Allen operator's named constants). This is the vocabulary tie the
 pointwise key judgment cites: per-group pairwise disjointness
 (`Dependencies.pointwise_key_disjoint`) and the query surface's
@@ -1363,16 +1358,16 @@ theorem allen_swap_mask (m : AllenMask) (a b : Interval α) :
 
 end AllenSwap
 
-/-- The REFINEMENT of PRD 04's abstract `Classify` parameter: the
-defined classifier at both element domains. Every PRD 04 theorem
+/-- The REFINEMENT of abstract `Classify` parameter: the
+defined classifier at both element domains. Every theorem
 quantified over `Classify` holds for the real classifier by
-instantiation — exactly why PRD 04 kept it opaque. -/
+instantiation — exactly why kept it opaque. -/
 def classifyRefined : Classify where
   u64 := classifyI
   i64 := classifyI
 
 /-- Interval value equality IS `Allen(EQUALS)` under the refinement —
-the provable equality PRD 04's `cmpDen` doc promised (the engine
+the provable equality `cmpDen` doc promised (the engine
 canonicalizes interval `Eq` to `EQUALS` in normalization). -/
 theorem classify_equals_iff {α : Type} [LT α] [LE α] [LinearElem α]
     [DecidableLT α] [DecidableEq α] (a b : Interval α) :
@@ -1412,7 +1407,7 @@ same evaluation). The superseded variable-keyed reading split those
 bindings into two fibers — a spec-only semantics no implementation
 ever had. -/
 
-/-- The distinct binding set a rule denotes — PRD 04's deriving
+/-- The distinct binding set a rule denotes — deriving
 assignments, PRE-projection (the fold domain's carrier). A `Set`:
 binding multiplicity is unrepresentable, which is "set semantics
 through aggregation" at the representation level. -/
@@ -1541,7 +1536,7 @@ can observe a duplicate, which is set semantics through aggregation
 posting twice is one"). Bridge: the binding seen-set (`fold_row.rs`:
 single-rule queries key the whole slot array, the union regime keys
 the head projection) and its elision licence — `DistinctWitness`,
-whose proof is PRD 07's. -/
+whose proof is -/
 theorem agg_over_distinct_bindings {β γ : Type} [DecidableEq β]
     (fold : List β → γ) {x : β} {l : List β} (hx : x ∈ l) :
     fold (dedup (x :: l)) = fold (dedup l) := by
@@ -1688,7 +1683,7 @@ order-blindness the verdict must respect; a reach-dependent poison
 flag contradicts it). A binding raises iff its folded verdict is
 `ray`; `orFold_eq_ray` is the disjunct-set reading — raise iff some
 disjunct is poisoned and none holds — and `andFold_eq_ray` its
-conjunctive face. The effect-free boolean model (PRD 04's recorded
+conjunctive face. The effect-free boolean model ( recorded
 narrowing: a ray's measure comparison is FALSE at that level) is the
 `holds`-PROJECTION of this fold — `Verdict3.toBool` is a homomorphism
 for both connectives (`toBool_and` / `toBool_or`) — so the
@@ -1760,7 +1755,7 @@ theorem and_or_distrib (a b c : Verdict3) :
   cases a <;> cases b <;> cases c <;> rfl
 
 /-- The `holds`-projection: the boolean reading the effect-free
-denotation takes — a `ray` reads `false` (PRD 04's recorded
+denotation takes — a `ray` reads `false` ( recorded
 narrowing). -/
 def toBool : Verdict3 → Bool
   | .holds => true
@@ -1858,14 +1853,14 @@ ray (`Term.poisonedB` — `Value.measure?` reads `none`). The two
 agreement lemmas tie it to the proved boolean evaluator: the
 `holds`-projection is `condHoldsB` UNCONDITIONALLY
 (`condVerdict_toBool` — a poisoned leaf reads `false` on both sides,
-PRD 04's recorded narrowing), and on ray-free inputs the verdict IS
+ recorded narrowing), and on ray-free inputs the verdict IS
 the boolean decision's image, never `ray`
 (`condVerdict_of_rayFree`). -/
 
 /-- A term demands the measure of a ray: the one partial leaf input —
 `Value.measure?` reads `none` exactly on rays and non-intervals
 (`measure?_ray_none`; the non-interval arm is validator-unreachable,
-module narrowing of PRD 04). -/
+module narrowing of -/
 def Term.poisonedB (σ : Assignment) : Term → Bool
   | .measure v => (σ v).measure?.isNone
   | _ => false
@@ -1911,8 +1906,8 @@ theorem compVerdict_toBool (C : Classify) (ρ : ParamEnv)
 
 mutual
   /-- One condition tree's verdict — `condHoldsB` on the Verdict3
-  lattice (ruled 2026-07-23, R6): the naive oracle's spec for the
-  MeasureOfRay raise, order-insensitive by the lattice laws. -/
+ lattice (ruled 2026-07-23, R6): the naive oracle's spec for the
+ MeasureOfRay raise, order-insensitive by the lattice laws. -/
   def condVerdict (C : Classify) (ρ : ParamEnv) (σ : Assignment) :
       Condition → Verdict3
     | .leaf c => compVerdict C ρ σ c
@@ -1934,10 +1929,10 @@ end
 
 mutual
   /-- **The `holds`-projection agreement, unconditional**: the
-  three-valued refinement projects onto the proved boolean evaluator —
-  `toBool` is a homomorphism for both connectives, and a poisoned leaf
-  reads `false` on both sides. Refining never disturbs the proved
-  denotation. -/
+ three-valued refinement projects onto the proved boolean evaluator —
+ `toBool` is a homomorphism for both connectives, and a poisoned leaf
+ reads `false` on both sides. Refining never disturbs the proved
+ denotation. -/
   theorem condVerdict_toBool (C : Classify) (ρ : ParamEnv)
       (σ : Assignment) :
       ∀ t : Condition,
@@ -1984,9 +1979,9 @@ end
 
 mutual
   /-- **The ray-free agreement (ruled 2026-07-23, R6)**: on ray-free
-  inputs the tree's verdict IS the boolean evaluator's decision on the
-  lattice — never `ray`, so the three-valued evaluator and
-  `condHoldsB` are ONE evaluator wherever no measure meets a ray. -/
+ inputs the tree's verdict IS the boolean evaluator's decision on the
+ lattice — never `ray`, so the three-valued evaluator and
+ `condHoldsB` are ONE evaluator wherever no measure meets a ray. -/
   theorem condVerdict_of_rayFree (C : Classify) (ρ : ParamEnv)
       (σ : Assignment) :
       ∀ t : Condition, condRayFreeB σ t = true →
@@ -2036,7 +2031,7 @@ inductive ScalarFold where
   | max
 deriving DecidableEq
 
-/-- The executable aggregate ops — the head-shape row PRD 04's
+/-- The executable aggregate ops — the head-shape row 
 recorded narrowing deferred here (the aggregate faces of
 `crate::ir::HeadTerm`). Remaining folds: Count, Sum, Min, Max, Pack,
 and the measure folds. The theorems of this module are these ops'
