@@ -88,7 +88,6 @@ fn seeded_world(tag: &str) -> (common::TempDir, Db<WitnessWorld>) {
 }
 
 fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations {
-
     let calls: [(u64, u64); 7] = [
         (200, 900),
         (201, 901),
@@ -99,7 +98,6 @@ fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations 
         (302, 1),
     ];
     rejection(db.write(|tx| {
-
         if order[0] != 0 {
             tx.delete([&WParent {
                 id: WParentId(3),
@@ -189,7 +187,6 @@ fn the_rejection_is_reproducible_across_stores() {
 
 #[test]
 fn the_source_witness_is_the_key_least_violator() {
-
     let kids: [(u64, u64); 6] = [
         (9001, 700),
         (9002, 650),
