@@ -4,16 +4,7 @@ use crate::corpus_gen::{MANDATE_SEGMENTS, Scale, Sizes};
 use crate::schema::ids;
 
 impl Sizes {
-    /// The scale ladder's size table — postings, instruments, and orgs
-    /// per point; everything else derives. `Tiny` is the fuzz-iteration
-    /// point: a full build-store → ops → oracles pass in milliseconds.
-    ///
-    /// | scale | postings   | instruments | orgs |
-    /// |-------|------------|-------------|------|
-    /// | Tiny  | 1 024      | 32          | 8    |
-    /// | S     | 100 000    | 512         | 64   |
-    /// | M     | 1 000 000  | 512         | 64   |
-    /// | L     | 10 000 000 | 512         | 64   |
+
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         let (postings, instruments, orgs): (u64, u64, u64) = match scale {
@@ -36,7 +27,6 @@ impl Sizes {
         }
     }
 
-    /// Rows for one relation.
     #[must_use]
     pub fn rows(&self, rel: RelationId) -> u64 {
         match rel {
@@ -53,8 +43,6 @@ impl Sizes {
         }
     }
 
-    /// The hot-account set: the first `max(1, accounts/1000)` account ids
-    /// receive [`crate::corpus_gen::HOT_SHARE_PCT`]% of postings.
     #[must_use]
     pub fn hot_accounts(&self) -> u64 {
         (self.accounts / 1000).max(1)
