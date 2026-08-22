@@ -47,7 +47,7 @@ fn fold_positive(
     };
     let relation = schema.relation(relation_id);
     if relation.body().closed_rows().is_none() {
-        return false; 
+        return false;
     }
     if !occurrence
         .filters
@@ -62,12 +62,10 @@ fn fold_positive(
     let binders = if let Some(k) = join_id_var(normalized, c_idx, output_vars) {
         let binders = membership_binders(normalized, c_idx, k);
         if binders.is_empty() {
-
             return false;
         }
         binders
     } else {
-
         if !normalized.occurrences[c_idx].vars.is_empty() {
             return false;
         }
@@ -84,7 +82,6 @@ fn fold_positive(
     };
     let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
     if survivors.is_empty() {
-
         normalized.dead = Some(format!(
             "folded to ∅: {}",
             folded_picture(schema, relation_id, &normalized.occurrences[c_idx].filters,)
@@ -115,13 +112,11 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     }
     let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
     if survivors.is_empty() {
-
         remove_anti_probe(normalized, c_idx);
         normalized.occurrences[c_idx].role = Role::Folded(folded_negated(relation_id, Vec::new()));
         return true;
     }
     if occurrence.vars.is_empty() {
-
         normalized.dead = Some(format!(
             "folded: !{} rejects every binding",
             folded_picture(schema, relation_id, &occurrence.filters)
@@ -137,10 +132,9 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     let closed = relation_id;
     let binders = membership_binders(normalized, c_idx, k);
     if binders.is_empty() {
-        return false; 
+        return false;
     }
     if !domain_within_ids(normalized, schema, c_idx, k, closed) {
-
         // direction this refusal pins). The anti-probe stays.
         return false;
     }
@@ -149,7 +143,6 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         .filter(|id| survivors.binary_search(id).is_err())
         .collect();
     if complement.is_empty() {
-
         normalized.dead = Some(format!(
             "folded: !{} rejects every binding",
             folded_picture(schema, closed, &normalized.occurrences[c_idx].filters)
