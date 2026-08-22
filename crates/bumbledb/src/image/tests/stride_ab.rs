@@ -236,7 +236,6 @@ fn stride_band_ab_falsifier() {
     let mut sink = 0u64;
 
     for block in 0..BLOCKS {
-
         let seed = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(block + 1);
 
         let (fill_a, fill_b) = if block % 2 == 0 {
@@ -345,8 +344,8 @@ fn stride_band_ab_falsifier() {
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_ab_falsifier_small_pitch() {
-    const ROWS_POISON: usize = 524_416; 
-    const ROWS_HEALTHY: usize = 524_288; 
+    const ROWS_POISON: usize = 524_416;
+    const ROWS_HEALTHY: usize = 524_288;
     let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS_POISON, SHIPPED);
     let mut cured = image_with_tolerance(&field_types, ROWS_POISON, WIDENED);
@@ -428,7 +427,7 @@ fn stride_band_ab_falsifier_small_pitch() {
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_ab_residue_128_discriminator() {
-    const ROWS: usize = 524_304; 
+    const ROWS: usize = 524_304;
     let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS, 0);
     let mut cured = image_with_tolerance(&field_types, ROWS, SHIPPED);
@@ -511,7 +510,6 @@ fn stride_band_residue_sweep() {
             fill(&mut poison, seed);
             fill(&mut cured, seed);
             if block == 0 {
-
                 let (_, s0) = lockstep_sum24(&poison);
                 let (_, s1) = lockstep_sum24(&cured);
                 sink = sink.wrapping_add(s0).wrapping_add(s1);
