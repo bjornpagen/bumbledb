@@ -2,7 +2,6 @@
 //! statements reused, `ANALYZE`, DISTINCT in the timed SQL, median-of-samples),
 //! and every ledger benchmark's exact protocol (`SQLite` file-backed, WAL,
 //! query is **oracle-gated before it is timed**: each query × param set
-
 pub mod graph;
 pub mod joins;
 pub mod olap;
