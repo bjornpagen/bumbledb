@@ -37,18 +37,13 @@ const bareSurface: readonly (keyof typeof Kind)[] = ["name", "id", "data", "axio
 const payloadSurface: readonly (keyof typeof Grade)[] = ["name", "id", "data", "axioms", "columns", "where"]
 
 type Cases = [
-
 	Expect<Equal<keyof typeof Kind, "name" | "id" | "data" | "axioms" | "columns">>,
 	Expect<Equal<keyof typeof Grade, "name" | "id" | "data" | "axioms" | "columns" | "where">>,
-
 	Expect<Equal<typeof Grade.columns.mastered, BoolField>>,
 	Expect<Equal<typeof Grade.columns.score, U64Field>>,
 	Expect<Equal<keyof typeof Grade.columns, "mastered" | "score">>,
-
 	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Retried" | "Failed">>,
-
 	Expect<Equal<Parameters<typeof Grade.where>[0], SelectionInput<typeof Grade.columns>>>,
-
 	Expect<Equal<Infer<typeof Weird.id>, "match" | "where" | "id">>,
 	Expect<Equal<keyof typeof Weird.axioms, "match" | "where" | "id">>
 ]
