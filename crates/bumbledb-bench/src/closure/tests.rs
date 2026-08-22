@@ -148,7 +148,7 @@ fn closure_counts_match_the_shapes() {
 }
 
 #[test]
-fn a_profiled_closure_query_digests_reach_rounds() {
+fn a_closure_query_digests_reach_rounds() {
     let dir = scratch("digest");
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability)

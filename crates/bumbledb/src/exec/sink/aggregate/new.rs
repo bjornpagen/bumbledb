@@ -7,21 +7,18 @@ use crate::exec::wordmap::WordMap;
 pub(in crate::exec::sink) fn parse_finds(
     finds: &[FindSpec],
     slot_count: usize,
-) -> (Vec<SinkSpec>, Vec<(usize, usize)>) {
+) -> Vec<SinkSpec> {
     let mut parsed = Vec::with_capacity(finds.len());
-    let mut measures = Vec::new();
-    parse_finds_into(finds, slot_count, &mut parsed, &mut measures);
-    (parsed, measures)
+    parse_finds_into(finds, slot_count, &mut parsed);
+    parsed
 }
 
 pub(in crate::exec::sink) fn parse_finds_into(
     finds: &[FindSpec],
     _slot_count: usize,
     parsed: &mut Vec<SinkSpec>,
-    measures: &mut Vec<(usize, usize)>,
 ) {
     parsed.clear();
-    measures.clear();
     for find in finds {
         let spec = match *find {
             FindSpec::Var { slot, width } => SinkSpec::Var { slot, width },
@@ -132,8 +129,8 @@ impl AggregateSink {
         hint: usize,
         dense_groups: &[u16],
     ) -> Self {
-        let (finds, measures) = parse_finds(finds, slot_count);
-        let scratch_words = slot_count + measures.len();
+        let finds = parse_finds(finds, slot_count);
+        let scratch_words = slot_count;
         let group_spans: Vec<(usize, usize)> = finds
             .iter()
             .filter_map(|f| match f {
@@ -225,7 +222,6 @@ impl AggregateSink {
             group_probes: 0,
             group_spans,
             finds,
-            measures,
             real_slots: slot_count,
             group_state,
         }
@@ -234,7 +230,7 @@ impl AggregateSink {
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize, shared_slots: &[(usize, usize)]) {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
 
-        parse_finds_into(finds, slot_count, &mut self.finds, &mut self.measures);
+        parse_finds_into(finds, slot_count, &mut self.finds);
         self.real_slots = slot_count;
         self.group_spans.clear();
         self.group_spans
@@ -255,7 +251,7 @@ impl AggregateSink {
         }
         self.binding_scratch.clear();
         self.binding_scratch
-            .resize(slot_count + self.measures.len(), 0);
+            .resize(slot_count, 0);
         if let GroupState::Pack { slot, .. } = &mut self.group_state {
             *slot = pack_slot(&self.finds).expect("Pack heads stay Pack across rules");
         }

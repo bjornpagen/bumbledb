@@ -22,7 +22,7 @@ impl Sink for AggregateSink {
             return ScanOffer::Declined;
         }
 
-        if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
+        if matches!(self.group_state, GroupState::Pack { .. }) {
             return ScanOffer::Declined;
         }
 
@@ -192,7 +192,7 @@ impl Sink for AggregateSink {
 
         self.refresh_shape_cache(batch);
 
-        if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
+        if matches!(self.group_state, GroupState::Pack { .. }) {
             self.fold_batch_rows(batch);
             return Flow::Continue;
         }

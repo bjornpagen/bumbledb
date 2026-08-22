@@ -145,12 +145,9 @@ fn i64_to_word(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
 
-/// One projected word's source: a binding slot read verbatim. The
-/// is gone); the variant stays so the sink match stays total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjSource {
     Slot(usize),
-    Measure { start: usize },
 }
 
 #[derive(Debug)]
@@ -158,30 +155,23 @@ enum ProjectionSources {
     Plain(Vec<usize>),
 }
 
-fn sources_of(finds: &[SinkSpec], measures: &[(usize, usize)]) -> ProjectionSources {
+fn sources_of(finds: &[SinkSpec]) -> ProjectionSources {
     let mut sources = Vec::new();
-    extend_sources(finds, measures, &mut sources);
+    extend_sources(finds, &mut sources);
     ProjectionSources::Plain(
         sources
             .into_iter()
-            .filter_map(|source| match source {
-                ProjSource::Slot(slot) => Some(slot),
-                ProjSource::Measure { .. } => None,
-            })
+            .map(|ProjSource::Slot(slot)| slot)
             .collect(),
     )
 }
 
-fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec<ProjSource>) {
+fn extend_sources(finds: &[SinkSpec], out: &mut Vec<ProjSource>) {
     out.clear();
     for spec in finds {
         match spec {
             SinkSpec::Var { slot, width } => {
-                if let Some((_, start)) = measures.iter().find(|(derived, _)| derived == slot) {
-                    out.push(ProjSource::Measure { start: *start });
-                } else {
-                    out.extend((*slot..slot + width).map(ProjSource::Slot));
-                }
+                out.extend((*slot..slot + width).map(ProjSource::Slot));
             }
             SinkSpec::Agg(_) | SinkSpec::Pack { .. } => {}
         }
@@ -283,7 +273,6 @@ pub struct AggregateSink {
 
     finds: Vec<SinkSpec>,
 
-    measures: Vec<(usize, usize)>,
 
     real_slots: usize,
 

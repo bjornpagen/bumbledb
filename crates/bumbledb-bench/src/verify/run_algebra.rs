@@ -230,7 +230,7 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                     )],
                 ),
             };
-            let mut rich_leaf = |rng: &mut Rng| match rng.range(3) {
+            let mut rich_leaf = |rng: &mut Rng| match rng.range(5) {
                 0 => leaf(
                     CmpOp::Allen {
                         mask: match rng.range(4) {
@@ -246,6 +246,16 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 1 => leaf(
                     CmpOp::PointIn,
                     var(1),
+                    Term::Literal(Value::I64(at_literal(rng))),
+                ),
+                2 => leaf(
+                    op_of(rng),
+                    var(0),
+                    Term::Literal(Value::U64(rng.range(sizes.accounts + 2))),
+                ),
+                _ if joined => leaf(
+                    op_of(rng),
+                    var(2),
                     Term::Literal(Value::I64(at_literal(rng))),
                 ),
                 _ => leaf(
@@ -317,7 +327,7 @@ fn op_of(rng: &mut Rng) -> CmpOp {
     }
 }
 
-fn pack_and_measure_ops() -> (Vec<Op>, u64) {
+fn pack_ops() -> (Vec<Op>, u64) {
     let pack = |rules: Vec<Rule>| Query {
         interiors: vec![],
         head: rules[0].head(),
@@ -368,7 +378,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
 pub(super) fn algebra_ops(seed: u64, sizes: &Sizes) -> (Vec<Op>, u64) {
     let mut ops = rules_ops(sizes);
     ops.extend(dnf_ops(seed, sizes));
-    let (rest, naive_only) = pack_and_measure_ops();
+    let (rest, naive_only) = pack_ops();
     ops.extend(rest);
     (ops, naive_only)
 }

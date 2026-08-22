@@ -178,56 +178,6 @@ impl Operands for ImageRow<'_> {
     }
 }
 
-pub(crate) struct SlotOps<'a, F: Fn(usize) -> u64 + ?Sized> {
-    pub word: &'a F,
-}
-
-impl<F: Fn(usize) -> u64 + ?Sized> Operands for SlotOps<'_, F> {
-    type Error = std::convert::Infallible;
-
-    fn word(&self, at: OperandAddr) -> Result<u64, Self::Error> {
-        Ok((self.word)(at.slot()))
-    }
-
-    fn pair(&self, at: OperandAddr) -> Result<(u64, u64), Self::Error> {
-        let s = at.slot();
-        Ok(((self.word)(s), (self.word)(s + 1)))
-    }
-
-    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8), Self::Error> {
-        Ok(slot_block(self.word, at))
-    }
-
-    fn loaded(&self, at: OperandAddr) -> Result<Loaded, Self::Error> {
-        Ok(match at.width() {
-            0 | 1 => Loaded::Word((self.word)(at.slot())),
-            2 => {
-                let s = at.slot();
-                Loaded::Pair((self.word)(s), (self.word)(s + 1))
-            }
-            n => {
-                let (words, count) = slot_block(self.word, at);
-                debug_assert_eq!(count, n);
-                Loaded::Block { words, count }
-            }
-        })
-    }
-
-    fn intern(&self, _bytes: &[u8]) -> Result<u64, Self::Error> {
-        Ok(crate::storage::dict::SENTINEL_ID)
-    }
-}
-
-fn slot_block(word: &(impl Fn(usize) -> u64 + ?Sized), at: OperandAddr) -> ([u64; 8], u8) {
-    let count = at.width();
-    let s = at.slot();
-    let mut words = [0u64; 8];
-    for (i, slot) in words[..usize::from(count)].iter_mut().enumerate() {
-        *slot = word(s + i);
-    }
-    (words, count)
-}
-
 pub(crate) fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
     match value {
         Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],

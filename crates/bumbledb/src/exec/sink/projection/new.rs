@@ -27,16 +27,15 @@ impl ProjectionSink {
 
     #[must_use]
     pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
-        let (parsed, measures) = parse_finds(finds, slot_count);
-        let sources = sources_of(&parsed, &measures);
+        let parsed = parse_finds(finds, slot_count);
+        let sources = sources_of(&parsed);
         let mut sink = Self::with_capacity_hint_sources(sources, hint);
         sink.finds = parsed;
         sink
     }
 
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
-        let mut measures = Vec::new();
-        parse_finds_into(finds, slot_count, &mut self.finds, &mut measures);
+        parse_finds_into(finds, slot_count, &mut self.finds);
         match &mut self.sources {
             ProjectionSources::Plain(slots) => {
                 slots.clear();
