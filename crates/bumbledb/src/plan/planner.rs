@@ -46,10 +46,8 @@ pub struct OccStats {
 /// (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinOrder {
-
     pub order: Vec<OccId>,
     /// The estimator's row count after each step; `estimates[0]` is the
-
     pub estimates: Vec<u64>,
 }
 
@@ -71,7 +69,6 @@ struct OccInfo {
 }
 
 struct AllenKeep {
-
     vars: u128,
 
     keep_num: u64,
