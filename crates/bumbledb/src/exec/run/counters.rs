@@ -1,5 +1,4 @@
 //! The execution observability counters.
-
 use super::Counters;
 use super::NoopCounters;
 #[cfg(feature = "trace")]
