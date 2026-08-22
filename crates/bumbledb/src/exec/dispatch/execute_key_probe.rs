@@ -10,7 +10,6 @@ use crate::storage::catalog::CatalogRead;
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
 )]
-
 pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters, Cat: CatalogRead>(
     plan: &KeyProbePlan,
     catalog: &Cat,
