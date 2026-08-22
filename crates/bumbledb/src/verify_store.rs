@@ -33,7 +33,6 @@
 //! missing-premise half,
 //! own: duplicate scalar determinants are impossible by LMDB key uniqueness, so
 //! `lean/Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`).
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
@@ -131,7 +130,6 @@ pub enum StoreFinding {
 
 impl<S> Db<S> {
     /// Read-only, one LMDB snapshot, O(store) — seconds at the
-
     /// # Errors
     #[doc(hidden)]
     pub fn verify_store(&self) -> Result<StoreReport> {
