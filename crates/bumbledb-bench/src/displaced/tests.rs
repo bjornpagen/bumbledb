@@ -199,7 +199,7 @@ fn the_interleaved_harness_runs_between_every_pass() {
     assert_eq!(m.work, u64::from(proto.samples));
 
     let mut resident = ForeignStream::new(0);
-    resident.stream(); 
+    resident.stream();
     let mut foreign = ForeignStream::new(1);
     assert_eq!(foreign.buf.len(), 1 << 20);
     foreign.stream();
