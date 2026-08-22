@@ -1,33 +1,3 @@
-/**
- * PRD-K4 probes: THE LAWS TYPE THE COLUMNS. `schema()` computes the
- * equivalence-class map over field slots FROM the statement list, at the
- * type level and at runtime, and this file pins the whole law set:
- * generator naming (fresh coordinates and closed synthetic ids); the
- * 3-hop containment chain landing one class end to end; the generator-less
- * class named by its least member in relation-declaration ×
- * field-declaration order at the VALUE tier (the wire authority) and
- * carried as its member-coordinate SET at the TYPE tier (deterministic —
- * a type-level least-member pick is unimplementable: union member order is
- * not observably stable); the bare field staying bare; the ψ-selected
- * face pairing; the selected-mirrors shape (the mirrors law types the
- * source column with the target's class — pinned exactly); the
- * one-generator wall at BOTH tiers (the named, self-locating `ClassWall`
- * compile verdict — generators and the offending paired slots pinned by
- * `Equal` — and the construction throw naming the statement), with the
- * re-homed cross-domain construction probes (contained/mirrors/capacity
- * unifying two mints, the closed-id generator included); the runtime/type
- * agreement diff (a GENERATED golden the compiler pins against the schema
- * type's `classes` while `deepStrictEqual` pins it against the runtime
- * map — one golden, two tiers); the wire lowering (spec `newtype` = class
- * name / omitted — `statements.test.ts` carries the full SchemaSpec pins);
- * the manifest golden (statements in == statements out: nothing is ever
- * synthesized, order preserved, count equal); and the declaration-order
- * refusal of integer-index names (the enumeration-order hazard closed at
- * construction). Every `Equal` probe is a value, so each compile-time
- * claim carries its own runtime assertion; every `@ts-expect-error` is
- * REAL (removing it breaks compilation).
- */
-
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
@@ -41,14 +11,11 @@ import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
 describe("the three class laws", function laws() {
 	test("generators name their classes; a 3-hop chain lands the whole chain in the generator's class; bare stays bare", function chainGolden() {
-		// Closedness rides the descriptor: every chain member referencing the
-		// vocabulary is spelled with the vocabulary's OWN descriptor (the
-		// roster-agreement wall — a plain u64 cannot alias Vocab.id).
+
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const A = relation("A", { x: Vocab.id, note: str })
 		const B = relation("B", { y: Vocab.id })
@@ -57,7 +24,7 @@ describe("the three class laws", function laws() {
 			contained(on(A, "x"), on(B, "y")),
 			contained(on(B, "y"), on(Vocab, "id"))
 		])
-		// The type tier computed the same map the value tier carries.
+
 		const probeAx: Equal<(typeof Chain)["classes"]["A"]["x"], "Vocab.id"> = true
 		const probeBy: Equal<(typeof Chain)["classes"]["B"]["y"], "Vocab.id"> = true
 		const probeVocab: Equal<(typeof Chain)["classes"]["Vocab"]["id"], "Vocab.id"> = true
@@ -74,14 +41,7 @@ describe("the three class laws", function laws() {
 	test("a generator-less class is named by its least member in relation-declaration × field-declaration order", function leastMember() {
 		const First = relation("First", { a: u64 })
 		const Second = relation("Second", { b: u64 })
-		// Second is DECLARED first in the record — the statement's written
-		// orientation does not name the class; the declaration walk does.
-		// The RUNTIME map (the wire authority) carries the ratified
-		// least-member name; the TYPE tier carries the component's member
-		// SET (deterministic — TypeScript's union order is not observable,
-		// so a type-level least-member pick would drift), the runtime name a
-		// member of it by construction, both slots the identical set (the
-		// join judgment is the same at both tiers).
+
 		const Pairing = schema("Pairing", { Second, First }, [
 			key(First, ["a"]),
 			key(Second, ["b"]),
@@ -92,7 +52,7 @@ describe("the three class laws", function laws() {
 		const probeSameClass: Equal<(typeof Pairing)["classes"]["First"]["a"], (typeof Pairing)["classes"]["Second"]["b"]> =
 			true
 		assert.ok(probeFirst && probeSecond && probeSameClass)
-		// The runtime name inhabits the type-level set — the property's type is honest.
+
 		const runtimeName: (typeof Pairing)["classes"]["First"]["a"] = Pairing.classes.First.a
 		assert.equal(runtimeName, "Second.b", "the ratified least-member name — Second declared first")
 		assert.deepStrictEqual(Pairing.classes, {
@@ -122,8 +82,7 @@ describe("the three class laws", function laws() {
 			key(CalendarEntry, ["booking"]),
 			mirrors(on(CalendarEntry.where({ label: "hold" }), "booking"), on(Booking, "id"))
 		])
-		// Pinned exactly: the σ-selected SOURCE column lands in the TARGET's
-		// generator class — "Booking.id", never a least-member name.
+
 		const probeSource: Equal<(typeof Calendar)["classes"]["CalendarEntry"]["booking"], "Booking.id"> = true
 		assert.ok(probeSource)
 		assert.deepStrictEqual(Calendar.classes, {
@@ -145,7 +104,7 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 		const probeGenerators: Equal<Located[0], "Left.id" | "Right.id"> = true
 		const probeChain: Equal<Located[1], readonly ["Left.id ~ Right.id"]> = true
 		assert.ok(probeGenerators && probeChain)
-		// A lawful list resolves to the no-op intersection instead.
+
 		const lawful = [contained(on(Left, "peer"), on(Right, "id"))] as const
 		type Lawful = LawfulStatements<{ Left: typeof Left; Right: typeof Right }, typeof lawful>
 		const probeLawful: Equal<Lawful, unknown> = true
@@ -174,10 +133,7 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 	})
 
 	test("a closed relation's id is a generator too — unifying it with a fresh coordinate refuses (the roster wall fires first, at construction)", function closedWall() {
-		// The two-mint collision through a closed id is now unreachable: the
-		// statement constructors' roster-agreement wall refuses the pairing
-		// EARLIER (a fresh u64 is a bare column; the closed [id] carries its
-		// roster), so the generator wall behind it can never be reached
+
 		// through a closed id — the refusal moved earlier and warmer.
 		assert.throws(function runtimeTwin() {
 			// @ts-expect-error — a fresh u64 mint never pairs the closed [id]: the roster rides the face shape
@@ -198,7 +154,7 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 })
 
 describe("the runtime/type agreement and the wire", function agreement() {
-	/** The one fixture both tiers are diffed over (every law exercised). */
+
 	function buildFixture() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const Holder = relation("Holder", { id: u64.fresh, name: str })
@@ -213,12 +169,6 @@ describe("the runtime/type agreement and the wire", function agreement() {
 		])
 	}
 
-	/**
-	 * GENERATED GOLDEN (scripts/generate-law-fixtures.ts — regenerate, never
-	 * hand-edit): the compiler pins it against the schema TYPE's class map
-	 * (`Equal`), the assertion pins it against the runtime map — one golden
-	 * proving the two tiers computed the same classes.
-	 */
 	const GOLDEN = {
 		Vocab: { id: "Vocab.id" },
 		Holder: { id: "Holder.id", name: undefined },
@@ -299,7 +249,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 		assert.throws(function protoLiteralHandle() {
 			closed("Sev", { pages: u64 }, litHandles)
 		}, /prototype was replaced/)
-		// The computed spelling creates an own data property and is admitted: no name is reserved.
+
 		const Sev = closed("Sev", { pages: u64 }, { ["__proto__"]: { pages: 1n }, Warn: { pages: 2n } })
 		assert.deepStrictEqual([...Sev.data.handles], ["__proto__", "Warn"])
 		assert.ok(Object.hasOwn(Sev.axioms, "__proto__"))
