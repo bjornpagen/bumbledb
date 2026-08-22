@@ -9,8 +9,6 @@ use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term}
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 use bumbledb::{FieldId, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep, VarId};
 
-/// Relation and field ids for the test ledger below — declaration order
-/// is the id order, no magic numbers in query constructions.
 mod ids {
     use bumbledb::{FieldId, RelationId};
 
@@ -75,10 +73,6 @@ mod ids {
     }
 }
 
-/// The test ledger: the benchmark schema of
-/// `docs/architecture/60-validation.md`,
-/// plus `Transfer` for a Bytes field — built locally so the translator's
-/// goldens depend on nothing but the IR and the schema descriptors.
 fn schema() -> &'static Schema {
     static SCHEMA: OnceLock<Schema> = OnceLock::new();
     SCHEMA.get_or_init(|| {
@@ -177,7 +171,7 @@ fn schema() -> &'static Schema {
 
 #[test]
 fn point_matches_its_hand_written_golden() {
-    // Q(amount, at) :- Posting(id = ?0, amount, at).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -198,11 +192,7 @@ fn point_matches_its_hand_written_golden() {
 
 #[test]
 fn containment_walk_matches_its_hand_written_golden() {
-    // Q(name, amount) :- Posting(account = ?0, amount),
-    //                    Account(id = ?0, holder = h),
-    //                    Holder(id = h, name).
-    // (The account is pinned by the same param on both sides — the
-    // join predicate through ?1 twice, param reused.)
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -239,8 +229,7 @@ fn containment_walk_matches_its_hand_written_golden() {
 
 #[test]
 fn balance_matches_its_hand_written_golden() {
-    // Q(a, Sum(amount)) :- Posting(id, account = a, amount),
-    //                      Account(id = a, holder = ?0).
+
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -275,7 +264,7 @@ fn balance_matches_its_hand_written_golden() {
 
 #[test]
 fn negated_atoms_match_their_goldens() {
-    // no_tag: Q(p) :- Posting(id = p), ¬PostingTag(posting = p, tag = Fee).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -295,8 +284,6 @@ fn negated_atoms_match_their_goldens() {
     assert_eq!(t.sql, goldens::NO_TAG);
     assert!(t.params.is_empty());
 
-    // self_negation: Q(c) :- OrgParent(child = c, parent = p),
-    //                        ¬OrgParent(child = p).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -315,7 +302,6 @@ fn negated_atoms_match_their_goldens() {
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::SELF_NEGATION);
 
-    // A param inside a negated atom still binds positionally.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -338,7 +324,7 @@ fn negated_atoms_match_their_goldens() {
 
 #[test]
 fn param_sets_render_as_literal_in_lists() {
-    // in_three / in_empty: Q(e) :- Posting(entry = e, account ∈ ?set0).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -366,11 +352,9 @@ fn param_sets_render_as_literal_in_lists() {
     let t = translate(&query, schema(), &empty).expect("translates");
     assert_eq!(t.sql, goldens::IN_EMPTY);
 
-    // An unbound set is a named error, never silently-empty SQL.
     let err = translate(&query, schema(), &[]).unwrap_err();
     assert!(err.contains("param set 0"), "{err}");
 
-    // A set inside a negated atom takes the same IN form.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -398,8 +382,7 @@ fn param_sets_render_as_literal_in_lists() {
 
 #[test]
 fn set_forms_cover_interval_membership_and_predicate_equality() {
-    // Membership per element on an interval field: an OR of endpoint
-    // tests (IN has no interval form); the empty set is 1 = 0 here too.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -425,7 +408,6 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
     let t = translate(&query, schema(), &empty).expect("translates");
     assert!(t.sql.ends_with("WHERE 1 = 0"), "{}", t.sql);
 
-    // Eq against a set in a predicate: the variable side's IN.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -449,8 +431,7 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
 
 #[test]
 fn membership_matches_its_goldens() {
-    // Q(o) :- Posting(account = a, at = t),
-    //         Mandate(account = a, org = o, active ∋ t).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -473,8 +454,6 @@ fn membership_matches_its_goldens() {
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::MEMBERSHIP);
 
-    // The param form: Q(o) :- Posting(account = ?0, at = ?1),
-    //                         Mandate(account = ?0, org = o, active ∋ ?1).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -508,9 +487,7 @@ fn membership_matches_its_goldens() {
 
 #[test]
 fn allen_intersects_matches_its_hand_written_golden() {
-    // Q(o1, o2) :- Mandate(account = a, org = o1, active = u),
-    //              Mandate(account = a, org = o2, active = v),
-    //              Allen(u, v, INTERSECTS).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -546,8 +523,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
 
 #[test]
 fn point_in_matches_both_goldens() {
-    // The ⊇ composite against an interval param:
-    // Q(o) :- Mandate(org = o, active = v), Allen(v, ?0, COVERS).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -571,8 +547,6 @@ fn point_in_matches_both_goldens() {
         "an interval param binds its two halves"
     );
 
-    // Point containment: Q(o, t) :- Mandate(org = o, active = v),
-    //                               Posting(at = t), PointIn(v, t).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
@@ -598,9 +572,7 @@ fn point_in_matches_both_goldens() {
 
 #[test]
 fn interval_equality_matches_its_goldens() {
-    // Predicate form: Q(a1, a2) :- Mandate(account = a1, active = u),
-    //                              Mandate(account = a2, active = v),
-    //                              Eq(u, v).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -629,7 +601,6 @@ fn interval_equality_matches_its_goldens() {
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERVAL_EQ);
 
-    // Binding form, literal: Q(o) :- Mandate(org = o, active = [1700, 1800)).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -650,8 +621,6 @@ fn interval_equality_matches_its_goldens() {
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERVAL_EQ_LITERAL);
 
-    // Binding form, param: Q(o) :- Mandate(org = o, active = ?0) — the
-    // bivalent anchor resolves to the interval reading, two placeholders.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -674,8 +643,7 @@ fn interval_equality_matches_its_goldens() {
 
 #[test]
 fn an_interval_find_projects_both_halves() {
-    // Q(o, u) :- Mandate(org = o, active = u): the decode path
-    // reassembles the value from the pair (`crate::sqlmap`).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -695,7 +663,7 @@ fn an_interval_find_projects_both_halves() {
 #[test]
 fn every_scalar_construct_translates() {
     // Gate atom → EXISTS; literal escaping (string and bytes); same-atom
-    // comparisons; every scalar operator.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -758,7 +726,6 @@ fn every_scalar_construct_translates() {
     assert!(t.sql.contains("<> ?1"), "{}", t.sql);
     assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
 
-    // Repeated in-atom variable equates its two columns.
     let repeated = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -774,8 +741,7 @@ fn every_scalar_construct_translates() {
 
 #[test]
 fn global_aggregates_carry_the_having_rule() {
-    // Q(Count) :- Posting(amount = x): SQL's NULL-row-over-empty must
-    // collapse to the engine's empty set.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Count],
         atoms: vec![Atom {
@@ -789,7 +755,6 @@ fn global_aggregates_carry_the_having_rule() {
     assert!(t.sql.ends_with("HAVING COUNT(*) > 0"), "{}", t.sql);
     assert!(t.sql.contains("SELECT DISTINCT"), "{}", t.sql);
 
-    // Min/Max over the distinct binding set, grouped.
     let grouped = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -833,9 +798,6 @@ fn errors_name_the_untranslatable_construct() {
     assert!(err.contains("no bound atoms"), "{err}");
 }
 
-/// A NUL in a string literal would truncate `SQLite`'s tokenizer
-/// mid-statement — the translator rejects it by name instead of emitting
-/// silently-shortened SQL.
 #[test]
 fn a_nul_string_literal_is_a_named_error() {
     let query = Query::single(Rule {
@@ -857,9 +819,6 @@ fn a_nul_string_literal_is_a_named_error() {
     assert!(err.contains("NUL byte in string literal"), "{err}");
 }
 
-/// `Pack` is the one query construct in the inexpressible set: `SQLite`
-/// has no coalescing aggregate, so a `Pack` head routes to the naive
-/// lane — never silently skipped, never translated.
 #[test]
 fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
     let query = Query::single(Rule {
@@ -882,9 +841,6 @@ fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
     assert!(err.contains("Pack is naive-only"), "{err}");
 }
 
-/// The `[shape]` criterion pinned as a golden: the inexpressible set is
-/// the dependency judgments plus the `Pack` head (its own golden above);
-/// every other query construct translates.
 #[test]
 fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
     let query = Query::single(Rule {
@@ -927,9 +883,8 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
         Err(Inexpressible::ContainmentJudgment)
     );
 
-    // The capacity statement — weighted or unit, the pinned verdict is
     // equally inexpressible (the SUM is a query, not a typed refusal);
-    // the ledger's own tag-budget entry routes naive-side.
+
     let capacity = StatementDescriptor::Capacity {
         target: Side {
             relation: ids::POSTING,
@@ -953,10 +908,7 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
 
 #[test]
 fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
-    // Q(x) :- Posting(account = x).
-    // Q(x) :- PostingTag(posting = x).
-    // One SELECT DISTINCT per rule, joined by UNION — set union, the
-    // systematized rules translation.
+
     let query = Query {
         interiors: vec![],
         head: vec![bumbledb::HeadTerm::Var],
@@ -994,11 +946,7 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
 
 #[test]
 fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
-    // Q(x, Sum(y)) :- Posting(account = x, amount = y).
-    // Q(x, Sum(y)) :- Posting(account = x, amount = y), y >= ?0.
-    // The union fold: per-rule SELECT DISTINCT head projections
-    // (aliased hN), one UNION, the fold grouped by the variable
-    // positions. The param is query-global: one ?1 slot.
+
     let arm = |conditions: Vec<ConditionTree>| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -1045,9 +993,7 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
 
 #[test]
 fn a_param_repeated_across_rules_keeps_one_positional_slot() {
-    // Q(x) :- Posting(account = ?0, amount = x).
-    // Q(x) :- Posting(instrument = ?0, amount = x).
-    // Params are query-global: both occurrences render ?1.
+
     let arm = |field: bumbledb::FieldId| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -1072,8 +1018,6 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
     assert_eq!(t.sql.matches(" UNION ").count(), 1, "{}", t.sql);
 }
 
-/// The linear transitive closure over `OrgParent` — identity main over
-/// the rec (base arm + one-recursive-atom arm).
 fn closure_query() -> Query {
     Query {
         interiors: vec![],
@@ -1126,7 +1070,7 @@ fn the_linear_closure_matches_its_hand_written_golden() {
 
 #[test]
 fn negation_of_finished_rec_matches_its_hand_written_golden() {
-    // Main: Org(id = x), ¬rec(c0 = x) — anti-join inlined in the SELECT.
+
     let mut query = closure_query();
     match &mut query {
         Query {
@@ -1206,7 +1150,6 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
     );
 }
 
-/// Interval-typed derived columns remain the translator's named limit.
 #[test]
 fn interval_derived_columns_error_by_name() {
     let query = Query {
