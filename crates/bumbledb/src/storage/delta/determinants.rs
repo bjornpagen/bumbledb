@@ -97,7 +97,6 @@ impl TupleOwners {
 }
 
 impl WriteDelta<'_> {
-
     pub(super) fn record_determinants(
         &mut self,
         rel: RelationId,
