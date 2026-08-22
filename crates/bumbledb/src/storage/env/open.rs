@@ -12,7 +12,6 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::{MetaBlock, classify_meta_block, parse_meta, parse_meta_head};
 
 impl Environment {
-
     /// # Errors
 
     /// LMDB environment; `FormatMismatch`, then `SchemaMismatch`;
