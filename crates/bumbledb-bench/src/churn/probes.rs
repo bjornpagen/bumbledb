@@ -1,20 +1,3 @@
-//! The pinned probe queries — the degradation curve's y-axis. A probe
-//! is a registry row of plain data (the [`crate::families::Family`] /
-//! [`crate::displaced::DisplacedFamily`] precedent): exact IR, a fixed
-//! draw policy, and its regime note. The oracle gate is a structural
-//! precondition of every sample point, not a one-time ceremony:
-//! [`sample_ours`] RETURNS the reference answers ([`ProbeRun`]) and
-//! [`sample_sqlite`] takes them as an argument — a mirror sample that
-//! skipped the gate is untypeable.
-//!
-//! Draw policy is data too: balance and window params are FIXED
-//! constants of the lane (stationary selectivity — the curve reads
-//! store state, not param drift; [`super::ops::stationary_body`] keeps
-//! the corpus's timestamp span stationary from the write side), and
-//! point params are pure functions of `(seed, cycle, live set)` —
-//! always LIVE ids, so the point probe prices the burned id space, not
-//! misses.
-
 use bumbledb::{
     Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, ParamId,
     Query, Rule, Term, Value, VarId,
@@ -30,8 +13,6 @@ use crate::sqlite_run;
 
 use super::ops;
 
-/// One pinned probe: a name, its exact IR, and its regime note — a
-/// registry row, not a branch.
 pub struct Probe {
     pub name: &'static str,
     pub query: fn() -> Query,
@@ -42,9 +23,6 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// `churn_point` — the key-probe shape, verbatim from the read
-/// families' point query: `Q(amount, at) :- Posting(id = ?0, amount,
-/// at)`.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -61,10 +39,6 @@ fn point_query() -> Query {
     })
 }
 
-/// `churn_balance` — `Q(Sum(amount)) :- Posting(id = v2, account == ?0,
-/// amount = v1)`: the one-account aggregate fold (the fresh id binding
-/// makes every posting a distinct binding — the balance-family
-/// precedent).
 fn balance_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
@@ -84,8 +58,6 @@ fn balance_query() -> Query {
     })
 }
 
-/// `churn_window` — the range-family shape verbatim: `Q(id, amount) :-
-/// Posting(id, amount, at)`, `at >= ?0`, `at < ?1`.
 fn window_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -113,8 +85,6 @@ fn window_query() -> Query {
     })
 }
 
-/// The pinned registry: exactly three rows — changing it is a
-/// deliberate act (the identity test asserts the names).
 #[must_use]
 pub fn all() -> &'static [Probe] {
     &[
@@ -136,28 +106,14 @@ pub fn all() -> &'static [Probe] {
     ]
 }
 
-/// The probe protocol — small on purpose: a sample point is a curve
-/// pixel, not a gate; 16 exact-percentile samples after warmups that
-/// absorb the post-commit image rebuild, so the series is WARM read
-/// latency (the cold spike is the cold lanes' story).
+/// The probe protocol — small on purpose: a sample point is a curve pixel, not
+/// a gate; 16 exact-percentile samples after warmups that
 pub const PROBE_PROTO: Protocol = Protocol {
     warmups: 4,
     samples: 16,
 };
 
-/// One probe's draws at one sample point. `churn_point` draws four LIVE
-/// ids, a pure function of `(seed, cycle, live set)`; `churn_balance`
-/// and `churn_window` are FIXED constants of the lane (account 0 exists
-/// at every scale; the window is the range-family ≈2% formula, one
-/// window, fixed forever) — fixed across all samples so the curve is
-/// comparable point to point.
-///
 /// # Panics
-///
-/// On an empty live set (the working-set floor of
-/// [`super::ops::validate`] keeps a driven run away from this), and
-/// never otherwise in practice: the documented size table keeps every
-/// derived value inside `i64`.
 #[must_use]
 pub fn draws(probe: &Probe, r#gen: GenConfig, live: &ops::LiveSet, cycle: u64) -> Vec<Draw> {
     match probe.name {
@@ -183,44 +139,26 @@ pub fn draws(probe: &Probe, r#gen: GenConfig, live: &ops::LiveSet, cycle: u64) -
     }
 }
 
-/// One engine's probe reading at one sample point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeSample {
     pub name: String,
-    /// The per-execute p50, floor-aware (see [`sample_ours`]).
+
     pub p50_ns: u64,
-    /// Mean answers per execute — `work / samples`, the `run_query`
-    /// convention (taken from the batch-1 measurement, so the floor
-    /// re-measure never inflates the count).
+
     pub answers: u64,
 }
 
-/// One ours-side sample point WITH its reference answers per draw — the
-/// gate's carrier: the mirror sampler takes this by argument, so a
-/// mirror sample without an ours-side gate is untypeable.
 #[derive(Debug, Clone)]
 pub struct ProbeRun {
     pub sample: ProbeSample,
-    /// The reference answers, one multiset per draw, in draw order.
+
     pub reference: Vec<Vec<compare::Answer>>,
-    /// The probe's output signature — the prepared query's signature
-    /// columns, the answer-typing authority.
+
     pub types: Vec<bumbledb::schema::ValueType>,
 }
 
-/// Samples one probe on the engine store. The churn probe protocol:
-/// probe statements are prepared FRESH at every sample point on BOTH
-/// engines, so the plan reflects the current store and prepare cost
-/// stays outside the timed reps; statement reuse holds within a sample
-/// point's warmups+reps (the harness closure reuses the one prepared
-/// query). First the reference answers per draw (the gate's carrier),
-/// then the timed window; a p50 under the timer's quantum floor
-/// re-measures batched (the displaced quantum-floor rule — `churn_point`
-/// sits near the floor).
-///
+/// The churn probe protocol:
 /// # Errors
-///
-/// Engine errors, stringified with the probe named.
 pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<ProbeRun, String> {
     let query = (probe.query)();
     let mut prepared = db
@@ -267,23 +205,10 @@ pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<Prob
     })
 }
 
-/// Samples one probe on a `SQLite` mirror — GATE FIRST: every draw's
-/// result multiset must equal the ours-side reference before a single
-/// timed sample exists (standing law: value-identical multiset
-/// agreement, wired like the scenario gate). Then the timed window over
-/// a statement prepared fresh at this sample point (the churn probe
-/// protocol — see [`sample_ours`]), with the same quantum-floor
-/// re-measure rule.
-///
+/// result multiset must equal the ours-side reference before a single protocol
+/// — see [`sample_ours`]), with the same quantum-floor
 /// # Errors
-///
-/// A gate disagreement naming the lane, probe, and draw index — nothing
-/// gets timed; `SQLite` and translation errors, stringified.
-///
 /// # Panics
-///
-/// When `run` does not carry one reference multiset per draw (the
-/// carrier comes from [`sample_ours`] over the same `sets`).
 pub fn sample_sqlite(
     conn: &rusqlite::Connection,
     probe: &Probe,
@@ -374,9 +299,6 @@ mod tests {
         (lane, conn, live, dir)
     }
 
-    /// Every probe gates and samples on a fresh Tiny pair: both engines
-    /// return, the point probe's live id hits exactly one row, and the
-    /// fixed window is nonempty.
     #[test]
     fn churn_probes_gate_and_sample_on_a_fresh_tiny_pair() {
         let (lane, conn, live, dir) = fresh_pair("fresh");
@@ -401,9 +323,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The draw policy's two laws, asserted: point draws are a pure
-    /// function of `(seed, cycle, live set)` and always LIVE; balance
-    /// and window draws are FIXED across cycles.
     #[test]
     fn churn_probe_draws_are_deterministic_and_live() {
         let live = ops::LiveSet::from_corpus(tiny());
@@ -432,13 +351,6 @@ mod tests {
         }
     }
 
-    /// The gate has teeth: a mirror diverged by one in-window row
-    /// refuses with the battle cry, and nothing gets timed. The deleted
-    /// id sits mid-window BY THE TIMESTAMP LAW: posting `i`'s `at` is
-    /// `AT_BASE + 50·i + jitter(0..50)`, and the pinned Tiny window
-    /// `[AT_BASE + 16000, AT_BASE + 17024)` therefore contains ids
-    /// 320..=339 for every jitter — id 330 is guaranteed inside (id 0
-    /// would sit far below the window and diverge nothing).
     #[test]
     fn churn_probe_gate_catches_a_divergent_mirror() {
         let (lane, conn, live, dir) = fresh_pair("divergent");
@@ -454,8 +366,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The pinned-probe identity: exactly three rows, these names —
-    /// changing it is a deliberate act.
     #[test]
     fn churn_probe_registry_is_fixed() {
         assert_eq!(all().len(), 3, "exactly three pinned probes");
