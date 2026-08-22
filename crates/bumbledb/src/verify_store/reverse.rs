@@ -4,7 +4,6 @@
 //! as the survivor authority. Every edge must resolve to a live source
 //! fact that re-derives the same key bytes and still sits inside its φ
 //! (the commit path's own satisfaction helper).
-
 use crate::error::{CorruptionError, Result};
 use crate::schema::{Enforcement, StatementView};
 use crate::storage::catalog::CatalogRead;
