@@ -337,7 +337,6 @@ fn scalar_source_with_pre_committed_target_commits() {
 
 #[test]
 fn scalar_target_failing_the_target_selection_aborts() {
-
     let schema = schema();
     let t = transfer(&schema, 9);
     assert_source_violation(
@@ -353,7 +352,6 @@ fn scalar_target_failing_the_target_selection_aborts() {
 
 #[test]
 fn out_of_sigma_source_commits_without_a_target_and_writes_no_reverse_edge() {
-
     let dir = TempDir::new("judg-conditional-outside");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -447,7 +445,6 @@ fn abutting_chain_covers() {
 
 #[test]
 fn entry_segment_overhang_covers() {
-
     let schema = schema();
     base_then_insert(
         "judg-cover-overhang",
@@ -478,7 +475,6 @@ fn interior_gap_aborts() {
 
 #[test]
 fn source_start_before_first_segment_aborts() {
-
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -494,7 +490,6 @@ fn source_start_before_first_segment_aborts() {
 
 #[test]
 fn source_end_past_last_segment_aborts() {
-
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -510,7 +505,6 @@ fn source_end_past_last_segment_aborts() {
 
 #[test]
 fn ray_target_covers_a_bounded_source() {
-
     let schema = schema();
     base_then_insert(
         "judg-cover-ray-target",
@@ -523,7 +517,6 @@ fn ray_target_covers_a_bounded_source() {
 
 #[test]
 fn ray_source_not_covered_by_bounded_targets() {
-
     let schema = schema();
     let s = session(&schema, 1, 15, u64::MAX);
     assert_source_violation(
@@ -539,7 +532,6 @@ fn ray_source_not_covered_by_bounded_targets() {
 
 #[test]
 fn ray_source_covered_by_ray_target() {
-
     let schema = schema();
     base_then_insert(
         "judg-cover-ray-source-ray",
@@ -552,7 +544,6 @@ fn ray_source_covered_by_ray_target() {
 
 #[test]
 fn another_prefix_group_does_not_cover() {
-
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -598,7 +589,6 @@ fn entry_segment_failing_sigma_aborts() {
 
 #[test]
 fn mid_chain_segment_failing_sigma_aborts() {
-
     let schema = schema();
     let r = rest(&schema, 1, 10, 20);
     assert_source_violation(
