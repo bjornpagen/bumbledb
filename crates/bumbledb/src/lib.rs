@@ -189,8 +189,8 @@ pub use error::{
 pub use schema::fingerprint::SchemaFingerprint;
 pub use schema::{
     FieldId, FreshField, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
-    SchemaDescriptor, SchemaSpec, SchemaSpecError, SchemaWarning, StatementId, StatementKind,
-    Theory, render_rejection,
+    SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
+    render_rejection,
 };
 /// Offline store sweeper used by the bench harness and engine tests.
 /// Not embedding API.

@@ -803,23 +803,6 @@ pub struct Schema {
     order: Box<[StatementRef]>,
     /// `target_key -> dependents`, indexed by [`KeyId`].
     dependents: Box<[Box<[ContainmentId]>]>,
-    /// Non-fatal declaration diagnostics sealed alongside the witness.
-    /// Warnings never change acceptance or enforcement.
-    warnings: Box<[SchemaWarning]>,
-}
-
-/// A non-fatal schema diagnostic. Unlike [`crate::error::SchemaError`], a
-/// warning accompanies an accepted, fully enforcing [`Schema`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchemaWarning {
-    /// `key` strictly contains `implied_by` on the same relation. The
-    /// smaller determinant already implies the larger one, so the latter
-    /// adds determinant writes without strengthening the theory.
-    RedundantSuperkey {
-        relation: RelationId,
-        key: KeyId,
-        implied_by: KeyId,
-    },
 }
 
 impl Schema {
@@ -905,12 +888,6 @@ impl Schema {
     #[must_use]
     pub fn capacity_checked(&self, id: CapacityId) -> Option<&CapacityStatement> {
         self.capacities.get(usize::from(id.0))
-    }
-
-    /// Non-fatal diagnostics recorded while sealing this schema.
-    #[must_use]
-    pub fn warnings(&self) -> &[SchemaWarning] {
-        &self.warnings
     }
 
     /// A key selected by its validation-minted witness.

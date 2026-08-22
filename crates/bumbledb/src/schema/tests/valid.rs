@@ -30,7 +30,7 @@ fn valid_schema_constructs_with_statement_indices() {
 }
 
 #[test]
-fn a_redundant_pointwise_superkey_seals_with_a_warning() {
+fn a_redundant_pointwise_superkey_remains_sealed() {
     let mut descriptor = one_relation(vec![
         field("id", ValueType::U64),
         field(
@@ -51,14 +51,6 @@ fn a_redundant_pointwise_superkey_seals_with_a_warning() {
     assert_eq!(schema.keys().len(), 2, "both keys remain sealed");
     assert!(!schema.key(KeyId(0)).form().is_pointwise());
     assert!(schema.key(KeyId(1)).form().is_pointwise());
-    assert_eq!(
-        schema.warnings(),
-        &[SchemaWarning::RedundantSuperkey {
-            relation: RelationId(0),
-            key: KeyId(1),
-            implied_by: KeyId(0),
-        }]
-    );
 }
 
 /// The materialization-order pin: two relations with one fresh

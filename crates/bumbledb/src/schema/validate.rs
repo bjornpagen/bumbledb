@@ -20,9 +20,8 @@ use super::{
     CompiledSide, CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof,
     EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyForm, KeyId,
     KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, SchemaWarning, SealedBound, SealedWeight, Side,
-    StatementDescriptor, StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight,
-    value_matches,
+    RelationId, Schema, SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor,
+    StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -280,7 +279,6 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         Ok(Schema {
-            warnings: redundant_superkeys(&keys),
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
@@ -397,41 +395,6 @@ impl FieldSet {
         }
         Ok(Self(canonical.into_boxed_slice()))
     }
-
-    fn is_strict_subset_of(&self, other: &Self) -> bool {
-        self.0.len() < other.0.len()
-            && self
-                .0
-                .iter()
-                .all(|field| other.0.binary_search(field).is_ok())
-    }
-}
-
-/// Non-fatal key diagnostics, derived only after every accepted key has a
-/// stable [`KeyId`]. A strict superkey remains fully sealed and enforced;
-/// the warning records its determinant-write amplification.
-fn redundant_superkeys(keys: &[KeyStatement]) -> Box<[SchemaWarning]> {
-    let field_sets: Vec<FieldSet> = keys
-        .iter()
-        .map(|key| FieldSet::new(&key.projection).expect("sealed key projection is a set"))
-        .collect();
-    let mut warnings = Vec::new();
-    for (key_position, key) in keys.iter().enumerate() {
-        for (smaller_index, smaller) in keys.iter().enumerate() {
-            if key.relation == smaller.relation
-                && field_sets[smaller_index].is_strict_subset_of(&field_sets[key_position])
-            {
-                warnings.push(SchemaWarning::RedundantSuperkey {
-                    relation: key.relation,
-                    key: KeyId(u16::try_from(key_position).expect("statement count fits u16")),
-                    implied_by: KeyId(
-                        u16::try_from(smaller_index).expect("statement count fits u16"),
-                    ),
-                });
-            }
-        }
-    }
-    warnings.into_boxed_slice()
 }
 
 /// A validated projection carries both statement order (execution and key

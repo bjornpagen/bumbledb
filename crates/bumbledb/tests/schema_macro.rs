@@ -1188,9 +1188,9 @@ mod keyed_equality {
     }
 }
 
-mod redundant_superkey_warning {
+mod redundant_superkey_enforcement {
+    use bumbledb::schema::StatementId;
     use bumbledb::schema::ValidateDescriptor as _;
-    use bumbledb::schema::{RelationId, SchemaWarning, StatementId};
     use bumbledb::{Db, Interval, Theory as _, Violation};
 
     bumbledb::schema! {
@@ -1203,24 +1203,11 @@ mod redundant_superkey_warning {
     }
 
     #[test]
-    fn redundant_superkey_warns_without_weakening_either_enforcement_plan() {
-        let schema = RedundantKeys
+    fn a_redundant_superkey_still_enforces_both_keys() {
+        let _schema = RedundantKeys
             .descriptor()
             .validate()
             .expect("the redundant superkey remains accepted");
-        let [
-            SchemaWarning::RedundantSuperkey {
-                relation,
-                key,
-                implied_by,
-            },
-        ] = schema.warnings()
-        else {
-            panic!("expected exactly one redundant-superkey warning");
-        };
-        let keys = schema.relation(RelationId(0)).keys();
-        assert_eq!(*relation, RelationId(0));
-        assert_eq!((*key, *implied_by), (keys[1], keys[0]));
 
         let dir = crate::common::TempDir::new("macro-redundant-superkey");
         let db = Db::create(dir.path(), RedundantKeys)

@@ -393,17 +393,6 @@ impl<S> Db<S> {
         self.schema.as_ref()
     }
 
-    /// The non-fatal declaration diagnostics validation sealed into this
-    /// handle's schema witness ([`crate::schema::SchemaWarning`],
-    /// `docs/architecture/70-api.md` § schema warnings): construction
-    /// validates the descriptor and owns the witness, so the handle is
-    /// where the sealed diagnostics surface — a borrow, zero recompute.
-    /// Warnings are never errors and never alter the fingerprint.
-    #[must_use]
-    pub fn schema_warnings(&self) -> &[crate::schema::SchemaWarning] {
-        self.schema.warnings()
-    }
-
     /// Renders a query in the rule notation ([`crate::ir::render`]) —
     /// the roster-error diagnostic surface: when [`Db::prepare`] rejects
     /// a query there is no prepared handle to ask, so the host renders
