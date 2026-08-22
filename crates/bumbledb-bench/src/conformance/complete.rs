@@ -1,18 +1,5 @@
-//! The complete-admission conformance lane (instance-lifetime L5).
-//!
-//! The incremental judgment lane fences closed-source containments
-//! because the engine verdict is delta-restricted and `Txn.judgeB`
-//! reads the whole final state. Complete admission is not
-//! delta-restricted: those fences **lift**. `judgeB` stays the
-//! differential oracle. Each document is written only after
-//! [`bumbledb::InstanceBuilder::admit`] and the naive full-state
-//! [`NaiveDb::judge_complete`] agree — a disagreement is a trophy.
-//! Replay is fixture re-serialization through both Rust oracles;
-//! the Lean run is `completeAdmissionB` / `judgeB` over the candidate.
-//!
-//! Documents reuse the judgment interchange shape (`kind` is
-//! `"complete"`; `delta` is empty). `instance` **is the candidate**.
-//! Format in `lean/conformance/README.md` § complete-admission cases.
+//! Each document is written only after Format in `lean/conformance/README.md` §
+//! complete-admission cases.
 
 use bumbledb::Value;
 use bumbledb::schema::{
@@ -27,10 +14,6 @@ use super::judgment::{lane_verdict, push_blocks, push_relations, push_statements
 
 type Facts = Vec<(RelationId, Vec<Value>)>;
 
-/// One hand complete-admission fixture: a schema and the candidate's
-/// ordinary facts. The verdict is computed through both Rust oracles
-/// ([`bumbledb::InstanceBuilder::admit`] and [`NaiveDb::judge_complete`])
-/// and recorded only on agreement.
 struct CompleteFixture {
     name: &'static str,
     schema: SchemaDescriptor,
@@ -85,9 +68,6 @@ fn must_validate(schema: SchemaDescriptor, name: &str) -> SchemaDescriptor {
     schema
 }
 
-/// Closed Severity {Low, High} requiring ordinary Handler rows — the
-/// incremental lane's fenced class, and one of the four motivating
-/// complete-admission shapes.
 fn closed_source_schema() -> SchemaDescriptor {
     must_validate(
         SchemaDescriptor {
@@ -111,8 +91,6 @@ fn closed_source_schema() -> SchemaDescriptor {
     )
 }
 
-/// Closed Kind {Soft, Hard} as a positive-floor capacity parent over
-/// ordinary Bucket children.
 fn closed_capacity_schema() -> SchemaDescriptor {
     must_validate(
         SchemaDescriptor {
@@ -132,8 +110,6 @@ fn closed_capacity_schema() -> SchemaDescriptor {
     )
 }
 
-/// Ordinary Account rows requiring ordinary Holder rows — a pre-existing
-/// source obligation no empty incremental plan would touch.
 fn ordinary_source_schema() -> SchemaDescriptor {
     must_validate(
         SchemaDescriptor {
@@ -156,8 +132,6 @@ fn ordinary_source_schema() -> SchemaDescriptor {
     )
 }
 
-/// Ordinary Holder under a positive-floor window — empty children fail
-/// complete admission even when no delta exists.
 fn ordinary_capacity_schema() -> SchemaDescriptor {
     must_validate(
         SchemaDescriptor {
@@ -358,7 +332,6 @@ fn render_fixture(fixture: &CompleteFixture) -> String {
     )
 }
 
-/// The whole complete-admission corpus, deterministically.
 #[must_use]
 pub fn generate_complete_corpus() -> Vec<(String, String)> {
     fixtures()
@@ -367,11 +340,7 @@ pub fn generate_complete_corpus() -> Vec<(String, String)> {
         .collect()
 }
 
-/// One checked-in complete-admission case, fresh from its named fixture.
-///
 /// # Panics
-///
-/// If `name` is not a fixture in this corpus — a stale case file.
 #[must_use]
 pub fn replay_complete_case(name: &str) -> String {
     let fixture = fixtures()
@@ -385,9 +354,6 @@ pub fn replay_complete_case(name: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Engine `admit` and the naive full-state judge agree on every
-    /// roster fixture — the Rust half of the three-way. Lean
-    /// `judgeB` / `completeAdmissionB` compares the recorded verdict.
     #[test]
     fn complete_admission_engine_admit_agrees_with_naive() {
         for fixture in fixtures() {
@@ -395,8 +361,6 @@ mod tests {
         }
     }
 
-    /// The incremental fence's formerly excluded class is in this lane
-    /// and rejects: closed Severity rows with no Handler targets.
     #[test]
     fn complete_admission_includes_closed_source_containments() {
         let document = replay_complete_case("complete-closed-source-missing-target");
@@ -414,7 +378,7 @@ mod tests {
     }
 
     /// Unrelated ordinary facts do not hide a closed-source miss — the
-    /// empty-delta incremental shortcut's motivating counterexample.
+
     #[test]
     fn unrelated_ordinary_facts_do_not_discharge_closed_source() {
         let document = replay_complete_case("complete-closed-source-unrelated-note");
