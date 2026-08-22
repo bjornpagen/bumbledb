@@ -116,13 +116,9 @@ fn capacity_verdicts_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-
         write(vec![], vec![holder(7), account(7, 1, 0)]),
-
         write(vec![], vec![holder(8)]),
-
         write(vec![], vec![account(7, 1, 1), account(7, 1, 2)]),
-
         write(
             vec![],
             vec![
@@ -130,7 +126,6 @@ fn capacity_verdicts_agree_with_the_model() {
                 (HOLDER, vec![Value::U64(9), Value::U64(1)]),
             ],
         ),
-
         write(vec![], vec![account(7, 1, 1)]),
         write(vec![holder(7), account(7, 1, 0), account(7, 1, 1)], vec![]),
     ];
@@ -153,9 +148,7 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-
         write(vec![], vec![holder(7)]),
-
         write(vec![], vec![holder(7), account(7, 1, 0)]),
     ];
     let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
@@ -184,21 +177,13 @@ fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-
         write(vec![], vec![holder(1), account(1, 1, 0), account(1, 1, 1)]),
-
         write(vec![account(1, 1, 1)], vec![]),
-
         write(vec![], vec![account(1, 1, 2)]),
-
         write(vec![], vec![account(1, 9, 0)]),
-
         write(vec![], vec![account(1, 5, 0), account(1, 6, 1)]),
-
         write(vec![], vec![account(3, 1, 0)]),
-
         write(vec![account(1, 1, 1)], vec![account(1, 1, 1)]),
-
         write(
             vec![account(1, 1, 0), account(1, 1, 1)],
             vec![account(1, 1, 0)],
