@@ -1,17 +1,7 @@
-//! The rule loop (docs/architecture/40-execution.md § the rule loop):
-//! one head, one sink — rules run sequentially and the sink's seen-set
-//! spanning rules IS the union. No merge node exists to test; what these
-//! tests pin is the *absence* of duplicates (and the negative control:
-//! host-concatenated separate executions DO duplicate), the union fold
-//! domain of aggregates, and params binding once for every rule.
-
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadTerm, ParamId};
 
-/// Accounts 3 and 7 overlap on ("b", 25): the amounts of account 3 are
-/// {10, 25}, of account 7 {25, 40}; account 9 exists so unfiltered rules
-/// see more than the union under test.
 fn overlap_postings() -> Vec<(u64, u64, &'static str, i64)> {
     vec![
         (1, 3, "a", 10),
@@ -22,9 +12,6 @@ fn overlap_postings() -> Vec<(u64, u64, &'static str, i64)> {
     ]
 }
 
-/// One rule: `Posting(account = <account>, memo, amount), amount >= ?0`
-/// — finds (memo, amount). Every rule references the one query-global
-/// param.
 fn by_account_rule(account: u64) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -45,8 +32,6 @@ fn by_account_rule(account: u64) -> Rule {
     }
 }
 
-/// Q(memo, amount) :- account 3's postings ∪ account 7's postings, both
-/// under one `amount >= ?0` param.
 fn union_query() -> Query {
     Query {
         interiors: vec![],
@@ -68,8 +53,7 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
     assert_eq!(prepared.pipeline.main_rules().len(), 2, "one plan per rule");
     for rule in prepared.pipeline.main_rules() {
-        // Each rule went through the full pipeline: a real plan with the
-        // rule's own occurrence scratch exists.
+
         let PreparedRule::FreeJoin(rule) = rule else {
             panic!("fixture rules use Free Join");
         };
@@ -87,10 +71,6 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
     );
 }
 
-/// The union has no duplicates — and the negative control: the same two
-/// rules as two separate single-rule executions, concatenated by the
-/// host, DO duplicate. That difference is the proof the seen-set spans
-/// rules (there is no merge pass that could have deduplicated instead).
 #[test]
 fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
     let dir = TempDir::new("prepared-rules-union");
@@ -115,8 +95,6 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
         "the overlap ('b', 25) appears once: the union is a set"
     );
 
-    // The negative control: per-rule executions concatenated in the
-    // host carry the overlap twice.
     let mut concatenated = Vec::new();
     for account in [3, 7] {
         let mut single = prepare(
@@ -143,8 +121,6 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
     );
 }
 
-/// Params are query-global: one bind reaches every rule (the param slots
-/// live on the prepared query, not on any rule).
 #[test]
 fn params_bind_once_and_reach_all_rules() {
     let dir = TempDir::new("prepared-rules-params");
@@ -163,18 +139,13 @@ fn params_bind_once_and_reach_all_rules() {
         vec![("b".to_owned(), 25), ("c".to_owned(), 40)],
         "the floor filtered account 3's 10 AND account 7's nothing-below-20"
     );
-    // Re-bind, same prepared query: both rules see the new value.
+
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::I64(30)])
         .expect("execute");
     assert_eq!(answers_of(&out), vec![("c".to_owned(), 40)]);
 }
 
-/// Aggregates over rules read the head (20-query-ir § aggregation): the
-/// fold domain is the union of the rules' binding sets projected to the
-/// head, so the overlapping ("b", 25) binding folds ONCE — where the
-/// host-side sum of per-rule queries counts it twice. This is the naive
-/// model's `union_fold` semantics, hand-computed.
 #[test]
 fn aggregates_fold_the_union_of_head_projected_bindings() {
     let dir = TempDir::new("prepared-rules-fold");
@@ -184,7 +155,6 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(Sum(amount), Count) :- rules over accounts 3 and 7.
     let agg_rule = |account: u64| Rule {
         finds: vec![
             FindTerm::Aggregate {
@@ -217,16 +187,11 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
         .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    // Head projection per binding = (amount): {10, 25} ∪ {25, 40} =
-    // {10, 25, 40}. Sum = 75 (the duplicate 25 folded once), Count = 3
-    // — NOT the per-rule sums 35 + 65 = 100 / counts 2 + 2 = 4.
+
     assert_eq!(out.get(0, 0), AnswerValue::I64(75), "Sum over the union");
     assert_eq!(out.get(0, 1), AnswerValue::U64(3), "Count counts the union");
 }
 
-/// Grouped fold across rules: the duplicate head binding ("b", 25)
-/// reaches its group exactly once, and each rule's exclusive groups
-/// land untouched.
 #[test]
 fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     let dir = TempDir::new("prepared-rules-groups");
@@ -236,7 +201,6 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(memo, Sum(amount)) :- account 3's ∪ account 7's postings.
     let rule = |account: u64| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -282,8 +246,7 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         answers,
         vec![
             ("a".to_owned(), 10),
-            // Both rules derive ("b", 25); the union folds it once —
-            // 25, never 50.
+
             ("b".to_owned(), 25),
             ("c".to_owned(), 40),
         ]
@@ -291,11 +254,11 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
 }
 
 /// Cross-rule fold-free nullary `Count` is refused at validation (ruled
-/// 2026-07-23, R1): under the head-projection law every binding projects
-/// to the empty head tuple, so the union is a singleton and the Count is
-/// definitionally the constant 1 — an uninformative query, made
-/// unrepresentable beside `ArgAcrossRules` with the same modeling
-/// answer: one Count per disjunct, host-merged.
+/// 2026-07-23, R1): under the head-projection law every binding projects to the
+/// empty head tuple, so the union is a singleton and the Count is
+/// definitionally the constant 1 — an uninformative query, made unrepresentable
+/// beside `ArgAcrossRules` with the same modeling answer: one Count per
+/// disjunct, host-merged.
 #[test]
 fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
     let dir = TempDir::new("prepared-rules-count");
@@ -335,9 +298,6 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
     );
 }
 
-/// A grouped fold-free Count head refuses identically (R1): the group
-/// variables are constant per group, so the head projection is one row
-/// per group and the Count is 1 for every inhabited group.
 #[test]
 fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
     let dir = TempDir::new("prepared-rules-grouped-count");
@@ -378,11 +338,10 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
     );
 }
 
-/// The or-transparency law (ruled 2026-07-23, R2): a DNF-derived rule
-/// set re-keys the union dedup on the shared slot arrays, so surface
-/// `or` never changes a fold domain — distinct full bindings that
-/// project to EQUAL head rows all fold, and the nullary Count counts
-/// the written rule's binding set
+/// The or-transparency law (ruled 2026-07-23, R2): a DNF-derived rule set
+/// re-keys the union dedup on the shared slot arrays, so surface `or` never
+/// changes a fold domain — distinct full bindings that project to EQUAL head
+/// rows all fold, and the nullary Count counts the written rule's binding set
 /// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 #[test]
 fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
@@ -393,10 +352,6 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(Sum(amount), Count) :- Posting(account, memo, amount),
-    // amount >= 25 or amount >= 55 — ONE written rule whose disjuncts
-    // overlap on every amount ≥ 55 binding, and whose bindings
-    // ("b", 25) × accounts {3, 7} project to the same head row.
     let rule = Rule {
         finds: vec![
             FindTerm::Aggregate {
@@ -446,12 +401,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
         .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    // Distinct full bindings with amount ≥ 25: (3, "b", 25),
-    // (7, "b", 25), (7, "c", 40), (9, "d", 55) — the two 25s project to
-    // one head row yet BOTH fold (the shared-slot re-key), and the
-    // ≥ 55 binding satisfying both disjuncts folds once (the widened
-    // membership collapses in the set). Sum = 145, Count = 4 — exactly
-    // the leaf spelling `amount >= 25`'s answers.
+
     assert_eq!(
         out.get(0, 0),
         AnswerValue::I64(145),
@@ -464,9 +414,6 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     );
 }
 
-/// introspection over a query: per-rule node stats plus the head-level union
-/// accounting — rule 1 re-derives the overlap and the report shows the
-/// absorption.
 #[test]
 fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     let dir = TempDir::new("prepared-rules-introspect");
@@ -487,9 +434,6 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     assert!(report.contains("query:"), "{report}");
 }
 
-/// A key-probe rule inside a query goes through the sink like any
-/// other rule (the union must hear it): its re-derivation of another
-/// rule's row is absorbed.
 #[test]
 fn a_key_probe_rule_unions_through_the_sink() {
     let dir = TempDir::new("prepared-rules-key_probe");
@@ -499,9 +443,6 @@ fn a_key_probe_rule_unions_through_the_sink() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Rule 0: account 3's (memo, amount). Rule 1: the point lookup
-    // `Posting(id = 2, memo, amount)` — a key probe re-deriving
-    // ("b", 25), which rule 0 already produced.
     let key_probe_rule = Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -516,7 +457,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
         conditions: vec![],
     };
     let mut rule0 = by_account_rule(3);
-    rule0.conditions.clear(); // no param: the key-probe rule binds none
+    rule0.conditions.clear(); 
     let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
