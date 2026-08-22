@@ -58,7 +58,6 @@ impl Colt {
     }
 
     /// (the `gather_keys` invariant), bounds-checked here — this gather
-
     pub fn gather_interval_pair(
         &self,
         start_col: usize,
@@ -89,7 +88,6 @@ impl Colt {
     /// # Panics
 
     /// Only on a programmer-invariant violation: `out` shorter than the
-
     pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
         let level = self.join_index(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
