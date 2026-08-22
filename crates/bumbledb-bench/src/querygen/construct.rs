@@ -37,10 +37,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
                 2 => chain(&mut b, rng),
                 _ => aggregate(&mut b, rng),
             }
-            // The zero-binding nonemptiness gate, drawn from more than
-            // one relation (falsity is the empty-store pass's job;
-            // diversity here is about relation shape) — including under
-            // aggregates, per the two aggregate-bearing arms above.
+
             b.add_atom(match rng.range(3) {
                 0 => ids::ORG,
                 1 => ids::ORG_PARENT,
@@ -59,18 +56,15 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Measure => measure(&mut b, rng, cfg, domains),
         Shape::Rules => unreachable!("multi-rule queries assemble their own query"),
     }
-    // The grounding and closed shapes are their own deliberate dressing: a
-    // random predicate or negated probe landing on the target atom
+
     // would flip an eliminable shape to a refusal (or blur the counted
-    // closed class) nondeterministically, and the coverage contract
-    // asserts each variant per run (shapes_ground.rs, shapes_closed.rs).
+
     if !matches!(
         shape,
         Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::GroundFold
     ) {
         dress(&mut b, rng, cfg, domains);
-        // Negation last: its templates draw on every anchor the shape
-        // and the dressing established.
+
         negate(&mut b, rng);
     }
     b
@@ -80,11 +74,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
     let domains = Domains::of(cfg.scale);
     let shape = shape_of(rng);
     if shape == Shape::Rules {
-        // Multi-rule queries bypass the single-rule Builder: variables
-        // are rule-scoped, so each arm carries its own scope and the
-        // shape assembles the `Query` itself (dressing and negation are
-        // deliberately withheld, like the grounding shapes — the variants'
-        // bands are the point).
+
         let (query, variant) = rules(rng, &domains);
         let tags = GenTags {
             rules: Some(variant),
@@ -108,16 +98,11 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
     (b.into_query(), shape, tags)
 }
 
-/// CQ-only reconstructer. Seeded corpus replay must keep this RNG
-/// stream (`SHAPE_WEIGHTS`) so answers stay pinned.
 #[must_use]
 pub fn random_cq_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     random_query_tagged(rng, cfg).0
 }
 
-/// The randomized entry for stamp/fuzz/contradict/opgen: one class
-/// coin-flip, then a CQ shape or an interiors/rec shape. Corpus
-/// reconstructers keep [`random_cq_query`] / [`super::random_reach_query`].
 #[must_use]
 pub fn random_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     match QueryClass::draw(rng) {
@@ -133,9 +118,7 @@ enum QueryClass {
 
 impl QueryClass {
     fn draw(rng: &mut Rng) -> Self {
-        // 1/8 derived so stamp/fuzz explore interiors/rec without
-        // drowning the CQ distribution the coverage contract pins
-        // through [`random_query_tagged`].
+
         if rng.range(8) == 0 {
             Self::Derived
         } else {
