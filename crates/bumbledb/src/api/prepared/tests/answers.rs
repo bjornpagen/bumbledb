@@ -2,10 +2,6 @@ use super::*;
 use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
-/// A finalize-time Overflow leaves `Answers`
-/// discardable — the same prepared query re-executes cleanly into
-/// the same carrier (deterministic error), and a passing query then
-/// fills that carrier with exactly its own answers.
 #[test]
 fn overflow_errors_leave_answers_reusable() {
     let dir = TempDir::new("prepared-overflow-reuse");
@@ -16,7 +12,7 @@ fn overflow_errors_leave_answers_reusable() {
         &schema,
         &[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)],
     );
-    // Sum by account: account 7 overflows at finalize.
+
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -52,7 +48,7 @@ fn overflow_errors_leave_answers_reusable() {
             "{err:?}"
         );
     }
-    // A passing query fills the same carrier with exactly its answers.
+
     let ok_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -105,15 +101,12 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
         .execute(&txn, &cache, &params, &mut out)
         .expect("execute");
     assert_eq!(answers_of(&out), first);
-    // Capacity is retained across reuse (the zero-alloc path).
+
     assert!(out.cells.capacity() >= cells_cap);
     assert!(out.text.capacity() >= text_cap);
     assert_eq!(first.len(), 3);
 }
 
-/// Finalize resolves each distinct intern once per prepared query —
-/// the persistent arena tier — and stores its bytes once per answer
-/// carrier per finalize (docs/architecture/40-execution.md).
 #[cfg(feature = "trace")]
 #[test]
 fn finalize_resolves_each_distinct_intern_once() {
@@ -122,8 +115,7 @@ fn finalize_resolves_each_distinct_intern_once() {
     let dir = TempDir::new("prepared-resolve-memo");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // 64 facts sharing one memo (distinct amounts keep the answers
-    // distinct under set semantics), plus 16 facts over 16 memos.
+
     let facts: Vec<(u64, u64, String, i64)> = (0..64)
         .map(|id| {
             (
@@ -157,19 +149,15 @@ fn finalize_resolves_each_distinct_intern_once() {
         (out, count)
     };
 
-    // 64 answers, one distinct memo: one resolution, one byte copy.
     let (out, count) = resolves(&mut prepared, 1);
     assert_eq!(out.len(), 64);
     assert_eq!(count, 1, "one distinct intern, one resolution");
     assert_eq!(out.byte_len(), "shared-memo".len(), "bytes stored once");
 
-    // 16 answers over 16 memos: sixteen resolutions.
     let (out, count) = resolves(&mut prepared, 2);
     assert_eq!(out.len(), 16);
     assert_eq!(count, 16);
-    // A second execution hits the persistent arena tier: the append-only
-    // dictionary makes every resolved pair final, so no descent repeats
-    // — and the answers still materialize whole.
+
     let (out, count) = resolves(&mut prepared, 2);
     assert_eq!(count, 0, "the arena tier survives across finalizes");
     assert_eq!(out.len(), 16);
