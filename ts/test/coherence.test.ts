@@ -1,15 +1,3 @@
-/**
- * The coherence wall's ENGINE twin, proven at the raw bridge (M5): the
- * typed builder cannot spell a mismatched spec — the SDK computes every
- * newtype label from the laws, so its lowered specs cohere by
- * construction — which makes the raw `SchemaSpec` fixtures below the one
- * road to the engine's check. This is the type-lie law applied to a
- * wall: the compile-time claim (paired faces share a domain) has a
- * runtime referee, and the referee is the engine's shared lowering, not
- * the types. The wire kind is `newtypeMismatch`; `Db`'s admission path
- * wraps it in the matchable {@link ErrNewtypeMismatch}.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -28,11 +16,6 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/**
- * Two u64 columns paired positionwise by one containment, each carrying
- * the newtype label given (or bare). The target key keeps the theory
- * sealable when the wall passes.
- */
 function paired(source: string | undefined, target: string | undefined): SchemaSpec {
 	return {
 		relations: [
