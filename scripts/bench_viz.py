@@ -124,21 +124,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-# ---------------------------------------------------------------- data
-
 READ_ORDER = [
     "point", "mandate_at_instant", "string", "entries_for_account_set",
     "balance", "containment_walk", "postings_without_tag", "mandate_overlap",
     "skew", "range", "chain", "stats", "latest_posting_per_account",
     "spread", "triangle",
-    # The calendar family set (the second theory), in registry order;
-    # rsvp_union_off is the elision-delta sub-measurement.
+
     "busy_scan", "meets_chain", "rsvp_union", "rsvp_union_off",
     "conflict_pairs", "conflict_free", "free_busy", "claim_hours",
 ]
 WRITE_ORDER = ["commit_single", "commit_witnessed", "commit_batch",
                "cold_containment_walk", "insert_stream"]
-
 
 def ordered(table, order):
     """Every family in the merged table, canonical names first in
@@ -146,17 +142,11 @@ def ordered(table, order):
     present in the pin but absent from the chart is unrepresentable."""
     return [n for n in order if n in table] + [n for n in table if n not in order]
 
-# The merged percentile set (p90 exists in every committed pin; the
-# tail fan reads it).
 PCTS = ("p50", "p90", "p95", "p99")
 
 OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",
 )
-
-
-# -------------------------------------------------------------- inputs
-
 
 def _stats_p50(container, key, where):
     """One optional stats slot: absent or null is fine (drawn as
@@ -167,7 +157,6 @@ def _stats_p50(container, key, where):
     if not isinstance(stats, dict) or not isinstance(stats.get("p50"), (int, float)):
         raise ValueError(f'{where}: "{key}" must be null or an object with a numeric "p50"')
     return stats
-
 
 def load_write_throughput(payload):
     """The write_throughput lane contract: "lanes" is a non-empty list;
@@ -196,7 +185,6 @@ def load_write_throughput(payload):
                     raise ValueError(f'write_throughput lane "{name}" batch '
                                      f'{row["batch"]}: "{key}" must be a number')
     return payload
-
 
 def load_adversarial(payload):
     """The adversarial lane contract: "cap_ms" > 0 and a non-empty
@@ -227,7 +215,6 @@ def load_adversarial(payload):
             raise ValueError(f'adversarial lane query "{name}": theirs_exceeded_cap=true '
                              'yet "theirs" carries stats — a capped twin has no number')
     return payload
-
 
 def load_churn_report(payload):
     """The churn runner's REAL artifact (churn_schema: 1, the frozen
@@ -285,7 +272,6 @@ def load_churn_report(payload):
                                          '"name" string and a numeric "p50_ns"')
     return payload
 
-
 def world_report_rows(report):
     """The two home-turf report shapes as ONE row stream of
     (lane_label, row): crud nests its rows under durability-lane
@@ -301,7 +287,6 @@ def world_report_rows(report):
                     yield entry.get("lane"), row
         else:
             yield entry.get("lane"), entry
-
 
 def load_world_report(world):
     """The home-turf world contract (crud / lawful): "world" names the
@@ -333,17 +318,13 @@ def load_world_report(world):
         return payload
     return load
 
-
 load_crud_report = load_world_report("crud")
 load_lawful_report = load_world_report("lawful")
 
-
-# Lane name -> contract loader; a lane without one is stored raw.
 LANE_LOADERS = {
     "write_throughput": load_write_throughput,
     "adversarial": load_adversarial,
 }
-
 
 def ingest_report(inputs, path):
     """One report.json into the inputs dict, dispatched on the lane
@@ -371,11 +352,6 @@ def ingest_report(inputs, path):
     else:
         print(f"note: {path} is neither a lane payload nor a RunReport — skipped")
 
-
-# The night dir's real lane reports, auto-ingested by discovery: the
-# canonical child path, the inputs key EXACTLY as the matching flag sets
-# it (flags override discovery), and the contract loader (None = the
-# flag-shaped reports, consumed raw by their charts).
 NIGHT_LANE_REPORTS = (
     ("storage/storage-report.json", "storage_report", None),
     ("writes/writes-report.json", "writes_rates", None),
@@ -384,7 +360,6 @@ NIGHT_LANE_REPORTS = (
     ("lawful/lawful.json", "lawful_report", load_lawful_report),
     ("churn/churn-report.json", "churn_report", load_churn_report),
 )
-
 
 def contaminated(inputs, report_path):
     """The contamination record is a FILE on the pinned run dir
@@ -399,7 +374,6 @@ def contaminated(inputs, report_path):
     print(f"note: {Path(report_path).parent.name} excluded — {marker.name} "
           "(contaminated run, excluded and counted)")
     return True
-
 
 def discover(night_dir):
     """A night out-dir -> the inputs dict: every one-level child's
@@ -432,7 +406,6 @@ def discover(night_dir):
         inputs[key] = payload
     return inputs
 
-
 def gather(run_dirs):
     """Legacy mode -> the same inputs dict: each positional run dir's
     report.json, classified exactly like discovery (the contamination
@@ -443,7 +416,6 @@ def gather(run_dirs):
         if not contaminated(inputs, report_path):
             ingest_report(inputs, report_path)
     return inputs
-
 
 def merge_runs(runs):
     """Min-of-N stats per family for ours and sqlite, reads + writes.
@@ -468,7 +440,6 @@ def merge_runs(runs):
         }
     return merge(reads), merge(writes)
 
-
 def derive_pools(inputs):
     """The merged reads/writes tables ride on the preferred pool —
     durable when non-empty, else ephemeral — with the pool's kind,
@@ -487,7 +458,6 @@ def derive_pools(inputs):
             inputs["scale"] = (pool[0].get("config") or {}).get("scale", "?")
             return
 
-
 def prov_note(payload):
     """The shared-machine caveat from the payload's OWN provenance
     stamp — a lane measured on a loaded machine under boosted QoS says
@@ -497,7 +467,6 @@ def prov_note(payload):
     if isinstance(provenance, dict) and provenance.get("shared_machine"):
         return " · shared machine, recorded system load"
     return ""
-
 
 def pool_note(inputs):
     """The merged-pool caption tail: min-of-N, store kind, exclusions,
@@ -509,7 +478,6 @@ def pool_note(inputs):
     if inputs.get("shared_machine"):
         note += " · shared machine, recorded system load"
     return note
-
 
 def derive_write_throughput(inputs):
     """writes-report.json's commit/delete batch ladders -> the
@@ -535,7 +503,6 @@ def derive_write_throughput(inputs):
         payload = {"lane": "write_throughput", "lanes": lanes,
                    "provenance": inputs["writes_rates"].get("provenance")}
         inputs["write_throughput"] = load_write_throughput(payload)
-
 
 def derive_adversarial(inputs):
     """scenarios.json's exceeded_cap lanes -> the adversarial lane
@@ -565,20 +532,17 @@ def derive_adversarial(inputs):
     payload = {"lane": "adversarial", "cap_ms": caps.pop(), "queries": queries}
     inputs["adversarial"] = load_adversarial(payload)
 
-
 def derive_lanes(inputs):
     """Every derived chart input, in one place, after discovery and
     flags — real payloads always win over derivations."""
     derive_write_throughput(inputs)
     derive_adversarial(inputs)
 
-
 def _md_p50(cell):
     """One p50 cell from the markdown table: a µs float, or None for the
     honest `DNF>cap` token — a capped lane has no number, so a number is
     never invented for it."""
     return None if cell.startswith("DNF") else float(cell)
-
 
 def load_scenarios(path):
     """Parse scenarios.md: [(scenario, query, lane, ours_us, sqlite_us)].
@@ -596,7 +560,7 @@ def load_scenarios(path):
             scenario = line[3:].split(" (")[0]
         elif line.startswith("|") and scenario and "---" not in line:
             cells = [c.strip() for c in line.strip("|").split("|")]
-            if cells[0] == "query":  # the header row names its columns
+            if cells[0] == "query":  
                 cols = {name: index for index, name in enumerate(cells)}
                 for needed in ("ours p50 (us)", "sqlite p50 (us)"):
                     if needed not in cols:
@@ -607,7 +571,6 @@ def load_scenarios(path):
                              _md_p50(cells[cols["ours p50 (us)"]]),
                              _md_p50(cells[cols["sqlite p50 (us)"]])))
     return rows
-
 
 def load_scenarios_json(path):
     """Parse the runner's scenarios.json: [(scenario, query, lane,
@@ -621,12 +584,10 @@ def load_scenarios_json(path):
     return [(q["scenario"], q["name"], lane["lane"], q["ours"], lane)
             for q in doc["queries"] for lane in q["lanes"]]
 
-
 def lane_suffix(lane_name):
     """The ·tuned-style label idiom: the canonical "sqlite" lane rides
     unsuffixed; any other lane suffixes the query label."""
     return "" if lane_name == "sqlite" else "·" + lane_name.removeprefix("sqlite-")
-
 
 def scenario_rows(scenarios):
     """The one normalized scenario row shape behind the world and
@@ -644,7 +605,7 @@ def scenario_rows(scenarios):
             if lane["outcome"] == "timed":
                 rows.append((scenario, label, ours["p50"],
                              lane["stats"]["p50"], None))
-            else:  # exceeded_cap: no stats — the annotation IS the datum
+            else:  
                 rows.append((scenario, label, ours["p50"], None,
                              f"timed out > {lane['cap_ms']}ms"))
         return rows
@@ -653,14 +614,9 @@ def scenario_rows(scenarios):
              None if sqlite_us is not None else "timed out")
             for scenario, query, lane_name, ours_us, sqlite_us in load_scenarios(path)]
 
-
 def load_report(path):
     """One committed lane report JSON, whole."""
     return json.loads(Path(path).read_text())
-
-
-# --------------------------------------------------------------- style
-
 
 def fmt_us(ns, _pos=None):
     us = ns / 1000
@@ -672,7 +628,6 @@ def fmt_us(ns, _pos=None):
         return f"{us / 1000:.0f}ms"
     return f"{us / 1e6:.1f}s"
 
-
 def fmt_bytes(n, _pos=None):
     """Absolute store bytes: B / KiB / MiB / GiB, monospace-friendly."""
     n = float(n)
@@ -682,7 +637,6 @@ def fmt_bytes(n, _pos=None):
         n /= 1024
     return f"{n:.1f}GiB"
 
-
 def fmt_rate(v, _pos=None):
     """Rows (or commits) per second across the decades."""
     if v >= 1e6:
@@ -690,7 +644,6 @@ def fmt_rate(v, _pos=None):
     if v >= 1e3:
         return f"{v / 1e3:.1f}k/s"
     return f"{v:.0f}/s"
-
 
 def fit_exponent(facts, p50s):
     """Least-squares slope of log10(p50) against log10(facts) — the
@@ -705,7 +658,6 @@ def fit_exponent(facts, p50s):
         return None
     return sum((a - mx) * (b - my) for a, b in zip(lx, ly)) / den
 
-
 def dark(ax):
     ax.set_facecolor(BG)
     for spine in ax.spines.values():
@@ -714,7 +666,6 @@ def dark(ax):
     ax.xaxis.label.set_color(DIM)
     ax.yaxis.label.set_color(DIM)
     ax.title.set_color(FG)
-
 
 def paired_bars(ax, names, table, note_ratio=True):
     ys = range(len(names))
@@ -741,10 +692,6 @@ def paired_bars(ax, names, table, note_ratio=True):
     ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=9)
 
-
-# -------------------------------------------------------------- charts
-
-
 def chart_vs_sqlite(inputs, out):
     reads = inputs["reads"]
     names = ordered(reads, READ_ORDER)
@@ -765,7 +712,6 @@ def chart_vs_sqlite(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
 
 def chart_speedup(inputs, out):
     reads = inputs["reads"]
@@ -800,7 +746,6 @@ def chart_speedup(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_tails(inputs, out):
     reads = inputs["reads"]
     names = [n for n in ordered(reads, READ_ORDER) if "theirs" in reads[n]]
@@ -827,13 +772,7 @@ def chart_tails(inputs, out):
     ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
     ax.set_title("tail latency · p50 → p95 → p99 per read query, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
-    # The p50 dots for slot_booking_overlap and postings_without_tag are
-    # rotation-boundary tail-maxima: their two fastest param populations
-    # fill ranks 0-127 of the 256-sample rotation exactly, so nearest-rank
-    # p50 = sorted[127] = the max of the fast mass — a per-process tail
-    # draw (0.34-2.01 pair ratios on identical binaries), not an engine
-    # mode. Mechanism + falsification evidence: the family doc comments
-    # (crates/bumbledb-bench/src/{calendar/families.rs,families/read.rs}).
+
     fig.text(0.01, 0.005,
              "containment_walk, balance, skew, and chain have bimodal latency · "
              f"{pool_note(inputs)}",
@@ -841,7 +780,6 @@ def chart_tails(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
 
 def chart_scenarios_lanes(rows, out):
     """The lane-aware bench-scenarios.svg, from scenarios.json rows:
@@ -873,7 +811,7 @@ def chart_scenarios_lanes(rows, out):
             label = f"{speed:.0f}×" if speed >= 10 else f"{speed:.1f}×"
             ax.text(max(speed * 1.06, 1.15), y, label, va="center", fontsize=9,
                     color=color, fontweight="bold", family="monospace")
-        else:  # exceeded_cap: no stats, no bar — the annotation IS the datum
+        else:  
             dnf += 1
             ax.text(xhi * 0.85, y, f"timed out > {lane['cap_ms']}ms", va="center",
                     ha="right", fontsize=9, color=THEIRS, fontweight="bold",
@@ -896,7 +834,6 @@ def chart_scenarios_lanes(rows, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_scenarios(inputs, out):
     kind, path = inputs["scenarios"]
     if kind == "json":
@@ -914,14 +851,13 @@ def chart_scenarios(inputs, out):
             y += 1
         yticks.append(y)
         ylabels.append(query + lane_suffix(lane_name))
-        if sqlite_us is None:  # DNF > cap: no number, no bar — skipped, counted
+        if sqlite_us is None:  
             dnf += 1
             ax.text(2500 * 0.85, y, "timed out", va="center", ha="right",
                     fontsize=9, color=THEIRS, fontweight="bold",
                     family="monospace")
         else:
-            # From the raw p50 columns — the markdown's ratio rounds to 2
-            # decimals, which floors the >100x queries to 0.00.
+
             speed = sqlite_us / ours_us if ours_us > 0 else 0
             color = OURS if speed >= 1 else "#f85149"
             ax.barh(y, speed, height=0.6, color=color, zorder=3)
@@ -945,7 +881,6 @@ def chart_scenarios(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
 
 def chart_worlds(inputs, out):
     """world-<world>.svg, one file per scenario world: horizontal
@@ -984,7 +919,7 @@ def chart_worlds(inputs, out):
         ax.set_xlim(min(vals) * 0.4, xhi)
         dnf = 0
         for y, (_label, _ours, sqlite_ns, note) in enumerate(entries):
-            if note:  # the capped lane: no bar to draw — the annotation IS the datum
+            if note:  
                 dnf += 1
                 ax.text(xhi * 0.85, y + 0.19, note, va="center", ha="right",
                         fontsize=9, color=THEIRS, fontweight="bold",
@@ -1003,7 +938,6 @@ def chart_worlds(inputs, out):
         written.append(outpath)
     return written
 
-
 def chart_ratio_waterfall(inputs, out):
     """ratio-waterfall.svg: every read family and every scenario
     (query, lane) as one bar of SQLite-p50 ÷ ours-p50, sorted
@@ -1019,7 +953,7 @@ def chart_ratio_waterfall(inputs, out):
              if inputs.get("scenarios") else [])
     dnf = 0
     for scenario, label, ours_ns, sqlite_ns, _note in srows:
-        if sqlite_ns is None:  # DNF > cap: no number to ratio — skipped, counted
+        if sqlite_ns is None:  
             dnf += 1
         elif ours_ns > 0:
             rows.append((f"{scenario}/{label}", sqlite_ns / ours_ns))
@@ -1058,7 +992,6 @@ def chart_ratio_waterfall(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_tails_fan(inputs, out):
     """tails-fan.svg: the p50 → p90 → p99 fan per read family, both
     engines — the legacy bench-tails.svg (p95) chart stays untouched."""
@@ -1094,7 +1027,6 @@ def chart_tails_fan(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_writes(inputs, out):
     writes = inputs["writes"]
     names = ordered(writes, WRITE_ORDER)
@@ -1114,10 +1046,6 @@ def chart_writes(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
-
-# -------------------------------------------------- the metric lanes
-
 
 def chart_storage(inputs, out):
     """bench-storage.svg: bytes per fact per scale, one panel per world
@@ -1211,7 +1139,6 @@ def chart_storage(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_writes_rates(inputs, out):
     """bench-writes-rates.svg: rows/sec per (family, batch) row, ours vs
     theirs paired, one panel per durability lane — the lane + sqlite_sync
@@ -1258,7 +1185,6 @@ def chart_writes_rates(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
 
 def chart_curves(inputs, out):
     """bench-curves.svg: log-log p50-vs-facts lines, one panel per
@@ -1327,7 +1253,6 @@ def chart_curves(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_warmth(inputs, out):
     """bench-warmth.svg: cold/warm/memoized p50 per warmth-carrying
     family, ours vs sqlite paired per group — the memo effect made an
@@ -1375,7 +1300,6 @@ def chart_warmth(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_write_throughput(inputs, out):
     """write-throughput.svg: facts/sec across commit batch sizes, one
     line per (durability lane × engine) — engine by color, durability
@@ -1414,7 +1338,6 @@ def chart_write_throughput(inputs, out):
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
-
 def chart_adversarial_dnf(inputs, out):
     """adversarial-dnf.svg: paired horizontal log bars, ours vs SQLite
     p50 — a capped twin has NO stats to draw (the loader enforced the
@@ -1440,7 +1363,7 @@ def chart_adversarial_dnf(inputs, out):
             ax.text(cap_ns * 1.15, y + 0.19, f"timed out > {cap_ms} ms",
                     va="center", fontsize=9, color="#f85149",
                     fontweight="bold", family="monospace")
-            label = fmt_us(o)  # no ratio against a cap — there is no number
+            label = fmt_us(o)  
         elif query.get("theirs"):
             t = query["theirs"]["p50"]
             peaks.append(t)
@@ -1451,7 +1374,7 @@ def chart_adversarial_dnf(inputs, out):
             label = fmt_us(o) + (f"   {ratio:.0f}×" if ratio >= 10
                                  else f"   {ratio:.1f}×")
         else:
-            label = fmt_us(o)  # no twin at all: ours stands alone
+            label = fmt_us(o)  
         ax.barh(y - 0.19, o, height=0.34, color=OURS, zorder=3)
         ax.text(o * 1.15, y - 0.19, label, va="center", fontsize=9,
                 color=OURS, fontweight="bold", family="monospace")
@@ -1479,7 +1402,6 @@ def chart_adversarial_dnf(inputs, out):
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
-
 
 def home_turf_render(key, world, regime, oracle_note):
     """world-crud.svg / world-lawful.svg: the home-turf worlds where
@@ -1545,7 +1467,6 @@ def home_turf_render(key, world, regime, oracle_note):
         plt.close(fig)
     return render
 
-
 def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
     """The one churn time-series scaffold behind every churn chart: one
     FILE PER RUN (the world-*.svg multi-file idiom), one line per lane
@@ -1571,8 +1492,7 @@ def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
             scale = yscale
         ax.set_yscale(scale)
         ax.yaxis.set_major_formatter(FuncFormatter(formatter))
-        # A series spanning less than a decade on a log axis auto-labels
-        # minor ticks in scientific notation — keep the lane's voice there.
+
         if scale == "log" and max(values) / max(min(values), 1e-12) < 10:
             ax.yaxis.set_minor_formatter(FuncFormatter(formatter))
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1594,9 +1514,7 @@ def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
         written.append(outpath)
     return written
 
-
 CHURN_LINE_STYLES = ("-", "--", ":", "-.")
-
 
 def churn_lane_styles(run):
     """lane name -> (color, linestyle): engine picks the color, the Nth
@@ -1609,7 +1527,6 @@ def churn_lane_styles(run):
         color = OURS if lane["engine"] == "bumbledb" else THEIRS
         styles[lane["lane"]] = (color, CHURN_LINE_STYLES[n % len(CHURN_LINE_STYLES)])
     return styles
-
 
 def churn_series(ax, run, values_of):
     """Every lane of one run onto one axes through the values_of
@@ -1635,7 +1552,6 @@ def churn_series(ax, run, values_of):
         values += [y for _, y in pts]
     return values
 
-
 def churn_footer(report, config):
     """The one churn caption: the protocol strides from the report's own
     config, plus the provenance caveat."""
@@ -1644,7 +1560,6 @@ def churn_footer(report, config):
             f"{config.get('vacuum_every', '?')} / ANALYZE every "
             f"{config.get('analyze_every', '?')}, charged as maintenance · "
             f"maintenance included{prov_note(report)}")
-
 
 def churn_probe_value(probe_name):
     """A values_of accessor for one probe's p50 at a sample (None when
@@ -1655,7 +1570,6 @@ def churn_probe_value(probe_name):
                 return probe["p50_ns"]
         return None
     return value
-
 
 def chart_churn_latency(inputs, out):
     """churn-latency-<run>.svg, one file per run: every probe family as
@@ -1703,7 +1617,6 @@ def chart_churn_latency(inputs, out):
         written.append(outpath)
     return written
 
-
 def churn_metric_render(stem, values_of, formatter, yscale, what):
     """One churn metric -> a registry render fn over the per-run
     scaffold."""
@@ -1712,10 +1625,6 @@ def churn_metric_render(stem, values_of, formatter, yscale, what):
                                   formatter=formatter, yscale=yscale, what=what)
     return render
 
-
-# ---------------------------------------------------------- the registry
-
-
 @dataclass(frozen=True)
 class ChartSpec:
     """One chart as data: what it's called, what it needs, how it draws.
@@ -1723,9 +1632,8 @@ class ChartSpec:
     A render fn may return the list of paths it wrote (a spec that
     emits one file per world); None means the single outpath."""
     filename: str
-    requires: tuple  # inputs keys, all required present and truthy
-    render: object   # fn(inputs, outpath) -> None | [written paths]
-
+    requires: tuple  
+    render: object   
 
 CHARTS = [
     ChartSpec("bench-vs-sqlite.svg", ("reads",), chart_vs_sqlite),
@@ -1759,10 +1667,6 @@ CHARTS = [
                                   lambda s: s["commits_per_sec"], fmt_rate,
                                   "auto", "write commits/sec over cycles")),
 ]
-
-
-# --------------------------------------------------------------- main
-
 
 def main():
     ap = argparse.ArgumentParser(
@@ -1824,7 +1728,6 @@ def main():
             r = reads[name]
             print(f"{name:10} ours {fmt_us(r['ours']['p50']):>8}  sqlite {fmt_us(r['theirs']['p50']):>8}  "
                   f"{r['theirs']['p50'] / r['ours']['p50']:5.1f}x")
-
 
 if __name__ == "__main__":
     main()
