@@ -45,7 +45,6 @@ pub(super) fn spans(seed: u64, z: &Sizes) -> Vec<Vec<Value>> {
     for i in 0..z.spans {
         let mut rng = Rng::new(mix(seed, ids::SPAN.0, i));
         let key = if rng.chance(1, 50) {
-
             0
         } else {
             rng.range(z.keys)
