@@ -1,27 +1,3 @@
-/**
- * PRD-H2 probes: the marshal bijection over closed rosters, against a REAL
- * durable store. Handle NAMES cross the marshal boundary as values; u64
- * row ids stay the engine's truth:
- *
- * - the round trip: insert with `"Savings"`, final-state tx reads and
- *   snapshot `scan`/`get` all return `"Savings"` (strict equality), and
- *   `delete`/`contains` lower the NAME through the same one seam;
- * - the raw cell: the store holds the closed roster's declaration-order
- *   id (`Savings` is `1n`); typed scan/get decode it back to the name;
- * - the write throw: an unknown handle name is a pointed marshal refusal
- *   naming the vocabulary and its roster (the 0.4.0 UPGRADE over 0.3.0's
- *   any-bigint-compiles), and a bare bigint is a shape refusal — the old
- *   spelling is dead;
- * - the read throw: an out-of-roster id — constructed via a LAWLESS twin
- *   store whose closed-typed column no containment law pins (raw bigints
- *   written under a plain-u64 twin schema with the identical fingerprint)
- *   — is a pointed error naming the missing law, never a silent fallback;
- * - violations: an offending fact's closed cell arrives as the NAME and
- *   agrees with the `canonical` string's engine rendering of the same
- *   handle;
- * - the marshal module itself stays literally cast-free (its own law).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -48,13 +24,6 @@ const SavingsTerms = relation("SavingsTerms", { account: u64 })
 const savingsKey = key(SavingsTerms, ["account"])
 const kindContainment = contained(on(Account, "kind"), on(Kind, "id"))
 
-/**
- * The σ-selected mirror source, HAND-LOWERED (fixture-style): the binding
- * carries the already-lowered wire literal `{ kind: "handle" }`, so this
- * suite pins the MARSHAL bijection independent of the `where()` literal
- * machinery (H3's files own that seam). Structurally identical to what
- * `Account.where({ kind: "Savings" })` resolves to.
- */
 const savingsSelected: Selected<"Account", RelationFields<typeof Account>> = {
 	relation: Account,
 	selection: [{ field: "kind", set: { kind: "one", literal: { kind: "handle", handle: "Savings" } } }]
@@ -63,14 +32,6 @@ const savingsMirror = mirrors(on(savingsSelected, "id"), on(SavingsTerms, "accou
 
 const Ledger = schema("MarshalLedger", { Kind, Account, SavingsTerms }, [savingsKey, kindContainment, savingsMirror])
 
-/**
- * The lawless twins: the SAME wire shape (the closed linkage is SDK-side
- * only — a `Kind.id` column lowers as a plain u64 field, and class labels
- * are never fingerprinted), so a store CREATED under the raw-u64 writer
- * schema OPENS under the closed-typed reader schema. Neither declares the
- * containment law, which is exactly the state the read throw names: raw
- * bigints reach a column the reader types by `Kind`.
- */
 const RawLawlessAccount = relation("Account", { id: u64.fresh, kind: u64 })
 const LawlessAccount = relation("Account", { id: u64.fresh, kind: Kind.id })
 const LawlessWriter = schema("Lawless", { Kind, Account: RawLawlessAccount }, [])
@@ -88,7 +49,6 @@ function copyStore(from: string, to: string): void {
 	fs.rmSync(path.join(to, "bumbledb.lock"), { force: true })
 }
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
@@ -138,17 +98,17 @@ describe("the marshal bijection over closed rosters", function suite() {
 		assert.throws(function misspelled() {
 			db.write(function tryInsert(tx) {
 				/**
-				 * Ruling 5: a wrong string is a compile error AND a marshal
-				 * refusal — the expect-error pins the compile half, the throw
-				 * (before the engine ever sees a row) pins the runtime half.
-				 */
+ * Ruling 5: a wrong string is a compile error AND a marshal
+ * refusal — the expect-error pins the compile half, the throw
+ * (before the engine ever sees a row) pins the runtime half.
+ */
 				// @ts-expect-error — "DirectPas" is not in Kind's handle union
 				tx.insert(Account, [{ id: 1n, kind: "DirectPas" }])
 			})
 		}, /"DirectPas" is not a handle of Kind — the roster is Checking, Savings/)
 		assert.throws(function bigintShape() {
 			db.write(function tryInsert(tx) {
-				/** The 0.3.0 spelling is dead: a bare bigint no longer crosses the closed seam. */
+
 				// @ts-expect-error — a bigint is not a handle name
 				tx.insert(Account, [{ id: 1n, kind: 1n }])
 			})
@@ -181,7 +141,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 	test("an out-of-roster id in a LAWLESS store is a pointed read throw, never a fallback", async function lawlessRead() {
 		const writer = accepted(await Db.create(lawlessDir, LawlessWriter))
 		const seeded = writer.write(function seedRaw(tx) {
-			/** The writer twin types the column as plain u64 — no law pins it, so any bigint commits. */
+
 			put(tx, RawLawlessAccount, { kind: 7n })
 		})
 		assert.equal(seeded.tag, "accepted", "the lawless writer commits a raw out-of-roster id")
@@ -199,7 +159,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 			.split("\n")
 			.filter(function codeLine(line) {
 				const trimmed = line.trim()
-				/** Comment prose and namespace imports may spell "as"; a CAST may not. */
+
 				return !(
 					trimmed.startsWith("*") ||
 					trimmed.startsWith("/*") ||
