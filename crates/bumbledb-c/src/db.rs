@@ -1,6 +1,5 @@
 //! Database ownership, heap construction, and the lexical read/write
 //! boundary: opaque handles, tagged admissions, per-callback instance refs.
-
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Arc;
