@@ -18,27 +18,22 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// The corpus shape is what the closed forms say: node/edge counts, the
-/// chain prefix, the tree's heap layout.
 #[test]
 fn the_corpus_shape_is_closed_form() {
     let sizes = ClosSizes::of(Scale::Tiny);
-    assert_eq!(sizes.tree_nodes(), (4u64.pow(4) - 1) / 3); // 85
+    assert_eq!(sizes.tree_nodes(), (4u64.pow(4) - 1) / 3); 
     assert_eq!(sizes.nodes(), 64 + 1 + 85);
     let edges: Vec<Vec<Value>> = relation_rows(sizes, ids::EDGE).collect();
     assert_eq!(edges.len() as u64, sizes.edges());
     assert_eq!(edges[0], vec![Value::U64(0), Value::U64(1)]);
     let base = sizes.tree_base();
-    // The first tree edge: root -> first child.
+
     assert_eq!(
         edges[usize::try_from(sizes.chain).expect("fits")],
         vec![Value::U64(base), Value::U64(base + 1)]
     );
 }
 
-/// Naive parity — the semantic oracle for the recursion surface: the
-/// engine's reach answers equal [`NaiveDb::query`]'s lfp on the Tiny
-/// corpus, every family x draw (misses included).
 #[test]
 fn the_engine_agrees_with_the_naive_fixpoint() {
     let dir = scratch("naive");
@@ -102,9 +97,6 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// SQLite parity — the recursive CTE mirror is row-identical on the
-/// Tiny corpus (the bench lane's verify-before-time, exercised as a
-/// test so a mirror bug fails fast, not at bench time).
 #[test]
 fn the_recursive_cte_mirror_is_row_identical() {
     let dir = scratch("mirror");
@@ -117,9 +109,6 @@ fn the_recursive_cte_mirror_is_row_identical() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The depth and fanout shapes produce the counts their closed forms
-/// promise: closure from the chain head is the whole chain; closure
-/// from the tree root is every tree node but the root.
 #[test]
 fn closure_counts_match_the_shapes() {
     let dir = scratch("counts");
@@ -158,7 +147,6 @@ fn closure_counts_match_the_shapes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// bench-008: a profiled rec query digests reach rounds, not `exec: None`.
 #[test]
 fn a_profiled_closure_query_digests_reach_rounds() {
     let dir = scratch("digest");
