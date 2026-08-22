@@ -282,13 +282,13 @@ fn decode_field_surfaces_corruption() {
     let layout = mixed_layout();
     let mut fact = Vec::new();
     encode_fact(&mixed_values(), &layout, &mut fact);
-    fact[0] = 0x02; 
+    fact[0] = 0x02;
     assert_eq!(
         decode_field(layout.encoded(&fact), 0),
         Err(FieldDecodeError::InvalidBool(0x02))
     );
     fact[0] = 0x01;
-    fact[1] = 0x03; 
+    fact[1] = 0x03;
     assert_eq!(
         decode_field(layout.encoded(&fact), 1),
         Err(FieldDecodeError::InvalidBool(0x03))
@@ -355,7 +355,6 @@ fn append_field_writes_layout_bytes_width() {
 
 #[test]
 fn fixed_bytes_round_trip_at_pad_boundaries() {
-
     for len in [1usize, 7, 8, 9, 63, 64] {
         let raw: Vec<u8> = (0..len)
             .map(|i| u8::try_from(i % 251).unwrap() + 1)
@@ -373,7 +372,6 @@ fn fixed_bytes_round_trip_at_pad_boundaries() {
 
 #[test]
 fn fixed_bytes_padded_order_is_byte_order() {
-
     // is the index's need — order *operations* stay refused).
     let mut rng = Lcg(0x0303);
     for _ in 0..500 {
@@ -406,7 +404,6 @@ fn rand_interval_u64_from(rng: &mut Lcg, start: u64) -> (u64, u64) {
 
 #[test]
 fn interval_round_trip_edges_and_random_pairs() {
-
     for (start, end) in [
         (i64::MIN, i64::MAX),
         (i64::MIN, i64::MIN + 1),
@@ -458,7 +455,6 @@ fn interval_round_trip_edges_and_random_pairs() {
 
 #[test]
 fn interval_encoding_orders_by_start_then_end() {
-
     let mut rng = Lcg(0x0202);
     for i in 0..1_000 {
         let x = rand_interval_u64(&mut rng);
@@ -500,7 +496,6 @@ fn interval_encoding_orders_by_start_then_end() {
 
 #[test]
 fn interval_decode_rejects_start_at_or_beyond_end() {
-
     for (start, end) in [(5u64, 5u64), (9, 3), (u64::MAX, 0)] {
         let mut bytes = [0; 16];
         bytes[..8].copy_from_slice(&encode_u64(start));
@@ -703,7 +698,6 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
 
 #[test]
 fn nullary_fact_layout_and_hash() {
-
     let layout = FactLayout::new(&[]);
     assert_eq!(layout.fact_width(), 0);
     let mut fact = Vec::new();
@@ -729,7 +723,6 @@ fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
 
 #[test]
 fn interval_words_reads_through_the_layout_width() {
-
     let general = ValueType::Interval {
         element: IntervalElement::U64,
     };
@@ -753,7 +746,6 @@ fn interval_words_reads_through_the_layout_width() {
 
 #[test]
 fn fixed_interval_round_trips_one_word() {
-
     for (start, width) in [(0u64, 1u64), (3, 5), (1 << 40, 1 << 20), (u64::MAX - 3, 1)] {
         let layout = fixed_layout(IntervalElement::U64, width);
         assert_eq!(layout.fact_width(), 16, "8-byte scalar + 8-byte start");
@@ -791,10 +783,9 @@ fn fixed_interval_round_trips_one_word() {
 
 #[test]
 fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
-
     for width in [1u64, 5, 1 << 33] {
         let layout = fixed_layout(IntervalElement::U64, width);
-        let bound = u64::MAX - width; 
+        let bound = u64::MAX - width;
         for start in [bound, bound + 1, u64::MAX] {
             let mut fact = Vec::new();
             encode_fact(
@@ -848,7 +839,7 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
 fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     for width in [1u64, 2, 255, 1 << 32, u64::MAX - 2] {
         let layout = fixed_layout(IntervalElement::U64, width);
-        let ceiling = u64::MAX - width; 
+        let ceiling = u64::MAX - width;
         let mut starts = std::collections::BTreeSet::new();
         starts.extend(0..=64u64);
         starts.extend((0..=8).map(|k| ceiling.saturating_sub(k + 1)));
