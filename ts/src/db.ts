@@ -449,15 +449,10 @@ interface WriteTx<Rels extends SchemaRelations> {
 	/** Final-state membership of one complete fact. */
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	/**
-	 * Final-state point lookup through the relation's primary key (the
-	 * {@link KeyFact} rule); `undefined` on a miss.
+	 * Final-state twin of {@link ReadInstance.get}: primary key or a
+	 * declared `key()` statement, against the commit judgment's view.
 	 */
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	/**
-	 * Final-state point lookup through a DECLARED `key()` statement of this
-	 * schema — the key object is typed by the statement's own projection;
-	 * `undefined` on a miss.
-	 */
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
 		keyStatement: KeyStatement<R, P>,
@@ -633,6 +628,72 @@ type StatementEntry =
 	| { readonly kind: "containment"; readonly statement: Statement }
 	| { readonly kind: "mirrors"; readonly statement: Statement; readonly orientation: "written" | "mirrored" }
 	| { readonly kind: "capacity"; readonly statement: Statement }
+
+function decodeOffendingFact<Rels extends SchemaRelations>(
+	member: SchemaRelation,
+	relation: keyof Rels & string,
+	fact: WireViolationFact
+): OffendingFact<Rels> {
+	const declared = sealedFieldsOf(member)
+	const decoded: Record<string, FactValue> = {}
+	for (const cell of fact.fields) {
+		const cited = declared.find(function byName(candidate) {
+			return candidate.name === cell.name
+		})
+		const roster = rosterOf(cited?.field)
+		decoded[cell.name] =
+			roster !== undefined
+				? handleOf(`violation fact ${fact.relation} field ${cell.name}`, roster, cell.value)
+				: cell.value
+	}
+	return Object.freeze({ relation, fact: Object.freeze(decoded) })
+}
+
+function violationFromEntry<Rels extends SchemaRelations>(
+	entry: StatementEntry,
+	wire: WireViolation,
+	facts: readonly OffendingFact<Rels>[]
+): Violation<Rels> {
+	const canonical = wire.canonical
+	if (entry.kind === "functionality") {
+		if (!("statement" in entry)) {
+			return Object.freeze({ kind: "functionality", statement: undefined, canonical, facts })
+		}
+		return Object.freeze({ kind: "functionality", statement: entry.statement, canonical, facts })
+	}
+	if (entry.kind === "capacity") {
+		if (wire.kind !== "capacity") {
+			throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
+		}
+		return Object.freeze({
+			kind: "capacity",
+			statement: entry.statement,
+			canonical,
+			measure: wire.measure,
+			facts
+		})
+	}
+	if (wire.kind !== "containment") {
+		throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
+	}
+	if (entry.kind === "mirrors") {
+		return Object.freeze({
+			kind: "containment",
+			statement: entry.statement,
+			canonical,
+			direction: wire.direction,
+			orientation: entry.orientation,
+			facts
+		})
+	}
+	return Object.freeze({
+		kind: "containment",
+		statement: entry.statement,
+		canonical,
+		direction: wire.direction,
+		facts
+	})
+}
 
 /**
  * Mirrors the engine's materialized statement order
@@ -1232,71 +1293,21 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return tables.relations.has(name)
 	}
 
-	function offendingFactOf(fact: WireViolationFact): OffendingFact<Rels> {
-		const entry = tables.relations.get(fact.relation)
-		if (entry === undefined || !isMemberName(fact.relation)) {
-			throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
-		}
-		const declared = sealedFieldsOf(entry.member)
-		const decoded: Record<string, FactValue> = {}
-		for (const cell of fact.fields) {
-			const cited = declared.find(function byName(candidate) {
-				return candidate.name === cell.name
-			})
-			const roster = rosterOf(cited?.field)
-			decoded[cell.name] =
-				roster !== undefined
-					? handleOf(`violation fact ${fact.relation} field ${cell.name}`, roster, cell.value)
-					: cell.value
-		}
-		return Object.freeze({ relation: fact.relation, fact: Object.freeze(decoded) })
-	}
-
 	function violationOf(wire: WireViolation): Violation<Rels> {
 		const entry = tables.statements[wire.statementId]
 		if (entry === undefined) {
 			throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
 		}
-		const facts = Object.freeze(wire.facts.map(offendingFactOf))
-		const canonical = wire.canonical
-		if (entry.kind === "functionality") {
-			if (!("statement" in entry)) {
-				return Object.freeze({ kind: "functionality", statement: undefined, canonical, facts })
-			}
-			return Object.freeze({ kind: "functionality", statement: entry.statement, canonical, facts })
-		}
-		if (entry.kind === "capacity") {
-			if (wire.kind !== "capacity") {
-				throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
-			}
-			return Object.freeze({
-				kind: "capacity",
-				statement: entry.statement,
-				canonical,
-				measure: wire.measure,
-				facts
+		const facts = Object.freeze(
+			wire.facts.map(function offending(fact) {
+				const rel = tables.relations.get(fact.relation)
+				if (rel === undefined || !isMemberName(fact.relation)) {
+					throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
+				}
+				return decodeOffendingFact<Rels>(rel.member, fact.relation, fact)
 			})
-		}
-		if (wire.kind !== "containment") {
-			throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
-		}
-		if (entry.kind === "mirrors") {
-			return Object.freeze({
-				kind: "containment",
-				statement: entry.statement,
-				canonical,
-				direction: wire.direction,
-				orientation: entry.orientation,
-				facts
-			})
-		}
-		return Object.freeze({
-			kind: "containment",
-			statement: entry.statement,
-			canonical,
-			direction: wire.direction,
-			facts
-		})
+		)
+		return violationFromEntry(entry, wire, facts)
 	}
 
 	function pointReadsOf(assertLive: () => void, reads: PointReads) {
@@ -1680,65 +1691,16 @@ function mapViolationWithoutStore<Rels extends SchemaRelations>(
 	if (entry === undefined) {
 		throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
 	}
-	function offending(fact: WireViolationFact): OffendingFact<Rels> {
-		const member = theory.relations[fact.relation]
-		if (member === undefined || !(fact.relation in theory.relations)) {
-			throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
-		}
-		const declared = sealedFieldsOf(member)
-		const decoded: Record<string, FactValue> = {}
-		for (const cell of fact.fields) {
-			const cited = declared.find(function byName(candidate) {
-				return candidate.name === cell.name
-			})
-			const roster = rosterOf(cited?.field)
-			decoded[cell.name] =
-				roster !== undefined
-					? handleOf(`violation fact ${fact.relation} field ${cell.name}`, roster, cell.value)
-					: cell.value
-		}
-		return Object.freeze({ relation: fact.relation as keyof Rels & string, fact: Object.freeze(decoded) })
-	}
-	const facts = Object.freeze(wire.facts.map(offending))
-	const canonical = wire.canonical
-	if (entry.kind === "functionality") {
-		if (!("statement" in entry)) {
-			return Object.freeze({ kind: "functionality", statement: undefined, canonical, facts })
-		}
-		return Object.freeze({ kind: "functionality", statement: entry.statement, canonical, facts })
-	}
-	if (entry.kind === "capacity") {
-		if (wire.kind !== "capacity") {
-			throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
-		}
-		return Object.freeze({
-			kind: "capacity",
-			statement: entry.statement,
-			canonical,
-			measure: wire.measure,
-			facts
+	const facts = Object.freeze(
+		wire.facts.map(function offending(fact) {
+			const member = theory.relations[fact.relation]
+			if (member === undefined || !(fact.relation in theory.relations)) {
+				throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
+			}
+			return decodeOffendingFact<Rels>(member, fact.relation as keyof Rels & string, fact)
 		})
-	}
-	if (wire.kind !== "containment") {
-		throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
-	}
-	if (entry.kind === "mirrors") {
-		return Object.freeze({
-			kind: "containment",
-			statement: entry.statement,
-			canonical,
-			direction: wire.direction,
-			orientation: entry.orientation,
-			facts
-		})
-	}
-	return Object.freeze({
-		kind: "containment",
-		statement: entry.statement,
-		canonical,
-		direction: wire.direction,
-		facts
-	})
+	)
+	return violationFromEntry(entry, wire, facts)
 }
 
 async function openStore<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Promise<Db<Rels>> {
@@ -1759,6 +1721,7 @@ interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	count<R extends MemberRelation<Rels>>(relation: R): bigint
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
+	/** Same keyed surface as {@link ReadInstance.get}, against the frozen catalog. */
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
@@ -1772,6 +1735,7 @@ interface InstanceBuilder<Rels extends SchemaRelations> extends Disposable {
 	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
 	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
+	/** Same keyed surface as {@link WriteTx.get}, against the unproved heap. */
 	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
 	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
 		relation: R,
