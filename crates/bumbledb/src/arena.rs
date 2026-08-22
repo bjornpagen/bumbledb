@@ -35,7 +35,6 @@ impl Arena {
     }
 
     /// # Panics
-
     /// Only on a programmer-invariant violation: a single allocation or
     pub fn alloc(&mut self, bytes: &[u8]) -> ArenaSlice {
         let chunk_idx = if bytes.len() > CHUNK_CAPACITY {
