@@ -202,7 +202,6 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("two vocabularies sharing a handle name overlap exactly on the shared literal (structural doctrine)", function sharedLiteral() {
-
 		const sevCrit = query(Oncall).rule(function rule(r) {
 			const inc = v(Incident)
 			return r.match(Incident, { id: inc.id, sev: "Crit" }).find({ i: inc.id })
@@ -257,7 +256,6 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("reordered membership spellings are ONE set — content-addressed to one dense ParamId", function contentAddressed() {
-
 		const reordered = query(Oncall)
 			.rule(function rule(r) {
 				const inc = v(Incident)
@@ -286,7 +284,6 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("a param anchored at both a closed reference and a bare field refuses at construction (one name, one roster)", function paramAnchorCoherence() {
-
 		assert.throws(function bareFirst() {
 			query(Oncall).rule(function rule(r) {
 				const inc = v(Incident)
@@ -319,7 +316,6 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("a closed-descriptor slot never joins a bare u64 slot, even lawless (the roster is join structure)", function rosterJoinWall() {
-
 		const Tag = closed("Tag", ["A", "B"])
 		const Note = relation("Note", { id: u64.fresh, tag: Tag.id, val: u64 })
 		const Twin = schema("Twin", { Tag, Note }, [])
@@ -348,7 +344,6 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("an unknown member name rides the ONE verification point and throws pointed at BUILD", function unknownMember() {
-
 		assert.throws(function bogusMember() {
 			query(Oncall).rule(function rule(r) {
 				const inc = v(Incident)
