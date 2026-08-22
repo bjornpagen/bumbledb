@@ -124,7 +124,6 @@ pub fn run_spec(
                 let sets = probes::draws(probe, cfg.r#gen, &live, cycle);
                 let run = probes::sample_ours(&ours.db, probe, &sets)?;
                 for (lane, taken) in mirrors.iter().zip(mirror_probes.iter_mut()) {
-
                     taken.push(probes::sample_sqlite(
                         &lane.conn, probe, &sets, &run, lane.label,
                     )?);
@@ -152,7 +151,6 @@ pub fn run_spec(
             });
             ours_window_ns = 0;
             for (lane, taken) in mirrors.iter_mut().zip(mirror_probes) {
-
                 lane.conn
                     .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
                     .map_err(|e| format!("churn sample checkpoint ({}): {e}", lane.label))?;
