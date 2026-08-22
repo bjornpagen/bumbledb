@@ -177,7 +177,6 @@ mod tests {
     /// The plausibility band transcribes aarch64 physics: only there is
 
     /// per mul, so off aarch64 the estimate is indicative, not a claim —
-
     #[test]
     #[cfg_attr(
         not(target_arch = "aarch64"),
