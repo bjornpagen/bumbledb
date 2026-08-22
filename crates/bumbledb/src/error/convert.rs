@@ -8,7 +8,6 @@ use super::{
 impl From<heed::Error> for Error {
     fn from(err: heed::Error) -> Self {
         match err {
-
             // and the remedy is releasing snapshots, not diagnosing LMDB.
             heed::Error::Mdb(heed::MdbError::ReadersFull) => Self::ReadersFull {
                 max_readers: crate::storage::env::MAX_READERS,
@@ -19,7 +18,6 @@ impl From<heed::Error> for Error {
 }
 
 impl Error {
-
     /// macOS: the data-page `pwrite`s, `fcntl(F_FULLFSYNC)`, the
 
     pub(crate) fn from_commit(err: heed::Error) -> Self {
@@ -74,7 +72,6 @@ impl std::error::Error for IoFailure {}
 impl std::error::Error for LmdbFailure {}
 
 impl std::error::Error for Error {
-
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.descriptor().source
     }
