@@ -6,7 +6,6 @@ use crate::image::view::View;
 const FORCE_BATCH: usize = 256;
 
 impl Colt {
-
     pub(super) fn force(&mut self, node: NodeRef, level: usize) -> u32 {
         if let NodeState::Forced { map } = self.nodes[node.0 as usize] {
             return map;
