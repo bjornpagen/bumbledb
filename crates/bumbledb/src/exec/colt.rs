@@ -23,14 +23,12 @@ const FIRST_CHUNK_CAP: usize = 8;
 /// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCount {
-
     Exact(u64),
 
     Estimate(u64),
 }
 
 impl KeyCount {
-
     #[must_use]
     pub fn magnitude(self) -> u64 {
         match self {
@@ -57,7 +55,6 @@ pub enum SuffixRun<'a> {
 }
 
 impl SuffixRun<'_> {
-
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -105,7 +102,6 @@ const STALE_EPOCH: &str = "iteration token outlived a reset — drain before the
 
 #[derive(Debug, Clone, Copy)]
 enum Positions {
-
     Root,
 
     Chunks { first: u32, last: u32, count: u32 },
@@ -119,7 +115,6 @@ enum NodeState {
 
 #[derive(Debug, Clone, Copy)]
 struct Chunk {
-
     start: u32,
 
     cap: u8,
@@ -131,7 +126,6 @@ struct Chunk {
 
 #[derive(Debug, Clone, Copy)]
 enum Slot {
-
     Single(u32),
     Node(NodeRef),
 }
@@ -156,7 +150,6 @@ struct Map {
 }
 
 impl Map {
-
     fn stride(&self) -> usize {
         8 * self.arity + 8
     }
@@ -300,7 +293,6 @@ pub struct Colt {
     stage_positions: Vec<u32>,
 
     /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
-
     epoch: u8,
 }
 
