@@ -6,7 +6,6 @@
 //! **The portable/intrinsic split is measured, not stylistic**
 //! intrinsic dual and most of the layer's `unsafe`, and are
 //! unsafe module): its 64-byte `tbl4` signature table has no `std::simd`
-
 mod allen;
 mod compact;
 mod filter;
