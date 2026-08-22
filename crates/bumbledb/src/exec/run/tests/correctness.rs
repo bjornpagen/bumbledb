@@ -107,7 +107,7 @@ fn self_join_grandparent() {
         }
     }
     assert_eq!(results, expected);
-    assert_eq!(results.len(), 3); 
+    assert_eq!(results.len(), 3);
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn residuals_filter_across_atoms() {
         }
     }
     assert_eq!(results, expected);
-    assert_eq!(results.len(), 5); 
+    assert_eq!(results.len(), 5);
 }
 
 #[test]
@@ -248,7 +248,6 @@ fn residuals_filter_across_atoms() {
     reason = "one differential harness, generator to oracle — clearer kept together"
 )]
 fn randomized_differential_against_the_nested_loop_oracle() {
-
     let mut state = 0x1234_5678_9ABC_DEF0_u64;
     let mut next = move || {
         state = state
@@ -259,7 +258,6 @@ fn randomized_differential_against_the_nested_loop_oracle() {
 
     let schema = schema(3);
     for case in 0..60u32 {
-
         let domain = 1 + next() % 8;
         let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
         for _ in 0..3 {
@@ -345,7 +343,6 @@ fn randomized_differential_against_the_nested_loop_oracle() {
         }
 
         for batch in [1usize, 7, 128] {
-
             // VarId order before comparing with the oracle.
             let got: BTreeSet<Vec<u64>> = run_at(&plan, &views, batch)
                 .into_iter()
