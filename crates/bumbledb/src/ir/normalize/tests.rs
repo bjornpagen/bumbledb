@@ -109,7 +109,6 @@ fn query(atoms: Vec<Atom>, negated: Vec<Atom>, conditions: Vec<Comparison>) -> Q
 
 #[test]
 fn repeated_variable_lowers_and_executes_through_the_evaluator() {
-
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -200,7 +199,6 @@ fn literal_and_param_bindings_lower_to_eq_filters() {
 
 #[test]
 fn string_literals_stay_raw_as_pending_interns() {
-
     assert_eq!(
         lower_literal(&Value::String(Box::from("acme"))),
         Const::PendingIntern {
@@ -211,7 +209,6 @@ fn string_literals_stay_raw_as_pending_interns() {
 
 #[test]
 fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
-
     assert_eq!(
         lower_literal(&Value::FixedBytes(Box::from(&[7u8][..]))),
         Const::Word(0x0700_0000_0000_0000)
@@ -237,7 +234,6 @@ fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
 
 #[test]
 fn interval_literals_lower_to_encoded_word_pairs() {
-
     assert_eq!(
         lower_literal(&Value::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval")
@@ -259,7 +255,6 @@ fn interval_literals_lower_to_encoded_word_pairs() {
 
 #[test]
 fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -292,7 +287,6 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
 
 #[test]
 fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
-
     let query = query(
         vec![
             Atom {
@@ -323,7 +317,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
         norm.occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: FieldId(1).into(),
-            op: WordCmp::Ge, 
+            op: WordCmp::Ge,
             value: Const::Word(w(100)),
         }]
     );
@@ -341,7 +335,6 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
 
 #[test]
 fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
-
     let schema = schema();
     let mut checked = 0;
     for mask in 0..3u16.pow(3) {
@@ -411,7 +404,6 @@ fn zero_binding_atom_becomes_an_empty_occurrence() {
 
 #[test]
 fn same_atom_var_var_comparison_lowers_to_a_filter() {
-
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -441,7 +433,6 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
 
 #[test]
 fn constant_point_membership_lowers_to_point_in() {
-
     let literal = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -486,7 +477,6 @@ fn constant_point_membership_lowers_to_point_in() {
 
 #[test]
 fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
-
     let allen = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -585,7 +575,6 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
 
 #[test]
 fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
-
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -627,7 +616,6 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
 
 #[test]
 fn cross_atom_allen_becomes_the_mask_residual() {
-
     let allen = query(
         vec![
             Atom {
@@ -729,7 +717,6 @@ fn cross_atom_allen_becomes_the_mask_residual() {
 
 #[test]
 fn scalar_param_set_binding_is_the_selection_set_marker() {
-
     let scalar = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(S),
@@ -769,7 +756,6 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
 
 #[test]
 fn same_atom_membership_variable_lowers_to_the_field_composition() {
-
     // binding order must not matter (the membership binding comes first).
     let query = query(
         vec![Atom {
@@ -792,7 +778,6 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
 
 #[test]
 fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -817,7 +802,6 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
 
 #[test]
 fn interval_param_equality_binding_stays_an_eq_compare() {
-
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -869,7 +853,6 @@ fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
 
 #[test]
 fn sweep_scalar_var_var_placements() {
-
     for op in [CmpOp::Lt, CmpOp::Ge, CmpOp::Eq, CmpOp::Ne] {
         let same = query(
             vec![Atom {
@@ -933,7 +916,6 @@ fn sweep_scalar_var_var_placements() {
 
 #[test]
 fn sweep_scalar_var_const_placements() {
-
     let r_atom = || Atom {
         source: crate::ir::AtomSource::Edb(R),
         bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
@@ -974,7 +956,6 @@ fn sweep_scalar_var_const_placements() {
 
 #[test]
 fn sweep_param_set_comparison_placements() {
-
     for const_first in [false, true] {
         let set = Term::ParamSet(ParamId(0));
         let (lhs, rhs) = if const_first {
@@ -1008,7 +989,6 @@ fn sweep_param_set_comparison_placements() {
 
 #[test]
 fn sweep_contains_param_placements() {
-
     let point_param = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -1052,7 +1032,6 @@ fn sweep_contains_param_placements() {
 
 #[test]
 fn residuals_are_never_single_occurrence_across_the_new_kinds() {
-
     let two_intervals_one_atom = |op| {
         query(
             vec![
