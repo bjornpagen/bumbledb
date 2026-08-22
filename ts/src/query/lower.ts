@@ -535,8 +535,6 @@ function resolveBindings(
 					)
 					break
 				}
-				case "duration":
-					throw errors.new(`${label}.${fieldName}: Duration is gone — compute end − start on the host`)
 			}
 		} else if (Array.isArray(value)) {
 			const set = membershipSet(`${label}.${fieldName}`, declared.field, value)
@@ -585,8 +583,6 @@ function cmpTermDataOf(value: unknown): CmpTermData {
 				return Object.freeze({ kind: "param" as const, name: value.name })
 			case "setParam":
 				return Object.freeze({ kind: "setParam" as const, name: value.name })
-			case "duration":
-				throw errors.new("Duration is gone — compute end − start on the host")
 		}
 	}
 	return Object.freeze({ kind: "literal" as const, value })
@@ -596,14 +592,7 @@ function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: Pa
 	if (side.kind !== "param" && side.kind !== "setParam") {
 		return
 	}
-	let anchor: AnyField | "measure" | undefined
-	if (sibling.kind === "var") {
-		anchor = sibling.ref.field
-	} else if (sibling.kind === "measure") {
-		anchor = "measure"
-	} else {
-		anchor = undefined
-	}
+	const anchor = sibling.kind === "var" ? sibling.ref.field : undefined
 	uses.push(
 		Object.freeze({
 			name: side.name,
@@ -755,9 +744,6 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 				slot: undefined
 			})
 		}
-		if (entry[term] === "duration") {
-			throw errors.new(`find ${name}: Duration is gone — compute end − start on the host`)
-		}
 		throw errors.new(`find ${name}: a ${entry[term]} is not projectable — find takes variables or aggregates`)
 	}
 	if (isAggregateEntry(entry)) {
@@ -827,21 +813,11 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 		assertBound(where, bound, entry.over)
 		return
 	}
-	if (entry.kind === "measure") {
-		assertBound(where, bound, entry.over)
-		assertInterval(where, entry.over)
-		return
-	}
 	const agg = entry.agg
 	switch (agg.op) {
 		case "count":
 			return
 		case "fold": {
-			if ("duration" in agg.over) {
-				assertBound(where, bound, agg.over.duration)
-				assertInterval(where, agg.over.duration)
-				return
-			}
 			assertBound(where, bound, agg.over)
 			assertNotClosed(where, `the ${agg.fold} input`, agg.over)
 			assertNumeric(where, `the ${agg.fold} input`, agg.over)
@@ -864,10 +840,6 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 				if (isOrderOp(cond.op.kind) && roster !== undefined) {
 					throw closedOrderError(label, `the ${cond.op.kind} side ${side.ref.label}`, roster.name)
 				}
-			}
-			if (side.kind === "measure") {
-				assertBound(label, bound, side.ref)
-				assertInterval(label, side.ref)
 			}
 		}
 		if ((cond.op.kind === "eq" || cond.op.kind === "ne") && cond.lhs.kind === "var" && cond.rhs.kind === "var") {
@@ -1201,7 +1173,7 @@ function renderClosedSlice(closed: ClosedRoster | undefined): string {
 
 function headSignature(column: FindColumn): string {
 	const entry = column.entry
-	if (entry.kind === "var" || entry.kind === "measure") {
+	if (entry.kind === "var") {
 		return `${column.name}:var`
 	}
 	const agg = entry.agg
@@ -1209,10 +1181,6 @@ function headSignature(column: FindColumn): string {
 		return `${column.name}:${agg.fold}`
 	}
 	return `${column.name}:${agg.op}`
-}
-
-function anchorRosterOf(anchor: AnyField | "measure" | undefined): ClosedRoster | undefined {
-	return anchor === "measure" ? undefined : rosterOf(anchor)
 }
 
 function renderParamAnchor(roster: ClosedRoster | undefined): string {
@@ -1270,8 +1238,8 @@ function paramRegistryOf(
 				)
 			}
 			if (existing.anchor !== undefined && use.anchor !== undefined) {
-				const registered = anchorRosterOf(existing.anchor)
-				const anchored = anchorRosterOf(use.anchor)
+				const registered = rosterOf(existing.anchor)
+				const anchored = rosterOf(use.anchor)
 				if (registered !== anchored) {
 					throw errors.new(
 						`query param ${use.name} is anchored at ${renderParamAnchor(registered)} and at ${renderParamAnchor(anchored)} — a closed-anchored param translates handle names through ONE roster (one name, one domain); name the params differently`
@@ -1666,18 +1634,7 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
  * interval operand of `pointIn(t, span(...))`; under every other operator an
  * interval shape against a scalar sibling stays refused.
  */
-function taggedCmpLiteral(
-	context: string,
-	sibling: AnyField | "measure",
-	value: unknown,
-	op: CmpKind | "binding"
-): TaggedValue {
-	if (sibling === "measure") {
-		if (typeof value !== "bigint") {
-			throw literalShapeError(context, "bigint (the measure is u64)", value)
-		}
-		return { kind: "u64", value }
-	}
+function taggedCmpLiteral(context: string, sibling: AnyField, value: unknown, op: CmpKind | "binding"): TaggedValue {
 	if (rosterOf(sibling) === undefined && sibling.kind === "interval") {
 		return taggedAtElementDomain(context, sibling.element, value)
 	}
@@ -1806,8 +1763,6 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 			return { kind: "param", param: paramIdOf(ctx, side.name) }
 		case "setParam":
 			return { kind: "paramSet", param: paramIdOf(ctx, side.name) }
-		case "measure":
-			throw errors.new("Duration is gone — compute end − start on the host")
 		case "literal": {
 			const anchor = cmpAnchorOf(ctx, sibling)
 			if (anchor === undefined) {
@@ -1820,12 +1775,9 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 	}
 }
 
-function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | "measure" | undefined {
+function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | undefined {
 	if (sibling.kind === "var") {
 		return sibling.ref.field
-	}
-	if (sibling.kind === "measure") {
-		return "measure"
 	}
 	if (sibling.kind === "param" || sibling.kind === "setParam") {
 		return ctx.params.get(sibling.name)?.anchor
@@ -1864,19 +1816,12 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	if (entry.kind === "var") {
 		return { kind: "var", var: ids.of(entry.over) }
 	}
-	if (entry.kind === "measure") {
-		throw errors.new("Duration is gone — compute end − start on the host")
-	}
 	const agg = entry.agg
 	switch (agg.op) {
 		case "count":
 			return { kind: "count" }
-		case "fold": {
-			if ("duration" in agg.over) {
-				throw errors.new("Duration is gone — compute end − start on the host")
-			}
+		case "fold":
 			return { kind: "aggregate", op: { kind: agg.fold }, over: ids.of(agg.over) }
-		}
 		case "pack":
 			return { kind: "pack", over: ids.of(agg.over) }
 	}
@@ -1895,7 +1840,7 @@ function headOpOf(agg: AggData): HeadOpIr {
 
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
-	if (entry.kind === "var" || entry.kind === "measure") {
+	if (entry.kind === "var") {
 		return { kind: "var" }
 	}
 	return { kind: "aggregate", op: headOpOf(entry.agg) }

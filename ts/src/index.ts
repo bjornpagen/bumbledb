@@ -153,7 +153,6 @@ export type {
 export { lowerQuery, query } from "#query/lower.ts"
 export type {
 	ClassedField,
-	Duration,
 	MatchFields,
 	MatchOwner,
 	Param,

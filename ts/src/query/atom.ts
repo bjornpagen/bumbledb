@@ -4,7 +4,6 @@ import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AnyVar,
 	ClassedField,
-	Duration,
 	JoinOk,
 	MatchFields,
 	MatchOwner,
@@ -42,7 +41,6 @@ type CmpTermData =
 	| { readonly kind: "var"; readonly ref: AnyVar }
 	| { readonly kind: "param"; readonly name: string }
 	| { readonly kind: "setParam"; readonly name: string }
-	| { readonly kind: "measure"; readonly ref: AnyVar }
 	| { readonly kind: "literal"; readonly value: unknown }
 
 type CmpData = {
@@ -67,13 +65,12 @@ type AggData =
 	| {
 			readonly op: "fold"
 			readonly fold: "sum" | "min" | "max"
-			readonly over: AnyVar | { readonly duration: AnyVar }
+			readonly over: AnyVar
 	  }
 	| { readonly op: "pack"; readonly over: AnyVar }
 
 type FindEntryData =
 	| { readonly kind: "var"; readonly over: AnyVar }
-	| { readonly kind: "measure"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 
 interface FindColumn {
@@ -101,7 +98,7 @@ type RuleItem =
 interface ParamUse {
 	readonly name: string
 	readonly shape: "value" | "set"
-	readonly anchor: AnyField | "measure" | undefined
+	readonly anchor: AnyField | undefined
 	readonly op: "binding" | CmpKind
 	readonly members: readonly string[] | undefined
 }
@@ -222,7 +219,7 @@ type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boo
 
 type NeRight = AnyVar | Param<string> | bigint | string | boolean | Uint8Array | IntervalValue
 
-type OrderSide = AnyVar | Param<string> | Duration | bigint | boolean
+type OrderSide = AnyVar | Param<string> | bigint | boolean
 
 type PointSide = AnyVar | Param<string> | bigint
 
@@ -233,7 +230,7 @@ function comparison<Op extends CmpKind, L, R, M>(op: Op, lhs: L, rhs: R, mask: M
 }
 
 function isVariableSide(value: unknown): boolean {
-	return isTerm(value) && (value[term] === "var" || value[term] === "duration")
+	return isTerm(value) && value[term] === "var"
 }
 
 function assertTermSide(op: string, lhs: unknown, rhs: unknown): void {
@@ -376,23 +373,19 @@ type OrderVarOk<V extends AnyVar> = V["field"]["kind"] extends "bool" ? true : N
 
 type IntervalVarOk<V extends AnyVar> = V["field"]["kind"] extends "interval" ? true : false
 
-type CmpVarSideOk<L, R> = L extends AnyVar | Duration ? true : R extends AnyVar | Duration ? true : false
+type CmpVarSideOk<L, R> = L extends AnyVar ? true : R extends AnyVar ? true : false
 
 type OrderDomain<T> = T extends AnyVar
 	? OrderVarOk<T> extends true
 		? T["field"]["kind"]
 		: never
-	: T extends Duration<infer V extends AnyVar>
-		? IntervalVarOk<V> extends true
-			? "duration"
-			: never
-		: T extends Param<string>
-			? "open"
-			: T extends bigint
-				? "integer"
-				: T extends boolean
-					? "bool"
-					: never
+	: T extends Param<string>
+		? "open"
+		: T extends bigint
+			? "integer"
+			: T extends boolean
+				? "bool"
+				: never
 
 type OrderDomainsOk<A, B> = [A] extends [never]
 	? false
@@ -402,27 +395,19 @@ type OrderDomainsOk<A, B> = [A] extends [never]
 			? true
 			: B extends "open"
 				? true
-				: A extends "duration"
-					? B extends "u64" | "integer"
+				: A extends "bool"
+					? B extends "bool"
 						? true
 						: false
-					: B extends "duration"
-						? A extends "u64" | "integer"
+					: B extends "bool"
+						? false
+						: A extends "integer"
 							? true
-							: false
-						: A extends "bool"
-							? B extends "bool"
+							: B extends "integer"
 								? true
-								: false
-							: B extends "bool"
-								? false
-								: A extends "integer"
+								: A extends B
 									? true
-									: B extends "integer"
-										? true
-										: A extends B
-											? true
-											: false
+									: false
 
 type OrderPairOk<L, R> = CmpVarSideOk<L, R> extends true ? OrderDomainsOk<OrderDomain<L>, OrderDomain<R>> : false
 

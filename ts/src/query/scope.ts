@@ -39,12 +39,7 @@ interface SetParam<Name extends string = string> {
 	readonly name: Name
 }
 
-interface Duration<V extends AnyVar = AnyVar> {
-	readonly [term]: "duration"
-	readonly over: V
-}
-
-type AnyTerm = Var | Param | SetParam | Duration
+type AnyTerm = Var | Param | SetParam
 
 function isTerm(value: unknown): value is AnyTerm {
 	return typeof value === "object" && value !== null && term in value
@@ -219,7 +214,7 @@ type InferredOf<T> = T extends { readonly [inferred]?: infer S } ? Exclude<S, un
 interface ParamEntry {
 	readonly name: string
 	readonly shape: "value" | "set"
-	readonly anchor: AnyField | "measure" | undefined
+	readonly anchor: AnyField | undefined
 	readonly op: "binding" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "pointIn" | "allen"
 	readonly membership: QueryParam | undefined
 }
@@ -228,7 +223,6 @@ export type {
 	AnyTerm,
 	AnyVar,
 	ClassedField,
-	Duration,
 	ExactVars,
 	Flatten,
 	InferredOf,
