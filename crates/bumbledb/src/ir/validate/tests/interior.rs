@@ -1,6 +1,3 @@
-//! Interior roster: DAG order, well-formedness screen, bound-var heads,
-//! no interior-count cap.
-
 use super::*;
 use crate::error::AtomIndex;
 use crate::ir::{AtomSource, HeadTerm, Interior, InteriorId, ProjectionRule};
