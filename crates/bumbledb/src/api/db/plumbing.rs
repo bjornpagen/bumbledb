@@ -7,9 +7,7 @@ use crate::error::{CorruptionError, Error, FactShapeError, Result};
 /// `value_matches` rule (width equality and the Q2 ray bar; the width
 /// is the type, so a wide or narrow value is a type mismatch) — and
 /// wraps it as the one-word-encoding [`ValueRef`].
-///
 /// # Errors
-///
 /// [`FactShapeError::TypeMismatch`] when the interval's width is not the
 /// declared `width` or its end is the domain ceiling (a ray).
 pub fn fixed_interval_u64(
@@ -26,9 +24,7 @@ pub fn fixed_interval_u64(
 }
 
 /// The `i64` sibling of [`fixed_interval_u64`].
-///
 /// # Errors
-///
 /// As [`fixed_interval_u64`].
 pub fn fixed_interval_i64(
     relation: RelationId,
@@ -46,9 +42,7 @@ pub fn fixed_interval_i64(
 /// Resolves an intern id to a `&str` view of the committed dictionary
 /// (decode boundary): mmap pages, transaction-stable by LMDB `CoW`. UTF-8
 /// is validated here, without a copy (parse, don't validate).
-///
 /// # Errors
-///
 /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
 pub fn resolve_string<'a, S>(instance: &'a ReadInstance<'_, S>, id: InternId) -> Result<&'a str> {
     let raw = instance.core.source.catalog().dict_resolve(id)?;
