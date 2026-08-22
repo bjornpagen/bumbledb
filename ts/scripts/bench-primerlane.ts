@@ -1,18 +1,3 @@
-/**
- * The TS-side primerlane harness
- * (proposals/one-representation/10-measurement.md): generates N facts
- * for a 3-relation Primer-shaped schema and times the persist path
- * through the PUBLIC SDK — `InstanceBuilder.create` + `load` + `admit`
- * + `Db.fromInstance` — printing per-phase wall times. The JS-side
- * component of the report derives from these walls minus the native
- * span tree; nothing here instruments product code.
- *
- * Needs the built native module (`node scripts/build.ts` first) — this
- * harness runs at integration, not in the typecheck-only lanes.
- *
- *     node scripts/bench-primerlane.ts [--facts N]
- */
-
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -28,18 +13,14 @@ const Primer = schema("PrimerlaneTs", { R0, R1, R2 }, [
 	contained(on(R2, "parent"), on(R1, "id"))
 ])
 
-/** Row-count skew across the three relations (a Primer-ish shape). */
 const WEIGHTS = [2n, 5n, 3n]
 
-/** Zipf vocabulary size for the label column. */
 const VOCABULARY = 1024n
 
-/** One novel long-tail label per this many draws. */
 const NOVEL_DEN = 8n
 
 const MASK = (1n << 64n) - 1n
 
-/** splitmix64 over BigInt — deterministic, dependency-free. */
 function splitmix(seed: bigint): () => bigint {
 	let state = seed & MASK
 	return function next(): bigint {
@@ -51,12 +32,11 @@ function splitmix(seed: bigint): () => bigint {
 	}
 }
 
-/** A Zipf-ish vocabulary word or a row-unique novel string. */
 function label(next: () => bigint, rel: number, index: bigint): string {
 	if (next() % NOVEL_DEN === 0n) {
 		return `novel-${rel}-${index}`
 	}
-	// Geometric bucket then uniform within: density falls ~1/rank.
+
 	let bucket = 0n
 	let word = next()
 	while (bucket < 9n && (word & 1n) === 0n) {
