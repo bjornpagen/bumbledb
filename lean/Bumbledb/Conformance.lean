@@ -3,7 +3,7 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Query.Membership
 
 /-!
-# Conformance — the denotation executes as the third oracle (PRD 13)
+# Conformance — the denotation executes as the third oracle (
 
 The pure half of the conformance lane: decode one interchange-format
 case (`lean/conformance/README.md`) into the tree's own types, evaluate
@@ -76,17 +76,17 @@ the `Lean` package is used.
 ## Shape notes
 
 * Decoding is TOTAL: condition trees decode under an explicit fuel
-  bound (64 — the engine's `MAX_CONDITION_DEPTH`); no `partial` in this
-  module (the PRD allows `partial` in the IO shell only).
+ bound (64 — the engine's `MAX_CONDITION_DEPTH`); no `partial` in this
+ module (the `partial` in the IO shell only).
 * Canonical order: each answer row renders to its compact tagged form
-  (`renderValue` — byte-identical to the serializer's) and rows sort by
-  that rendering; both sides of every comparison are re-rendered HERE,
-  so the comparison is value-level and cross-language format drift
-  cannot silently pass or fail a case.
+ (`renderValue` — byte-identical to the serializer's) and rows sort by
+ that rendering; both sides of every comparison are re-rendered HERE,
+ so the comparison is value-level and cross-language format drift
+ cannot silently pass or fail a case.
 * Facts decode to the tree's `Fact` (`FieldId → Value`) with the
-  out-of-arity default `⟨.bool, false⟩` — the same filler the naive
-  model uses for unbound positions, never readable by an accepted
-  query.
+ out-of-arity default `⟨.bool, false⟩` — the same filler the naive
+ model uses for unbound positions, never readable by an accepted
+ query.
 -/
 
 namespace Bumbledb
@@ -113,11 +113,7 @@ def renderValue : Value → String
   | { type := .interval .i64, val := iv } =>
     "{\"interval_i64\":[" ++ toString iv.start.val ++ "," ++
       toString iv.«end».val ++ "]}"
-  -- The fixed-width family: start + width render (injective — the
-  -- width is the type's, and the tag separates the family from the
-  -- general spelling). Carried by the corpus: the fixed judgment
-  -- fixtures (`judgment-fixed-*`) and the mixed-width Allen query
-  -- case (`hand-allen-mixed-width`).
+
   | { type := .intervalFixed .u64 w, val := v } =>
     "{\"interval_u64_fixed\":[" ++ toString v.val.val ++ "," ++
       toString w ++ "]}"
@@ -163,7 +159,7 @@ where
 /-! ## Decoding — the interchange format into the tree's types -/
 
 /-- One head position of a decoded rule: a projected variable, the
-measure, or an aggregate op (PRD 05's `AggOp` — the head-shape row). -/
+measure, or an aggregate op (`AggOp` — the head-shape row). -/
 inductive CFind where
   | var (v : Query.VarId)
   | measure (v : Query.VarId)
@@ -171,17 +167,17 @@ inductive CFind where
 
 /-- One decoded rule: the head positions plus the BODY as the tree's
 own `Query.Rule` (its `finds` empty — the head lives in `finds` here,
-because PRD 04's rule head is the plain-variable narrowing). -/
+because rule head is the plain-variable narrowing). -/
 structure CRule where
   finds : List CFind
   body : Query.Rule
   /-- The written rule's SURFACE variable width (the serializer's
-  `"width"` key): every serializer mint — the membership lowering's
-  fresh interval variables — sits at or above it, and the fold domain
-  reads `fullRow` at exactly this width, so a mint is fold-invisible
-  precisely as it is answer-invisible
-  (`membership_lowering_preserves_fold`, `Exec/Dedup.lean` — finding
-  087). Absent in a case file: the decoded rule's own ceiling. -/
+ `"width"` key): every serializer mint — the membership lowering's
+ fresh interval variables — sits at or above it, and the fold domain
+ reads `fullRow` at exactly this width, so a mint is fold-invisible
+ precisely as it is answer-invisible
+ (`membership_lowering_preserves_fold`, `Exec/Dedup.lean` — finding
+ 087). Absent in a case file: the decoded rule's own ceiling. -/
   width : Option Nat
 
 /-- One decoded query-case: the `cq` arm (empty interiors) plus the
@@ -190,13 +186,13 @@ head-shape row, R2 `dnf` mark, and optional surface width that
 structure CQuery where
   rules : List CRule
   /-- The serializer's derivation mark (`"dnf": true`): the rule list
-  is ONE written rule's DNF lowering, and the union dedup re-keys on
-  the shared width (ruled 2026-07-23, R2 — `dnf_rekey_transparent`).
-  Absent: hand-written rules, the head-projection law. -/
+ is ONE written rule's DNF lowering, and the union dedup re-keys on
+ the shared width (ruled 2026-07-23, R2 — `dnf_rekey_transparent`).
+ Absent: hand-written rules, the head-projection law. -/
   dnf : Bool
 
 /-- The proved-type body: empty-prefix `.cq`, one rule list. Head
-shapes stay on `CRule.finds`; `Rule.finds` stays the PRD 04 narrowing. -/
+shapes stay on `CRule.finds`; `Rule.finds` stays the narrowing. -/
 def CQuery.body (q : CQuery) : Query.Query :=
   .cq [] (q.rules.map (·.body))
 
@@ -267,12 +263,7 @@ def decodeValue (j : Json) : Except String Value := do
     return ⟨.interval .u64, ← decodeIntervalU64 iv⟩
   if let some iv := objKey? j "interval_i64" then
     return ⟨.interval .i64, ← decodeIntervalI64 iv⟩
-  -- The fixed-width family, `[start, width]` — decode-as-corruption at
-  -- the format boundary: a zero width or a start at or past the Q2
-  -- bound (`start + w < maxEnd`; at-bound derives the ray sentinel,
-  -- unconstructible in the fixed family) REFUSES, exactly as
-  -- `crate::encoding::decode_fixed_interval_start` convicts the same
-  -- bytes (the ceiling negatives are `#guard`-pinned below).
+
   if let some iv := objKey? j "interval_u64_fixed" then
     match (← iv.getArr?).toList with
     | [s, w] =>
@@ -299,21 +290,21 @@ width) — and the boundary POSITIVES one below each ceiling. -/
 
 #guard (decodeValue (Json.mkObj [("interval_u64_fixed",
   Json.arr #[Json.num ⟨2 ^ 64 - 7, 0⟩,
-             Json.num 5])])).isOk  -- start + 5 = maxEnd − 1: legal
+             Json.num 5])])).isOk  
 #guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
   Json.arr #[Json.num ⟨2 ^ 64 - 6, 0⟩,
-             Json.num 5])])).isOk  -- start + 5 = maxEnd: the ray sentinel
+             Json.num 5])])).isOk  
 #guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
   Json.arr #[Json.num ⟨2 ^ 64 - 1, 0⟩,
-             Json.num 5])])).isOk  -- past the bound: overflow
+             Json.num 5])])).isOk  
 #guard (decodeValue (Json.mkObj [("interval_i64_fixed",
   Json.arr #[Json.num ⟨2 ^ 63 - 7, 0⟩,
-             Json.num 5])])).isOk  -- i64 twin, one below the bound
+             Json.num 5])])).isOk  
 #guard !(decodeValue (Json.mkObj [("interval_i64_fixed",
   Json.arr #[Json.num ⟨2 ^ 63 - 6, 0⟩,
-             Json.num 5])])).isOk  -- i64 at-bound
+             Json.num 5])])).isOk  
 #guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
-  Json.arr #[Json.num 3, Json.num 0])])).isOk  -- w = 0 denotes nothing
+  Json.arr #[Json.num 3, Json.num 0])])).isOk  
 #guard (decodeValue (Json.mkObj [("bytes",
   Json.arr #[Json.num 7, Json.num 0, Json.num 255])])).isOk
 #guard !(decodeValue (Json.mkObj [("bytes",
@@ -565,7 +556,7 @@ def decodeCase (j : Json) : Except String Case := do
 
 /-! ## Evaluation — join + surface anti-join (AntiProbe) plus the aggregate glue -/
 
-/-- The classifier: PRD 05's DEFINED refinement of the abstract
+/-- The classifier: DEFINED refinement of the abstract
 parameter — the lane evaluates the real thirteen-way classification. -/
 def theClassify : Query.Classify := Query.classifyRefined
 
@@ -735,7 +726,7 @@ def natValue (n : Nat) : Except String Value :=
   if h : n < 2 ^ 64 then .ok ⟨.u64, ⟨n, h⟩⟩
   else .error "a count exceeds the u64 domain"
 
-/-- The checked sum: `checkedSum` for the `u64` face (the PRD 05 form,
+/-- The checked sum: `checkedSum` for the `u64` face (the form,
 `checkedSum_sound`), the `Int` sum with the one finalize range check
 for `i64` (the wide-accumulator shape). -/
 def sumVals : List Value → Except String Value
@@ -760,7 +751,7 @@ def sumVals : List Value → Except String Value
     else .error "Overflow: Sum(I64) out of range"
   | _ => .error "Sum over a non-integer input"
 
-/-- Pack: the group's claims through PRD 05's coalescing fold. -/
+/-- Pack: the group's claims through coalescing fold. -/
 def packVals : List Value → Except String (List Value)
   | [] => .error "Pack over an empty group"
   | vals@({ type := .interval .u64, val := _ } :: _) => do
@@ -775,10 +766,7 @@ def packVals : List Value → Except String (List Value)
       | some iv => Except.ok iv
       | none => Except.error "a mixed-type Pack input"
     .ok ((pack ivs).map fun iv => ⟨.interval .i64, iv⟩)
-  -- Fixed-width claims pack through their derived intervals
-  -- (`Value.intervalU64`'s fixed arm); the packed output is the
-  -- GENERAL type — coalescing does not preserve a width, so Pack's
-  -- result column is `interval<E>`, exactly the engine's typing.
+
   | vals@({ type := .intervalFixed .u64 _, val := _ } :: _) => do
     let ivs ← vals.mapM fun v =>
       match v.intervalU64 with
@@ -1020,16 +1008,11 @@ def evalSeeded (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
       .ok (evalPlain h W ρ q)
     else if q.dnf then
       -- The re-keyed regime (ruled 2026-07-23, R2): a DNF-derived
-      -- rule set evaluates the WRITTEN rule's own denotation — the
-      -- disjuncts' binding rows unioned over the shared width,
-      -- grouped once.
       evalGrouped r0.finds (dnfBindings h W ρ q.rules)
     else if r0.finds.any CFind.isAgg then
       evalUnion h W ρ q
     else
-      -- Measure finds, no aggregate: the union of the per-rule
-      -- projections (the plain multi-rule reading, measure positions
-      -- projected per rule).
+
       q.rules.foldlM
         (fun acc r => do pure (acc ++ (← evalSingle h W ρ r)))
         []
