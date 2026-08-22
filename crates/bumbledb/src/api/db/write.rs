@@ -81,7 +81,6 @@ pub struct Witness<S> {
 
 impl<S> ReadInstance<'_, S> {
     /// # Errors
-
     pub fn witness(&self) -> Result<Witness<S>> {
         Ok(Witness {
             identity: self.txn().identity().clone(),
@@ -100,7 +99,6 @@ impl<S> Db<S> {
     /// # Errors
 
     /// # Panics
-
     pub fn write<R>(
         &self,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
@@ -119,7 +117,6 @@ impl<S> Db<S> {
     /// # Errors
 
     /// # Panics
-
     pub fn write_from<R>(
         &self,
         witness: &Witness<S>,
