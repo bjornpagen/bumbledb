@@ -45,7 +45,6 @@ fn binary2fj_and_factor_match_the_papers_clover_example() {
 
 #[test]
 fn gj_split_lowers_the_triangle_to_the_gj_plan() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -126,7 +125,6 @@ fn gj_split_leaves_the_chain_binary_shaped() {
 
 #[test]
 fn gj_split_keeps_same_node_variable_pairs_whole() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -143,7 +141,6 @@ fn gj_split_keeps_same_node_variable_pairs_whole() {
 
 #[test]
 fn fold_split_prefixes_group_variables() {
-
     let query = normalized(vec![occurrence(0, 0, &[(0, A), (1, X), (2, B)])], vec![]);
     let mut plan = binary2fj(&query, &order(&[0]));
     factor(&mut plan);
@@ -185,7 +182,6 @@ fn fold_split_prefixes_group_variables() {
 
 #[test]
 fn fold_split_moves_group_only_lookups_to_the_prefix() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, A), (2, X)]),
@@ -247,7 +243,6 @@ fn fold_split_leaves_unmixed_levels_alone() {
 
 #[test]
 fn binary2fj_matches_the_papers_chain_example() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
