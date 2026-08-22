@@ -56,7 +56,6 @@ impl InteriorId {
 
     /// is 64-bit only; this is a programmer invariant, not an IR
     /// overflow (`InteriorIdOverflow` is judged before any
-
     #[must_use]
     pub(crate) fn index(self) -> usize {
         usize::try_from(self.0).expect("crate is 64-bit")
