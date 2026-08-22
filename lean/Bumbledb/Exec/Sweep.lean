@@ -1,7 +1,7 @@
 import Bumbledb.Query.Aggregates
 
 /-!
-# Exec/Sweep — the sweep as a fold (Level 1, PRD 06)
+# Exec/Sweep — the sweep as a fold (Level 1, 
 
 The engine's ONE shared sweep
 (`crates/bumbledb/src/interval/sweep.rs::sweep`) modeled at its
@@ -10,17 +10,17 @@ segment list. Two Rust consumers drive the one walk, and both get
 their theorems here:
 
 * **`storage/commit/judgment.rs::check_coverage`** — the containment
-  judgment's coverage walk, which consumes a
-  `DisjointDeterminantProof` token before walking.
-  `sweep_covered_sound_complete` IS that token's theorem: under
-  `Ordered ∧ Disjoint` — exactly what a pointwise key guarantees per
-  prefix group (`pointwise_key_disjoint`, PRD 03) plus the
-  determinant index's key order — the one-pass verdict equals the
-  point-subset denotation.
+ judgment's coverage walk, which consumes a
+ `DisjointDeterminantProof` token before walking.
+ `sweep_covered_sound_complete` IS that token's theorem: under
+ `Ordered ∧ Disjoint` — exactly what a pointwise key guarantees per
+ prefix group (`pointwise_key_disjoint`, plus the
+ determinant index's key order — the one-pass verdict equals the
+ point-subset denotation.
 * **Pack's finalize** (`exec/sink/aggregate/finalize.rs`, driving the
-  windowless sweep) — `pack_is_the_sweep` proves this file's
-  run-emitting fold IS PRD 05's `pack`: one fold, two consumers, the
-  code-sharing claim the docs brag about, proved.
+ windowless sweep) — `pack_is_the_sweep` proves this file's
+ run-emitting fold IS `pack`: one fold, two consumers, the
+ code-sharing claim the docs brag about, proved.
 
 ## The seam, recorded (the predecessor probe)
 
@@ -37,59 +37,59 @@ semantics.
 ## Findings recorded (law 5)
 
 * **`Disjoint` goes unspent at the fold level.** Completeness needs
-  only `Ordered` (`sweep_complete_of_ordered`), and soundness needs
-  NO premise at all (`sweep_never_false_accepts`) — mirroring the
-  Rust module doc: overlapping inputs are legal, "tracking the
-  *maximum* frontier subsumes disjoint chaining". The `Disjoint` half
-  of the `DisjointDeterminantProof` premise licences what sits BELOW
-  the fold's altitude: the predecessor-seek entry ("a predecessor
-  that has ended proves nothing covers `s`" — decisive only because
-  the group is disjoint and start-ordered). The premise stays visible
-  in the statement — it is the token's meaning — and the finding is
-  recorded here and in the countermodel section.
+ only `Ordered` (`sweep_complete_of_ordered`), and soundness needs
+ NO premise at all (`sweep_never_false_accepts`) — mirroring the
+ Rust module doc: overlapping inputs are legal, "tracking the
+ *maximum* frontier subsumes disjoint chaining". The `Disjoint` half
+ of the `DisjointDeterminantProof` premise licences what sits BELOW
+ the fold's altitude: the predecessor-seek entry ("a predecessor
+ that has ended proves nothing covers `s`" — decisive only because
+ the group is disjoint and start-ordered). The premise stays visible
+ in the statement — it is the token's meaning — and the finding is
+ recorded here and in the countermodel section.
 * **A false ACCEPT is not constructible.** The PRD's countermodel
-  asks for both wrong-verdict directions "if constructible";
-  `sweep_never_false_accepts` proves the accept direction sound with
-  no premises whatsoever, so only the false REJECT exists
-  (`Countermodels.sweep_premise_load_bearing` — the unordered list
-  the verdict wrongly rejects).
+ asks for both wrong-verdict directions "if constructible";
+ `sweep_never_false_accepts` proves the accept direction sound with
+ no premises whatsoever, so only the false REJECT exists
+ (`Countermodels.sweep_premise_load_bearing` — the unordered list
+ the verdict wrongly rejects).
 * **The Pack tie order is closed by theorem, not argument.** The
-  engine sorts claims lexicographically on `[start, end]`
-  (`finalize.rs::finalize_into`); the spec's `sortByStart` reads
-  starts alone. `sweepRuns_tie_order_irrelevant` proves the walk
-  equal on any two start-ordered arrangements of one claim
-  collection — the fidelity record's remaining transfer argument
-  (equal-start tie order), now an equation composed from
-  `sweepRuns_eq_pack_of_ordered` and PRD 05's
-  `pack_input_order_irrelevant`.
+ engine sorts claims lexicographically on `[start, end]`
+ (`finalize.rs::finalize_into`); the spec's `sortByStart` reads
+ starts alone. `sweepRuns_tie_order_irrelevant` proves the walk
+ equal on any two start-ordered arrangements of one claim
+ collection — the fidelity record's remaining transfer argument
+ (equal-start tie order), now an equation composed from
+ `sweepRuns_eq_pack_of_ordered` and 
+ `pack_input_order_irrelevant`.
 * **`ray_needs_ray` carries the ceiling premise explicitly.** That
-  `maxEnd` is the GREATEST element is a fact of the two real domains
-  (`ceiling_greatest_u64` / `ceiling_greatest_i64`), not of PRD 02's
-  `PointDomain` class; the theorem takes it as a visible hypothesis
-  rather than widening the class.
+ `maxEnd` is the GREATEST element is a fact of the two real domains
+ (`ceiling_greatest_u64` / `ceiling_greatest_i64`), not of 
+ `PointDomain` class; the theorem takes it as a visible hypothesis
+ rather than widening the class.
 * **The σ conjunct rides ABOVE the fold.** `check_coverage`'s full
-  verdict is coverage AND every consumed segment satisfies ψ
-  (`storage/commit/judgment.rs::GapAt::segment` delegating to
-  `storage/commit/judgment.rs::check_segment`; the hook is
-  `interval/sweep.rs::Continuation::segment`); `sweepCovered` models
-  pure coverage. The σ semantics belong to the `Coverage` denotation
-  (`Dependencies.lean`, which carries ψ); this file's fold is the
-  coverage half only — delegated, not dropped.
+ verdict is coverage AND every consumed segment satisfies ψ
+ (`storage/commit/judgment.rs::GapAt::segment` delegating to
+ `storage/commit/judgment.rs::check_segment`; the hook is
+ `interval/sweep.rs::Continuation::segment`); `sweepCovered` models
+ pure coverage. The σ semantics belong to the `Coverage` denotation
+ (`Dependencies.lean`, which carries ψ); this file's fold is the
+ coverage half only — delegated, not dropped.
 * **The degenerate window is unstatable here.** Rust declares an
-  empty window (`s = e`) vacuously covered (`interval/sweep.rs::sweep`:
-  the run opens at `(s, s)`, the `frontier ≥ e` exit fires immediately);
-  `Interval` carries `start < end`, so the shape cannot be written at
-  this level — and it is unreachable through `check_coverage`, whose
-  probe intervals are acceptance-gated valid intervals.
+ empty window (`s = e`) vacuously covered (`interval/sweep.rs::sweep`:
+ the run opens at `(s, s)`, the `frontier ≥ e` exit fires immediately);
+ `Interval` carries `start < end`, so the shape cannot be written at
+ this level — and it is unreachable through `check_coverage`, whose
+ probe intervals are acceptance-gated valid intervals.
 * **The windowed gap verdict is delegated to the continuation.** A
-  windowed continuation that declined to convict would make `sweep`
-  return accept on a gap (the windowed early return in
-  `interval/sweep.rs::sweep`) where `sweepFrom`
-  hard-codes `false`; the only windowed continuation, `GapAt`, always
-  errs (`storage/commit/judgment.rs::GapAt::maximal`), so the
-  divergence is unreachable —
-  the spec does not determine `sweep` for a non-convicting windowed
-  caller.
+ windowed continuation that declined to convict would make `sweep`
+ return accept on a gap (the windowed early return in
+ `interval/sweep.rs::sweep`) where `sweepFrom`
+ hard-codes `false`; the only windowed continuation, `GapAt`, always
+ errs (`storage/commit/judgment.rs::GapAt::maximal`), so the
+ divergence is unreachable —
+ the spec does not determine `sweep` for a non-convicting windowed
+ caller.
 
 Mechanism fence: a sweep is a fold, nothing else — batching, buffers,
 scratch, SIMD, pipelining, memos, and LMDB are banned from this file
@@ -128,7 +128,7 @@ def Ordered (l : List (Interval α)) : Prop :=
 
 /-- `Disjoint`: the segments are pairwise point-disjoint — exactly
 what a pointwise key guarantees per prefix group
-(`pointwise_key_disjoint`, PRD 03), the half of the
+(`pointwise_key_disjoint`, the half of the
 `DisjointDeterminantProof` premise the key acceptance mints. -/
 def Disjoint (l : List (Interval α)) : Prop :=
   l.Pairwise (fun a b => ∀ x : α, x ∈ a.points → x ∉ b.points)
@@ -183,7 +183,7 @@ def sweepRuns (run : Interval α) : List (Interval α) → List (Interval α)
 
 /-- `sweepPack` — Pack as this file's sweep: sort by start (the
 engine's `sort_unstable` pass in `finalize.rs`), then the windowless
-run-emitting walk. `pack_is_the_sweep` proves it equal to PRD 05's
+run-emitting walk. `pack_is_the_sweep` proves it equal to 
 spec function `pack`. -/
 def sweepPack (l : List (Interval α)) : List (Interval α) :=
   match sortByStart l with
@@ -309,7 +309,7 @@ theorem sweep_covered_sound_complete (src : Interval α)
 omit [LinearElem α] in
 /-- **Theorem 3 (`sweep_early_exit_sound`).** Once the frontier
 passes the window end, the verdict is `true` on ANY remaining input —
-so returning without consuming it (Rust's `return Ok(())` at the loop
+so returning without consuming it (Rust's `return Ok()` at the loop
 head, "later input is moot") loses nothing. Bridge:
 `interval/sweep.rs`'s early return; pinned by the second half of
 `consumed_segments_are_handed_over_in_order_and_gaps_convict_first`
@@ -348,7 +348,7 @@ theorem sweep_ignores_spent_segments {e f : α} {iv : Interval α}
 
 /-! ## Theorem 4 — one fold, two consumers -/
 
-/-- The windowless walk is PRD 05's coalescing fold, run for run —
+/-- The windowless walk is coalescing fold, run for run —
 the run-carrying state `⟨s, f, h⟩` is `coalesce`'s three arguments as
 one `Interval`. -/
 theorem sweepRuns_eq_coalesce :
@@ -364,10 +364,10 @@ theorem sweepRuns_eq_coalesce :
       exact sweepRuns_eq_coalesce rest s (maxE f iv.«end») _
 
 /-- **Theorem 4 (`pack_is_the_sweep`).** `sweepPack = pack`: the
-run-emitting sweep, given Pack's sort pass, IS PRD 05's spec function
+run-emitting sweep, given Pack's sort pass, IS spec function
 — one fold, two consumers (`check_coverage` windowed, Pack's finalize
 windowless), the code-sharing claim of `interval/sweep.rs` proved.
-Every PRD 05 Pack spec (`pack_canonical`, `pack_extensional`,
+Every Pack spec (`pack_canonical`, `pack_extensional`,
 `pack_adjacency`, `pack_lattice_closed`) transfers to the sweep
 through this equation. Bridge: `interval/sweep.rs` +
 `exec/sink/aggregate/finalize.rs`; sampled by
@@ -405,7 +405,7 @@ of one claim collection is — produce IDENTICAL runs. So the engine's
 `[start, end]` lexicographic sort and the spec's start-only sort
 cannot be told apart through Pack: the tie order among equal starts
 is provably irrelevant. Composes `sweepRuns_eq_pack_of_ordered` with
-PRD 05's input-order theorem (`pack_input_order_irrelevant` —
+ input-order theorem (`pack_input_order_irrelevant` —
 canonical-form uniqueness under `pack_canonical` +
 `pack_extensional`). Bridge: `finalize.rs::finalize_into`'s sort pass
 feeding `interval/sweep.rs::sweep`; sampled by
@@ -524,7 +524,7 @@ cover across the seam: `a.«end» = b.start` shares no point yet leaves
 no hole, so the walk accepts the composed window
 `[a.start, b.«end»)` — half-open composition, the one adjacency law
 ("`start == frontier` continues a run", `interval/sweep.rs`, its home
-and nowhere else). The denotational half is PRD 05's
+and nowhere else). The denotational half is 
 `pack_adjacency`; this is the verdict half. Bridge:
 `adjacency_continues_and_the_minimal_gap_breaks` in
 `interval/sweep.rs`; the checker accepting a chain of exact tiles. -/
