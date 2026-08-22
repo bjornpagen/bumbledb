@@ -46,7 +46,7 @@ fn closed_join_query() -> Query {
 fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let cfg = corpus_gen::GenConfig {
         seed,
-        scale: corpus_gen::Scale::S, 
+        scale: corpus_gen::Scale::S,
     };
     let mut ops = Vec::new();
     for rel in 0..ids::RELATIONS {
@@ -75,7 +75,6 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let segment = mandate_segments(seed, sizes, 0)[0];
     let overlap = Interval::<i64>::new(segment.start, segment.start + 1).expect("nonempty");
     vec![
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -90,7 +89,6 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 ],
             )],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -102,7 +100,6 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 ],
             )],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -110,12 +107,10 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 vec![Value::U64(0), Value::String("holder-duplicate".into())],
             )],
         }),
-
         Op::Write(Delta {
             deletes: vec![(ids::ACCOUNT, corpus_gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
             inserts: vec![],
         }),
-
         Op::Write({
             let posting = (0..sizes.postings)
                 .map(|i| corpus_gen::row(&cfg, sizes, ids::POSTING, i))
@@ -131,12 +126,10 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         }),
         // A write naming the closed vocabulary: refused before the
         // delta on the engine, before applying on the model — the same
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::CURRENCY, vec![Value::U64(5)])],
         }),
-
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
