@@ -5,7 +5,6 @@
 //! spanning rules — reset once per execution, never per rule — so a later
 //! rule re-deriving a head fact is absorbed exactly like a within-rule
 //! `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
-
 use crate::encoding::encode_i64;
 use crate::exec::wordmap::WordMap;
 
