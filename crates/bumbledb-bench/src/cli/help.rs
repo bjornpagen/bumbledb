@@ -1,7 +1,5 @@
 use crate::verify::DEFAULT_RANDOM_CASES;
 
-/// The command list — static usage data, no parameters ([`help`]
-/// stitches it between the version header and the flag sections).
 const COMMANDS: &str = "COMMANDS:\n\
     \x20 gen      generate + load both stores into the digest-keyed dir\n\
     \x20 verify   the oracle: families + randomized queries on both engines\n\
@@ -34,7 +32,6 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
-/// The usage text.
 #[must_use]
 #[expect(
     clippy::too_many_lines,
