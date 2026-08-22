@@ -138,7 +138,6 @@ impl ProjectionSink {
     }
 
     /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
-
     fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.prepare_plain_batch_sources(batch);
         let batch_sources = &self.batch_sources[..];
