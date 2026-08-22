@@ -1,10 +1,3 @@
-//! `WriteTx` point reads through the public surface
-//! (`docs/architecture/70-api.md` § `WriteTx` point reads): `contains`/`get`
-//! observe committed state overlaid with the pending delta — the
-//! final-state view the judgment phase judges — so every pre-commit answer
-//! equals the post-commit one, and the blessed upsert idiom is sound
-//! within a single write transaction.
-
 use bumbledb::Db;
 
 mod common;
@@ -20,9 +13,9 @@ bumbledb::schema! {
 }
 
 /// The read-your-writes matrix: insert → found; delete → gone; delete +
-/// reinsert(modified) → the modified fact — all before commit, and all
-/// equal to the post-commit answer (asserted through a fresh transaction
-/// *and* a read-transaction scan).
+/// reinsert(modified) → the modified fact — all before commit, and all equal to
+/// the post-commit answer (asserted through a fresh transaction *and* a
+/// read-transaction scan).
 #[test]
 fn point_reads_observe_the_final_state_before_commit() {
     let dir = common::TempDir::new("points-read-your-writes");
@@ -38,17 +31,15 @@ fn point_reads_observe_the_final_state_before_commit() {
                 holder: "ada",
                 balance: 10,
             };
-            // Insert, then read back through the pending delta — the
-            // holder string exists only as a provisional intern id here.
+
             assert_eq!(tx.insert([&acct])?.changed(), 1);
             assert!(tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, Some(acct));
-            // Delete: the final state no longer holds the fact.
+
             assert_eq!(tx.delete([&acct])?.changed(), 1);
             assert!(!tx.contains(&acct)?);
             assert_eq!(tx.get(id)?, None);
-            // Delete + reinsert(modified): the key re-establishes with
-            // the modified fact.
+
             let modified = Account {
                 balance: 42,
                 ..acct
@@ -63,7 +54,6 @@ fn point_reads_observe_the_final_state_before_commit() {
         .unwrap()
         .value;
 
-    // The post-commit point reads answer identically.
     let survivor = Account {
         id,
         holder: "ada",
@@ -81,7 +71,6 @@ fn point_reads_observe_the_final_state_before_commit() {
     .expect("post-commit point reads")
     .unwrap();
 
-    // And the read-transaction view agrees fact-for-fact.
     db.read(|snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
         assert_eq!(facts, vec![survivor]);
@@ -90,9 +79,6 @@ fn point_reads_observe_the_final_state_before_commit() {
     .expect("read");
 }
 
-/// Committed-state fallthrough: a fact committed in a prior transaction
-/// and untouched in this delta is found through the committed view; a
-/// never-interned string proves absence without touching the dictionary.
 #[test]
 fn point_reads_fall_through_to_committed_state() {
     let dir = common::TempDir::new("points-committed-fallthrough");
@@ -114,8 +100,7 @@ fn point_reads_fall_through_to_committed_state() {
         .value;
 
     db.write(|tx| {
-        // Touch an unrelated fact so the delta is nonempty but the probed
-        // key has no overlay.
+
         let other = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
         tx.insert([&Account {
             id: other,
@@ -129,14 +114,13 @@ fn point_reads_fall_through_to_committed_state() {
         };
         assert!(tx.contains(&seeded)?);
         assert_eq!(tx.get(id)?, Some(seeded));
-        // A never-interned holder short-circuits to false — the fact
-        // provably exists nowhere.
+
         assert!(!tx.contains(&Account {
             id: AccountId(999),
             holder: "ghost",
             balance: 0,
         })?);
-        // An unallocated key misses cleanly.
+
         assert_eq!(tx.get(AccountId(999))?, None);
         Ok(())
     })
@@ -144,12 +128,12 @@ fn point_reads_fall_through_to_committed_state() {
     .unwrap();
 }
 
-/// Regression: a compensating delete that *cancels* a pending insert nets
-/// to nothing — the shared key tuple must keep answering with its
-/// committed owner, typed and dynamic alike, and the blessed upsert idiom
-/// composed after the cancelled pair takes the seen arm and commits
-/// cleanly (the poisoned overlay used to deny the committed row and
-/// steer the idiom into a spurious `Admission::Rejected`).
+/// Regression: a compensating delete that *cancels* a pending insert nets to
+/// nothing — the shared key tuple must keep answering with its committed owner,
+/// typed and dynamic alike, and the blessed upsert idiom composed after the
+/// cancelled pair takes the seen arm and commits cleanly (the poisoned overlay
+/// used to deny the committed row and steer the idiom into a spurious
+/// `Admission::Rejected`).
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_row() {
     let dir = common::TempDir::new("points-cancelled-insert");
@@ -171,8 +155,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         .value;
 
     db.write(|tx| {
-        // A pending insert on the committed key, then its compensating
-        // delete: the pair cancels, net delta nothing.
+
         assert_eq!(
             tx.insert([&Account {
                 id,
@@ -192,7 +175,6 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             1
         );
 
-        // Every point read answers exactly what a post-commit read would.
         let committed = Account {
             id,
             holder: "ada",
@@ -210,7 +192,6 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             "the dynamic point read sees the committed row"
         );
 
-        // The upsert idiom takes the seen arm: delete + insert bumped.
         tx.delete([&Account {
             id,
             holder: "ada",
@@ -254,13 +235,6 @@ bumbledb::schema! {
     }
 }
 
-/// The single-fresh restriction is dead: a relation with SEVERAL fresh
-/// fields reads through each key as its own Rust type — `LeftId` and
-/// `RightId` carry distinct `Key::STATEMENT`s (the materialized order's
-/// first block: relation declaration order, then field order), so which
-/// FD a point read goes through is the key value's type, never a
-/// runtime question. Both transaction kinds answer through both keys,
-/// and a later relation's fresh key ordinal follows on.
 #[test]
 fn every_fresh_field_is_its_own_typed_key() {
     use bumbledb::Key;
@@ -296,10 +270,6 @@ fn every_fresh_field_is_its_own_typed_key() {
     .expect("read");
 }
 
-/// `ReadInstance::get` — the committed-state sibling of `WriteTx::get`,
-/// through the same typed key value: a committed fact comes back from
-/// the read scope (`db.read(|snap| snap.get(id))`), and an unallocated
-/// id misses cleanly.
 #[test]
 fn snapshot_get_reads_committed_state_through_the_fresh_key() {
     let dir = common::TempDir::new("points-snapshot-get");
@@ -335,10 +305,9 @@ fn snapshot_get_reads_committed_state_through_the_fresh_key() {
     .expect("read");
 }
 
-/// The blessed upsert idiom, as written in `70-api.md`: get → delete +
-/// insert, or insert. The holder string comes back as a borrowed view of
-/// the transaction, so ownership is an explicit host act — copy the
-/// fields out before mutating the transaction again.
+/// The holder string comes back as a borrowed view of the transaction, so
+/// ownership is an explicit host act — copy the fields out before mutating the
+/// transaction again.
 fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     db.write(|tx| {
         let old = tx.get(id)?.map(|old| (old.holder.to_owned(), old.balance));
@@ -369,17 +338,13 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     Ok(())
 }
 
-/// A counter increment round-trips across three write transactions: the
-/// first inserts, the next two read-modify-write — exactly one fact
-/// survives, carrying the sum.
 #[test]
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     let dir = common::TempDir::new("points-upsert-counter");
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
-    // An explicit fresh value is legal on the write path; the high-water
-    // mark advances past it.
+
     let id = AccountId(7);
     add(&db, id, 1).expect("first upsert inserts");
     add(&db, id, 10).expect("second upsert increments");
@@ -400,11 +365,6 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     .expect("read");
 }
 
-/// Committed-state membership of a TYPED fact — the snapshot sibling of
-/// `tx.contains`, closing the point-operation matrix: a committed fact
-/// answers true, a value-modified twin false, and a fact carrying a
-/// never-interned string short-circuits to false (the read-context
-/// encode proves it cannot exist — no probe, no error).
 #[test]
 fn snapshot_contains_answers_typed_membership_against_committed_state() {
     let dir = common::TempDir::new("points-snap-contains");
@@ -444,10 +404,6 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
     .expect("read");
 }
 
-/// The snapshot's witnessed generation is the storage tx id read INSIDE
-/// the snapshot (the race-closing rule of
-/// `docs/architecture/50-storage.md`): it equals the handle's, and a
-/// commit advances what the next snapshot witnesses.
 #[test]
 #[expect(
     clippy::redundant_closure_for_method_calls,
