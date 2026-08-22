@@ -6,7 +6,6 @@
 //! confine to 3 of 6 integer ALUs) — and the survivor writes go through
 //! the reference host, delete the intrinsic dual and its `unsafe`, and
 //! one hoisted capacity invariant instead of a per-lane bounds check
-
 use std::simd::SimdElement;
 use std::simd::prelude::*;
 
