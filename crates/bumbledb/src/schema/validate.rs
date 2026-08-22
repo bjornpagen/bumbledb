@@ -4,7 +4,6 @@
 //! — exhaustive, one distinct
 //! (the variant doc comments carry the citations). Every accepted
 //! statement leaves as a typed arena witness; downstream trusts its
-
 use std::collections::BTreeMap;
 
 use super::{
@@ -30,9 +29,7 @@ pub trait ValidateDescriptor: Sized {
 
 impl ValidateDescriptor for SchemaDescriptor {
     /// # Panics
-
     /// Only on one programmer-invariant violation: more than 2³²
-
     /// [`SchemaError::TooManyStatements`]) checked before any u16 id is
     #[expect(
         clippy::too_many_lines,
@@ -1514,6 +1511,7 @@ fn validate_relation(
             });
         }
         if let ValueType::FixedBytes { len } = field.value_type {
+            // bytes<N> width gate: N ∈ 1..=64 (64 bytes = 8 words).
             if len == 0 || usize::from(len) > crate::encoding::MAX_FIXED_BYTES {
                 return Err(SchemaError::FixedBytesWidthOutOfRange {
                     relation: rel_id,
@@ -1523,6 +1521,7 @@ fn validate_relation(
             }
         }
         if let ValueType::FixedInterval { width, .. } = field.value_type {
+            // interval<E, w> width gate: w ≥ 1 and w ≤ u64::MAX − 1.
             if width == 0 || width == u64::MAX {
                 return Err(SchemaError::IntervalWidthOutOfRange {
                     relation: rel_id,
