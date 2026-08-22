@@ -442,7 +442,6 @@ mod tests {
     /// chain WITH reads between — at least three commits after the seed
 
     /// reopen verb anywhere. That is the append-on-append stress: each
-
     #[test]
     fn the_streak_variant_reaches_long_read_interleaved_append_chains() {
         let streaks = (0..256u64)
