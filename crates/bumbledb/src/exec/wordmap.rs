@@ -6,13 +6,11 @@
 //! (~1/128 of collisions falsely), and values are uninitialized until
 #![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
 #![allow(clippy::inline_always)]
-
 //! `MaybeUninit` reads are gated by ctrl-byte occupancy, and the probe
 //! indices are masked to the power-of-two capacity — both invariants
 //! stated at the sites. `V: Copy` keeps the uninitialized-slot story
 //! `unsafe` per the 00-product policy (this module is allowlisted): the
-//! drop-free (both users store `` and `usize`).
-
+//! drop-free (both users store `Copy` values).
 use std::mem::MaybeUninit;
 
 /// Ctrl bytes scanned per probe step (one SWAR word).
