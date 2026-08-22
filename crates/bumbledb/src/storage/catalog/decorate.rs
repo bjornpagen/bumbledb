@@ -4,8 +4,6 @@ use crate::error::{CitedCitations, CitedFact, Result, Violation, Violations};
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
 
-/// Decodes cited facts through the candidate catalog's dictionary.
-/// Secondary failure leaves the sealed set undecorated.
 pub(crate) fn decorate_violations<C: CatalogRead>(
     violations: Violations,
     schema: &Schema,
