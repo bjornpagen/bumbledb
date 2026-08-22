@@ -129,7 +129,6 @@ mod tests {
     }
 
     /// success on macOS (rc 0 asserted; no timing behavior). Each test
-
     #[test]
     fn the_qos_claim_succeeds() {
         claim_qos().expect("the user-interactive QoS claim succeeds");
