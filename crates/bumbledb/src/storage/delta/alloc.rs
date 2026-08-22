@@ -11,7 +11,6 @@ impl WriteDelta<'_> {
     /// # Errors
 
     /// (the dyn boundary's foreign-witness refusal — see
-
     pub fn reserve(
         &mut self,
         view: &ReadTxn<'_>,
