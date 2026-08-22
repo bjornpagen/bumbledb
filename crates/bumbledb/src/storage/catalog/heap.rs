@@ -1,11 +1,9 @@
 //! Allocation-bounded heap staging for [`crate::InstanceBuilder`].
-//!
 //! [`HeapStage`] is the construction representation: chunked arenas, a
 //! compact [`FactRef`] table, an open-addressed identity index, compact
 //! dictionary slots, and dense fresh floors. It is not a catalog. Packed
 //! freeze (step 8) consumes the stage into sorted runs and then a
 //! [`super::CandidateCatalog`]. A `BTreeMap<Vec<u8>, Vec<u8>>` heap
-//! catalog is refused.
 
 use crate::arena::{Arena, ArenaSlice};
 use crate::encoding::{InternId, decode_u64, fact_hash, field_word_bytes};
@@ -21,9 +19,6 @@ mod tests;
 const EMPTY: u32 = u32::MAX;
 const TOMBSTONE: u32 = u32::MAX - 1;
 
-/// Compact handle to one net-live staged fact. Bytes live in the fact
-/// arena; identity is `(relation, hash)`. `seq` is insert order, so
-/// keyed overlay last-wins survives [`Vec::swap_remove`].
 #[derive(Clone, Copy)]
 pub(crate) struct FactRef {
     pub(crate) relation: RelationId,
@@ -32,8 +27,6 @@ pub(crate) struct FactRef {
     seq: u32,
 }
 
-/// Open-addressed index: slot values are table indices, `EMPTY`, or
-/// `TOMBSTONE`. Capacity is a power of two.
 struct OpenIndex {
     slots: Box<[u32]>,
     live: usize,
@@ -149,15 +142,12 @@ impl OpenIndex {
     }
 }
 
-/// Compact dictionary forward slot: hash, id, and arena coordinates.
 struct DictSlot {
     hash: [u8; 32],
     id: InternId,
     bytes: ArenaSlice,
 }
 
-/// Chunked heap construction state. Net-live facts only — an empty base
-/// never records a delete disposition.
 pub(crate) struct HeapStage {
     fact_arena: Arena,
     facts: Vec<FactRef>,
@@ -165,13 +155,13 @@ pub(crate) struct HeapStage {
     dict_arena: Arena,
     dict_entries: Vec<DictSlot>,
     dict_index: OpenIndex,
-    /// Reverse slots, dense from intern id 0.
+
     dict_reverse: Vec<ArenaSlice>,
     dict_next: u64,
-    /// Schema fresh-field roster; [`Self::floors`] is parallel.
+
     roster: Box<[(RelationId, FieldId)]>,
     floors: Box<[u64]>,
-    /// Monotone insert stamp for keyed last-wins.
+
     next_seq: u32,
 }
 
@@ -264,8 +254,6 @@ impl HeapStage {
         Ok(next)
     }
 
-    /// Last-wins overlay among net-live facts. Empty base: a miss is
-    /// absence, never a committed shadow.
     pub(crate) fn overlay_fact(
         &self,
         schema: &Schema,
