@@ -59,7 +59,6 @@ fn ladder_schema() -> SchemaDescriptor {
 }
 
 fn zone(group: u64, start: u64) -> Vec<Value> {
-
     let start = if bumbledb::Interval::<u64>::fixed(start, 5).is_some() {
         start
     } else {
@@ -83,10 +82,10 @@ fn span_row(group: u64, rng: &mut Rng) -> Vec<Value> {
 fn ladder_start(rng: &mut Rng, existing: Option<u64>) -> u64 {
     let base = existing.unwrap_or_else(|| rng.below(40) * 3);
     match rng.below(4) {
-        0 => base,                            
-        1 => base + 5,                        
-        2 => base + 2,                        
-        _ => u64::MAX - 6 - rng.below(3) * 5, 
+        0 => base,
+        1 => base + 5,
+        2 => base + 2,
+        _ => u64::MAX - 6 - rng.below(3) * 5,
     }
 }
 
@@ -137,7 +136,6 @@ fn fixed_width_ladder_stream_agrees_with_the_engine() {
             _ => None,
         });
         let delta = if rng.below(8) == 0 {
-
             match pick(&mirror, ZONE, &mut rng) {
                 Some(fact) => Delta {
                     deletes: vec![(ZONE, fact)],
