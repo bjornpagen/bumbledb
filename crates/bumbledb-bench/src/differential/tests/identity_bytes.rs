@@ -100,7 +100,6 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
     let mut deltas = Vec::new();
     for _ in 0..160 {
         let delta = match rng.below(10) {
-
             0..=3 => {
                 let k = rng.below(24);
                 Delta {
@@ -181,7 +180,7 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>)
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn queries() -> Vec<Op> {
     let mut ops = Vec::new();
 
