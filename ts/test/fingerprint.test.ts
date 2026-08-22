@@ -1,26 +1,3 @@
-/**
- * The cross-host fingerprint lock (bumbledb TODO.md §7, the pin the SDK
- * owes): the ONE theory exercising every schema construct — fresh keys,
- * `str`, `bytes<N>`, general and fixed-width intervals INCLUDING a ray
- * literal, both closed tiers, containment with σ on both faces, a
- * ψ-selected CLOSED target (`Kind.where({ mastered: true })` — the member
- * set folds at validate), `==` mirrors including a generator-less pair
- * (`SavingsTerms == AuditTrail` over columns no mint touches — the class
- * laws name that class by least coordinate and NEVER leak into the hash),
- * and every legal capacity spelling — unit, weighted, Duration-weighted,
- * dependent-bound — built here through the SDK's
- * constructors and, in `crate/src/fingerprint_lock.rs`, through the
- * engine's `schema!` macro. Each side independently asserts its
- * engine-computed fingerprint equals the ONE pinned constant, so
- * `node --test` and `cargo test` each run standalone while jointly proving
- * the cross-host bond: identical fingerprints mean `Db::open` on either
- * side admits the other side's store (the fingerprint is open's whole
- * schema gate beyond format version and store kind), and neither surface
- * can fake the pin — this side's hex arrives from the engine ACROSS THE
- * FFI after a real `dbCreate`, the Rust side's through real macro
- * expansion and validation.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -44,18 +21,10 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/**
- * The pinned cross-host fingerprint of the `CrossHost` theory. The SAME
- * constant is baked into `crate/src/fingerprint_lock.rs`; a change here
- * without the twin change there (or vice versa) is exactly the drift this
- * lock exists to catch.
- */
 const PIN = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc"
 
-/** `u64::MAX` — an interval ending here is the unbounded ray `[start, ∞)`. */
 const RAY_END = 18446744073709551615n
 
-/** The 16 bytes of the Rust twin's `b"0123456789abcdef"` selection literal. */
 const DIGEST = new TextEncoder().encode("0123456789abcdef")
 
 const Status = closed("Status", ["Open", "Frozen"])
@@ -91,21 +60,11 @@ const Account = relation("Account", {
 	lease: interval(u64, 7n)
 })
 const SavingsTerms = relation("SavingsTerms", { account: u64, rate_bps: i64 })
-/** The weighted-capacity extension (dossier § 4.2): the dependent-bound and Duration encodings enter the lock's surface. */
+
 const Pool = relation("Pool", { id: u64.fresh, supply: u64, open: interval(u64) })
 const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64, ran: interval(u64) })
 const AuditTrail = relation("AuditTrail", { account: u64, rate_bps: i64 })
 
-/**
- * Statement for statement the Rust twin's declaration order — order is
- * fingerprint identity (materialized order pins statement ids). The tail
- * four are PRD-K7's lock extension: the ψ-on-closed containment (the
- * engine folds `mastered == true` to the member set {DirectPass} at
- * validate) and the generator-less `==` pair — `rate_bps` on both faces is
- * touched by no mint, so its class is named by least coordinate
- * ("SavingsTerms.rate_bps"); the pinned hex proving the class laws hash
- * NOTHING (classes are law-born names, never descriptor bytes).
- */
 const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTerms, AuditTrail, Pool, Device }, [
 	key(SavingsTerms, ["account"]),
 	contained(on(Account, "holder"), on(Holder, "id")),
@@ -161,8 +120,7 @@ describe("the cross-host fingerprint lock", function suite() {
 	})
 
 	test("the store is inhabitable through the public surface", async function inhabit() {
-		// Loaded lazily: the `Db` runtime is S4's structural rewrite — until it
-		// lands, this import (not the fingerprint pins above) is the red part.
+
 		const { Db } = await import("#db.ts")
 		const db = await Db.open(storeDir, CrossHost)
 		const result = db.write(function seed(tx) {
@@ -194,8 +152,7 @@ describe("the cross-host fingerprint lock", function suite() {
 			})
 			put(tx, SavingsTerms, { account: frozenA.id, rate_bps: -3n })
 			put(tx, SavingsTerms, { account: frozenB.id, rate_bps: 25n })
-			// The generator-less mirrors demands the audit twins in the same
-			// delta — SavingsTerms == AuditTrail commits whole or not at all.
+
 			put(tx, AuditTrail, { account: frozenA.id, rate_bps: -3n })
 			put(tx, AuditTrail, { account: frozenB.id, rate_bps: 25n })
 		})
