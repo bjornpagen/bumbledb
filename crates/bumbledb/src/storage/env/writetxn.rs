@@ -9,7 +9,6 @@ impl WriteTxn<'_> {
     /// # Errors
 
     /// raw OS errno, `Lmdb` on any LMDB-coded failure; either way the
-
     pub fn commit(self) -> Result<()> {
         self.txn.commit().map_err(Error::from_commit)
     }
@@ -33,7 +32,6 @@ impl WriteTxn<'_> {
     }
 
     /// # Errors
-
     pub fn generation(&self) -> Result<GenerationId> {
         read_u64(&self.env.meta, &self.txn, META_TX_ID, "tx id").map(GenerationId::from_storage)
     }
