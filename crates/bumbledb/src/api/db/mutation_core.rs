@@ -480,7 +480,6 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
     }
 
     /// request, judged before any refusal — then poison, closed, unknown
-
     fn accept_dyn(
         &self,
         rel: RelationId,
