@@ -3,7 +3,6 @@ use bumbledb::obs::{Category, TraceEvent};
 use super::{FlameRow, FlameSummary, RENDER_ROWS, containment};
 
 impl FlameSummary {
-
     /// must not see them; `render_phase_table` does).
     #[must_use]
     pub fn compute(events: &[TraceEvent]) -> Self {
