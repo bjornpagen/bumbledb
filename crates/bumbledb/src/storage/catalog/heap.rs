@@ -4,7 +4,6 @@
 //! dictionary slots, and dense fresh floors. It is not a catalog. Packed
 //! freeze (step 8) consumes the stage into sorted runs and then a
 //! [`super::CandidateCatalog`]. A `BTreeMap<Vec<u8>, Vec<u8>>` heap
-
 use crate::arena::{Arena, ArenaSlice};
 use crate::encoding::{InternId, decode_u64, fact_hash, field_word_bytes};
 use crate::error::{Error, Result};
