@@ -34,9 +34,6 @@ impl Builder {
         self.atoms[atom].bindings.push((field, term));
     }
 
-    /// A fresh variable bound to the field, registered as a group-key
-    /// candidate and anchored for provenance (negation templates and
-    /// membership anchors select by (relation, field), never by hope).
     pub(super) fn bind_var(&mut self, atom: usize, field: FieldId) -> VarId {
         let var = self.fresh_var();
         let relation = builder_relation(&self.atoms[atom]);
@@ -46,8 +43,6 @@ impl Builder {
         var
     }
 
-    /// The variable already bound to the field, binding a fresh one if the
-    /// field is free; `None` when the field is bound to a non-variable.
     pub(super) fn var_at(&mut self, atom: usize, field: FieldId) -> Option<VarId> {
         match self.atoms[atom].bindings.iter().find(|(f, _)| *f == field) {
             Some((_, Term::Var(var))) => Some(*var),
@@ -56,8 +51,6 @@ impl Builder {
         }
     }
 
-    /// A positive-bound variable anchored at any of the given
-    /// (relation, field) positions — the deliberate-anchor lookup.
     pub(super) fn anchored_at(&self, positions: &[(RelationId, FieldId)]) -> Option<VarId> {
         self.anchors
             .iter()
@@ -65,11 +58,6 @@ impl Builder {
             .map(|(var, _, _)| *var)
     }
 
-    /// Whether a variable is interval-*valued*: every anchor it has is
-    /// an interval field. A membership point var is also reachable at
-    /// an interval field (through the binding, not an anchor), but its
-    /// scalar anchor names it element-typed — interval dressing must
-    /// not compare it against interval literals.
     pub(super) fn interval_valued(&self, var: VarId) -> bool {
         use crate::querygen::target::ids;
         let mut anchors = self
@@ -86,8 +74,6 @@ impl Builder {
         self.finds.push(FindTerm::Var(var));
     }
 
-    /// One negated atom (an anti-join position — it binds nothing, only
-    /// rejects, so every variable placed in it must come from `anchors`).
     pub(super) fn negated_atom(&mut self, relation: RelationId) -> usize {
         self.negated.push(Atom {
             source: bumbledb::AtomSource::Edb(relation),
@@ -109,9 +95,7 @@ impl Builder {
             finds: self.finds,
             atoms: self.atoms,
             negated: self.negated,
-            // The generator emits flat conjunctions — leaves only. The
-            // tree grammar's OR shapes are proven by the DNF property
-            // suite against the naive model (`naive/tests/dnf.rs`).
+
             conditions: self
                 .conditions
                 .into_iter()
