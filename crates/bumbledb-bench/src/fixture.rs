@@ -1,8 +1,3 @@
-//! Shared benchmark query and test-fixture shorthands.
-//!
-//! Query builders are compiled for production benchmark families; filesystem
-//! and literal helpers used only by unit tests are gated at the item boundary.
-
 use bumbledb::schema::{FieldDescriptor, Generation, ValueType};
 use bumbledb::{Term, VarId};
 
@@ -70,16 +65,13 @@ pub(crate) struct TempDir(std::path::PathBuf);
 #[cfg(test)]
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
-        // Unique per run (pid + wall-clock nanos): a fixed tag path lets
+
         // a concurrent or wedged prior run collide on the LMDB flock.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        // BUMBLEDB_SCRATCH_DIR points the differential/adversarial
-        // scratch stores at a RAM-backed volume (`scripts/ramdisk.sh`,
-        // docs/architecture/60-validation.md § the ramdisk sanction);
-        // unset, the system temp dir stands.
+
         let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
             .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
         let path = root.join(format!(
