@@ -1,6 +1,5 @@
 //! The leaf fast-path dispatcher, the pinned-row arm, and the
 //! pinned-run arm (the fold pushdown for probe-pinned leaves).
-
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafBatch, Sink, SkipCapability,
     Source, ValidatedPlan, grow_scratch,
@@ -8,7 +7,6 @@ use super::{
 
 impl Executor {
     /// 2026-07-19): the leaf-elision
-
     pub(super) fn run_leaf_fast<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
