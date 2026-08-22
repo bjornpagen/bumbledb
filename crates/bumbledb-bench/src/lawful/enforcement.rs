@@ -5,7 +5,6 @@
 //! FROM the table ([`ddl`]) — an engine law without a `SQLite` enforcement row
 //! is a failing totality test, never where no declarative constraint form
 //! exists), appended after the
-
 use bumbledb::schema::ValueType;
 
 use super::{ids, schema};
