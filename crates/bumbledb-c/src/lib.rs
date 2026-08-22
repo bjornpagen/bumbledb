@@ -1,77 +1,9 @@
-//! The C ABI: `bdb_*` symbols, dumb marshal only (`docs/architecture/76-c-abi.md`).
-//!
+//! The C ABI: `bdb_*` symbols, dumb marshal only.
 //! The dumb-bridge law (the ts/crate precedent): no logic beyond marshaling
-//! will EVER live in this crate. No schema knowledge beyond schema-DIRECTED
-//! rendering of rejections, no validation, no name resolution, no retries,
-//! no logging — anything smart belongs in the host or in the bumbledb
-//! engine itself. This crate exists only to carry values across the C
+//! will EVER live in this crate. This crate exists only to carry values across the C
 //! boundary.
-//!
-//! # The boundary protocol
-//!
-//! Every fallible export returns a [`bdb_status`] and takes a trailing
-//! `*mut *mut bdb_error` out-param:
-//!
-//! - `BDB_STATUS_OK`: success; no error is written.
-//! - `BDB_STATUS_ABORTED`: the caller's own callback returned
-//!   `BDB_CALLBACK_CONTROL_ABORT` — domain abandonment, not a failure; no
-//!   error is written and nothing committed.
-//! - `BDB_STATUS_ERROR`: an engine or marshal failure; a [`bdb_error`] is
-//!   written to the out-param (when it is non-null) and the caller owns it
-//!   (`bdb_error_destroy`).
-//! - `BDB_STATUS_MISUSE`: a contract violation the bridge could detect —
-//!   a null required pointer, a stale instance/tx ref used after its
-//!   callback returned, an out-of-range answers index, an unknown enum tag.
-//!   No error is allocated: misuse is a programming error, not data.
-//!
-//! # The lexical model
-//!
-//! Read instances and write transactions are LEXICAL borrowed
-//! capabilities. Each callback mints its own heap [`db::bdb_instance_ref`]
-//! (and, for store reads, a borrowed [`db::bdb_witness`]). When the
-//! callback returns the slot is invalidated (`alive = false`, engine
-//! pointers nulled). A stashed pointer still names that heap slot and
-//! answers `BDB_STATUS_MISUSE` rather than use-after-free. Instance refs
-//! are never owned or destroyed by C. A caller retains a witness with
-//! `bdb_witness_retain` (a clone of the engine [`bumbledb::Witness`])
-//! and destroys the retained handle with `bdb_witness_destroy`.
-//! `bdb_db_write_from` takes a witness — borrowed or retained — and may
-//! be called from inside a read callback. Concurrent MVCC reads on one
-//! handle are allowed; a nested write, a write during a write, and
-//! destroy during a live callback are refused.
-//!
-//! Theory rejection and a moved generation are proved outcomes: they
-//! fill an admission union under `BDB_STATUS_OK`. They are not
-//! `bdb_error` kinds.
-//!
-//! # Panic policy
-//!
-//! A Rust panic unwinding across the C boundary is undefined behavior, so
-//! EVERY extern entry point routes through [`guard`] (or
-//! [`guard_statusless`] when there is no error out-param):
-//! `std::panic::catch_unwind` maps a caught panic to `BDB_ERROR_KIND_PANIC`
-//! (the caller treats the store as poisoned). Unwinding stays inside Rust,
-//! so the engine's own drop guards (the escaped-fresh-id burn on write
-//! failure) run as designed. Re-entrant writes are refused bridge-side
-//! with a typed `BDB_ERROR_KIND_BUSY_HANDLE` error BEFORE the engine's
-//! non-reentrancy assertion can fire. Destroy of a db or prepared handle
-//! while it is in a callback/execute is `BDB_STATUS_MISUSE`. A C++
-//! exception thrown through a read/write callback is unsupported — it
-//! would unwind through Rust.
-//!
 //! # Safety shape
-//!
-//! Raw-pointer handling is concentrated in the small helper set below
-//! ([`ref_in`], [`mut_in`], [`slice_in`], [`out`], [`box_in`]) plus the
-//! per-module view readers; each helper's SAFETY argument is the generated
-//! header's contract (pointers come from the constructors this header
-//! names, views outlive the call they are passed to). The exported
-//! functions themselves are spelled as safe `extern "C" fn`s whose whole
-//! body rides those audited helpers — the ts/crate carve-out regime.
 
-// C ABI type names ARE the header contract: the Rust spelling and the C
-// spelling are one identifier, so grep works across the boundary and
-// cbindgen needs no rename table.
 #![allow(non_camel_case_types)]
 
 pub mod answers;
@@ -115,7 +47,6 @@ pub extern "C" fn bdb_abi_version() -> u32 {
     3
 }
 
-/// TryFrom/From for a C ABI enum whose struct field is stored as `u32`.
 macro_rules! c_tag {
     ($ty:ty { $($variant:ident),* $(,)? }) => {
         impl TryFrom<u32> for $ty {
@@ -161,8 +92,8 @@ pub enum bdb_callback_control {
 c_tag!(bdb_callback_control { Ok, Abort });
 
 /// How a bridge operation failed, before it is rendered to the boundary
-/// protocol: a contract violation (no error allocated), or a typed error
-/// the caller will own.
+/// protocol: a contract violation (no error allocated), or a typed error the
+/// caller will own.
 pub(crate) enum Fail {
     Misuse,
     Error(Box<bdb_error>),
@@ -170,11 +101,6 @@ pub(crate) enum Fail {
 
 pub(crate) type BridgeResult<T> = Result<T, Fail>;
 
-/// The one panic wall (module doc: panic policy): every extern entry's
-/// body runs under `catch_unwind`; a caught panic becomes
-/// `BDB_ERROR_KIND_PANIC`. A body cannot return `BDB_STATUS_ERROR`
-/// without an error written: `Fail::Error` always stores through
-/// `out_error`.
 pub(crate) fn guard(
     out_error: *mut *mut bdb_error,
     body: impl FnOnce() -> BridgeResult<bdb_status>,
@@ -199,9 +125,6 @@ pub(crate) fn guard(
     }
 }
 
-/// Panic wall for entries with no error out-param (destroy). `Fail::Error`
-/// is unrepresentable here and becomes `Misuse`; a panic becomes `Error`
-/// with no payload (the only statusless panic path).
 pub(crate) fn guard_statusless(body: impl FnOnce() -> BridgeResult<bdb_status>) -> bdb_status {
     match std::panic::catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(status)) => {
@@ -216,10 +139,6 @@ pub(crate) fn guard_statusless(body: impl FnOnce() -> BridgeResult<bdb_status>) 
     }
 }
 
-/// Writes the boxed error to the caller's out-param; a null out-param
-/// drops the error (the caller declined the payload, keeping only the
-/// status). A previously stored non-null `bdb_error*` in the slot is
-/// reclaimed first so reuse without `bdb_error_destroy` does not leak.
 fn store_error(out_error: *mut *mut bdb_error, error: Box<bdb_error>) {
     let raw = Box::into_raw(error);
     #[expect(
@@ -228,10 +147,7 @@ fn store_error(out_error: *mut *mut bdb_error, error: Box<bdb_error>) {
                   out_error a writable *mut bdb_error location"
     )]
     // SAFETY: `out_error` was null-checked; per the header contract a
-    // non-null value points at a writable `bdb_error*` slot owned by the
-    // caller for the duration of this call. A previous occupant was
-    // minted by this bridge (`Box::into_raw`) and is reclaimed exactly
-    // once here.
+
     unsafe {
         if out_error.is_null() {
             drop(Box::from_raw(raw));
@@ -245,21 +161,14 @@ fn store_error(out_error: *mut *mut bdb_error, error: Box<bdb_error>) {
     }
 }
 
-/// Panic wall for scalar-returning externs: a caught panic answers
-/// `fallback` (zero, Panic kind, …) rather than unwinding into C.
 pub(crate) fn guard_value<T>(fallback: T, body: impl FnOnce() -> T) -> T {
     std::panic::catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
 }
 
-/// An inbound C enum tag: only the documented discriminants are valid;
-/// anything else is `BDB_STATUS_MISUSE` (never a `match` on an
-/// out-of-range `#[repr(C)]` enum — that is UB).
 pub(crate) fn tag_in<T: TryFrom<u32>>(raw: u32) -> BridgeResult<T> {
     T::try_from(raw).map_err(|_| Fail::Misuse)
 }
 
-/// An inbound C bool payload: only 0 and 1 are valid. Any other byte is
-/// `BDB_STATUS_MISUSE` (a Rust `bool` that is not 0/1 is UB).
 pub(crate) fn bool_in(raw: u8) -> BridgeResult<bool> {
     match raw {
         0 => Ok(false),
@@ -268,7 +177,6 @@ pub(crate) fn bool_in(raw: u8) -> BridgeResult<bool> {
     }
 }
 
-/// A required borrowed handle/view argument.
 pub(crate) fn ref_in<'a, T>(ptr: *const T) -> BridgeResult<&'a T> {
     #[expect(
         unsafe_code,
@@ -277,14 +185,12 @@ pub(crate) fn ref_in<'a, T>(ptr: *const T) -> BridgeResult<&'a T> {
                   the duration of the call"
     )]
     // SAFETY: null was refused above the deref; per the header contract the
-    // pointer names a live, properly aligned T (a handle minted by this
-    // bridge or a caller view) that outlives this call.
+
     unsafe {
         ptr.as_ref().ok_or(Fail::Misuse)
     }
 }
 
-/// A required mutable handle argument.
 pub(crate) fn mut_in<'a, T>(ptr: *mut T) -> BridgeResult<&'a mut T> {
     #[expect(
         unsafe_code,
@@ -293,17 +199,12 @@ pub(crate) fn mut_in<'a, T>(ptr: *mut T) -> BridgeResult<&'a mut T> {
                   the duration of the call (no aliasing, single thread)"
     )]
     // SAFETY: null was refused above the deref; per the header contract the
-    // pointer names a live T owned by the caller with no other live
-    // reference during this call.
+
     unsafe {
         ptr.as_mut().ok_or(Fail::Misuse)
     }
 }
 
-/// A borrowed `(pointer, count)` view argument. `count == 0` admits a null
-/// pointer (the empty view); a null pointer under a nonzero count, a
-/// count whose byte length overflows `isize::MAX`, or an unaligned
-/// pointer is misuse.
 pub(crate) fn slice_in<'a, T>(ptr: *const T, count: usize) -> BridgeResult<&'a [T]> {
     if count == 0 {
         return Ok(&[]);
@@ -325,15 +226,12 @@ pub(crate) fn slice_in<'a, T>(ptr: *const T, count: usize) -> BridgeResult<&'a [
                   alive for the duration of the call"
     )]
     // SAFETY: non-null, alignment, and `count * size_of::<T>()` ≤
-    // `isize::MAX` were just checked; per the header contract the caller
-    // passes `count` contiguous, initialized T values that outlive this
-    // call and are not written to during it.
+
     unsafe {
         Ok(std::slice::from_raw_parts(ptr, count))
     }
 }
 
-/// Writes a value through a required out-param.
 pub(crate) fn out<T>(ptr: *mut T, value: T) -> BridgeResult<()> {
     if ptr.is_null() {
         return Err(Fail::Misuse);
@@ -344,17 +242,13 @@ pub(crate) fn out<T>(ptr: *mut T, value: T) -> BridgeResult<()> {
                   non-null out pointer a writable, properly aligned T location"
     )]
     // SAFETY: non-null was just checked; per the header contract the caller
-    // passes a writable T slot. `write` (not `*ptr =`) because the slot may
-    // be uninitialized C memory — nothing is dropped in place.
+
     unsafe {
         ptr.write(value);
     }
     Ok(())
 }
 
-/// Mints an owned handle for the boundary (paired with [`box_in`] at the
-/// matching destroy). Prefer [`box_out_to`] so a null out-param cannot
-/// leak the `Box`.
 pub(crate) fn box_out<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
 }
@@ -368,15 +262,13 @@ pub(crate) fn require_out<T>(ptr: *mut T) -> BridgeResult<*mut T> {
     }
 }
 
-/// Mints an owned handle into a required out-param. The `Box` is only
-/// `into_raw`'d after the slot is proven non-null, so a null out-param
-/// drops `value` instead of leaking it.
+/// The `Box` is only `into_raw`'d after the slot is proven non-null, so a null
+/// out-param drops `value` instead of leaking it.
 pub(crate) fn box_out_to<T>(ptr: *mut *mut T, value: T) -> BridgeResult<()> {
     let ptr = require_out(ptr)?;
     out(ptr, box_out(value))
 }
 
-/// Reclaims a [`box_out`]-minted handle at its destroy entry.
 pub(crate) fn box_in<T>(ptr: *mut T) -> BridgeResult<Box<T>> {
     if ptr.is_null() {
         return Err(Fail::Misuse);
@@ -388,7 +280,7 @@ pub(crate) fn box_in<T>(ptr: *mut T) -> BridgeResult<Box<T>> {
                   once"
     )]
     // SAFETY: non-null was just checked; per the header contract the
-    // pointer came from `box_out` (Box::into_raw) for this same T and is
+
     // never used again after this call.
     unsafe {
         Ok(Box::from_raw(ptr))
