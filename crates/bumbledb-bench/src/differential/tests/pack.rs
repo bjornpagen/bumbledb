@@ -72,11 +72,11 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
             let claim = match (ordinal % 5, last) {
                 (4, _) => {
                     let start = rng.next() % 24;
-                    (start, u64::MAX) 
+                    (start, u64::MAX)
                 }
-                (3, Some(previous)) => previous, 
+                (3, Some(previous)) => previous,
                 (n, Some((_, end))) if n % 3 == 2 && end <= 24 => {
-                    let start = end + rng.next() % 2; 
+                    let start = end + rng.next() % 2;
                     (start, start + 1 + rng.next() % 4)
                 }
                 _ => {
@@ -176,19 +176,16 @@ fn the_calendar_golden_coalesces_by_hand() {
     let corpus = Delta {
         deletes: vec![],
         inserts: vec![
-
             busy(0, 1, 8, 9),
             busy(1, 1, 9, 10),
             busy(2, 1, 9, 12),
             busy(3, 1, 10, 14),
             busy(4, 1, 11, 13),
             busy(5, 1, 16, 17), // after the gap
-
             busy(6, 2, 9, 11),
             busy(7, 2, 9, 11),
             busy(8, 2, 10, 11),
             busy(9, 2, 13, 15),
-
             busy(10, 3, 20, u64::MAX),
             busy(11, 3, 22, 23),
         ],
