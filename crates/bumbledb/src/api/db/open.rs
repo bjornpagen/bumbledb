@@ -16,7 +16,6 @@ pub(crate) fn complete_admit_empty(schema: &Schema) -> Result<Admission<()>> {
 
 impl<S: Theory> Db<S> {
     /// # Errors
-
     pub fn create(path: &Path, schema: S) -> Result<Admission<Self>> {
         let schema = schema.descriptor().validate()?;
         let catalog = match admit_catalog(&schema, HeapStage::new(&schema))? {
@@ -32,14 +31,12 @@ impl<S: Theory> Db<S> {
     }
 
     /// # Errors
-
     pub fn open(path: &Path, schema: S) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
         Self::assemble(Environment::open(path, &schema)?, schema)
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn create_nosync(path: &Path, schema: S) -> Result<Admission<Self>> {
         let schema = schema.descriptor().validate()?;
@@ -52,7 +49,6 @@ impl<S: Theory> Db<S> {
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn open_nosync(path: &Path, schema: S) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
@@ -60,7 +56,6 @@ impl<S: Theory> Db<S> {
     }
 
     /// # Errors
-
     #[cfg(any(test, feature = "ground-off"))]
     pub fn create_store_without_admission(path: &Path, schema: S) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
@@ -90,7 +85,6 @@ impl<S> Db<S> {
     /// ```
 
     /// # Errors
-
     pub fn from_instance(path: &Path, instance: &OwnedInstance<S>) -> Result<Self> {
         let env = Environment::publish(
             path,
@@ -100,7 +94,6 @@ impl<S> Db<S> {
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn from_instance_nosync(path: &Path, instance: &OwnedInstance<S>) -> Result<Self> {
         let env = Environment::publish_nosync(
