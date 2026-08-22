@@ -1,7 +1,6 @@
 use super::{Colt, Map, ctrl_tag, hash_words, zero_byte_mask};
 
 impl Colt {
-
     pub(super) fn grow_map(&mut self, m: &mut Map) {
         let arity = m.arity;
         let stride = m.stride();
@@ -24,7 +23,6 @@ impl Colt {
             let hash = hash_words(&key);
             let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
             let idx = loop {
-
                 let (groups, _) = self.ctrl.as_chunks::<8>();
                 let cw = u64::from_le_bytes(groups[ctrl_start / 8 + b]);
                 let empties = zero_byte_mask(cw);
