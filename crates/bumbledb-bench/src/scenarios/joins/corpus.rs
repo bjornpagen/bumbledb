@@ -23,7 +23,6 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         ],
         ids::KEYWORD => vec![Value::U64(i), s(format!("kw-{i:05}"))],
         ids::MOVIE => {
-
             let kind = rng.range(KINDS);
             let band_start = 1930 + i64::try_from(kind).expect("small") * 10;
             let year = band_start + i64::try_from(rng.range(40)).expect("small");
@@ -35,7 +34,6 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
             ]
         }
         ids::CAST_INFO => {
-
             let movie = i % MOVIES;
             let person = if rng.chance(1, 4) {
                 rng.range(HOT_PEOPLE)
