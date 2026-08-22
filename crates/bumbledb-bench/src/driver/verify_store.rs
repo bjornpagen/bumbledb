@@ -1,10 +1,3 @@
-//! `verify-store`: the CLI wrapper around the offline sweeper,
-//! [`Db::verify_store`] (`docs/architecture/60-validation.md` — the third
-//! validation leg: the oracles judge semantics, the sweeper judges the
-//! store). Opens the digest-keyed store, sweeps once, renders every
-//! finding — through the statement renderer where a statement id is
-//! present — and exits nonzero iff findings are non-empty.
-
 use std::fmt::Write as _;
 
 use bumbledb::error::CorruptionError;
@@ -17,14 +10,7 @@ use crate::schema::{Ledger, schema};
 use super::corpus::gen_config;
 use super::corpus_paths;
 
-/// `verify-store`. Returns the process exit code: 0 for a coherent store,
-/// 1 when the report carries findings.
-///
 /// # Errors
-///
-/// A missing corpus (the message names `gen`) or an environmental
-/// failure (open, LMDB) as a message — store findings are the report and
-/// an exit code, never an error.
 pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
     let paths = corpus_paths(&corpus.dir, gen_config(corpus));
     if !paths.db.exists() {
@@ -44,8 +30,6 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
     Ok(i32::from(!report.findings().is_empty()))
 }
 
-/// The finding's statement id, when its variant carries one — the hook
-/// for rendering the violated statement back in the `schema!` notation.
 fn finding_statement(finding: &StoreFinding, schema: &Schema) -> Option<StatementId> {
     match finding {
         StoreFinding::Judgment(violation) => Some(violation.statement_id(schema)),
@@ -62,8 +46,6 @@ fn finding_statement(finding: &StoreFinding, schema: &Schema) -> Option<Statemen
     }
 }
 
-/// One line per finding (statement-carrying findings cite the statement
-/// in the macro notation), the dictionary statistic, and the verdict.
 fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let mut out = String::new();
     for finding in report.findings() {
@@ -95,13 +77,10 @@ mod tests {
     use super::*;
     use bumbledb::{RelationId, StoreVerdict};
 
-    /// The statement renderer engages exactly on the statement-carrying
-    /// variants, in the ledger schema's own notation.
     #[test]
     fn findings_render_through_the_statement_renderer() {
         let schema = schema();
-        // `Account(holder) <= Holder(id)` is the ledger's first declared
-        // containment; its materialized id follows the fresh auto-FDs.
+
         let containment = (0..schema.keys().len() + schema.containments().len())
             .map(|id| StatementId(u16::try_from(id).expect("small fixture")))
             .find(|&id| render::render(schema, id).contains("<="))
