@@ -13,19 +13,17 @@ fn member_set(indices: &[u8]) -> MemberSet {
 fn valid_schema_constructs_with_statement_indices() {
     let schema = ledger_slice().validate().expect("valid schema");
     let holder = schema.relation(RelationId(0));
-    // The fresh fields auto-materialized ordinary, visible Functionality
-    // statements; the declared Containment follows them.
+
     assert_eq!(holder.keys(), &[KeyId(0)]);
     assert_eq!(holder.outgoing(), &[]);
-    // ...and Holder's key is the declared Containment's resolved target —
-    // the target-side reverse-edge check set.
+
     assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 
     let account = schema.relation(RelationId(1));
     assert_eq!(account.keys(), &[KeyId(1)]);
     assert_eq!(account.outgoing(), &[ContainmentId(0)]);
     assert_eq!(schema.dependents(KeyId(1)), &[]);
-    // Layout: id 8 + holder 8 + status 8, dense.
+
     assert_eq!(account.layout().fact_width(), 24);
 }
 
@@ -53,10 +51,6 @@ fn a_redundant_pointwise_superkey_remains_sealed() {
     assert!(schema.key(KeyId(1)).form().is_pointwise());
 }
 
-/// The materialization-order pin: two relations with one fresh
-/// field each plus two declared statements — auto-FDs take ids 0 and 1
-/// (relation declaration order, then field order), declared statements
-/// take 2 and 3 (declaration order).
 #[test]
 fn statement_ids_are_auto_fds_first_then_declared_order() {
     let mut decl = ledger_slice();
@@ -68,29 +62,29 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
     assert_eq!(
         materialized,
         vec![
-            // id 0: Holder's fresh auto-FD.
+
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(0)]),
             },
-            // id 1: Account's fresh auto-FD.
+
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
             },
-            // id 2: the declared Containment.
+
             StatementDescriptor::Containment {
                 source: side(RelationId(1), &[FieldId(1)]),
                 target: side(RelationId(0), &[FieldId(0)]),
             },
-            // id 3: the declared Functionality.
+
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(1), FieldId(2)]),
             },
         ]
     );
-    // The sealed schema preserves the same materialized identity spine.
+
     let schema = decl.validate().expect("valid schema");
     for (index, descriptor) in materialized.iter().enumerate() {
         let id = StatementId(u16::try_from(index).expect("small fixture"));
@@ -167,15 +161,9 @@ fn nullary_relation_constructs() {
     assert_eq!(schema.relation(RelationId(0)).layout().fact_width(), 0);
 }
 
-/// The `docs/architecture/30-dependencies.md` example schema — Holder /
-/// Account / `SavingsTerms` with its three declared statements (`==` lowered
-/// to two mirrored Containments) plus the fresh auto-keys — validates,
-/// with every typed statement's enforcement exact. The mirrored pair (ids 3 and 4)
-/// pins independent per-direction resolution, and id 3 resolves a key
-/// declared *after* it (forward reference).
 #[test]
 fn example_schema_resolves_exactly() {
-    let savings = Value::U64(1); // kind 1 = Savings
+    let savings = Value::U64(1); 
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -208,12 +196,12 @@ fn example_schema_resolves_exactly() {
             },
         ],
         statements: vec![
-            // Account(holder) <= Holder(id)
+
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // Account(id | kind == Savings) == SavingsTerms(account), lowered:
+
             containment(
                 side_where(
                     RelationId(1),
@@ -226,7 +214,7 @@ fn example_schema_resolves_exactly() {
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
             ),
-            // SavingsTerms(account) -> SavingsTerms
+
             fd(RelationId(2), &[FieldId(0)]),
         ],
     }
@@ -245,15 +233,12 @@ fn example_schema_resolves_exactly() {
             .map(|statement| &statement.enforcement)
             .collect::<Vec<_>>(),
         vec![
-            &probe(0, 1), // id 2: Account(holder) <= Holder(id)
-            &probe(2, 0), // id 3: Account(id | Savings) <= SavingsTerms(account)
-            &probe(1, 0), // id 4: SavingsTerms(account) <= Account(id | Savings)
+            &probe(0, 1), 
+            &probe(2, 0), 
+            &probe(1, 0), 
         ]
     );
 
-    // The sealed `==` pairing: the lowered pair links symmetrically;
-    // The one-way containment (id 2) carries `OneWay`; keys have no pairing
-    // field at all.
     let mirrors: Vec<Option<StatementId>> = schema
         .containments()
         .iter()
@@ -264,15 +249,11 @@ fn example_schema_resolves_exactly() {
         vec![None, Some(StatementId(4)), Some(StatementId(3)),]
     );
 
-    // The target_key -> dependents reverse index (the target-side
-    // reverse-edge check set).
     assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
     assert_eq!(schema.dependents(KeyId(1)), &[ContainmentId(2)]);
     assert_eq!(schema.dependents(KeyId(2)), &[ContainmentId(1)]);
 }
 
-/// Pointwise resolution: an interval key records its interval position, and
-/// an interval containment resolves to it with the shared position.
 #[test]
 fn pointwise_key_and_containment_resolve() {
     let iv = ValueType::Interval {
@@ -314,9 +295,6 @@ fn pointwise_key_and_containment_resolve() {
     assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 }
 
-/// The target projection may be any permutation of the key: the recorded
-/// projection is the source fields in target-key determinant order — the
-/// sealed permuted gather (`keys::determinant_image`).
 #[test]
 fn permuted_target_projection_resolves_with_permutation() {
     let schema = SchemaDescriptor {
@@ -333,8 +311,8 @@ fn permuted_target_projection_resolves_with_permutation() {
             },
         ],
         statements: vec![
-            fd(RelationId(0), &[FieldId(0), FieldId(1)]), // determinant order (a, b)
-            // S(x, y) <= T(b, a): projected against the key permuted.
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]), 
+
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1)]),
                 side(RelationId(0), &[FieldId(1), FieldId(0)]),
@@ -353,10 +331,6 @@ fn permuted_target_projection_resolves_with_permutation() {
     );
 }
 
-/// Source fields in key order, pinned by a 3-cycle (a 2-field permutation is an
-/// involution — identical under either convention): determinant order
-/// (a, b, c) against projection order (c, a, b) stores `[y, z, x]` when
-/// source projection is identity — `[FieldId(1), FieldId(2), FieldId(0)]`.
 #[test]
 fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
     let schema = SchemaDescriptor {
@@ -381,7 +355,7 @@ fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
             },
         ],
         statements: vec![
-            fd(RelationId(0), &[FieldId(0), FieldId(1), FieldId(2)]), // (a, b, c)
+            fd(RelationId(0), &[FieldId(0), FieldId(1), FieldId(2)]), 
             // S(x, y, z) <= T(c, a, b): a 3-cycle against the key.
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1), FieldId(2)]),
@@ -401,8 +375,6 @@ fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
     );
 }
 
-/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) } — the closed
-/// fixture shared by the valid-side tests.
 fn currency() -> RelationDescriptor {
     closed(
         "Currency",
@@ -424,16 +396,13 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     .expect("a closed relation validates");
     let relation = schema.relation(RelationId(0));
     assert!(relation.body().closed_rows().is_some());
-    // The synthetic id field opens the sealed list; declared columns
-    // shift by one — determinants, statements, and queries address FieldId(0)
-    // uniformly.
+
     assert_eq!(relation.fields()[0].name.as_ref(), "id");
     assert_eq!(relation.fields()[0].value_type, ValueType::U64);
     assert_eq!(relation.fields()[0].generation, Generation::None);
     assert_eq!(relation.fields()[1].name.as_ref(), "minor_units");
     assert_eq!(relation.layout().fact_width(), 16);
-    // Rows sealed as full canonical fact bytes (id ‖ values), encoded
-    // once at validate and never again.
+
     let rows = relation.body().closed_rows().expect("closed");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].handle.as_ref(), "Usd");
@@ -446,16 +415,13 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     };
     assert_eq!(rows[0].fact, fact(0, 2));
     assert_eq!(rows[1].fact, fact(1, 2));
-    // The closed auto-key materialized: `Currency(id) -> Currency`.
+
     assert_eq!(relation.keys(), &[KeyId(0)]);
 }
 
-/// The materialization-order pin, closed arm: ALL fresh auto-FDs first,
-/// then closed auto-keys (relation declaration order), then declared
-/// statements — the order is a fingerprint input, pinned by PRD 01 and
-/// never revisited. Holder declares AFTER Currency so the fresh/closed
-/// grouping (not relation order) is what the assertion pins; the declared
-/// containment also proves the closed auto-key targetable like any key.
+/// Holder declares AFTER Currency so the fresh/closed grouping (not relation
+/// order) is what the assertion pins; the declared containment also proves the
+/// closed auto-key targetable like any key.
 #[test]
 fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     let decl = SchemaDescriptor {
@@ -475,12 +441,11 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     assert_eq!(
         decl.materialized_statements(),
         vec![
-            // id 0: Holder's fresh auto-FD — fresh first, though Holder
-            // declares second.
+
             fd(RelationId(1), &[FieldId(0)]),
-            // id 1: Currency's closed auto-key on the synthetic id.
+
             fd(RelationId(0), &[FieldId(0)]),
-            // id 2: the declared containment.
+
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -488,25 +453,17 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
         ]
     );
     let schema = decl.validate().expect("valid");
-    // The containment compiles to the answer set itself — no key search,
-    // no permutation: Currency's two rows, both unselected survivors
-    // (`docs/architecture/30-dependencies.md`).
+
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::Closed {
             members: member_set(&[0, 1])
         }
     );
-    // No dependents ride the closed auto-key: the target side is vacuous
-    // by construction (axioms never delete), so no R traffic exists for
-    // the statement class.
+
     assert_eq!(schema.dependents(KeyId(1)), &[]);
 }
 
-/// PRD 04's validate-time criterion: the member set is computed at
-/// validate — construct the schema, read `Enforcement` directly, assert
-/// bits, no Db anywhere. ψ (`pages == true`) selects the sub-vocabulary
-/// {Med, High} = rows 1 and 2 = 0b110.
 #[test]
 fn a_psi_selected_closed_containment_compiles_its_member_set() {
     let decl = SchemaDescriptor {
@@ -536,7 +493,7 @@ fn a_psi_selected_closed_containment_compiles_its_member_set() {
         )],
     };
     let schema = decl.validate().expect("valid");
-    // Statement 0 is Severity's closed auto-key; 1 the declared statement.
+
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::Closed {
@@ -545,9 +502,6 @@ fn a_psi_selected_closed_containment_compiles_its_member_set() {
     );
 }
 
-/// A closed→closed containment the axioms satisfy validates: both sides
-/// constant, the judgment decided at declaration, nothing left for any
-/// commit to do.
 #[test]
 fn a_satisfied_closed_to_closed_containment_validates() {
     let decl = SchemaDescriptor {
@@ -575,9 +529,6 @@ fn a_satisfied_closed_to_closed_containment_validates() {
         .expect("every Kind severity is an axiom of Severity");
 }
 
-/// The task/parent fixture the extension-form tests share: Parent(id key)
-/// and Task(parent, pos, prio, flag) — the window's target key plus
-/// selectable payloads.
 fn task_tree() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -601,10 +552,10 @@ fn task_tree() -> SchemaDescriptor {
     }
 }
 
-/// `Parent(id) <={1..3} Task(parent)` seals into the window arena with
-/// the containment target-key rule reused — the acceptance premise of
-/// `lean/Bumbledb/Admission.lean: capacityForm`, and the plan the gate
-/// promises is `lean/Bumbledb/Oracle.lean: capacity_plan_decides`.
+/// `Parent(id) <={1..3} Task(parent)` seals into the window arena with the
+/// containment target-key rule reused — the acceptance premise of
+/// `lean/Bumbledb/Admission.lean: capacityForm`, and the plan the gate promises
+/// is `lean/Bumbledb/Oracle.lean: capacity_plan_decides`.
 #[test]
 fn a_capacity_statement_over_a_declared_key_validates() {
     let mut decl = task_tree();
@@ -620,18 +571,15 @@ fn a_capacity_statement_over_a_declared_key_validates() {
     assert_eq!(window.id, StatementId(1));
     assert_eq!(window.lo, 1);
     assert_eq!(window.hi.to_bound(), Some(Bound::Lit(3)));
-    // The spine resolves the materialized id to the typed arena arm.
+
     assert!(matches!(
         schema.statement(StatementId(1)),
         StatementView::Capacity(CapacityId(0), _)
     ));
 }
 
-/// `{2..*}` — `hi = None` is the `*` spelling, the only spelling of "no
-/// upper bound" (`lean/Bumbledb/Schema.lean: Window`). The floor starts
-/// at 2: `{1..*}` is the bare containment's duplicate spelling and
-/// `{0..*}` the vacuous window, both rejected (the canonical-utterance
-/// law — the reject suite pins each).
+/// `{2..*}` — `hi = None` is the `*` spelling, the only spelling of "no upper
+/// bound" (`lean/Bumbledb/Schema.lean: Window`).
 #[test]
 fn a_star_window_validates_with_no_ceiling() {
     let mut decl = task_tree();
@@ -645,8 +593,6 @@ fn a_star_window_validates_with_no_ceiling() {
     assert_eq!(schema.capacity(CapacityId(0)).hi.to_bound(), None);
 }
 
-/// `{0}` — the exclusion window: lo = hi = 0 is a legal exact count
-/// (no σ-selected child may exist per parent), sealed like any window.
 #[test]
 fn an_exclusion_window_validates() {
     let mut decl = task_tree();
@@ -664,8 +610,6 @@ fn an_exclusion_window_validates() {
     );
 }
 
-/// A window into a closed target compiles the member-set plan through the
-/// same key rule containments use — the closed-side mirror.
 #[test]
 fn a_window_into_a_closed_target_validates() {
     let decl = SchemaDescriptor {
@@ -692,9 +636,8 @@ fn a_window_into_a_closed_target_validates() {
         .expect("every severity demands at least two handlers");
 }
 
-/// Both sides constant and the counts inside the window: decided at
-/// validate, satisfied, sealed
-/// (`lean/Bumbledb/Schema.lean: den_closed_constant`).
+/// Both sides constant and the counts inside the window: decided at validate,
+/// satisfied, sealed (`lean/Bumbledb/Schema.lean: den_closed_constant`).
 #[test]
 fn a_satisfied_closed_to_closed_window_validates() {
     let decl = SchemaDescriptor {
@@ -724,10 +667,6 @@ fn a_satisfied_closed_to_closed_window_validates() {
         .expect("each severity counts exactly one kind axiom");
 }
 
-/// The power-budget fixture: Pool(id key, supply, span-interval) /
-/// Device(pool, watts, busy-interval) — the weighted acceptance suite's
-/// shared shape (`docs/architecture/30-dependencies.md` § the extension
-/// form).
 fn power_tree() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
@@ -757,9 +696,6 @@ fn power_tree() -> SchemaDescriptor {
     }
 }
 
-/// `Pool(id) <=[watts]{0..supply} Device(pool)` — a u64-field weight
-/// under a dependent ceiling seals whole: the weight, the resolved-name
-/// bound (C1), and NO interval tails (both positions are scalar).
 #[test]
 fn a_weighted_capacity_with_a_dependent_bound_validates() {
     let mut decl = power_tree();
@@ -781,9 +717,6 @@ fn a_weighted_capacity_with_a_dependent_bound_validates() {
     assert!(matches!(statement.hi, SealedBound::TargetField(_)));
 }
 
-/// `Pool(id) <=[Duration(busy)]{0..Duration(span)} Device(pool)` — the
-/// calendar shape: both Duration positions seal their interval tails,
-/// so the judge reads measures off canonical bytes with no roster walk.
 #[test]
 fn a_calendar_capacity_validates_and_seals_its_tails() {
     let mut decl = power_tree();
@@ -800,11 +733,11 @@ fn a_calendar_capacity_validates_and_seals_its_tails() {
     assert!(matches!(statement.hi, SealedBound::Duration { .. }));
 }
 
-/// `<=[w]{1..*}` — the weighted floor of 1 is LEGAL: "positive total"
-/// is no existence claim over rows (zero-weight rows satisfy nothing),
-/// so the containment-respelled ban fires on the unit instance only
-/// (the per-aggregate ban law, ruled 2026-07-24; the unit refusal is
-/// the reject suite's `rejects_the_containment_respelled_as_a_window`).
+/// `<=[w]{1..*}` — the weighted floor of 1 is LEGAL: "positive total" is no
+/// existence claim over rows (zero-weight rows satisfy nothing), so the
+/// containment-respelled ban fires on the unit instance only (the per-aggregate
+/// ban law, ruled 2026-07-24; the unit refusal is the reject suite's
+/// `rejects_the_containment_respelled_as_a_window`).
 #[test]
 fn a_weighted_floor_of_one_validates() {
     let mut decl = power_tree();
@@ -821,10 +754,6 @@ fn a_weighted_floor_of_one_validates() {
     assert_eq!(schema.capacity(CapacityId(0)).lo, 1);
 }
 
-/// `Holder(id) <=[Duration(active)]{0..720} Account(holder)` — a
-/// Duration weight under a LITERAL ceiling: C18 refuses only the
-/// unit-window-vs-Duration-BOUND direction (u64 is u64), so the
-/// 30-dependencies schema block's weighted line is accepted verbatim.
 #[test]
 fn a_duration_weight_under_a_literal_ceiling_validates() {
     let mut decl = power_tree();
@@ -844,10 +773,6 @@ fn a_duration_weight_under_a_literal_ceiling_validates() {
     assert!(matches!(statement.hi, super::super::SealedBound::Lit(_)));
 }
 
-/// Both sides constant under a weight and a dependent ceiling, the
-/// measures inside every per-axiom resolved window: decided at
-/// validate, satisfied, sealed — the weighted twin of the count case
-/// above.
 #[test]
 fn a_satisfied_weighted_closed_pair_validates() {
     let decl = SchemaDescriptor {
@@ -881,10 +806,10 @@ fn a_satisfied_weighted_closed_pair_validates() {
         .expect("7 watts inside a 9-watt budget, per the sealed axiom");
 }
 
-/// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts
-/// the set, so both spellings of one set are one statement and one
-/// fingerprint (`lean/Bumbledb/Schema.lean: Selection` — the set is the
-/// binding's identity, not its spelling).
+/// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts the
+/// set, so both spellings of one set are one statement and one fingerprint
+/// (`lean/Bumbledb/Schema.lean: Selection` — the set is the binding's identity,
+/// not its spelling).
 #[test]
 fn a_literal_set_selection_seals_sorted() {
     let build = |literals: Vec<Value>| {
@@ -916,8 +841,6 @@ fn a_literal_set_selection_seals_sorted() {
     );
 }
 
-/// Two spellings of one literal set are one statement — the duplicate
-/// rule compares canonical sets, not written order.
 #[test]
 fn a_reordered_literal_set_is_a_duplicate_statement() {
     let selected = |literals: Vec<Value>| {
@@ -944,14 +867,12 @@ fn a_reordered_literal_set_is_a_duplicate_statement() {
     );
 }
 
-/// Q1 — element-domain typing at interval positions: a fixed-width
-/// interval position against a GENERAL one of the same element domain
-/// matches positionally (widths free; the pointwise judgments quantify
-/// over points, which carry an element domain and never a width —
-/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`), and the
-/// containment resolves the same pointwise coverage plan. This is the
-/// playlist recipe's typing seam: `Slot(playlist, slot: interval<u64, 1>)
-/// == Playlist(id, span: interval<u64>)`.
+/// Q1 — element-domain typing at interval positions: a fixed-width interval
+/// position against a GENERAL one of the same element domain matches
+/// positionally (widths free; the pointwise judgments quantify over points,
+/// which carry an element domain and never a width —
+/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`), and the containment
+/// resolves the same pointwise coverage plan.
 #[test]
 fn mixed_width_interval_positions_of_one_element_domain_resolve() {
     let schema = SchemaDescriptor {
@@ -987,7 +908,7 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
         statements: vec![
             fd(RelationId(0), &[FieldId(0), FieldId(1)]),
             fd(RelationId(1), &[FieldId(0), FieldId(1)]),
-            // The exact-partition ==, spelled as its two containments.
+
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1)]),
                 side(RelationId(0), &[FieldId(0), FieldId(1)]),
