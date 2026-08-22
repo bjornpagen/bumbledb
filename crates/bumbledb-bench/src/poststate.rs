@@ -2,7 +2,6 @@
 //! per-family prose: scan the engine, `SELECT` the mirror in field-declaration
 //! order, and judge the multisets through the same of the writebench pattern:
 //! after a write lane runs on both twins,
-
 use bumbledb::schema::Relation;
 use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;
