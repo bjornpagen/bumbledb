@@ -25,7 +25,6 @@ pub(crate) struct FrozenMap {
 }
 
 impl FrozenMap {
-
     pub(crate) fn pack(
         entries: impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)>,
     ) -> Self {
