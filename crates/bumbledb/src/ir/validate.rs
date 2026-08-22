@@ -262,7 +262,6 @@ impl InteriorSignatures<'_> {
     }
 
     /// base is a roster refusal). Rec lookup is unrepresentable on
-
     fn lookup(&self, interior: InteriorId) -> &Signature {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         let interiors = self.interiors();
@@ -518,7 +517,6 @@ impl ValidatedQuery {
     /// # Panics
 
     /// On a programmer-invariant violation: an index at or beyond
-
     #[must_use]
     pub fn rule(&self, index: usize) -> RuleWitness<'_> {
         self.main_rule(index)
@@ -569,7 +567,6 @@ impl ValidatedQuery {
     /// # Panics
 
     /// On a programmer-invariant violation: an unknown `ParamId` (the
-
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
         &self.param_types_map()[&param]
@@ -608,7 +605,6 @@ impl<'a> RuleWitness<'a> {
     }
 
     /// This lowered rule's written-rule provenance (ruled 2026-07-23,
-
     #[must_use]
     pub fn written(&self) -> Option<u16> {
         self.rule.written
@@ -622,7 +618,6 @@ impl<'a> RuleWitness<'a> {
     /// # Panics
 
     /// On a programmer-invariant violation: an unknown `VarId` (the witness
-
     #[must_use]
     pub fn var_type(&self, var: VarId) -> &ValueType {
         &self.typing.var_types[&var]
@@ -638,7 +633,6 @@ impl<'a> RuleWitness<'a> {
     }
 
     /// # Panics
-
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
         self.query.param_type(param)
