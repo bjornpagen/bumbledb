@@ -5,15 +5,7 @@ use super::run_query::{gate, run_query};
 use super::{QueryModes, QueryReport, Scenario, all, render};
 use crate::harness::Protocol;
 
-/// Runs every scenario (or the selected subset): load, gate, time,
-/// report — under the per-query capture [`QueryModes`] (`--trace` /
-/// `--alloc`, a separate pass each). Returns the rendered markdown; the
-/// caller writes artifacts.
-///
 /// # Errors
-///
-/// Load/prepare/translate failures and oracle disagreements, as
-/// messages naming the scenario and query.
 pub fn run(
     dir: &Path,
     seed: u64,
@@ -40,14 +32,7 @@ pub fn run(
     Ok((render(&reports, proto), reports))
 }
 
-/// Gates one scenario without timing anything: load, then the oracle
-/// gate for every query × param set × `SQLite` lane — the world
-/// packets' smoke-test entry (correctness only; zero measured windows).
-///
 /// # Errors
-///
-/// Load/prepare/translate failures and oracle disagreements, as
-/// messages naming the scenario, query, and lane.
 pub fn gate_scenario(dir: &Path, scenario: &Scenario, seed: u64) -> Result<(), String> {
     let stores = load(dir, scenario, seed)?;
     for sq in (scenario.queries)() {
