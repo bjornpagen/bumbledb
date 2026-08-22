@@ -8,7 +8,7 @@ fn stats_match_hand_computed_nearest_rank() {
 
     let mut two = vec![20, 10];
     let s = stats(&mut two);
-    // n = 2: p50 rank = ceil(1) - 1 = 0 -> 10; p90/p95/p99 -> 20.
+
     assert_eq!(s.min, 10);
     assert_eq!(s.p50, 10);
     assert_eq!(s.p90, 20);
@@ -57,23 +57,16 @@ fn measure_calls_exactly_warmups_plus_samples_and_sums_work() {
     assert!(m.trace.is_none());
 }
 
-/// The per-rep normalization unmasks contamination the block
-/// bracket misses: a sample that ran at 2.0 GHz
-/// reads 1.75x slow raw; normalized to the cohort's 3.5 GHz it
-/// rejoins the population — and a GENUINELY slow sample stays slow.
 #[test]
 fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
-    // Five samples: four clean at 100 ns/3.5 GHz, one clock-slowed
-    // (same work, 2.0 GHz -> 175 ns raw). Raw p50 is fine but raw
-    // MIN-based protocols would also pass — the failure mode is when
-    // slow-clock samples DOMINATE: three of five contaminated.
+
     let samples = [100u64, 175, 175, 175, 100];
     let ghz = [3.5f64, 2.0, 2.0, 2.0, 3.5];
-    // Raw p50 = 175 (contaminated); normalized p50 = 100.
+
     let mut raw = samples.to_vec();
     assert_eq!(stats(&mut raw).p50, 175);
     assert_eq!(normalized_p50(&samples, &ghz), 100);
-    // A genuinely slow sample at full clock stays slow.
+
     let samples = [100u64, 300, 100, 100, 100];
     let ghz = [3.5f64; 5];
     assert_eq!(normalized_p50(&samples, &ghz), 100);
@@ -87,8 +80,6 @@ fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
     );
 }
 
-/// End-to-end: the per-rep mode populates `p50_norm`. Ignored:
-/// timing-adjacent (runs ~200 us of proxy per sample).
 #[test]
 #[ignore = "per-rep proxy e2e gate; run manually"]
 fn per_rep_proxy_mode_populates_the_normalized_p50() {
@@ -108,7 +99,7 @@ fn per_rep_proxy_mode_populates_the_normalized_p50() {
     )
     .expect("measures");
     let norm = m.p50_norm.expect("per-rep mode populates p50_norm");
-    // Normalization rescales toward the best clock: never above raw.
+
     assert!(norm <= m.stats.p50 + m.stats.p50 / 10);
     let off = measure_batched(proto, Modes::default(), 1, || Ok(1)).expect("measures");
     assert!(off.p50_norm.is_none(), "off by default");
@@ -217,8 +208,8 @@ fn the_alloc_window_refuses_without_the_feature() {
     assert!(err.contains("obs feature"), "{err}");
 }
 
-/// The touch runs before every sample (warmups included), and
-/// generations strictly increase across samples on a real store.
+/// The touch runs before every sample (warmups included), and generations
+/// strictly increase across samples on a real store.
 #[test]
 fn cold_touches_before_every_sample_and_bumps_generations() {
     use std::cell::RefCell;
