@@ -1,49 +1,28 @@
-//! The device-honesty instrument (docs/architecture/60-validation.md §
-//! the ramdisk sanction): a RAM-backed-path detector and the refusal
-//! every timed family raises against it — the read families check their
+//! The device-honesty instrument: a RAM-backed-path detector and the refusal
 //! corpus `--dir` (`driver::bench`), the write families their scratch
-//! (`driver::write_families`). Verify, differential, and fuzz lanes are
-//! exempt — they check answers, not wall clocks, and may run on the ram
-//! disk (`scripts/ramdisk.sh`); a *timed* number measured on RAM would
-//! be a lie told with a straight face.
-//!
-//! Mechanism (macOS, the canonical machine): the volume identity comes
-//! from the `mount` table (the longest mount-point prefix of the
-//! canonicalized path — the `statfs f_fstypename` answer, reached
-//! without `libc`: the quarantine is rusqlite and nothing else, so the
-//! syscall arrives via `/sbin/mount`'s output instead), and RAM-disk
-//! identity from `hdiutil info` (every `ram://`-backed image's device
-//! nodes), with the APFS synthesized-container indirection resolved
-//! through `diskutil info`'s physical store. Linux (cfg-gated, WRITTEN
-//! CAREFULLY BUT UNTESTED — the owner's instruction; this machine is
-//! the macOS M2 Max): `/proc/mounts` parsed the same way, `tmpfs`/
-//! `ramfs` as the RAM filesystems — the std-only stand-in for
-//! `statfs f_type == TMPFS_MAGIC` (`0x0102_1994`), which is unreachable
-//! without `libc`.
+//! (`driver::write_families`).
 
 use std::path::{Path, PathBuf};
 
-/// One resolved volume identity: where the path actually lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VolumeIdentity {
-    /// The mount point owning the path (longest-prefix winner).
+
     pub mount_point: PathBuf,
-    /// The filesystem type name (`hfs`, `apfs`, `tmpfs`, …).
+
     pub fstype: String,
-    /// The device node or source the mount table names.
+
     pub device: String,
-    /// Whether the backing store is RAM.
+
     pub ram_backed: bool,
 }
 
-/// The typed device-honesty refusal: a timed family was pointed at a
-/// RAM-backed volume. Named, not stringly — the driver renders it at
-/// the boundary.
+/// The typed device-honesty refusal: a timed family was pointed at a RAM-backed
+/// volume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RamBackedRefusal {
     /// What refused to run there.
     pub family_scope: &'static str,
-    /// The volume that was RAM-backed.
+
     pub identity: VolumeIdentity,
 }
 
@@ -63,16 +42,8 @@ impl std::fmt::Display for RamBackedRefusal {
 }
 
 /// The timed-family gate: refuses when `path` (or, before it exists,
-/// its nearest existing ancestor — scratch dirs are created after the
-/// check) resolves onto a RAM-backed volume.
-///
 /// # Errors
-///
-/// [`RamBackedRefusal`] when the volume is RAM-backed.
-///
 /// # Panics
-///
-/// When the mount table cannot be read at all — an unreadable device
 /// answer must not silently pass a timed run (tool invariant).
 pub fn assert_disk_backed(
     path: &Path,
@@ -95,21 +66,14 @@ pub fn assert_disk_backed(
     Ok(())
 }
 
-/// Resolves the volume identity of `path` via the platform mount table.
-/// The path need not exist yet: the nearest existing ancestor answers
-/// (a scratch directory is asked about before it is created).
-///
+/// The path need not exist yet: the nearest existing ancestor answers (a
+/// scratch directory is asked about before it is created).
 /// # Errors
-///
-/// A message when the mount table is unreadable or names no owner.
 pub fn volume_identity(path: &Path) -> Result<VolumeIdentity, String> {
     let resolved = canonical_base(path)?;
     imp::volume_identity(&resolved)
 }
 
-/// Canonicalizes the deepest existing ancestor of `path` (symlinks like
-/// macOS's `/tmp -> /private/tmp` would otherwise dodge the prefix
-/// match).
 fn canonical_base(path: &Path) -> Result<PathBuf, String> {
     let mut probe = path;
     loop {
@@ -123,8 +87,6 @@ fn canonical_base(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// The longest mount point that is a component-wise prefix of `path`,
-/// over `(mount_point, fstype, device)` rows.
 fn longest_prefix_owner(
     rows: Vec<(PathBuf, String, String)>,
     path: &Path,
@@ -155,9 +117,6 @@ mod imp {
         String::from_utf8(out.stdout).map_err(|e| format!("{cmd} output not UTF-8: {e}"))
     }
 
-    /// Parses one `mount` line: `<device> on <mount point> (<fstype>, …)`.
-    /// The mount point may contain spaces, so the parse anchors on the
-    /// first ` on ` and the last ` (`.
     fn parse_mount_line(line: &str) -> Option<(PathBuf, String, String)> {
         let (device, rest) = line.split_once(" on ")?;
         let open = rest.rfind(" (")?;
@@ -171,8 +130,6 @@ mod imp {
         ))
     }
 
-    /// The base whole-disk name of a device node: `/dev/disk5s1` →
-    /// `disk5` (slice suffixes stripped).
     fn base_disk(device: &str) -> Option<String> {
         let name = device.strip_prefix("/dev/")?.trim();
         let digits_end = name
@@ -182,9 +139,6 @@ mod imp {
         Some(name[..digits_end].to_owned())
     }
 
-    /// Every whole-disk name backed by a `ram://` image, from
-    /// `hdiutil info` (sections split by `=` rules; a section whose
-    /// `image-path` starts with `ram://` owns its `/dev/disk` nodes).
     fn ram_disk_bases() -> Result<Vec<String>, String> {
         let out = read("hdiutil", &["info"])?;
         let mut bases = Vec::new();
@@ -209,9 +163,6 @@ mod imp {
         Ok(bases)
     }
 
-    /// The APFS synthesized-container indirection: `diskutil info` on
-    /// the volume device names its physical store(s); a ram-backed
-    /// store makes the volume ram-backed.
     fn apfs_physical_bases(device: &str) -> Vec<String> {
         let Ok(out) = read("diskutil", &["info", device]) else {
             return Vec::new();
@@ -246,13 +197,6 @@ mod imp {
     }
 }
 
-/// Undoes `/proc/mounts` octal escapes (`\040` space, `\011` tab,
-/// `\012` newline, `\134` backslash) — the Linux arm's field decoder.
-/// Escapes decode as BYTES, assembled into UTF-8 once at the end
-/// (`from_utf8_lossy`): a multi-byte mount path (`ö` is `\303\266`)
-/// round-trips, where a char-per-byte push would read it as latin-1.
-/// Pure string logic, so it compiles under `test` on every host — the
-/// canonical macOS machine runs its unit tests too.
 #[cfg(any(target_os = "linux", test))]
 fn unescape(field: &str) -> String {
     let mut out = Vec::with_capacity(field.len());
@@ -274,11 +218,6 @@ fn unescape(field: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// The Linux arm: WRITTEN CAREFULLY BUT UNTESTED (the owner's explicit
-// instruction — the canonical machine is the macOS M2 Max, and no Linux
-// host has run this). `/proc/mounts` is whitespace-separated with
-// octal escapes in paths; the fields used here (source, mount point,
-// fstype) are the first three.
 #[cfg(target_os = "linux")]
 mod imp {
     use std::path::{Path, PathBuf};
