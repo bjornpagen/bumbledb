@@ -39,11 +39,10 @@ impl Sink for AggregateSink {
                 continue;
             };
             let AggSpec::Fold { slot, .. } = spec else {
-                continue; 
+                continue;
             };
             let source = match scan.key_slots.iter().position(|k| *k == *slot) {
                 Some(word) => {
-
                     if !matches!(
                         scan.colt.suffix_column(scan.level, word),
                         ColumnView::Words(_)
@@ -81,12 +80,12 @@ impl Sink for AggregateSink {
             let acc = &mut self.acc_scratch[acc_i];
             acc_i += 1;
             let AggSpec::Fold { op, .. } = spec else {
-                continue; 
+                continue;
             };
             let source = self.scan_sources[fold_i];
             fold_i += 1;
             let FoldSource::Column(word) = source else {
-                continue; 
+                continue;
             };
             let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
                 unreachable!("begin_scan declined byte columns")
@@ -201,7 +200,6 @@ impl Sink for AggregateSink {
             !matches!(self.dedup, DedupState::Elided { .. }),
             self.cached_constant_group,
         ) {
-
             (true, true) => self.fold_batch_dedup_constant_group(batch),
             (false, true) => self.fold_batch_constant_group(batch, batch.survivors),
 
