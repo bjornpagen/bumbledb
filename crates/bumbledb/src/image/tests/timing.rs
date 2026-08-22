@@ -11,9 +11,6 @@ use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
-/// The image-build profile split (ignored: timing evidence, run by hand):
-/// the LMDB cursor walk alone vs the full build, on a Posting-shaped
-/// 150k-row relation.
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
 fn image_build_split_evidence() {
@@ -42,7 +39,6 @@ fn image_build_split_evidence() {
     commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
 
-    // Walk floor: drain the cursor, touch every fact byte cheaply.
     let mut sink = 0u64;
     let walk = std::time::Instant::now();
     for _ in 0..5 {
