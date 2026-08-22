@@ -1,9 +1,5 @@
-//! Projection-arity coverage cases layered after the structurally-free
-//! descriptor arm. The legacy arm's decisions are deliberately untouched:
-//! callers finish [`super::random_descriptor`] (or the fixed ops scenario)
-//! before drawing one of these cases through a fresh [`Rng`] cursor. The
-//! cursor separation keeps late coverage live even when the legacy generator
-//! exhausted its cursor, while call order keeps every legacy decision fixed.
+//! Projection-arity coverage cases layered after the structurally-free before
+//! drawing one of these cases through a fresh [`Rng`] cursor.
 
 use bumbledb::Value;
 use bumbledb::schema::{
@@ -15,19 +11,13 @@ use crate::naive::Delta;
 
 use super::super::Rng;
 
-/// The storage key budget, derived in `storage::keys` as `511 - 15`.
-/// Storage is intentionally crate-private; this bench-side coverage constant
-/// is pinned by the generated over-width diagnostic in the seeded sweep.
 pub const ARITY_WIDTH_BOUND: usize = 496;
 
-/// The five-type cycle reaches 470 bytes at arity 29; its next `bytes<64>`
-/// field reaches 534 and is the first illegal arity for this mix.
 pub const MAX_MIXED_ARITY: usize = max_mixed_arity();
 
 const SOURCE: RelationId = RelationId(0);
 const TARGET: RelationId = RelationId(1);
 
-/// Which containment sides carry a non-projected boolean selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionPlacement {
     Source,
@@ -35,7 +25,6 @@ pub enum SelectionPlacement {
     Both,
 }
 
-/// The verdict class a generated theory case must receive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArityExpectation {
     Accepted,
@@ -44,7 +33,6 @@ pub enum ArityExpectation {
     MissingTargetKey,
 }
 
-/// Coverage facts carried beside a descriptor, never inferred by the oracle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArityCoverage {
     pub arity: usize,
@@ -56,14 +44,12 @@ pub struct ArityCoverage {
     pub expectation: ArityExpectation,
 }
 
-/// One schema-acceptance case from the hostile arity arm.
 #[derive(Debug, Clone)]
 pub struct ArityDescriptorCase {
     pub descriptor: SchemaDescriptor,
     pub coverage: ArityCoverage,
 }
 
-/// One accepted theory plus a write stream for the ops parity oracle.
 #[derive(Debug, Clone)]
 pub struct ArityOpsCase {
     pub descriptor: SchemaDescriptor,
@@ -71,11 +57,7 @@ pub struct ArityOpsCase {
     pub coverage: ArityCoverage,
 }
 
-/// A deterministic descriptor at one legal mixed-scalar arity.
-///
 /// # Panics
-///
-/// Panics when `arity` is outside `1..=MAX_MIXED_ARITY`.
 #[must_use]
 pub fn arity_descriptor(
     arity: usize,
@@ -86,13 +68,7 @@ pub fn arity_descriptor(
     build_case(arity, selection, equality, ArityExpectation::Accepted)
 }
 
-/// The hostile arm: accepted containments across every legal arity, accepted
-/// keyed equalities at the constitutional arities, either missing equality
-/// key, and the first over-width mixed projection.
-///
 /// # Panics
-///
-/// Only if the constitutional arity (at most 30) cannot fit `usize`.
 #[must_use]
 pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let selection = random_selection(rng);
@@ -131,11 +107,7 @@ pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     }
 }
 
-/// The accepted sibling arm used by lifecycle generation.
-///
 /// # Panics
-///
-/// Only if the constitutional arity (at most 29) cannot fit `usize`.
 #[must_use]
 pub fn random_valid_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let selection = random_selection(rng);
@@ -148,8 +120,6 @@ pub fn random_valid_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     arity_descriptor(arity, selection, equality)
 }
 
-/// A valid high-arity theory plus writes that commit once, then exercise a
-/// functionality collision, a missing source witness, and target removal.
 #[must_use]
 pub fn random_valid_arity_ops(rng: &mut Rng) -> ArityOpsCase {
     let case = random_valid_arity_descriptor(rng);
