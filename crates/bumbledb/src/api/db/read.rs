@@ -16,10 +16,7 @@ impl<S> Db<S> {
             .try_lock()
             .ok()
             .and_then(|mut slot| slot.take())
-            .and_then(|parked| {
-
-                (parked.generation == generation).then_some(parked.txn)
-            });
+            .and_then(|parked| (parked.generation == generation).then_some(parked.txn));
         let txn = match parked {
             Some(raw) => self.env.resume_read_txn(raw),
             None => self.env.read_txn()?,
