@@ -111,7 +111,6 @@ fn a_nonzero_pad_byte_aborts_the_build_typed() {
             .expect("nonempty")
     };
     {
-
         let mut corrupt = fact(&schema, 9);
         corrupt[20] = 0x5A;
         let mut wtxn = env.write_txn().expect("txn");
