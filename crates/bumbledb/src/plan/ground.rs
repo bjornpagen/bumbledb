@@ -5,7 +5,6 @@
 //! that statements prove redundant; evaluation ([`evaluate`]) removes
 //! closed-relation atoms whose extension is stage-0-known by *running
 //! plan but a three-element id-set computed before the DP ever sees the
-
 use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
