@@ -1,10 +1,3 @@
-//! Param binding generation: four seeded draws per query — two
-//! in-range hits, one of boundary values, one of guaranteed misses —
-//! now carrying **param sets** beside the scalars. Set sizes draw from
-//! {0, 1, 2, [`LARGE_BOUNDARY`]}, duplicate elements are injected (the
-//! executor must dedup — asserted downstream), and the miss draw
-//! applies the per-type miss policies to every element.
-
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{AtomSource, FieldId, ParamId, Query, RelationId, Term, Value};
 
@@ -13,45 +6,28 @@ use crate::querygen::target::{self, AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
 use crate::querygen::{DrawKind, PARAM_DRAWS, dress, interval_data};
 use crate::walk;
 
-/// The large set size: one past the executor's batch width (128), so a
-/// single set spans a full batch plus a straggler lane.
 pub const LARGE_BOUNDARY: usize = 129;
 
-/// One draw's bindings: scalar values and set element lists, both by
-/// dense `ParamId`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamDraw {
     pub scalars: Vec<(ParamId, Value)>,
     pub sets: Vec<(ParamId, Vec<Value>)>,
 }
 
-/// How a param is used, with its typing anchor.
 #[derive(Clone, Copy)]
 pub(super) struct Anchor {
     pub(super) relation: RelationId,
     pub(super) field: FieldId,
     pub(super) set: bool,
-    /// The param also occurs at a non-interval position — it is a
-    /// *scalar point* even where it binds an interval field
-    /// (membership); without one, an interval-field param is an
-    /// interval value.
+
     scalar_anchored: bool,
 }
 
-/// A param's role: field-anchored (typed by its (relation, field)
-/// position).
 #[derive(Clone, Copy)]
 pub(super) enum ParamAnchor {
     Field(Anchor),
 }
 
-/// Resolves every param's anchor: the (relation, field) that types it —
-/// directly for atom bindings (positive and negated), through the
-/// variable side for predicates. Prefers a scalar-field position: a
-/// membership param's type is its element, established by the scalar
-/// anchor the generator constructs. Params are query-global; variables
-/// are rule-scoped, so the walk runs per rule with its own variable
-/// anchors, placing into one dense param table.
 pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
     let schema = target::schema();
     let is_interval = |rel: RelationId, field: FieldId| {
@@ -83,7 +59,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
         let slot = &mut anchors[usize::from(param.0)];
         let scalar = !is_interval(relation, field);
         match slot {
-            // A scalar-field position wins over an interval-field one.
+
             Some(ParamAnchor::Field(anchor)) if anchor.scalar_anchored => {}
             Some(ParamAnchor::Field(_)) if !scalar => {}
             _ => {
@@ -141,12 +117,9 @@ pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
         .collect()
 }
 
-/// The dense-id domain of a u64 field (every corpus id is `0..n`).
 pub(super) fn u64_domain(rel: RelationId, field: FieldId, domains: &Domains) -> u64 {
     match (rel, field) {
-        // Closed-vocabulary reference fields (and the vocabularies'
-        // own ids): the domain is the closed relation's extension
-        // (three rows each).
+
         (ids::ACCOUNT, ids::account::CURRENCY)
         | (ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE)
         | (ids::POSTING_TAG, ids::posting_tag::TAG)
@@ -188,7 +161,7 @@ fn param_value(
             let domain = u64_domain(rel, field, domains).max(1);
             Value::U64(match kind {
                 DrawKind::Hit => rng.range(domain),
-                // Boundary alternates the domain's edges.
+
                 DrawKind::Boundary => {
                     if rng.chance(1, 2) {
                         0
@@ -196,7 +169,7 @@ fn param_value(
                         domain - 1
                     }
                 }
-                // Out-of-domain, matching the family miss policies.
+
                 DrawKind::Miss => domain + 1 + rng.range(domain),
             })
         }
@@ -226,20 +199,14 @@ fn param_value(
         ValueType::String => Value::String(
             match kind {
                 DrawKind::Hit | DrawKind::Boundary => target::string_hit(rel, field, rng),
-                // Guaranteed miss: no corpus vocabulary starts with this.
+
                 DrawKind::Miss => format!("missing-{}", rng.u64()),
             }
             .into(),
         ),
-        // Both bool values are boundary values; every draw kind draws
-        // uniformly.
+
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
-        // bytes<N>: the hit (and boundary) is a real corpus digest of the
-        // anchored width — extref for the 32-byte key, a vocabulary value
-        // for the pad-boundary tags; the miss is adversarial, a
-        // single-byte delta of a real digest (never in the corpus:
-        // extrefs pin their tail to the row id and tag vocabularies pin
-        // every byte but the last).
+
         ValueType::FixedBytes { len } => {
             let hit = if *len == 32 {
                 target::extref(cfg, rng.range(domains.transfers))
@@ -252,17 +219,13 @@ fn param_value(
                     let Value::FixedBytes(mut raw) = hit else {
                         unreachable!("digests are bytes<N>")
                     };
-                    // Flip one byte outside the vocabulary's live range:
-                    // the first byte is zero in every corpus digest.
+
                     raw[0] = 0xA5;
                     Value::FixedBytes(raw)
                 }
             }
         }
-        // An interval-typed param (no scalar anchor): a ladder literal
-        // — equal/adjacent/nested/ray against the drawn group, whatever
-        // the draw kind (hit-vs-miss for interval values is a corpus
-        // alignment question, and the ladder IS the alignment sweep).
+
         ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
             let group = rng.range(64);
             match element {
@@ -283,9 +246,6 @@ fn param_value(
     }
 }
 
-/// One set's element list: size from {0, 1, 2, [`LARGE_BOUNDARY`]},
-/// elements per the draw kind's policy, and — often — an injected
-/// duplicate (dedup is the executor's obligation, exercised here).
 fn set_elements(
     anchor: Anchor,
     kind: DrawKind,
@@ -308,16 +268,8 @@ fn set_elements(
     elements
 }
 
-/// Four param draws per query: two in-range hits, one of boundary
-/// values (domain edges — minima and maxima alternate), and one where
-/// every string, bytes, and u64 param — scalar or set element — is a
-/// guaranteed miss (out of vocabulary or out of domain; i64/enum/bool
-/// stay in range).
-///
 /// # Panics
-///
 /// On a programmer-invariant violation: an unanchored param (validation
-/// anchors every param the grammar emits).
 #[must_use]
 pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<ParamDraw> {
     let domains = Domains::of(cfg.scale);
