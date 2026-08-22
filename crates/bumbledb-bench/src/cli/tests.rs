@@ -501,7 +501,6 @@ fn lawful_parses_its_flags() {
 
 #[test]
 fn crud_refuses_an_unknown_flag() {
-
     // precedent); the refusal names both the token and the command.
     let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
     assert!(err.contains("--scale"), "{err}");
