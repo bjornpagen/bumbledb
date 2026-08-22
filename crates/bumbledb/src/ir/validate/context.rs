@@ -7,11 +7,8 @@ use crate::schema::Schema;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
-/// The structural type of a literal, for matching against a field or
-/// variable type — the shared [`crate::schema::value_matches`] check.
 use bumbledb_theory::schema::{ValueMismatch as LiteralMismatch, value_matches as literal_matches};
 
-/// The scalar type of an interval's element domain.
 fn element_type(element: IntervalElement) -> ValueType {
     match element {
         IntervalElement::U64 => ValueType::U64,
@@ -19,30 +16,23 @@ fn element_type(element: IntervalElement) -> ValueType {
     }
 }
 
-/// Whether `candidate` is one of a bivalent slot's two readings: the
-/// element type (membership — a point carries no width) or the
-/// anchoring position's exact interval type (value equality — the
-/// family member, width included).
 fn bivalent_admits(interval: &ValueType, candidate: &ValueType) -> bool {
     interval
         .interval_element()
         .is_some_and(|element| *candidate == element_type(element) || candidate == interval)
 }
 
-/// The structural type a literal contributes as a comparison anchor.
 fn literal_anchor_type(value: &Value) -> ValueType {
     match value {
         Value::Bool(_) => ValueType::Bool,
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
         Value::String(_) => ValueType::String,
-        // The length is the type: a bytes<N> literal anchors bytes<N>.
+
         Value::FixedBytes(raw) => ValueType::FixedBytes {
             len: u16::try_from(raw.len()).unwrap_or(u16::MAX),
         },
-        // An interval literal anchors the GENERAL type: the value spells
-        // both bounds, and no literal syntax names a width — fixed
-        // positions check literals through `value_matches` instead.
+
         Value::IntervalU64(..) => ValueType::Interval {
             element: IntervalElement::U64,
         },
@@ -52,18 +42,10 @@ fn literal_anchor_type(value: &Value) -> ValueType {
     }
 }
 
-/// Whether an element-typed value sits at its domain ceiling (`MAX`) —
-/// outside the point domain `MIN ..= MAX−1`: `MAX` is the ray's ∞, never
-/// a point (`docs/architecture/10-data-model.md`, the point-domain law).
 fn at_domain_ceiling(value: &Value) -> bool {
     matches!(value, Value::U64(u64::MAX) | Value::I64(i64::MAX))
 }
 
-/// A literal in an interval-field binding: element-typed means point
-/// membership, while interval-typed (same element) means value equality.
-/// Interval literals are nonempty by construction; at a fixed-width
-/// position the equality reading demands exactly the declared width and
-/// never a ray (`value_matches`' Q2 rule — the width is the type).
 fn check_interval_field_literal(
     atom: usize,
     field: FieldId,
@@ -72,8 +54,7 @@ fn check_interval_field_literal(
 ) -> Result<(), ValidationError> {
     let element = interval.interval_element().expect("interval-field binding");
     match (value, element) {
-        // Membership: `start <= t < end` — and the point domain is
-        // `MIN ..= MAX−1`, so the ceiling can be inside no interval.
+
         (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
             if at_domain_ceiling(value) {
                 Err(ValidationError::PointLiteralAtCeiling {
@@ -84,8 +65,7 @@ fn check_interval_field_literal(
                 Ok(())
             }
         }
-        // Value equality against the field's intervals — through the one
-        // shared width-aware check.
+
         (Value::IntervalU64(_), IntervalElement::U64)
         | (Value::IntervalI64(_), IntervalElement::I64) => match literal_matches(value, interval) {
             Ok(()) => Ok(()),
@@ -101,22 +81,18 @@ fn check_interval_field_literal(
     }
 }
 
-/// The operator's class — the dimension a comparison's operand roster
-/// depends on, matched exactly once per comparison. The order operators
-/// precompute their mirror here, so no later phase re-matches an
-/// operator to flip it.
 #[derive(Clone, Copy)]
 enum OpClass {
-    /// `Eq`/`Ne` (`negated` = `Ne`).
+
     Equality { negated: bool },
-    /// `Lt`/`Le`/`Gt`/`Ge`, with the mirrored operator alongside.
+
     Order {
         op: crate::ir::OrderCmp,
         mirror: crate::ir::OrderCmp,
     },
-    /// `Allen { mask }`.
+
     Allen { mask: AllenMask },
-    /// `PointIn`.
+
     PointIn,
 }
 
@@ -147,85 +123,67 @@ impl OpClass {
     }
 }
 
-/// One comparison's operand shape, proven and sealed by the shape pass
-/// ([`Context::comparison_shape`]): the operator class fused with exactly
-/// the operand roster the shape rules admit under it, so the typed pass
-/// ([`Context::classify`]) matches only representable shapes — the
-/// rejected ones (constant comparisons, two measures, a measure outside
-/// the order operators, a set outside `Eq`) exist as typed errors, never
-/// as arms. Literal sides borrow the rule; the typed pass seals owned
-/// values into [`ClassifiedComparison`].
 enum Shaped<'rule> {
-    /// `Eq`/`Ne` over two distinct variables.
+
     EqVarVar {
         negated: bool,
         lhs: VarId,
         rhs: VarId,
     },
-    /// `Eq`/`Ne` against a scalar constant (written order kept for the
-    /// canonicalized interval form's mask converse).
+
     EqVarConst {
         negated: bool,
         var: VarId,
         var_on_left: bool,
         constant: ConstSide<'rule>,
     },
-    /// `Eq` against the set marker (legal under `Eq` alone).
+
     EqVarSet { var: VarId, set: ParamId },
-    /// An order comparison over two variables.
+
     OrdVarVar {
         op: crate::ir::OrderCmp,
         lhs: VarId,
         rhs: VarId,
     },
-    /// An order comparison against a constant — the operator already
-    /// sealed variable-on-left; the written order kept for the operand
-    /// screen's diagnostic order.
+
     OrdVarConst {
         op: crate::ir::OrderCmp,
         var: VarId,
         var_on_left: bool,
         constant: ConstSide<'rule>,
     },
-    /// `Allen` over two variables, the mask as written.
+
     AllenVarVar {
         mask: AllenMask,
         lhs: VarId,
         rhs: VarId,
     },
-    /// `Allen` against a constant (written order kept for the mask
-    /// converse).
+
     AllenVarConst {
         mask: AllenMask,
         var: VarId,
         var_on_left: bool,
         constant: ConstSide<'rule>,
     },
-    /// `PointIn` over two variables, written order (`lhs ∋ rhs`).
+
     PointInVarVar { lhs: VarId, rhs: VarId },
-    /// `var ∋ constant`.
+
     PointInVarConst {
         var: VarId,
         constant: ConstSide<'rule>,
     },
-    /// `constant ∋ var`.
+
     PointInConstVar {
         constant: ConstSide<'rule>,
         var: VarId,
     },
 }
 
-/// A proven constant comparison side: the param handle or the literal.
 enum ConstSide<'rule> {
     Param(ParamId),
     Literal(&'rule Value),
 }
 
-/// Seals a proven variable-vs-constant operand pair under its operator
-/// class: the order form seals the operator variable-on-left (a
-/// constant-first comparison mirrors — the mirror rode in on
-/// [`OpClass::Order`]); the containment form seals its direction as a
-/// variant.
 fn shaped_var_const(
     class: OpClass,
     var: VarId,
@@ -256,9 +214,6 @@ fn shaped_var_const(
     }
 }
 
-/// Interval equality's canonical mask: interval `Eq`/`Ne` are the derived
-/// facts `Allen(EQUALS)` / `Allen(¬EQUALS)` — sealed at classification,
-/// so exactly one interval-pair form leaves validation.
 fn equals_mask(negated: bool) -> AllenMask {
     if negated {
         AllenMask::EQUALS.complement()
@@ -267,8 +222,6 @@ fn equals_mask(negated: bool) -> AllenMask {
     }
 }
 
-/// The scalar operator a sealed `Eq`/`Ne` shape carries (symmetric, so
-/// operand order never mirrors it).
 fn equality_op(negated: bool) -> crate::ir::WordCmp {
     if negated {
         crate::ir::WordCmp::Ne
@@ -277,19 +230,12 @@ fn equality_op(negated: bool) -> crate::ir::WordCmp {
     }
 }
 
-/// The sealed mask side of an interval comparison against a constant,
-/// the mirrored form pre-encoded exactly as the filter shape carries it:
-/// `Allen(a, b, m) ≡ Allen(b, a, converse(m))`, so a comparison written
-/// constant-first seals the field on the left and the mask conversed —
-/// immediately for a literal.
 fn sealed_mask(mask: AllenMask, mirrored: bool) -> MaskConst {
     if mirrored { mask.converse() } else { mask }
 }
 
 /// The order operators' operand screen: every equality-only type gets its
-/// dedicated diagnostic before accepted comparison classification. Bool
-/// is orderable — `false < true`, the strict 0/1 encoding IS the order
-/// (ruled 2026-07-23, R3) — so it passes with U64 and I64.
+/// dedicated diagnostic before accepted comparison classification.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
         Some(ty) if ty.is_interval() => Err(ValidationError::OrderComparisonOnInterval { index }),
@@ -303,17 +249,15 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
 
 impl Context {
     /// The closed-reference order wall (ruled 2026-07-23, R4): a
-    /// closed-bound variable's words are declaration indices — ordering
+
     /// them is refused exactly as the enum's ordinal order was, judged
-    /// once here in the engine and therefore identical on every surface.
+
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
         if self.closed_vars.contains_key(&var) {
             return Err(ValidationError::OrderComparisonOnClosedReference { index });
         }
         Ok(())
     }
-
-    // --- anchoring -------------------------------------------------------
 
     fn bind_var_mono(&mut self, var: VarId, value_type: &ValueType) -> Result<(), ValidationError> {
         match self.var_slots.get(&var) {
@@ -438,41 +382,22 @@ impl Context {
         }
     }
 
-    /// The resolved type of a variable. Callable only after
-    /// [`Context::resolve_bivalents`] — the map it reads is the
-    /// resolution's product, so no unresolved slot is representable
-    /// here.
-    ///
     /// # Panics
-    ///
+
     /// On a programmer-invariant violation: an unknown `VarId` (every
     /// comparison variable was checked atom-bound before the typed
-    /// pass).
+
     pub(super) fn resolved_var_type(&self, var: VarId) -> &ValueType {
         &self.var_types[&var]
     }
 
-    // --- atoms ------------------------------------------------------------
-
-    /// Walks positive and negated atoms under one set of per-atom rules —
-    /// negation is a position, not a kind of atom, so the occurrence
-    /// numbering (positives first, then negated) is the only difference a
-    /// diagnostic shows. An `Edb` binding anchors at the stored field's
-    /// type; an `Interior` binding anchors at the target's sealed
-    /// signature column — the SAME bivalent membership rule reads through both (an
-    /// interval-typed signature column participates in point membership
-    /// exactly as an interval field does; 20-query-ir.md § engine recursion). Ends
-    /// with the negation safety rule: a negated atom binds nothing, so
-    /// its variables must come from positive atoms.
     pub(super) fn check_atoms(
         &mut self,
         schema: &Schema,
         interiors: &super::InteriorSignatures<'_>,
         rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
-        // The closed-reference position table (`ir/render::ClosedRefs` —
-        // one owner of the resolution): vars bound at closed positions
-        // are recorded for the R4 order wall.
+
         let closed_refs = crate::ir::render::ClosedRefs::build(schema);
         let occurrences = rule
             .atoms
@@ -491,10 +416,7 @@ impl Context {
                         });
                     }
                 }
-                // The source screen, binding-independent: a zero-binding
-                // `Interior` gate must refuse against the address space
-                // too (the per-binding `column` reads below never run
-                // for it).
+
                 crate::ir::AtomSource::Interior(interior) => {
                     interiors.screen(occ_idx, interior)?;
                 }
@@ -525,12 +447,7 @@ impl Context {
                     self.check_interval_binding(occ_idx, negated, *field, field_type, term)?;
                 } else {
                     self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
-                    // A closed-reference position marks its variable for
-                    // the order wall (R4) with the sealed extension's
-                    // row count — the proven dense group domain (049).
-                    // The words are declaration indices, not semantics.
-                    // `Interior` columns carry plain types — closedness is a
-                    // stored-relation fact.
+
                     if let crate::ir::AtomSource::Edb(relation_id) = atom.source
                         && let Term::Var(var) = term
                         && let Some(closed) = closed_refs.target(relation_id, *field)
@@ -554,10 +471,6 @@ impl Context {
         Ok(())
     }
 
-    /// One binding on an interval field — the membership rule: the
-    /// position types its term bivalently, `Interval(element)` (value
-    /// equality) or `element` (membership). Resolution:
-    /// [`Context::resolve_bivalents`].
     fn check_interval_binding(
         &mut self,
         occ_idx: usize,
@@ -581,9 +494,7 @@ impl Context {
                 self.anchor_param_bivalent(*param, interval)?;
                 self.interval_position_params.insert(*param);
             }
-            // A set holds points, so an interval-field position anchors
-            // it at the element type — membership per element, never
-            // interval equality.
+
             Term::ParamSet(param) => {
                 self.note_param_kind(*param, ParamKind::Set)?;
                 self.anchor_param_mono(*param, &element_type(element))?;
@@ -596,8 +507,6 @@ impl Context {
         Ok(())
     }
 
-    /// One binding on a scalar field: a monovalent anchor for every term
-    /// kind, with the literal precisely diagnosed.
     fn check_scalar_binding(
         &mut self,
         occ_idx: usize,
@@ -637,13 +546,6 @@ impl Context {
         Ok(())
     }
 
-    // --- comparisons ------------------------------------------------------
-
-    /// The three comparison phases, ending in the seal: the shape pass
-    /// proves the operand forms ([`Shaped`]), the anchor fixpoint and
-    /// bivalent resolution fix every type, and the typed pass proves
-    /// per-operator legality — constructing the [`ClassifiedComparison`]
-    /// each proof establishes, on the same lines.
     pub(super) fn check_comparisons(
         &mut self,
         rule: &LoweredRule,
@@ -651,22 +553,12 @@ impl Context {
         let shaped = self.comparison_shapes(rule)?;
         self.propagate_comparison_anchors(rule)?;
         self.resolve_bivalents();
-        // A param with no anchor is unwritable by construction: every
-        // param position is itself an anchor (a field binding types it
-        // immediately; a comparison against a variable types it via the
-        // variable; param-only comparisons are already
-        // `ConstantComparison`) — the roster item is discharged by
-        // representation, not by a check. The two query-global param
-        // rules — mask-vs-value conflicts and id density — are checked
+
         // after every rule contributed (params are query-global;
-        // `validate::ParamTables`).
+
         self.classify_comparisons(&shaped)
     }
 
-    /// Shape rules that need no types: self-comparisons, constant
-    /// comparisons (no variable side), comparison-only variables, param
-    /// roles, the measure discipline, and the `ParamSet`-only-under-`Eq`
-    /// rule — one sealed [`Shaped`] per condition, in condition order.
     fn comparison_shapes<'rule>(
         &mut self,
         rule: &'rule LoweredRule,
@@ -678,13 +570,6 @@ impl Context {
             .collect()
     }
 
-    /// One comparison's shape judgment: a single exhaustive match over
-    /// the operand pair whose arms either reject — the same typed errors
-    /// as ever, in the same diagnostic priority (mask vacuity, self
-    /// comparison, the measure discipline, constant comparisons, then
-    /// the per-side rules in written order) — or seal the proven
-    /// [`Shaped`] form. The proof and the seal are the same lines, so
-    /// no rejected shape is ever represented.
     fn comparison_shape<'rule>(
         &mut self,
         index: usize,
@@ -692,10 +577,7 @@ impl Context {
     ) -> Result<Shaped<'rule>, ValidationError> {
         let Comparison { op, lhs, rhs } = comparison;
         let class = OpClass::of(*op);
-        // The Allen mask position first: both vacuity rules for literals
-        // (∅ = "never": write no query; full = "always": write no
-        // condition) and the roster registration for params (their
-        // vacuity is checked at bind, where the value exists).
+
         if let OpClass::Allen { mask } = class {
             if mask.is_empty() {
                 return Err(ValidationError::EmptyAllenMask { index });
@@ -705,9 +587,7 @@ impl Context {
             }
         }
         match (lhs, rhs) {
-            // A comparison of a variable with itself is constant-valued —
-            // the "write the query you mean" rule applies exactly as it
-            // does to literal-vs-literal.
+
             (Term::Var(l), Term::Var(r)) if l == r => {
                 Err(ValidationError::SelfComparison { index })
             }
@@ -775,8 +655,7 @@ impl Context {
                     set: *param,
                 })
             }
-            // No variable side and no measure side: a constant comparison
-            // — write the query you mean.
+
             (
                 Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
                 Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
@@ -784,8 +663,6 @@ impl Context {
         }
     }
 
-    /// A comparison-position variable must already be atom-bound —
-    /// comparisons bind nothing (the comparison-only rejection).
     fn comparison_var(&self, var: VarId) -> Result<(), ValidationError> {
         if self.var_slots.contains_key(&var) {
             Ok(())
@@ -794,14 +671,6 @@ impl Context {
         }
     }
 
-    /// Monovalent-anchor propagation: under the same-type operators, a
-    /// side of known type names the other side's type — collapsing a
-    /// bivalent variable and anchoring an unanchored param. Runs to a
-    /// fixpoint so comparison order cannot matter. Incompatibilities are
-    /// left standing (never overwritten): `comparison_types` diagnoses
-    /// them against final types. `PointIn` propagates nothing — its
-    /// right side is legally either reading of the left (the predicate
-    /// form of the membership rule), so neither side names the other.
     fn propagate_comparison_anchors(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
@@ -824,7 +693,6 @@ impl Context {
         }
     }
 
-    /// The monovalent type a term contributes right now, if any.
     fn term_mono_type(&self, term: &Term) -> Option<ValueType> {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
@@ -839,9 +707,6 @@ impl Context {
         }
     }
 
-    /// Collapses a bivalent variable slot or fills an empty param slot
-    /// with `value_type`, when compatible; anything else is left for
-    /// `comparison_types`. Returns whether a slot changed.
     fn collapse_term(&mut self, term: &Term, value_type: &ValueType) -> bool {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
@@ -862,44 +727,13 @@ impl Context {
                 }
                 _ => false,
             },
-            // A set never takes an interval type; its collapse would be
-            // its own error, diagnosed in `comparison_types`.
+
             Term::ParamSet(_) | Term::Literal(_) => false,
         }
     }
 
-    /// Bivalent-anchor resolution — the one subtle typing rule
-    /// (`docs/architecture/20-query-ir.md` § membership),
-    /// implemented exactly once, here.
-    ///
-    /// A binding `(field: Interval(E), term)` does not fix the term's
-    /// type: an interval-typed term means value equality, an element-typed
-    /// term means point membership. Inference therefore records such a
-    /// position as a *bivalent* anchor `{Interval(E) | E}`
-    /// ([`TypeSlot::Bivalent`]). Resolution order:
-    ///
-    /// 1. Monovalent anchors — scalar field bindings, comparisons against
-    ///    a term of known type, typed literals — collapse a bivalent slot
-    ///    to whichever of its two candidates they name; an anchor naming
-    ///    neither candidate is a type conflict (atoms) or an illegal
-    ///    comparison (conditions).
-    /// 2. A slot still bivalent here — every anchor was an interval-field
-    ///    position — resolves to `Interval(E)`: the term is interval-typed
-    ///    and each such binding is value equality. This step is why
-    ///    "bound only by membership" can never arise from bindings alone:
-    ///    membership needs an element-typed term, and element typing needs
-    ///    a monovalent anchor.
-    /// 3. Consequently the membership-only rejection
-    ///    ([`Context::check_membership_domains`]) fires exactly when a
-    ///    comparison collapsed a variable to the element type while all
-    ///    its positive atom bindings are interval fields: element-typed,
-    ///    membership-bound, no enumerable domain.
-    ///
-    /// The phase change is a type change: the variable slots are
     /// CONSUMED into [`Context::var_types`], so nothing after this line
-    /// can see — or defensively re-match — an unresolved variable slot.
-    /// Params stay slots: the typed pass still anchors them
-    /// ([`Context::check_const`]).
+
     fn resolve_bivalents(&mut self) {
         self.var_types = std::mem::take(&mut self.var_slots)
             .into_iter()
@@ -918,12 +752,6 @@ impl Context {
         }
     }
 
-    /// The typed pass: per-operator type legality over final types, and
-    /// the param anchoring those rules imply. Runs after
-    /// [`Context::resolve_bivalents`], so every variable type is plain —
-    /// and consumes the shape pass's seal, so no operand form is
-    /// re-derived. Each proof constructs its [`ClassifiedComparison`] on
-    /// the lines that establish it.
     fn classify_comparisons(
         &mut self,
         shaped: &[Shaped<'_>],
@@ -935,21 +763,17 @@ impl Context {
             .collect()
     }
 
-    /// One comparison's typed judgment and seal.
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // one arm per proven shape, each ending in its seal
+    )] 
     fn classify(
         &mut self,
         index: usize,
         shape: &Shaped<'_>,
     ) -> Result<ClassifiedComparison, ValidationError> {
         match shape {
-            // `Eq`/`Ne`: same structural type both sides, every type
-            // legal — and interval equality canonicalizes to its derived
-            // `Allen` fact (`EQUALS` / its complement), so exactly one
-            // interval-pair form leaves validation.
+
             Shaped::EqVarVar { negated, lhs, rhs } => {
                 let lhs_type = *self.resolved_var_type(*lhs);
                 if *self.resolved_var_type(*rhs) != lhs_type {
@@ -991,9 +815,7 @@ impl Context {
                     }
                 })
             }
-            // The set marker anchors at the variable side's type — unless
-            // that type is an interval, the dedicated `IntervalParamSet`
-            // rejection.
+
             Shaped::EqVarSet { var, set } => {
                 let var_type = *self.resolved_var_type(*var);
                 if var_type.is_interval() {
@@ -1005,9 +827,7 @@ impl Context {
                     set: *set,
                 })
             }
-            // `Lt`/`Le`/`Gt`/`Ge`: same-typed orderable sides — U64,
-            // I64, and Bool (false < true, R3) — the operand screen
-            // first, in written order, then the closed-reference wall
+
             // (ordering a declaration-order accident, refused — R4).
             Shaped::OrdVarVar { op, lhs, rhs } => {
                 for var in [lhs, rhs] {
@@ -1055,15 +875,7 @@ impl Context {
                     value,
                 })
             }
-            // `Allen { mask }`: two interval terms of one ELEMENT DOMAIN —
-            // the one interval-pair comparison (the mask itself was
-            // checked at the shape pass; params get the vacuity rules at
-            // bind). Q1, element-domain typing at interval positions: the
-            // classification runs over derived bounds, which carry an
-            // element domain and not a width, so a fixed-width term meets
-            // a general (or other-width) term of the same element freely —
-            // u64-vs-i64 stays illegal
-            // (`docs/architecture/30-dependencies.md` § Q1).
+
             Shaped::AllenVarVar { mask, lhs, rhs } => {
                 let Some(lhs_element) = self.resolved_var_type(*lhs).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
@@ -1089,11 +901,7 @@ impl Context {
                 let Some(element) = self.resolved_var_type(*var).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
-                // The constant side types by element domain too (Q1): an
-                // interval literal spells both bounds and anchors the
-                // GENERAL type, and the comparison classifies over derived
-                // bounds — so a general constant against a fixed-width
-                // var is a legal mixed-width pair of one element.
+
                 let other = self.check_const(index, constant, &ValueType::Interval { element })?;
                 Ok(ClassifiedComparison::AllenVarConst {
                     var: *var,
@@ -1101,14 +909,7 @@ impl Context {
                     mask: sealed_mask(*mask, !var_on_left),
                 })
             }
-            // `PointIn`: point membership as a predicate — an interval
-            // side, an **element-typed** point side (the predicate form
-            // of the membership binding rule, for terms already bound
-            // elsewhere). The interval⊇interval form is gone: that
-            // predicate is `Allen(COVERS)`, and an interval-typed point
-            // side is an illegal comparison. The point side is an order
-            // position — membership sweeps the interval's order — so
-            // the closed wall screens it (R4).
+
             Shaped::PointInVarVar { lhs, rhs } => {
                 self.screen_order_closed(index, *rhs)?;
                 let Some(element) = self.resolved_var_type(*lhs).interval_element() else {
@@ -1128,10 +929,7 @@ impl Context {
                 };
                 match constant {
                     ConstSide::Param(param) => {
-                        // A `PointIn` point side is a point at an
-                        // interval position: the ceiling rule applies at
-                        // bind, where the value exists (the point-domain
-                        // law).
+
                         self.interval_position_params.insert(*param);
                         self.anchor_param_mono(*param, &element_type(element))?;
                         Ok(ClassifiedComparison::PointInVarPoint {
@@ -1142,7 +940,7 @@ impl Context {
                     ConstSide::Literal(value) => match (value, element) {
                         (Value::U64(_), IntervalElement::U64)
                         | (Value::I64(_), IntervalElement::I64) => {
-                            // The point domain is `MIN ..= MAX−1`.
+
                             if at_domain_ceiling(value) {
                                 return Err(ValidationError::ComparisonPointLiteralAtCeiling {
                                     index,
@@ -1159,16 +957,13 @@ impl Context {
             }
             Shaped::PointInConstVar { constant, var } => match constant {
                 ConstSide::Param(param) => {
-                    // The point side is the variable: its element type
-                    // names the param's interval domain.
+
                     let element = match self.resolved_var_type(*var) {
                         ValueType::U64 => IntervalElement::U64,
                         ValueType::I64 => IntervalElement::I64,
                         _ => return Err(ValidationError::IllegalComparison { index }),
                     };
-                    // A bound outer interval is the GENERAL type: the
-                    // param carries both bounds, whatever any field's
-                    // width — no width is nameable from a scalar side.
+
                     self.anchor_param_mono(*param, &ValueType::Interval { element })?;
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
@@ -1191,10 +986,6 @@ impl Context {
         }
     }
 
-    /// One sealed constant side against the anchoring side's resolved
-    /// type: a param anchors there ([`Context::anchor_param_mono`]); a
-    /// literal is checked precisely, exactly as the atom-binding path
-    /// reports it — and the passing proof seals the side.
     fn check_const(
         &mut self,
         index: usize,
@@ -1213,8 +1004,6 @@ impl Context {
         }
     }
 
-    /// The type a constant side contributes to the order screen right
-    /// now, if any: the param's anchored type, or the literal's own.
     fn constant_screen(&self, constant: &ConstSide<'_>) -> Option<ValueType> {
         match constant {
             ConstSide::Param(param) => match self.param_slots.get(param) {
@@ -1225,13 +1014,10 @@ impl Context {
         }
     }
 
-    /// A literal against a comparison side's resolved type — the precise
-    /// diagnosis, exactly as the atom-binding path reports it (the ordinal
-    /// names the comparison instead of an atom).
     #[expect(
         clippy::unused_self,
         reason = "the receiver keeps this checker API shape-parallel"
-    )] // shape-parallel with the sibling checkers
+    )] 
     fn check_literal_against(
         &self,
         index: usize,
@@ -1244,12 +1030,6 @@ impl Context {
         }
     }
 
-    // --- membership domains -------------------------------------------
-
-    /// The membership-only rejection (step 3 of the resolution order on
-    /// [`Context::resolve_bivalents`]): an element-typed variable whose
-    /// positive atom bindings are all interval fields is bound only by
-    /// membership — no enumerable domain.
     pub(super) fn check_membership_domains(&self) -> Result<(), ValidationError> {
         for (var, value_type) in &self.var_types {
             if value_type.is_interval() {
