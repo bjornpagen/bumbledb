@@ -1,9 +1,3 @@
-//! The churn lane's three-way end gate — the write-verification pattern
-//! extended by representation: the driver's [`LiveSet`] IS the naive
-//! model of the churned relation, so end-state verification is one
-//! multiset equality chain (model vs engine vs every `SQLite` mirror)
-//! plus the store sweeper, never an extra checker.
-
 use bumbledb::{Db, Value};
 
 use crate::compare::{self, Owned};
@@ -12,8 +6,6 @@ use crate::schema::{Ledger, ids};
 use super::engines::{OursLane, posting_values};
 use super::ops::LiveSet;
 
-/// One posting row into the canonical answer form — every `Posting`
-/// cell is `U64` or `I64` by schema.
 fn owned_row(row: &[Value]) -> compare::Answer {
     row.iter()
         .map(|value| match value {
@@ -24,11 +16,7 @@ fn owned_row(row: &[Value]) -> compare::Answer {
         .collect()
 }
 
-/// The engine's posting multiset, scanned whole through one snapshot.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
 pub fn posting_multiset_ours(db: &Db<Ledger>) -> Result<Vec<compare::Answer>, String> {
     db.read(|snap| {
         let mut out = Vec::new();
@@ -40,12 +28,7 @@ pub fn posting_multiset_ours(db: &Db<Ledger>) -> Result<Vec<compare::Answer>, St
     .map_err(|e| format!("churn end scan: {e:?}"))
 }
 
-/// One mirror's posting multiset, decoded through the normative value
-/// mapping against the schema's field types.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim; a mapping mismatch naming the column.
 pub fn posting_multiset_sqlite(
     conn: &rusqlite::Connection,
 ) -> Result<Vec<compare::Answer>, String> {
@@ -79,8 +62,6 @@ pub fn posting_multiset_sqlite(
     Ok(out)
 }
 
-/// The model's posting multiset — the [`LiveSet`]'s rows rendered
-/// through the same dynamic form the mirror inserts.
 #[must_use]
 pub fn model_multiset(live: &LiveSet) -> Vec<compare::Answer> {
     live.rows()
@@ -89,15 +70,7 @@ pub fn model_multiset(live: &LiveSet) -> Vec<compare::Answer> {
         .collect()
 }
 
-/// The three-way end gate: (1) the model vs the engine (the `LiveSet`
-/// model is normative), (2) the engine vs every mirror (the lane label
-/// in the error), (3) the store sweeper — `verify_store` findings must
-/// be EMPTY, closing the run.
-///
 /// # Errors
-///
-/// The first diverging multiset, rendered with its pair named; a
-/// populated sweeper report, rendered whole.
 pub fn assert_end_state(
     ours: &OursLane,
     mirrors: &[(&str, &rusqlite::Connection)],
