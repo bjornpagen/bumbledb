@@ -15,14 +15,10 @@ use super::{Sweep, for_namespace};
 pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
     let schema = s.schema;
     let mut derived = keys::DeterminantImage::scratch();
-    // The previous pointwise determinant key: consecutive keys of one
-    // scalar-prefix group sit adjacent under the cursor, so a single
-    // lookback walks every successive pair. Owned because the catalog
-    // range cursor is lending — a prior `&[u8]` would dangle.
+
     let mut prev_pointwise: Option<Vec<u8>> = None;
     for_namespace(s.catalog, keys::Namespace::Determinant, |key, value| {
-        // U | relation(4) | statement(2) | determinant — the determinant is nonempty
-        // (projections are non-empty by validation).
+
         let Some((rel, sid, determinant)) = keys::parse_determinant_key(key) else {
             s.malformed(key, "U key length");
             prev_pointwise = None;
@@ -33,8 +29,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             prev_pointwise = None;
             return Ok(());
         };
-        // Closed relations have no rows in the store: presence is the
-        // finding (the F pass's exemption, mirrored).
+
         if relation.body().closed_rows().is_some() {
             s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
@@ -53,9 +48,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             prev_pointwise = None;
             return Ok(());
         }
-        // The one id allocator (R16): a fresh-row auto-key maintains no
-        // `U` tree — its entry would transcribe `F` — so the entry's
-        // very existence is the finding.
+
         if statement.form().as_fresh_row().is_some() {
             s.corrupt(CorruptionError::FreshRowDeterminantEntry {
                 relation: rel,
@@ -72,10 +65,6 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
         };
         let row_id = u64::from_le_bytes(row_bytes);
 
-        // U→F: the row id must resolve to a live fact re-deriving this
-        // determinant. A wrong-width fact was already convicted by the F pass
-        // and cannot be sliced, so it passes here rather than double-
-        // reporting.
         let backs = match s.fact(rel, row_id)? {
             None => false,
             Some(fact) if fact.as_ref().len() != relation.layout().fact_width() => true,
@@ -96,20 +85,12 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             });
         }
 
-        // Pointwise disjointness: the determinant's tail parses through
-        // the key statement's interval-tail shape (16-byte `start ‖ end`,
-        // or the 8-byte fixed start whose end is the type's width) to
-        // order-preserving words, so word compare is numeric compare.
-        // Half-open `[ps, pe)` and `[ns, ne)` with `ps <= ns` by cursor
-        // order overlap iff `pe > ns`; equality is adjacency, legal by
-        // construction.
         let Some(tail) = schema.key_tail(statement) else {
             prev_pointwise = None;
             return Ok(());
         };
         if determinant.len() < tail.width() {
-            // A pointwise determinant shorter than its interval is a width
-            // desync the re-derivation above already convicted.
+
             prev_pointwise = None;
             return Ok(());
         }
@@ -120,9 +101,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                 crate::encoding::interval_words(tail, &prev[prev.len() - tail.width()..]),
                 crate::encoding::interval_words(tail, &key[key.len() - tail.width()..]),
             );
-            // A tail past the Q2 bound is a malformed value the F pass's
-            // canonical re-decode already convicts; the disjointness walk
-            // skips it rather than double-reporting.
+
             if let (Some((_, prev_end)), Some((next_start, _))) = words
                 && same_group
                 && prev_end > next_start
