@@ -6,27 +6,13 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 use super::{FreshMark, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Mints `count` consecutive fresh values for a `Fresh`-generation
-    /// field: reads `Q` once per `(relation, field)` per transaction, then
-    /// advances the in-memory mark by `count` in one step. Returns the
-    /// inclusive start of `[start, start + count)`. Empty is
-    /// [`crate::FreshRange::Empty`] at the API and never reaches here.
-    ///
-    /// A minted value that escapes to the host is burned even when the
-    /// transaction aborts (the escaped high-water flushes on every abort
-    /// path — `commit`'s reject/infra exits, and `Db::write`'s
+
     /// `EscapedIdBurn` drop guard for the closure region, which covers
-    /// the `Err`-returning and the PANICKING closure alike): the
-    /// generator never re-issues an id it handed out, the transaction's
-    /// fate irrelevant. Only the abort's data and generation stay
-    /// untouched, never the sequence.
-    ///
+
     /// # Errors
-    ///
-    /// `FreshExhausted` when `start.checked_add(count)` overflows
-    /// `u64::MAX`; `FactShape` from the sequence init's generation check
+
     /// (the dyn boundary's foreign-witness refusal — see
-    /// [`WriteDelta::fresh_mark`]); `Lmdb` on a failed `Q` read.
+
     pub fn reserve(
         &mut self,
         view: &ReadTxn<'_>,
@@ -45,21 +31,10 @@ impl WriteDelta<'_> {
         Ok(next)
     }
 
-    /// The sequence's transaction-local mark, lazily initialized whole
-    /// from the committed `Q` value (read once per transaction; the base
-    /// is the dirtiness baseline).
-    ///
     /// The lazy init is the dyn boundary's foreign-witness refusal
-    /// (`70-api.md` § ETL): the schema-bound [`crate::FreshField`] makes
-    /// a cross-schema witness a compile error, but `Db<SchemaDescriptor>`
-    /// handles share one typestate, so another descriptor's witness can
-    /// reach `reserve` well-typed. The generation check here refuses it
+
     /// typed before any `Q` key is touched — priced once per
-    /// `(relation, field)` per transaction beside the `Q` read it
-    /// precedes, zero on the steady-state mint (an occupied mark exists
-    /// only because this check, or the schema-derived insert advance,
-    /// admitted the pair). The typed lane's `Fresh` constants and the
-    /// insert advance's schema-derived pairs pass vacuously.
+
     pub(super) fn fresh_mark(
         &mut self,
         view: &ReadTxn<'_>,
@@ -77,11 +52,6 @@ impl WriteDelta<'_> {
     }
 }
 
-/// Reads the committed `Q` next-value for `(relation, field)`; a missing
-/// entry means the sequence has never issued a value. Beside the mint,
-/// the image cache reads it as a fresh-keyed relation's append boundary
-/// (the one id allocator, R16: every committed row id sits strictly
-/// below it).
 pub(crate) fn read_fresh_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
     let buf = keys::fresh_key(rel, field);
     let disk = match view.env().data().get(view.raw(), &buf)? {
