@@ -3,8 +3,7 @@ use std::mem::MaybeUninit;
 use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
 
 impl<V: Copy> WordMap<V> {
-    /// An empty map for keys of `arity` words (zero arity is legal: every
-    /// key is the empty tuple — the global-aggregate group).
+
     #[must_use]
     pub fn new(arity: usize) -> Self {
         Self {
@@ -20,10 +19,6 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
-    /// An empty map presized for ~`hint` entries: one
-    /// allocation up front instead of a rehash ladder inside the first
-    /// measured execution. The map still grows if the hint was short.
-    /// Sizing covers the hint at the shipped max load.
     #[must_use]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
@@ -42,15 +37,11 @@ impl<V: Copy> WordMap<V> {
         self.stamps = vec![0; capacity];
     }
 
-    /// The slot capacity (`values.len()`; ctrl carries the mirror tail).
     #[inline(always)]
     pub(super) fn capacity(&self) -> usize {
         self.values.len()
     }
 
-    /// Writes one ctrl byte, mirroring the head bytes into the tail so
-    /// window loads never wrap, and stamping the slot into the live
-    /// generation (callers set ctrl exactly when occupying a slot).
     #[inline(always)]
     pub(super) fn set_ctrl(&mut self, idx: usize, value: u8) {
         self.ctrl[idx] = value;
