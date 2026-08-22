@@ -1,17 +1,10 @@
-//! Render goldens: the exact macro notation back out — an FD, a one-way
-//! containment with selection, a bidirectional pair rendering `==` once
-//! from either id, and an interval selection literal.
-
 use super::*;
 use crate::schema::ContainmentId;
 use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 
-/// The `docs/architecture/30-dependencies.md` example schema plus an
-/// interval-selected containment (Shift/Roster). Materialized ids: 0/1
-/// the fresh auto-FDs, 2.. the declared statements below in order.
 fn example() -> SchemaDescriptor {
-    let savings = Value::U64(1); // kind 1 = Savings
+    let savings = Value::U64(1); 
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -62,12 +55,12 @@ fn example() -> SchemaDescriptor {
             },
         ],
         statements: vec![
-            // id 2: Account(holder) <= Holder(id)
+
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // ids 3 and 4: Account(id | kind == 1) == SavingsTerms(account)
+
             containment(
                 side_where(
                     RelationId(1),
@@ -80,11 +73,11 @@ fn example() -> SchemaDescriptor {
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
             ),
-            // id 5: SavingsTerms(account) -> SavingsTerms
+
             fd(RelationId(2), &[FieldId(0)]),
-            // id 6: Roster(worker) -> Roster
+
             fd(RelationId(3), &[FieldId(0)]),
-            // id 7: Shift(worker | span == 0..86400) <= Roster(worker)
+
             containment(
                 side_where(
                     RelationId(4),
@@ -106,20 +99,19 @@ fn example() -> SchemaDescriptor {
 #[test]
 fn goldens_render_the_exact_macro_notation() {
     let schema = example().validate().expect("the example schema is valid");
-    // A fresh auto-FD renders like any declared FD.
+
     assert_eq!(render(&schema, StatementId(0)), "Holder(id) -> Holder");
-    // A one-way containment.
+
     assert_eq!(
         render(&schema, StatementId(2)),
         "Account(holder) <= Holder(id)"
     );
-    // An FD, key form.
+
     assert_eq!(
         render(&schema, StatementId(5)),
         "SavingsTerms(account) -> SavingsTerms"
     );
-    // A one-way containment with a selection whose literal is an
-    // interval: the macro form `start..end`.
+
     assert_eq!(
         render(&schema, StatementId(7)),
         "Shift(worker | span == 0..86400) <= Roster(worker)"
@@ -129,8 +121,7 @@ fn goldens_render_the_exact_macro_notation() {
 #[test]
 fn a_bidirectional_pair_renders_as_double_equals_once_from_either_id() {
     let schema = example().validate().expect("valid");
-    // Both lowered ids render the pair's one written form — `==` exactly
-    // once, the selection literal in its macro spelling.
+
     let expected = "Account(id | kind == 1) == SavingsTerms(account)";
     assert_eq!(render(&schema, StatementId(3)), expected);
     assert_eq!(render(&schema, StatementId(4)), expected);
@@ -139,11 +130,7 @@ fn a_bidirectional_pair_renders_as_double_equals_once_from_either_id() {
 
 #[test]
 fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
-    // The closed gap, pinned: the pairing is a sealed fact computed over
-    // *all* statements, so a hand-built descriptor separating the lowered
-    // pair with an unrelated statement still renders `==` once from
-    // either id (adjacency-based detection rendered it as two `<=`
-    // lines).
+
     let declaration = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -163,18 +150,18 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
             },
         ],
         statements: vec![
-            // id 0: P(id) -> P
+
             fd(RelationId(0), &[FieldId(0)]),
-            // id 1: Q(pid) -> Q
+
             fd(RelationId(1), &[FieldId(0)]),
-            // id 2: the pair's first half.
+
             containment(
                 side(RelationId(0), &[FieldId(0)]),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-            // id 3: an unrelated statement between the halves.
+
             fd(RelationId(2), &[FieldId(0)]),
-            // id 4: the pair's second half — exactly id 2's sides swapped.
+
             containment(
                 side(RelationId(1), &[FieldId(0)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -182,7 +169,7 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
         ],
     };
     let schema = declaration.clone().validate().expect("valid");
-    // The links seal symmetric across the gap.
+
     assert_eq!(
         schema.containment(ContainmentId(0)).mirror_id(&schema),
         Some(StatementId(4))
@@ -191,23 +178,18 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
         schema.containment(ContainmentId(1)).mirror_id(&schema),
         Some(StatementId(2))
     );
-    // Both halves render the pair once, in the lower id's orientation.
+
     let expected = "P(id) == Q(pid)";
     assert_eq!(render(&schema, StatementId(2)), expected);
     assert_eq!(render(&schema, StatementId(4)), expected);
-    // The declared (diagnostic) path agrees.
+
     assert_eq!(render_declared(&declaration, StatementId(2)), expected);
     assert_eq!(render_declared(&declaration, StatementId(4)), expected);
 }
 
 #[test]
 fn a_respelled_literal_set_still_seals_the_mirror_pair() {
-    // Mirror pairing compares the NORMALIZED statement identity, never
-    // the raw spelling: the two halves spell one literal set in opposite
-    // orders, and the sides seal canonical — exact swapped mirrors — so
-    // the links must seal (raw side equality rendered this pair as two
-    // `<=` lines while a canonically-spelled twin with the SAME
-    // fingerprint rendered `==`).
+
     use crate::schema::tests::side_where_sets;
     let declaration = SchemaDescriptor {
         relations: vec![
@@ -223,10 +205,10 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
             },
         ],
         statements: vec![
-            // id 0: A(x) -> A; id 1: B(y) -> B — both targets probe-able.
+
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(1), &[FieldId(0)]),
-            // id 2: A(x) <= B(y | f == {1, 2}).
+
             containment(
                 side(RelationId(0), &[FieldId(0)]),
                 side_where_sets(
@@ -238,8 +220,7 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
                     )],
                 ),
             ),
-            // id 3: B(y | f == {2, 1}) <= A(x) — id 2's mirror, the set
-            // respelled.
+
             containment(
                 side_where_sets(
                     RelationId(1),
@@ -262,12 +243,11 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
         schema.containment(ContainmentId(1)).mirror_id(&schema),
         Some(StatementId(2))
     );
-    // Both halves render the pair once, in the lower id's orientation —
-    // the sealed sides carry the canonical set.
+
     let expected = "A(x) == B(y | f == {1, 2})";
     assert_eq!(render(&schema, StatementId(2)), expected);
     assert_eq!(render(&schema, StatementId(3)), expected);
-    // The declared (diagnostic) path pairs over the same identity.
+
     assert!(render_declared(&declaration, StatementId(2)).contains(" == "));
     assert!(render_declared(&declaration, StatementId(3)).contains(" == "));
 }
@@ -287,11 +267,7 @@ fn declared_rendering_matches_sealed_rendering() {
 
 #[test]
 fn schema_error_diagnostics_render_the_offending_statement() {
-    // Reject: the containment's target projection matches no key of
-    // Roster (no FD declared) — the diagnostic renders the statement.
-    // The citation is total by representation: every statement-roster
-    // rejection is the one `SchemaError::Statement` arm, so no variant
-    // can ship outside the rendered-citation path.
+
     let mut declaration = example();
     declaration.statements.remove(4); // drop `Roster(worker) -> Roster`
     let err = declaration
@@ -308,9 +284,7 @@ fn schema_error_diagnostics_render_the_offending_statement() {
 
 #[test]
 fn declaration_scoped_errors_render_without_a_statement_citation() {
-    // The other half of the typed partition: a declaration-scoped error
-    // carries no statement id, so `display_with` has nothing to cite —
-    // by representation, not by a hand-sorted match arm.
+
     let declaration = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -334,10 +308,6 @@ fn declaration_scoped_errors_render_without_a_statement_citation() {
     assert!(!rendered.contains(" — in `"), "{rendered}");
 }
 
-/// A selection word at a closed-reference position renders its handle —
-/// the macro's own bare-handle spelling back out — on the source's
-/// referencing field and the closed relation's id alike; an out-of-range
-/// word renders visibly wrong as `Status(9?)` (the `ir/render` fallback).
 #[test]
 fn closed_reference_selections_render_handles() {
     let declaration = |status_word: u64| SchemaDescriptor {
@@ -368,12 +338,12 @@ fn closed_reference_selections_render_handles() {
             },
         ],
         statements: vec![
-            // Submission(status) <= Status(id) — the closed reference.
+
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // FrozenNote(submission) <= Submission(id | status == <word>).
+
             containment(
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(
@@ -384,8 +354,7 @@ fn closed_reference_selections_render_handles() {
             ),
         ],
     };
-    // Materialized ids: 0 the fresh auto-FD, 1 the closed auto-key,
-    // 2..3 the declared containments above.
+
     let schema = declaration(1).validate().expect("valid");
     assert_eq!(
         render(&schema, StatementId(2)),
@@ -395,10 +364,7 @@ fn closed_reference_selections_render_handles() {
         render(&schema, StatementId(3)),
         "FrozenNote(submission) <= Submission(id | status == Frozen)"
     );
-    // The declared (diagnostic) path agrees, and an out-of-range word —
-    // no tenth row exists — keeps the number with the `?` that marks it
-    // wrong, under the relation's name (the engine never learns host
-    // newtype names).
+
     assert_eq!(
         render_declared(&declaration(1), StatementId(3)),
         "FrozenNote(submission) <= Submission(id | status == Frozen)"
@@ -411,9 +377,7 @@ fn closed_reference_selections_render_handles() {
 
 #[test]
 fn unresolvable_names_fall_back_to_id_placeholders() {
-    // A statement naming a relation outside the declaration renders with
-    // placeholders instead of panicking — that unknown id IS the error
-    // being diagnosed.
+
     let declaration = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -428,14 +392,6 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
     );
 }
 
-/// The extension forms render back in the exact grammar — B-family,
-/// target-left, and every legal window spelling round-trips canonically
-/// (the canonical-utterance law, `docs/architecture/70-api.md`): the
-/// `{lo..hi}` range, the `{lo..*}` floor (lo ≥ 2), the `{0..hi}`
-/// ceiling, the `{n}` exact, and the `{0}` exclusion — plus the set
-/// selection in braces (canonical order). Validation refuses the banned
-/// bound shapes (`{0..*}`, `{1..*}`, inverted — the reject suite), so
-/// no sealed statement can render a banned spelling.
 #[test]
 fn extension_forms_render_in_the_grammar() {
     use crate::schema::tests::{capacity, side_where_sets};
@@ -467,7 +423,7 @@ fn extension_forms_render_in_the_grammar() {
         statements: vec![
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(2), &[FieldId(0)]),
-            // `{1..3}` — the two-bound range, over a set selection.
+
             capacity(
                 side_where_sets(
                     RelationId(1),
@@ -481,29 +437,28 @@ fn extension_forms_render_in_the_grammar() {
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // `{2..*}` — the floor (lo ≥ 2; `{1..*}` is the banned
-            // containment respelling).
+
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 2,
                 None,
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // `{0..4}` — the ceiling.
+
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 0,
                 Some(4),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // `{3}` — the exact count (`lo = hi`).
+
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 3,
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // `{0}` — the exclusion.
+
             capacity(
                 side_where_sets(
                     RelationId(1),
@@ -525,8 +480,6 @@ fn extension_forms_render_in_the_grammar() {
         "Parent(id) <={0} Task(parent | state == 9)",
     ];
 
-    // Declared-side rendering (the diagnostic path) — the set as
-    // written.
     assert_eq!(
         render_declared(&decl, StatementId(2)),
         "Parent(id) <={1..3} Task(parent | state == {2, 1})"
@@ -541,13 +494,11 @@ fn extension_forms_render_in_the_grammar() {
         );
     }
 
-    // Sealed-side rendering — the set now canonical (sorted), every
-    // survivor in its one spelling.
     let schema = decl.validate().expect("the extension forms validate");
     for (offset, want) in expected.iter().enumerate() {
         let id = StatementId(u16::try_from(2 + offset).expect("small"));
         assert_eq!(render(&schema, id), *want);
-        // The spine agrees with the arenas.
+
         assert!(matches!(
             schema.statement(id),
             StatementView::Capacity(CapacityId(w), _) if usize::from(w) == offset
@@ -555,15 +506,6 @@ fn extension_forms_render_in_the_grammar() {
     }
 }
 
-/// The weighted capacity spellings render in the exact grammar: the
-/// weight bracket between `<=` and the window (nothing for the unit
-/// instance — the count utterance IS the unit rendering above), ident
-/// bounds through the target's field names, `Duration(field)` on both
-/// sides of the operator, the weighted `{1..*}` floor (legal — the
-/// per-aggregate ban law), and the literal exact on STRUCTURAL
-/// equality only (a dependent ceiling always renders the range). Every
-/// rendered string re-parses under the `schema!` grammar — the
-/// round-trip law (`tests/schema_macro.rs` pins the parse side).
 #[test]
 fn weighted_capacity_forms_render_in_the_grammar() {
     use crate::schema::tests::capacity_weighted;
@@ -595,7 +537,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
         ],
         statements: vec![
             fd(RelationId(0), &[FieldId(0)]),
-            // The power budget: dependent ceiling from the target row.
+
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
@@ -603,7 +545,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::TargetField(FieldId(1))),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-            // Calendar capacity: Duration weight under a Duration bound.
+
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::DurationOf(FieldId(2)),
@@ -611,8 +553,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::TargetDuration(FieldId(2))),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-            // The weighted floor of 1 — "positive total", legal (the
-            // containment-respelled ban is unit-only).
+
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
@@ -620,8 +561,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 None,
                 side(RelationId(1), &[FieldId(0)]),
             ),
-            // A Duration weight under a literal ceiling (C18 refuses
-            // only the unit-window-vs-Duration-BOUND direction).
+
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::DurationOf(FieldId(2)),
@@ -629,7 +569,7 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::Lit(720)),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-            // The literal exact under a weight — structural equality.
+
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
