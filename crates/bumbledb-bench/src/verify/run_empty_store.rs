@@ -5,22 +5,10 @@ use crate::querygen::target;
 use crate::schema::{Ledger, schema};
 use crate::sqlmap;
 
-/// The empty-store pass: a fresh store pair with the schema loaded and
-/// no corpus rows. Ledger and calendar empty hold as-is. Target empty
-/// does not: [`target::publish_admitted`] seeds the three `CurrencyBacking`
-/// rows so domain quantification holds — the rest of the target is
-/// empty. Every gate is false, every corpus scan empty, every aggregate
-/// folds nothing (the empty-set-not-NULL rule and the HAVING template
-/// earn their keep), every selection misses — the empty-relation
-/// semantic surface, oracle-checked in milliseconds with zero corpus
-/// churn. Cases count into the stamp's evidence; bundles land beside the
-/// main run's.
-///
 /// # Panics
-///
-/// On tool-level invariant violations, including the structural gate
-/// check: the randomized slice must contain at least one gate-bearing
-/// query, so gate falsity is exercised by construction, not by luck.
+/// On tool-level invariant violations, including the structural gate check: the
+/// randomized slice must contain at least one gate-bearing query, so gate
+/// falsity is exercised by construction, not by luck.
 pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let empty_dir = cfg.out_dir.join("empty-db");
     let _ = std::fs::remove_dir_all(&empty_dir);
@@ -31,9 +19,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     for statement in sqlmap::ddl(schema()) {
         empty_conn.execute(&statement, []).expect("empty ddl");
     }
-    // "Empty" spares no axiom: a closed relation is never empty — the
-    // engine answers its extension virtually over a rowless store, so
-    // the mirror carries the same ground rows.
+
     for statement in sqlmap::extension_ddl(&bumbledb::Theory::descriptor(Ledger)) {
         empty_conn.execute(&statement, []).expect("empty extension");
     }
@@ -41,9 +27,6 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         family_lane(lane, cfg, "empty family", &|_| None);
     });
 
-    // The calendar families over an empty pair of their own: every
-    // union arm empty, the Pack folding nothing, the anti-probe
-    // vacuously true against an empty gate.
     let empty_cal_dir = cfg.out_dir.join("empty-cal-db");
     let _ = std::fs::remove_dir_all(&empty_cal_dir);
     let empty_cal = Db::create(&empty_cal_dir, crate::calendar::Scheduling)
@@ -59,8 +42,6 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         super::run_calendar::calendar_lane(lane, cfg, "empty calendar", false);
     });
 
-    // The randomized slice runs over an empty target-schema pair (the
-    // generated queries speak the target ledger).
     let empty_target_dir = cfg.out_dir.join("empty-target-db");
     let _ = std::fs::remove_dir_all(&empty_target_dir);
     let empty_target = target::publish_admitted(&empty_target_dir);
@@ -91,9 +72,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             &mut naive_routed,
         );
     });
-    // The routed Pack draws over the SAME empty store: the empty-fold
-    // face of the naive leg (an empty group folds to no answer row on
-    // both sides, or the divergence says otherwise).
+
     if !naive_routed.is_empty() {
         let mut naive = crate::naive::NaiveDb::new(&target::descriptor());
         super::run::naive_routed_lane(
@@ -104,8 +83,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             &naive_routed,
         );
     }
-    // The structural check holds only for a full slice — a bundle-budget
-    // cutoff already fails the run.
+
     assert!(
         run.bundles.len() >= MAX_BUNDLES || gate_bearing > 0,
         "the empty-store slice generated no gate-bearing query"
