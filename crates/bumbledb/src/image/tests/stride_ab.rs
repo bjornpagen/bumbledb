@@ -2,7 +2,6 @@
 //! RE-RUN (2026-07-17, post-T1 — the recorded re-open trigger): the
 //! (residues 384/512/768/1024/2048 → 1.44/1.34/1.22/1.09/0.97× on the
 //! residues before a single span is timed.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
