@@ -3,7 +3,6 @@
 //! counters type is a ZST and every method an inline empty body, so
 //! instrumented call sites are written once, `#[cfg]`-free — the
 //! obs.rs law, applied to the cache. Reader: the benchmark report.
-
 #[cfg(feature = "trace")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
