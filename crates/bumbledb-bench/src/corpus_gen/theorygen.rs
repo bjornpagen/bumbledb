@@ -1,15 +1,3 @@
-//! The random-descriptor arm (docs/architecture/60-validation.md § the
-//! fuzzing charter): structurally-free [`SchemaDescriptor`]s for the fuzz
-//! lanes. Unlike the fixed ledger theory (`crate::schema`), this arm
-//! deliberately reaches invalid shapes — dangling relation/field ids,
-//! arity mismatches, duplicate names, closed-relation member abuse,
-//! interval misuse (empty bounds, the ray end) — alongside valid ones,
-//! and the ENGINE judges. The generator shares the ledger's vocabulary
-//! and owns no validity logic: index-anchored name draws and typed-value
-//! hints bias toward acceptance, but nothing here re-implements the
-//! acceptance gate (refusal: a generator that knows the rules can only
-//! confirm them).
-
 use bumbledb::Value;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
@@ -26,8 +14,6 @@ pub use arity::{
     random_valid_arity_descriptor, random_valid_arity_ops,
 };
 
-/// The ledger's relation vocabulary — shared names, so mutated inputs
-/// collide meaningfully instead of drifting into gibberish.
 const RELATION_NAMES: &[&str] = &[
     "Holder",
     "Account",
@@ -45,15 +31,8 @@ const FIELD_NAMES: &[&str] = &[
 
 const HANDLES: &[&str] = &["Usd", "Eur", "Gbp", "Manual", "Import", "Fee"];
 
-/// `bytes<N>` widths: legal points, both illegal edges (0 and 65), and a
-/// far-out width — the roster's `FixedBytesWidthOutOfRange` is a draw
-/// away, never a special case.
 const FIXED_LENS: &[u16] = &[0, 1, 16, 32, 64, 65, 300];
 
-/// A structurally-free schema descriptor: 0–4 relations, 0–5 statements,
-/// every shape the descriptor type can spell reachable by some byte
-/// string. Valid and invalid descriptors both arise; the verdict is the
-/// engine's.
 pub fn random_descriptor(rng: &mut Rng) -> SchemaDescriptor {
     let relation_count = draw(rng, 5);
     let relations: Vec<_> = (0..relation_count)
@@ -70,8 +49,7 @@ pub fn random_descriptor(rng: &mut Rng) -> SchemaDescriptor {
 }
 
 fn random_relation(rng: &mut Rng, idx: usize) -> RelationDescriptor {
-    // Index-anchored names are mostly distinct; the free draw forces the
-    // occasional `DuplicateRelationName` collision.
+
     let name = if rng.chance(1, 8) {
         pick(rng, RELATION_NAMES)
     } else {
@@ -81,9 +59,7 @@ fn random_relation(rng: &mut Rng, idx: usize) -> RelationDescriptor {
     let fields: Vec<_> = (0..field_count)
         .map(|field_idx| random_field(rng, field_idx))
         .collect();
-    // A quarter of relations declare an extension (closed): rows over the
-    // handle vocabulary, values hinted by the columns but free to abuse
-    // arity, type, interval bounds, and the ray end.
+
     let extension = if rng.chance(1, 4) {
         Some(random_extension(rng, &fields))
     } else {
@@ -102,8 +78,7 @@ fn random_field(rng: &mut Rng, idx: usize) -> FieldDescriptor {
     } else {
         FIELD_NAMES[idx % FIELD_NAMES.len()]
     };
-    // `Fresh` lands on any type and any relation kind — `FreshOnNonU64`
-    // and `FreshOnClosedRelation` are the engine's to refuse.
+
     let generation = if rng.chance(1, 5) {
         Generation::Fresh
     } else {
@@ -125,10 +100,7 @@ fn random_type(rng: &mut Rng) -> ValueType {
         5 => ValueType::FixedBytes {
             len: FIXED_LENS[draw(rng, FIXED_LENS.len())],
         },
-        // The corpus generator deliberately draws only the GENERAL
-        // interval type: fixture provenance is byte-pinned, and the
-        // fixed-width family's storage seam is covered by the engine's
-        // own suites.
+
         6 => ValueType::Interval {
             element: IntervalElement::U64,
         },
@@ -139,7 +111,7 @@ fn random_type(rng: &mut Rng) -> ValueType {
 }
 
 fn random_extension(rng: &mut Rng, fields: &[FieldDescriptor]) -> Box<[Row]> {
-    let rows = draw(rng, 4); // zero rows: the vocabulary of nothing
+    let rows = draw(rng, 4); 
     (0..rows)
         .map(|row| {
             let handle = if rng.chance(1, 8) {
@@ -147,8 +119,7 @@ fn random_extension(rng: &mut Rng, fields: &[FieldDescriptor]) -> Box<[Row]> {
             } else {
                 HANDLES[row % HANDLES.len()]
             };
-            // Mostly the declared arity with column-typed values; the
-            // free draw reaches `ExtensionArityMismatch`.
+
             let arity = if rng.chance(7, 8) {
                 fields.len()
             } else {
@@ -165,8 +136,6 @@ fn random_extension(rng: &mut Rng, fields: &[FieldDescriptor]) -> Box<[Row]> {
         .collect()
 }
 
-/// A literal, usually inhabiting the hinted column type and sometimes any
-/// shape at all — the type-mismatch rosters stay reachable.
 fn random_value(rng: &mut Rng, hint: Option<&ValueType>) -> Value {
     match hint {
         Some(value_type) if rng.chance(7, 8) => typed_value(rng, value_type),
@@ -181,10 +150,7 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
     match value_type {
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
         ValueType::U64 => {
-            // Mostly the small handle vocabulary; occasionally a word
-            // beyond `u16::MAX`, so a closed-reference draw reaches the
-            // out-of-range → non-membership narrowing at validate (a
-            // corpus whose draws stay small never exercises that arm).
+
             if rng.chance(1, 8) {
                 Value::U64(u64::from(u16::MAX) + 1 + rng.range(16))
             } else {
@@ -195,7 +161,7 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
         ValueType::String => Value::String(pick(rng, HANDLES).into()),
         ValueType::FixedBytes { len } => {
             let declared = usize::from(*len);
-            // The width is the type: an off-by-one draw is a mismatch.
+
             let width = if rng.chance(7, 8) {
                 declared
             } else {
@@ -209,10 +175,6 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
     }
 }
 
-/// Interval bounds over the representable shape ladder: unit, wide, and
-/// the ray end (`MAX` = ∞). The former empty rung maps to unit without an
-/// extra entropy draw; malformed `Value` payloads are no longer a schema
-/// descriptor state.
 fn interval_value(rng: &mut Rng, element: IntervalElement) -> Value {
     match element {
         IntervalElement::U64 => {
@@ -254,23 +216,13 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
             source: random_side(rng, relations),
             target: random_side(rng, relations),
         },
-        // The capacity statement, weight and bounds structurally free
-        // (C13 — the generator mints the whole surface day one):
-        // inverted literal windows (`lo > hi`), the `0..*` vacuity, the
-        // `1..1` keyed-`==` shape, interval-projected sides
-        // (`CapacityIntervalPosition`), signed/dangling/non-u64 weight
-        // fields (`CapacityWeightNotU64`), Duration weights over scalar
-        // positions (`CapacityWeightNotDuration`), dependent hi-slot
-        // bounds off the target's roster or mis-typed
-        // (`CapacityBoundNotU64` / `CapacityBoundNotDuration`), and the
-        // count-window-vs-Duration-bound dimension mix (C18) are all a
-        // draw away; the engine judges.
+
         _ => {
             let target = random_side(rng, relations);
             let source = random_side(rng, relations);
             let weight = random_weight(rng, relations, source.relation);
             let hi = if rng.chance(1, 3) {
-                None // the `*` spelling
+                None 
             } else {
                 Some(random_bound(rng, relations, target.relation))
             };
@@ -285,10 +237,6 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
     }
 }
 
-/// A structurally-free capacity weight: the unit (count) instance, a
-/// `[field]` measure, or a `[Duration(field)]` measure — the field id
-/// drawn one PAST the source's span so u64, signed, interval, and
-/// dangling positions all reach the typed refusals.
 fn random_weight(rng: &mut Rng, relations: &[RelationDescriptor], source: RelationId) -> Weight {
     let span = field_span(relations, source) + 1;
     match rng.range(3) {
@@ -298,11 +246,11 @@ fn random_weight(rng: &mut Rng, relations: &[RelationDescriptor], source: Relati
     }
 }
 
-/// A structurally-free ceiling: literal, dependent u64 field, or
-/// dependent Duration off the TARGET's row — dependent bounds are
-/// hi-slot only by representation (C6: the descriptor's `lo` is a bare
-/// literal), so only the ceiling draws the ident forms; the span is one
-/// past the target's so the dangling-field refusal stays reachable.
+/// A structurally-free ceiling: literal, dependent u64 field, or dependent
+/// Duration off the TARGET's row — dependent bounds are hi-slot only by
+/// representation (C6: the descriptor's `lo` is a bare literal), so only the
+/// ceiling draws the ident forms; the span is one past the target's so the
+/// dangling-field refusal stays reachable.
 fn random_bound(rng: &mut Rng, relations: &[RelationDescriptor], target: RelationId) -> Bound {
     let span = field_span(relations, target) + 1;
     match rng.range(4) {
@@ -323,10 +271,7 @@ fn random_side(rng: &mut Rng, relations: &[RelationDescriptor]) -> Side {
                 .get(usize::try_from(relation.0).expect("relation id fits usize"))
                 .and_then(|rel| rel.fields.get(usize::from(field.0)))
                 .map(|f| &f.value_type);
-            // A quarter of bindings are literal SETS — sized 0–3, so the
-            // degenerate shapes (`DegenerateSelectionSet`) and free
-            // duplicates (`DuplicateSelectionLiteral`) arise beside the
-            // honest disjunctions; the engine judges.
+
             let literals = if rng.chance(1, 4) {
                 let len = draw(rng, 4);
                 bumbledb::schema::LiteralSet::Many(
@@ -345,8 +290,6 @@ fn random_side(rng: &mut Rng, relations: &[RelationDescriptor]) -> Side {
     }
 }
 
-/// Mostly a declared relation, sometimes a dangling id — the
-/// `StatementUnknownRelation` roster line stays a draw away.
 fn random_relation_id(rng: &mut Rng, count: usize) -> RelationId {
     let count = u64::try_from(count).expect("relation count fits u64");
     let id = if count > 0 && rng.chance(7, 8) {
@@ -363,12 +306,10 @@ fn random_projection(
     relation: RelationId,
 ) -> Box<[FieldId]> {
     let span = field_span(relations, relation);
-    let len = draw(rng, 4); // zero fields: the empty projection
+    let len = draw(rng, 4); 
     (0..len).map(|_| random_field_id(rng, span)).collect()
 }
 
-/// Mostly within the relation's declared fields (duplicates arise freely),
-/// sometimes dangling.
 fn random_field_id(rng: &mut Rng, span: u64) -> FieldId {
     let id = if span > 0 && rng.chance(7, 8) {
         rng.range(span)
@@ -378,7 +319,6 @@ fn random_field_id(rng: &mut Rng, span: u64) -> FieldId {
     FieldId(u16::try_from(id).expect("field id fits u16"))
 }
 
-/// The relation's declared field count, zero when the id dangles.
 fn field_span(relations: &[RelationDescriptor], relation: RelationId) -> u64 {
     relations
         .get(usize::try_from(relation.0).expect("relation id fits usize"))
@@ -387,7 +327,6 @@ fn field_span(relations: &[RelationDescriptor], relation: RelationId) -> u64 {
         })
 }
 
-/// A small signed draw centered on zero.
 fn signed(rng: &mut Rng) -> i64 {
     i64::try_from(rng.range(16)).expect("small draw fits i64") - 8
 }
@@ -407,8 +346,6 @@ mod tests {
     use crate::corpus_gen::Rng;
     use bumbledb::schema::ValidateDescriptor as _;
 
-    /// The arm is deterministic in its entropy: the same byte string
-    /// yields the identical descriptor, and a different one steers away.
     #[test]
     fn the_same_bytes_yield_the_same_descriptor() {
         let bytes: Vec<u8> = (1..=64u64)
@@ -430,9 +367,6 @@ mod tests {
         );
     }
 
-    /// The arm's whole point: across a modest seed sweep the engine both
-    /// accepts and rejects — a generator that only produces one verdict
-    /// class fuzzes nothing.
     #[test]
     fn the_arm_reaches_both_verdict_classes() {
         let mut accepted = 0u32;
@@ -449,16 +383,6 @@ mod tests {
         eprintln!("mix: {accepted} accepted / {rejected} rejected");
     }
 
-    /// The statement-form sweep (docs/architecture/60-validation.md §
-    /// negative validation, the adversarial estate's schema half): 10⁴+
-    /// structurally-free descriptors through the acceptance gate —
-    /// every outcome `Ok` or a typed error, any panic a red run with
-    /// its seed named — with the generated surface itself asserted:
-    /// both verdict classes, both classical forms, the capacity
-    /// statement across its whole minted surface — unit, `[field]`, and
-    /// `[Duration(field)]` weights; a literal ceiling, the `*`, and the
-    /// dependent hi-slot bounds (C13: nothing ships unspellable by the
-    /// generator) — and the literal-set selections, each reached.
     #[test]
     fn the_descriptor_sweep_reaches_every_statement_form_without_panicking() {
         use bumbledb::schema::{LiteralSet, StatementDescriptor};
