@@ -1,24 +1,15 @@
 use super::{LOAD_DEN, WordMap, ctrl_tag, hash_core, hash_words};
 
 impl<V: Copy> WordMap<V> {
-    /// Gets the value for `key`, inserting `make()` when absent. Returns
-    /// `(value, inserted)`.
-    ///
+
     /// # Panics
-    ///
+
     /// Only on a programmer-invariant violation: `key.len() != arity`.
-    #[inline(always)] // the whole chain inlines into the sink row loops so
-    // LLVM can hoist batch-constant prefix hashes out of them
+    #[inline(always)] 
+
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
-        // The const-arity dispatch (measured): runtime
-        // arity taxed every dedup row +4.3-4.9 ns via the general-length
-        // compare/copy ladder, the slot*arity multiplies, and the blocked
-        // hash hoisting. One predictable branch here (the same arm every
-        // call from a given sink) buys straight-line monomorphs for every
-        // width through 8: group keys are 1-4 (0 the global-aggregate
-        // group — its hash constant-folds to the seed), full bindings
-        // 2-6, 8 is headroom. Only widths past 8 keep the dyn path.
+
         match self.arity {
             0 => self.entry_core::<0>(key, make),
             1 => self.entry_core::<1>(key, make),
@@ -33,18 +24,12 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
-    /// The runtime-arity fallback's hashing shell, deliberately
-    /// outlined: widths past 8 only — a `bl` here is the cold
-    /// arm, and keeping `hash_words` inside it keeps the hot sink
-    /// symbols free of hash calls (the check-asm gate).
     #[cold]
     #[inline(never)]
     fn entry_dyn_hashing(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
         self.entry_dyn(key, hash_words(key), make)
     }
 
-    /// The monomorphic entry: hash and probe with the key width fixed at
-    /// K, so the hash unrolls and fuses with the gather (measured).
     #[inline(always)]
     fn entry_core<const K: usize>(
         &mut self,
@@ -55,8 +40,6 @@ impl<V: Copy> WordMap<V> {
         self.entry_hashed_core::<K>(key, hash, make)
     }
 
-    /// The monomorphic insert core: K straight-line word compares, K
-    /// stores, strength-reduced `idx * K` slab indexing.
     #[inline(always)]
     fn entry_hashed_core<const K: usize>(
         &mut self,
@@ -70,8 +53,7 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe_core::<K>(key, hash);
         if !found {
-            // A set ctrl byte here is a stale slot being reclaimed (the
-            // probe returns stale tag matches as insert slots).
+
             self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
@@ -81,12 +63,10 @@ impl<V: Copy> WordMap<V> {
             self.len += 1;
         }
         // SAFETY: the slot's ctrl byte is set (matched or just written),
-        // so its value was initialized by the write above or a prior one.
+
         (unsafe { self.values[idx].assume_init_mut() }, !found)
     }
 
-    /// The runtime-arity fallback for widths without a monomorph — the
-    /// general-length body, kept for widths past 8.
     pub(super) fn entry_dyn(
         &mut self,
         key: &[u64],
@@ -99,7 +79,7 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe(key, hash);
         if !found {
-            // Stale-slot reclaim, exactly as the monomorphic core.
+
             self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
@@ -109,11 +89,10 @@ impl<V: Copy> WordMap<V> {
             self.len += 1;
         }
         // SAFETY: the slot's ctrl byte is set (matched or just written),
-        // so its value was initialized by the write above or a prior one.
+
         (unsafe { self.values[idx].assume_init_mut() }, !found)
     }
 
-    /// Whether `key` was newly inserted (a set-flavored helper).
     #[inline(always)]
     pub fn insert(&mut self, key: &[u64]) -> bool
     where
