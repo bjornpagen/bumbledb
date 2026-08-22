@@ -40,7 +40,7 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn randomized_subset_projections_match_the_oracle_under_d2() {
     let mut state = 0xBEEF_CAFE_1234_5678u64;
     let mut next = move || {
@@ -169,7 +169,6 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
 /// valid_plan_sound` requires).
 #[test]
 fn epoch_wrap_never_aliases_a_stale_cancellation() {
-
     let schema = schema(2);
     let normalized = normalized(
         vec![
@@ -214,7 +213,6 @@ fn epoch_wrap_never_aliases_a_stale_cancellation() {
 /// by fully-priced batch.
 #[test]
 fn whole_execution_skip_stops_the_cover_draw_mid_entry() {
-
     #[derive(Default)]
     struct RootBatches {
         batches: usize,
