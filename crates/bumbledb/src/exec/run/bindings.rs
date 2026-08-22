@@ -1,5 +1,4 @@
 //! Slot-indexed bindings with an epoch discipline.
-
 use super::Bindings;
 
 impl Bindings {
