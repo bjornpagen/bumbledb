@@ -1,6 +1,5 @@
 //! The build path: one sequential scan decodes every column of a relation
-//! into structure-of-arrays slabs (docs/architecture/40-execution.md D1,
-//! `50-storage.md`; the per-fact decode kernel lives in `super::decode`) —
+//! into structure-of-arrays slabs —
 //! and the synthesis path, which fills the same slabs from a closed
 //! relation's sealed extension with no catalog anywhere.
 
@@ -20,9 +19,8 @@ use super::{
     column_spans,
 };
 
-/// Checked slab lengths (in words and bytes) for the stored row count.
-/// The `S` value is data: overflow in any size computation is typed
-/// Corruption before a single byte is allocated.
+/// The `S` value is data: overflow in any size computation is typed Corruption
+/// before a single byte is allocated.
 fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<(usize, usize)> {
     let corrupt = || Error::Corruption(CorruptionError::MalformedValue("S row count"));
     let word_len = row_count
@@ -38,10 +36,6 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
     Ok((word_len, byte_len))
 }
 
-/// An image's allocated-but-unfilled frame: the field→column map, the
-/// placed columns, and the two backing slabs, sized for `row_count` rows
-/// of the given field shape. Shared by the two fill paths — the catalog
-/// scan ([`build`]) and closed-relation synthesis ([`synthesize_closed`]).
 struct Frame {
     spans: Box<[ColumnSpan]>,
     columns: Vec<Column>,
@@ -49,31 +43,16 @@ struct Frame {
     bytes: Vec<u8>,
 }
 
-/// Allocates the frame: one up-front allocation per backing store, sized
-/// from the row count plus per-column alignment/stride slack, column
-/// bases 128-byte aligned with strides padded off 16 KiB multiples (the
-/// tracker-aliasing rule, measured). Every slab-size computation is
-/// checked; overflow is typed Corruption *before* any allocation is
-/// attempted.
 fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
     allocate_with(field_types, row_count, StridePadder::new())
 }
 
-/// [`allocate`] with an explicit padder — the measured falsifier's hook:
-/// the shipped stride rule and its twin lay out side by side in one
-/// process. The slabs are sized identically either way ([`slab_lengths`]
-/// pre-pays one `SET_STRIDE + LINE` of slack per column, the worst-case
-/// alignment plus pad), so the tolerance moves column starts within the
-/// slack and never the allocation.
 fn allocate_with(
     field_types: &[ValueType],
     row_count: usize,
     mut padder: StridePadder,
 ) -> Result<Frame> {
-    // The field→column map drives the layout: an interval field spans two
-    // consecutive 8-byte columns (start, end), a bytes<N> field its
-    // ⌈N/8⌉ word columns, everything else one column of its width — the
-    // image layer has no wide column (`docs/architecture/50-storage.md`).
+
     let spans = column_spans(field_types);
     let byte_cols = spans
         .iter()
@@ -124,12 +103,6 @@ fn allocate_with(
     })
 }
 
-/// Seals a filled frame into the shared image with its distinct
-/// counting state — computed by the caller: the scan paths count while
-/// the slabs are warm ([`super::distinct::count_columns`]), the append
-/// path extends the base's persisted state (O(tail), exact), and the
-/// transient fixpoint slots stay uncounted (the planner never costs
-/// them — the `Interior` floor guard).
 fn seal(
     row_count: usize,
     frame: Frame,
@@ -145,9 +118,6 @@ fn seal(
     })
 }
 
-/// The build-path counting pass over a filled frame, spanned at batch
-/// granularity (`image_distincts`): one pass per column while the just-
-/// decoded slabs are warm, into state sized to the distincts.
 fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::DistinctState]> {
     let span = crate::obs::span_args(
         crate::obs::names::IMAGE_DISTINCTS,
@@ -159,10 +129,6 @@ fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::Distinc
     states
 }
 
-/// An empty (all-zero) sealed image laid out under an explicit stride
-/// tolerance — the measured falsifier's constructor: identical shape and
-/// data either way, only the column starts move. Test-only; production
-/// layouts go through [`allocate`] and the one shipped tolerance.
 #[cfg(test)]
 pub(super) fn image_with_tolerance(
     field_types: &[ValueType],
@@ -179,7 +145,6 @@ pub(super) fn image_with_tolerance(
     seal(row_count, frame, distincts)
 }
 
-/// Prefix `F` scan: the relation's live facts in row-id order.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
@@ -211,8 +176,6 @@ fn fill_scan<C: CatalogRead>(
     Ok(position)
 }
 
-/// Suffix `F` range from `from_row_id` through the relation's last fact
-/// key — the image-append tail. Mis-shaped keys are typed corruption.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
@@ -256,23 +219,16 @@ fn fill_from<C: CatalogRead>(
     Ok(position)
 }
 
-/// Builds the full-width image of `rel` from one sequential scan.
-///
 /// # Errors
-///
-/// Any scan corruption (wrong fact width) aborts the build; a scan yielding
-/// a different number of rows than the stored `S` count is corruption too,
-/// and a stored count exceeding the `_data` entry-count witness is
+/// Any scan corruption (wrong fact width) aborts the build; a scan yielding a
+/// different number of rows than the stored `S` count is corruption too, and a
+/// stored count exceeding the `_data` entry-count witness is
 /// [`CorruptionError::CounterDesync`] before any size-derived allocation.
-/// Dangling intern ids are *not* checked here — ids are opaque words at
-/// this layer.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (backing-store capacity computed
-/// from the same counters the fill loop trusts; `rel` names a closed
-/// relation — closed images synthesize from the theory, and the cache
-/// branches before this path).
+/// from the same counters the fill loop trusts; `rel` names a closed relation —
+/// closed images synthesize from the theory, and the cache branches before this
+/// path).
 pub(crate) fn build<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,
@@ -287,13 +243,7 @@ pub(crate) fn build<C: CatalogRead>(
     let claimed = catalog.row_count(rel)?;
 
     // The reopen-trust ceiling: the stored `S` count is data, and a
-    // corrupt-but-plausible value (2^40 passes every checked size
-    // computation) would drive the slab `vec!`s below into a
-    // multi-terabyte allocation. Bound it by the `_data` entry count
-    // — an over-approximation (the DBI spans F/M/U/R/Q/S, so it counts
-    // far more than this relation's F rows), which a ceiling is allowed
-    // to be: no real row count can exceed it, and the scan cross-check
-    // below stays the exactness guarantee.
+
     let witness = catalog.len(CatalogMap::Data)?;
     if claimed > witness {
         return Err(Error::Corruption(CorruptionError::CounterDesync {
@@ -309,8 +259,6 @@ pub(crate) fn build<C: CatalogRead>(
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let mut frame = allocate(&field_types, row_count)?;
 
-    // One sequential scan fills every column (positions = scan ordinals),
-    // through the hoisted decode plan.
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
@@ -338,46 +286,21 @@ pub(crate) fn build<C: CatalogRead>(
     Ok(seal(row_count, frame, distincts))
 }
 
-/// [`build`]'s copy-on-append sibling (`docs/architecture/50-storage.md`
-/// § the image cache): extends a base image to this snapshot's row count
-/// without re-decoding the base's rows. Sound because a delete-free,
-/// tail-only lineage makes the base a **logical prefix** of the new
-/// image — every row committed after the base has id at or above the
-/// base's boundary (the one id allocator, R16: `ImageCache::advance`
-/// evicts a base whose relation took a below-boundary insert, so
-/// tail-only is ENFORCED, never assumed from counter shape), same
-/// ordinals, same column words (fact bytes are immutable). The layout is
-/// NOT a physical prefix (column starts and strides are address-dependent,
-/// [`StridePadder`]), so the copy unit is the **column**: a fresh frame at
-/// the new row count, one `copy_from_slice` per column — the image layer
-/// has exactly two column kinds, so the copy is total and safe — then a
-/// tail decode of only the new rows through the identical per-fact kernel,
-/// scanning from `from_row_id` (the base's build-time boundary — the
-/// `Q` next value on a fresh-keyed relation, the `S` high-water
-/// otherwise — read in the base's own transaction). The distinct
-/// counting state persists with the base exactly for this moment: the
-/// sealed image clones it and inserts ONLY the tail rows — exact by
-/// construction (the image oracle's served-vs-rebuilt equality), at
-/// O(tail) instead of a full re-walk.
-///
-/// The caller (the cache's append arm) owns the lineage claim; this
-/// function still trusts nothing it can check: the stored row count is
-/// ceiling-bounded by the `_data` entry witness before any allocation
-/// (as [`build`]), a count below the base's rows is typed corruption
-/// (only corruption shrinks a delete-free relation), and the tail scan
-/// is cross-checked against the claimed count — hard error, never a
-/// skip.
-///
+/// Sound because a delete-free, tail-only lineage makes the base a **logical
+/// prefix** of the new image — every row committed after the base has id at or
+/// above the base's boundary (the one id allocator, R16: `ImageCache::advance`
+/// evicts a base whose relation took a below-boundary insert, so tail-only is
+/// ENFORCED, never assumed from counter shape), same ordinals, same column
+/// words (fact bytes are immutable). The caller (the cache's append arm) owns
+/// the lineage claim; this function still trusts nothing it can check: the
+/// stored row count is ceiling-bounded by the `_data` entry witness before any
+/// allocation (as [`build`]), a count below the base's rows is typed corruption
+/// (only corruption shrinks a delete-free relation), and the tail scan is
+/// cross-checked against the claimed count — hard error, never a skip.
 /// # Errors
-///
-/// As [`build`]: scan corruption aborts; `CounterDesync` on a count past
-/// the entry witness; `RowCountMismatch` when the count shrank below the
-/// base or the tail scan disagrees with the claimed count.
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations: `rel` names a closed relation,
-/// or `base` was built for a different relation shape (the column layouts
+/// Only on programmer-invariant violations: `rel` names a closed relation, or
+/// `base` was built for a different relation shape (the column layouts
 /// disagree).
 pub(crate) fn append<C: CatalogRead>(
     catalog: &C,
@@ -408,8 +331,7 @@ pub(crate) fn append<C: CatalogRead>(
     }
     let row_count = usize::try_from(claimed).expect("64-bit usize");
     let base_rows = base.row_count();
-    // Under a delete-free lineage the count is monotone; a shrink is
-    // storage corruption, typed — hard error, never a silent rebuild.
+
     if row_count < base_rows {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
@@ -425,8 +347,6 @@ pub(crate) fn append<C: CatalogRead>(
         "the base image was built from this relation's field→column map"
     );
 
-    // The prefix copy, one column at a time: the base's rows keep their
-    // ordinals and words; only the slab addresses move.
     for (index, column) in frame.columns.iter().enumerate() {
         match (*column, base.column(index)) {
             (Column::Words { start }, ColumnView::Words(prefix)) => {
@@ -439,8 +359,6 @@ pub(crate) fn append<C: CatalogRead>(
         }
     }
 
-    // The tail decode: the identical kernel over the suffix scan, filling
-    // positions `base_rows..row_count` — the only rows that decode.
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
@@ -465,8 +383,6 @@ pub(crate) fn append<C: CatalogRead>(
         }));
     }
 
-    // The persisted counting state's whole payoff: clone the base's
-    // exact state and insert only the tail — never re-walk the prefix.
     let span = crate::obs::span_args(
         crate::obs::names::IMAGE_DISTINCTS,
         crate::obs::TraceArgs::Pair(frame.columns.len() as u64, (row_count - base_rows) as u64),
@@ -484,33 +400,22 @@ pub(crate) fn append<C: CatalogRead>(
     Ok(seal(row_count, frame, distincts))
 }
 
-/// One pooled transient-image slot (40-execution.md § the linear reach driver): the fixpoint
 /// driver's per-round delta and accumulated images, built on the
-/// [`synthesize_closed`] precedent — the image machinery is
-/// source-agnostic after decode, and here the source is cheaper still:
 /// the rows are already encoded column words (a seen-set's dense
 /// suffix), so the build is a columnar transpose with no fact-bytes
 /// decode at all. **Never cached, never memoized, never pinned**: a
-/// transient image is valid for one round of one execution — a lifetime
-/// the generation vocabulary cannot express — so it lives entirely
 /// outside `image/cache.rs` (whose diff for the recursion campaign is
 /// zero lines) and the view memo; the closed carve-out's `OnceLock`
 /// slots already proved images can live outside the map.
-///
 /// The slot is a retained-capacity pool on the prepared query (the
-/// allocation contract's iteration-shape axis): a refill whose row
-/// count fits the slot's high-water — and whose previous round's views
-/// have all been dropped, the driver's ping-pong discipline — rewrites
-/// the slabs in place through `Arc::get_mut`, touching the allocator
-/// zero times.
+/// source-agnostic after decode, and here the source is cheaper still:
 #[derive(Debug)]
 pub enum TransientImage {
-    /// No image yet; `capacity` is the last framed high-water (0 at new).
+
     Empty { capacity: usize },
     Occupied {
         image: Arc<RelationImage>,
-        /// Rows the current allocation was framed for (column strides are
-        /// laid out at this count; `row_count` may sit below it).
+
         capacity: usize,
     },
 }
@@ -522,46 +427,23 @@ impl Default for TransientImage {
 }
 
 impl TransientImage {
-    /// Rebuilds this slot's image from `row_count` encoded word rows —
-    /// one row per answer tuple, in the seen-set's find-word order,
-    /// which is exactly the column order `column_spans(field_types)`
-    /// lays out (an interval column two words, a `bytes<N>` column its
-    /// padded words, a Bool column one 0/1 word written back as the
-    /// byte). Reuses the retained allocation when the row count fits
-    /// and no view still holds the `Arc`; otherwise allocates a fresh
-    /// frame at the new high-water.
-    ///
+
     /// # Panics
-    ///
+
     /// Only on programmer-invariant violations: a row narrower than the
-    /// field types' total column count, or a row count past the checked
-    /// slab ceiling (seen-set positions are `u32`-bounded, orders of
-    /// magnitude below it).
+
     pub fn refill<'r>(
         &mut self,
         field_types: &[ValueType],
         row_count: usize,
         rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
-        // A refill IS an append from row zero — one fill body, two
-        // capacity policies (the delta slot is re-framed exactly per
-        // round; only the accumulator needs headroom).
+
         self.fill(field_types, 0, row_count, |_| rows, CapacityPolicy::Exact)
     }
 
-    /// The incremental sibling of [`Self::refill`] — the fixpoint
-    /// accumulator's append path. Rows `[0, filled)` already sit in this
-    /// slot from its previous call this execution, and a seen-set is
-    /// append-only within one, so writing the suffix `[filled,
-    /// row_count)` alone reproduces a full refill. When the in-place
-    /// precondition fails — a view still holds the `Arc`, or `row_count`
-    /// outgrew the framed capacity — the slot rebuilds whole from
-    /// `rows_since(0)`, framed with doubling headroom (monotone, never
-    /// below the retained high-water) so a growing accumulator
-    /// reallocates logarithmically often, never per round.
-    ///
     /// # Panics
-    ///
+
     /// As [`Self::refill`]: programmer-invariant violations only.
     pub fn append<'r, I>(
         &mut self,
@@ -582,13 +464,6 @@ impl TransientImage {
         )
     }
 
-    /// The one fill body behind [`Self::refill`] and [`Self::append`]
-    /// (formerly two ~35-line verbatim siblings): rows `[0, filled)`
-    /// already sit in the slot; the suffix `[filled, row_count)` is
-    /// written in place when the reuse precondition holds — `row_count`
-    /// within the framed capacity AND no view still holding the `Arc` —
-    /// otherwise the slot rebuilds whole from `rows_since(0)`, framed by
-    /// `policy`.
     fn fill<'r, I>(
         &mut self,
         field_types: &[ValueType],
@@ -618,10 +493,7 @@ impl TransientImage {
             };
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
-            // Transient images stay UNCOUNTED: the planner never costs
-            // them (an `Interior` occurrence pins no statistics — the
-            // selectivity floor guard), so a per-round counting pass
-            // would be pure waste inside the fixpoint's warm loop.
+
             let distincts = super::distinct::uncounted_columns(&frame.columns);
             *self = Self::Occupied {
                 image: seal(row_count, frame, distincts),
@@ -640,20 +512,12 @@ impl TransientImage {
     }
 }
 
-/// How a non-reusable slot frames its fresh allocation: the per-round
-/// delta refills exactly (each round's delta is independently sized —
-/// headroom would be dead slab); the accumulator appends with doubling
-/// headroom (monotone growth, never below the retained high-water, so
-/// it reallocates logarithmically often, never per round).
 #[derive(Clone, Copy)]
 enum CapacityPolicy {
     Exact,
     Doubling,
 }
 
-/// The shared transpose of both fill paths above: encoded word rows into
-/// consecutive positions from `base`; returns one past the last position
-/// written.
 fn fill_encoded_rows<'r>(
     image: &mut RelationImage,
     base: usize,
@@ -686,19 +550,15 @@ fn fill_encoded_rows<'r>(
 
 /// Synthesizes a closed relation's image from its sealed extension — the
 /// fingerprint's preimage IS the storage
-/// (`docs/architecture/50-storage.md` § virtual relations). No LMDB
+/// . No LMDB
 /// transaction parameter exists because synthesis is pure: the sealed
 /// rows' canonical fact bytes (encoded ONCE, at validate) decode through
 /// exactly the plan a stored fact would, so the column layout, the
 /// implicit `id` column (`0..rows`, first — the synthetic field opens the
 /// sealed field list), stride padding, and the build-time distinct
-/// counting pass are all the ordinary image machinery, untouched.
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations: `relation` is ordinary, or a
-/// sealed row fails the canonical decode — both impossible for a
 /// validated schema.
+/// Only on programmer-invariant violations: `relation` is ordinary, or a
 #[must_use]
 pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationImage> {
     let extension = relation
