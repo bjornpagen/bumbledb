@@ -13,7 +13,6 @@ use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Rule};
 /// exactly this.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoweredRule {
-
     pub finds: Vec<FindTerm>,
 
     pub atoms: Vec<Atom>,
@@ -22,11 +21,9 @@ pub struct LoweredRule {
 
     pub conditions: Vec<Comparison>,
     /// Written-rule provenance (ruled 2026-07-23, R2): the index of the
-
     pub written: Option<u16>,
 
     /// (the Kleene algebra, ruled 2026-07-23, R6) reads it: a written
-
     pub minted: Vec<u16>,
 }
 
@@ -138,7 +135,6 @@ pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
             .iter_mut()
             .find(|earlier| same_normalized_body(earlier, &rule))
         {
-
             if earlier.written != rule.written {
                 earlier.written = None;
             }
