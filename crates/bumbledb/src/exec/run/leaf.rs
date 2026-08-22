@@ -7,7 +7,6 @@ use super::{
 };
 
 impl Executor {
-
     /// 2026-07-19): the leaf-elision
 
     pub(super) fn run_leaf_fast<S: Sink, C: Counters>(
@@ -35,7 +34,7 @@ impl Executor {
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] 
+    )]
     fn run_leaf_pinned<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -122,7 +121,7 @@ impl Executor {
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] 
+    )]
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
