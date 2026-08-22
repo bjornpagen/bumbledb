@@ -1,11 +1,3 @@
-//! Golden tests: the renderer is deterministic and its output is the
-//! documented rule notation, byte-exact — the calendar union query and
-//! the Pack/Duration heads pin the grammar (PRD 20's passing criteria);
-//! the malformed shapes pin totality (render is the roster's diagnostic
-//! surface, so rejected queries must render, never panic); the handle
-//! goldens pin closed-reference printing (the vocabulary's names on the
-//! read side, with the out-of-range fallback visibly wrong).
-
 use super::render;
 use crate::ir::validate::validate;
 use crate::ir::{
@@ -19,9 +11,6 @@ use bumbledb_theory::schema::{
     SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 
-/// The calendar fixture: Busy(person, during, kind), Ooo(person, during),
-/// with `kind` a closed reference into Kind = { Focus, Break } — the
-/// handle goldens' vocabulary.
 fn calendar() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -104,10 +93,6 @@ fn projection_rule(relation: RelationId) -> Rule {
     }
 }
 
-/// The calendar union query, golden: unavailability is Busy ∪ Ooo
-/// against a window param — two rules, each `;`-terminated,
-/// newline-separated (literal INTERSECTS; other literal-mask spellings
-/// are pinned below).
 #[test]
 fn calendar_union_golden() {
     let rule = projection_rule(BUSY);
@@ -126,9 +111,6 @@ fn calendar_union_golden() {
     );
 }
 
-/// The literal-mask spelling: a workload composite renders by name; the
-/// selection binding renders schema-grammar-verbatim — a closed-reference
-/// word as its handle; negation is `!`.
 #[test]
 fn selection_negation_and_literal_mask_golden() {
     let query = Query::single(Rule {
@@ -164,10 +146,6 @@ fn selection_negation_and_literal_mask_golden() {
     );
 }
 
-/// The handle goldens: a literal word at a closed-reference position
-/// prints its handle — on the referencing field and on the closed
-/// relation's own id field alike — and an out-of-range word prints
-/// visibly wrong as `Kind(7?)` (rendering hides nothing).
 #[test]
 fn closed_reference_handles_golden() {
     let selection = |word: u64| {
@@ -190,14 +168,12 @@ fn closed_reference_handles_golden() {
         render(&schema, &selection(0)),
         "(v0) | Busy(person: v0, kind == Focus);"
     );
-    // Out of range: no seventh row exists — the fallback names the
-    // relation (the engine never learns host newtype names) and keeps
-    // the number with the `?` that marks it wrong.
+
     assert_eq!(
         render(&schema, &selection(7)),
         "(v0) | Busy(person: v0, kind == Kind(7?));"
     );
-    // The closed relation's own id field maps to itself.
+
     let own_id = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -219,8 +195,6 @@ fn closed_reference_handles_golden() {
     );
 }
 
-/// The Pack head, golden: relation-shaped coalesce — group key plus one
-/// packed interval position.
 #[test]
 fn pack_head_golden() {
     let query = Query::single(Rule {
@@ -240,8 +214,6 @@ fn pack_head_golden() {
     );
 }
 
-/// The Duration head, golden: the measure projected and folded, plus a
-/// measure comparison — `Duration(v)` in every legal position.
 #[test]
 fn membership_and_param_forms() {
     let query = Query::single(Rule {
@@ -261,17 +233,13 @@ fn membership_and_param_forms() {
             rhs: Term::Var(VarId(0)),
         })],
     });
-    // v0 needs a scalar anchor for validity; this golden pins the
-    // notation forms, so it stays a render-only shape.
+
     assert_eq!(
         render(&calendar(), &query),
         "(v0) | Busy(person in ?0, during: v1, kind == ?1), v0 in v1;"
     );
 }
 
-/// Totality on malformed data: unknown ids render as placeholders, the
-/// vacuous masks by name, nested trees functionally — the roster's
-/// rejections all still render.
 #[test]
 fn malformed_queries_render_with_placeholders() {
     let query = Query::single(Rule {
@@ -298,8 +266,6 @@ fn malformed_queries_render_with_placeholders() {
     );
 }
 
-/// A non-composite multi-basic mask joins singleton names with `|` (the
-/// mask-level bar is set union over the 13 basics).
 #[test]
 fn mask_union_spelling() {
     let mask =
