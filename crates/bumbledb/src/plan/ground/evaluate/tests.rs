@@ -1,6 +1,5 @@
 //! against the honest pipeline (validate → normalize → grounding) over a
 //! condition's refusal shape is easier to pin in isolation.
-
 use super::*;
 use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
