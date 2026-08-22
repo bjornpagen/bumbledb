@@ -10,7 +10,6 @@
 //! them), a coverage statement over a pointwise key, a `==` pair, and
 //! two σ-carrying containments whose targets can re-land a key determinant
 //! with a changed ψ-relevant non-key field.
-
 use crate::encoding::ValueRef;
 use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::Schema;
