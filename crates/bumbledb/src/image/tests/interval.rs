@@ -1,7 +1,3 @@
-//! PRD 14 criteria: an interval field decodes into two parallel 8-byte
-//! columns (start, end) — no 16-byte column kind — and inverted halves are
-//! corruption, aborting the build.
-
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::error::{CorruptionError, Error};
 use crate::image::{ColumnSpan, ColumnWidth, build};
@@ -18,7 +14,6 @@ use bumbledb_theory::schema::{
     SchemaDescriptor, ValueType,
 };
 
-/// T(id u64, during interval<i64>, kind bool).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -52,9 +47,6 @@ fn schema() -> Schema {
 
 const T: RelationId = RelationId(0);
 
-/// The rows, in insert (= scan) order: a fully negative interval, one
-/// crossing zero, one fully positive — starts ascending, so the golden
-/// word-order assertion pins the sign-flip.
 const ROWS: [(u64, i64, i64, bool); 3] = [(0, -100, -7, false), (1, -5, 9, true), (2, 3, 7, false)];
 
 fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
@@ -73,7 +65,6 @@ fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
     b
 }
 
-/// The biased I64 column word.
 fn w(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
@@ -102,7 +93,7 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
     assert_eq!(image.row_count(), 3);
 
     // The field→column map: three fields, four columns — the interval
-    // spans columns 1 and 2 (start, end), the bool lands at 3.
+
     assert_eq!(
         image.span(FieldId(0)),
         ColumnSpan {
@@ -125,10 +116,6 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
         }
     );
 
-    // Golden words per row (positions are scan ordinals — row ids are
-    // content hashes, so match rows by their id word): each half is the
-    // byte-order-normalized word of its scalar encoding, including the
-    // negative starts.
     let ids = image.column_words(0);
     let starts = image.column_words(1);
     let ends = image.column_words(2);
@@ -149,9 +136,6 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
     }
     assert_eq!(seen, [true; ROWS.len()], "every fixture row decoded");
 
-    // The sign-flip lands inside each half's encoding (never re-derived
-    // in image code): sorting the columns as u64 words yields exactly
-    // the i64 element order — negative bounds below positive.
     let mut start_words = starts.to_vec();
     start_words.sort_unstable();
     assert_eq!(start_words, [w(-100), w(-5), w(3)]);
@@ -166,8 +150,6 @@ fn inverted_interval_halves_abort_the_build() {
     let schema = schema();
     let env = populated(&dir, &schema);
 
-    // Hand-corrupt the last row's F value: same width, halves swapped —
-    // an interval whose encoded start ≥ end.
     let layout = schema.relation(T).layout();
     let offset = layout.field_offset(1);
     let mut corrupt = fact(&schema, 2, 3, 7, false);
