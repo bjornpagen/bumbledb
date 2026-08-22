@@ -17,39 +17,39 @@ import Bumbledb.Oracle
 import Bumbledb.Countermodels
 
 /-!
-# Bridge — the obligation ledger (PRD 10)
+# Bridge — the obligation ledger (
 
 The machine-listable Lean↔Rust boundary: one `Obligation` per premise
 the Rust engine discharges, collated from the modules' inline `Bridge:`
 notes (PRDs 02–09), replacing the prose theorem↔evidence table that
-lived in `docs/architecture/30-dependencies.md`.
+lived in.
 
 ## The two checked halves
 
 * **The Lean half is CHECKED BY THE BUILD.** Every row is constructed
-  through `Obligation.row`, whose first argument is the theorem ITSELF
-  (`@theoremName` — the chosen mechanism, recorded per the PRD: one
-  term-level reference inside each row, so a renamed or deleted theorem
-  is an unknown-constant elaboration error and `lake build` fails). The
-  `theoremName : Lean.Name` field is the machine-listable rendering of
-  the same reference.
+ through `Obligation.row`, whose first argument is the theorem ITSELF
+ (`@theoremName` — the chosen mechanism, recorded per the PRD: one
+ term-level reference inside each row, so a renamed or deleted theorem
+ is an unknown-constant elaboration error and `lake build` fails). The
+ `theoremName: Lean.Name` field is the machine-listable rendering of
+ the same reference.
 * **The Rust/docs half is CHECKED BY THE CENSUS**
-  (`scripts/spec-census.sh`, run via `scripts/lean.sh` and the CI lean
-  job): every `mechanism` and `instrument` token of the form
-  `symbol (path)` must find its path on disk and its symbol inside that
-  path; bare `crates/…` tokens must exist on disk; and every
-  `lean/…` citation in the surviving markdown (`lean/README.md`,
-  `lean/conformance/README.md`, `docs/cookbook.md`, `ts/COOKBOOK.md`,
-  `proposals/`) must resolve to a real declaration in this tree.
+ (`scripts/spec-census.sh`, run via `scripts/lean.sh` and the CI lean
+ job): every `mechanism` and `instrument` token of the form
+ `symbol (path)` must find its path on disk and its symbol inside that
+ path; bare `crates/…` tokens must exist on disk; and every
+ `lean/…` citation in the surviving markdown (`lean/README.md`,
+ `lean/conformance/README.md`, `docs/cookbook.md`, `ts/COOKBOOK.md`,
+ `proposals/`) must resolve to a real declaration in this tree.
 
 ## String conventions (the census's parse contract)
 
 * `premise` is ONE prose sentence — no `::`, no `crates/`
-  (any such token would make the census scan it).
+ (any such token would make the census scan it).
 * `mechanism` and `instrument` are census-scanned: semicolon-joined
-  `symbol (path)` pairs (the symbol's final `::`-segment must grep
-  word-bounded inside the path) and bare repository paths (existence).
-  An instrument names a test fn or a conformance case.
+ `symbol (path)` pairs (the symbol's final `::`-segment must grep
+ word-bounded inside the path) and bare repository paths (existence).
+ An instrument names a test fn or a conformance case.
 
 ## The inline residue
 
@@ -67,14 +67,14 @@ mechanism that discharges it, and the instrument that empirically
 watches the seam. -/
 structure Obligation where
   /-- The fully qualified theorem name (the machine-listable half of
-  the checked reference `Obligation.row` carries). -/
+ the checked reference `Obligation.row` carries). -/
   theoremName : Lean.Name
   /-- One sentence: what Lean assumes. -/
   premise : String
   /-- The Rust discharge site, exact: `symbol (path)`. -/
   mechanism : String
   /-- What empirically watches the seam: a test fn or conformance
-  case — `symbol (path)` or a bare repository path. -/
+ case — `symbol (path)` or a bare repository path. -/
   instrument : String
 
 /-- The checked row constructor — the PRD's "lightest mechanism that
@@ -85,12 +85,10 @@ def Obligation.row {α : Sort u} (_checked : α) (theoremName : Lean.Name)
     (premise mechanism instrument : String) : Obligation :=
   { theoremName, premise, mechanism, instrument }
 
-/-- The obligation ledger. Ordered by PRD (02 → 09, then the fresh
+/-- The obligation ledger. Ordered by → 09, then the fresh
 allocation model); collated exhaustively from the module docs'
 `Bridge:` notes. -/
 def ledger : List Obligation := [
-
-  /- ## PRD 02 — Values -/
 
   .row @interval_nonempty `Bumbledb.interval_nonempty
     "Every representable interval denotes a nonempty point set — the invariant the constructor discharges by parsing, never validating."
@@ -141,8 +139,6 @@ def ledger : List Obligation := [
     "The Q2 bound of the fixed-width interval family: start plus width sits strictly below the ceiling, so a fixed-width value is never a ray and its one-word encoding re-derives the end without loss — the constructor discharges the bound by parsing."
     "crate::Interval::fixed (crates/bumbledb-theory/src/interval.rs); crate::schema::value_matches (crates/bumbledb-theory/src/schema.rs); encoding/decode.rs::decode_fixed_interval_start (crates/bumbledb/src/encoding/decode.rs)"
     "fixed_parses_the_q2_bound (crates/bumbledb-theory/src/interval.rs); fixed_interval_round_trips_one_word (crates/bumbledb/src/encoding/tests.rs); fixed_interval_decode_rejects_a_start_at_the_q2_bound (crates/bumbledb/src/encoding/tests.rs)",
-
-  /- ## PRD 03 — Schema and Dependencies -/
 
   .row @den_closed_constant `Bumbledb.den_closed_constant
     "Ground axioms are constants of the theory: a closed relation denotes the same sealed fact set at every instance, so closed-to-closed statements are decided at validate outright."
@@ -228,8 +224,6 @@ def ledger : List Obligation := [
     "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs)"
     "a_redundant_pointwise_superkey_remains_sealed (crates/bumbledb/src/schema/tests/valid.rs); a_redundant_superkey_still_enforces_both_keys (crates/bumbledb/tests/schema_macro.rs); equality_rejects_a_singleton_reverse_projection_without_a_left_key (crates/bumbledb/src/schema/tests/reject.rs)",
 
-  /- ## PRD 04 — Query denotation -/
-
   .row @Query.matches_def `Bumbledb.Query.matches_def
     "The matching equation: a fact matches an atom iff every binding's term selects the fact's value at that field, absence of a field being the wildcard."
     "crate::ir::Atom (crates/bumbledb/src/ir.rs)"
@@ -310,8 +304,6 @@ def ledger : List Obligation := [
     "context.rs::check_atoms (crates/bumbledb/src/ir/validate/context.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
 
-  /- ## PRD 05 — Aggregates -/
-
   .row @checkedSum_sound `Bumbledb.checkedSum_sound
     "A successful checked sum is the mathematical sum within bounds — an emitted Sum is exact, and overflow is a typed error, never a wrap."
     "finalize.rs::finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
@@ -367,8 +359,6 @@ def ledger : List Obligation := [
     "finalize.rs::finalize_into (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
     "global_aggregate_over_empty_input_yields_zero_rows (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
 
-  /- ## PRD 06 — the sweep -/
-
   .row @Exec.sweep_covered_sound_complete `Bumbledb.Exec.sweep_covered_sound_complete
     "THE witness-token theorem: under ordered-and-disjoint — precisely what the proof token attests — the one-pass coverage verdict equals the point-subset denotation (soundness needs no premise; completeness spends only order; disjointness licences the predecessor-seek entry below the fold)."
     "crate::schema::DisjointDeterminantProof (crates/bumbledb/src/schema.rs); Checker::check_coverage (crates/bumbledb/src/storage/commit/judgment.rs)"
@@ -399,8 +389,6 @@ def ledger : List Obligation := [
     "interval/sweep.rs::sweep (crates/bumbledb/src/interval/sweep.rs)"
     "adjacency_continues_and_the_minimal_gap_breaks (crates/bumbledb/src/interval/sweep.rs)",
 
-  /- ## PRD 07 — dedup and the elision licences -/
-
   .row @Query.seenfold_is_set_semantics `Bumbledb.Query.seenfold_is_set_semantics
     "The seen-set IS set semantics: first-occurrence filtering of the emitted stream computes exactly the answer set — the sinks are where union lives."
     "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
@@ -430,8 +418,6 @@ def ledger : List Obligation := [
     "The membership mint is fold-invisible: aggregates over the lowered rule with the minted interval variable projected away equal aggregates over the surface reading — the fold-level companion of the membership lowering."
     "normalize.rs::is_membership (crates/bumbledb/src/ir/normalize/normalize.rs); crates/bumbledb/src/exec/sink.rs"
     "crates/bumbledb-bench/src/conformance.rs",
-
-  /- ## PRD 08 — the rewrites -/
 
   .row @Query.grounding_preserves_answers `Bumbledb.Query.grounding_preserves_answers
     "Grounding is denotation-preserving partial evaluation: on any instance agreeing with the ground axioms, the folded contribution means exactly what the closed atom meant, and rule death is honest emptiness."
@@ -478,8 +464,6 @@ def ledger : List Obligation := [
     "fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::constant_order_bound (crates/bumbledb/src/ir/normalize/fold.rs); crate::encoding::encode::encode_u64 (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_i64 (crates/bumbledb/src/encoding/encode.rs)"
     "folded_and_unfolded_executions_agree_on_random_single_slot_filters (crates/bumbledb/src/api/prepared/tests/statically_empty.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs)",
 
-  /- ## PRD 09 — the lifecycle -/
-
   .row @Txn.final_state_judgment_order_free `Bumbledb.Txn.final_state_judgment_order_free
     "Judgment is a function of the final state alone: any two op sequences with one final state receive one verdict — operation order is not representable in the judge's input."
     "judgment.rs::FinalStateView (crates/bumbledb/src/storage/commit/judgment.rs)"
@@ -515,8 +499,6 @@ def ledger : List Obligation := [
     "ReadInstance::scan (crates/bumbledb/src/api/db/read_instance.rs); Db::write (crates/bumbledb/src/api/db/write.rs)"
     "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)",
 
-  /- ## The fresh allocation model -/
-
   .row @Txn.Fresh.never_reissue_observable
     `Bumbledb.Txn.Fresh.never_reissue_observable
     "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; EVERY transaction persists its final mark — committed, no-op, or aborted alike — because reserve already handed the id to the host (an aborted run is NOT discarded)."
@@ -534,8 +516,6 @@ def ledger : List Obligation := [
     "The auto-materialized key statement rides the ordinary final-state judgment — ids are writable-by-default, so the statement, never the generator, owns uniqueness."
     "SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
     "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
-
-  /- ## The interiors/reach cut (Exec/Reach.lean) -/
 
   .row @Query.evalQuery_cq `Bumbledb.Query.evalQuery_cq
     "Empty-prefix cq denotes the union of its main rules over the instance."
@@ -587,8 +567,6 @@ def ledger : List Obligation := [
     "RecArm (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); answers_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
     "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
 
-  /- ## The judgment conformance lane (Decide.lean) -/
-
   .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
     "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge — the write-side third oracle's license."
     "render_fixture (crates/bumbledb-bench/src/conformance/judgment.rs); SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
@@ -598,8 +576,6 @@ def ledger : List Obligation := [
     "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — under no premise beyond the closed-roster merge."
     "judge (crates/bumbledb/src/storage/commit/judgment.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)",
-
-  /- ## Complete initial admission (instance-lifetime L1, L2, L3, L4, L5) -/
 
   .row @Txn.completeKeyViolations_eq `Bumbledb.Txn.completeKeyViolations_eq
     "On a theory whose closed-constant obligations hold, the complete key roster is the key-phase citation set — validation has emptied the closed-functionality slice the roster skips."
