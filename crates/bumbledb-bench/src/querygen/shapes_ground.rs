@@ -1,27 +1,9 @@
-//! The grounding shapes (`docs/architecture/40-execution.md` § the grounding;
-//! `60-validation.md` generator contract): deliberately eliminable join
-//! geometry — the existence walk (the containment target joined on its
-//! full key with nothing else read from it) and the discriminated-union
-//! one-sided walk in both `==` directions — plus the near-miss refusals
-//! (one extra projected target field; missing φ), so the randomized
-//! differential exercises the rewrite *and* its refusals: the naive
-//! model and `SQLite` compute the unrewritten query, which is the
-//! differential. These shapes are neither dressed nor negated
-//! (`construct.rs`): a random predicate landing on the target atom
-//! would flip an eliminable shape to a refusal nondeterministically,
-//! and the coverage contract asserts each variant appears per run.
-
 use bumbledb::{FieldId, FindTerm, RelationId, Term, Value};
 
 use crate::corpus_gen::Rng;
 use crate::querygen::target::{SOURCE_IMPORT, ids};
 use crate::querygen::{Builder, GroundVariant};
 
-/// The containment walks the existence shape rotates over: (source
-/// relation, reference field, source payload field, target relation,
-/// target key field, extra target field for the near-miss variant) —
-/// one row per scalar containment of the target schema whose source
-/// carries a payload to project.
 const WALKS: &[(RelationId, FieldId, FieldId, RelationId, FieldId, FieldId)] = &[
     (
         ids::POSTING,
@@ -81,11 +63,6 @@ const WALKS: &[(RelationId, FieldId, FieldId, RelationId, FieldId, FieldId)] = &
     ),
 ];
 
-/// The existence walk: source atom projecting its own payload, target
-/// joined on its full key. A third of the draws are the near-miss
-/// (one extra projected target field — must refuse); a third of the
-/// rest fold under an aggregate sink (the rewrite is sink-independent,
-/// `40-execution.md`).
 pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
     let idx = usize::try_from(rng.range(WALKS.len() as u64)).expect("small");
     let (source_rel, ref_field, payload_field, target_rel, key_field, extra_field) = WALKS[idx];
@@ -95,16 +72,14 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
     let target = b.add_atom(target_rel);
     b.bind(target, key_field, Term::Var(join));
     match rng.range(9) {
-        // Near-miss (a third): the target produces output, so
-        // condition 2 fails.
+
         0..=2 => {
             b.find_var(payload);
             let extra = b.bind_var(target, extra_field);
             b.find_var(extra);
             b.ground = Some(GroundVariant::WalkExtraField);
         }
-        // The aggregate sink over the eliminable walk: fold per join
-        // key, the payload bound but unprojected.
+
         3 | 4 => {
             b.find_var(join);
             b.finds.push(FindTerm::Count);
@@ -117,12 +92,6 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// The discriminated-union one-sided walk over
-/// `JournalEntry(id | source == Import) == ImportBatch(entry)`: the
-/// header falls (child-to-header direction), the child falls
-/// (header-to-child direction), or the missing-φ near-miss (the header
-/// occurrence without `source == Import` — its facts are not all in
-/// σφ, so the grounding must refuse).
 pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
     let import = Term::Literal(Value::U64(SOURCE_IMPORT));
     match rng.range(3) {
