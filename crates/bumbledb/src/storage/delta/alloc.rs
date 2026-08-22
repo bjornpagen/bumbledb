@@ -7,9 +7,7 @@ use super::{FreshMark, WriteDelta};
 
 impl WriteDelta<'_> {
     /// `EscapedIdBurn` drop guard for the closure region, which covers
-
     /// # Errors
-
     /// (the dyn boundary's foreign-witness refusal — see
     pub fn reserve(
         &mut self,
@@ -30,9 +28,7 @@ impl WriteDelta<'_> {
     }
 
     /// The lazy init is the dyn boundary's foreign-witness refusal
-
     /// typed before any `Q` key is touched — priced once per
-
     pub(super) fn fresh_mark(
         &mut self,
         view: &ReadTxn<'_>,
