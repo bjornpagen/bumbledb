@@ -18,7 +18,6 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
 
     let mut prev_pointwise: Option<Vec<u8>> = None;
     for_namespace(s.catalog, keys::Namespace::Determinant, |key, value| {
-
         let Some((rel, sid, determinant)) = keys::parse_determinant_key(key) else {
             s.malformed(key, "U key length");
             prev_pointwise = None;
@@ -90,7 +89,6 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             return Ok(());
         };
         if determinant.len() < tail.width() {
-
             prev_pointwise = None;
             return Ok(());
         }
