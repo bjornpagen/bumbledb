@@ -145,8 +145,8 @@ const report = JSON.stringify({
 	deletedGrp: String(seeded.deletedGrp),
 	task: String(seeded.task),
 	attempt: String(seeded.attempt),
-	grpRows: db.scan(grp).length,
-	grpMemberRows: db.scan(grpMember).length
+	grpRows: db.read((i) => i.scan(grp)).length,
+	grpMemberRows: db.read((i) => i.scan(grpMember)).length
 })
 process.stdout.write(`${report}\n`)
 

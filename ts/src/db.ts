@@ -541,8 +541,7 @@ const preparedTypes: unique symbol = Symbol("bumbledb.prepared.types")
  * One prepared query as a plain VALUE: explicit visible compilation
  * (`db.prepare(q)` lowers, pins the plan, and surfaces every engine roster
  * refusal), no lifecycle. Execution happens ONLY through
- * `instance.execute(prepared, params)` / `db.execute(prepared, params)` — the
- * symmetry rule's one spelling. The engine-side plan is reclaimed by a GC
+ * `instance.execute(prepared, params)`. The engine-side plan is reclaimed by a GC
  * finalizer when this value becomes unreachable (reclamation only, never
  * correctness — an unreclaimed plan is idle memory, and process exit frees
  * everything).
@@ -552,7 +551,7 @@ interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecor
 }
 
 /**
- * An open store. There is no close: read through `read`/the read sugar,
+ * An open store. There is no close: read through `read`,
  * write through `write`/`writeFrom`, and let the process own the
  * environment's lifetime (the engine fsyncs every commit, so durability
  * never waits on a close). A second `open`/`create` of the same path
@@ -569,22 +568,6 @@ interface Db<Rels extends SchemaRelations> {
 	 * throws {@link ErrAsyncCallback}.
 	 */
 	read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R>
-	/** `db.scan(r)` === `db.read(instance => instance.scan(r))` — the symmetry rule. */
-	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
-	/** `db.count(r)` === `db.read(instance => instance.count(r))` — the symmetry rule. */
-	count<R extends MemberRelation<Rels>>(relation: R): bigint
-	/** `db.get(r, k)` === `db.read(instance => instance.get(r, k))` — the symmetry rule. */
-	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	/** `db.get(r, s, k)` === `db.read(instance => instance.get(r, s, k))` — the symmetry rule, keyed form. */
-	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-	/** `db.contains(r, f)` === `db.read(instance => instance.contains(r, f))` — the symmetry rule. */
-	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-	/** `db.execute(p, params)` === `db.read(instance => instance.execute(p, params))` — the symmetry rule. */
-	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
 	/**
 	 * One delta transaction: builds the delta synchronously through `fn`,
 	 * commits, and returns the domain outcome. A throw from `fn` aborts
@@ -767,10 +750,8 @@ function isStatementValue<R extends AnyRelation, P extends readonly string[]>(
  * THE one selector dispatch of the `get` overload pair (primary-key vs
  * key-statement, `docs/architecture/70-api.md` § the freeze): judges the
  * middle argument once and hands the narrowed pieces to the chosen
- * continuation. `Db.get` and the read scope's `get` both dispatch through
- * here, so the two mismatch refusals speak with one voice and the symmetry
- * rule (`db.get(...) === db.read(snap => snap.get(...))`) holds by
- * construction.
+ * continuation. Every keyed get on a read scope, write tx, and builder
+ * dispatches through here, so the two mismatch refusals speak with one voice.
  */
 function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
 	keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
@@ -1502,57 +1483,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return (captured ?? result) as SyncResult<R>
 	}
 
-	function scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[] {
-		return read(function scanInScope(instance) {
-			return instance.scan(relation)
-		})
-	}
-
-	function count<R extends MemberRelation<Rels>>(relation: R): bigint {
-		return read(function countInScope(instance) {
-			return instance.count(relation)
-		})
-	}
-
-	function get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-		declaredKey?: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined {
-		let found: Fact<R> | undefined
-		read(function getInScope(instance) {
-			found = selectKeyRead(
-				keyOrStatement,
-				declaredKey,
-				function byStatement(statement, key) {
-					return instance.get(relation, statement, key)
-				},
-				function byPrimary(key) {
-					return instance.get(relation, key)
-				}
-			)
-		})
-		return found
-	}
-
-	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-		return read(function containsInScope(instance) {
-			return instance.contains(relation, fact)
-		})
-	}
-
-	function execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[] {
-		return read(function executeInScope(instance) {
-			return instance.execute(prepared, params)
-		})
-	}
-
 	function makeTx(resolveTx: () => TxHandle): { readonly tx: WriteTx<Rels>; spend(): void } {
 		const txState = { spent: false }
 		function assertLive(): void {
@@ -1737,11 +1667,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	return Object.freeze({
 		schema: theory,
 		read,
-		scan,
-		count,
-		get,
-		contains,
-		execute,
 		write,
 		writeFrom,
 		prepare

@@ -262,7 +262,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 	test("Q1: the 8-way conjunctive rule prepares and answers correctly", function multiWay() {
 		const prepared = db.prepare(taughtContract)
-		const rows = db.execute(prepared, { program: progA })
+		const rows = db.read((i) => i.execute(prepared, { program: progA }))
 		assert.equal(rows.length, MEMBERS_PER_PROGRAM / 3, "one contract row per Taught member of program A")
 
 		// the stitch is correct — spot-check the pos-0 member's whole contract:
@@ -282,7 +282,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		assert.equal(first.nearMissText, "cap-text-1", "Capability joined TWICE decodes both texts")
 
 		// program B answers independently through the same prepared value:
-		assert.equal(db.execute(prepared, { program: progB }).length, MEMBERS_PER_PROGRAM / 3)
+		assert.equal(db.read((i) => i.execute(prepared, { program: progB })).length, MEMBERS_PER_PROGRAM / 3)
 	})
 
 	test("Q1: the planning cliff is the occurrence cap — 21 atoms refuse typed at prepare, 8 has headroom", function cliff() {
@@ -301,8 +301,8 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	})
 
 	test("Q2 candidate A (SANCTIONED): one prepared query per kind-arm, host-concatenated", function armPerKind() {
-		const taught = db.execute(db.prepare(taughtContract), { program: progA })
-		const rest = db.execute(db.prepare(restMembers), { program: progA })
+		const taught = db.read((i) => i.execute(db.prepare(taughtContract), { program: progA }))
+		const rest = db.read((i) => i.execute(db.prepare(restMembers), { program: progA }))
 		assert.equal(taught.length, 50)
 		assert.equal(rest.length, 100)
 		for (const row of rest) {
@@ -316,8 +316,8 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		const project = function project(rows: readonly { m: bigint; c: bigint; pos: bigint }[]) {
 			return rows.map((row) => ({ m: row.m, c: row.c, pos: row.pos })).sort(byPos)
 		}
-		assert.deepEqual(project(db.execute(db.prepare(restExplicit), { program: progA })), project(rest))
-		assert.deepEqual(project(db.execute(db.prepare(restUnion), { program: progA })), project(rest))
+		assert.deepEqual(project(db.read((i) => i.execute(db.prepare(restExplicit), { program: progA }))), project(rest))
+		assert.deepEqual(project(db.read((i) => i.execute(db.prepare(restUnion), { program: progA }))), project(rest))
 	})
 
 	test("Q2 candidate B (REFUSED): a union head cannot drop the contract columns — absence is unrepresentable", function unionWall() {
@@ -396,8 +396,8 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 	test("Q4: answers are sets — the host sorts; two executions agree", function ordering() {
 		const prepared = db.prepare(restMembers)
-		const first = [...db.execute(prepared, { program: progB })].sort(byPos)
-		const second = [...db.execute(prepared, { program: progB })].sort(byPos)
+		const first = [...db.read((i) => i.execute(prepared, { program: progB }))].sort(byPos)
+		const second = [...db.read((i) => i.execute(prepared, { program: progB }))].sort(byPos)
 		assert.equal(first.length, 100)
 		for (let i = 1; i < first.length; i++) {
 			assert.ok(
@@ -463,7 +463,7 @@ describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function pri
 			put(tx, Requires, { consumer: b.id, capability: 1n, state: "Upheld" })
 		})
 		assert.equal(seeded.tag, "accepted", "a one-edge DAG lands")
-		const rows = db.execute(db.prepare(requiresCycleQuery), {})
+		const rows = db.read((i) => i.execute(db.prepare(requiresCycleQuery), {}))
 		assert.deepEqual(rows, [], "empty answers = DAG")
 	})
 })

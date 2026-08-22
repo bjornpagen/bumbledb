@@ -2,14 +2,13 @@
  * The exact-count pins (one-representation PRD 40) against a REAL durable
  * store: `count` is a structural read of the engine's maintained counter —
  * never a scan, never an estimate, `bigint` by the wire law — and one name
- * at every layer. Six pins: count ≡ BigInt(scan().length) in the SAME
+ * at every layer. Five pins: count ≡ BigInt(scan().length) in the SAME
  * lease after mixed commits (the TS twin of the engine pin); the snapshot
  * law (a held lease reports the pre-commit count, a fresh lease the new
  * one); an empty relation is `0n` — a value, never an empty result to
  * reinterpret; a closed relation is a type error (`MemberRelation`
  * excludes it, exactly as `scan`) AND the runtime wall throws on the
- * untyped path; `db.count` obeys the symmetry rule in the same words as
- * the other sugars; and `OwnedInstance.count` agrees with its own scan of
+ * untyped path; and `OwnedInstance.count` agrees with its own scan of
  * the one frozen catalog.
  */
 
@@ -103,16 +102,6 @@ describe("the exact count against a real store", function suite() {
 				instance.count(Kind)
 			})
 		}, /closed/)
-	})
-
-	test("db.count(r) === db.read(instance => instance.count(r)) — the symmetry rule", function symmetry() {
-		assert.equal(
-			db.count(Holder),
-			db.read(function countInScope(instance) {
-				return instance.count(Holder)
-			})
-		)
-		assert.equal(db.count(Unwritten), 0n)
 	})
 
 	test("OwnedInstance.count agrees with its scan of the one frozen catalog", async function ownedCount() {

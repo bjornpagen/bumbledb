@@ -114,10 +114,10 @@ describe("the marshal bijection over closed rosters", function suite() {
 			assert.strictEqual(read.kind, "Savings", "the tx point read decodes the id back to the NAME")
 		})
 		assert.equal(written.tag, "accepted", "the seed commit lands")
-		const rows = db.scan(Account)
+		const rows = db.read((i) => i.scan(Account))
 		assert.equal(rows.length, 1)
 		assert.strictEqual(must(rows[0]).kind, "Savings", "scan decodes the id back to the NAME")
-		const got = db.get(Account, { id: must(ids.savings) })
+		const got = db.read((i) => i.get(Account, { id: must(ids.savings) }))
 		assert.strictEqual(must(got).kind, "Savings", "get decodes the id back to the NAME")
 	})
 
@@ -131,7 +131,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 			)
 		})
 		assert.equal(cycle.tag, "accepted", "the net-zero delta commits")
-		assert.equal(db.scan(Account).length, 1, "the checking row died in its own delta")
+		assert.equal(db.read((i) => i.scan(Account)).length, 1, "the checking row died in its own delta")
 	})
 
 	test("an unknown handle name is a pointed write refusal (the 0.4.0 upgrade)", function unknownName() {
@@ -153,7 +153,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 				tx.insert(Account, [{ id: 1n, kind: 1n }])
 			})
 		}, /expected a Kind handle name \(string\), got bigint/)
-		assert.equal(db.scan(Account).length, 1, "both refusals aborted before any commit")
+		assert.equal(db.read((i) => i.scan(Account)).length, 1, "both refusals aborted before any commit")
 	})
 
 	test("a violation's offending fact speaks the NAME and agrees with canonical", function violationNames() {

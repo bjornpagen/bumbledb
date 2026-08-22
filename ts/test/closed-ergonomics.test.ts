@@ -162,7 +162,7 @@ describe("handles named like methods — pure data, no reserved names", function
 			assert.equal(typeof written.id, "bigint")
 		})
 		assert.equal(result.tag, "accepted", "the commit lands")
-		const rows = db.scan(Uses)
+		const rows = db.read((i) => i.scan(Uses))
 		assert.equal(rows.length, 1)
 		assert.equal(rows[0]?.kind, "match", "the decoded fact speaks the handle name")
 	})

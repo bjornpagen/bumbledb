@@ -215,7 +215,7 @@ describe("the Db runtime against a real store", function suite() {
 			assert.equal(reinserted.id, ada)
 		})
 		assert.equal(result.tag, "accepted")
-		const holders = db.scan(Holder)
+		const holders = db.read((i) => i.scan(Holder))
 		assert.equal(holders.length, 1)
 		assert.deepStrictEqual(holders[0], { id: ada, name: "ada lovelace" })
 	})
@@ -253,20 +253,20 @@ describe("the Db runtime against a real store", function suite() {
 	test("the db.X sugar obeys the symmetry rule db.X(...) === db.read(snap => snap.X(...))", function symmetry() {
 		const audit = must(ids.audit)
 		assert.deepStrictEqual(
-			db.get(Audit, { id: audit }),
+			db.read((i) => i.get(Audit, { id: audit })),
 			db.read(function getInScope(snap) {
 				return snap.get(Audit, { id: audit })
 			})
 		)
 		assert.deepStrictEqual(
-			db.scan(Audit),
+			db.read((i) => i.scan(Audit)),
 			db.read(function scanInScope(snap) {
 				return snap.scan(Audit)
 			})
 		)
-		const fact = must(db.get(Audit, { id: audit }))
+		const fact = must(db.read((i) => i.get(Audit, { id: audit })))
 		assert.equal(
-			db.contains(Audit, fact),
+			db.read((i) => i.contains(Audit, fact)),
 			db.read(function containsInScope(snap) {
 				return snap.contains(Audit, fact)
 			})
@@ -289,13 +289,13 @@ describe("the Db runtime against a real store", function suite() {
 			put(tx, Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
 		})
 		assert.equal(setup.tag, "accepted")
-		assert.deepStrictEqual(db.get(SavingsTerms, { account: must(ids.graceAccount) }), {
+		assert.deepStrictEqual(db.read((i) => i.get(SavingsTerms, { account: must(ids.graceAccount) })), {
 			account: ids.graceAccount,
 			rate: 3n
 		})
-		assert.equal(db.get(SavingsTerms, { account: must(ids.adaAccount) }), undefined)
+		assert.equal(db.read((i) => i.get(SavingsTerms, { account: must(ids.adaAccount) })), undefined)
 		assert.throws(function missingKeyField() {
-			db.get(SavingsTerms, {})
+			db.read((i) => i.get(SavingsTerms, {}))
 		}, /missing field account/)
 	})
 
@@ -398,7 +398,7 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("writeFrom lands a clean witnessed commit", function witnessedCommit() {
 		const outcome = db.read(function seed(_instance, witness) {
-			const holders = db.scan(Holder)
+			const holders = db.read((i) => i.scan(Holder))
 			assert.ok(holders.length > 0)
 			return db.writeFrom(witness, function insert(tx) {
 				put(tx, Holder, { name: "witnessed" })
@@ -410,7 +410,7 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("writeFrom reports moved on self-inflicted contention — retry is host policy", function witnessedMoved() {
 		const outcome = db.read(function compute(_instance, witness) {
-			const holders = db.scan(Holder)
+			const holders = db.read((i) => i.scan(Holder))
 			const mover = db.write(function race(inner) {
 				put(inner, Holder, { name: "wit-mover" })
 			})
@@ -420,7 +420,7 @@ describe("the Db runtime against a real store", function suite() {
 			})
 		})
 		assert.equal(outcome.tag, "moved", "the one-shot writeFrom reports moved instead of retrying")
-		const landed = db.scan(Holder).filter(function witnessedRows(holder) {
+		const landed = db.read((i) => i.scan(Holder)).filter(function witnessedRows(holder) {
 			return holder.name.startsWith("wit-count-")
 		})
 		assert.equal(landed.length, 0, "the stale-premise attempt never committed")
@@ -456,7 +456,7 @@ describe("the Db runtime against a real store", function suite() {
 			return instance.generation
 		})
 		assert.equal(after, before, "no commit was issued on the abandon path")
-		const ghosts = db.scan(Holder).filter(function abandonedRows(holder) {
+		const ghosts = db.read((i) => i.scan(Holder)).filter(function abandonedRows(holder) {
 			return holder.name === "never-lands"
 		})
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
@@ -499,7 +499,7 @@ describe("the Db runtime against a real store", function suite() {
 			before,
 			"no commit was issued, not even an empty one"
 		)
-		const ghosts = db.scan(Holder).filter(function abandonedRows(holder) {
+		const ghosts = db.read((i) => i.scan(Holder)).filter(function abandonedRows(holder) {
 			return holder.name === "write-abandon-never-lands"
 		})
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
@@ -597,7 +597,7 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("the live handle still reads every committed fact", function liveReads() {
-		const ada = db.get(Holder, { id: must(ids.ada) })
+		const ada = db.read((i) => i.get(Holder, { id: must(ids.ada) }))
 		assert.ok(ada, "the committed data reads back")
 		assert.equal(ada.name, "ada lovelace")
 	})

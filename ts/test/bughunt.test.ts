@@ -81,14 +81,14 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			put(tx, Num, { u: 0n, s: I64_MAX })
 		})
 		assert.equal(written.tag, "accepted")
-		const back = must(db.get(Num, { id: must(id) }))
+		const back = must(db.read((i) => i.get(Num, { id: must(id) })))
 		assert.equal(back.u, U64_MAX)
 		assert.equal(back.s, I64_MIN)
-		const max = db.scan(Num).find(function byS(row) {
+		const max = db.read((i) => i.scan(Num)).find(function byS(row) {
 			return row.s === I64_MAX
 		})
 		assert.ok(max, "the i64::MAX row reads back")
-		assert.equal(db.contains(Num, { id: must(id), u: U64_MAX, s: I64_MIN }), true, "contains agrees at the extremes")
+		assert.equal(db.read((i) => i.contains(Num, { id: must(id), u: U64_MAX, s: I64_MIN })), true, "contains agrees at the extremes")
 	})
 
 	test("out-of-range bigints throw typed errors naming the position", function bigintRange() {
@@ -132,7 +132,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			id = put(tx, Blob, { tag: view }).id
 		})
 		assert.equal(written.tag, "accepted")
-		assert.deepStrictEqual(must(db.get(Blob, { id: must(id) })).tag, new Uint8Array([7, 7, 7, 7]))
+		assert.deepStrictEqual(must(db.read((i) => i.get(Blob, { id: must(id) }))).tag, new Uint8Array([7, 7, 7, 7]))
 	})
 
 	test("interval rays (end = MAX_END) round-trip in both element domains", function rays() {
@@ -141,10 +141,10 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			id = put(tx, Ray, { at: span(3n, U64_MAX), sat: span(I64_MIN, I64_MAX) }).id
 		})
 		assert.equal(written.tag, "accepted")
-		const back = must(db.get(Ray, { id: must(id) }))
+		const back = must(db.read((i) => i.get(Ray, { id: must(id) })))
 		assert.deepEqual(back.at, { start: 3n, end: U64_MAX })
 		assert.deepEqual(back.sat, { start: I64_MIN, end: I64_MAX })
-		assert.equal(db.contains(Ray, back), true)
+		assert.equal(db.read((i) => i.contains(Ray, back)), true)
 	})
 
 	test("an empty interval smuggled past span() is refused typed at the bridge", function emptyInterval() {
@@ -193,9 +193,9 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			astralId = put(tx, Txt, { note: "𝔽😀́" }).id
 		})
 		assert.equal(written.tag, "accepted")
-		assert.equal(must(db.get(Txt, { id: must(emptyId) })).note, "")
-		assert.equal(must(db.get(Txt, { id: must(astralId) })).note, "𝔽😀́")
-		assert.equal(db.contains(Txt, { id: must(emptyId), note: "" }), true)
+		assert.equal(must(db.read((i) => i.get(Txt, { id: must(emptyId) }))).note, "")
+		assert.equal(must(db.read((i) => i.get(Txt, { id: must(astralId) }))).note, "𝔽😀́")
+		assert.equal(db.read((i) => i.contains(Txt, { id: must(emptyId), note: "" })), true)
 	})
 
 	test("a lone surrogate is refused typed — never silently mangled", function loneSurrogate() {
@@ -223,7 +223,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.equal(seeded.tag, "accepted")
 		assert.throws(
 			function containsRefused() {
-				db.contains(Txt, { id: must(id), note: "\uDC00" })
+				db.read((i) => i.contains(Txt, { id: must(id), note: "\uDC00" }))
 			},
 			/well-formed string/,
 			"the lookup path refuses too — a never-written fact must not answer"
@@ -270,7 +270,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const prepared = db.prepare(byNote)
 		assert.throws(
 			function paramRefused() {
-				db.execute(prepared, { note: "\uD800" })
+				db.read((i) => i.execute(prepared, { note: "\uD800" }))
 			},
 			/well-formed string/,
 			"the execute-time string param is refused"
@@ -386,14 +386,14 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a thrown write callback aborts the delta and leaves the store writable", function thrownWrite() {
-		const before = db.scan(Num).length
+		const before = db.read((i) => i.scan(Num)).length
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
 				put(tx, Num, { u: 1n, s: 1n })
 				throw errors.new("host boom")
 			})
 		}, /host boom/)
-		assert.equal(db.scan(Num).length, before, "the recorded insert never landed")
+		assert.equal(db.read((i) => i.scan(Num)).length, before, "the recorded insert never landed")
 		const next = db.write(function fine(tx) {
 			put(tx, Num, { u: 2n, s: 2n })
 		})
@@ -401,7 +401,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a thrown witnessed callback (after a delta verb) aborts and frees the writer", function thrownWitnessed() {
-		const before = db.scan(Num).length
+		const before = db.read((i) => i.scan(Num)).length
 		assert.throws(function boom() {
 			db.read(function boom(_instance, witness) {
 				return db.writeFrom(witness, function bad(tx) {
@@ -410,7 +410,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 				})
 			})
 		}, /witnessed boom/)
-		assert.equal(db.scan(Num).length, before)
+		assert.equal(db.read((i) => i.scan(Num)).length, before)
 		const next = db.write(function fine(tx) {
 			put(tx, Num, { u: 4n, s: 4n })
 		})
@@ -436,7 +436,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 
 	test("an async write callback is refused — never a silent empty commit", async function asyncCallback() {
 		const before = db.read((instance) => instance.generation)
-		const beforeRows = db.scan(Num).length
+		const beforeRows = db.read((i) => i.scan(Num)).length
 		let lateError: unknown
 		/**
 		 * NOTE: `write` now types the callback as `SyncResult` (thenables are
@@ -466,7 +466,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			 * an ok:true result is the defect this probes for.
 			 */
 			assert.equal(lateError, undefined, "the callback's inserts must not throw spent")
-			assert.equal(db.scan(Num).length, beforeRows + 1, "the insert must land if admitted")
+			assert.equal(db.read((i) => i.scan(Num)).length, beforeRows + 1, "the insert must land if admitted")
 		} else {
 			assert.match(
 				attempt.error.toString(),

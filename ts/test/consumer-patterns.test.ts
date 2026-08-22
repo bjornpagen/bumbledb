@@ -144,16 +144,16 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		const { report, child } = await spawnChild("create", dir)
 		await waitExit(child)
 		const db = await Db.open(dir, runStoreSchema)
-		assert.equal(db.scan(grp).length, report.grpRows)
-		assert.equal(db.scan(grpMember).length, report.grpMemberRows)
+		assert.equal(db.read((i) => i.scan(grp)).length, report.grpRows)
+		assert.equal(db.read((i) => i.scan(grpMember)).length, report.grpMemberRows)
 		const sheetRow = must(
-			db.scan(sheet).find(function byName(row) {
+			db.read((i) => i.scan(sheet)).find(function byName(row) {
 				return row.name === "child-sheet"
 			})
 		)
 		assert.equal(String(sheetRow.id), report.sheet)
-		const attemptRow = must(db.scan(attempt)[0])
-		const verdictRow = must(db.get(verdict, { attempt: attemptRow.id }))
+		const attemptRow = must(db.read((i) => i.scan(attempt))[0])
+		const verdictRow = must(db.read((i) => i.get(verdict, { attempt: attemptRow.id })))
 		assert.equal(verdictRow.outcome, "Rejected")
 		/**
 		 * The fresh high-water survives a clean exit: the child minted grp
@@ -187,13 +187,13 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		}
 		/** Resume after a kill: everything committed survives, per-commit fsync. */
 		const db = await Db.open(dir, runStoreSchema)
-		assert.equal(db.scan(grp).length, report.grpRows)
-		assert.equal(db.scan(grpMember).length, report.grpMemberRows)
-		assert.equal(db.scan(verdict).length, 1)
-		assert.equal(db.scan(attemptText).length, 1)
+		assert.equal(db.read((i) => i.scan(grp)).length, report.grpRows)
+		assert.equal(db.read((i) => i.scan(grpMember)).length, report.grpMemberRows)
+		assert.equal(db.read((i) => i.scan(verdict)).length, 1)
+		assert.equal(db.read((i) => i.scan(attemptText)).length, 1)
 		/** The fresh high-water also survives the kill — no re-issue of the reverted grp id. */
 		const state: { minted?: bigint } = {}
-		const sheetRow = must(db.scan(sheet)[0])
+		const sheetRow = must(db.read((i) => i.scan(sheet))[0])
 		const written = db.write(function mintAfterKill(tx) {
 			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-kill", context: "c" })
 			state.minted = row.id
@@ -268,8 +268,8 @@ describe("the repair loop against the real theory", function repairLoop() {
 	})
 
 	test("a cartograph swap that uncovers an objective is rejected citing partitionTotality by identity, and the store is untouched", function rejectedSwap() {
-		const grpsBefore = db.scan(grp)
-		const membersBefore = db.scan(grpMember)
+		const grpsBefore = db.read((i) => i.scan(grp))
+		const membersBefore = db.read((i) => i.scan(grpMember))
 		const written = db.write(function badSwap(tx) {
 			for (const row of membersBefore) {
 				tx.delete(grpMember, [row])
@@ -292,13 +292,13 @@ describe("the repair loop against the real theory", function repairLoop() {
 		assert.equal(violation.kind, "capacity")
 		assert.ok(violation.facts.length > 0, "the uncovered parent is cited")
 		/** Rejection is data and the store is untouched — the repair loop's premise. */
-		assert.deepEqual(db.scan(grp), grpsBefore)
-		assert.deepEqual(db.scan(grpMember), membersBefore)
+		assert.deepEqual(db.read((i) => i.scan(grp)), grpsBefore)
+		assert.deepEqual(db.read((i) => i.scan(grpMember)), membersBefore)
 	})
 
 	test("the rebuilt delta commits (delta rebuild after rejection)", function rebuiltSwap() {
-		const grpsBefore = db.scan(grp)
-		const membersBefore = db.scan(grpMember)
+		const grpsBefore = db.read((i) => i.scan(grp))
+		const membersBefore = db.read((i) => i.scan(grpMember))
 		const written = db.write(function goodSwap(tx) {
 			for (const row of membersBefore) {
 				tx.delete(grpMember, [row])
@@ -317,8 +317,8 @@ describe("the repair loop against the real theory", function repairLoop() {
 			}
 		})
 		assert.equal(written.tag, "accepted", "the corrected swap satisfies partition totality")
-		assert.equal(db.scan(grp).length, 2)
-		assert.equal(db.scan(grpMember).length, 2)
+		assert.equal(db.read((i) => i.scan(grp)).length, 2)
+		assert.equal(db.read((i) => i.scan(grpMember)).length, 2)
 	})
 
 	test("a misauthored hierarchy program is rejected citing BOTH the parent-count capacity law and the entry-form ban by identity", function rejectedAuthor() {
@@ -363,7 +363,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			statements.has(regularNounEntryBan.statement),
 			"the generated entry-form ban is cited by identity (the diag-map's generated-family lane)"
 		)
-		assert.equal(db.scan(program).length, 0, "the rejected author payload left nothing behind")
+		assert.equal(db.read((i) => i.scan(program)).length, 0, "the rejected author payload left nothing behind")
 	})
 
 	test("the corrected author payload commits", function acceptedAuthor() {
@@ -411,11 +411,11 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("a delete that would dangle references is rejected citing the containments by identity, store untouched", function danglingDelete() {
 		const target = must(
-			db.scan(grp).find(function byId(row) {
+			db.read((i) => i.scan(grp)).find(function byId(row) {
 				return row.id === must(ids.planGrps[0])
 			})
 		)
-		const before = db.scan(grp)
+		const before = db.read((i) => i.scan(grp))
 		const written = db.write(function badDelete(tx) {
 			tx.delete(grp, [target])
 		})
@@ -433,11 +433,11 @@ describe("the repair loop against the real theory", function repairLoop() {
 			}
 			assert.ok(violation.direction !== undefined, "containment violations carry a direction")
 		}
-		assert.deepEqual(db.scan(grp), before)
+		assert.deepEqual(db.read((i) => i.scan(grp)), before)
 	})
 
 	test("the sheet resupply update (delete + insert with the SAME fresh id) commits in one delta", function sheetResupply() {
-		const sheetRow = must(db.scan(sheet)[0])
+		const sheetRow = must(db.read((i) => i.scan(sheet))[0])
 		const written = db.write(function resupply(tx) {
 			tx.delete(sheet, [sheetRow])
 			put(tx, sheet, {
@@ -448,7 +448,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			})
 		})
 		assert.equal(written.tag, "accepted", "identity-preserving revision commits — referencing rows never dangle")
-		const rows = db.scan(sheet)
+		const rows = db.read((i) => i.scan(sheet))
 		assert.equal(rows.length, 1)
 		const revised = must(rows[0])
 		assert.equal(revised.id, sheetRow.id)
@@ -468,14 +468,14 @@ describe("the repair loop against the real theory", function repairLoop() {
 		})
 		assert.equal(seeded.tag, "accepted")
 		const attemptId = must(ids.attempt)
-		const current = must(db.get(verdict, { attempt: attemptId }))
+		const current = must(db.read((i) => i.get(verdict, { attempt: attemptId })))
 		assert.equal(current.outcome, "Accepted")
 		const revised = db.write(function revise(tx) {
 			tx.delete(verdict, [current])
 			put(tx, verdict, { attempt: attemptId, outcome: "Rejected" })
 		})
 		assert.equal(revised.tag, "accepted", "the settleReviewEdge refutation write commits")
-		assert.equal(must(db.get(verdict, { attempt: attemptId })).outcome, "Rejected")
+		assert.equal(must(db.read((i) => i.get(verdict, { attempt: attemptId }))).outcome, "Rejected")
 	})
 
 	test("the revert-capture idiom: a db.read INSIDE a db.write callback sees the committed pre-delta state", function nestedRead() {
@@ -488,7 +488,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			assert.equal(captured.length, 0, "the nested read sees the pre-delta committed state")
 		})
 		assert.equal(written.tag, "accepted")
-		assert.equal(db.scan(steer).length, 1)
+		assert.equal(db.read((i) => i.scan(steer)).length, 1)
 	})
 
 	test("a read scope stays pinned at its snapshot across an interleaved commit", function pinnedScope() {
@@ -500,29 +500,29 @@ describe("the repair loop against the real theory", function repairLoop() {
 			assert.equal(written.tag, "accepted")
 			assert.equal(snap.scan(steer).length, before, "the open scope never sees the new commit")
 		})
-		assert.equal(db.scan(steer).length, 2, "a fresh read sees it")
+		assert.equal(db.read((i) => i.scan(steer)).length, 2, "a fresh read sees it")
 	})
 
 	test("the PRIMARY-KEY rule: get reads through the fresh field or the first declared key, and NOTHING else", function primaryKeyRule() {
 		const taskId = must(ids.task)
-		assert.ok(db.get(task, { id: taskId }) !== undefined, "fresh-keyed get hits")
+		assert.ok(db.read((i) => i.get(task, { id: taskId })) !== undefined, "fresh-keyed get hits")
 		/** The 2-arg form refuses the declared identity key (kind, subject): its KeyFact is the primary projection alone. The declared-key read is the 3-arg keyed form — get(task, keyStatement, key) (70-api ledger row (b), SHIPPED 2026-07-19; ts/test/keyed-get.test.ts pins it). */
 		assert.throws(function declaredKeyGet() {
 			// @ts-expect-error — the KeyFact type demands exactly the fresh field; this pins the runtime refusal too
-			db.get(task, { kind: "Cartograph", subject: 1n })
+			db.read((i) => i.get(task, { kind: "Cartograph", subject: 1n }))
 		}, /missing field id/)
 		const objectiveId = must(ids.objectives[0])
-		const membership = db.get(grpMember, { objective: objectiveId })
+		const membership = db.read((i) => i.get(grpMember, { objective: objectiveId }))
 		assert.ok(membership !== undefined, "a freshless relation's first declared key is the get lane")
 		assert.throws(function offProjectionGet() {
-			db.get(grpMember, { grp: membership?.grp })
+			db.read((i) => i.get(grpMember, { grp: membership?.grp }))
 		}, /missing field objective/)
 		const attemptId = must(ids.attempt)
-		assert.equal(db.get(attemptText, { attempt: attemptId }), undefined, "keyed miss is undefined")
+		assert.equal(db.read((i) => i.get(attemptText, { attempt: attemptId })), undefined, "keyed miss is undefined")
 	})
 
 	test("a resupplied duplicate fresh id violates the engine-materialized auto-key: statement is undefined (the repair loop's identity gap)", function autoKeyGap() {
-		const existing = must(db.scan(grp)[0])
+		const existing = must(db.read((i) => i.scan(grp))[0])
 		const written = db.write(function duplicateId(tx) {
 			put(tx, grp, {
 				id: existing.id,

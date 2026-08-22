@@ -68,7 +68,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 	const program = programId
 
 	test("primary-key get works (the fresh field)", function primary() {
-		const row = db.get(Program, { id: program })
+		const row = db.read((i) => i.get(Program, { id: program }))
 		assert.ok(row)
 		assert.equal(row.grp, grp)
 	})
@@ -82,7 +82,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		assert.throws(
 			function getByDeclaredKey() {
 				// @ts-expect-error — KeyFact demands exactly the fresh field; the declared key needs the 3-arg form
-				db.get(Program, { grp })
+				db.read((i) => i.get(Program, { grp }))
 			},
 			/missing field id/,
 			"the 2-arg get reads only through the primary key"
@@ -94,7 +94,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		 * The exact lookup graph-builder performs at every programNeighbor /
 		 * settle* site, as one typed point read instead of scan().find().
 		 */
-		const row = db.get(Program, programGrpKey, { grp })
+		const row = db.read((i) => i.get(Program, programGrpKey, { grp }))
 		assert.ok(row, "the declared key answers the typed point read")
 		assert.equal(row.id, program)
 		assert.equal(row.title, "linear equations")
@@ -111,11 +111,11 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		 */
 		const foreignKey = key(Program, ["title"])
 		assert.throws(function foreignStatement() {
-			db.get(Program, foreignKey, { title: "linear equations" })
+			db.read((i) => i.get(Program, foreignKey, { title: "linear equations" }))
 		}, /not a declared statement of schema KeyedGet/)
 		assert.throws(function wrongOwner() {
 			// @ts-expect-error — the statement keys Program, not Grp; the key object is typed by Program's projection
-			db.get(Grp, programGrpKey, { grp })
+			db.read((i) => i.get(Grp, programGrpKey, { grp }))
 		}, /keys Program, not Grp/)
 	})
 
@@ -128,7 +128,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		 */
 		assert.throws(function wrongField() {
 			// @ts-expect-error — programGrpKey's projection is (grp); `title` is not a determinant column of the statement
-			db.get(Program, programGrpKey, { title: "x" })
+			db.read((i) => i.get(Program, programGrpKey, { title: "x" }))
 		}, /missing field grp/)
 	})
 
@@ -150,7 +150,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		assert.equal(outcome.tag, "accepted", "the commit lands")
 		assert.ok(freshGrp !== undefined)
 		assert.equal(
-			db.get(Program, programGrpKey, { grp: freshGrp }),
+			db.read((i) => i.get(Program, programGrpKey, { grp: freshGrp })),
 			preCommit,
 			"the committed keyed answer agrees with the pre-commit one"
 		)
@@ -260,7 +260,7 @@ describe("keyed get: the statement-vs-key dispatch is a brand, never a shape pro
 
 	test("an interval key cell with an excess kind property dispatches as a key object", function excessKind() {
 		const withKind: { start: bigint; end: bigint; kind: string } = { start: 1n, end: 2n, kind: "window" }
-		const row = db.get(Cfg, { data: withKind })
+		const row = db.read((i) => i.get(Cfg, { data: withKind }))
 		assert.ok(row, "the keyed read lands — no statement-selector misdispatch")
 		assert.equal(row.value, 7n)
 	})

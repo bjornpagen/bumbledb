@@ -1221,7 +1221,7 @@ const root = 1n // the host's chosen root node id
 const seen = new Set<bigint>([root])
 let frontier: readonly bigint[] = [root]
 for (;;) {
-	const next = db.execute(stepPrepared, { frontier }) // one set-param query
+	const next = db.read((i) => i.execute(stepPrepared, { frontier })) // one set-param query
 	const fresh = next
 		.map((row) => row.c)
 		.filter((c) => {
@@ -1615,7 +1615,7 @@ db.write((tx) => {
 const grp = minted.grp ?? 0n
 
 // db.get — the standalone keyed read through the declared law:
-const byGroup = db.get(Course, courseGrpKey, { grp })
+const byGroup = db.read((i) => i.get(Course, courseGrpKey, { grp }))
 
 // snap.get — the same spelling inside a read scope:
 const viaSnap = db.read((instance) => instance.get(Course, courseGrpKey, { grp }))
@@ -1631,7 +1631,7 @@ db.write((tx) => {
 })
 
 // The primary 2-arg form — the fresh field is the primary key:
-const byId = byGroup === undefined ? undefined : db.get(Course, { id: byGroup.id })
+const byId = byGroup === undefined ? undefined : db.read((i) => i.get(Course, { id: byGroup.id }))
 ```
 
 The anti-pattern this recipe retires: a scan-and-find where a key law

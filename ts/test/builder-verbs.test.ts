@@ -164,7 +164,7 @@ describe("TS builder verb set", function suite() {
 			assert.equal(report.changed, 2n)
 			assert.equal(tx.contains(Holder, { id: first, name: "ada" }), true)
 		})
-		assert.equal(db.get(Holder, { id: minted.first })?.name, "ada")
+		assert.equal(db.read((i) => i.get(Holder, { id: minted.first }))?.name, "ada")
 		owned[Symbol.dispose]()
 	})
 
@@ -188,14 +188,14 @@ describe("TS builder verb set", function suite() {
 			assert.equal(report.changed, 1n)
 			assert.equal(tx.contains(Marker, {}), true)
 		})
-		assert.equal(db.contains(Marker, {}), true)
-		assert.equal(db.count(Marker), 1n)
+		assert.equal(db.read((i) => i.contains(Marker, {})), true)
+		assert.equal(db.read((i) => i.count(Marker)), 1n)
 		db.write(function deleteMarker(tx) {
 			const report = tx.delete(Marker, [{}])
 			assert.equal(report.submitted, 1n)
 			assert.equal(report.changed, 1n)
 		})
-		assert.equal(db.count(Marker), 0n)
+		assert.equal(db.read((i) => i.count(Marker)), 0n)
 		owned[Symbol.dispose]()
 	})
 

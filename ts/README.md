@@ -97,7 +97,7 @@ const certifiedAbove = query(Review).rule((r) => {
 })
 
 const prepared = db.prepare(certifiedAbove)
-const rows = db.execute(prepared, { floor: 15n }) // rows: { a: bigint; rank: bigint }[]
+const rows = db.read((i) => i.execute(prepared, { floor: 15n })) // rows: { a: bigint; rank: bigint }[]
 console.log(rows)
 
 // A store read is one callback. The instance is invalid when the callback

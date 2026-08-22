@@ -986,7 +986,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const seen = new Set<bigint>([root])
 		let frontier: readonly bigint[] = [root]
 		for (;;) {
-			const next = db.execute(stepPrepared, { frontier })
+			const next = db.read((i) => i.execute(stepPrepared, { frontier }))
 			const fresh = next
 				.map((row) => row.c)
 				.filter((c) => {
@@ -1001,13 +1001,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			frontier = fresh
 		}
 
-		const engineNative = db.execute(reachPrepared, { root }).map((row) => row.c)
+		const engineNative = db.read((i) => i.execute(reachPrepared, { root })).map((row) => row.c)
 		assert.deepEqual(sorted([...seen]), sorted(engineNative), "the two dialects agree, root for root")
 		assert.deepEqual(sorted([...seen]), sorted([root, must(minted.mid), must(minted.leaf)]))
 
 		// The complement lands in-plan: every node the closure never reached.
-		const complement = db.execute(unreachedPrepared, { root }).map((row) => row.c)
-		const everyNode = db.scan(Node).map((node) => node.id)
+		const complement = db.read((i) => i.execute(unreachedPrepared, { root })).map((row) => row.c)
+		const everyNode = db.read((i) => i.scan(Node)).map((node) => node.id)
 		assert.deepEqual(
 			sorted(complement),
 			sorted(everyNode.filter((id) => !seen.has(id))),
@@ -1182,13 +1182,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const course = must(minted.course)
 
 		// db.get, 3-arg — the declared key statement selects the read:
-		const byGroup = db.get(Course, courseGrpKey, { grp })
+		const byGroup = db.read((i) => i.get(Course, courseGrpKey, { grp }))
 		assert.ok(byGroup, "the declared key answers the typed point read")
 		assert.equal(byGroup.id, course)
 		assert.equal(byGroup.title, "linear equations")
 
 		// The primary 2-arg form — the fresh field IS the primary key:
-		const byId = db.get(Course, { id: course })
+		const byId = db.read((i) => i.get(Course, { id: course }))
 		assert.ok(byId, "the fresh field answers the primary point read")
 		assert.equal(byId.grp, grp)
 

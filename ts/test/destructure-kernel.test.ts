@@ -158,7 +158,7 @@ test("find keys name the answer columns — renames are real", function renames(
 	})
 	type Pin = Expect<Equal<QueryRow<typeof rq>, { readonly renamed: bigint }>>
 	const prepared = db.prepare(rq)
-	const rows = db.execute(prepared, {})
+	const rows = db.read((i) => i.execute(prepared, {}))
 	assert.ok(rows.length > 0)
 	for (const row of rows) {
 		assert.deepEqual(Object.keys(row), ["renamed"])
@@ -237,7 +237,7 @@ test("the recursive query ports: rec find + named interior record lower and prep
 	assert.equal(ir.interiors.length, 0)
 	assert.equal(ir.kind, "reach")
 	const prepared = db.prepare(reachable)
-	const rows = db.execute(prepared, { root: 1n })
+	const rows = db.read((i) => i.execute(prepared, { root: 1n }))
 	assert.deepEqual(
 		sorted(
 			rows.map(function c(row) {
@@ -301,7 +301,7 @@ test("params stay string-named: param/inSet register by first use and execute un
 	const preparedP = db.prepare(paramQ)
 	assert.deepEqual(
 		sorted(
-			db.execute(preparedP, { minRank: 2n }).map(function id(row) {
+			db.read((i) => i.execute(preparedP, { minRank: 2n })).map(function id(row) {
 				return row.id
 			})
 		),
@@ -324,7 +324,7 @@ test("params stay string-named: param/inSet register by first use and execute un
 	const preparedS = db.prepare(setQ)
 	assert.deepEqual(
 		sorted(
-			db.execute(preparedS, { acctIds: [10n, 11n] }).map(function id(row) {
+			db.read((i) => i.execute(preparedS, { acctIds: [10n, 11n] })).map(function id(row) {
 				return row.id
 			})
 		),
