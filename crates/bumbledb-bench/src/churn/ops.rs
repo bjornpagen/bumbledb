@@ -1,7 +1,6 @@
 //! Steady state is unrepresentable to violate: the [`Mix`] carries ONE `churn`
 //! field meaning "this many postings enter AND this many leave The churn
 //! protocol layer — pure data, pure functions.
-
 use std::collections::BTreeSet;
 
 use bumbledb::Value;
