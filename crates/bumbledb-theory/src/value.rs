@@ -15,6 +15,8 @@ pub enum Value {
     FixedBytes(Box<[u8]>),
 
     /// ```compile_fail
+    /// use bumbledb_theory::Value;
+    /// let _ = Value::IntervalU64(7, 7);
     /// ```
     IntervalU64(crate::Interval<u64>),
 
