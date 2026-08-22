@@ -142,10 +142,10 @@ fn pack_finalize_orders_claims_by_start_word_alone() {
     let mut bindings = Bindings::new(3);
     for (group, start, end) in [
         (1u64, 30u64, 40u64),
-        (1, 10, 20),       
-        (1, 10, 15),       
-        (1, 5, 12),        
-        (2, 10, u64::MAX), 
+        (1, 10, 20),
+        (1, 10, 15),
+        (1, 5, 12),
+        (2, 10, u64::MAX),
         (2, 1, 2),
     ] {
         bindings.set(0, group);
@@ -414,7 +414,7 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
         ]
     };
     let mut sink = AggregateSink::for_union(&spec(0, 1), 2, 0);
-    sink.reset(); 
+    sink.reset();
 
     let mut bindings = Bindings::new(2);
     for x in [100u64, 250] {
@@ -474,7 +474,7 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     let spans_a = [(0, 1), (1, 1), (2, 1)];
     let spans_b = [(2, 1), (1, 1), (0, 1)];
     let mut sink = AggregateSink::for_dnf_union(&spec(0, 1), 3, &spans_a, 0);
-    sink.reset(); 
+    sink.reset();
 
     let mut bindings = Bindings::new(3);
     bindings.reset();
@@ -538,7 +538,7 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
         (1, 2, 30),
         (0, 1, 2),
         (1, 1, 4),
-        (1, 2, 10), 
+        (1, 2, 10),
     ] {
         bindings.reset();
         bindings.set(0, a);
