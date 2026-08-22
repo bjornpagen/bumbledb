@@ -154,7 +154,6 @@ fn view<'s, 'f>(
 /// dictionary (mmap pages, txn-stable by LMDB `CoW`) or the write
 /// transaction's pending interns (delta arena). A struct with no
 pub trait Fact<'a>: Sized {
-
     type Schema;
 
     const RELATION: RelationId;
@@ -216,7 +215,6 @@ pub trait Fact<'a>: Sized {
 /// }
 /// ```
 pub trait Key<'a>: Sized {
-
     type Schema;
 
     type Fact: Fact<'a, Schema = Self::Schema>;
@@ -234,7 +232,6 @@ pub trait Key<'a>: Sized {
 /// `fresh` field declared `as NewType`: [`WriteTx::reserve`] mints the next
 /// values with the field already known.
 pub trait Fresh: Sized + Copy {
-
     type Schema;
 
     const RELATION: RelationId;
@@ -260,7 +257,6 @@ pub struct Db<S> {
     /// Declared BEFORE `env` — fields drop in declaration order, and
 
     /// before `env` releases the advisory lock, or the drop opens a
-
     read_cache: Mutex<Option<ParkedReader>>,
     env: Environment,
     cache: ImageCache,
@@ -272,7 +268,6 @@ pub struct Db<S> {
     schema: Arc<Schema>,
 
     /// [`Db::read`] and taken back after the lease — one pool, no
-
     scratch: Mutex<Option<ScratchPool>>,
 
     marker: PhantomData<fn() -> S>,
@@ -384,7 +379,6 @@ pub struct ReadInstance<'txn, S> {
 }
 
 impl<'txn, S> ReadInstance<'txn, S> {
-
     pub(crate) fn txn(&self) -> &ReadTxn<'_> {
         self.core.source.txn()
     }
