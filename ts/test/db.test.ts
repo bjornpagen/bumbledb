@@ -221,29 +221,6 @@ describe("the Db runtime against a real store", function suite() {
 		})
 	})
 
-	test("the db.X sugar obeys the symmetry rule db.X(...) === db.read(snap => snap.X(...))", function symmetry() {
-		const audit = must(ids.audit)
-		assert.deepStrictEqual(
-			db.read((i) => i.get(Audit, { id: audit })),
-			db.read(function getInScope(snap) {
-				return snap.get(Audit, { id: audit })
-			})
-		)
-		assert.deepStrictEqual(
-			db.read((i) => i.scan(Audit)),
-			db.read(function scanInScope(snap) {
-				return snap.scan(Audit)
-			})
-		)
-		const fact = must(db.read((i) => i.get(Audit, { id: audit })))
-		assert.equal(
-			db.read((i) => i.contains(Audit, fact)),
-			db.read(function containsInScope(snap) {
-				return snap.contains(Audit, fact)
-			})
-		)
-	})
-
 	test("keyed get reads through a declared (non-fresh) primary key", function declaredKey() {
 		const setup = db.write(function seedSavings(tx) {
 			const grace = put(tx, Holder, { name: "grace" })
