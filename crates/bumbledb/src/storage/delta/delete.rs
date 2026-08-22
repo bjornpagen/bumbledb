@@ -7,7 +7,6 @@ use bumbledb_theory::schema::RelationId;
 use super::{DeltaEffect, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-
     pub fn delete(
         &mut self,
         view: &ReadTxn<'_>,
