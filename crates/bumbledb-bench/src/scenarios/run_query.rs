@@ -20,7 +20,6 @@ use crate::translate::{Translated, translate};
               bytes nothing is short of"
 )]
 enum Engine {
-
     Prepared(bumbledb::PreparedQuery<SchemaDescriptor>),
 
     KeyedGet {
@@ -30,7 +29,6 @@ enum Engine {
 }
 
 impl Engine {
-
     fn answers(
         &mut self,
         stores: &Stores,
@@ -285,7 +283,6 @@ pub(super) fn run_query(
                 }
             }
             Some(cap) => {
-
                 let mut preflight_tripped = false;
                 for params in &sets {
                     if sample_capped(&mut family, &stores.conn, cap, params)? == CapOutcome::Tripped
