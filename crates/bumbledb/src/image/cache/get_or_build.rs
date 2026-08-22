@@ -28,7 +28,6 @@ impl ImageCache {
     /// # Errors
 
     /// # Panics
-
     #[cfg(test)]
     pub fn get_or_build(
         &self,
@@ -145,7 +144,6 @@ impl ImageCache {
     }
 
     /// The from-scratch arm: one full LMDB scan and decode, exactly the
-
     fn build_full(
         &self,
         txn: &ReadTxn<'_>,
