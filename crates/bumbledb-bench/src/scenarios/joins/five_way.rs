@@ -55,7 +55,6 @@ pub(super) fn five_way() -> Query {
 }
 
 pub(super) fn five_way_params(_: u64) -> Vec<Vec<Value>> {
-
     vec![
         vec![
             Value::U64(0),
