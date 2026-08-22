@@ -2,10 +2,6 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 
-/// Takes the exclusive advisory lock enforcing one WRITING handle per
-/// path. A held lock — another process, or another live writing
-/// `Environment` on the same path in this process — is
-/// `Error::EnvironmentLocked`.
 pub(super) fn acquire_lock(path: &Path) -> Result<std::fs::File> {
     let file = std::fs::OpenOptions::new()
         .create(true)
