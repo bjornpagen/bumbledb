@@ -4,7 +4,6 @@
 //! (`Corruption(DanglingInternId)`) or silently suffer (a rebound
 //! forward entry, a regressed next-id arming reverse-map reuse) is a
 //! finding here. Entries no live fact references stay the accepted leak
-
 use std::ops::Bound;
 
 use crate::encoding::InternId;
