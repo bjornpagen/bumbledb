@@ -1,9 +1,7 @@
 //! The schema-spec crossing: borrowed C view structs
 //! mirroring `bumbledb::SchemaSpec` field for field, copied IMMEDIATELY
 //! into the Rust-owned spec — no borrowed caller memory survives
-//! `bdb_db_create` / `bdb_db_open`. The engine's
-//! `SchemaSpec::descriptor()` remains the canonical lowering; this module
-//! judges nothing.
+//! `bdb_db_create` / `bdb_db_open`.
 
 use bumbledb::SchemaSpec;
 use bumbledb::schema::spec::{
@@ -465,8 +463,8 @@ fn relation_in(view: &bdb_relation_spec) -> BridgeResult<RelationSpec> {
     })
 }
 
-/// The whole inbound spec, copied into the Rust-owned `SchemaSpec`
-/// before any engine call.
+/// The whole inbound spec, copied into the Rust-owned `SchemaSpec` before any
+/// engine call.
 pub(crate) fn schema_spec_in(view: &bdb_schema_spec) -> BridgeResult<SchemaSpec> {
     Ok(SchemaSpec {
         relations: slice_in(view.relations, view.relation_count)?
