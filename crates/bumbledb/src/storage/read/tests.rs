@@ -13,9 +13,6 @@ use bumbledb_theory::schema::{
     StatementDescriptor, StatementId, ValueType,
 };
 
-/// R(id fresh, amount i64) with a declared key on amount too:
-/// statement 0 is the fresh auto-key (materialized first), statement 1
-/// the declared `R(amount) -> R`.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -55,8 +52,6 @@ fn fact(schema: &Schema, id: u64, amount: i64) -> Vec<u8> {
     b
 }
 
-/// Committed fixture: facts (id, amount) = (0,10), (1,20), (2,30), then
-/// (1,20) deleted — leaving a row-id hole at 1.
 fn fixture(dir: &TempDir, schema: &Schema) -> Environment {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
@@ -85,12 +80,10 @@ fn membership_probe_hit_and_miss() {
     let schema = schema();
     let env = fixture(&dir, &schema);
     let txn = env.read_txn().expect("txn");
-    // Row ids are assigned in fact-hash order at commit (the delta's
-    // deterministic iteration), so tests derive them rather than assume
-    // insertion order.
+
     let row = fact_row(&txn, R, &fact(&schema, 0, 10)).expect("probe");
     assert!(row.is_some());
-    // The deleted fact and a never-inserted fact both miss.
+
     assert_eq!(
         fact_row(&txn, R, &fact(&schema, 1, 20)).expect("probe"),
         None
@@ -101,8 +94,6 @@ fn membership_probe_hit_and_miss() {
     );
 }
 
-/// Composes a `U` key and probes it — the read path's shape, as a test
-/// convenience.
 fn probe(
     txn: &crate::storage::env::ReadTxn<'_>,
     statement: StatementId,
@@ -123,9 +114,7 @@ fn key_probe_hit_and_miss() {
     let row = fact_row(&txn, R, &fact(&schema, 2, 30))
         .expect("probe")
         .expect("present");
-    // The fresh auto-key (statement 0) maintains no `U` tree (the one id
-    // allocator, R16): its determinant IS the row id, and the committed
-    // probe is the direct `F` get — an honest miss on the deleted row.
+
     assert_eq!(probe(&txn, StatementId(0), &encode_u64(2)), None);
     assert_eq!(row, 2, "the fresh field's value IS the F row id");
     assert_eq!(
@@ -135,12 +124,12 @@ fn key_probe_hit_and_miss() {
         Some(&fact(&schema, 2, 30)[..])
     );
     assert_eq!(fact_at(&txn, &schema, R, 1).expect("probe"), None);
-    // The declared key (statement 1) on amount keeps its `U` tree.
+
     assert_eq!(
         probe(&txn, StatementId(1), &crate::encoding::encode_i64(30)),
         Some(row)
     );
-    // The deleted fact's declared-key tuple is gone.
+
     assert_eq!(
         probe(&txn, StatementId(1), &crate::encoding::encode_i64(20)),
         None
@@ -160,8 +149,7 @@ fn fetch_round_trips_inserted_bytes() {
         fetch(&txn, &schema, R, row).expect("fetch").bytes(),
         fact(&schema, 2, 30).as_slice()
     );
-    // The deleted fact left a row-id hole: fetching it is corruption
-    // (a row id reaching fetch must have come from M/U in-snapshot).
+
     let live: Vec<u64> = scan(&txn, &schema, R)
         .expect("scan")
         .map(|r| r.expect("ok").0)
@@ -191,8 +179,7 @@ fn scan_yields_live_facts_in_row_id_order_skipping_holes() {
         .map(|r| r.map(|(id, b)| (id, b.bytes().to_vec())))
         .collect::<Result<_>>()
         .expect("no corruption");
-    // Exactly the two live facts, in strictly increasing row-id order,
-    // with the deleted fact's row id absent.
+
     assert_eq!(rows.len(), 2);
     assert!(rows[0].0 < rows[1].0);
     let live_bytes: Vec<&[u8]> = rows.iter().map(|(_, b)| b.as_slice()).collect();
@@ -212,7 +199,7 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
     let dir = TempDir::new("read-corrupt");
     let schema = schema();
     let env = fixture(&dir, &schema);
-    // Truncate the *last* live F value behind the schema's back.
+
     let victim = {
         let txn = env.read_txn().expect("txn");
         scan(&txn, &schema, R)
@@ -232,7 +219,7 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
     let txn = env.read_txn().expect("txn");
     let results: Vec<Result<(u64, crate::encoding::FactView<'_, '_>)>> =
         scan(&txn, &schema, R).expect("scan").collect();
-    assert!(results[0].is_ok()); // the first live row is intact
+    assert!(results[0].is_ok()); 
     let err = results[1].as_ref().unwrap_err();
     assert!(
         matches!(
@@ -248,12 +235,10 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
         ),
         "{err:?}"
     );
-    // fetch reports the same corruption.
+
     assert!(fetch(&txn, &schema, R, victim).is_err());
 }
 
-/// A 5-byte F key — the bare prefix, the
-/// audit's shape — is typed Corruption from `scan`, never a panic.
 #[test]
 fn a_short_f_key_is_typed_corruption_from_scan() {
     let dir = TempDir::new("read-corrupt-f-key");
@@ -283,16 +268,6 @@ fn a_short_f_key_is_typed_corruption_from_scan() {
     );
 }
 
-/// The kill-6 verdict's positive half (cleanup-0.5.0 prd-U2,
-/// aborted-with-reason): over WELL-FORMED keys the prefix cursor and the
-/// range cursor agree — `scan_from(rel, 0)` yields exactly `scan(rel)`,
-/// row for row, and a mid-high-water start yields the strict tail. The
-/// delegation itself is refuted one test up: a bare `F | rel` prefix key
-/// sorts BEFORE `fact_key(rel, 0)`, so the range cursor would skip what
-/// `a_short_f_key_is_typed_corruption_from_scan` pins the prefix cursor
-/// to convict — the two cursor-opens encode different corruption
-/// envelopes, two meanings, not two spellings (the shared meaning, the
-/// per-entry parse and fuse, is already one body: `parse_facts`).
 #[test]
 fn scan_from_zero_yields_exactly_scan_over_live_facts() {
     let dir = TempDir::new("read-scan-from-zero");
@@ -313,7 +288,7 @@ fn scan_from_zero_yields_exactly_scan_over_live_facts() {
         via_scan, via_scan_from,
         "scan_from(rel, 0) is scan's tail-from-zero"
     );
-    // A mid start yields the strict tail: everything at or above the cut.
+
     let cut = via_scan[1].0;
     let tail: Vec<(u64, Vec<u8>)> = scan_from(&txn, &schema, R, cut)
         .expect("scan_from tail")
@@ -334,10 +309,6 @@ fn row_count_equals_scan_count_after_mixed_commits() {
     assert_eq!(scanned, 2);
 }
 
-/// The composed-key writer is byte-identical to the codec's
-/// [`keys::determinant_key`] — the coupling the point-read paths lean on
-/// when they encode a determinant directly behind
-/// [`begin_determinant_key`]'s header.
 #[test]
 fn composed_determinant_key_matches_the_codec() {
     let determinant = encode_u64(0xAABB_CCDD_EE01_0203);
@@ -350,8 +321,6 @@ fn composed_determinant_key_matches_the_codec() {
     assert_eq!(composed, codec);
 }
 
-/// [`fact_for_key`] chains the `F` fetch behind a composed-key hit and
-/// misses honestly behind a probe miss.
 #[test]
 fn fact_for_key_chains_the_fetch_and_misses_honestly() {
     let dir = TempDir::new("read-composed-key");
