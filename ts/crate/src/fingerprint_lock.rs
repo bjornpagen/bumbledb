@@ -1,28 +1,4 @@
-//! The cross-host fingerprint lock (bumbledb TODO.md §7, the pin the SDK
-//! owes): ONE theory exercising every schema construct — fresh keys, `str`,
-//! `bytes<N>`, general and fixed-width intervals INCLUDING a ray literal,
-//! both closed tiers, containment with σ on both faces, a ψ-selected CLOSED
-//! target (`Kind(id | mastered == true)` — the member set folds at
-//! validate), `==` mirrors including a generator-less pair (`SavingsTerms ==
-//! AuditTrail` over columns no mint touches — the TS side's law-computed
-//! class names never leak into the hash), and every legal capacity
-//! spelling — unit, weighted, Duration-weighted, dependent-bound —
-//! declared here through the engine's `schema!` macro and, in
-//! `test/fingerprint.test.ts`, through the SDK's constructors. Each side independently asserts its engine-computed
-//! fingerprint equals the ONE pinned constant [`PIN`], so `cargo test` and
-//! `node --test` each run standalone while jointly proving the cross-host
-//! bond: identical fingerprints mean `Db::open` on either side admits the
-//! other side's store — the fingerprint is open's whole schema gate beyond
-//! format version and store kind — and neither surface can fake the pin,
-//! because each hex arrives through its own full pipeline (macro expansion →
-//! validation → blake3 here; SDK lowering → napi marshaling → the same
-//! engine across the FFI there).
-//!
-//! The store roundtrip below additionally drives the exact open lanes: a
-//! store CREATED through the bridge's own typestate (`Db<SchemaDescriptor>`
-//! — every JS-created store is this) opens under the macro twin, a
-//! macro-created store opens under the runtime descriptor, and a twisted
-//! twin is refused as `SchemaMismatch` — the lock has teeth.
+//! Cross-host fingerprint lock: one theory, one pinned digest.
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
@@ -96,7 +72,7 @@ bumbledb::schema! {
     Pool(id) <=[watts]{0..100} Device(pool);
     Pool(id) <=[watts]{1..*} Device(pool);
     Pool(id) <=[Duration(ran)]{0..Duration(open)} Device(pool);
-    // PRD-K7's lock extension, statement for statement the SDK twin's tail:
+    // Lock extension, statement for statement the SDK twin's tail:
     // the ψ-on-closed containment (the member set {DirectPass} folds at
     // validate) and the generator-less `==` pair — no fresh field touches
     // `rate_bps`, so the TS side's class laws name that class by least
@@ -111,8 +87,7 @@ bumbledb::schema! {
 /// constant is baked into `test/fingerprint.test.ts`; a change here without
 /// the twin change there (or vice versa) is exactly the drift this lock
 /// exists to catch. `18446744073709551615` above is `u64::MAX` — the `at`
-/// selection literal is the unbounded ray `[5, ∞)`
-/// (`docs/architecture/10-data-model.md`).
+/// selection literal is the unbounded ray `[5, ∞)`.
 const PIN: &str = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc";
 
 /// A self-cleaning per-test store directory (the engine's integration
