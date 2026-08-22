@@ -9,7 +9,6 @@
 use super::{Column, RelationImage};
 
 impl RelationImage {
-
     #[must_use]
     pub fn distinct_count(&self, column: usize) -> u64 {
         self.distincts[column].count()
@@ -41,7 +40,6 @@ pub(super) struct WordSet {
 
 impl WordSet {
     fn with_hint(rows: usize) -> Self {
-
         // before the pass, so start at rows/8 (min 16) and double when
 
         let capacity = (rows / 8).max(16).next_power_of_two();
