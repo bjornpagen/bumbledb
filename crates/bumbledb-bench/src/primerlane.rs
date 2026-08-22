@@ -8,7 +8,6 @@ pub use run::run;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimerConfig {
-
     pub relations: u32,
 
     pub facts: u64,
