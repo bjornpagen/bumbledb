@@ -179,7 +179,6 @@ pub(crate) fn posting_swap(
 ) -> Result<Posting, String> {
     db.write(|tx| {
         if tx.delete([prev])?.changed() == 0 {
-
             return Err(bumbledb::Error::from(std::io::Error::other(
                 "the swap touch must be delete-bearing: the previous revision was absent",
             )));
