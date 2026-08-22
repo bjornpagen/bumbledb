@@ -258,7 +258,6 @@ impl Context {
     /// The closed-reference order wall (ruled 2026-07-23, R4): a
 
     /// them is refused exactly as the enum's ordinal order was, judged
-
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
         if self.closed_vars.contains_key(&var) {
             return Err(ValidationError::OrderComparisonOnClosedReference { index });
@@ -738,7 +737,6 @@ impl Context {
     }
 
     /// CONSUMED into [`Context::var_types`], so nothing after this line
-
     fn resolve_bivalents(&mut self) {
         self.var_types = std::mem::take(&mut self.var_slots)
             .into_iter()
