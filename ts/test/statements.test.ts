@@ -357,12 +357,12 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("an arity-mismatched pairing is a construction error — the SameArity runtime twin (untyped path)", function probeArityWall() {
 		/**
- * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
- * already refuses these (the directives are real); before the twin an
- * UNTYPED caller's mismatch silently truncated to the shorter
- * projection (the positionwise walks skip unpaired positions) until
- * Db.create's colder engine refusal — now the statement itself judges.
- */
+		 * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
+		 * already refuses these (the directives are real); before the twin an
+		 * UNTYPED caller's mismatch silently truncated to the shorter
+		 * projection (the positionwise walks skip unpaired positions) until
+		 * Db.create's colder engine refusal — now the statement itself judges.
+		 */
 		const { Booking, Slot } = buildCalendar()
 		assert.throws(function truncatedContainment() {
 			// @ts-expect-error — SameArity refuses the pairing at the type tier; this is its construction-time twin
@@ -426,7 +426,6 @@ function weightedFloorOneCompiles(): unknown {
 function capacityWallsAreTyped(): unknown[] {
 	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
-
 		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool")),
 		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room")),
 		// @ts-expect-error — the weight names a field of the SOURCE's own row: Device has no field `nope`
@@ -445,7 +444,6 @@ function capacityWallsAreTyped(): unknown[] {
 }
 
 describe("the ban table's construction tier — computed bounds the type cannot judge", function describeBelts() {
-
 	const computed: (n: bigint) => bigint = function widen(n) {
 		return n
 	}
@@ -590,7 +588,6 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	test("the paste-back law: a handle selection needs its resolving containment declared", function probePasteBack() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
 		assert.throws(function unresolvedHandleSelection() {
-
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
 				key(SavingsTerms, ["account"]),
 				mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
@@ -689,7 +686,6 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	})
 
 	test("a handle named `where` is ordinary roster data — NO name is reserved, both tiers", function probeNoReservedNames() {
-
 		const bare = closed("Fine", ["where"])
 		assert.deepEqual(bare.data.handles, ["where"])
 		const payload = closed("AlsoFine", { pages: bool }, { where: { pages: true } })
@@ -722,7 +718,6 @@ function facesArePairedStructurally(): unknown[] {
 	const { Booking, Slot } = buildCalendar()
 	const Vault = relation("Vault", { tag: bytes(32), stamp: bytes(16) })
 	return [
-
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"])),
 		contained(on(Account, "kind"), on(Kind, "id")),
@@ -748,7 +743,6 @@ function closedPayloadColumnsPairStructurally(): unknown[] {
 	const { Holder, Account } = buildLedger()
 	const Alert = relation("Alert", { sev: Sev.id })
 	return [
-
 		contained(on(Sev, "level"), on(Limit, "level")),
 		contained(on(Limit, "level"), on(Sev, "level")),
 
@@ -796,7 +790,6 @@ function closedSelectionsAreTyped(): unknown[] {
 function psiFacesArePairedStructurally(): unknown[] {
 	const { Grade, Certificate } = buildMastery()
 	return [
-
 		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
 		capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade")),
 		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
