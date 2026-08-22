@@ -149,10 +149,7 @@ enum Lit {
     Bool(bool),
     Int(Int),
 
-    Interval {
-        start: Int,
-        end: Int,
-    },
+    Interval { start: Int, end: Int },
 
     Str(String),
 
@@ -480,7 +477,6 @@ fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
             } else if text.starts_with("b\"") {
                 Ok(Lit::Bytes(text))
             } else if is_int_text(&text) {
-
                 let mut rewound: Tokens = std::iter::once(TokenTree::Literal(lit))
                     .collect::<TokenStream>()
                     .into_iter()
@@ -627,7 +623,6 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
             "false" => SelValue::Lit(Lit::Bool(false)),
             _ => {
                 if peek_punct(tokens, ':') {
-
                     expect_colon(tokens, "the handle path's `::`")?;
                     expect_punct(tokens, ':', "the handle path's `::`")?;
                     let handle = expect_ident(tokens, "a handle name")?;
@@ -843,7 +838,6 @@ fn parse_tree_children(tokens: &mut Tokens, name: &Name) -> Parse<Vec<Cond>> {
 
 fn parse_cond(tokens: &mut Tokens) -> Parse<Cond> {
     if peek_punct(tokens, '!') {
-
         return tree_refusal(peek_span(tokens));
     }
     let call_shaped = match tokens.peek() {
@@ -882,7 +876,6 @@ fn continues_as_term(tokens: &mut Tokens) -> bool {
 
 fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     if peek_punct(tokens, '!') {
-
         tokens.next();
         if nameless_interior_atom(tokens) {
             let name = take_nameless_interior(tokens)?;
@@ -923,7 +916,7 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
         }
 
         let mut ahead = tokens.clone();
-        ahead.next(); 
+        ahead.next();
         if continues_as_term(&mut ahead) {
             return fail(
                 name.span,
@@ -1433,7 +1426,6 @@ impl Emitter<'_> {
 
     fn interior_bindings(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if interior_style(atom)? == BindingStyle::Bare {
-
             let mut bindings = String::new();
             for (position, binding) in atom.bindings.iter().enumerate() {
                 let Binding::Pun(name) = binding else {
