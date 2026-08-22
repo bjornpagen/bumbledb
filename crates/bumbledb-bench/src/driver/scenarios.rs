@@ -5,7 +5,6 @@ use crate::report;
 
 /// # Errors
 pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
-
     if args.trace && !cfg!(feature = "obs") {
         return Err(super::bench::obs_missing("--trace"));
     }
