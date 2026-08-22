@@ -116,8 +116,8 @@ impl TraceEvent {
 /// an unfenced closing stamp can read up to ~50 ns early (bounded by
 /// backend scheduler occupancy, not the ROB). Stamp policy:
 /// - **Accumulated attribution** (`PhaseTimers`) uses raw [`ticks`] at
-/// both ends — measured inflation ≤ 2–3% at 10 ns phases; any fence
-/// costs more than it fixes (`isb` stamps measured +164%).
+///   both ends — measured inflation ≤ 2–3% at 10 ns phases; any fence
+///   costs more than it fixes (`isb` stamps measured +164%).
 #[cfg(feature = "trace")]
 pub mod fastclock;
 
