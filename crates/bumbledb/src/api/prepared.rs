@@ -8,7 +8,6 @@
 //! lookup — a miss means the query is empty on this snapshot, never an
 //! error, and a value interned by a later write is picked up on the next
 //! execution.
-
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -198,20 +197,14 @@ pub struct Answers {
     blob: Vec<u8>,
 }
 
-/// The intern-resolution memo , two
-/// tiers by lifetime:
+/// The intern-resolution memo, two tiers by lifetime:
 /// - **Per prepared query** (never cleared): the text arena and its
-/// word→arena-range map. The dictionary is append-only, so a resolved
-/// (word → text) pair is FINAL — each distinct intern word pays its
-/// LMDB descent and UTF-8 parse exactly once over the prepared
-/// query's lifetime, and every later finalize copies bytes out of the
-/// arena instead of descending. Memory is the distinct-string
-/// high-water — the explicit trade.
-/// - **Per finalize** (cleared at entry): word→range into THAT call's
-/// answer carrier, so K answers sharing one string cost one byte copy,
-/// not K — plus the run-coherence `last` slot.
-/// Keys are bare words: strings are the one interned type, so the tag
-/// byte died with variable bytes .
+///   word→arena-range map. The dictionary is append-only, so a resolved
+///   (word → text) pair is final — each distinct intern word pays its
+///   LMDB descent and UTF-8 parse exactly once over the prepared
+///   query's lifetime.
+/// - **Per finalize** (cleared at entry): word→range into that call's
+///   answer carrier, so K answers sharing one string cost one byte copy.
 #[derive(Debug)]
 struct ResolveMemo {
     /// word → packed `(start, len)` into the buffer's text heap
