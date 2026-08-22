@@ -126,7 +126,6 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     params: &[Const],
     key_scratch: &mut Vec<u8>,
 ) -> Result<Option<Cat::Value<'c>>> {
-
     key_scratch.clear();
     if let super::KeyProbeKind::Uniqueness { statement, .. } = &plan.kind {
         read::begin_determinant_key(key_scratch, plan.relation, *statement);
@@ -173,7 +172,7 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     };
     probe_span.set_flag(stored.is_some());
     let Some(stored) = stored else {
-        return Ok(None); 
+        return Ok(None);
     };
 
     let fact = layout.encoded(stored.as_ref());
