@@ -3,7 +3,6 @@
 use super::{FactLayout, ValueType};
 
 impl FactLayout {
-
     #[must_use]
     pub fn new(field_types: &[ValueType]) -> Self {
         let mut offset = 0;
