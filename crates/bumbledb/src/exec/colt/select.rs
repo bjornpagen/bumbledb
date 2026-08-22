@@ -150,7 +150,6 @@ impl Colt {
     }
 
     /// # Panics
-
     /// `select()` would silently drop its selections — wrong results.
     #[must_use]
     pub fn start(&self) -> Cursor {
