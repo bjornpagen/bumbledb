@@ -4,7 +4,6 @@
 //! Namespace readers per: `M` serves
 //! idempotence and point lookups, `U` functionality judgments and
 //! determinant-probe lookups, `F` image builds / point-lookup fetch / export
-
 mod check_width;
 mod determinant_row;
 mod fact_row;
