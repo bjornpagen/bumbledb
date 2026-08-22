@@ -1,4 +1,4 @@
-//! The containment target-side judgment (PRD 09 criteria): scalar
+//! The containment target-side judgment: scalar
 //! reverse-edge scans (stranded source, cluster demolition, statement
 //! scoping under identical key bytes), the interval re-walk matrix
 //! (shrink under / outside a source, chain segment deletion, delete plus
@@ -624,8 +624,7 @@ fn noop_parent_reinsert_with_child_delete_aborts_target_side() {
 fn parent_delete_reinsert_with_child_delete_aborts_target_side() {
     // The cancellation form of the same corner: delete(parent) +
     // insert(parent) nets to nothing, so the parent is never judged
-    // source-side (that judgment previously flipped the Direction label
-    // against the naive model). Same target-side verdict as above.
+    // source-side. Same target-side verdict as above.
     let schema = schema();
     let p = u64_fact(&schema, PARENT, 1);
     assert_target_violation(
