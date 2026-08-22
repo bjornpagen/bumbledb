@@ -271,7 +271,6 @@ fn admission_peak_bound() {
 
 #[test]
 fn alloc_law_budgets() {
-
     admission_peak_bound();
 
     let (heap, _hid, heap_aid, _hh, heap_acct) = seed_heap();
