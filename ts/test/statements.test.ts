@@ -1,27 +1,3 @@
-/**
- * Statement-algebra pins on the MINIMAL kernel (K3) under the LAW-TYPING
- * (K4): the full Ledger example (key, containment, selected `==`,
- * capacity) lowers to its `SchemaSpec` shape — every `newtype` slot
- * carrying the class name `schema()` COMPUTED from the statement list (the
- * laws type the columns; bare fields lower `undefined`); the
- * canonical-utterance ban table is enumerated one row at a time (each
- * banned LITERAL spelling a REAL `@ts-expect-error` — unwritable — each
- * computed-bound escape a construction error naming the canonical form,
- * and the weight-SENSITIVE `{1..*}` row split per-aggregate: banned on the
- * unit overload, a POSITIVE compile probe on the weighted one); field
- * references are checked in the type — existence AND structural shape
- * (positionwise kind/width/element, read off the schema type; the DOMAIN
- * wall lives at `schema()` — the one-generator-per-class law, pinned in
- * `law-typing.test.ts` — and at query joins, never at face construction);
- * the capacity form's OWN walls (weight on the SOURCE row, u64/interval
- * kinds; dependent bounds on the TARGET's full roster) hold at both tiers;
- * `schema()` enforces its expansion-boundary checks including the
- * handle-selection paste-back law; ψ-selection over closed relations
- * (`Grade.where({ mastered: true })` as a face source) is typed, rendered,
- * and lowered PASS-THROUGH (the engine folds at validate); and
- * `renderStatement` emits the canonical `70-api.md` spellings exactly.
- */
-
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
@@ -56,7 +32,6 @@ function buildLedger() {
 	return { Kind, Holder, Account, SavingsTerms, statements, Ledger }
 }
 
-/** The composite/pointwise fixtures: `on(R, ["a", "b"])` positions and the composite key. */
 function buildCalendar() {
 	const Booking = relation("Booking", { room: u64, during: interval(u64) })
 	const Slot = relation("Slot", { room: u64, during: interval(u64) })
@@ -68,14 +43,6 @@ function buildCalendar() {
 	return { Booking, Slot, statements, Calendar }
 }
 
-/**
- * The ψ fixtures: a payload-tier closed vocabulary selected by its own
- * columns (`Grade.where({ mastered: true })`) as a face source — Hole A of
- * ψ-selection closed. The selection is lowered AS-IS (pass-through — the
- * engine folds against the sealed extension at validate), so the two ψ
- * statement forms here are the exact shapes the macro's
- * `Grade(id | mastered == true)` lowers to.
- */
 function buildMastery() {
 	const Grade = closed(
 		"Grade",
@@ -92,11 +59,6 @@ function buildMastery() {
 	return { Grade, Certificate, psiContainment, psiCapacity, Mastery }
 }
 
-/**
- * The weighted fixtures — the dossier's two ruled shapes: the power budget
- * (u64 weight, dependent u64 bound) and calendar capacity (Duration weight,
- * Duration bound). `Model` carries the pinned-column pair's catalog side.
- */
 function buildRacks() {
 	const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
 	const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64 })
@@ -105,11 +67,6 @@ function buildRacks() {
 	return { Pool, Device, Room, Booking }
 }
 
-/**
- * The closed-payload fixtures: a payload column facing a relation field of
- * the SAME structure — the pairing the typed `columns` carrier exists to
- * admit (its domain, if any, is law-born at `schema()`, never declared).
- */
 function buildSeverity() {
 	const Sev = closed(
 		"Sev",
@@ -298,7 +255,7 @@ describe("renderStatement", function describeRender() {
 		assert.equal(renderStatement(capacity(target, within(1n, 3n), source)), "Holder(id) <={1..3} Account(holder)")
 		assert.equal(renderStatement(capacity(target, within(2n, "*"), source)), "Holder(id) <={2..*} Account(holder)")
 		assert.equal(renderStatement(capacity(target, within(0n, 4n), source)), "Holder(id) <={0..4} Account(holder)")
-		// The weighted rows: the bracket, the dependent bound, the Duration pair.
+
 		const { Pool, Device, Room, Booking } = buildRacks()
 		assert.equal(
 			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, 20n), on(Device, "pool"))),
@@ -349,7 +306,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 	test("degenerate literal sets refuse — a membership array needs two DISTINCT members, and the refusal locates itself", function probeDegenerateSet() {
 		const { Account } = buildLedger()
 		// Every refusal names the relation and field (`relation Account.kind:`)
-		// — self-locating, the same texture as the query tier's membershipSet.
+
 		assert.throws(function emptySet() {
 			Account.where({ kind: [] })
 		}, /relation Account\.kind: an empty literal set selects nothing/)
@@ -357,12 +314,11 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			Account.where({ kind: ["Checking"] })
 		}, /relation Account\.kind: a one-element literal set is the bare literal respelled/)
 		// A duplicate member is the banned one-element set respelled — refused
-		// HERE with the canonical-utterance voice, so the engine's index-speak
-		// duplicate error at Db.create is unreachable from this surface.
+
 		assert.throws(function duplicateMember() {
 			Account.where({ kind: ["Checking", "Checking"] })
 		}, /relation Account\.kind: the literal set spells Checking twice — write it once/)
-		// The ordinary-field twin, same voice (the one selection machine).
+
 		assert.throws(function duplicateOrdinary() {
 			const { Holder } = buildLedger()
 			Holder.where({ name: ["a", "b", "a"] })
@@ -371,11 +327,9 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("a duplicate field in a key() projection refuses at the mint — the engine's FieldSet duplicate, canonical voice", function probeDuplicateKeyProjection() {
 		const { Holder } = buildLedger()
-		// key(R, ["a", "a"]) collapses under `new Set` to the one-field set —
+
 		// without the mint refusal it could set-match a 1-field target
-		// projection the engine refuses (FieldSet errs on duplicates), a
-		// parity window between the two boundaries. The duplicate spelling
-		// is the once-spelled projection respelled: canonical utterance.
+
 		assert.throws(function duplicateProjection() {
 			key(Holder, ["name", "name"])
 		}, /key\(Holder, \.\.\.\): the projection spells name twice — write it once \(the canonical-utterance law: one meaning, one spelling\)/)
@@ -383,12 +337,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 	test("a plain u64 face never pairs a closed [id] face — closedness rides the descriptor (both tiers)", function probeRosterWall() {
 		const { Sev, Limit } = buildSeverity()
-		// The alias spelling — a bare u64 column into the vocabulary's [id] —
-		// dies at statement construction: the vocabulary's own descriptor
-		// (`Sev.id`) is the ONE spelling of a closed reference, so every
-		// descriptor-keyed closed judgment (the orderable ban, the name↔id
-		// marshal, answer decode) stays sound. The directives are real: the
-		// roster is the fourth slot of the face shape.
+
 		assert.throws(function aliasContainment() {
 			// @ts-expect-error — a plain u64 column cannot alias a closed vocabulary through a containment
 			contained(on(Limit, "cap"), on(Sev, "id"))
@@ -401,19 +350,19 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			// @ts-expect-error — a capacity statement's grouping join holds the roster wall exactly as containment
 			capacity(on(Sev, "id"), within(0n, 1n), on(Limit, "cap"))
 		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference/)
-		// The one spelling still constructs and renders canonically.
+
 		const Alert = relation("Alert", { sev: Sev.id })
 		assert.equal(renderStatement(contained(on(Alert, "sev"), on(Sev, "id"))), "Alert(sev) <= Sev(id)")
 	})
 
 	test("an arity-mismatched pairing is a construction error — the SameArity runtime twin (untyped path)", function probeArityWall() {
 		/**
-		 * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
-		 * already refuses these (the directives are real); before the twin an
-		 * UNTYPED caller's mismatch silently truncated to the shorter
-		 * projection (the positionwise walks skip unpaired positions) until
-		 * Db.create's colder engine refusal — now the statement itself judges.
-		 */
+ * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
+ * already refuses these (the directives are real); before the twin an
+ * UNTYPED caller's mismatch silently truncated to the shorter
+ * projection (the positionwise walks skip unpaired positions) until
+ * Db.create's colder engine refusal — now the statement itself judges.
+ */
 		const { Booking, Slot } = buildCalendar()
 		assert.throws(function truncatedContainment() {
 			// @ts-expect-error — SameArity refuses the pairing at the type tier; this is its construction-time twin
@@ -427,7 +376,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			// @ts-expect-error — a capacity statement's grouping join holds the arity wall exactly as containment
 			capacity(on(Slot, "room"), within(0n, 1n), on(Booking, ["room", "during"]))
 		}, /Booking\(room, during\) and Slot\(room\) project 2 vs 1 fields/)
-		// The paired spelling still constructs.
+
 		assert.equal(
 			renderStatement(contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"]))),
 			"Slot(room, during) <= Booking(room, during)"
@@ -435,15 +384,6 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 	})
 })
 
-/**
- * The ban table's compile tier: every banned LITERAL spelling is a type
- * error naming the canonical form — there is no argument shape that
- * produces `{n..n}`, `{0..0}`, `{0..*}`, a unit-instance `{1..*}`, a
- * negative bound, or a path weight/bound. Each directive is REAL: removing
- * it breaks compilation. The weight-SENSITIVE row is split per-aggregate
- * (design § 6): the unit `{1..*}` ban lives on the `capacity()` unit
- * overload, and {@link weightedFloorOneCompiles} is its POSITIVE twin.
- */
 function banTableIsUnwritable(): unknown[] {
 	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
@@ -483,15 +423,10 @@ function weightedFloorOneCompiles(): unknown {
 	return capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))
 }
 
-/**
- * The capacity form's own type walls: the weight names a u64/interval
- * field of the SOURCE's row, dependent bounds a u64/interval field of the
- * TARGET's full roster. Each directive is REAL.
- */
 function capacityWallsAreTyped(): unknown[] {
 	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
-		// the legal spellings compile — the walls admit exactly the ruled shapes
+
 		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool")),
 		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room")),
 		// @ts-expect-error — the weight names a field of the SOURCE's own row: Device has no field `nope`
@@ -510,12 +445,11 @@ function capacityWallsAreTyped(): unknown[] {
 }
 
 describe("the ban table's construction tier — computed bounds the type cannot judge", function describeBelts() {
-	/** A bound whose literal identity the type level has already lost. */
+
 	const computed: (n: bigint) => bigint = function widen(n) {
 		return n
 	}
 
-	/** A field name whose literal identity the type level has already lost. */
 	const computedName: (name: string) => string = function widenName(name) {
 		return name
 	}
@@ -546,7 +480,7 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		assert.throws(function computedUnitFloorOne() {
 			capacity(on(Pool, "id"), within(computed(1n), "*"), on(Device, "pool"))
 		}, /says only what the bare containment says/)
-		// The weighted twin CONSTRUCTS — the ban is Count-instance-only.
+
 		const weighted = capacity(on(Pool, "id"), weigh("watts"), within(computed(1n), "*"), on(Device, "pool"))
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
 	})
@@ -557,8 +491,7 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the type tier's ban row, with the construction wall behind it
 			return capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room"))
 		}, /mixes dimensions \(C18\) — weigh the source with weigh\(duration\(field\)\), or bound by a u64 field or literal/)
-		// The Duration-weighted twin CONSTRUCTS — Duration weights pair
-		// with Duration-capable bounds (C18's positive half).
+
 		const weighted = capacity(
 			on(Room, "id"),
 			weigh(duration("booked")),
@@ -657,8 +590,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	test("the paste-back law: a handle selection needs its resolving containment declared", function probePasteBack() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
 		assert.throws(function unresolvedHandleSelection() {
-			// The key keeps the mirrors target lawful under the target-key
-			// wall, so exactly the paste-back law is the broken thing.
+
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
 				key(SavingsTerms, ["account"]),
 				mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
@@ -668,8 +600,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 
 	test("a forged structural statement is refused at BOTH tiers — the admission brand (062)", function probeForgery() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
-		// A statement pairing a bare u64 with the closed id — the exact shape the
-		// roster wall exists to refuse, spelled structurally to skip the constructors.
+
 		const forgedData = {
 			kind: "containment" as const,
 			source: on(Account, "holder").data,
@@ -758,12 +689,7 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	})
 
 	test("a handle named `where` is ordinary roster data — NO name is reserved, both tiers", function probeNoReservedNames() {
-		/**
-		 * H5: handles are pure DATA, never properties of the value — the
-		 * axioms record and the roster are their own namespaces, so a
-		 * vocabulary may legally contain handles named like the value's own
-		 * methods, and the payload tier's ψ surface is untouched by them.
-		 */
+
 		const bare = closed("Fine", ["where"])
 		assert.deepEqual(bare.data.handles, ["where"])
 		const payload = closed("AlsoFine", { pages: bool }, { where: { pages: true } })
@@ -774,18 +700,6 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	})
 })
 
-// ————————————————————————————————————————————————————————————————————————
-// The construction compile probes: field references are checked in the
-// TYPE — existence (names autocomplete, unknown field = type error) and
-// STRUCTURAL compatibility (positionwise kind/width/element, read off the
-// schema type). The old cross-DOMAIN construction probes are gone from
-// here BY DESIGN: at construction there is no domain to compare — the
-// laws are self-defining, and the domain wall is re-homed at the schema
-// level (K4's one-generator-per-class check) and at query joins. Each
-// function is exported-but-uncalled; each directive is REAL.
-// ————————————————————————————————————————————————————————————————————————
-
-/** `on()` field references must exist on the source — existence is a type property. */
 function fieldReferencesAreTypeChecked(): unknown[] {
 	const { Kind, Account } = buildLedger()
 	const { Booking } = buildCalendar()
@@ -803,13 +717,12 @@ function fieldReferencesAreTypeChecked(): unknown[] {
 	]
 }
 
-/** Structurally mismatched pairs are compile errors on every relating constructor. */
 function facesArePairedStructurally(): unknown[] {
 	const { Kind, Holder, Account } = buildLedger()
 	const { Booking, Slot } = buildCalendar()
 	const Vault = relation("Vault", { tag: bytes(32), stamp: bytes(16) })
 	return [
-		// the legal pairs compile — positionwise-equal kind/width/element
+
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"])),
 		contained(on(Account, "kind"), on(Kind, "id")),
@@ -830,23 +743,15 @@ function facesArePairedStructurally(): unknown[] {
 	]
 }
 
-/**
- * A closed relation's payload columns pair by their declared descriptors'
- * STRUCTURE through the typed `columns` carrier (whose runtime twin is the
- * frozen `columns` record the mint carries), exactly as an ordinary
- * relation's fields do; the synthetic `id` is a u64 CARRYING ITS ROSTER —
- * it pairs only a column spelled with the vocabulary's own descriptor
- * (the roster slot of the face shape; a plain u64 cannot alias it).
- */
 function closedPayloadColumnsPairStructurally(): unknown[] {
 	const { Sev, Limit } = buildSeverity()
 	const { Holder, Account } = buildLedger()
 	const Alert = relation("Alert", { sev: Sev.id })
 	return [
-		// the legal pairs compile — u64 against u64, whichever side is closed
+
 		contained(on(Sev, "level"), on(Limit, "level")),
 		contained(on(Limit, "level"), on(Sev, "level")),
-		// the closed [id] pairs the vocabulary's OWN descriptor — the one spelling
+
 		contained(on(Alert, "sev"), on(Sev, "id")),
 		// @ts-expect-error — a plain u64 never pairs a closed [id]: closedness rides the descriptor (the roster slot)
 		contained(on(Limit, "cap"), on(Sev, "id")),
@@ -857,7 +762,6 @@ function closedPayloadColumnsPairStructurally(): unknown[] {
 	]
 }
 
-/** `where()` selections are typed: a closed reference selects by handle NAME (the precise union). */
 function selectionsAreTyped(): unknown[] {
 	const { Account } = buildLedger()
 	return [
@@ -872,14 +776,6 @@ function selectionsAreTyped(): unknown[] {
 	]
 }
 
-/**
- * The closed `where()` is typed exactly like the ordinary one — payload
- * columns only (the synthetic `id` is excluded: an id selection is spelled
- * only as handle literals on the referencing side), the same literal/one-of
- * vocabulary — and it exists ONLY on the payload tier: the bare tier has no
- * payload, so `.where` is a type-level ABSENCE there, not an uncallable
- * method.
- */
 function closedSelectionsAreTyped(): unknown[] {
 	const { Kind } = buildLedger()
 	const { Grade } = buildMastery()
@@ -897,16 +793,10 @@ function closedSelectionsAreTyped(): unknown[] {
 	]
 }
 
-/**
- * A ψ-selected closed face pairs by STRUCTURE exactly as a bare closed
- * face — the selection changes nothing about the projected shapes: the
- * synthetic `id` contributes the u64 triple, payload columns their
- * declared descriptors' triples through the typed `columns` carrier.
- */
 function psiFacesArePairedStructurally(): unknown[] {
 	const { Grade, Certificate } = buildMastery()
 	return [
-		// the legal pairs compile — same-label ψ pairing and the ψ capacity target
+
 		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
 		capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade")),
 		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
