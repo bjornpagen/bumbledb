@@ -1,45 +1,23 @@
-//! The one literal-value sum (`docs/architecture/30-dependencies.md`:
-//! dependencies and queries share one representation).
-//!
+//! The one literal-value sum.
 //! Query literals (the engine IR's `Term::Literal`) and statement
 //! selection literals ([`crate::schema::Side::selection`]) are the same
 //! type — this module is the zero-dependency home both the IR and
 //! `schema` import, so neither layer owes the other anything.
-//!
-//! `Value` is dumb data except where a malformed value would erase its own
 //! denotation: interval variants carry the checked [`crate::Interval`] type,
-//! so every encodable interval is nonempty by construction, and
-//! [`Value::String`] carries [`Box<str>`] so UTF-8 is proved where the
-//! value is born. Encoding and rendering live engine-side; nothing a
-//! consumer owns lives here.
-
-/// A literal value. Exactly one variant per data-model type — no universal
-/// integer (U64 and I64 literals are exact-typed; out-of-range is
-/// unrepresentable rather than truncated), and the fixed-bytes variant
-/// exists by construction (the v5 hole, post-mortem §13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
     U64(u64),
     I64(i64),
-    /// UTF-8 text; interning is the engine's job (resolved to an intern
-    /// id per execution — a dictionary miss means empty result).
+
     String(Box<str>),
-    /// A `bytes<N>` value: exactly N raw bytes, self-encoding — the
-    /// length is the type (`ValueType::FixedBytes`), so a length mismatch
-    /// is a type mismatch. Never interned: identity-shaped values live
-    /// inline in the fact (*intern what repeats; inline what
-    /// identifies* — `docs/architecture/10-data-model.md`).
+
     FixedBytes(Box<[u8]>),
-    /// A nonempty half-open `[start, end)` over U64
-    /// (`docs/architecture/20-query-ir.md`). Raw bounds do not typecheck:
-    ///
+
     /// ```compile_fail
-    /// use bumbledb_theory::Value;
-    /// let _ = Value::IntervalU64(7, 7);
+
     /// ```
     IntervalU64(crate::Interval<u64>),
-    /// A nonempty half-open `[start, end)` over I64. Construction follows
-    /// [`Value::IntervalU64`].
+
     IntervalI64(crate::Interval<i64>),
 }
