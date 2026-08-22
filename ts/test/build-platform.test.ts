@@ -50,7 +50,6 @@ describe("the build's local-platform derivation", function suite() {
 
 describe("the shipped set, single-sourced", function suite() {
 	test("the loader's SHIPPED_PLATFORMS is the build's PUBLISH_PLATFORM", function shippedSetLockstep() {
-
 		assert.equal(SHIPPED_PLATFORMS, PUBLISH_PLATFORM)
 	})
 
