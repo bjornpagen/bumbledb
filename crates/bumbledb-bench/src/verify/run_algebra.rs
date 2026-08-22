@@ -1,6 +1,5 @@
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
-//! representation, judged before anything is timed):
-
+//!   representation, judged before anything is timed.
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, FoldOp, Query, Rule,
     Term, Value, VarId,
