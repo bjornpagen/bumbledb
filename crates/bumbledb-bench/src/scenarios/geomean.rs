@@ -1,10 +1,5 @@
 use super::{LaneOutcome, QueryReport};
 
-/// Geometric mean of the primary-lane p50 ratios (the honest cross-query
-/// summary: ratios multiply, so the geomean is the scale-free center).
-/// A DNF primary lane contributes nothing — a censored ratio is not a
-/// ratio, so exceeded-cap queries are excluded (and counted by
-/// [`dnf_count`]).
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -19,9 +14,6 @@ pub fn geomean(reports: &[&QueryReport]) -> f64 {
     (log_sum / ratios.len() as f64).exp()
 }
 
-/// How many reports carry at least one exceeded-cap lane — the DNFs the
-/// renderers count beside every geomean (honesty in both directions:
-/// excluded, never hidden).
 #[must_use]
 pub fn dnf_count(reports: &[&QueryReport]) -> usize {
     reports
