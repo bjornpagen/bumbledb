@@ -1,22 +1,5 @@
 //! The dumb-bridge law: no logic beyond marshaling will EVER live in this
 //! crate. Anything smart belongs in the TypeScript SDK or the engine.
-//!
-//! # Threading model
-//!
-//! Store reads and writes invoke the JavaScript callback synchronously
-//! inside `Db::read` / `Db::write` on the JavaScript thread. Instance and
-//! transaction handles are raw pointers valid only while `alive` is set —
-//! they are never transmuted to `'static` and never parked on a worker.
-//! Control-plane work (`create` / `open` / `fromInstance` / `admit`) is
-//! one temporal shape: every `async` SDK method is a napi
-//! `AsyncTask`. An owned instance holds `Arc<OwnedInstance>` plus a lease
-//! flag so dispose-during-publish is a typed refusal, not a race.
-//!
-//! # Error taxonomy
-//!
-//! Domain outcomes are DATA (admission and write tags). Language and
-//! shape errors THROW. Engine errors carry a forced [`ErrorFamily`] kind
-//! in `tags::error_family`.
 
 use std::cell::{Cell, Ref, RefCell, RefMut, UnsafeCell};
 use std::sync::Arc;
@@ -61,8 +44,6 @@ struct Sealed {
     rosters: Vec<marshal::SealedRoster>,
 }
 
-/// The one `Sealed` constructor: descriptor → materialized statements +
-/// resident rosters, at handle construction (open/create/publish/builder).
 fn seal(descriptor: SchemaDescriptor) -> Sealed {
     let statements = descriptor.materialized_statements();
     let rosters = marshal::sealed_rosters(&descriptor);
@@ -221,10 +202,6 @@ fn assemble(db: Engine, descriptor: SchemaDescriptor) -> DbHandle {
         })),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Db handle
-// ---------------------------------------------------------------------------
 
 pub struct DbHandle {
     inner: RefCell<Option<DbInner>>,
@@ -586,10 +563,6 @@ pub fn db_from_instance(
     }))
 }
 
-// ---------------------------------------------------------------------------
-// Borrowed instance + witness
-// ---------------------------------------------------------------------------
-
 pub struct InstanceHandle {
     sealed: Arc<Sealed>,
     alive: Arc<AtomicBool>,
@@ -869,10 +842,6 @@ pub fn witness_close(witness: &External<WitnessHandle>) -> napi::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Writes
-// ---------------------------------------------------------------------------
-
 pub struct TxHandle {
     sealed: Arc<Sealed>,
     /// The `Db` that minted this write — valid only while `alive`.
@@ -1085,14 +1054,6 @@ fn fresh_range_wire(range: FreshRange<u64>) -> FreshRangeWire {
     }
 }
 
-/// One crossing per write verb (`proposals/one-representation/20`): the
-/// flat row-major cells array — beside the EXPLICIT row count only the JS
-/// side can state (a fieldless roster's N facts project to 0 cells, so no
-/// derivation can recover N) — becomes ONE shape-proved
-/// `AcceptedCollection` in one marshal pass, handed to the engine's
-/// doc-hidden `*_accepted` transport lane. The paired column crossings
-/// this bridge used to carry are D2 in the deletion ledger
-/// (`proposals/one-representation/70`).
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn tx_insert(
@@ -1186,10 +1147,6 @@ pub fn tx_reserve(
         .map_err(|e| throw_engine(env, &e))?;
     Ok(fresh_range_wire(range))
 }
-
-// ---------------------------------------------------------------------------
-// Prepared
-// ---------------------------------------------------------------------------
 
 pub struct PreparedHandle {
     inner: RefCell<Option<PreparedInner>>,
@@ -1289,10 +1246,6 @@ pub fn prepared_close(prepared: &External<PreparedHandle>) -> napi::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Builder / owned instance
-// ---------------------------------------------------------------------------
-
 pub struct BuilderHandle {
     inner: RefCell<Option<InstanceBuilder<SchemaDescriptor>>>,
     sealed: Arc<Sealed>,
@@ -1367,9 +1320,6 @@ pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<Bui
     }))
 }
 
-/// The builder twin of [`tx_insert`]'s one crossing: same flat cells
-/// array with the explicit row count, same `AcceptedCollection`, the
-/// engine's `load_accepted`.
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn instance_builder_load(
