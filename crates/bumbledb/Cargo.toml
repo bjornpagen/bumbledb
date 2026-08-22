@@ -6,52 +6,19 @@ publish = false
 
 [features]
 trace = []
-# Test-support: global-allocator counting for the zero-warm-allocation
-# gate. Never enabled in production builds.
+
 alloc-counter = []
-# Test-support: reaches the grounding's thread-local off switch
-# (`plan/ground.rs`) from the bench crate's dual-run differential unit
-# tests. Enabled only as a bench dev-dependency; no runtime mode ships.
+
 ground-off = []
-# The PRD-C1 measurement twins (`twin-no-mem-init`, `twin-append`)
-# lived here for one measurement session and were removed with their
-# gravestones — `MDB_NOMEMINIT` measured NEUTRAL
-# (`storage/env/open_env.rs` records the numbers), `MDB_APPEND` refuted
-# structurally (`storage/commit/applier.rs: put_data` records the
-# mechanism). No dead flag ships.
-# GRAVESTONE (cleanup-0.5.0 ruling 4,
-# the retired U2 engine-kills packet (git history)): `lineage-off` — the
-# PR #10 branch's image-cache advance-vs-evict A/B knob
-# (`with_lineage_disabled`, the `evict_older_than` feature arm) and its
-# Wave-M cold-lineage bench twin (`bumbledb-bench/src/writebench.rs`) —
-# is ruled DEAD before ever merging here. The copy-on-append number is
-# banked (OFF/ON = 2.54x, cold_containment_walk, commit 7ca120aa) and
-# measurement twins die once their number is banked (the PRD-C1
-# precedent above). The PR #10 merge DID carry the feature — the
-# reconciliation executed this gravestone: the feature, the knob, the
-# twin, and the twin's feature dep died in the same commit;
-# `evict_older_than` died with purge K7.
 
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
-# The theory vocabulary (values, intervals, the Allen mask algebra, schema
-# descriptors, the SchemaSpec lowering) — re-exported wholesale: hosts
-# depend on this one crate, never on bumbledb-theory directly
-# (docs/architecture/70-api.md § the SchemaSpec bindings contract).
+
 bumbledb-theory = { path = "../bumbledb-theory" }
-heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
+heed = { version = "0.22", default-features = false } 
 
 # On Apple platforms LMDB's default lock implementation is SysV semaphores,
-# keyed by ftok(lock.mdb) — 16 bits of inode — so ANY other LMDB environment
-# on the volume whose lockfile inode collides mod 2^16 shares the set, and
-# removes it at close (semctl IPC_RMID): the open environment's next lock
-# acquisition returns EINVAL (struck the production store twice, 2026-07-17;
-# regression: tests/sysv_sem_rmid.rs). POSIX named semaphores are keyed by a
-# full 64-bit (dev, ino) hash and survive sem_unlink in-process; their known
-# cost — no robust-owner recovery when a lock holder dies — is void here:
-# bumbledb.lock enforces one process per store, so after a crash the next
-# opener always wins LMDB's exclusive lock and recreates the semaphores.
 [target.'cfg(target_os = "macos")'.dependencies]
 heed = { version = "0.22", default-features = false, features = ["posix-sem"] }
 
