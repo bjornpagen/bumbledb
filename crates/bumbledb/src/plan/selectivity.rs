@@ -4,7 +4,6 @@
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
 //! (the cache is peeked); a cold prepare degrades to bounds and floors,
-
 use crate::image::ColumnWidth;
 use crate::image::ImageBind;
 #[cfg(test)]
