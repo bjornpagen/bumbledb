@@ -38,7 +38,6 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
                 Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
                 Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
                 // A ray met at measure time (C10's judge-side refusal)
-
                 Err(Error::CapacityRayMeasure { .. }) => {
                     s.malformed(&parent, "capacity measure of a ray");
                 }
