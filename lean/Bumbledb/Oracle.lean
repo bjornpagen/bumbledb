@@ -7,7 +7,7 @@ import Bumbledb.Exec.Sweep
 "The determinant index can answer it" as mathematics. The acceptance
 gate's law — a statement is accepted only if the checker has an
 enforcement plan whose consultations are bounded by the touched data
-(`docs/architecture/30-dependencies.md` § the acceptance gate) — was
+ § the acceptance gate) — was
 prose. This module is that law as theorems: an abstract ordered
 oracle, enforcement plans as witness terms over it, and per accepted
 form the two halves — the plan's verdict EQUALS the form's
@@ -27,8 +27,8 @@ delta-restriction module whose checks it decides.
 ## The abstract ordered oracle
 
 `OrderedOracle K P β ple` is an ordered-set oracle, full stop: a fact
-set, a group key (`groupOf : β → K`) and a within-group position
-(`posOf : β → P`) under an abstract order `ple` — the two-level key
+set, a group key (`groupOf: β → K`) and a within-group position
+(`posOf: β → P`) under an abstract order `ple` — the two-level key
 of a determinant consultation, with the order itself abstract (which
 bytes realize it is representation, unmodeled). Operations with
 specification lemmas: `consult` (the facts of one group, sound,
@@ -66,54 +66,54 @@ form's delta-restricted check (`planObligation`, `acceptance_gate`).
 ## The per-form theorems (correctness + the proved count)
 
 * **Scalar FD** — one point probe per touched determinant tuple
-  (`fdPlan`, `fd_plan_consultations` = 1): the collision-free verdict
-  over the probed buckets IS `fdDeltaCheck` (`fd_plan_decides`).
+ (`fdPlan`, `fd_plan_consultations` = 1): the collision-free verdict
+ over the probed buckets IS `fdDeltaCheck` (`fd_plan_decides`).
 * **Pointwise FD** — two neighbor probes per touched fact
-  (`neighborPlan`, `neighbor_plan_consultations` = 2): under the
-  group-disjointness premise — the applier's premise chain, exactly
-  what the pre-state key supplies per group — clearing both neighbors
-  IS clearing the whole group (`neighbor_probe_decides`, the sandwich
-  argument at the sweep's altitude).
+ (`neighborPlan`, `neighbor_plan_consultations` = 2): under the
+ group-disjointness premise — the applier's premise chain, exactly
+ what the pre-state key supplies per group — clearing both neighbors
+ IS clearing the whole group (`neighbor_probe_decides`, the sandwich
+ argument at the sweep's altitude).
 * **Scalar IND, source** — one target-key point probe per added
-  source fact (`indSourcePlan`, `ind_source_plan_consultations` = 1);
-  the ψ read is of the probed bucket itself — the oracle answers
-  whole facts, so the engine's establishing-fact `F` get is
-  representation below this altitude.
+ source fact (`indSourcePlan`, `ind_source_plan_consultations` = 1);
+ the ψ read is of the probed bucket itself — the oracle answers
+ whole facts, so the engine's establishing-fact `F` get is
+ representation below this altitude.
 * **Scalar IND, target** — per removed ψ-target fact, one
-  re-establishment probe on the KEYED target index
-  (`indReestablishProbe`, `ind_reestablish_consultations` = 1) plus
-  one reverse-demand WALK of the source bucket (`indReverseWalk`,
-  `ind_reverse_walk_consultations` = 1 + the walked bucket's length):
-  the source projection is many-to-one by design — no acceptance
-  rule keys it — so a unit price there would understate (exactly the
-  keyed-bucket honesty criterion below), and the walk is priced at
-  what it reads. Both arms together decide `containmentDeltaCheck`
-  (`containment_plan_decides`, evaluating exactly these named
-  terms); a CLOSED target sharpens the whole source arm to a sealed
-  member test at zero consultations (`member_test_decides`,
-  `member_test_consultations`).
+ re-establishment probe on the KEYED target index
+ (`indReestablishProbe`, `ind_reestablish_consultations` = 1) plus
+ one reverse-demand WALK of the source bucket (`indReverseWalk`,
+ `ind_reverse_walk_consultations` = 1 + the walked bucket's length):
+ the source projection is many-to-one by design — no acceptance
+ rule keys it — so a unit price there would understate (exactly the
+ keyed-bucket honesty criterion below), and the walk is priced at
+ what it reads. Both arms together decide `containmentDeltaCheck`
+ (`containment_plan_decides`, evaluating exactly these named
+ terms); a CLOSED target sharpens the whole source arm to a sealed
+ member test at zero consultations (`member_test_decides`,
+ `member_test_consultations`).
 * **Coverage** — one entry seek + a prefix walk of the group
-  (`coveragePlan`, `coverage_plan_consultations` = 1 + walk length):
-  the walked segments feed `Exec/Sweep.lean`'s one-pass verdict, and
-  under the target-key disjointness premise the sweep verdict IS the
-  point-subset denotation (`coverage_walk_decides`, spending
-  `sweep_covered_sound_complete`).
+ (`coveragePlan`, `coverage_plan_consultations` = 1 + walk length):
+ the walked segments feed `Exec/Sweep.lean`'s one-pass verdict, and
+ under the target-key disjointness premise the sweep verdict IS the
+ point-subset denotation (`coverage_walk_decides`, spending
+ `sweep_covered_sound_complete`).
 * **Capacity** — a prefix walk of each touched parent's child group,
-  weighed (`capacityPlan`): the measure verdict over one
-  duplicate-free enumeration IS the capacity judgment at the
-  parent-resolved window (`measure_admits_iff_enum` via the
-  consolidated weighted pigeonhole `nodup_subset_natSum_le`,
-  `Capacity.lean`), deciding `capacityDeltaCheck`
-  (`capacity_plan_decides`); total consultations = touched parents +
-  total touched-group sizes, as an equation
-  (`capacity_plan_consultations`) — the weighted verdict reads no
-  extra entries beyond what the count walk read, and the engine's
-  floor-only clip (C14) is priced sound by
-  `capacity_floor_exit_sound`; the ceiling twin
-  (`capacity_ceiling_exit_sound`) records the verdict's early
-  decidability, which the engine deliberately does not spend — a
-  ceiling walk completes, so the witnessed measure is
-  walk-order-independent.
+ weighed (`capacityPlan`): the measure verdict over one
+ duplicate-free enumeration IS the capacity judgment at the
+ parent-resolved window (`measure_admits_iff_enum` via the
+ consolidated weighted pigeonhole `nodup_subset_natSum_le`,
+ `Capacity.lean`), deciding `capacityDeltaCheck`
+ (`capacity_plan_decides`); total consultations = touched parents +
+ total touched-group sizes, as an equation
+ (`capacity_plan_consultations`) — the weighted verdict reads no
+ extra entries beyond what the count walk read, and the engine's
+ floor-only clip (C14) is priced sound by
+ `capacity_floor_exit_sound`; the ceiling twin
+ (`capacity_ceiling_exit_sound`) records the verdict's early
+ decidability, which the engine deliberately does not spend — a
+ ceiling walk completes, so the witnessed measure is
+ walk-order-independent.
 
 ## The acceptance premises, spent
 
@@ -141,39 +141,39 @@ fact-level fidelity to its delta-restricted check.
 ## Narrowings recorded (law 5: narrow and record)
 
 * **The pointwise arms live at the interval altitude.** The
-  fact-level reading rides `Value.points` through positional
-  structural typing — delegated exactly as `Exec/Sweep.lean`'s module
-  doc delegates σ and typing above the fold. Their delta composition
-  is `pointwise_delta_restriction` / `coverage_delta_restriction`
-  (already proved, wave 2a); this module supplies the per-probe and
-  per-walk verdicts those checks run.
+ fact-level reading rides `Value.points` through positional
+ structural typing — delegated exactly as `Exec/Sweep.lean`'s module
+ doc delegates σ and typing above the fold. Their delta composition
+ is `pointwise_delta_restriction` / `coverage_delta_restriction`
+ (already proved, wave 2a); this module supplies the per-probe and
+ per-walk verdicts those checks run.
 * **The neighbor-probe theorem is per-insert over the standing
-  group.** The applier probes each inserted fact against the index as
-  it stands, earlier inserts included — a collection insert is the
-  fold of those singleton probes (`Txn.insert_is_fold`); the theorem
-  is the one insert's decision, which is the probe's whole
-  algorithmic content.
+ group.** The applier probes each inserted fact against the index as
+ it stands, earlier inserts included — a collection insert is the
+ fold of those singleton probes (`Txn.insert_is_fold`); the theorem
+ is the one insert's decision, which is the probe's whole
+ algorithmic content.
 * **The coverage plan walks the whole group.** The engine clips the
-  walk to the touched window via the entry seek;
-  `Exec/Sweep.lean: sweep_ignores_spent_segments` is the clipping
-  license, and a wider walk only re-reads more — the same
-  superset-narrowing as `touchedParents` (wave 2a).
+ walk to the touched window via the entry seek;
+ `Exec/Sweep.lean: sweep_ignores_spent_segments` is the clipping
+ license, and a wider walk only re-reads more — the same
+ superset-narrowing as `touchedParents` (wave 2a).
 * **Touched enumerations are sets.** The engine's deduplicated
-  scan-order lists are representation — the `violationSet` narrowing
-  (`Txn.lean`), unchanged. The window count theorem takes the touched
-  parents as any list because the price is per-parent-walk, whatever
-  order the engine visits them.
+ scan-order lists are representation — the `violationSet` narrowing
+ (`Txn.lean`), unchanged. The window count theorem takes the touched
+ parents as any list because the price is per-parent-walk, whatever
+ order the engine visits them.
 * **The reverse-demand walk reads the whole source bucket.** The
-  engine's reverse index is φ-gated per statement and its scan stops
-  at the first surviving demand — clipping, representation below
-  this altitude: a shorter engine read only reads less, and the
-  model prices the whole walked bucket — the same superset-narrowing
-  as `touchedParents` (wave 2a).
+ engine's reverse index is φ-gated per statement and its scan stops
+ at the first surviving demand — clipping, representation below
+ this altitude: a shorter engine read only reads less, and the
+ model prices the whole walked bucket — the same superset-narrowing
+ as `touchedParents` (wave 2a).
 * **Unit probe cost is the keyed-bucket honesty.** `pointProbe` costs
-  1 because acceptance demands probe-ability — the exact-field-set
-  target-key rule; `accepted_target_key_prices_the_probe` is that
-  demand spent. On an unkeyed group the abstract count would
-  understate, which is exactly why the gate refuses unkeyed targets.
+ 1 because acceptance demands probe-ability — the exact-field-set
+ target-key rule; `accepted_target_key_prices_the_probe` is that
+ demand spent. On an unkeyed group the abstract count would
+ understate, which is exactly why the gate refuses unkeyed targets.
 
 ## The capacity plan: acceptance and checker discharged
 
@@ -844,7 +844,7 @@ theorem neighbor_probe_decides : NeighborPlanned := by
     have hxiv' : iv.start ≤ x ∧ x < iv.«end» := hxiv
     have hxjv' : jv.start ≤ x ∧ x < jv.«end» := hxjv
     rcases LinearElem.le_total jv.start iv.start with hle | hle
-    · -- the predecessor side
+    · 
       cases hp : o.pred g iv.start with
       | none =>
         exact o.pred_none g iv.start hp jv hjf hjg
@@ -868,7 +868,7 @@ theorem neighbor_probe_decides : NeighborPlanned := by
               ⟨LinearElem.le_refl _, p.h⟩
               ⟨hjp, LinearElem.lt_trans
                 (LinearElem.lt_of_lt_of_le p.h hpe) hxjv'.2⟩
-    · -- the successor side
+    · 
       cases hs : o.succ g iv.start with
       | none =>
         exact o.succ_none g iv.start hs jv hjf hjg
@@ -979,7 +979,7 @@ def planObligation (T : Theory) (I : Instance) (d : Txn.Delta) :
 HAS its plan term: each accepted form's delta-restricted check is
 decided by an evaluation of sanctioned probes with a proved
 consultation count — "an accepted statement is a measured promise"
-(`docs/architecture/30-dependencies.md` § the acceptance gate) made
+ § the acceptance gate) made
 literal. The acceptance premises price the probes
 (`accepted_target_key_prices_the_probe`); the E1 shape has no plan
 term at the gate's own type
