@@ -153,7 +153,6 @@ struct RunCtx<'a, Cat, Img> {
 }
 
 impl<S> PreparedQuery<S> {
-
     #[expect(
         clippy::too_many_lines,
         reason = "the derived phase reads as one protocol: interiors, then rec"
