@@ -12,7 +12,6 @@ use super::{ids, schema};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Enforcement {
-
     pub law: &'static str,
 
     pub notation: &'static str,
