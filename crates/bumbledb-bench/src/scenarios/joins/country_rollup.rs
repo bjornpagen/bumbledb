@@ -3,8 +3,6 @@ use bumbledb::{Atom, FieldId, FindTerm, FoldOp, Query, Rule, VarId};
 use super::ids;
 use super::term::var;
 
-/// j5 — kind/country rollup over the full join: Min(year) and Count per
-/// (country) — the aggregate face of join-order stress.
 pub(super) fn country_rollup() -> Query {
     Query::single(Rule {
         finds: vec![
