@@ -17,10 +17,8 @@ impl WriteDelta<'_> {
     }
 
     /// Fresh marks advance on insert before the no-op determination —
-
     /// commit — the write path and explicit resupply after a delete —
     /// and marks never retreat (`mark.max(value + 1)`; deletes do not
-
     /// # Errors
     pub fn apply(
         &mut self,
