@@ -1,5 +1,4 @@
 //! Collection-valued mutation reports and fresh-id ranges.
-
 use super::Fresh;
 use std::iter::FusedIterator;
 use std::num::NonZeroU64;
