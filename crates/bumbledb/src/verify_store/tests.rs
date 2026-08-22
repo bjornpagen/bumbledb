@@ -1,8 +1,4 @@
 //! Fixture stores with each desync class hand-injected through raw LMDB
-//! writes on the environment handle — the sweeps must produce exactly
-//! their finding variant, and a clean store an empty report with the
-//! dictionary statistic populated. Every injected key is derived through
-//! `storage::keys` (never a second slicer).
 
 use super::*;
 use crate::encoding::{
@@ -23,8 +19,7 @@ const HOLDER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);
 const ACCOUNT: RelationId = RelationId(2);
 const CLAIM: RelationId = RelationId(3);
-/// Materialized statement order: the fresh auto-FD on `Holder.id` first,
-/// then the declared statements in declaration order.
+
 const HOLDER_KEY: StatementId = StatementId(0);
 const BOOKING_KEY: StatementId = StatementId(1);
 const ACCOUNT_HOLDER: StatementId = StatementId(2);
@@ -47,15 +42,10 @@ fn judgment_capacity(
     StoreFinding::Judgment(Violation::capacity(schema.cite(statement), fact, measure))
 }
 
-/// Holder(id fresh, name str) — scalar key, string field for the
-/// dictionary statistic; Booking(room, during) with a pointwise key;
-/// Account(holder, kind) ⊆ Holder under the σ `kind == 0` (checking);
-/// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
-/// containment (the target's pointwise key carries the interval).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one descriptor literal, four relations
+)] 
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -164,13 +154,6 @@ fn schema() -> SchemaDescriptor {
     }
 }
 
-/// A committed store: holders 1 "alice" (row 1 — Holder is fresh-keyed,
-/// so its row id IS the fresh value, R16) and 2 "bob" (row 2, then
-/// deleted — "bob" is the dangling dictionary entry), bookings (7, [0,10))
-/// and (7, [20,30)) at rows 0 and 1, accounts (1, checking) at row 0
-/// (inside σ — one `R` edge) and (2, savings) at row 1 (outside σ — no
-/// edge), and claim (7, [2,8)) at row 0 (covered by booking (7, [0,10))).
-/// One insert per commit pins the fresh-less row ids.
 fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), schema())
@@ -223,10 +206,6 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     (dir, db)
 }
 
-/// Every newly added corruption fixture is paired with the same populated
-/// store left untouched. This makes the raw injector's no-false-positive
-/// control explicit rather than relying only on the suite's general clean
-/// fixture.
 fn fixture_with_healthy_sibling(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let control_tag = format!("{tag}-control");
     let (_control_dir, control) = fixture(&control_tag);
@@ -307,17 +286,12 @@ fn canonical_field_fixture_with_healthy_sibling(tag: &str) -> (TempDir, Db<Schem
     canonical_field_fixture(tag)
 }
 
-/// The test-only raw-write handle: one LMDB write transaction over the
-/// open environment, bypassing the delta — exactly the desync injector
-/// the sweeps exist to catch.
 fn raw_write(db: &Db<SchemaDescriptor>, f: impl FnOnce(&mut crate::storage::env::WriteTxn<'_>)) {
     let mut txn = db.env().write_txn().expect("raw txn");
     f(&mut txn);
     txn.commit().expect("raw commit");
 }
 
-/// Replaces one F value while keeping its M image coherent. Callers choose a
-/// field that is not projected by U, or use a relation with no keys.
 fn replace_fact_bytes(
     db: &Db<SchemaDescriptor>,
     rel: RelationId,
@@ -357,7 +331,6 @@ fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> 
     out
 }
 
-/// `enc(room) ‖ enc(start ‖ end)` — the Booking key statement's determinant.
 fn booking_determinant(room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut determinant = Vec::new();
     determinant.extend_from_slice(&encode_u64(room));
@@ -392,13 +365,6 @@ fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Ve
     out
 }
 
-/// Deletes one fact's `F`/`M`/`U` rows *coherently* — every namespace
-/// pairing stays consistent, and the `S` row count is re-pinned to the
-/// surviving population — so every namespace sweep passes. This is
-/// exactly the corruption class only the global judgment re-verification
-/// can convict: a target gone from every namespace while a source fact
-/// still requires it. (`R` rows: neither fixture target relation has
-/// outgoing statements, so there are none to remove.)
 fn delete_target_rows(
     db: &Db<SchemaDescriptor>,
     rel: RelationId,
@@ -436,8 +402,7 @@ fn clean_store_reports_nothing_and_counts_the_leak() {
     let (_dir, db) = fixture("verify-clean");
     let report = db.verify_store().expect("verify");
     assert_eq!(report.findings().to_vec(), Vec::new());
-    // "bob" was interned, then its one referencing fact deleted: the
-    // accepted leak, counted, never a finding.
+
     assert_eq!(report.dangling_intern_ids(), 1);
 }
 
@@ -652,7 +617,7 @@ fn wrong_fact_width_is_a_contextual_finding() {
 fn noncanonical_field_encodings_are_each_found() {
     let (_dir, db) = canonical_field_fixture_with_healthy_sibling("verify-field-encodings");
     replace_fact_bytes(&db, RelationId(0), 0, |fact| {
-        // bool byte; bytes<5>'s third pad byte; equal interval halves.
+
         fact[0] = 2;
         fact[8] = 1;
         fact[9..17].copy_from_slice(&10u64.to_be_bytes());
@@ -693,16 +658,12 @@ fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
                 intern_id: InternId::from_raw(99),
                 next_id: InternId::from_raw(2),
             }),
-            // The forged id has no reverse entry either — the dict
-            // pass's liveness direction convicts it independently (004).
+
             StoreFinding::Corruption(CorruptionError::DanglingInternId(InternId::from_raw(99))),
         ]
     );
 }
 
-/// The miss sentinel is a query-word token, not a stored id — a fact
-/// that encodes it is malformed, so `DanglingInternId(SENTINEL)` is
-/// unrepresentable as a sweep finding.
 #[test]
 fn a_sentinel_intern_id_is_malformed_not_a_named_id() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-intern-sentinel");
@@ -746,27 +707,18 @@ fn malformed_dictionary_reverse_key_is_a_finding() {
     );
 }
 
-/// The `_dict` reverse key for an intern id — the codec's 9-byte shape,
-/// rebuilt raw here exactly as the fixture surgery plants every other
-/// namespace (the codec itself stays private to `storage::dict`).
 fn dict_reverse_key(id: u64) -> Vec<u8> {
     let mut key = vec![1u8];
     key.extend_from_slice(&id.to_be_bytes());
     key
 }
 
-/// The `_dict` forward key for raw bytes — tag 0 ‖ blake3.
 fn dict_forward_key(raw: &[u8]) -> Vec<u8> {
     let mut key = vec![0u8];
     key.extend_from_slice(blake3::hash(raw).as_bytes());
     key
 }
 
-/// Finding 004, the liveness direction: a referenced id whose reverse
-/// entry is gone — the exact corruption the runtime types as
-/// `Corruption(DanglingInternId)` — convicts offline instead of at the
-/// next export. ("alice" interned first: id 0, referenced by the live
-/// holder row.)
 #[test]
 fn a_referenced_id_without_a_reverse_entry_is_the_finding() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-dict-liveness");
@@ -788,9 +740,6 @@ fn a_referenced_id_without_a_reverse_entry_is_the_finding() {
     );
 }
 
-/// Finding 004, forward/reverse coherence: a rebound forward entry —
-/// `blake3("alice") → bob's id` — would silently redirect every
-/// selection literal on "alice"; the reverse cursor convicts it.
 #[test]
 fn a_rebound_forward_entry_is_the_finding() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-dict-rebound");
@@ -816,9 +765,6 @@ fn a_rebound_forward_entry_is_the_finding() {
     );
 }
 
-/// Finding 078: a regressed `_meta` next-id below existing reverse ids —
-/// the state that arms silent reverse-map reuse — convicts even when the
-/// high ids are dangling (`RowIdHighWaterLow`'s dictionary sibling).
 #[test]
 fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-dict-next-id");
@@ -835,9 +781,6 @@ fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
     );
 }
 
-/// Finding 033, the ratchet law: a `Q` next-value at or below a
-/// committed fresh value re-issues an id the host already holds — the
-/// Lean-pinned never-reissue law convicted at rest.
 #[test]
 fn a_regressed_fresh_next_value_is_the_finding() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-q-low");
@@ -861,9 +804,6 @@ fn a_regressed_fresh_next_value_is_the_finding() {
     );
 }
 
-/// Finding 033, the absent arm: a tallied fresh field with no stored
-/// sequence reads as zero — rows on disk convict the absent entry,
-/// exactly as absent `S` counters are convicted.
 #[test]
 fn an_absent_fresh_sequence_is_found_against_the_tally() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-q-absent");
@@ -887,11 +827,10 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
     );
 }
 
-/// Finding 033, the exhausted-sequence corner: the exemption keys on
-/// the STORED next-value being exhausted, never on the tally alone — a
-/// row holding an explicit `u64::MAX` must not mask a regressed `Q`
-/// underneath it (`reserve()` would re-issue every id between the
-/// regression and the ceiling).
+/// Finding 033, the exhausted-sequence corner: the exemption keys on the STORED
+/// next-value being exhausted, never on the tally alone — a row holding an
+/// explicit `u64::MAX` must not mask a regressed `Q` underneath it (`reserve`
+/// would re-issue every id between the regression and the ceiling).
 #[test]
 fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-q-max-masked");
@@ -904,7 +843,7 @@ fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
     })
     .expect("insert the exhausting row")
     .unwrap();
-    // The legal exhausted shape first: stored == tally == MAX is exempt.
+
     assert_eq!(
         db.verify_store().expect("verify").findings().to_vec(),
         vec![]
@@ -991,8 +930,7 @@ fn missing_determinant_is_found_from_the_fact_side() {
                 row_id: 0,
                 determinant_key: u.into(),
             }),
-            // The deleted determinant entry is also the segment covering claim
-            // (7, [2,8)) — the coverage walk judges the `U` state, so the
+
             // desync convicts twice, once per broken invariant.
             judgment_containment(db.schema(), CLAIM_BOOKING, claim_bytes(&db, 7, 2, 8).into()),
         ]
@@ -1002,8 +940,7 @@ fn missing_determinant_is_found_from_the_fact_side() {
 #[test]
 fn orphan_determinant_is_found_from_the_entry_side() {
     let (_dir, db) = fixture("verify-orphan-u");
-    // A determinant for a fact that does not exist, pointing at a row that
-    // does not exist either.
+
     let u =
         key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10)));
     raw_write(&db, |txn| {
@@ -1027,10 +964,7 @@ fn orphan_determinant_is_found_from_the_entry_side() {
 #[test]
 fn determinant_key_byte_flip_is_found_against_the_live_fact() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-u-key-image");
-    // Booking row 0 re-derives determinant (7, [0,10)). Keep its correct
-    // U entry and plant a room-perturbed determinant pointing at the same
-    // live row (room 5 opens its own prefix group, so no overlap rides
-    // along).
+
     let u = key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(5, 0, 10)));
     raw_write(&db, |txn| {
         txn.env()
@@ -1052,9 +986,7 @@ fn determinant_key_byte_flip_is_found_against_the_live_fact() {
 
 #[test]
 fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
-    // The one id allocator (R16): the fresh-row auto-key maintains no U
-    // tree — its entry would transcribe F — so a planted entry convicts
-    // by existence, even one whose bytes and row id would be "coherent".
+
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-u");
     let u = key(|b| keys::determinant_key(b, HOLDER, HOLDER_KEY, &encode_u64(1)));
     raw_write(&db, |txn| {
@@ -1077,8 +1009,7 @@ fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
 
 #[test]
 fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
-    // The merged mint's own desync class (R16): the F row id and the
-    // first fresh field are one u64 — a disagreement is corruption.
+
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-desync");
     replace_fact_bytes(&db, HOLDER, 1, |fact| {
         fact[..8].copy_from_slice(&0u64.to_be_bytes());
@@ -1095,8 +1026,7 @@ fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
 
 #[test]
 fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
-    // The S high-water exists only where no fresh field does (R16): a
-    // fresh-keyed relation's mint is Q, so the entry itself convicts.
+
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-high-water");
     let water = keys::stat_key(HOLDER, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
@@ -1117,10 +1047,9 @@ fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
 #[test]
 fn pointwise_overlap_is_found_by_the_ordered_walk() {
     let (_dir, db) = fixture("verify-pointwise-overlap");
-    // A fully consistent third booking (7, [5, 15)) injected raw — F, M,
-    // U, and both S counters all coherent — whose only defect is
+
     // overlapping (7, [0, 10)): the invariant no namespace pairing sees,
-    // only the ordered walk.
+
     let fact = booking_bytes(&db, 7, 5, 15);
     let row_id = 2u64;
     let f = keys::fact_key(BOOKING, row_id).to_vec();
@@ -1163,11 +1092,7 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
 #[test]
 fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
     let (_dir, db) = fixture("verify-judgment-scalar");
-    // Holder 1 removed from every namespace at once (row id 1 = its
-    // fresh value, and its fresh-row key holds no U entry to remove —
-    // R16) — no namespace sweep sees it, but account (1, checking) is a
-    // live source inside σ still requiring it: the fresh-row F probe
-    // misses.
+
     delete_target_rows(&db, HOLDER, 1, &[], 0);
     let report = db.verify_store().expect("verify");
     assert_eq!(
@@ -1183,9 +1108,7 @@ fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
 #[test]
 fn a_coherently_deleted_coverage_segment_is_a_judgment_violation() {
     let (_dir, db) = fixture("verify-judgment-coverage");
-    // Booking (7, [0,10)) removed from every namespace at once — booking
-    // (7, [20,30)) survives, so the store stays namespace-coherent, but
-    // claim (7, [2,8)) is no longer covered: the coverage walk gaps.
+
     delete_target_rows(
         &db,
         BOOKING,
@@ -1249,9 +1172,7 @@ fn orphan_reverse_edge_is_found_from_the_edge_side() {
 #[test]
 fn edge_whose_source_left_its_selection_is_an_orphan() {
     let (_dir, db) = fixture("verify-orphan-r-phi");
-    // An edge for the savings account (row 1) — the fact is live and
-    // re-derives the key bytes, but sits outside σ: φ is re-checked,
-    // not just liveness.
+
     let r = key(|b| keys::reverse_key(b, ACCOUNT_HOLDER, &encode_u64(2), ACCOUNT, 1));
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -1272,8 +1193,7 @@ fn edge_whose_source_left_its_selection_is_an_orphan() {
 #[test]
 fn reverse_key_byte_flip_is_found_against_the_live_source() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-r-key-image");
-    // Account row 0 requires holder 1. Its correct edge stays present; this
-    // perturbed key names holder 3 but still points at that live source row.
+
     let r = key(|b| keys::reverse_key(b, ACCOUNT_HOLDER, &encode_u64(3), ACCOUNT, 0));
     raw_write(&db, |txn| {
         txn.env()
@@ -1369,10 +1289,7 @@ fn absent_counters_are_found_against_the_fact_tally() {
 
 #[test]
 fn a_stored_row_for_a_closed_relation_is_the_finding() {
-    // Currency { minor_units: u64 } = { Usd(2) }: closed relations are
-    // virtual — the store holds no rows for them — so a raw-injected `F`
-    // entry is itself the one finding: the entry is exempt from every
-    // coherence walk (no membership/tally convictions ride along).
+
     let dir = TempDir::new("verify-closed");
     let decl = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -1484,11 +1401,6 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
     );
 }
 
-// --- Compiled subsets (docs/architecture/30-dependencies.md): the
-// closed-target and constant-source arms of the sweep.
-
-/// Severity closed {pages: bool} = Low(false) | Med(true) | High(true),
-/// Alert(severity) <= Severity(id) — the closed-target statement.
 fn closed_subset_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -1524,7 +1436,7 @@ fn closed_subset_schema() -> SchemaDescriptor {
                 }],
             },
         ],
-        // Materialized: Severity's closed auto-key (0), the containment (1).
+
         statements: vec![StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(1),
@@ -1542,8 +1454,7 @@ fn closed_subset_schema() -> SchemaDescriptor {
 
 #[test]
 fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
-    // Closed-target statements never emit R traffic: a stored edge's very
-    // existence is the finding, attributed to the closed target.
+
     let dir = TempDir::new("verify-closed-r");
     let db = Db::create(dir.path(), closed_subset_schema())
         .expect("create")
@@ -1570,8 +1481,7 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
 
 #[test]
 fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
-    // The corruption class only the global judgment sees: a coherent
-    // F/M/S triple whose closed reference no commit could have admitted.
+
     let dir = TempDir::new("verify-closed-member");
     let db = Db::create(dir.path(), closed_subset_schema())
         .expect("create")
@@ -1610,12 +1520,7 @@ fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
 
 #[test]
 fn an_uncovered_domain_quantification_is_a_judgment_violation() {
-    // Severity(id) <= Handler(severity): the constant source has no F
-    // rows, so only the extension-source walk can re-verify it globally —
-    // an empty store violates it three times over, and covering all three
-    // severities clears the report. Commit-time judgment never sees the
-    // empty store (no delta touches Handler), which is exactly why the
-    // sweeper owns this class.
+
     let dir = TempDir::new("verify-closed-domain");
     let mut decl = closed_subset_schema();
     decl.relations.push(RelationDescriptor {
@@ -1653,10 +1558,7 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
             selection: Box::new([]),
         },
     });
-    // Materialized: closed auto-key (0), Handler key (1), Alert
-    // containment (2), the domain statement (3). Public create
-    // complete-admits empty and refuses this theory; the sweeper
-    // fixture is format-8 surgery, not an admission path.
+
     let db = Db::create_store_without_admission(dir.path(), decl).expect("fixture");
     let severities = db
         .schema()
@@ -1686,16 +1588,11 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
     );
 }
 
-// ---------- the extension form (capacity) ----------
-
 const M_HOLDER: RelationId = RelationId(0);
 const M_ACCOUNT: RelationId = RelationId(1);
-/// Materialized: Holder key (0), the capacity statement (1).
+
 const M_CAPACITY: StatementId = StatementId(1);
 
-/// Holder(id, tag; key id), Account(holder, kind, num) with
-/// `Holder(id) <={1..2} Account(holder | kind == 1)` — unit weight, the
-/// count instance.
 fn marks_schema() -> SchemaDescriptor {
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -1742,7 +1639,6 @@ fn marks_schema() -> SchemaDescriptor {
     }
 }
 
-/// One committed, green store: holder 1 with one kind-1 account.
 fn marks_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), marks_schema())
@@ -1767,17 +1663,11 @@ fn a_marked_store_verifies_clean() {
     );
 }
 
-/// The CLOSED-parent arm — `verify_store/marks.rs`'s own pass, distinct
-/// from the ordinary-parent capacity re-check that rides the `F` scan:
-/// closed parents have no `F` rows, so their roster walks per sealed
-/// axiom. A green store sweeps clean; a raw-deleted capacity edge is
-/// both the missing-edge finding and the axiom's group re-measured
-/// below its floor.
 #[test]
 fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
     let pool = RelationId(0);
     let device = RelationId(1);
-    // Materialized: Pool's closed auto-key (0), then the capacity (1).
+
     let capacity = StatementId(1);
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -1800,7 +1690,7 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
                 fields: vec![plain("pool"), plain("num")],
             },
         ],
-        // `Pool(id) <={1..2} Device(pool)` — the closed parent's window.
+
         statements: vec![StatementDescriptor::Capacity {
             target: Side {
                 relation: pool,
@@ -1818,8 +1708,7 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
         }],
     };
     let dir = TempDir::new("verify-marks-closed-parent");
-    // Empty does not hold (closed parent, floor 1). Public create
-    // refuses; this is sweeper surgery so the marks pass can run.
+
     let db = Db::create_store_without_admission(dir.path(), decl).expect("fixture");
     db.write(|tx| {
         tx.insert_dyn(device, [&[Value::U64(0), Value::U64(0)]])
@@ -1832,8 +1721,7 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
         vec![],
         "the green closed-parent store sweeps clean"
     );
-    // The R-delete-blind class against the closed parent: the axiom's
-    // group drops below its floor, visible only to the marks pass.
+
     let r = key(|b| keys::reverse_key(b, capacity, &encode_u64(0), device, 0));
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -1866,9 +1754,6 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
     assert_eq!(findings.len(), 2, "exactly the two findings: {findings:?}");
 }
 
-/// The R-delete-blind class, capacity form: a raw-deleted capacity edge
-/// is both the missing-edge finding AND a global re-measure below the
-/// floor — the sweeper owns exactly what incremental checking cannot see.
 #[test]
 fn a_missing_capacity_edge_is_found_and_the_group_remeasured() {
     let (_dir, db) = marks_fixture("verify-marks-capacity-edge");
@@ -1904,8 +1789,6 @@ fn a_missing_capacity_edge_is_found_and_the_group_remeasured() {
     );
 }
 
-/// A stray capacity edge (no live fact re-derives it) is the R pass's
-/// finding, exactly as a containment's.
 #[test]
 fn a_stray_capacity_edge_is_convicted() {
     let (_dir, db) = marks_fixture("verify-marks-stray-capacity");
@@ -1926,17 +1809,11 @@ fn a_stray_capacity_edge_is_convicted() {
     );
 }
 
-// ---------- the weighted value slot (the desync sweep) ----------
-
 const W_POOL: RelationId = RelationId(0);
 const W_DEVICE: RelationId = RelationId(1);
-/// Materialized: Pool key (0), the weighted capacity statement (1).
+
 const W_CAPACITY: StatementId = StatementId(1);
 
-/// Pool(id, supply; key id), Device(pool, watts, num) with
-/// `Pool(id) <=[watts]{5..100} Device(pool)` — the weighted statement
-/// whose `R` edges carry the child's u64 weight in the value slot
-/// (ruled 2026-07-24, C17: statement-scoped).
 fn weighted_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -2001,17 +1878,6 @@ fn a_weighted_store_verifies_clean() {
     );
 }
 
-/// The weight-desync sweep (ruled 2026-07-24; `60-validation.md` § the
-/// sweeps): the `R` value slot is a maintained copy of one row-local
-/// field, and the sweeper is the offline authority that convicts a
-/// diverged copy — never repairs it silently. A hand-corrupted slot
-/// (8 stray bytes planted where the store wrote its own encoding)
-/// leaves every verdict inside its window on both readings, so the
-/// ONLY findings are the desync convictions — both sweep directions
-/// (F→R: the existence get's value must equal the fact's weight-field
-/// encoding; R→F: the entry's value must back to the live fact) report
-/// the same diverged edge, `stored` carrying the planted bytes and
-/// `derived` the live fact's weight encoding (the C17 slot law).
 #[test]
 fn a_desynced_weight_slot_is_convicted_never_repaired() {
     let (_dir, db) = weighted_fixture("verify-weight-desync");
@@ -2045,13 +1911,6 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
     }
 }
 
-/// A hostile `R` edge under the weighted statement embedding a FOREIGN
-/// source relation (Pool, not Device), its value slot empty: the
-/// measure walk refuses the empty slot as typed corruption (a weighted
-/// edge owes 8 bytes — width discipline, never a fallback), so the
-/// sweep's verdict is the R pass's own conviction, and the F pass's
-/// capacity judgment swallows the `Corruption` (convict-never-panic:
-/// the R pass owns the edge).
 #[test]
 fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
     let (_dir, db) = weighted_fixture("verify-weight-foreign-edge");
@@ -2071,21 +1930,13 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
     );
 }
 
-/// A capacity edge naming a WRONG-WIDTH source fact (16 raw bytes
-/// planted under Device's 24-byte layout), its value slot empty: the
-/// walk refuses the empty slot as typed corruption without ever
-/// touching the planted fact (the slot law reads no child). The F
-/// pass convicts the planted width itself, the counters convict the raw
-/// row's tallies, and the R pass stays silent — a wrong-width fact is
-/// already F-convicted (`reverse.rs`'s own discipline) — so no capacity
-/// finding and, above all, no panic.
 #[test]
 fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
     let (_dir, db) = weighted_fixture("verify-weight-wrong-width-child");
     let child_key = encode_u64(1);
     let f = keys::fact_key(W_DEVICE, 77).to_vec();
     let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_DEVICE, 77));
-    // Pool-shaped bytes (16) where Device's layout says 24.
+
     let planted: Vec<u8> = [encode_u64(1), encode_u64(60)].concat();
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -2115,10 +1966,6 @@ fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
     );
 }
 
-// ---------- interval<E, w> at rest: the Q2 bound is F coherence ----------
-
-/// FixedLane(kind bool, lane interval<u64, 5>) — keyless, so the F value
-/// mutates freely (as `canonical_field_schema`).
 fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -2161,10 +2008,6 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     (dir, db)
 }
 
-/// The fixed-width at-rest fixture: a stored start AT the Q2 bound
-/// (`start + w = MAX_END` — the derived end would be the ray sentinel)
-/// and one PAST it (overflow) are each a corruption conviction from the
-/// offline sweep — never a panic, never a silent ray.
 #[test]
 fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
     for (tag, corrupt_start) in [
@@ -2172,7 +2015,7 @@ fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
         ("verify-fixed-start-overflow", u64::MAX),
     ] {
         let (_dir, db) = fixed_lane_fixture(tag);
-        // Healthy first: the untouched store verifies clean.
+
         assert_eq!(
             db.verify_store()
                 .expect("verify healthy")
@@ -2182,8 +2025,7 @@ fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
         );
         replace_fact_bytes(&db, RelationId(0), 0, |fact| {
             // The lane field's one stored word sits after the bool byte's
-            // padded... no: layout-derived — bool is 1 byte, the fixed
-            // start is the trailing 8 bytes of the 9-byte fact.
+
             let len = fact.len();
             fact[len - 8..].copy_from_slice(&corrupt_start.to_be_bytes());
         });
