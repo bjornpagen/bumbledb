@@ -7,7 +7,6 @@
 //! release (`get_unchecked` per the 00-product unsafe policy: this
 //! segment-level invariant stated at the site). Nothing is ever built
 #![allow(clippy::inline_always)]
-
 pub(super) use crate::image::view::{BoundView, View};
 
 const CHUNK_LEN: usize = 64;
