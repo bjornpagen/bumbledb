@@ -4,7 +4,6 @@
 //! before anything reaches a timer. The REGION (one gate pass or one whole
 //! timing protocol block); a capped [`crate::sqlite_run::FairnessCheck`]
 //! asserted before timing gated exactly like the canonical before it is timed.
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -253,11 +252,8 @@ struct DnfCap {
 
 impl DnfCap {
     /// Runs one region (one gate pass or one whole timing protocol
-
     /// deadline captured at entry, ALWAYS clears it before returning,
-
     /// observed after the region completed keeps its finished result;
-
     /// first op — excluded before entry.
     fn guarded<T>(
         self,
