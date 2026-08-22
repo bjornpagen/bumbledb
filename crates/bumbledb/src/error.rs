@@ -164,21 +164,6 @@ pub enum CorruptionError {
     /// as corrupt as a non-0/1 Bool byte. Carries the offending trailing
     /// word's 8 bytes.
     NonzeroFixedBytesPad([u8; 8]),
-    /// The persisted schema-descriptor bytes hash to something other
-    /// than the stored fingerprint. The two are one value twice (the
-    /// fingerprint IS blake3 of the descriptor bytes,
-    /// `docs/architecture/50-storage.md` § the `_meta` block), so a
-    /// disagreement means one of them was altered after creation —
-    /// corrupt data, exactly as a mis-shaped `F` key is. Distinct from
-    /// a missing descriptor, which is [`CorruptionError::MetaMissing`]
-    /// — a required format-8 `_meta` key, not a legal half-state.
-    DescriptorFingerprintDesync {
-        /// The stored `_meta` fingerprint.
-        fingerprint: [u8; 32],
-        /// Blake3 of the stored descriptor bytes.
-        descriptor_hash: [u8; 32],
-    },
-
     // --- Offline-sweep structural facts (twinless until this cut) ---
     // The sweeper found these at rest; they are corruption, not a second
     // vocabulary. Runtime twins that already existed stay above.

@@ -1,7 +1,9 @@
 use crate::error::Result;
 
-use super::read_meta::{read_dict_next_id, read_fingerprint, read_u64};
-use super::{GenerationId, META_SCHEMA_DESCRIPTOR, META_TX_ID, ReadTxn};
+use super::read_meta::{read_dict_next_id, read_u64};
+#[cfg(test)]
+use super::read_meta::read_fingerprint;
+use super::{GenerationId, META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside
@@ -29,15 +31,9 @@ impl ReadTxn<'_> {
         read_dict_next_id(&self.env.meta, &self.txn)
     }
 
-    /// The stored `_meta` schema fingerprint, raw (reader:
-    /// `Db::verify_store`'s leftover descriptor pass).
+    /// The stored `_meta` schema fingerprint, raw.
+    #[cfg(test)]
     pub(crate) fn stored_fingerprint(&self) -> Result<[u8; 32]> {
         read_fingerprint(&self.env.meta, &self.txn)
-    }
-
-    /// Retired descriptor key. New stores do not write it; `None` then.
-    /// Left for `verify_store`'s descriptor pass (not this lane).
-    pub(crate) fn schema_descriptor(&self) -> Result<Option<&[u8]>> {
-        Ok(self.env.meta.get(&self.txn, META_SCHEMA_DESCRIPTOR)?)
     }
 }

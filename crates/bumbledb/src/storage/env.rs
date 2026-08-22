@@ -179,10 +179,6 @@ const META_FORMAT_VERSION: &[u8] = MetaKey::FORMAT_VERSION.key;
 const META_FINGERPRINT: &[u8] = MetaKey::FINGERPRINT.key;
 const META_TX_ID: &[u8] = MetaKey::GENERATION.key;
 const META_DICT_NEXT_ID: &[u8] = MetaKey::DICT_NEXT.key;
-/// Retired descriptor key `[5]`. New stores do not write it.
-/// `ReadTxn::schema_descriptor` still reads it so `verify_store`'s
-/// leftover descriptor pass compiles (not this lane).
-const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
 
 /// The LMDB substrate: environment plus the three named databases.
 ///

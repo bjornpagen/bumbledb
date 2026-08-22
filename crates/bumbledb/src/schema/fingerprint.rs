@@ -50,10 +50,9 @@ pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v5";
 pub struct SchemaFingerprint(pub [u8; 32]);
 
 /// The 64-char lowercase hex of the 32 bytes — the fingerprint's one
-/// rendering, so the mismatch and desync diagnostics
-/// ([`crate::error::Error::SchemaMismatch`],
-/// [`crate::error::CorruptionError::DescriptorFingerprintDesync`]) print
-/// the values a host must compare, never a payload-free sentence.
+/// rendering, so the mismatch diagnostic
+/// ([`crate::error::Error::SchemaMismatch`]) prints the values a host
+/// must compare, never a payload-free sentence.
 impl std::fmt::Display for SchemaFingerprint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {

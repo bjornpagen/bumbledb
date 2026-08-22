@@ -216,22 +216,6 @@ impl<S> Db<S> {
         })?;
         sweep.pass(crate::obs::names::VERIFY_COUNTERS, counters::sweep)?;
         sweep.pass(crate::obs::names::VERIFY_FRESH, fresh::sweep)?;
-        // The descriptor pass: a persisted schema descriptor must hash to
-        // the stored fingerprint — they are one value twice
-        // (`docs/architecture/50-storage.md` § the `_meta` block).
-        // Format 8 open already required the key; absence here is
-        // surgery on a live handle, not an adoption state.
-        if let Some(descriptor) = txn.schema_descriptor()? {
-            let fingerprint = txn.stored_fingerprint()?;
-            let descriptor_hash =
-                crate::schema::fingerprint::fingerprint_of_descriptor(descriptor).0;
-            if descriptor_hash != fingerprint {
-                sweep.corrupt(CorruptionError::DescriptorFingerprintDesync {
-                    fingerprint,
-                    descriptor_hash,
-                });
-            }
-        }
         let dangling_intern_ids = {
             let mut span = crate::obs::span(crate::obs::names::VERIFY_DICT);
             let before = sweep.findings.len();

@@ -285,15 +285,6 @@ impl fmt::Display for CorruptionError {
                 f,
                 "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
             ),
-            Self::DescriptorFingerprintDesync {
-                fingerprint,
-                descriptor_hash,
-            } => write!(
-                f,
-                "the persisted schema descriptor hashes to {}, the stored fingerprint is {}",
-                crate::schema::fingerprint::SchemaFingerprint(*descriptor_hash),
-                crate::schema::fingerprint::SchemaFingerprint(*fingerprint)
-            ),
             Self::FactWithoutMembership {
                 relation, row_id, ..
             } => write!(

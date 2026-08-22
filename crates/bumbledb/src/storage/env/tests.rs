@@ -256,18 +256,6 @@ fn a_format_7_store_is_a_format_mismatch_on_every_open_surface() {
     );
 }
 
-/// The descriptor key left the roster: a store without it still opens.
-#[test]
-fn a_missing_descriptor_is_not_required() {
-    let dir = TempDir::new("env-missing-descriptor");
-    forge_meta(&dir, |env, wtxn| {
-        env.meta
-            .delete(wtxn, META_SCHEMA_DESCRIPTOR)
-            .expect("strip leftover descriptor");
-    });
-    Environment::open(dir.path(), &schema()).expect("four-key open");
-}
-
 #[test]
 fn a_pre_cutover_v6_store_is_a_format_mismatch() {
     let dir = TempDir::new("env-marker-v6-pre-cutover");
