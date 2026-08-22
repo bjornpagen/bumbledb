@@ -13,7 +13,6 @@ pub(crate) enum ViewEpoch {
 }
 
 impl ViewEpoch {
-
     pub(crate) fn superseded_by(self, current: Self) -> bool {
         match (self, current) {
             (Self::Store(old), Self::Store(new)) => old < new,
