@@ -336,24 +336,12 @@ fn a_committed_string_interned_twice_probes_the_dict_once() {
     let committed = seed_committed(&env, &schema, "hello");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert_eq!(delta.committed_dict_probes(), 0);
     assert_eq!(delta.intern_str(&view, "hello").expect("intern"), committed);
-    assert_eq!(
-        delta.committed_dict_probes(),
-        1,
-        "first sight pays the probe"
-    );
-    assert_eq!(delta.committed_memo_hits(), 0);
     assert_eq!(delta.intern_str(&view, "hello").expect("intern"), committed);
-    assert_eq!(delta.committed_dict_probes(), 1, "the memo answered");
-    assert_eq!(delta.committed_memo_hits(), 1);
-    // The delete path shares the read: resolve is the same probe order.
     assert_eq!(
         delta.resolve_str(&view, "hello").expect("resolve"),
         Some(committed)
     );
-    assert_eq!(delta.committed_dict_probes(), 1);
-    assert_eq!(delta.committed_memo_hits(), 2);
     assert_eq!(delta.dict_next(), None, "a committed hit mints nothing");
 }
 
@@ -369,14 +357,7 @@ fn a_pending_string_answers_before_the_memo() {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let minted = delta.intern_str(&view, "novel").expect("intern");
-    assert_eq!(
-        delta.committed_dict_probes(),
-        1,
-        "the mint-licensing committed miss"
-    );
     assert_eq!(delta.intern_str(&view, "novel").expect("intern"), minted);
-    assert_eq!(delta.committed_dict_probes(), 1, "pending answered");
-    assert_eq!(delta.committed_memo_hits(), 0, "the memo never saw it");
     assert_eq!(delta.dict_next(), Some(minted.raw() + 1), "one mint");
 }
 
@@ -393,8 +374,6 @@ fn committed_misses_are_never_memoized() {
     let delta = WriteDelta::new(&schema);
     assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
     assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
-    assert_eq!(delta.committed_dict_probes(), 2, "a miss is re-asked");
-    assert_eq!(delta.committed_memo_hits(), 0);
     assert_eq!(delta.dict_next(), None, "resolve minted nothing");
 }
 
@@ -410,14 +389,10 @@ fn a_dropped_deltas_memo_leaves_no_trace() {
     {
         let mut delta = WriteDelta::new(&schema);
         delta.intern_str(&view, "hello").expect("intern");
-        assert_eq!(delta.committed_dict_probes(), 1);
         // Abort = drop: the memo dies with the delta.
     }
     let mut later = WriteDelta::new(&schema);
-    assert_eq!(later.committed_dict_probes(), 0, "a fresh delta is cold");
     assert_eq!(later.intern_str(&view, "hello").expect("intern"), committed);
-    assert_eq!(later.committed_dict_probes(), 1, "its own probe, re-paid");
-    assert_eq!(later.committed_memo_hits(), 0);
 }
 
 #[test]

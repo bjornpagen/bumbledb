@@ -208,26 +208,23 @@ fn foreign_prepared_query_is_rejected() {
 }
 
 #[test]
-fn profile_on_owned_and_lease_agrees() {
+fn execute_on_owned_and_lease_agrees() {
     let (owned, _, _) = admit_ada();
     let mut owned_prepared = owned.prepare(&all_accounts()).expect("prepare");
-    let (owned_answers, owned_stats) = owned
-        .profile(&mut owned_prepared, &[])
-        .expect("owned profile");
+    let mut owned_answers = Answers::new();
+    owned
+        .execute(&mut owned_prepared, &[], &mut owned_answers)
+        .expect("owned execute");
 
-    let dir = TempDir::new("profile-both-arms");
+    let dir = TempDir::new("execute-both-arms");
     let db = Db::from_instance(&dir.path().join("store"), &owned).expect("publish");
-    let (lease_answers, lease_stats) = db
+    let lease_answers = db
         .read(|instance| {
             let mut prepared = instance.prepare(&all_accounts())?;
-            instance.profile(&mut prepared, &[])
+            instance.execute_collect(&mut prepared, &[] as &[crate::BindValue])
         })
-        .expect("lease profile");
+        .expect("lease execute");
 
-    assert_eq!(
-        owned_stats, lease_stats,
-        "identical inputs, identical stats"
-    );
     assert_eq!(owned_answers.len(), lease_answers.len());
 }
 

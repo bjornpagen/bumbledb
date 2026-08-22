@@ -168,17 +168,6 @@ struct RunCtx<'a, Cat, Img> {
 }
 
 impl<S> PreparedQuery<S> {
-    /// Amends this prepared query's derived-tuples / rec-rounds budget.
-    /// The rounds axis is stored on the Reach arm and ignored on Cq
-    /// (rounds never advance). The tuples axis judges every query —
-    /// interiors-only included. Hosts copy-paste.
-    pub fn set_derived_budget(&mut self, rounds: u32, tuples: u64) {
-        self.tuples_budget = tuples;
-        if let PreparedPipeline::Reach { rounds_budget, .. } = &mut self.pipeline {
-            *rounds_budget = rounds;
-        }
-    }
-
     /// Interiors in declaration order, then rec. One derived tuples
     /// ledger. Interiors-only never enters [`run_reach`].
     #[expect(

@@ -28,12 +28,8 @@
 //!
 //! Output: one table with wall time per phase (std `Instant`); under
 //! the obs build, `--alloc` adds per-phase allocation windows
-//! ([`bumbledb::alloc_counter`]) and `--trace` adds one capture over
-//! the lanes with the span totals folded into the upstream report's
-//! component table ([`components`]) — mutually exclusive passes, the
-//! obs doctrine.
+//! ([`bumbledb::alloc_counter`]) and `--trace` emits a flame capture.
 
-pub mod components;
 pub mod corpus;
 pub mod report;
 pub mod run;

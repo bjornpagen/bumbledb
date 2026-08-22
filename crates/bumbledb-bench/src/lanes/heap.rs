@@ -1,6 +1,5 @@
 //! The heap-arm ladder: frozen-vs-LMDB point reads and admission
-//! throughput with $A,I,R,F,J$ — REPORT-class ([`crate::lanes`] carries
-//! the charter).
+//! throughput — REPORT-class ([`crate::lanes`] carries the charter).
 //!
 //! Both arms use the ledger generator stream (the same bytes
 //! `corpus::load_bumbledb` writes).
@@ -11,7 +10,7 @@ use std::time::Instant;
 
 use bumbledb::ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId};
 use bumbledb::schema::FieldId;
-use bumbledb::{AdmissionTelemetry, Answers, Db, InstanceBuilder, RelationId};
+use bumbledb::{Answers, Db, InstanceBuilder, RelationId};
 
 use crate::cli::HeapArgs;
 use crate::corpus_gen::{self, GenConfig, MANDATE_SEGMENTS, Sizes};
@@ -52,19 +51,10 @@ pub struct AdmitRow {
     pub wall_ns: u64,
     pub facts_per_sec: f64,
     pub ns_per_fact: f64,
-    pub telemetry: AdmissionTelemetry,
 }
 
 fn push_stats(out: &mut String, stats: &Stats) {
     super::push_stats(out, stats);
-}
-
-fn push_tel(out: &mut String, tel: &AdmissionTelemetry) {
-    let _ = write!(
-        out,
-        "{{\"a\":{},\"i\":{},\"r\":{},\"f\":{},\"j\":{}}}",
-        tel.a, tel.i, tel.r, tel.f, tel.j
-    );
 }
 
 /// The machine-consumable heap artifact.
@@ -97,11 +87,9 @@ pub fn to_json(report: &HeapReport) -> String {
         }
         let _ = write!(
             out,
-            "{{\"facts\":{},\"wall_ns\":{},\"facts_per_sec\":{:.2},\"ns_per_fact\":{:.2},\"telemetry\":",
+            "{{\"facts\":{},\"wall_ns\":{},\"facts_per_sec\":{:.2},\"ns_per_fact\":{:.2}}}",
             row.facts, row.wall_ns, row.facts_per_sec, row.ns_per_fact
         );
-        push_tel(&mut out, &row.telemetry);
-        out.push('}');
     }
     let _ = write!(
         out,
@@ -140,14 +128,13 @@ fn to_markdown(report: &HeapReport) -> String {
         report.join_ns, report.join_rows, report.publish_ns
     );
     out.push_str("## Admission prefixes\n\n");
-    out.push_str("| facts | wall ns | facts/s | ns/fact | A | I | R | F | J |\n");
-    out.push_str("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    out.push_str("| facts | wall ns | facts/s | ns/fact |\n");
+    out.push_str("| ---: | ---: | ---: | ---: |\n");
     for row in &report.admission {
-        let t = row.telemetry;
         let _ = writeln!(
             out,
-            "| {} | {} | {:.0} | {:.1} | {} | {} | {} | {} | {} |",
-            row.facts, row.wall_ns, row.facts_per_sec, row.ns_per_fact, t.a, t.i, t.r, t.f, t.j
+            "| {} | {} | {:.0} | {:.1} |",
+            row.facts, row.wall_ns, row.facts_per_sec, row.ns_per_fact
         );
     }
     if let Some(growth) = superlinear_term(&report.admission) {
@@ -266,9 +253,7 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
     let sizes = Sizes::of(cfg.scale);
 
     let builder = load_builder(cfg, &sizes)?;
-    let (admission, _) = builder
-        .admit_measured()
-        .map_err(|e| format!("admit: {e:?}"))?;
+    let admission = builder.admit().map_err(|e| format!("admit: {e:?}"))?;
     let heap = match admission {
         bumbledb::Admission::Accepted(instance) => instance,
         bumbledb::Admission::Rejected(v) => return Err(format!("rejected: {v}")),
@@ -350,8 +335,8 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
         let facts = fact_count(&prefix);
         let builder = load_builder(cfg, &prefix)?;
         let start = Instant::now();
-        let (adm, tel) = builder
-            .admit_measured()
+        let adm = builder
+            .admit()
             .map_err(|e| format!("admit prefix {postings}: {e:?}"))?;
         let wall_ns = u64::try_from(start.elapsed().as_nanos()).expect("fits");
         match adm {
@@ -383,7 +368,6 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
             wall_ns,
             facts_per_sec,
             ns_per_fact,
-            telemetry: tel,
         });
     }
 
@@ -467,10 +451,8 @@ mod tests {
             .expect("admission");
         assert_eq!(admits.len(), 2);
         for row in admits {
-            let tel = row.get("telemetry").expect("telemetry");
-            for key in ["a", "i", "r", "f", "j"] {
-                assert!(tel.get(key).is_some(), "{key}");
-            }
+            assert!(row.get("facts").is_some(), "facts");
+            assert!(row.get("wall_ns").is_some(), "wall_ns");
         }
         assert!(parsed.get("primer").is_none());
         assert!(out.join("heap-report.md").exists());

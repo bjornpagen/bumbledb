@@ -36,10 +36,10 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
-    CollectionBuilder, Comparison, ConditionTree, ExecutionStats, FieldId, FindTerm, FoldOp,
+    CollectionBuilder, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
     HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule,
     Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor,
-    SchemaSpec, StatementId, StatementKind, StatsBody, Term, Value, VarId,
+    SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -413,10 +413,8 @@ pub(crate) fn accepted_collection(
     rows: u64,
     cells: &Array,
 ) -> napi::Result<AcceptedCollection> {
-    let mut span = bumbledb::obs::span(bumbledb::obs::names::MARSHAL_FACTS);
     let rel = RelationId(relation);
     if rows == 0 && cells.len() == 0 {
-        span.set_count(0);
         return CollectionBuilder::new(rel, &[])
             .seal()
             .map_err(|error| throw_engine(env, &error));
@@ -449,7 +447,6 @@ pub(crate) fn accepted_collection(
         let collection = CollectionBuilder::new(rel, &roster.fields)
             .seal_nullary(rows)
             .map_err(|error| throw_engine(env, &error))?;
-        span.set_count(collection.rows());
         return Ok(collection);
     }
     let mut builder = CollectionBuilder::new(rel, &roster.fields);
@@ -459,7 +456,6 @@ pub(crate) fn accepted_collection(
         push_cell(env, &mut builder, name, field, &value)?;
     }
     let collection = builder.seal().map_err(|error| throw_engine(env, &error))?;
-    span.set_count(collection.rows());
     Ok(collection)
 }
 
@@ -1666,170 +1662,3 @@ impl ToNapiValue for ViolationWire {
         unsafe { Object::to_napi_value(env, obj) }
     }
 }
-
-/// The structured plan-introspection report as wire data (ruled
-/// 2026-07-23, R13): the engine's [`ExecutionStats`] — plan sections and
-/// counters — rendered to plain objects, camelCase keys, u64 counters as
-/// `bigint` (the u64-as-bigint law). Diagnostic surface, explicitly
-/// unfrozen: the shape follows the plan representation wherever it goes,
-/// so this rendering is field-for-field and judges nothing.
-pub struct ExplainWire(pub(crate) ExecutionStats);
-
-impl ToNapiValue for ExplainWire {
-    #[expect(
-        unsafe_code,
-        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
-                  only builds plain objects and delegates to napi's own impls"
-    )]
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = Env::from_raw(env);
-        let stats = val.0;
-        let mut root = Object::new(&env_handle)?;
-        root.set(
-            "introspectionVersion",
-            u32::from(stats.introspection_version),
-        )?;
-        root.set("emits", stats.emits)?;
-        if let Some(disjoint) = stats.disjoint_rules {
-            let mut obj = Object::new(&env_handle)?;
-            obj.set("relation", disjoint.relation)?;
-            obj.set("field", disjoint.field)?;
-            root.set("disjointRules", obj)?;
-        }
-        let mut subsumed = Vec::with_capacity(stats.subsumed.len());
-        for entry in stats.subsumed {
-            let mut obj = Object::new(&env_handle)?;
-            obj.set("rule", u32::from(entry.rule))?;
-            obj.set("by", u32::from(entry.by))?;
-            subsumed.push(obj);
-        }
-        root.set("subsumed", subsumed)?;
-        let mut dead = Vec::with_capacity(stats.dead.len());
-        for entry in stats.dead {
-            let mut obj = Object::new(&env_handle)?;
-            obj.set("rule", u32::from(entry.rule))?;
-            obj.set("rendered", entry.rendered)?;
-            dead.push(obj);
-        }
-        root.set("dead", dead)?;
-        let (rule_stats, interior_stats, reach_stats) = match stats.body {
-            StatsBody::Cq { rules, interiors } => (rules, interiors, None),
-            StatsBody::Reach { interiors, reach } => (Vec::new(), interiors, Some(reach)),
-        };
-        let mut rules = Vec::with_capacity(rule_stats.len());
-        for rule in rule_stats {
-            rules.push(explain_rule_out(&env_handle, &rule)?);
-        }
-        root.set("rules", rules)?;
-        let mut interiors = Vec::with_capacity(interior_stats.len());
-        for interior in interior_stats {
-            let mut interior_obj = Object::new(&env_handle)?;
-            interior_obj.set("interior", interior.interior)?;
-            interior_obj.set("emits", interior.emits)?;
-            interiors.push(interior_obj);
-        }
-        root.set("interiors", interiors)?;
-        if let Some(reach) = reach_stats {
-            let mut reach_obj = Object::new(&env_handle)?;
-            let mut rounds = Vec::with_capacity(reach.rounds.len());
-            for round in reach.rounds {
-                let mut round_obj = Object::new(&env_handle)?;
-                round_obj.set("delta", round.delta)?;
-                round_obj.set("emitted", round.emitted)?;
-                round_obj.set("absorbed", round.absorbed)?;
-                rounds.push(round_obj);
-            }
-            reach_obj.set("rounds", rounds)?;
-            root.set("reach", reach_obj)?;
-        }
-        // SAFETY: `env` is the live environment napi handed this very call,
-        // and `root` was created against it.
-        unsafe { Object::to_napi_value(env, root) }
-    }
-}
-
-/// One rule's stats object ([`ExplainWire`]'s per-rule section).
-fn explain_rule_out<'env>(
-    env: &'env Env,
-    rule: &bumbledb::RuleStats,
-) -> napi::Result<Object<'env>> {
-    let mut rule_obj = Object::new(env)?;
-    rule_obj.set("distinctBindings", rule.distinct_bindings())?;
-    rule_obj.set("emitted", rule.emitted())?;
-    rule_obj.set("absorbed", rule.absorbed())?;
-    if let Some(probe) = rule.key_probe() {
-        let mut obj = Object::new(env)?;
-        obj.set("hit", probe.hit)?;
-        rule_obj.set("keyProbe", obj)?;
-    }
-    let mut nodes = Vec::with_capacity(rule.nodes().len());
-    for node in rule.nodes() {
-        nodes.push(explain_node_out(env, node.clone())?);
-    }
-    rule_obj.set("nodes", nodes)?;
-    let mut eliminated = Vec::with_capacity(rule.eliminated().len());
-    for entry in rule.eliminated() {
-        let mut obj = Object::new(env)?;
-        obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation.clone())?;
-        obj.set("statementId", u32::from(entry.statement.0))?;
-        obj.set("rendered", entry.rendered.clone())?;
-        eliminated.push(obj);
-    }
-    rule_obj.set("eliminated", eliminated)?;
-    let mut folded = Vec::with_capacity(rule.folded().len());
-    for entry in rule.folded() {
-        let mut obj = Object::new(env)?;
-        obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation.clone())?;
-        obj.set("rendered", entry.rendered.clone())?;
-        obj.set("handles", entry.handles.clone())?;
-        obj.set("negated", entry.negated)?;
-        folded.push(obj);
-    }
-    rule_obj.set("folded", folded)?;
-    let mut pinned = Vec::with_capacity(rule.pinned().len());
-    for entry in rule.pinned() {
-        let mut obj = Object::new(env)?;
-        obj.set("occurrence", u32::from(entry.occurrence))?;
-        obj.set("relation", entry.relation.clone())?;
-        obj.set("rows", entry.rows)?;
-        if let Some(survivors) = entry.survivors {
-            obj.set("survivors", survivors)?;
-        }
-        pinned.push(obj);
-    }
-    rule_obj.set("pinned", pinned)?;
-    Ok(rule_obj)
-}
-
-/// One plan node's counters ([`ExplainWire`]'s per-node section).
-fn explain_node_out(env: &Env, node: bumbledb::NodeStats) -> napi::Result<Object<'_>> {
-    let mut node_obj = Object::new(env)?;
-    node_obj.set("entries", node.entries)?;
-    node_obj.set("batches", node.batches)?;
-    node_obj.set("batchEntries", node.batch_entries)?;
-    node_obj.set("estimate", node.estimate)?;
-    node_obj.set("actual", node.actual)?;
-    node_obj.set("residualPass", node.residual_pass)?;
-    node_obj.set("residualFail", node.residual_fail)?;
-    node_obj.set("antiProbeProbed", node.anti_probe_probed)?;
-    node_obj.set("antiProbeRejected", node.anti_probe_rejected)?;
-    node_obj.set("skips", node.skips)?;
-    let mut covers = Vec::with_capacity(node.covers.len());
-    for cover in node.covers {
-        let mut obj = Object::new(env)?;
-        let subatom = u32::try_from(cover.subatom)
-            .map_err(|_| err("bumbledb marshal: subatom index exceeds u32".into()))?;
-        obj.set("subatom", subatom)?;
-        obj.set("chosenExact", cover.chosen_exact)?;
-        obj.set("chosenEstimate", cover.chosen_estimate)?;
-        obj.set("probesHit", cover.probes_hit)?;
-        obj.set("probesMiss", cover.probes_miss)?;
-        obj.set("hashes", cover.hashes)?;
-        covers.push(obj);
-    }
-    node_obj.set("covers", covers)?;
-    Ok(node_obj)
-}
-

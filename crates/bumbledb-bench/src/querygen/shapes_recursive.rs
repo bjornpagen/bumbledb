@@ -313,8 +313,6 @@ pub struct RecursiveCoverage {
     pub interiors_anti_join: u64,
     pub many_interiors: u64,
     pub sqlite_expressible: u64,
-    pub budget_trip: u64,
-    pub preamble_ledger_trip: u64,
 }
 
 impl RecursiveVariant {

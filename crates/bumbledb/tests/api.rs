@@ -903,25 +903,10 @@ fn cover_choice_iterates_the_selected_side() {
     });
     let mut prepared = db.prepare(&query).expect("prepare");
     let params = vec![ParamArg::Scalar(BindValue::Str("target"))];
-    let (out, stats) = db
-        .read(|snap| snap.profile(&mut prepared, &params))
-        .expect("profile");
+    let out = db
+        .read(|snap| snap.execute_collect(&mut prepared, &params))
+        .expect("execute");
     assert_eq!(out.len(), 7, "one group per target holder");
-    assert_eq!(stats.emits, 140, "20 accounts x 7 holders reach the sink");
-
-    // The join-variable node iterates the 7-key selected side...
-    let batch_entries: Vec<u64> = stats.rules()[0]
-        .nodes()
-        .iter()
-        .map(|n| n.batch_entries)
-        .collect();
-    assert!(
-        batch_entries.contains(&7),
-        "the cover is the selected side: {stats:?}"
-    );
-    // ...and total drawn entries are O(selected), never O(relation).
-    let total: u64 = batch_entries.iter().sum();
-    assert_eq!(total, 147, "7 holder keys + 140 account entries: {stats:?}");
 }
 
 /// Compaction (docs/architecture/50-storage.md): a chunk-churned store copies to a
@@ -1061,11 +1046,6 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             "{err:?}"
         );
         let err = snap.introspect(&mut prepared, &[]).unwrap_err();
-        assert!(
-            matches!(err, bumbledb::Error::ForeignPreparedQuery),
-            "{err:?}"
-        );
-        let err = snap.profile(&mut prepared, &[]).unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
@@ -1813,14 +1793,11 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     .expect("read after cycle");
 }
 
-/// The reach observability surface: `profile` on a rec query reports
-/// per-round delta sizes and union accounting through the `Counters`
-/// seam's reach hooks, and `introspect` renders labeled plan units plus
-/// the reach section — counted paths only; the release execute path
-/// monomorphizes `NoopCounters` and reports nothing.
+/// Reach still answers through execute; introspect keeps the rendered
+/// query header (K10's door). Per-round profile stats died with K23.
 #[test]
-fn reach_profile_reports_rounds_and_deltas() {
-    let dir = common::TempDir::new("api-reach-profile");
+fn reach_execute_answers_the_closure() {
+    let dir = common::TempDir::new("api-reach-execute");
     let db = Db::create(dir.path(), Graph)
         .expect("create")
         .expect("accepted");
@@ -1834,72 +1811,41 @@ fn reach_profile_reports_rounds_and_deltas() {
     .unwrap();
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
     db.read(|snap| {
-        let (answers, stats) = snap.profile(&mut prepared, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
-        assert!(
-            stats.rules().is_empty(),
-            "per-unit node stats do not exist under the driver"
-        );
-        let reach = stats.reach().expect("rec populates reach stats");
-        assert!(reach.rounds[0].delta == 0, "round 0 has no delta");
-        assert_eq!(reach.rounds[0].emitted, 7, "the base rule emits each edge");
-        assert_eq!(reach.rounds[0].absorbed, 0);
-        let mut new_rows = Vec::new();
-        for (idx, round) in reach.rounds.iter().enumerate() {
-            if idx > 0 {
-                let prev = &reach.rounds[idx - 1];
-                assert_eq!(
-                    round.delta,
-                    prev.emitted - prev.absorbed,
-                    "a round's delta is the previous round's newly seen rows"
-                );
-            }
-            new_rows.push(round.emitted - round.absorbed);
-        }
-        assert_eq!(*new_rows.last().expect("rounds ran"), 0, "convergence");
-        assert_eq!(
-            new_rows.iter().sum::<u64>(),
-            16,
-            "newly seen across rounds is exactly the closure"
-        );
-        assert_eq!(stats.emits, 16, "emits is the main sink");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
-        assert!(report.starts_with("introspection v7\n"), "{report}");
-        assert!(report.contains("reach base 0:"), "{report}");
-        assert!(report.contains("reach rec 0 (delta occ"), "{report}");
-        assert!(report.contains("reach:"), "{report}");
-        assert!(report.contains("round 1: delta 7;"), "{report}");
+        assert!(report.contains("query:"), "{report}");
         Ok(())
     })
     .expect("read");
 }
 
-/// A one-round budget trips on a multi-round closure with the typed
-/// execution error — constructed, not hoped for
-/// (`Error::DerivedBudgetExceeded`, `MeasureOfRay`'s error model: ids
-/// and counts, the snapshot stays usable). `rounds > 0`: the rec ran.
+/// A 66k-edge chain exceeds the default 2^16-round budget with a
+/// trivial tuple count (one new node per round). Typed error, constructed.
 #[test]
 fn a_tight_derived_budget_trips_under_reach() {
+    const CHAIN: u64 = 66_000;
     let dir = common::TempDir::new("api-reach-budget");
     let db = Db::create(dir.path(), Graph)
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-        for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
-            tx.insert([&GraphEdge { src, dst }])?;
+        for n in 0..CHAIN {
+            tx.insert([&GraphEdge { src: n, dst: n + 1 }])?;
         }
         Ok(())
     })
     .expect("write")
     .unwrap();
-    let mut prepared = db.prepare(&closure_query()).expect("recursion executes");
-    prepared.set_derived_budget(1, u64::MAX);
+    let mut prepared = db
+        .prepare(&single_source_chain_query())
+        .expect("recursion executes");
     let error = db
         .read(|snap| {
             snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
                 .map(|_| ())
         })
-        .expect_err("a one-round budget cannot close a diameter-4 closure");
+        .expect_err("66k hops exceed the default 2^16-round budget");
     assert!(
         matches!(
             error,
@@ -1907,81 +1853,38 @@ fn a_tight_derived_budget_trips_under_reach() {
         ),
         "expected DerivedBudgetExceeded with rounds > 0, got: {error}"
     );
-    prepared.set_derived_budget(16, u64::MAX);
-    db.read(|snap| {
-        snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-            .map(|_| ())
-    })
-    .expect("the widened budget closes the fixpoint");
 }
 
-/// Named interiors (no rec) still execute: a copy-through interior is
-/// the same answers as the EDB scan. Tight rounds alone must not trip.
-#[test]
-fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
-    let dir = common::TempDir::new("api-interiors-budget");
-    let db = Db::create(dir.path(), Ledger)
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| {
-        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
-        tx.insert([&Holder {
-            id: holder,
-            name: "alice",
-        }])?;
-        for balance in [100, -25, 40] {
-            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&Account {
-                id,
-                holder,
-                balance,
-            }])?;
-        }
-        Ok(())
-    })
-    .expect("write")
-    .unwrap();
-    let query = interiors_only_accounts();
-    let mut prepared = db.prepare(&query).expect("prepare");
-    prepared.set_derived_budget(0, 0);
-    let error = db
-        .read(|snap| {
-            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                .map(|_| ())
-        })
-        .expect_err("a zero-tuple budget trips on a nonempty interior");
-    assert!(
-        matches!(
-            error,
-            bumbledb::Error::DerivedBudgetExceeded { rounds: 0, tuples } if tuples > 0
-        ),
-        "expected DerivedBudgetExceeded {{ rounds: 0 }}, got: {error}"
-    );
-    // Tight rounds alone must not trip an interiors-only query.
-    prepared.set_derived_budget(0, u64::MAX);
-    db.read(|snap| {
-        let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
-        assert_eq!(answers.len(), 3, "three accounts copy through");
-        Ok(())
-    })
-    .expect("the tuples axis is the only tripwire");
-}
-
-fn interiors_only_accounts() -> Query {
+/// Single-source reach from node 0: one new node per round, linear tuples.
+fn single_source_chain_query() -> Query {
     Query {
-        interiors: vec![Interior {
-            rules: vec![ProjectionRule {
+        interiors: vec![],
+        rec: Some(Rec {
+            base: NonEmpty::one(RecRule {
                 finds: vec![VarId(0)],
                 atoms: vec![Atom {
-                    source: AtomSource::Edb(Account::RELATION),
-                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                    source: AtomSource::Edb(GraphEdge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Literal(Value::U64(0))),
+                        (FieldId(1), Term::Var(VarId(0))),
+                    ],
                 }],
-                negated: vec![],
                 conditions: vec![],
-            }],
-        }],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(GraphEdge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(0))),
+                        (FieldId(1), Term::Var(VarId(1))),
+                    ],
+                }],
+                conditions: vec![],
+            }),
+        }),
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
-        rec: None,
     }
 }

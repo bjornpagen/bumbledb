@@ -165,20 +165,6 @@ fn profile_binds_param_sets_exactly_as_execute_args() {
         .expect("execute");
     assert!(!executed.is_empty(), "the fixture selects rows");
 
-    let (profiled, stats) = prepared
-        .profile(&txn, &cache, &[ParamArg::Set(&elements)])
-        .expect("profile binds the set entry");
-    assert_eq!(
-        id_amount_answers(&profiled),
-        id_amount_answers(&executed),
-        "profiling is an execution: value-identical answers"
-    );
-    assert_eq!(
-        usize::try_from(stats.emits).expect("emits fit"),
-        executed.len(),
-        "the counted surface saw exactly the executed bindings"
-    );
-
     let (rendered, report) = prepared
         .introspect(&txn, &cache, &[ParamArg::Set(&elements)])
         .expect("introspect binds the set entry");

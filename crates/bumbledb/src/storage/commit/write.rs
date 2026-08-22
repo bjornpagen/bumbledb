@@ -88,15 +88,6 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
     reason = "consuming the delta is the commit boundary contract"
 )] // consuming the delta IS the contract: a commit ends it
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<Admission<CommitReport>> {
-    // The one `INTERN_PROBE` emission site (10-measurement.md, component
-    // 4): commit entry, where the delta's dictionary-probe totals are
-    // final — an aggregate two-arg event (probes issued to the committed
-    // dictionary, memo answers that each saved one LMDB get), never
-    // per-string spans.
-    obs::event(
-        obs::names::INTERN_PROBE,
-        obs::TraceArgs::Pair(delta.committed_dict_probes(), delta.committed_memo_hits()),
-    );
     // The empty delta is the *only* no-op commit shape — net dispositions
     // make every recorded entry a genuine state change. It commits without
     // touching query-visible state: the tx id does not advance and no

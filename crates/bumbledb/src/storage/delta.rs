@@ -16,7 +16,7 @@
 //! commit, keeping the write-lock window to the commit step; an abort
 //! (error or panic) just drops this struct and LMDB was never written.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use crate::arena::{Arena, ArenaSlice};
@@ -267,45 +267,28 @@ impl PendingInterns {
 }
 
 /// The committed-hit memo ([`WriteDelta::committed_memo`]): a cache of
-/// committed-dictionary *reads*, plus the two counters that account for
-/// it. Interior mutability because recording a read must not demand
-/// `&mut`: `resolve` is `&self` — the commit judgment's selection-literal
-/// encoding resolves through a shared borrow — and the delta is confined
-/// to the single writer (`MutationCore` is `Send + !Sync` by
-/// construction, `api/db/mutation_core.rs`: it moves whole to the
-/// binding's async task, it is never shared across threads), so the
-/// `RefCell` is uncontended by law and its borrows are straight-line
-/// inside `resolve`. `Cell` for the counters for the same reason.
+/// committed-dictionary *reads*. Interior mutability because recording
+/// a read must not demand `&mut`: `resolve` is `&self` — the commit
+/// judgment's selection-literal encoding resolves through a shared
+/// borrow — and the delta is confined to the single writer
+/// (`MutationCore` is `Send + !Sync` by construction,
+/// `api/db/mutation_core.rs`: it moves whole to the binding's async
+/// task, it is never shared across threads), so the `RefCell` is
+/// uncontended by law and its borrows are straight-line inside
+/// `resolve`.
 #[derive(Default)]
 struct CommittedMemo {
     ids: RefCell<MemoMap>,
-    /// Probes actually issued to the committed dictionary — one LMDB
-    /// forward get each. With [`Self::memo_hits`], the `INTERN_PROBE`
-    /// trace point's two args (`proposals/one-representation/`
-    /// `10-measurement.md`, component 4).
-    dict_probes: Cell<u64>,
-    /// Memo answers — each exactly one saved LMDB get.
-    memo_hits: Cell<u64>,
 }
 
 impl CommittedMemo {
-    /// Memo probe; a hit is counted (it is exactly one saved dict get).
     fn get(&self, hash: &[u8; 32]) -> Option<crate::encoding::InternId> {
-        let id = self.ids.borrow().get(hash).copied();
-        if id.is_some() {
-            self.memo_hits.set(self.memo_hits.get() + 1);
-        }
-        id
+        self.ids.borrow().get(hash).copied()
     }
 
     /// Records a committed-dictionary hit for the transaction's lifetime.
     fn record(&self, hash: [u8; 32], id: crate::encoding::InternId) {
         self.ids.borrow_mut().insert(hash, id);
-    }
-
-    /// Counts one probe issued to the committed dictionary.
-    fn count_probe(&self) {
-        self.dict_probes.set(self.dict_probes.get() + 1);
     }
 }
 
@@ -337,21 +320,5 @@ impl WriteDelta<'_> {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dict_next(&self) -> Option<u64> {
         self.interns.as_ref().map(PendingInterns::next_id)
-    }
-
-    /// Probes this transaction issued to the committed dictionary — the
-    /// `INTERN_PROBE` trace point's probe count, emitted once at commit
-    /// entry where the totals are final (`storage/commit/write.rs`); the
-    /// delta tests pin the one-probe-per-distinct-committed-string law
-    /// through this directly.
-    pub(crate) fn committed_dict_probes(&self) -> u64 {
-        self.committed_memo.dict_probes.get()
-    }
-
-    /// Committed-memo answers, each exactly one saved LMDB get — the
-    /// `INTERN_PROBE` trace point's hit count, emitted beside
-    /// [`Self::committed_dict_probes`].
-    pub(crate) fn committed_memo_hits(&self) -> u64 {
-        self.committed_memo.memo_hits.get()
     }
 }

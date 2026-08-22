@@ -145,10 +145,9 @@ fn key_probe_queries_flow_through_the_same_surface() {
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::I64(42));
 
-    // introspection reports the classification alongside the rows.
     let (answers, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(answers.len(), 1);
-    assert!(report.contains("key probe"));
+    assert!(report.contains("query:"), "{report}");
 }
 
 // ---------- PRD 19 criteria: statement-derived point lookups ----------
@@ -267,24 +266,14 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         "post-commit cold: the key-probe path builds no image"
     );
 
-    // The classification is observable through profile stats, and the
-    // 16-byte determinant is exact: a one-off interval misses.
-    let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(answers.len(), 1);
-    assert_eq!(
-        stats.rules()[0].key_probe(),
-        Some(crate::api::stats::KeyProbeStats { hit: true })
-    );
     let near = booking_query(Term::Literal(Value::IntervalU64(
         bumbledb_theory::Interval::<u64>::new(5, 11).expect("nonempty interval"),
     )));
     let mut near = prepare(&txn, &cache, &schema, &near).expect("prepare");
-    let (answers, stats) = near.profile(&txn, &cache, &[]).expect("profile");
+    let answers = near
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     assert_eq!(answers.len(), 0);
-    assert_eq!(
-        stats.rules()[0].key_probe(),
-        Some(crate::api::stats::KeyProbeStats { hit: false })
-    );
     #[cfg(feature = "trace")]
     assert_eq!(cache.resident(), (0, 0));
 }
@@ -315,12 +304,9 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
         "membership binding is not a key cover"
     );
 
-    let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert!(
-        stats.rules()[0].key_probe().is_none(),
-        "the scan+filter path, not the key_probe"
-    );
-    assert!(!stats.rules()[0].nodes().is_empty());
+    let answers = prepared
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), AnswerValue::U64(100));
 
@@ -417,7 +403,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         [PreparedRule::KeyProbe(_)]
     ));
     let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(report.contains("full-fact membership probe"), "{report}");
+    assert!(report.contains("query:"), "{report}");
 
     let out = prepared
         .execute_collect(&txn, &cache, &[] as &[BindValue])
@@ -517,14 +503,7 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     let executed = prepared
         .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("execute");
-    let (profiled, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(executed.len(), profiled.len());
-    assert_eq!(executed.get(0, 0), profiled.get(0, 0));
-    assert_eq!(
-        stats.rules()[0].key_probe(),
-        Some(crate::api::stats::KeyProbeStats { hit: true }),
-        "counted path still names the key-probe classification; it did not fabricate a direct-lane miss/hit from out.len() alone"
-    );
+    assert_eq!(executed.len(), 1);
 }
 
 /// An intern-miss param on the fast path: the key resolves to the

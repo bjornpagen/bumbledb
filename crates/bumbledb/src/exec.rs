@@ -2,7 +2,6 @@
 
 pub mod colt;
 pub mod dispatch;
-pub mod introspection;
 pub mod kernel;
 pub mod run;
 pub mod sink;

@@ -178,16 +178,10 @@ fn a_profiled_closure_query_digests_reach_rounds() {
     let mut prepared = db.prepare(&query).expect("prepare");
     let draw = crate::families::scalar_draw(vec![Value::U64(0)]);
     let args = param_args(&draw);
-    let (_, stats) = db
-        .read(|snap| snap.profile(&mut prepared, &args))
-        .expect("profile");
-    let digest = crate::driver::exec_digest(&stats);
-    assert!(
-        digest.covers.contains("rec:r"),
-        "reach digest names rounds, got {:?}",
-        digest.covers
-    );
-    assert!(digest.emitted > 0, "the chain head emits");
+    let answers = db
+        .read(|snap| snap.execute_collect(&mut prepared, &args))
+        .expect("execute");
+    assert!(!answers.is_empty(), "the chain head emits");
     drop(prepared);
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);

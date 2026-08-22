@@ -310,14 +310,10 @@ stream computes exactly the answer set
   provenance, § the rule loop; ruled 2026-07-23, R2) even when every rule
   has its own witness — deliberately distinct
   from the measured cross-rule elision refutation below.
-- **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
-  multi-rule query whose heads are provably pairwise disjoint — the witness
-  form and its soundness are
-  `lean/Bumbledb/Exec/Dedup.lean: syntactic_disjointness_sound` (conservative
-  and pairwise by design: params, sets, and mixed constant forms pin nothing;
-  the elision the witness could license is `disjoint_witness_licence`). The
-  DU-arm union is exactly this shape. Plan introspection retains the knowledge
-  as `disjoint_rules: proven (R.f)`, but execution always keeps one seen-set
+- **Rule-disjointness knowledge:** pairwise arm disjointness is a
+  semantic hypothesis —
+  `lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`. The
+  DU-arm union is exactly this shape. Execution always keeps one seen-set
   spanning a multi-rule query, keyed by provenance (§ the rule loop; ruled
   2026-07-23, R2).
 

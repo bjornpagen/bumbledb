@@ -49,10 +49,6 @@ impl OpenIndex {
         }
     }
 
-    fn byte_size(&self) -> usize {
-        self.slots.len() * std::mem::size_of::<u32>()
-    }
-
     fn needs_grow(&self) -> bool {
         let cap = self.slots.len();
         cap == 0 || (self.live + self.tombs) * 4 >= cap * 3
@@ -300,25 +296,6 @@ impl HeapStage {
     #[cfg(test)]
     pub(crate) fn intern_count(&self) -> usize {
         self.dict_entries.len()
-    }
-
-    /// Staged fact + dictionary arena capacity and compact tables — $A$.
-    #[must_use]
-    pub(crate) fn phase_a(&self) -> u64 {
-        let tables = self.facts.capacity() * std::mem::size_of::<FactRef>()
-            + self.dict_entries.capacity() * std::mem::size_of::<DictSlot>()
-            + self.dict_reverse.capacity() * std::mem::size_of::<ArenaSlice>()
-            + self.floors.len() * std::mem::size_of::<u64>()
-            + self.roster.len() * std::mem::size_of::<(RelationId, FieldId)>();
-        u64::try_from(self.fact_arena.capacity() + self.dict_arena.capacity() + tables)
-            .expect("stage bytes fit u64")
-    }
-
-    /// Open-addressed identity + dictionary index capacity — $I$.
-    #[must_use]
-    pub(crate) fn phase_i(&self) -> u64 {
-        u64::try_from(self.identity.byte_size() + self.dict_index.byte_size())
-            .expect("index bytes fit u64")
     }
 
     fn find(&self, relation: RelationId, hash: &[u8; 32]) -> Option<u32> {

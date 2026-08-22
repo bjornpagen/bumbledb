@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, RecRule, RecStep, Rule,
-    Term, VarId,
+    Term, Value, VarId,
 };
 use bumbledb::schema::FieldId;
 use bumbledb::{AnswerValue, Answers, Db, Fact, Interval, NonEmpty, ProjectionRule};
@@ -512,55 +512,81 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     .expect("read");
 }
 
-/// A budget abort mid-fixpoint leaves the prepared handle reusable: the
-/// deep chain trips a two-round budget (COLT views and pooled halves are
-/// mid-flight at the abort), then the SAME handle re-executes under the
-/// default budget and must reproduce the naive closure exactly — a
-/// poisoned pool (stale append floor, an un-unbound view, a frontier
-/// watermark surviving the abort) diverges here.
+/// A budget abort mid-fixpoint leaves the prepared handle reusable: a
+/// 66k-edge single-source chain trips the default rounds budget, then
+/// the SAME handle re-executes and raises the same typed error — a
+/// poisoned pool would panic or change the error shape.
 #[test]
 fn a_budget_abort_leaves_the_prepared_handle_correct() {
-    const CHAIN: u64 = 24;
+    const CHAIN: u64 = 66_000;
     let dir = common::TempDir::new("hunt-budget-abort");
     let db = Db::create(dir.path(), Hunt)
         .expect("create")
         .expect("accepted");
-    let edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     db.write(|tx| {
-        for &(src, dst) in &edges {
-            tx.insert([&Edge { src, dst }])?;
+        for n in 0..CHAIN {
+            tx.insert([&Edge { src: n, dst: n + 1 }])?;
         }
         Ok(())
     })
     .expect("write")
     .unwrap();
-    let expected = naive_closure(&edges);
-    let mut prepared = db.prepare(&closure_query()).expect("prepare");
-    prepared.set_derived_budget(2, u64::MAX);
-    db.read(|snap| {
-        let err = snap
-            .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-            .expect_err("a 24-round closure trips a 2-round budget");
-        assert!(
-            matches!(err, bumbledb::Error::DerivedBudgetExceeded { .. }),
-            "typed budget error, got {err:?}"
-        );
-        Ok(())
-    })
-    .expect("read");
-    prepared.set_derived_budget(1 << 16, 10_000_000);
-    db.read(|snap| {
-        for run in 0..2 {
-            let got =
-                answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
-            assert_eq!(
-                got, expected,
-                "post-abort closure differs from naive on run {run}"
+    let mut prepared = db.prepare(&single_source_chain_query()).expect("prepare");
+    for run in 0..2 {
+        db.read(|snap| {
+            let err = snap
+                .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                .expect_err("66k hops exceed the default 2^16-round budget");
+            assert!(
+                matches!(err, bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0),
+                "typed budget error on run {run}, got {err:?}"
             );
-        }
-        Ok(())
-    })
-    .expect("read");
+            Ok(())
+        })
+        .expect("read");
+    }
+}
+
+/// Single-source reach from node 0: one new node per round, linear tuples.
+fn single_source_chain_query() -> Query {
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(Edge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Literal(Value::U64(0))),
+                        (FieldId(1), Term::Var(VarId(0))),
+                    ],
+                }],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(Edge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(0))),
+                        (FieldId(1), Term::Var(VarId(1))),
+                    ],
+                }],
+                conditions: vec![],
+            }),
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    }
 }
 
 /// One recursive handle, alternating parameter envelopes: the source-

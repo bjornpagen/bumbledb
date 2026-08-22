@@ -1,8 +1,6 @@
-//! The rule-disjointness proof (docs/architecture/40-execution.md § set
-//! semantics): rules selecting different values of one discriminator are
-//! provably disjoint. The proof remains visible in introspection, while execution
-//! deliberately keeps one seen-set spanning the rules. These tests pin the
-//! proof and show that the spanning set absorbs nothing across proven arms.
+//! Multi-rule unions keep one spanning seen-set: arms that select
+//! different discriminator literals do not collide, and the fold-free
+//! nullary Count across written rules still refuses (R1).
 
 use super::*;
 use crate::ir::FoldOp;
@@ -94,103 +92,6 @@ fn du_query(rules: Vec<Rule>) -> Query {
     }
 }
 
-/// The DU-arm union (two arms, `kind`-selected) proves disjoint;
-/// removing one rule's selection unproves it — the pair has no witness,
-/// so the flag conservatively stays off.
-#[test]
-fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
-    let dir = TempDir::new("prepared-disjoint-proof");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let proven = prepare(
-        &txn,
-        &cache,
-        &schema,
-        &du_query(vec![arm_rule(0), arm_rule(1)]),
-    )
-    .expect("prepare");
-    assert!(
-        proven.disjoint_rules(),
-        "different kind literals over the id-keyed occurrence prove the pair"
-    );
-
-    // The same query with rule 1's selection removed: the kind is open,
-    // so nothing pins the pair apart.
-    let mut open = arm_rule(1);
-    open.atoms[0].bindings.remove(1);
-    let unproven =
-        prepare(&txn, &cache, &schema, &du_query(vec![arm_rule(0), open])).expect("prepare");
-    assert!(!unproven.disjoint_rules(), "no witness, no proof");
-
-    // Equal literals pin the pair TOGETHER, not apart (the rules differ
-    // structurally so DNF dedup keeps both — the pair really is judged).
-    let mut same_kind = arm_rule(0);
-    same_kind.conditions = vec![ConditionTree::Leaf(Comparison {
-        op: CmpOp::Ge,
-        lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::U64(0)),
-    })];
-    let same = prepare(
-        &txn,
-        &cache,
-        &schema,
-        &du_query(vec![arm_rule(0), same_kind]),
-    )
-    .expect("prepare");
-    assert!(!same.disjoint_rules(), "equal literals are not different");
-}
-
-/// introspection names the proof — `disjoint_rules: proven (Item.kind)` — and
-/// the structured stats carry the same witness; the unproven query
-/// says so.
-#[test]
-fn introspection_names_the_disjointness_witness() {
-    let dir = TempDir::new("prepared-disjoint-introspect");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let mut prepared = prepare(
-        &txn,
-        &cache,
-        &schema,
-        &du_query(vec![arm_rule(0), arm_rule(1)]),
-    )
-    .expect("prepare");
-    let (out, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert_eq!(out.len(), 4, "both arms, the task excluded");
-    assert!(
-        report.contains("disjoint_rules: proven (Item.kind)"),
-        "{report}"
-    );
-    let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(
-        stats.disjoint_rules,
-        Some(crate::api::stats::DisjointRules {
-            relation: "Item".to_owned(),
-            field: "kind".to_owned(),
-        }),
-    );
-
-    // The open arm reads `kind` as a variable: no pinned literal, so
-    // the pair is unproven — and the extra variable position keeps the
-    // bodies structurally distinct, out of subsumption's witness (a
-    // plainly kind-free arm would contain the pinned one and delete it,
-    // leaving no pair to report).
-    let mut open = arm_rule(1);
-    open.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(2)));
-    let mut unproven =
-        prepare(&txn, &cache, &schema, &du_query(vec![arm_rule(0), open])).expect("prepare");
-    let (_, report) = unproven.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(report.contains("disjoint_rules: unproven"), "{report}");
-}
-
 /// A fold over a proven-disjoint union retains the spanning seen-set,
 /// which absorbs zero answers because the theorem is true, and matches
 /// the naive model: per id, the sum of its head-projected payloads. The
@@ -235,20 +136,20 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(prepared.disjoint_rules(), "the arms prove disjoint");
     assert!(!prepared.distinct_bindings(), "unions always retain dedup");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
         panic!("Sum builds the aggregate sink");
     };
     assert!(!sink.seen_elided(), "the spanning seen-set exists");
 
-    let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     assert_eq!(
         prepared.sink.distinct_seen(),
         Some(4),
         "all four head projections inhabit the spanning set"
     );
-    assert!(stats.rules().iter().all(|rule| rule.absorbed() == 0));
     // The naive model: fold domain = ∪ head-projected bindings; per
     // group (id) the projection is the singleton (id, payload), so the
     // Sum is the payload and the kind-2 item never appears.
@@ -304,12 +205,9 @@ fn a_three_arm_union_absorbs_nothing_across_rules() {
 
     let query = du_query(vec![arm_rule(0), arm_rule(1), arm_rule(2)]);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(
-        prepared.disjoint_rules(),
-        "all three pairs share the witness"
-    );
-    let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert!(stats.rules().iter().all(|rule| rule.absorbed() == 0));
+    let out = prepared
+        .execute_collect(&txn, &cache, &[] as &[BindValue])
+        .expect("execute");
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {
             let (AnswerValue::U64(id), AnswerValue::U64(payload)) =

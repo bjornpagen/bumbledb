@@ -137,13 +137,6 @@ pub use api::db::{
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
 };
-/// Structured execution counters used by the in-workspace bench harness.
-/// Not embedding API.
-#[doc(hidden)]
-pub use api::stats::{
-    CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
-    INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats, StatsBody,
-};
 pub use error::{
     Admission, Check, Committed, ConditionalWrite, Conflict, Direction, Error, ErrorFamily,
     Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
@@ -154,8 +147,6 @@ pub use interval::Interval;
 /// differential unit tests (as a dev-dependency) enable.
 #[cfg(feature = "ground-off")]
 pub use plan::ground::with_grounding_disabled;
-/// Heap-admit phase quantities $A,I,R,F,J$ (`proposals/instance-lifetime.md`).
-pub use storage::catalog::AdmissionTelemetry;
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived

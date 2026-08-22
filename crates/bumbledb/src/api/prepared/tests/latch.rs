@@ -105,7 +105,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
         .expect("the missed query explains");
     assert!(
         report.contains(
-            "pending literals: \"carol\" — an unresolved Eq literal empties its rule at execution until latched"
+            "pending literals: carol — an unresolved Eq literal empties its rule at execution until latched"
         ),
         "{report}"
     );

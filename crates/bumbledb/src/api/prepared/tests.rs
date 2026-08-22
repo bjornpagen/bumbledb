@@ -22,8 +22,6 @@ mod correctness;
 mod disjoint;
 mod folded;
 mod ground;
-mod introspection;
-mod introspection_goldens;
 mod key_probe;
 mod latch;
 mod measure;

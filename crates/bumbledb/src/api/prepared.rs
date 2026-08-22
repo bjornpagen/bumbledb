@@ -305,25 +305,6 @@ pub struct PreparedQuery<S> {
     /// any other environment's snapshot is `Error::ForeignPreparedQuery`
     /// — checked first at every execution entry.
     identity: crate::storage::env::CatalogIdentity,
-    /// The rule-disjointness proof (docs/architecture/40-execution.md
-    /// § set semantics): `Some` iff the query's rules are provably
-    /// pairwise disjoint, carrying the witness — the (relation, field)
-    /// whose differing pinned literals forbid cross-rule head
-    /// collisions. `None` for single-rule programs and unproven pairs.
-    /// Readers: introspection and the structured stats. The executor deliberately
-    /// does not spend this proof; see the measured refutation in
-    /// `docs/architecture/40-execution.md`.
-    disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
-    /// The subsumption record (`plan/ground.rs`): rules deleted at
-    /// prepare, each with its subsuming rule, in lowered-rule indices —
-    /// `rules` below holds only the survivors, in order. Readers:
-    /// introspection and the structured stats.
-    subsumed: Vec<crate::api::stats::SubsumedRule>,
-    /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
-    /// constant conditions refuted themselves at normalize, deleted at
-    /// prepare with the killing condition — `rules` below holds only the
-    /// live ones. Readers: introspection and the structured stats.
-    dead: Vec<crate::api::stats::DeadRule>,
     /// Interiors then rec then main, as one pipeline sum: interiors
     /// live inside each arm, never as a sidecar. Dead main is
     /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
@@ -608,20 +589,6 @@ pub(crate) struct KeyProbeRule {
 }
 
 impl<S> PreparedQuery<S> {
-    /// The stats surface's rendering of one rule's pin record.
-    pub(super) fn rule_pinned_rows(&self, rule_idx: usize) -> Vec<crate::api::stats::PinnedRows> {
-        self.pipeline.main_rules()[rule_idx]
-            .pinned()
-            .iter()
-            .map(|pin| crate::api::stats::PinnedRows {
-                occurrence: pin.occ_id.0,
-                relation: self.schema.relation(pin.relation).name().to_owned(),
-                rows: pin.rows,
-                survivors: pin.survivors,
-            })
-            .collect()
-    }
-
     fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
         match &self.pipeline {
             PreparedPipeline::PointProbe { .. } => {}

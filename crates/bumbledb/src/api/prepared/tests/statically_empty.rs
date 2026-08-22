@@ -159,17 +159,8 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
         .expect("execute");
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 
-    // The death record names the killing condition — introspection's line.
-    let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(stats.rules().len(), 1, "stats cover the live rule only");
-    assert_eq!(stats.dead.len(), 1);
-    assert_eq!(stats.dead[0].rule, 0);
-    assert_eq!(stats.dead[0].rendered, "Event: score > 5 ∧ score < 3");
     let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(
-        report.contains("statically empty: rule 0: Event: score > 5 ∧ score < 3"),
-        "{report}"
-    );
+    assert!(report.contains("query:"), "{report}");
 }
 
 /// The one-RULE-span proof: the dead rule not only emits nothing, it

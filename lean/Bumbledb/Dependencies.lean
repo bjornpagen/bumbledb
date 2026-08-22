@@ -34,11 +34,10 @@ logical superkey implication — a key on `X` entails a key on every
 `X' ⊇ X` — is TRUE (`no_closure_superkey_implication`, the one-line
 proof below) and deliberately UNSPENT by acceptance: the validator
 computes no closure, resolves no implied key, and accepts no
-containment against a merely-entailed superkey. The engine even names
-the entailment as diagnostics-only — `SchemaWarning::RedundantSuperkey`
-acknowledges a declared strict superkey without changing enforcement
-or the fingerprint. The gap between entailment and acceptance is the
-model's recorded fact, not an oversight.
+containment against a merely-entailed superkey. A declared strict
+superkey still seals and still enforces both keys — the entailment is
+unspent, not a second enforcement plan. The gap between entailment and
+acceptance is the model's recorded fact, not an oversight.
 
 ## Notes on the non-theorems (countermodels and refused converses)
 
@@ -581,8 +580,8 @@ determinant restricts to agreement on the smaller. TRUE, and
 deliberately UNSPENT by acceptance — the model note in the module doc
 records the entailment-vs-acceptance gap explicitly.
 Bridge: `resolve_target_key`'s exact-field-set rule spends NO
-entailment; `SchemaWarning::RedundantSuperkey` names the implication
-as diagnostics only, outside enforcement and the fingerprint. -/
+entailment; a declared strict superkey still seals and still enforces
+both keys, outside any second plan. -/
 theorem no_closure_superkey_implication
     {R : Set Fact} {X X' : List FieldId} (h : Functionality R X)
     (hsub : ∀ i, i ∈ X → i ∈ X') :

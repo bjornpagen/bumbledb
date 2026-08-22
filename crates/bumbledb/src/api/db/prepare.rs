@@ -13,8 +13,7 @@ impl<S> Db<S> {
     /// only. Interiors evaluate once, then — on Reach
     /// (`Query::rec` is `Some`) — a rec least fixpoint, then main. A CQ
     /// (`Query::rec` is `None`) never enters the reach driver. At execution a derived table may
-    /// raise the typed [`crate::error::Error::DerivedBudgetExceeded`]
-    /// ([`PreparedQuery::set_derived_budget`] is the host policy knob).
+    /// raise the typed [`crate::error::Error::DerivedBudgetExceeded`].
     ///
     /// # Errors
     ///

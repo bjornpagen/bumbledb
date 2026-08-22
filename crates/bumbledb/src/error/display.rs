@@ -1172,8 +1172,7 @@ impl fmt::Display for Error {
             Self::DerivedBudgetExceeded { rounds, tuples } => write!(
                 f,
                 "derived-tuples budget exceeded: {rounds} rec rounds and \
-                 {tuples} derived tuples — raise the budget \
-                 (PreparedQuery::set_derived_budget) or bound the closure"
+                 {tuples} derived tuples — bound the closure"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")

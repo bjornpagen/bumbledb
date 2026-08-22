@@ -63,21 +63,11 @@ impl<S: Theory> InstanceBuilder<S> {
 }
 
 impl<S> InstanceBuilder<S> {
-    /// One heap-stage collection load, one span (`BUILDER_LOAD`,
-    /// `proposals/one-representation/10-measurement.md`): every builder
-    /// load verb — typed, dyn, accepted — records at collection
-    /// granularity, never per row, counting the rows submitted; a
-    /// refusal aborts the span (payload stays `TraceArgs::None`), the
-    /// commit spans' discipline.
     fn observed_load(
         &mut self,
         load: impl FnOnce(&mut MutationCore<HeapMutation, S>) -> Result<MutationReport>,
     ) -> Result<MutationReport> {
-        let mut span = crate::obs::span(crate::obs::names::BUILDER_LOAD);
-        let report = load(&mut self.mutation)?;
-        span.set_count(report.submitted());
-        span.end();
-        Ok(report)
+        load(&mut self.mutation)
     }
 
     /// Records a collection of typed inserts against the empty base.
@@ -293,25 +283,10 @@ impl<S> InstanceBuilder<S> {
     /// `TransactionPoisoned` if a prior apply failed after a prefix
     /// entered the stage; `Corruption` / `Internal` on infra failure.
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
-        Ok(self.admit_measured()?.0)
-    }
-
-    /// [`Self::admit`] plus the five phase quantities $A,I,R,F,J$.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::admit`].
-    pub fn admit_measured(
-        self,
-    ) -> Result<(Admission<OwnedInstance<S>>, crate::AdmissionTelemetry)> {
         self.mutation.refuse_poisoned()?;
         let (schema, stage) = self.mutation.into_heap();
-        let (admission, telemetry) =
-            crate::storage::catalog::admit_catalog_measured(schema.as_ref(), stage)?;
-        Ok((
-            admission.map(|catalog| OwnedInstance::new(schema, catalog)),
-            telemetry,
-        ))
+        let admission = crate::storage::catalog::admit_catalog(schema.as_ref(), stage)?;
+        Ok(admission.map(|catalog| OwnedInstance::new(schema, catalog)))
     }
 }
 

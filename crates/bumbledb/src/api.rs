@@ -2,4 +2,3 @@
 
 pub mod db;
 pub mod prepared;
-pub mod stats;

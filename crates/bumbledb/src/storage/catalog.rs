@@ -22,8 +22,7 @@ mod lmdb;
 #[cfg(test)]
 mod tests;
 
-pub use freeze::AdmissionTelemetry;
-pub(crate) use freeze::{admit_catalog, admit_catalog_measured};
+pub(crate) use freeze::admit_catalog;
 pub(crate) use frozen::FrozenCatalog;
 pub(crate) use heap::HeapStage;
 pub(crate) use lmdb::{LmdbPeekCatalog, LmdbReadCatalog, LmdbSortedGets, LmdbWriteCatalog};

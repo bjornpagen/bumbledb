@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::corpus;
-    use crate::corpus_gen::{GenConfig, Scale, Sizes};
-    use crate::families::{self, has_sets, param_args};
+    use crate::corpus_gen::{GenConfig, Scale};
+    use crate::families::{self, param_args};
     use crate::schema::Ledger;
     use bumbledb::Db;
 
@@ -221,112 +221,6 @@ mod tests {
             .count();
         assert!(out.len() > 1, "a real result set");
         assert_eq!(warm, 0, "the persistent tier holds: zero descents warm");
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Findings 1+3 (scan work and cover choice), forever: profiled work
-    /// per family is bounded by the corpus's logical selectivities —
-    /// never O(relation) for selective families, never O(map capacity)
-    /// anywhere. Bounds carry their derivations; counters are
-    /// deterministic over the pinned corpus. The param-set family has no
-    /// scalar profile path (set selectivity is an execution fact) — its
-    /// structural assertion is the selection-level tripwire above.
-    #[test]
-    fn read_work_is_bounded_by_selectivity() {
-        let (dir, db) = corpus_db("work");
-        let sizes = Sizes::of(CFG.scale);
-        let typical = |name: &str| -> usize {
-            match name {
-                "balance" | "skew" => 1,
-                _ => 0,
-            }
-        };
-        for family in families::all() {
-            let sets = (family.params)(&CFG);
-            if has_sets(&sets) {
-                continue;
-            }
-            let query = (family.query)();
-            let mut prepared = db.prepare(&query).expect("prepare");
-            for params in &sets {
-                let args = param_args(params);
-                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
-                    .expect("warm");
-            }
-            let (out, stats) = db
-                .read(|snap| snap.profile(&mut prepared, &param_args(&sets[typical(family.name)])))
-                .expect("profile");
-            let drawn: u64 = stats.rules()[0]
-                .nodes()
-                .iter()
-                .map(|n| n.batch_entries)
-                .sum();
-            // Derivations over the pinned corpus (postings = 100_000,
-            // entries = 50_000, accounts = 500, holders = 125,
-            // instruments = 512, orgs = 64, mandates = 2_000):
-            let bound = match family.name {
-                // Key probe: no join nodes at all.
-                "point" => 0,
-                // One cold account: ~postings/accounts = 200 postings,
-                // plus the account and holder probes. 4x margin.
-                "containment_walk" => 4 * (sizes.postings / sizes.accounts + 2),
-                // ~2% suffix x 1/3 currency share, three relations
-                // walked by cover: bounded by 3x the window's postings.
-                "chain" => 3 * (sizes.postings * 8 / 100),
-                // The pure scan family: one pass over postings.
-                "range" => 2 * sizes.postings,
-                // One light holder: ~4 accounts x ~200 postings + keys.
-                "balance" => 4 * (4 * (sizes.postings / sizes.accounts) + 8),
-                // The full fold: every posting once + the accounts.
-                "stats" => 2 * (sizes.postings + sizes.accounts),
-                // One symbol: ~postings/instruments postings + probes.
-                "string" => 8 * (sizes.postings / sizes.instruments + 8),
-                // One uniform tag: ~40% of second tag slots — bounded by
-                // the full PostingTag pass plus the matched postings.
-                "skew" => 2 * (sizes.posting_tags + sizes.postings),
-                // Param-less self-join on entry: the cover draws every
-                // posting once and the second occurrence ~2-3 per
-                // surviving entry — 6x margin.
-                "spread" => 6 * sizes.postings,
-                // The cyclic self-join: the measured plan iterates one
-                // full occurrence and probes the closing edges — bounded
-                // by a small multiple of postings (the cold ~1% window
-                // keeps the surviving suffix tiny).
-                "triangle" => 8 * sizes.postings,
-                // One account's postings + its anti-probes.
-                "postings_without_tag" => 16 * (sizes.postings / sizes.accounts + 16),
-                // The full Arg restriction: every posting once, plus the
-                // per-account extremes.
-                "latest_posting_per_account" => 4 * sizes.postings,
-                // One (account, at) posting point + the account's ~4
-                // mandate segments; generous margin for the cover's
-                // account-postings walk.
-                "mandate_at_instant" => 16 * (sizes.postings / sizes.accounts + 64),
-                // Chain's ~2% suffix walked through four nodes (no
-                // currency pin; entry/account/holder key probes per
-                // surviving posting) — bounded by 4x the window.
-                "deep_chain" => 4 * (sizes.postings * 8 / 100),
-                // One org's ~mandates/orgs segments squared (the
-                // overlap join), plus probes.
-                "mandate_overlap" => {
-                    let per_org = sizes.mandates / sizes.orgs + 8;
-                    8 * per_org * per_org
-                }
-                other => unreachable!("unregistered family {other}"),
-            };
-            eprintln!(
-                "tripwire {}: drawn {drawn}, bound {bound}, rows {}",
-                family.name,
-                out.len()
-            );
-            assert!(
-                drawn <= bound,
-                "{}: drew {drawn} entries, bound {bound} — a scan or a \
-                 capacity walk came back ({stats:?})",
-                family.name
-            );
-        }
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

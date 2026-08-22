@@ -49,20 +49,8 @@ fn stores(
     (db, naive)
 }
 
-/// The eliminated occurrences of the query's prepared plan, through the
-/// public profile surface (ANALYZE executes; the empty param list is
-/// every fixture query's).
-fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::EliminatedOccurrence> {
-    let mut prepared = db.prepare(query).expect("fixture queries validate");
-    let (_, stats) = db
-        .read(|snap| snap.profile(&mut prepared, &[]))
-        .expect("profile executes");
-    stats.into_cq_rules().swap_remove(0).eliminated().to_vec()
-}
-
 /// The dual run: grounding-on, ground-off, and the model must produce one
-/// result set — with the marks asserted so neither equality is vacuous
-/// (on eliminates exactly `fallen`; off eliminates nothing).
+/// result set. Plan-mark proof died with K23's profile stack.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_grounding_disabled(|| engine_query(db, query, &[]));
@@ -73,13 +61,6 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: 
         unreachable!("fixture queries never overflow")
     };
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
-    let marks = eliminated(db, query);
-    assert_eq!(marks.len(), 1, "one mark expected ({fallen})");
-    assert_eq!(marks[0].relation, fallen, "the wrong side fell");
-    assert!(
-        with_grounding_disabled(|| eliminated(db, query)).is_empty(),
-        "the off switch keeps every occurrence joining ({fallen})"
-    );
 }
 
 /// Posting(id fresh, account u64, amount i64); Account(id fresh,
@@ -303,10 +284,6 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
         negated: vec![],
         conditions: vec![],
     });
-    assert!(
-        eliminated(&db, &query).is_empty(),
-        "without φ the grounding must refuse"
-    );
     let engine = engine_query(&db, &query, &[]);
     let model = Answers::Ok(naive.query(&query, &[]).expect("the model executes"));
     assert_eq!(engine, model, "engine and model disagree on the near-miss");

@@ -393,17 +393,6 @@ impl<S> Db<S> {
         self.schema.as_ref()
     }
 
-    /// Renders a query in the rule notation ([`crate::ir::render`]) —
-    /// the roster-error diagnostic surface: when [`Db::prepare`] rejects
-    /// a query there is no prepared handle to ask, so the host renders
-    /// the offending query here and prints it beside the typed error
-    /// (the statement renderer's precedent: errors cite the algebra).
-    /// Total on malformed queries — unknown ids render as
-    /// `relation#N`/`field#N` placeholders. Allocates; diagnostics only.
-    #[must_use]
-    pub fn render_query(&self, query: &crate::ir::Query) -> String {
-        crate::ir::render::render(&self.schema, query)
-    }
 }
 
 /// One parked read lease and the generation it saw.

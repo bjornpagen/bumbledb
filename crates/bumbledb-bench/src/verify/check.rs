@@ -33,6 +33,7 @@ impl<S> Run<'_, S> {
         // them the oracle's answers cannot even be decoded, so a prepare
         // failure is an engine-side error and the oracle records "not
         // executed" rather than a fabricated second error.
+        let mut rendered_query = None;
         let (ours, theirs): (
             Result<Vec<compare::Answer>, String>,
             Result<Vec<compare::Answer>, String>,
@@ -42,6 +43,7 @@ impl<S> Run<'_, S> {
                 Err("not executed: no column types without a prepared query".to_owned()),
             ),
             Ok(mut prepared) => {
+                rendered_query = Some(prepared.rendered_query().to_owned());
                 let types: Vec<ValueType> = prepared
                     .signature()
                     .columns
@@ -111,7 +113,7 @@ impl<S> Run<'_, S> {
                 format!(
                     "{}\n{}\n\n{:#?}\n",
                     case.label,
-                    self.db.render_query(case.query),
+                    rendered_query.as_deref().unwrap_or(""),
                     case.query
                 ),
             )

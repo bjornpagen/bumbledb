@@ -5,7 +5,6 @@ use std::sync::Arc;
 use crate::Answers;
 use crate::ParamArg;
 use crate::PreparedQuery;
-use crate::api::stats::ExecutionStats;
 use crate::error::Result;
 use crate::image::FrozenSource;
 use crate::ir::{Query, Value};
@@ -123,26 +122,6 @@ impl<S> OwnedInstance<S> {
             &self.core.source,
             params,
             out,
-        )
-    }
-
-    /// Executes with counting instrumentation. Diagnostic: the stats
-    /// shape is unfrozen. Not a staleness clock.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::execute`].
-    #[doc(hidden)]
-    pub fn profile(
-        &self,
-        prepared: &mut PreparedQuery<S>,
-        params: &[ParamArg<'_>],
-    ) -> Result<(Answers, ExecutionStats)> {
-        prepared.profile_on(
-            &self.core.identity,
-            &self.core.source.catalog,
-            &self.core.source,
-            params,
         )
     }
 

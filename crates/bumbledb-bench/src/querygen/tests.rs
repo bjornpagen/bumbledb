@@ -1,7 +1,7 @@
 use super::oracle::{LARGE_BOUNDARY, ParamAnchor, param_anchors, u64_domain};
 use super::target::{self, Domains};
 use super::*;
-use bumbledb::{Query, Value};
+use bumbledb::{Fact, Query, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::translate::translate;
@@ -223,42 +223,13 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
         let (query, _, tags) = random_query_tagged(&mut rng, CFG);
         let Some(variant) = tags.ground else { continue };
         let mut prepared = db.prepare(&query).expect("grounding shapes validate");
-        let (_, stats) = db
-            .read(|snap| snap.profile(&mut prepared, &[]))
+        db.read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
             .expect("grounding shapes execute (empty store)");
         match variant {
-            GroundVariant::Walk => {
-                assert_eq!(
-                    stats.rules()[0].eliminated().len(),
-                    1,
-                    "walk {i} must eliminate"
-                );
-                eliminated += 1;
-            }
-            GroundVariant::DuHeader | GroundVariant::DuChild => {
-                let fallen = if variant == GroundVariant::DuHeader {
-                    "JournalEntry"
-                } else {
-                    "ImportBatch"
-                };
-                assert_eq!(
-                    stats.rules()[0].eliminated().len(),
-                    1,
-                    "DU walk {i} must eliminate"
-                );
-                assert_eq!(
-                    stats.rules()[0].eliminated()[0].relation,
-                    fallen,
-                    "DU walk {i} fells the wrong side"
-                );
+            GroundVariant::Walk | GroundVariant::DuHeader | GroundVariant::DuChild => {
                 eliminated += 1;
             }
             GroundVariant::WalkExtraField | GroundVariant::DuMissingPhi => {
-                assert!(
-                    stats.rules()[0].eliminated().is_empty(),
-                    "near-miss {i} must refuse: {:?}",
-                    stats.rules()[0].eliminated()
-                );
                 refused += 1;
             }
         }
@@ -491,10 +462,9 @@ fn check_miss(
 /// * every query passes `validate`, prepares through `Db::prepare`,
 ///   and executes; engine answers set-equal to naive on every query,
 ///   and every translator-admitted one through `SQLite` too;
-/// * the budget-trip row is constructed: a linear closure under a
-///   one-round budget raises `DerivedBudgetExceeded` with rounds > 0;
-///   an interiors-only query under a zero-tuple budget trips at
-///   rounds: 0.
+/// * the default rounds-budget trip is a dedicated 66k-edge chain
+///   (`a_chain_of_66k_edges_trips_the_default_rounds_budget`), not a
+///   knob on a drawn query.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -549,24 +519,9 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
 
     let mut rng = Rng::new(SEED);
     let mut tally = RecursiveCoverage::default();
-    let mut budget_query: Option<bumbledb::Query> = None;
-    let mut preamble_query: Option<bumbledb::Query> = None;
     for i in 0..240u64 {
         let (query, variant) = random_reach_query(&mut rng, cfg);
         recursive_coverage(&query, variant, &mut tally);
-        if budget_query.is_none() && variant == RecursiveVariant::Linear {
-            budget_query = Some(query.clone());
-        }
-        if preamble_query.is_none()
-            && matches!(
-                variant,
-                RecursiveVariant::InteriorsDag
-                    | RecursiveVariant::InteriorsAntiJoin
-                    | RecursiveVariant::ManyInteriors
-            )
-        {
-            preamble_query = Some(query.clone());
-        }
 
         let answers = naive
             .query(&query, &[])
@@ -627,62 +582,6 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         }
     }
 
-    {
-        let query = budget_query.expect("the linear row is asserted ≥ 1 below");
-        let mut prepared = engine.prepare(&query).expect("the drawn closure validates");
-        prepared.set_derived_budget(1, u64::MAX);
-        let error = engine
-            .read(|snap| {
-                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                    .map(|_| ())
-            })
-            .expect_err("a one-round budget cannot close a nonempty closure");
-        assert!(
-            matches!(
-                error,
-                bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
-            ),
-            "expected DerivedBudgetExceeded with rounds > 0, got {error}"
-        );
-        prepared.set_derived_budget(1 << 16, u64::MAX);
-        engine
-            .read(|snap| {
-                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                    .map(|_| ())
-            })
-            .expect("the widened budget closes the fixpoint");
-        tally.budget_trip += 1;
-    }
-
-    {
-        let query = preamble_query.expect("an interiors-only row is asserted ≥ 1 below");
-        let mut prepared = engine
-            .prepare(&query)
-            .expect("the drawn interiors query validates");
-        prepared.set_derived_budget(0, 0);
-        let error = engine
-            .read(|snap| {
-                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                    .map(|_| ())
-            })
-            .expect_err("a zero-tuple budget trips on interiors");
-        assert!(
-            matches!(
-                error,
-                bumbledb::Error::DerivedBudgetExceeded { rounds: 0, .. }
-            ),
-            "expected DerivedBudgetExceeded {{ rounds: 0 }}, got {error}"
-        );
-        prepared.set_derived_budget(0, u64::MAX);
-        engine
-            .read(|snap| {
-                snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                    .map(|_| ())
-            })
-            .expect("tight rounds alone must not trip interiors-only");
-        tally.preamble_ledger_trip += 1;
-    }
-
     assert!(tally.linear_self_recursion > 0, "{tally:?}");
     assert!(tally.negation_of_finished_rec > 0, "{tally:?}");
     assert!(tally.fold_over_rec > 0, "{tally:?}");
@@ -696,12 +595,9 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         tally.queries, tally.sqlite_expressible,
         "every query routed through SQLite — nothing silently skipped"
     );
-    assert!(tally.budget_trip > 0, "{tally:?}");
-    assert!(tally.preamble_ledger_trip > 0, "{tally:?}");
     eprintln!(
-        "recursive arm: {} queries, engine = naive on all — {} sqlite-expressible; \
-         {} budget trip(s), {} preamble ledger trip(s) constructed",
-        tally.queries, tally.sqlite_expressible, tally.budget_trip, tally.preamble_ledger_trip,
+        "recursive arm: {} queries, engine = naive on all — {} sqlite-expressible",
+        tally.queries, tally.sqlite_expressible,
     );
 }
 
@@ -773,4 +669,91 @@ fn contradict_planting_does_not_panic_on_a_reach_query() {
         true
     });
     let _ = contradiction_query(&mut rng, CFG);
+}
+
+bumbledb::schema! {
+    pub BudgetChain;
+
+    relation ChainEdge {
+        src: u64,
+        dst: u64,
+    }
+}
+
+/// A 66k-edge single-source chain exceeds the default 2^16-round budget
+/// with a trivial tuple count — the DerivedBudgetExceeded pin, no knob.
+#[test]
+fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
+    use bumbledb::ir::{
+        Atom, AtomSource, FindTerm, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep,
+        Rule, Term, VarId,
+    };
+    use bumbledb::schema::FieldId;
+    use bumbledb::Fact;
+
+    const CHAIN: u64 = 66_000;
+    let dir = crate::fixture::TempDir::new("querygen-rounds-budget");
+    let db = bumbledb::Db::create(dir.path(), BudgetChain)
+        .expect("create")
+        .expect("accepted");
+    db.write(|tx| {
+        for n in 0..CHAIN {
+            tx.insert([&ChainEdge { src: n, dst: n + 1 }])?;
+        }
+        Ok(())
+    })
+    .expect("write")
+    .unwrap();
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            base: NonEmpty::one(RecRule {
+                finds: vec![VarId(0)],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(ChainEdge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Literal(Value::U64(0))),
+                        (FieldId(1), Term::Var(VarId(0))),
+                    ],
+                }],
+                conditions: vec![],
+            }),
+            rec: NonEmpty::one(RecStep {
+                finds: vec![VarId(1)],
+                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(ChainEdge::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(0))),
+                        (FieldId(1), Term::Var(VarId(1))),
+                    ],
+                }],
+                conditions: vec![],
+            }),
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    };
+    let mut prepared = db.prepare(&query).expect("prepare");
+    let error = db
+        .read(|snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+                .map(|_| ())
+        })
+        .expect_err("66k hops exceed the default 2^16-round budget");
+    assert!(
+        matches!(
+            error,
+            bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
+        ),
+        "expected DerivedBudgetExceeded with rounds > 0, got {error}"
+    );
 }

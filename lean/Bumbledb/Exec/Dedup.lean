@@ -58,17 +58,14 @@ of the two it spends.
   `distinct_witness_licence` is its theorem;
   `Countermodels.distinct_premise_load_bearing` is the double-count
   the premise forecloses.
-* **`DisjointWitness`** (`plan/fj/provably_disjoint.rs::DisjointWitness`):
-  the engine mints it
-  (`plan/fj/provably_disjoint.rs::provably_disjoint_rules`) and spends it
-  **diagnostically only** — plan introspection renders
-  `disjoint_rules: proven (R.f)`, but execution always keeps the one
-  spanning head-projection seen-set: the measured cross-rule elision
-  refutation (docs/architecture/40-execution.md § set semantics,
-  "Refutation — cross-rule dedup removal") is the doc-side authority,
-  cited here and deliberately not restated — performance, not
-  semantics. `disjoint_witness_licence` proves what the witness COULD
-  license; the docs record why the engine declines.
+* **`DisjointArms`**: pairwise arm disjointness is a semantic
+  hypothesis, not a prepare-time mint. Execution always keeps the one
+  spanning head-projection seen-set (`exec/sink.rs::seen`): the measured
+  cross-rule elision refutation (docs/architecture/40-execution.md § set
+  semantics, "Refutation — cross-rule dedup removal") is the doc-side
+  authority, cited here and deliberately not restated — performance, not
+  semantics. `disjoint_witness_licence` proves what pairwise disjointness
+  COULD license; the docs record why the engine declines.
 * **`union_spans`** (`exec/sink.rs::union_spans`): the multi-rule union
   regime keys the **head projection** of the binding — per head
   position, the slot span the position reads from THIS rule's binding
@@ -130,46 +127,6 @@ admits `Word | Byte | Interval | Param | PendingIntern` and drops
 single-value pin — to the catch-all arm, so it never counts
 toward key coverage; strictly conservative (fewer witness mints, the
 seen-set retained), while `Term.pins` marks every `lit` as pinning.
-`provably_different` on the disjointness side DOES compare
-`Const::Words` payloads — the asymmetry is the mint's, not the
-model's.
-
-## The `provably_disjoint` reading (recorded; theorem 6's model)
-
-`plan/fj/provably_disjoint.rs::provably_disjoint_rules`: a
-witness `(R, f)` such that EVERY rule pair has, in each rule, a
-positive occurrence of `R` whose filters `Eq`-pin `f` to provably
-different concrete literals (`plan/fj/provably_disjoint.rs::pinned_fields`;
-`plan/fj/provably_disjoint.rs::provably_different` — params, sets,
-and mixed constant forms pin nothing, conservatively), AND some key
-of `R` value-bound in both occurrences with every key column flowing
-to a common head position
-(`plan/fj/provably_disjoint.rs::key_flows_to_common_head`;
-`plan/fj/provably_disjoint.rs::head_reads` — projected variables and
-fold inputs enter the dedup key;
-the nullary `Count`, Arg terms, and the non-injective measure
-positions witness nothing). Equal head answers would force the two
-pinned facts to agree on the key — one fact whose `f` cannot equal two
-different literals. `ProvablyDisjointRules` models this rule ONE KEY
-AT A TIME: pins are `lit` bindings at the witness field (the model's
-`Eq`-pin — `provably_different` degenerates to `Value` disequality,
-since only concrete literals are representable as pins here), key
-flow is positional agreement on the two find lists (`zip`), and the
-key itself enters as a semantic `Functionality` hypothesis (PRD 03's
-judgment — the schema-declared key the checker consults, discharged
-on committed instances by `holds`). One quantifier gap recorded: the
-model fixes a single `K` query-wide, while `pair_disjoint` picks a
-declared key PER RULE PAIR (the `keys().iter().any` of
-`key_flows_to_common_head`, invoked per pair) — an acceptance
-discharged by heterogeneous keys
-across pairs is covered pair-by-pair by this theorem's statement but
-not by one instantiation of it; diagnostic-only stakes (the witness
-is never spent by execution). `syntactic_disjointness_sound` is the
-SOUNDNESS direction only; completeness is explicitly a non-goal — the
-checker may refuse truly disjoint rules (any pins it cannot compare,
-any key that fails to reach a common head position), and that
-conservatism is its correctness discipline, not a defect.
-
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Derivation events are an abstract type `ε`.** The licences
@@ -565,10 +522,8 @@ theorem disjoint_flatten {C : Classify} {I : Instance} {ρ : ParamEnv} :
 no-op: concatenating the rules' distinct answer streams is already
 duplicate-free, its set is exactly the query union, and the spanning
 seen-set filters nothing (`seenFold` is the identity on it).
-Bridge: `DisjointWitness` (`plan/fj/provably_disjoint.rs::DisjointWitness`).
-The
-engine SPENDS this witness diagnostically only — plan introspection's
-`disjoint_rules: proven (R.f)` line — and keeps the spanning
+Bridge: the spanning seen-set (`exec/sink.rs::seen`). Prepare no
+longer mints a diagnostic witness; execution keeps the spanning
 head-projection seen-set regardless: the measured cross-rule elision
 refutation (docs/architecture/40-execution.md § set semantics,
 "Refutation — cross-rule dedup removal") rejected the per-rule-drain
@@ -630,104 +585,6 @@ theorem union_regime_head_projection {C : Classify} {rules : List Rule}
   · intro ht
     obtain ⟨r, hr, σ, hd, rfl⟩ := mem_rulesAnswers.mp ht
     exact hcomplete r hr σ hd
-
-/-! ## Theorem 6 — the syntactic check is sound -/
-
-/-- Positional head agreement carried through equal projections: the
-common head position forces the two assignments to agree on the
-zipped variable pair. -/
-theorem map_eq_of_zip_mem {σ σ' : Assignment} {v v' : VarId} :
-    ∀ {l l' : List VarId}, l.map σ = l'.map σ' →
-      (v, v') ∈ l.zip l' → σ v = σ' v'
-  | [], [], _, hmem => nomatch hmem
-  | [], _ :: _, _, hmem => nomatch hmem
-  | _ :: _, [], _, hmem => nomatch hmem
-  | a :: l, a' :: l', heq, hmem => by
-    rw [List.map_cons, List.map_cons] at heq
-    injection heq with h1 h2
-    rw [List.zip_cons_cons] at hmem
-    rcases List.mem_cons.mp hmem with hpair | hmem'
-    · injection hpair with hv hv'
-      subst hv; subst hv'
-      exact h1
-    · exact map_eq_of_zip_mem h2 hmem'
-
-/-- One rule pair under one witness `(R, fld, K)` — the model of
-`pair_disjoint` (`plan/fj/provably_disjoint.rs::pair_disjoint`): each
-rule has
-a positive occurrence of `R` pinning `fld` to provably different
-literals (`lit` bindings, the model's `Eq`-pins — only concrete
-literals are representable as pins, so `provably_different` is plain
-`Value` disequality), and every field of the key `K` is variable-bound
-in both occurrences with the two variables at a common head position
-(the `zip` clause —
-`plan/fj/provably_disjoint.rs::key_flows_to_common_head`). -/
-def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
-    (r r' : Rule) : Prop :=
-  ∃ a, a ∈ r.atoms ∧ ∃ a', a' ∈ r'.atoms ∧
-    a.source = .edb R ∧ a'.source = .edb R ∧
-    (∃ c c' : Value, (fld, Term.lit c) ∈ a.bindings ∧
-      (fld, Term.lit c') ∈ a'.bindings ∧ c ≠ c') ∧
-    ∀ i, i ∈ K → ∃ v v' : VarId, (i, Term.var v) ∈ a.bindings ∧
-      (i, Term.var v') ∈ a'.bindings ∧ (v, v') ∈ r.finds.zip r'.finds
-
-/-- The check, query-level: one witness discharging every rule pair
-— `plan/fj/provably_disjoint.rs::provably_disjoint_rules`
-("pairwise over all rules; one witness for every pair"). -/
-def ProvablyDisjointRules (rules : List Rule) (R : RelId) (fld : FieldId)
-    (K : List FieldId) : Prop :=
-  rules.Pairwise (ArmPin R fld K)
-
-/-- The pair soundness: equal head answers force the two pinned facts
-through the key onto ONE fact of `R`, whose `fld` cannot equal two
-different literals. -/
-theorem armPin_disjoint {C : Classify} {I : Instance} {ρ : ParamEnv}
-    {R : RelId} {fld : FieldId} {K : List FieldId}
-    (hkey : Functionality (I R) K) {r r' : Rule}
-    (hpin : ArmPin R fld K r r') :
-    ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ → t ∉ ruleAnswers C r' (edbEnv I) ρ := by
-  intro t ht ht'
-  obtain ⟨σ, hd, heq⟩ := mem_ruleAnswers.mp ht
-  obtain ⟨σ', hd', heq'⟩ := mem_ruleAnswers.mp ht'
-  obtain ⟨a, ha, a', ha', hR, hR', ⟨c, c', hc, hc', hne⟩, hflow⟩ := hpin
-  obtain ⟨f, hf, hmf⟩ := hd.1 a ha
-  obtain ⟨f', hf', hmf'⟩ := hd'.1 a' ha'
-  have hpin1 : c = f fld := hmf (fld, Term.lit c) hc
-  have hpin2 : c' = f' fld := hmf' (fld, Term.lit c') hc'
-  have hproj : f.project K = f'.project K := by
-    refine (Fact.project_eq_iff f f' K).mpr fun i hi => ?_
-    obtain ⟨v, v', hbv, hbv', hz⟩ := hflow i hi
-    have h1 : σ v = f i := hmf (i, Term.var v) hbv
-    have h2 : σ' v' = f' i := hmf' (i, Term.var v') hbv'
-    have h3 : σ v = σ' v' :=
-      map_eq_of_zip_mem (heq.symm.trans heq') hz
-    rw [← h1, ← h2, h3]
-  have hone : f = f' := hkey f f'
-    (by rw [hR] at hf; simpa [edbEnv, sourceDen] using hf)
-    (by rw [hR'] at hf'; simpa [edbEnv, sourceDen] using hf') hproj
-  exact hne (by rw [hpin1, hpin2, hone])
-
-/-- **Theorem 6 (`syntactic_disjointness_sound`).** The syntactic
-check is SOUND: a query `provably_disjoint_rules` accepts under a
-witness `(R, fld)` and a semantically keyed `K` has `DisjointArms` on
-every instance where the key holds. The SOUNDNESS direction only —
-completeness is explicitly a non-goal: the checker may refuse truly
-disjoint queries (pins it cannot compare — params, mixed constant
-forms; keys that never reach a common head position), and its
-conservatism is the discipline that keeps `None` honest, never a
-defect to fix (the doc of
-`plan/fj/provably_disjoint.rs::provably_disjoint_rules`,
-"conservative and sound"). Bridge: `provably_disjoint_rules` is the
-only mint of `DisjointWitness`; the semantic key premise is the
-schema-declared `Functionality` the check reads (the
-`keys().iter().any` of `key_flows_to_common_head`), discharged on
-committed instances by PRD 03's `holds`. -/
-theorem syntactic_disjointness_sound {C : Classify} {rules : List Rule}
-    {I : Instance} {ρ : ParamEnv} {R : RelId} {fld : FieldId}
-    {K : List FieldId} (hkey : Functionality (I R) K)
-    (hsyn : ProvablyDisjointRules rules R fld K) :
-    DisjointArms C rules I ρ :=
-  hsyn.imp fun hpin => armPin_disjoint hkey hpin
 
 /-! ## The aggregate face of elimination — one extension per binding
 

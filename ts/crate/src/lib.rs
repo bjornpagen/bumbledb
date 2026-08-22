@@ -40,7 +40,7 @@ mod fingerprint_lock;
 mod marshal;
 mod tags;
 
-use marshal::{ExplainWire, ManifestWire, OwnedParam, ValueOut, ViolationWire};
+use marshal::{ManifestWire, OwnedParam, ValueOut, ViolationWire};
 
 #[napi]
 #[must_use]
@@ -639,11 +639,6 @@ trait InstanceOps {
         prepared: &mut PreparedQuery<SchemaDescriptor>,
         params: &[OwnedParam],
     ) -> Result<Answers, WireError>;
-    fn explain(
-        &self,
-        prepared: &mut PreparedQuery<SchemaDescriptor>,
-        params: &[OwnedParam],
-    ) -> Result<bumbledb::ExecutionStats, WireError>;
     fn generation(&self) -> Result<u64, WireError>;
 }
 
@@ -691,15 +686,6 @@ impl InstanceOps for StoreOps<'_> {
             .execute_collect(prepared, &args)
             .map_err(|e| wire(&e))
     }
-    fn explain(
-        &self,
-        prepared: &mut PreparedQuery<SchemaDescriptor>,
-        params: &[OwnedParam],
-    ) -> Result<bumbledb::ExecutionStats, WireError> {
-        let args = param_args(params)?;
-        let (_, stats) = self.0.profile(prepared, &args).map_err(|e| wire(&e))?;
-        Ok(stats)
-    }
     fn generation(&self) -> Result<u64, WireError> {
         self.0
             .generation()
@@ -740,15 +726,6 @@ impl InstanceOps for HeapOps<'_> {
             .execute(prepared, &args, &mut answers)
             .map_err(|e| wire(&e))?;
         Ok(answers)
-    }
-    fn explain(
-        &self,
-        _prepared: &mut PreparedQuery<SchemaDescriptor>,
-        _params: &[OwnedParam],
-    ) -> Result<bumbledb::ExecutionStats, WireError> {
-        Err(bridge_error(
-            "bumbledb: profile is a store-read diagnostic, not an owned-instance method".into(),
-        ))
     }
     fn generation(&self) -> Result<u64, WireError> {
         Err(bridge_error(
@@ -1304,22 +1281,6 @@ pub fn prepared_execute(
             .map_err(|error| thrown(env, error))
     })?;
     Ok(marshal::answers_out(&answers))
-}
-
-#[napi]
-pub fn prepared_explain(
-    env: Env,
-    prepared: &External<PreparedHandle>,
-    instance: &External<InstanceHandle>,
-    params: Array,
-) -> napi::Result<ExplainWire> {
-    let params = marshal::params_in(&params)?;
-    let mut prepared = prepared_mut(prepared)?;
-    let stats = instance.with_instance(|ops| {
-        ops.explain(&mut prepared, &params)
-            .map_err(|error| thrown(env, error))
-    })?;
-    Ok(ExplainWire(stats))
 }
 
 #[napi]

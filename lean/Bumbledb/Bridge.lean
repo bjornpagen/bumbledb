@@ -224,8 +224,8 @@ def ledger : List Obligation := [
 
   .row @no_closure_superkey_implication `Bumbledb.no_closure_superkey_implication
     "The decidability firewall: the superkey implication is true and deliberately unspent — acceptance resolves exact field sets, computes no closure, and names the entailment as diagnostics only."
-    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs); SchemaWarning::RedundantSuperkey (crates/bumbledb/src/schema.rs)"
-    "a_redundant_pointwise_superkey_seals_with_a_warning (crates/bumbledb/src/schema/tests/valid.rs); redundant_superkey_warns_without_weakening_either_enforcement_plan (crates/bumbledb/tests/schema_macro.rs); equality_rejects_a_singleton_reverse_projection_without_a_left_key (crates/bumbledb/src/schema/tests/reject.rs)",
+    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs)"
+    "a_redundant_pointwise_superkey_remains_sealed (crates/bumbledb/src/schema/tests/valid.rs); a_redundant_superkey_still_enforces_both_keys (crates/bumbledb/tests/schema_macro.rs); equality_rejects_a_singleton_reverse_projection_without_a_left_key (crates/bumbledb/src/schema/tests/reject.rs)",
 
   /- ## PRD 04 — Query denotation -/
 
@@ -416,9 +416,9 @@ def ledger : List Obligation := [
     "witnessed_elision_matches_the_seen_set_path (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
 
   .row @Query.disjoint_witness_licence `Bumbledb.Query.disjoint_witness_licence
-    "The disjoint-arms licence: under pairwise arm disjointness, cross-rule dedup is a no-op — proved sound, and spent diagnostically only (the measured refutation keeps the spanning seen-set)."
-    "plan/fj/provably_disjoint.rs::DisjointWitness (crates/bumbledb/src/plan/fj/provably_disjoint.rs)"
-    "the_du_arm_union_proves_and_an_unselected_arm_unproves (crates/bumbledb/src/api/prepared/tests/disjoint.rs)",
+    "The disjoint-arms licence: under pairwise arm disjointness, cross-rule dedup is a no-op — proved sound; execution keeps the spanning seen-set (the measured refutation)."
+    "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
+    "a_fold_over_a_proven_disjoint_union_absorbs_nothing (crates/bumbledb/src/api/prepared/tests/disjoint.rs)",
 
   .row @Query.union_regime_head_projection `Bumbledb.Query.union_regime_head_projection
     "The multi-rule union regime keys the head projection, never a rule's full slot array — dedup keys must be rule-independent, and the head tuple is a complete key. Projection heads only; the aggregate object is the next row's."
@@ -434,11 +434,6 @@ def ledger : List Obligation := [
     "The membership mint is fold-invisible: aggregates over the lowered rule with the minted interval variable projected away equal aggregates over the surface reading — the fold-level companion of the membership lowering."
     "normalize.rs::is_membership (crates/bumbledb/src/ir/normalize/normalize.rs); crates/bumbledb/src/exec/sink.rs"
     "crates/bumbledb-bench/src/conformance.rs",
-
-  .row @Query.syntactic_disjointness_sound `Bumbledb.Query.syntactic_disjointness_sound
-    "The syntactic disjointness check is sound — and conservatively incomplete by design: any pin it cannot compare refuses the witness."
-    "plan/fj/provably_disjoint.rs::provably_disjoint_rules (crates/bumbledb/src/plan/fj/provably_disjoint.rs)"
-    "the_du_arm_union_proves_and_an_unselected_arm_unproves (crates/bumbledb/src/api/prepared/tests/disjoint.rs)",
 
   /- ## PRD 08 — the rewrites -/
 
@@ -574,7 +569,7 @@ def ledger : List Obligation := [
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The reach driver computes those answers when it terminates. DerivedBudgetExceeded is incompleteness vs evalQuery (interior tables and reachDen on one ledger) — not vs a fueled Lean evaluator (there isn't one)."
     "run_reach (crates/bumbledb/src/api/prepared/reach.rs); Error::DerivedBudgetExceeded (crates/bumbledb/src/error.rs)"
-    "a_tight_derived_budget_trips_under_reach (crates/bumbledb/tests/api.rs); a_tight_tuple_budget_trips_on_an_interiors_only_query (crates/bumbledb/tests/api.rs)",
+    "a_tight_derived_budget_trips_under_reach (crates/bumbledb/tests/api.rs)",
 
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
     "Interior DAG once, then either main rulesAnswers or reachDen plus main — listed by evalQueryList."
@@ -648,7 +643,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 104 := rfl
+theorem ledger_count : ledger.length = 103 := rfl
 
 end Bridge
 end Bumbledb

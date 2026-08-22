@@ -63,7 +63,6 @@ impl WriteDelta<'_> {
         if let Some(id) = self.committed_memo.get(&hash) {
             return Ok(Some(id));
         }
-        self.committed_memo.count_probe();
         let found = crate::storage::dict::lookup_by_hash(view, &hash)?;
         // Hits only. Memoizing a MISS would be equally sound — committed
         // state is frozen, and a later mint of these bytes lands in the

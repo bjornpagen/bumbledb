@@ -15,8 +15,7 @@ use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
-    provably_disjoint_rules, provably_distinct,
+    DistinctWitness, binary2fj, factor, fold_split, gj_split, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::catalog::CatalogRead;
@@ -144,12 +143,7 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
         normalize_rules(&schema, signatures, witness.rules())
     };
 
-    // The disjointness proof runs pre-grounding (the rewrite never changes
-    // the denotation, so the proof stands), and pre-deletion: pairwise
-    // over a superset holds over whichever rules survive below.
-    let disjoint_rules = disjointness(witness, &normalized, &schema);
-
-    let (survivors, subsumed) = ground_main(normalized, witness, &schema);
+    let survivors = ground_main(normalized, witness, &schema);
 
     // The signature the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -161,17 +155,11 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     // dense group domains (049).
     let mut written = Vec::with_capacity(survivors.len());
     let mut first_rule_idx = None;
-    let mut dead = Vec::new();
     for (rule_idx, normalized_rule) in survivors {
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
         // deleted here — no statistics read, no DP, no plan; the union
-        // loses nothing because the rule denotes the empty set. The
-        // record keeps the killing condition for introspection.
-        if let Some(reason) = &normalized_rule.dead {
-            dead.push(crate::api::stats::DeadRule {
-                rule: u16::try_from(rule_idx).expect("rule count fits u16"),
-                rendered: reason.clone(),
-            });
+        // loses nothing because the rule denotes the empty set.
+        if normalized_rule.dead.is_some() {
             continue;
         }
         let rule = witness.rule(rule_idx);
@@ -187,10 +175,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
             signatures,
         )?);
     }
-    // A query deletion (subsumption or rule death) shrank to at most
-    // one live rule has no pair left to prove (the stats surface's
-    // single-rule contract; pairwise over a superset held regardless).
-    let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
     let params = param_specs(witness);
 
     // The one sink configuration — head-owned shape (projection vs
@@ -329,9 +313,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     Ok(PreparedQuery {
         schema,
         identity: identity.clone(),
-        disjoint_rules,
-        subsumed,
-        dead,
         pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedImages::default(),
@@ -369,7 +350,7 @@ fn prepare_interior<C: CatalogRead, I: ImageBind>(
         .iter()
         .map(|rule| rule.rule().finds.as_slice())
         .collect();
-    let (survivors, _subsumed) = ground_rules(normalized, &finds, schema);
+    let survivors = ground_rules(normalized, &finds, schema);
     let mut rules = Vec::with_capacity(survivors.len());
     let mut written = Vec::with_capacity(survivors.len());
     for (rule_idx, normalized_rule) in survivors {
@@ -436,8 +417,8 @@ fn prepare_reach<C: CatalogRead, I: ImageBind>(
         base_w.iter().map(|r| r.rule().finds.as_slice()).collect();
     let rec_finds: Vec<&[crate::ir::FindTerm]> =
         rec_w.iter().map(|r| r.rule().finds.as_slice()).collect();
-    let (base_surv, _) = ground_rules(base_norm, &base_finds, schema);
-    let (rec_surv, _) = ground_rules(rec_norm, &rec_finds, schema);
+    let base_surv = ground_rules(base_norm, &base_finds, schema);
+    let rec_surv = ground_rules(rec_norm, &rec_finds, schema);
     let mut base = Vec::new();
     for (rule_idx, normalized_rule) in base_surv {
         if normalized_rule.dead.is_some() {
@@ -513,30 +494,23 @@ fn ground_rules(
     mut normalized: Vec<NormalizedQuery>,
     finds: &[&[crate::ir::FindTerm]],
     schema: &Schema,
-) -> (
-    Vec<(usize, NormalizedQuery)>,
-    Vec<crate::api::stats::SubsumedRule>,
-) {
+) -> Vec<(usize, NormalizedQuery)> {
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
         if normalized_rule.dead.is_some() {
             continue;
         }
         crate::plan::ground::ground(normalized_rule, schema, finds[rule_idx]);
     }
-    let subsumed: Vec<crate::api::stats::SubsumedRule> =
+    let subsumed: std::collections::HashSet<usize> =
         crate::plan::ground::subsume(&normalized, finds)
             .into_iter()
-            .map(|deletion| crate::api::stats::SubsumedRule {
-                rule: u16::try_from(deletion.rule).expect("rule count fits u16"),
-                by: u16::try_from(deletion.by).expect("rule count fits u16"),
-            })
+            .map(|deletion| deletion.rule)
             .collect();
-    let survivors = normalized
+    normalized
         .into_iter()
         .enumerate()
-        .filter(|(idx, _)| !subsumed.iter().any(|s| usize::from(s.rule) == *idx))
-        .collect();
-    (survivors, subsumed)
+        .filter(|(idx, _)| !subsumed.contains(idx))
+        .collect()
 }
 
 /// The shared sink's capacity hint, derived only from the already-frozen
@@ -641,16 +615,12 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 /// loop below exactly like a normalize-time death). Then rule
 /// subsumption: a rule whose post-elimination body a sibling contains
 /// modulo eliminated filters is deleted — the union loses nothing.
-/// Returns the surviving rules with their lowered-rule indices plus
-/// the deletion record (the introspection surface).
+/// Returns the surviving rules with their lowered-rule indices.
 fn ground_main(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
     schema: &Schema,
-) -> (
-    Vec<(usize, NormalizedQuery)>,
-    Vec<crate::api::stats::SubsumedRule>,
-) {
+) -> Vec<(usize, NormalizedQuery)> {
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
         // A statically-empty rule (ir/normalize/fold.rs) is deleted at
         // prepare — nothing to rewrite; the subsumption pass skips it
@@ -667,20 +637,16 @@ fn ground_main(
     let finds: Vec<&[FindTerm]> = (0..normalized.len())
         .map(|idx| witness.rule(idx).rule().finds.as_slice())
         .collect();
-    let subsumed: Vec<crate::api::stats::SubsumedRule> =
+    let subsumed: std::collections::HashSet<usize> =
         crate::plan::ground::subsume(&normalized, &finds)
             .into_iter()
-            .map(|deletion| crate::api::stats::SubsumedRule {
-                rule: u16::try_from(deletion.rule).expect("rule count fits u16"),
-                by: u16::try_from(deletion.by).expect("rule count fits u16"),
-            })
+            .map(|deletion| deletion.rule)
             .collect();
-    let survivors = normalized
+    normalized
         .into_iter()
         .enumerate()
-        .filter(|(idx, _)| !subsumed.iter().any(|s| usize::from(s.rule) == *idx))
-        .collect();
-    (survivors, subsumed)
+        .filter(|(idx, _)| !subsumed.contains(idx))
+        .collect()
 }
 
 /// The per-rule pipeline tail: classify → statistics → DP → lowering →
@@ -1316,28 +1282,6 @@ fn key_probe_find_table(
             | FindSpec::AggDuration { .. } => None,
         })
         .collect::<Option<Vec<_>>>()
-}
-
-/// The rule-disjointness proof (docs/architecture/40-execution.md § set
-/// semantics) — retained as diagnostic knowledge for introspection, run over the
-/// whole query before the pipeline goes per-rule (the grounding rewrites
-/// occurrences but never the denotation, so the pre-grounding proof stands).
-/// Single-rule programs have no pair to prove.
-fn disjointness(
-    witness: &crate::ir::validate::ValidatedQuery,
-    normalized: &[NormalizedQuery],
-    schema: &Schema,
-) -> Option<DisjointWitness> {
-    (normalized.len() > 1)
-        .then(|| {
-            let inputs: Vec<(&[FindTerm], &NormalizedQuery)> = normalized
-                .iter()
-                .enumerate()
-                .map(|(idx, rule)| (witness.rule(idx).rule().finds.as_slice(), rule))
-                .collect();
-            provably_disjoint_rules(&inputs, schema)
-        })
-        .flatten()
 }
 
 /// The multi-rule provenance judgment (ruled 2026-07-23, R2): a

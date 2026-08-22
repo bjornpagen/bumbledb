@@ -374,26 +374,6 @@ type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"
 type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
 type PrepareKind = "irError"
 
-/**
- * The plan-as-data report (ruled 2026-07-23, R13): the engine's
- * `ExecutionStats` rendered to plain objects — camelCase keys, u64
- * counters as `bigint`. A diagnostic surface, EXPLICITLY UNFROZEN: the
- * shape follows the plan representation wherever it goes and no
- * compatibility claim attaches, so this typing names the stable spine
- * (version, emits, the plan sections) and leaves each section's leaves
- * open for the host to introspect.
- */
-interface Explain {
-	readonly introspectionVersion: number
-	readonly emits: bigint
-	readonly disjointRules?: Readonly<Record<string, unknown>>
-	readonly subsumed: ReadonlyArray<Readonly<Record<string, unknown>>>
-	readonly dead: ReadonlyArray<Readonly<Record<string, unknown>>>
-	readonly rules: ReadonlyArray<Readonly<Record<string, unknown>>>
-	readonly interiors: ReadonlyArray<Readonly<Record<string, unknown>>>
-	readonly reach?: Readonly<Record<string, unknown>>
-}
-
 interface Native {
 	/**
 	 * Proof-of-life export (PRD-03): a non-empty string naming the bridge
@@ -511,12 +491,6 @@ interface Native {
 	 * — the host sorts.
 	 */
 	preparedExecute(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): FactValue[][]
-	/**
-	 * Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
-	 * query against a store read with counting instrumentation and returns
-	 * the structured stats. Store-read only.
-	 */
-	preparedExplain(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): Explain
 	/** Releases the prepared query. */
 	preparedClose(prepared: PreparedHandle): void
 
@@ -699,7 +673,6 @@ export type {
 	DbHandle,
 	DbOpenResult,
 	ErrorFamilyKind,
-	Explain,
 	FactValue,
 	FindTermIr,
 	FoldOpIr,

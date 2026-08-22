@@ -103,24 +103,6 @@ impl<S> ReadInstance<'_, S> {
         prepared.introspect(self.txn(), self.cache(), params)
     }
 
-    /// ANALYZE with structured output: the answers alongside
-    /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
-    /// as data.
-    ///
-    /// # Errors
-    ///
-    /// As [`ReadInstance::execute`].
-    #[doc(hidden)]
-    pub fn profile(
-        &self,
-        prepared: &mut PreparedQuery<S>,
-        params: &[ParamArg<'_>],
-    ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
-        let catalog = self.core.source.catalog();
-        let images = crate::image::LmdbSource::bind(self.txn(), self.cache());
-        prepared.profile_on(&self.core.identity, &catalog, &images, params)
-    }
-
     /// The export surface (`70-api.md` ETL story): a full-relation scan
     /// yielding decoded dynamic facts (strings resolved; bytes<N> values
     /// are inline) in `row_id` order — a storage stream, not a query

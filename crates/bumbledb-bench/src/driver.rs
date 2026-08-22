@@ -21,7 +21,6 @@ mod crud;
 mod lawful;
 mod merge;
 mod read_family;
-pub(crate) use read_family::exec_digest;
 mod scenarios;
 mod sweep_commit;
 #[cfg(test)]

@@ -169,63 +169,6 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    /// CQ profile's counted rule loop: the same derived → main → ray
-    /// protocol as [`Self::run_rules`], with per-main-rule
-    /// [`crate::exec::introspection::CountingCounters`] so node stats
-    /// land on the counted surface.
-    pub(super) fn run_rules_cq_profile<C: CatalogRead, I: ImageBind>(
-        &mut self,
-        catalog: &C,
-        images: &I,
-        rule_stats: &mut Vec<crate::api::stats::RuleStats>,
-    ) -> Result<bool> {
-        use crate::exec::introspection::CountingCounters;
-        if self.pipeline.has_derived() {
-            let derived_ran = self.run_derived(catalog, images, &mut NoopCounters)?;
-            if self.pipeline.main_rules().is_empty() {
-                return Ok(derived_ran);
-            }
-        }
-        if self.pipeline.main_rules().is_empty() {
-            return Ok(false);
-        }
-        self.sink.reset();
-        let mut ran = false;
-        let rule_count = self.pipeline.main_rules().len();
-        rule_stats.reserve(rule_count);
-        for rule_idx in 0..rule_count {
-            let seen_before = self.sink.distinct_seen().unwrap_or(0);
-            let mut counters = match &self.pipeline.main_rules()[rule_idx] {
-                PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
-                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
-            };
-            ran |= self.run_rule(rule_idx, catalog, images, &mut counters)?;
-            let emitted = Counters::emits(&counters);
-            let newly_seen = self
-                .sink
-                .distinct_seen()
-                .map_or(emitted, |seen| (seen - seen_before) as u64);
-            let absorbed = emitted - newly_seen;
-            rule_stats.push(match &self.pipeline.main_rules()[rule_idx] {
-                PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
-                    &rule.plan,
-                    self.schema.as_ref(),
-                    self.rule_pinned_rows(rule_idx),
-                    absorbed,
-                ),
-                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats::key_probe_rule(
-                    rule.distinct_witness.is_some(),
-                    emitted,
-                    absorbed,
-                ),
-            });
-        }
-        if ran {
-            self.run_ray_probes(catalog, images, &mut NoopCounters)?;
-        }
-        Ok(ran)
-    }
-
     /// One written rule's probes: resolve (the rule loop's latch
     /// discipline verbatim), run the probe's Free Join into the
     /// [`crate::exec::verdict::RayArbiter`], and raise on the first

@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bumbledb::schema::{FieldId, RelationId, SchemaDescriptor};
-use bumbledb::{Admission, AdmissionTelemetry, Db, FreshField, InstanceBuilder};
+use bumbledb::{Admission, Db, FreshField, InstanceBuilder};
 
 use crate::cli::PrimerlaneArgs;
 
 use super::report::{PhaseAlloc, PhaseRow, PrimerlaneReport, to_json, to_markdown};
-use super::{PrimerConfig, components, corpus};
+use super::{PrimerConfig, corpus};
 
 /// The measured-mode admission twin (the `measure.rs` idiom): the
 /// feature fork lives here, so the run body is `#[cfg]`-free. Off-obs,
@@ -98,7 +98,6 @@ fn fresh_fields(
 
 /// The builder write lane: `load_dyn` per relation → `admit` →
 /// `Db::from_instance` into the scratch dir (Primer's persist path).
-/// Returns the admission telemetry $A,I,R,F,J$.
 fn builder_lane(
     cfg: &PrimerConfig,
     counts: &[u64],
@@ -106,7 +105,7 @@ fn builder_lane(
     store: &Path,
     alloc: bool,
     phases: &mut Vec<PhaseRow>,
-) -> Result<AdmissionTelemetry, String> {
+) -> Result<(), String> {
     let total: u64 = counts.iter().sum();
     let mut builder =
         InstanceBuilder::new(descriptor.clone()).map_err(|e| format!("builder: {e:?}"))?;
@@ -126,10 +125,8 @@ fn builder_lane(
         }
         Ok(())
     })?;
-    let (admission, telemetry) = phase(phases, "builder_admit", total, alloc, || {
-        builder
-            .admit_measured()
-            .map_err(|e| format!("admit: {e:?}"))
+    let admission = phase(phases, "builder_admit", total, alloc, || {
+        builder.admit().map_err(|e| format!("admit: {e:?}"))
     })?;
     let instance = match admission {
         Admission::Accepted(instance) => instance,
@@ -138,7 +135,7 @@ fn builder_lane(
     phase(phases, "builder_publish", total, alloc, || {
         Db::from_instance(store, &instance).map_err(|e| format!("from_instance: {e:?}"))
     })?;
-    Ok(telemetry)
+    Ok(())
 }
 
 /// The delta write lane: `Db::create`, seed the corpus's first halves in
@@ -279,7 +276,7 @@ pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
         bumbledb::obs::start_capture();
     }
     let mut phases = Vec::new();
-    let telemetry = builder_lane(
+    builder_lane(
         &cfg,
         &counts,
         &descriptor,
@@ -297,15 +294,11 @@ pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
     )?;
     scan_lane(&db, &counts, args.alloc, &mut phases)?;
     drop(db);
-    let components = if args.trace {
+    if args.trace {
         let events = bumbledb::obs::finish_capture();
-        let totals = components::totals(&events);
         let flame = crate::trace_out::emit_pair(&out_dir, "primerlane", events)?;
         print!("{flame}");
-        Some(totals)
-    } else {
-        None
-    };
+    }
 
     let report = PrimerlaneReport {
         provenance: crate::report::provenance(Path::new(".")),
@@ -313,8 +306,6 @@ pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
         facts: cfg.facts,
         seed: cfg.seed,
         phases,
-        telemetry,
-        components,
     };
     std::fs::write(out_dir.join("primerlane-report.json"), to_json(&report))
         .map_err(|e| format!("artifact: {e}"))?;

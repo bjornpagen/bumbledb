@@ -1096,9 +1096,9 @@ const deriving = query(Rollup).rule((r) => {
 
 Guarantee: Lean theorem + represented planner/runtime premise — rule union is
 set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
-key-backed DU arms justify a disjointness *witness*
-(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`) spent diagnostically
-only — execution always keeps one spanning seen-set
+key-backed DU arms satisfy the disjoint-arms licence
+(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`); execution
+always keeps one spanning seen-set
 (`docs/architecture/40-execution.md` § set semantics).
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
@@ -1120,8 +1120,8 @@ const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 
 // One query, two rules (set union). The exclusivity theorem (recipe 2) is
 // spent a third time here: rules selecting different `kind` handles are
-// provably disjoint. Plan introspection retains the witness; execution still
-// probes one spanning seen-set — the measured refutation deleted the elision.
+// provably disjoint. Execution still probes one spanning seen-set — the
+// measured refutation deleted the elision.
 const wholeDu = query(Payments)
 	.rule((r) => {
 		const { id } = v(Payment)

@@ -688,7 +688,7 @@ fn adversarial_ir_never_panics() {
             Err(_) => panic!(
                 "prepare panicked on IR data (seed {seed}) — the trust-boundary law is \
                  violated by:\n{}\n{query:#?}",
-                db.render_query(&query)
+                format!("{query:#?}")
             ),
         }
     }
@@ -751,7 +751,7 @@ fn adversarial_query_with_interiors_never_panics() {
             }
             query
         };
-        let rendered = db.render_query(&query);
+        let rendered = format!("{query:#?}");
         let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
         #[expect(
             clippy::match_wild_err_arm,

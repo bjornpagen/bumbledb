@@ -464,13 +464,7 @@ pub fn bench_families(
             (ours, ghz_ours)
         };
 
-        let exec = {
-            let args = param_args(&draws[0]);
-            let (_, stats) = db
-                .read(|snap| snap.profile(&mut prepared, &args))
-                .map_err(|e| format!("{}: profile: {e:?}", family.name))?;
-            Some(crate::driver::exec_digest(&stats))
-        };
+        let exec = None;
         let mut mirror = sqlite_run::PreparedFamily::new(
             &conn,
             &translated(),

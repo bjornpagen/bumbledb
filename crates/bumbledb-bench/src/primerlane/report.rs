@@ -4,12 +4,7 @@
 
 use std::fmt::Write as _;
 
-use bumbledb::AdmissionTelemetry;
-
-use crate::json;
 use crate::report::Provenance;
-
-use super::components::ComponentRow;
 
 /// One measured phase: wall time by std `Instant`, rows processed, and
 /// (under `--alloc`) the phase's allocation window.
@@ -42,11 +37,6 @@ pub struct PrimerlaneReport {
     pub facts: u64,
     pub seed: u64,
     pub phases: Vec<PhaseRow>,
-    /// The builder lane's admission phase quantities $A,I,R,F,J$.
-    pub telemetry: AdmissionTelemetry,
-    /// The span fold (`--trace` only): the upstream report's component
-    /// rows, unwired components at zero.
-    pub components: Option<Vec<ComponentRow>>,
 }
 
 fn push_phase(out: &mut String, row: &PhaseRow) {
@@ -89,28 +79,7 @@ pub fn to_json(report: &PrimerlaneReport) -> String {
         }
         push_phase(&mut out, row);
     }
-    let t = report.telemetry;
-    let _ = write!(
-        out,
-        "],\"telemetry\":{{\"a\":{},\"i\":{},\"r\":{},\"f\":{},\"j\":{}}}",
-        t.a, t.i, t.r, t.f, t.j
-    );
-    if let Some(components) = &report.components {
-        out.push_str(",\"components\":[");
-        for (i, row) in components.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            out.push_str("{\"name\":");
-            json::push_str_lit(&mut out, row.name);
-            let _ = write!(
-                out,
-                ",\"calls\":{},\"total_ns\":{}}}",
-                row.calls, row.total_ns
-            );
-        }
-        out.push(']');
-    }
+    out.push(']');
     out.push('}');
     out
 }
@@ -170,24 +139,6 @@ pub fn to_markdown(report: &PrimerlaneReport) -> String {
             out.push_str(" — | — | — | — |");
         }
         out.push('\n');
-    }
-    let t = report.telemetry;
-    let _ = writeln!(
-        out,
-        "\nadmission A {} · I {} · R {} · F {} · J {}",
-        t.a, t.i, t.r, t.f, t.j
-    );
-    if let Some(components) = &report.components {
-        out.push_str("\n## Component span totals\n\n");
-        out.push_str("| component | calls | total ms |\n| --- | ---: | ---: |\n");
-        for row in components {
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "printed milliseconds; mantissa loss is below the table's decimals"
-            )]
-            let ms = row.total_ns as f64 / 1e6;
-            let _ = writeln!(out, "| {} | {} | {ms:.1} |", row.name, row.calls);
-        }
     }
     out
 }

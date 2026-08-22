@@ -1873,13 +1873,12 @@ pub enum Error {
     /// quadratic closure, and an unbounded table crossing the trust
     /// boundary is what the recorded v0 OS-backstop argument never
     /// priced. On `MeasureOfRay`'s model: aborts the query, the snapshot
-    /// stays usable, the payload is counts — never strings. Policy stays
-    /// host-owned ([`crate::PreparedQuery::set_derived_budget`]); the
+    /// stays usable, the payload is counts — never strings. The
     /// documented default
     /// ([`crate::api::prepared::reach::DEFAULT_REACH_ROUNDS`] /
-    /// [`crate::api::prepared::reach::DEFAULT_DERIVED_TUPLES`]) exists so
-    /// the boundary is never unguarded. `rounds` is rec rounds so far
-    /// (`0` on an interiors-only / preamble trip).
+    /// [`crate::api::prepared::reach::DEFAULT_DERIVED_TUPLES`]) is the
+    /// decision, not a knob — the boundary is never unguarded. `rounds`
+    /// is rec rounds so far (`0` on an interiors-only / preamble trip).
     DerivedBudgetExceeded {
         /// Rec rounds run when the budget tripped (`0` if no rec ran).
         rounds: u32,

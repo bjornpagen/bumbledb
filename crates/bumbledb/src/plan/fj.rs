@@ -21,7 +21,6 @@ mod derive_nodes;
 mod factor;
 mod fold_split;
 mod gj_split;
-mod provably_disjoint;
 mod provably_distinct;
 mod split_filters;
 mod validate;
@@ -31,7 +30,6 @@ pub(crate) use check_selections::check_selections;
 pub use factor::factor;
 pub use fold_split::fold_split;
 pub use gj_split::gj_split;
-pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use provably_distinct::{DistinctWitness, Distinctness, provably_distinct};
 
 pub(crate) use crate::ir::normalize::OccBind;
