@@ -32,7 +32,6 @@ pub struct WordMap<V> {
     stamps: Vec<u8>,
 
     /// forces the physical reset before a stamp value is ever reused,
-
     generation: u8,
 
     stale: usize,
