@@ -1,9 +1,3 @@
-# The `query!` proc-macro MECHANICS — packaging, not surface: hosts spell
-# `bumbledb-query`, which re-exports this crate's one macro. A Rust
-# proc-macro crate can export nothing but proc macros, so the host-facing
-# surface lives in the plain-lib facade and only the machinery lives here.
-# Zero foreign dependencies — the parser is hand-rolled over the token
-# stream (`bumbledb-macros`' precedent).
 [package]
 name = "bumbledb-query-macros"
 version = "0.16.0"
