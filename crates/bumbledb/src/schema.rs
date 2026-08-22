@@ -635,7 +635,6 @@ impl Schema {
     }
 
     /// # Panics
-
     #[must_use]
     pub fn relation(&self, id: RelationId) -> &Relation {
         &self.relations[id.0 as usize]
@@ -773,7 +772,6 @@ impl Schema {
     }
 
     /// # Panics
-
     #[must_use]
     pub fn dependents(&self, id: KeyId) -> &[ContainmentId] {
         &self.dependents[usize::from(id.0)]
