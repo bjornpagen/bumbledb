@@ -256,14 +256,12 @@ pub(super) fn render_materialized(
             relation: *relation,
             projection,
         },
-        StatementDescriptor::Containment { source, target } => {
-            RenderedStatement::Containment {
-                source,
-                target,
+        StatementDescriptor::Containment { source, target } => RenderedStatement::Containment {
+            source,
+            target,
 
-                mirror: mirrors.get(&id).copied(),
-            }
-        }
+            mirror: mirrors.get(&id).copied(),
+        },
         StatementDescriptor::Capacity {
             target,
             weight,
@@ -455,7 +453,6 @@ impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
                 target,
                 mirror,
             } => match mirror {
-
                 Some(partner) if partner < self.id => {
                     side(f, self.names, target)?;
                     write!(f, " == ")?;
