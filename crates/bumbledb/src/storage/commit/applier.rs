@@ -30,7 +30,6 @@ struct FreeRow(u64);
 
 impl<C: CatalogWrite> Applier<'_, '_, C> {
     /// net-disposition invariant the plan was derived from — a missing
-
     pub(super) fn delete_fact(&mut self, op: &DeleteOp<'_>) -> Result<()> {
         let rel = op.core.relation;
         let m_key = keys::membership_key(rel, op.core.fact_hash);
@@ -82,9 +81,7 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
     }
 
     /// violated key statements; the transaction aborts after phase 2
-
     /// invariant the plan was derived from — a live `M` entry means
-
     pub(super) fn insert_fact(&mut self, op: &InsertOp<'_>) -> Result<()> {
         let landing = self.resolve_landing(op)?;
         if let Landing::Free(row) = landing {
@@ -242,9 +239,7 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
     }
 
     /// The ordered-neighbor probe for a pointwise key: after the exact `U`
-
     /// O(log n), same write transaction — LMDB write txns read their own
-
     /// aborts after phase 2, and one recorded conviction per group
     fn probe_neighbors(
         &mut self,
