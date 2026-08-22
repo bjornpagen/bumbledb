@@ -69,30 +69,56 @@ pub struct FjPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
     /// A participating occurrence's subatoms do not partition its
+    BrokenPartition {
+        occ: OccId,
+    },
 
-    BrokenPartition { occ: OccId },
+    MissingOccurrence {
+        occ: OccId,
+    },
 
-    MissingOccurrence { occ: OccId },
+    UnknownOccurrence {
+        node: usize,
+        occ: OccId,
+    },
 
-    UnknownOccurrence { node: usize, occ: OccId },
+    NonParticipatingOccurrenceInNode {
+        node: usize,
+        occ: OccId,
+    },
 
-    NonParticipatingOccurrenceInNode { node: usize, occ: OccId },
+    DuplicateOccurrenceInNode {
+        node: usize,
+        occ: OccId,
+    },
 
-    DuplicateOccurrenceInNode { node: usize, occ: OccId },
+    NoCover {
+        node: usize,
+    },
 
-    NoCover { node: usize },
+    UnplacedResidual {
+        residual: usize,
+    },
 
-    UnplacedResidual { residual: usize },
+    UnplacedWordResidual {
+        residual: usize,
+    },
 
-    UnplacedWordResidual { residual: usize },
+    UnplacedAllenResidual {
+        residual: usize,
+    },
 
-    UnplacedAllenResidual { residual: usize },
+    UnplacedAntiProbe {
+        anti_probe: usize,
+    },
 
-    UnplacedAntiProbe { anti_probe: usize },
+    SelectionOnFilteredField {
+        occ: OccId,
+    },
 
-    SelectionOnFilteredField { occ: OccId },
-
-    UnplacedPointProbe { occ: OccId },
+    UnplacedPointProbe {
+        occ: OccId,
+    },
 }
 
 /// One probeable equality: `field == value`, the value constant per
@@ -138,7 +164,6 @@ pub struct PlanOccurrence {
     pub selections: Vec<Selection>,
 
     /// before the subtraction, `split_filters`); every other one is
-
     pub filters: Vec<FilterPredicate>,
 
     pub point_filters: Vec<(FieldId, VarId)>,
@@ -167,11 +192,9 @@ pub struct PlanNode {
     // REFUSAL, recorded (the representation audit; do not re-litigate):
 
     // enum begging to exist. The merge is refused: grouped-by-kind IS
-
     pub word_residuals: Vec<FilterPredicate>,
 
     /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
-
     pub allen_residuals: Vec<FilterPredicate>,
 
     pub anti_probes: Vec<AntiProbe>,
