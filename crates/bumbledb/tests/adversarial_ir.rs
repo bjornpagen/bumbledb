@@ -1,22 +1,4 @@
-//! The adversarial-IR panic sweep (docs/architecture/20-query-ir.md § the
-//! validation boundary — the trust-boundary law): queries arrive as data
-//! — eventually foreign data — so **no panic is reachable from an
-//! `ir::Query` value**. This property test drives structurally-random
-//! MALFORMED queries (unknown ids, arity mismatches, duplicate rules,
-//! cap-exceeders, vacuous masks, MAX-point literals, hostile nesting,
 //! measure abuse, param-id gaps) through validate → normalize → prepare
-//! and asserts every outcome is `Ok` or a typed error. Any panic is a red
-//! run. `unreachable!` arms *downstream* of validation are exempt by
-//! construction — the sweep's point is proving the check total, so an
-//! input that detonates one of them is a validation hole, and the sweep
-//! reports the seed that found it.
-//!
-//! Two generator lanes, half the budget each: a fully random lane
-//! (arbitrary shapes over hostile value/id distributions) and a
-//! mutation lane (the querygen idea inverted — start from a plausible
-//! query template and inject faults from the hostile catalog), so the
-//! sweep both exercises the roster's rejections and drives *valid*
-//! queries deep into the planner.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -49,12 +31,8 @@ bumbledb::schema! {
     Busy(kind) <= Kind(id);
 }
 
-/// The sweep budget: at least 10⁴ malformed queries (PRD 20's passing
-/// criterion), split across the two lanes.
 const SWEEP: u64 = 12_000;
 
-/// xorshift64* — the hand-rolled generator (the engine crates carry no
-/// randomness dependency, by the dependency law).
 struct Rng(u64);
 
 impl Rng {
@@ -74,7 +52,6 @@ impl Rng {
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    /// Uniform draw below `n` (n > 0; modulo bias is irrelevant here).
     fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
@@ -84,11 +61,6 @@ impl Rng {
     }
 }
 
-// --- the fully random lane -------------------------------------------
-
-/// A hostile relation id: usually a real one (the closed vocabulary
-/// included), sometimes just past the roster, sometimes the far end of
-/// the id space.
 fn relation_id(rng: &mut Rng) -> RelationId {
     match rng.below(8) {
         0 => RelationId(3),
@@ -97,7 +69,6 @@ fn relation_id(rng: &mut Rng) -> RelationId {
     }
 }
 
-/// A hostile field id over the widest relation (Busy has 9 fields).
 fn field_id(rng: &mut Rng) -> FieldId {
     match rng.below(12) {
         0 => FieldId(u16::MAX),
@@ -106,10 +77,6 @@ fn field_id(rng: &mut Rng) -> FieldId {
     }
 }
 
-/// A literal over every `Value` variant, boundary shapes included:
-/// domain ceilings, empty and ray intervals, wrong-width digests,
-/// row-id-shaped smalls straddling the closed roster, never a mask
-/// (masks are comparison literals, not values).
 fn value(rng: &mut Rng) -> Value {
     match rng.below(13) {
         0 => Value::Bool(rng.chance(2)),
@@ -142,15 +109,12 @@ fn value(rng: &mut Rng) -> Value {
     }
 }
 
-/// A term over every kind: variables and params from a small pool (so
-/// joins happen), occasionally far ids (so param-id gaps and unbound
-/// variables happen).
 fn term(rng: &mut Rng) -> Term {
     match rng.below(9) {
         0..=2 => Term::Var(VarId(u16::try_from(rng.below(5)).expect("small"))),
         3 => Term::Var(VarId(999)),
         4 => Term::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
-        5 => Term::Param(ParamId(40)), // a param-id gap
+        5 => Term::Param(ParamId(40)), 
         6 => Term::ParamSet(ParamId(u16::try_from(rng.below(3)).expect("small"))),
         _ => Term::Literal(value(rng)),
     }
@@ -166,9 +130,6 @@ fn atom(rng: &mut Rng) -> Atom {
     }
 }
 
-/// Mostly stored relations; sometimes an interior source — in range,
-/// just past, or absurd — so the sweep drives the interior roster
-/// (unknown id, not-prior, overflow) with hostile `Interior` shapes too.
 fn atom_source(rng: &mut Rng) -> AtomSource {
     if rng.chance(4) {
         let id = match rng.below(4) {
@@ -193,8 +154,7 @@ fn cmp_op(rng: &mut Rng) -> CmpOp {
         5 => CmpOp::Ge,
         6 => CmpOp::PointIn,
         7 => CmpOp::Allen {
-            // ∅ and full both occur (the vacuity rejections), plus
-            // arbitrary 13-bit masks.
+
             mask: match rng.below(4) {
                 0 => AllenMask::EMPTY,
                 1 => AllenMask::FULL,
@@ -215,8 +175,6 @@ fn comparison(rng: &mut Rng) -> Comparison {
     }
 }
 
-/// A predicate tree with hostile nesting: leaves mostly, `And`/`Or`
-/// nodes (empty child lists included) down to a bounded depth.
 fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
     if depth == 0 || rng.chance(2) {
         return ConditionTree::Leaf(comparison(rng));
@@ -258,8 +216,7 @@ fn random_rule(rng: &mut Rng) -> Rule {
 
 fn random_query(rng: &mut Rng) -> Query {
     let rules: Vec<Rule> = (0..rng.below(4)).map(|_| random_rule(rng)).collect();
-    // The head sometimes agrees with rule 0 (deeper reach) and sometimes
-    // is independently random (arity/shape mismatches).
+
     let head = match rules.first() {
         Some(rule) if rng.chance(2) => rule.head(),
         _ => (0..rng.below(4))
@@ -341,16 +298,9 @@ fn random_rec(rng: &mut Rng) -> Rec {
     }
 }
 
-// --- the mutation lane -------------------------------------------------
-
-/// Busy's declaration-order ids, through the macro's emitted constants —
-/// the sweep is also a consumer of PRD 20's named data.
 const BUSY: RelationId = Gauntlet::BUSY;
 const OOO: RelationId = Gauntlet::OOO;
 
-/// One plausible query: a valid template drawn from the workload shapes
-/// (projection+Allen, union, aggregate, Pack, the measure, negation with
-/// selection and membership).
 fn plausible_query(rng: &mut Rng) -> Query {
     let busy_atom = |bindings: Vec<(FieldId, Term)>| Atom {
         source: bumbledb::AtomSource::Edb(BUSY),
@@ -372,13 +322,13 @@ fn plausible_query(rng: &mut Rng) -> Query {
         })],
     };
     match rng.below(6) {
-        // Busy ⋈ window, projected.
+
         0 => Query::single(projection(
             BUSY,
             Gauntlet::BUSY_PERSON,
             Gauntlet::BUSY_DURING,
         )),
-        // The union: unavailability is Busy ∪ Ooo against one window.
+
         1 => {
             let busy = projection(BUSY, Gauntlet::BUSY_PERSON, Gauntlet::BUSY_DURING);
             let ooo = projection(OOO, Gauntlet::OOO_PERSON, Gauntlet::OOO_DURING);
@@ -389,7 +339,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 rec: None,
             }
         }
-        // Aggregate: balance-by-person over the i64 offset.
+
         2 => Query::single(Rule {
             finds: vec![
                 FindTerm::Var(VarId(0)),
@@ -405,7 +355,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
             negated: vec![],
             conditions: vec![],
         }),
-        // Pack: the coalesced calendar.
+
         3 => Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
             atoms: vec![busy_atom(vec![
@@ -415,7 +365,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
             negated: vec![],
             conditions: vec![],
         }),
-        // Negation + selection + membership.
+
         _ => Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![busy_atom(vec![
@@ -436,15 +386,13 @@ fn plausible_query(rng: &mut Rng) -> Query {
     }
 }
 
-/// The hostile catalog: one fault injected into a query in place — the
-/// querygen machinery inverted (generate *invalid* shapes deliberately).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the catalog: one arm per fault class
+)] 
 fn mutate(rng: &mut Rng, query: &mut Query) {
     match rng.below(16) {
-        // Unknown relation id.
+
         0 => {
             if let Some(atom) = query
                 .rules_mut()
@@ -455,7 +403,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     bumbledb::AtomSource::Edb(RelationId(if rng.chance(2) { 3 } else { u32::MAX }));
             }
         }
-        // Unknown field id.
+
         1 => {
             if let Some((field, _)) = query
                 .rules_mut()
@@ -466,19 +414,19 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 *field = FieldId(if rng.chance(2) { 9 } else { u16::MAX });
             }
         }
-        // Duplicate rule.
+
         2 => {
             if let Some(rule) = query.rules_mut().first().cloned() {
                 query.rules_mut().push(rule);
             }
         }
-        // Head arity mismatch.
+
         3 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 rule.finds.push(FindTerm::Var(VarId(0)));
             }
         }
-        // Rule cap + 1.
+
         4 => {
             if let Some(rule) = query.rules_mut().first().cloned() {
                 while query.rules_mut().len() <= MAX_RULES {
@@ -486,7 +434,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 }
             }
         }
-        // The vacuous masks.
+
         5 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 rule.conditions.push(ConditionTree::Leaf(Comparison {
@@ -502,7 +450,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 }));
             }
         }
-        // A MAX-point literal at an interval position (membership).
+
         6 => {
             if let Some(atom) = query
                 .rules_mut()
@@ -513,12 +461,11 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     .push((Gauntlet::BUSY_DURING, Term::Literal(Value::U64(u64::MAX))));
             }
         }
-        // An empty interval literal cannot enter the IR: the constructor is
-        // the rejection boundary.
+
         7 => {
             assert!(bumbledb::Interval::<u64>::new(7, 7).is_none());
         }
-        // The DNF blowup: wide Or of Ands past the cap.
+
         8 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 let leaf = || {
@@ -532,7 +479,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 rule.conditions = vec![or.clone(), or];
             }
         }
-        // Hostile nesting: a deep And/Or chain.
+
         9 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 let mut chain = ConditionTree::Leaf(Comparison {
@@ -550,7 +497,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 rule.conditions.push(chain);
             }
         }
-        // A param-id gap.
+
         10 => {
             if let Some(atom) = query
                 .rules_mut()
@@ -561,7 +508,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     .push((Gauntlet::BUSY_NOTE, Term::Param(ParamId(7))));
             }
         }
-        // The empty query / the empty head.
+
         12 => {
             if rng.chance(2) {
                 query.rules_mut().clear();
@@ -572,7 +519,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 }
             }
         }
-        // Occurrence cap + 1 (negated occurrences count too).
+
         13 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 let gate = Atom {
@@ -588,9 +535,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 }
             }
         }
-        // Distinct-variable cap + 1: 15 wide atoms bind 135 distinct
-        // variables while staying under the occurrence cap, so the
-        // variable roster item is the one that fires.
+
         14 => {
             if let Some(rule) = query.rules_mut().first_mut() {
                 for atom_idx in 0..15u16 {
@@ -605,7 +550,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                 }
             }
         }
-        // A random term swapped into a random binding.
+
         _ => {
             if let Some(atom) = query
                 .rules_mut()
@@ -618,8 +563,6 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
     }
 }
-
-// --- the sweep ----------------------------------------------------------
 
 #[test]
 fn adversarial_ir_never_panics() {
@@ -642,11 +585,9 @@ fn adversarial_ir_never_panics() {
             query
         };
         // The law under test: validate → normalize → prepare returns Ok
-        // or a typed error on arbitrary input — no panic is reachable
-        // from IR data.
+
         let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
-        // A caught unwind IS the red case — there is no error to match:
-        // the panic payload already printed through the hook.
+
         #[expect(
             clippy::match_wild_err_arm,
             reason = "the test intentionally rejects every non-target error uniformly"
@@ -660,9 +601,7 @@ fn adversarial_ir_never_panics() {
             ),
         }
     }
-    // The sweep must exercise both sides of the boundary: some queries
-    // reach the planner whole, most are typed rejections — a lane that
-    // produced neither would be a vacuous run.
+
     assert!(ok > 0, "no generated query validated — vacuous sweep");
     assert!(
         rejected > 0,
@@ -671,10 +610,6 @@ fn adversarial_ir_never_panics() {
     assert_eq!(ok + rejected, SWEEP);
 }
 
-/// Hostile Query interiors and rec: random interiors/rec plus plausible
-/// queries with injected Interior reads, driven through `Db::prepare`.
-/// Every outcome must be `Ok` or a typed error — never a panic, never
-/// `TooManyCtes` (that name is gone; interior count is uncapped).
 #[test]
 fn adversarial_query_with_interiors_never_panics() {
     let dir = common::TempDir::new("adversarial-interiors");
@@ -749,8 +684,7 @@ fn adversarial_query_with_interiors_never_panics() {
     assert_eq!(ok + rejected, SWEEP / 2);
 }
 
-/// `100_000` interiors is legal if each list respects `MAX_RULES` — slow
-/// validate, not a typed `TooManyCtes`. Must not panic.
+/// Must not panic.
 #[test]
 fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
     use bumbledb::Theory;
@@ -809,10 +743,10 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
 }
 
 /// Hostile nesting alone, far past the sweep's per-query depth: a deep
-/// alternating And/Or chain is the typed `ConditionNestingTooDeep` —
-/// judged iteratively, so neither validation nor distribution ever
-/// recurses into it (the sweep's founding find: before the boundary
-/// check existed, this input exhausted the stack).
+/// alternating And/Or chain is the typed `ConditionNestingTooDeep` — judged
+/// iteratively, so neither validation nor distribution ever recurses into it
+/// (the sweep's founding find: before the boundary check existed, this input
+/// exhausted the stack).
 #[test]
 fn deep_predicate_nesting_is_a_typed_rejection() {
     let dir = common::TempDir::new("adversarial-ir-nesting");
@@ -848,7 +782,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
             conditions: vec![tree],
         })
     };
-    // Past the cap: the typed rejection, never a stack exhaustion.
+
     let err = db
         .prepare(&query(chain(3_000)))
         .map(|_| ())
@@ -868,7 +802,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
         ),
         "{err:?}"
     );
-    // At the cap: an ordinary query (the chain is one disjunct).
+
     let _ = db
         .prepare(&query(chain(MAX_CONDITION_DEPTH)))
         .expect("cap-deep nesting is an ordinary query");
