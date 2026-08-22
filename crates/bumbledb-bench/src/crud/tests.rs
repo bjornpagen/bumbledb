@@ -16,10 +16,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// The declared world seals: two relations whose id constants match
-/// descriptor order, and both scalar key statements — `Doc(key)` and
-/// `Counter(key)` — present in the sealed statement roster (the upsert
-/// lane's `ON CONFLICT` targets on the mirror).
 #[test]
 fn the_crud_schema_validates_and_names_its_ids() {
     let schema = super::schema();
@@ -39,9 +35,6 @@ fn the_crud_schema_validates_and_names_its_ids() {
     );
 }
 
-/// Both durability lanes load value-identical twins at `Tiny`, judged
-/// by the shared post-state comparator — the exact fold every write
-/// lane will reuse.
 #[test]
 fn the_twin_stores_load_value_identical_at_tiny() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -67,9 +60,6 @@ fn the_twin_stores_load_value_identical_at_tiny() {
     }
 }
 
-/// A cross-matched twin is caught by the parity readback, naming the
-/// pragma: a Durable-configured mirror judged as `Nosync` errs on
-/// `synchronous`, and vice versa.
 #[test]
 fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
     let dir = scratch("parity-mismatch");
@@ -91,26 +81,17 @@ fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The test fixture seed — the CLI default, deliberately: seed 1's
-/// update and upsert streams collide (the update lane touches keys the
-/// upsert stream also draws), which is exactly what the shared
-/// [`ops::CounterModel`] must absorb. No seed needs hand-picking
-/// anymore: every stream draws its `prev` from the one model threaded
-/// in run order, so a collision is ordinary chaining, not an abort.
 const SEED: u64 = 1;
 
-/// The tiny per-family protocol: 1 warmup + 2 measured samples = 3
-/// closure invocations (the delete pool at Tiny, 256, covers it).
+/// The tiny per-family protocol: 1 warmup + 2 measured samples = 3 closure
+/// invocations (the delete pool at Tiny, 256, covers it).
 const TINY_PROTO: Protocol = Protocol {
     warmups: 1,
     samples: 2,
 };
 
-/// Total closure invocations under [`TINY_PROTO`].
 const COUNT: usize = 3;
 
-/// The post-state judgment over both relations — the one fold every
-/// write-family test ends on.
 fn assert_twins_identical(db: &bumbledb::Db<super::CrudWorld>, conn: &rusqlite::Connection) {
     for rel in [ids::DOC, ids::COUNTER] {
         let name = super::schema().relation(rel).name();
@@ -121,10 +102,6 @@ fn assert_twins_identical(db: &bumbledb::Db<super::CrudWorld>, conn: &rusqlite::
     }
 }
 
-/// The mixed lane's expected work under [`TINY_PROTO`]: the rotation
-/// is deterministic (4 sets — 3 one-row hits, 1 miss — cycled across
-/// 9 reads per invocation, warmups included), and work counts the
-/// measured samples only: drained answers + 1 insert row per sample.
 fn expected_mixed_work() -> u64 {
     let mut work = 0u64;
     let mut cursor = 0usize;
@@ -143,23 +120,16 @@ fn expected_mixed_work() -> u64 {
     work
 }
 
-/// EVERY write family runs its engine runner then its `SQLite` runner
-/// over the one shared op stream on a Durable twin pair, in registry
-/// order, and the twins end value-identical on BOTH relations — the
-/// representation verdict's proof: one stream, two engines, post-state
-/// equality as a consequence. Each measurement's work is the family's
-/// rows-per-sample × samples.
 #[test]
 fn every_crud_write_family_leaves_the_twins_value_identical() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("families-durable");
     let (db, conn) =
         super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
-    // One cursor per engine pass: both mint the identical id sequence.
+
     let mut ours_cursor = FreshCursor::at_base(sizes);
     let mut theirs_cursor = FreshCursor::at_base(sizes);
 
-    // The insert ladder (crud_insert, _10, _100, _1k).
     for per_commit in [1u64, 10, 100, 1_000] {
         let ours = lanes::insert_bumbledb(&db, TINY_PROTO, SEED, per_commit, &mut ours_cursor)
             .expect("insert engine");
@@ -178,40 +148,32 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     }
     assert_eq!(ours_cursor, theirs_cursor, "the cursors stay in lockstep");
 
-    // ONE counter model, threaded through the stream derivations in the
-    // exact order the families run — the lane fold's own shape.
     let mut model = ops::CounterModel::at_load(sizes);
 
-    // crud_update.
     let stream = ops::update_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("update engine");
     let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("update sqlite");
     assert_eq!(ours.work, 2, "update: engine work");
     assert_eq!(theirs.work, 2, "update: mirror work");
 
-    // crud_update_hot (the same runners over the hot stream).
     let stream = ops::hot_update_stream(COUNT, &mut model);
     let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("hot engine");
     let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("hot sqlite");
     assert_eq!(ours.work, 2, "hot: engine work");
     assert_eq!(theirs.work, 2, "hot: mirror work");
 
-    // crud_upsert.
     let stream = ops::upsert_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::upsert_bumbledb(&db, TINY_PROTO, &stream).expect("upsert engine");
     let theirs = lanes::upsert_sqlite(&conn, TINY_PROTO, &stream).expect("upsert sqlite");
     assert_eq!(ours.work, 2, "upsert: engine work");
     assert_eq!(theirs.work, 2, "upsert: mirror work");
 
-    // crud_rmw.
     let keys = ops::rmw_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
     let theirs = lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
     assert_eq!(ours.work, 2, "rmw: engine work");
     assert_eq!(theirs.work, 2, "rmw: mirror work");
 
-    // crud_delete (stream-driven: the fold derives the rows/ids — the
-    // traced twin sample continues the same stream).
     let rows = ops::delete_rows(SEED, sizes, COUNT);
     let ids: Vec<u64> = (0..COUNT as u64).map(|i| sizes.docs + i).collect();
     let ours = lanes::delete_bumbledb(&db, TINY_PROTO, &rows).expect("delete engine");
@@ -219,7 +181,6 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     assert_eq!(ours.work, 2, "delete: engine work");
     assert_eq!(theirs.work, 2, "delete: mirror work");
 
-    // crud_mixed_90_10.
     let ours = lanes::mixed_bumbledb(&db, TINY_PROTO, SEED, sizes, &mut ours_cursor)
         .expect("mixed engine");
     let theirs = lanes::mixed_sqlite(&conn, TINY_PROTO, SEED, sizes, &mut theirs_cursor)
@@ -233,9 +194,6 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The Nosync lane runs the same families identically — the other
-/// [`DurabilityLane`] constructor drives the identical runners over a
-/// representative write subset and the twins still end value-identical.
 #[test]
 fn the_nosync_lane_runs_the_same_families_identically() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -267,11 +225,10 @@ fn the_nosync_lane_runs_the_same_families_identically() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The delete lane's refusal contract, falsified from both sides:
-/// deleting the same pool row twice makes the second engine call `Err`
-/// (the in-closure sentinel — the lane never degrades to a no-op
-/// measurement), and the refusal commits NOTHING: the store generation
-/// does not move across it.
+/// The delete lane's refusal contract, falsified from both sides: deleting the
+/// same pool row twice makes the second engine call `Err` (the in-closure
+/// sentinel — the lane never degrades to a no-op measurement), and the refusal
+/// commits NOTHING: the store generation does not move across it.
 #[test]
 fn the_delete_lane_refuses_a_missing_row() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -300,10 +257,6 @@ fn the_delete_lane_refuses_a_missing_row() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The upsert stream genuinely exercises both arms at Tiny — at least
-/// one hit (`Some` prev) and one miss (`None` prev) — and the engine
-/// runner follows it to a post-state value-identical with `SQLite`'s
-/// native conflict-target upsert.
 #[test]
 fn the_upsert_follows_its_stream_through_hits_and_misses() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -330,11 +283,6 @@ fn the_upsert_follows_its_stream_through_hits_and_misses() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The read query translates to SQL (the canonical twin exists), and
-/// the stream generators are pure: the same `(seed, sizes, count)`
-/// folded over equal models yields identical streams AND identical
-/// end models — the two engine passes share one derivation by
-/// construction.
 #[test]
 fn the_read_query_translates_and_the_stream_generators_are_pure() {
     let translated = crate::translate::translate(&lanes::read_query(), super::schema(), &[])
@@ -363,13 +311,10 @@ fn the_read_query_translates_and_the_stream_generators_are_pure() {
 }
 
 /// THE night-run regression, pinned (tiny corpus, no timing): seed 1's
-/// update/hot streams touch keys the upsert stream also draws —
-/// asserted below, so the collision is genuinely exercised — and
-/// before the shared [`ops::CounterModel`] the upsert lane aborted with
-/// "the upsert drifted from its stream: the stored value is not the
-/// stream's prev". With every stream drawing `prev` from the one model
-/// threaded in run order, the runners follow their streams through the
-/// collision and the twins end value-identical.
+/// update/hot streams touch keys the upsert stream also draws — asserted below,
+/// so the collision is genuinely exercised — and before the shared
+/// [`ops::CounterModel`] the upsert lane aborted with "the upsert drifted from
+/// its stream: the stored value is not the stream's prev".
 #[test]
 fn a_colliding_seed_is_absorbed_by_the_counter_model() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -410,20 +355,8 @@ fn a_colliding_seed_is_absorbed_by_the_counter_model() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The orchestration tests' seed — [`SEED`], the CLI default, on
-/// purpose: the full run replays every family back to back under the
-/// REGISTRY warmups plus the 2-sample override (10 invocations for the
-/// counter streams), the exact lengths at which seed 1's streams
-/// collide. The full run passing IS the night-run regression at the
-/// orchestration level: the fold's one [`ops::CounterModel`] absorbs
-/// the collision that used to abort the upsert lane.
 const RUN_SEED: u64 = SEED;
 
-/// A loader that loads the real twin, then poisons the `SQLite` mirror
-/// with one extra `Doc` row at the read rotation's guaranteed-miss key
-/// (`u64::MAX / 2` — a key no insert lane can mint), so the gate's miss
-/// set finds a row on one engine only. The fold under test is the SAME
-/// fold [`super::run_with`] runs — only the store source differs.
 fn load_poisoned(
     dir: &std::path::Path,
     lane: DurabilityLane,
@@ -443,9 +376,6 @@ fn load_poisoned(
     Ok((db, conn))
 }
 
-/// The oracle gate refuses a divergent mirror: a poisoned `SQLite` twin
-/// makes the fold `Err` naming the disagreement — nothing gets timed,
-/// nothing gets rendered.
 #[test]
 fn the_crud_gate_refuses_a_divergent_oracle() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -464,11 +394,6 @@ fn the_crud_gate_refuses_a_divergent_oracle() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The full orchestration at `Tiny` with 2 samples per family: both
-/// lane sections render with every family row, and the JSON artifact
-/// parses back through our own parser with 2 lanes × 11 rows and the
-/// post-state verdict. This is a correctness smoke test — no number it
-/// produces is recorded anywhere.
 #[test]
 fn the_full_crud_run_produces_both_lanes_and_parses() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -513,8 +438,8 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// An unknown `--only` name is refused before anything loads, and the
-/// refusal lists the registry.
+/// An unknown `--only` name is refused before anything loads, and the refusal
+/// lists the registry.
 #[test]
 fn an_unknown_only_name_is_refused() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -534,9 +459,6 @@ fn an_unknown_only_name_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The gate is UNCONDITIONAL: filtering the run down to `crud_insert`
-/// (the read query untimed as its own family) still gates the read
-/// query, so a poisoned mirror still refuses the whole run.
 #[test]
 fn a_filtered_run_still_gates_the_read_query() {
     let sizes = CrudSizes::of(Scale::Tiny);
@@ -556,14 +478,6 @@ fn a_filtered_run_still_gates_the_read_query() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The traced crud path (`--trace`): every timed family lands its
-/// traced twin sample as BOTH a Chrome `.json` and a collapsed
-/// `.folded` under `<out>/trace/crud/<lane>/`, the commit spans reach
-/// the artifact (the observability doctrine's whole point: the
-/// `JUDGMENT_*`/`LMDB_COMMIT` phases are readable from disk), the report
-/// embeds the flame table, and the post-state fold still passes — the
-/// traced twin sample ran on BOTH engines. One family, one sample: a
-/// smoke test, not a measurement.
 #[cfg(feature = "obs")]
 #[test]
 fn traced_crud_lands_the_pair_with_judgment_and_commit_spans() {
@@ -605,8 +519,8 @@ fn traced_crud_lands_the_pair_with_judgment_and_commit_spans() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A one-row post-state divergence is loud: the error names the world
-/// and the relation before rendering the multiset diff.
+/// A one-row post-state divergence is loud: the error names the world and the
+/// relation before rendering the multiset diff.
 #[test]
 fn poststate_divergence_is_loud() {
     let ours = vec![
