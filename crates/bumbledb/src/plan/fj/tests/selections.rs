@@ -3,8 +3,6 @@ use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;
 use std::collections::BTreeSet;
 
-/// The string shape (docs/architecture/40-execution.md): one occurrence, `memo = ?0`
-/// lowered as a filter by normalize, split into a selection here.
 #[test]
 fn lowering_splits_eq_constants_into_selections() {
     let mut occ = occurrence(0, 0, &[(1, X)]);
@@ -27,8 +25,6 @@ fn lowering_splits_eq_constants_into_selections() {
     assert!(lowered.filters.is_empty());
 }
 
-/// Range/Ne compares and every `FieldsCompare` stay filters; selections
-/// come out ordered by field id whatever the filter order was.
 #[test]
 fn residuals_and_field_compares_stay_filters() {
     let mut occ = occurrence(0, 0, &[(1, X)]);
@@ -89,13 +85,10 @@ fn residuals_and_field_compares_stay_filters() {
         "residuals keep their order"
     );
 
-    // Determinism: the same query lowers to the same plan.
     let again = validate(&plan, &query, &schema(1, 3), &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.occurrences(), again.occurrences());
 }
 
-/// The boundary check: a hand-built occurrence that bypassed the split
-/// (an Eq-constant still in `filters`) is rejected by name.
 #[test]
 fn a_leaked_eq_filter_fails_selection_validation() {
     let bad = PlanOccurrence {
