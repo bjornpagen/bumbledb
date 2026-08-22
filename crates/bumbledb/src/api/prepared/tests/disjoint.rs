@@ -1,14 +1,9 @@
-//! Multi-rule unions keep one spanning seen-set: arms that select
 //! different discriminator literals do not collide, and the fold-free
-//! nullary Count across written rules still refuses (R1).
 
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadOp, HeadTerm};
 
-/// Item(id fresh u64, kind u64 — 0 note, 1 event, 2 task, payload u64) —
-/// the discriminated-union parent shape; the fresh id materializes the
-/// auto-key whose columns the arms' heads carry.
 fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -60,13 +55,10 @@ fn insert_items(env: &Environment, schema: &Schema, rows: &[(u64, u8, u64)]) {
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// Two notes, two events, one task — the task is the negative space
-/// every two-arm union must exclude.
 fn item_rows() -> Vec<(u64, u8, u64)> {
     vec![(1, 0, 10), (2, 0, 20), (3, 1, 20), (4, 1, 40), (5, 2, 50)]
 }
 
-/// One DU arm: `Item(id, kind = <kind>, payload)` — finds (id, payload).
 fn arm_rule(kind: u8) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -92,12 +84,8 @@ fn du_query(rules: Vec<Rule>) -> Query {
     }
 }
 
-/// A fold over a proven-disjoint union retains the spanning seen-set,
-/// which absorbs zero answers because the theorem is true, and matches
-/// the naive model: per id, the sum of its head-projected payloads. The
-/// fold-free nullary `Count` on this shape is refused instead (R1,
-/// pinned below) — the disjointness proof cannot make a constant
-/// informative.
+/// The fold-free nullary `Count` on this shape is refused instead (R1, pinned
+/// below) — the disjointness proof cannot make a constant informative.
 #[test]
 fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     let dir = TempDir::new("prepared-disjoint-count");
@@ -107,9 +95,6 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(id, Sum(payload)) :- one rule per kind; the rules bind the key
-    // variable (kind is pinned) plus the fold input, so bindings are
-    // key-covered and the head reads every slot.
     let rule = |kind: u8| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -150,9 +135,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         Some(4),
         "all four head projections inhabit the spanning set"
     );
-    // The naive model: fold domain = ∪ head-projected bindings; per
-    // group (id) the projection is the singleton (id, payload), so the
-    // Sum is the payload and the kind-2 item never appears.
+
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {
             let (AnswerValue::U64(id), AnswerValue::U64(sum)) =
@@ -166,9 +149,6 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     answers.sort_unstable();
     assert_eq!(answers, vec![(1, 10), (2, 20), (3, 20), (4, 40)]);
 
-    // The R1 corollary: the same proven-disjoint shape under a
-    // fold-free nullary Count refuses — provable disjointness is
-    // diagnostic knowledge, never a semantics.
     let count_rule = |kind: u8| {
         let mut rule = rule(kind);
         rule.finds[1] = FindTerm::Count;
@@ -192,8 +172,6 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     );
 }
 
-/// The projection sink under the proof: a three-arm union returns every
-/// item exactly once and the spanning set absorbs nothing across arms.
 #[test]
 fn a_three_arm_union_absorbs_nothing_across_rules() {
     let dir = TempDir::new("prepared-disjoint-spanning");
