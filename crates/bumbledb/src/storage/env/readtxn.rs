@@ -1,8 +1,8 @@
 use crate::error::Result;
 
-use super::read_meta::{read_dict_next_id, read_u64};
 #[cfg(test)]
 use super::read_meta::read_fingerprint;
+use super::read_meta::{read_dict_next_id, read_u64};
 use super::{GenerationId, META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
