@@ -9,19 +9,19 @@ use std::arch::aarch64::{
 
 const ALLEN_SIG_TABLE: [u8; 64] = {
     let mut table = [0xFFu8; 64];
-    table[0b00_0000] = 0; 
-    table[0b01_0000] = 1; 
-    table[0b10_0000] = 2; 
-    table[0b10_0001] = 3; 
-    table[0b10_0010] = 4; 
-    table[0b10_0110] = 5; 
-    table[0b10_0101] = 6; 
-    table[0b10_0100] = 7; 
-    table[0b10_1000] = 8; 
-    table[0b10_1001] = 9; 
-    table[0b10_1010] = 10; 
-    table[0b01_1010] = 11; 
-    table[0b00_1010] = 12; 
+    table[0b00_0000] = 0;
+    table[0b01_0000] = 1;
+    table[0b10_0000] = 2;
+    table[0b10_0001] = 3;
+    table[0b10_0010] = 4;
+    table[0b10_0110] = 5;
+    table[0b10_0101] = 6;
+    table[0b10_0100] = 7;
+    table[0b10_1000] = 8;
+    table[0b10_1001] = 9;
+    table[0b10_1010] = 10;
+    table[0b01_1010] = 11;
+    table[0b00_1010] = 12;
     table
 };
 
@@ -29,7 +29,6 @@ const ALLEN_SIG_TABLE: [u8; 64] = {
     clippy::inline_always,
     reason = "measured kernel inlining is machine-checked and load-bearing"
 )]
-
 #[inline(always)]
 unsafe fn allen_sig2(
     a_s: uint64x2_t,
@@ -61,7 +60,6 @@ unsafe fn allen_code_window(
     a_e: *const u64,
     codes: *mut u8,
 ) {
-
     unsafe {
         use std::arch::aarch64::{vcombine_u16, vcombine_u32, vmovn_u16, vmovn_u32, vmovn_u64};
         let sig = |lane: usize| {
@@ -80,10 +78,9 @@ unsafe fn allen_code_window(
 #[expect(
     clippy::inline_always,
     reason = "measured kernel inlining is machine-checked and load-bearing"
-)] 
+)]
 #[inline(always)]
 unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
-
     unsafe {
         std::arch::aarch64::uint8x16x4_t(
             vld1q_u8(ALLEN_SIG_TABLE.as_ptr()),
