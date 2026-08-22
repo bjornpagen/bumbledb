@@ -361,7 +361,6 @@ impl<M, S> MutationCore<M, S> {
 }
 
 impl<M: MutationBackend, S> MutationCore<M, S> {
-
     pub(super) fn apply_collection<T>(
         &mut self,
         relation: RelationId,
