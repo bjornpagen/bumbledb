@@ -1,6 +1,5 @@
 //! Each document is written only after Format in `lean/conformance/README.md` §
 //! complete-admission cases.
-
 use bumbledb::Value;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row,
