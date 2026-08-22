@@ -36,7 +36,6 @@ impl Default for CorpusArgs {
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
 )]
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchArgs {
     pub corpus: CorpusArgs,
@@ -57,20 +56,25 @@ pub struct BenchArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
-
     Help,
 
     Queries,
 
     Gen(CorpusArgs),
 
-    Verify { corpus: CorpusArgs, cases: u32 },
+    Verify {
+        corpus: CorpusArgs,
+        cases: u32,
+    },
 
     VerifyStore(CorpusArgs),
 
     Bench(BenchArgs),
 
-    Trace { corpus: CorpusArgs, family: String },
+    Trace {
+        corpus: CorpusArgs,
+        family: String,
+    },
 
     Scenarios(ScenarioArgs),
 
@@ -80,7 +84,9 @@ pub enum Cmd {
 
     SweepCommit(SweepArgs),
 
-    Merge { dirs: Vec<PathBuf> },
+    Merge {
+        dirs: Vec<PathBuf>,
+    },
 
     Storage(StorageArgs),
 
@@ -90,14 +96,12 @@ pub enum Cmd {
 
     Churn(ChurnArgs),
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
-
     Heap(HeapArgs),
 
     Primerlane(PrimerlaneArgs),
 }
 
 impl Cmd {
-
     #[must_use]
     pub fn runs_measurements(&self) -> bool {
         match self {
@@ -125,7 +129,6 @@ impl Cmd {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SweepArgs {
-
     pub sizes: Option<Vec<u64>>,
 
     pub samples: Option<u32>,
@@ -176,7 +179,6 @@ impl Default for ScenarioArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageArgs {
-
     pub scales: Vec<Scale>,
     pub seed: u64,
     pub dir: PathBuf,
@@ -204,7 +206,6 @@ pub struct WritesArgs {
     pub dir: PathBuf,
 
     /// durable lane's fsync shadow must land after every nosync sample
-
     pub lanes: Vec<DurabilityLane>,
 
     pub batches: Vec<u32>,
@@ -232,7 +233,6 @@ impl Default for WritesArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurvesArgs {
-
     pub scales: Vec<Scale>,
 
     pub families: Option<Vec<String>>,
@@ -294,7 +294,6 @@ impl Default for ChurnArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrimerlaneArgs {
-
     pub facts: u64,
 
     pub relations: u32,
