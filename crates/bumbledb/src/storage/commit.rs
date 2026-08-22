@@ -40,7 +40,6 @@ pub struct Applied<'env> {
     /// The open, uncommitted LMDB write transaction.
     pub txn: WriteTxn<'env>,
     /// Per-relation next row id after this apply (flushed to `S` by the
-
     pub row_id_next: BTreeMap<RelationId, u64>,
 }
 
@@ -51,7 +50,6 @@ pub struct Judged<'env> {
 }
 
 impl<'env> Applied<'env> {
-
     /// transaction to drop.
     pub(crate) fn judge(self, plan: &plan::CommitPlan<'_>) -> Result<Admission<Judged<'env>>> {
         let schema = plan.selections.schema();
@@ -96,7 +94,6 @@ impl Judged<'_> {
 /// 70-api doc wires it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitReport {
-
     Noop { generation: GenerationId },
 
     Changed { new_generation: GenerationId },
@@ -104,7 +101,6 @@ pub enum CommitReport {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl CommitReport {
-
     #[must_use]
     pub const fn changed(self) -> bool {
         matches!(self, Self::Changed { .. })
