@@ -231,7 +231,6 @@ fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<FilterPredicate>) -> 
         residuals,
         word_residuals: vec![],
         allen_residuals: vec![],
-        duration_residuals: Vec::new(),
         anti_probes,
         slot_widths,
     }

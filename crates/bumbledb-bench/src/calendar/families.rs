@@ -13,8 +13,8 @@
 //! the engine and the naive model before any timing.
 
 use bumbledb::{
-    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, Rule,
-    Term, Value, VarId,
+    AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
+    VarId,
 };
 
 use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, HOUR, created_at};
@@ -326,48 +326,6 @@ fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `claim_hours` — **times the measure: `Sum(Duration)` grouped by claim
-/// arm** (PRD 10 — the one arithmetic the point-set denotation defines),
-/// under the `Allen(DISJOINT)` ray filter against `[CAL_HORIZON, ∞)`:
-/// rays have no finite measure, and the filter keeps exactly the bounded
-/// claims (every bounded end sits below the horizon), the documented
-/// host idiom. The `source` binding is the claim key, so the fold's
-/// distinct-bindings elision engages (key coverage — the `balance`
-/// regime). `Q(arm, Sum(Duration(s))) :- Claim(source = c, arm, span = s),
-/// Allen(s, [CAL_HORIZON, ∞), DISJOINT)`.
-fn claim_hours_query() -> Query {
-    Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::AggregateMeasure {
-                op: FoldOp::Sum,
-                over: VarId(2),
-            },
-        ],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::CLAIM),
-            bindings: vec![
-                (ids::claim::SOURCE, var(1)),
-                (ids::claim::ARM, var(0)),
-                (ids::claim::SPAN, var(2)),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![allen(
-            var(2),
-            Term::Literal(Value::IntervalI64(
-                bumbledb::Interval::<i64>::ray(CAL_HORIZON).expect("calendar ray"),
-            )),
-            AllenMask::DISJOINT,
-        )],
-    })
-}
-
-fn claim_hours_params(_: &GenConfig) -> Vec<Draw> {
-    // Param-less full fold: one empty draw.
-    vec![scalar_draw(vec![])]
-}
-
 /// `slot_scan` — **times the mask kernel over the fixed-width interval
 /// type** (the order purge's `interval<i64, w>`: the encoding stores the
 /// start word only, the end derives as `start + w`): the `busy_scan`
@@ -571,21 +529,12 @@ pub const SLOT_BOOKING_OVERLAP: &str = concat!(
     )
 );
 
-/// `claim_hours`: the normative fold template over the distinct binding
-/// set, the ray filter's 4 disjoint basics OR'd against the horizon
-/// literal (`[1800000000, ∞)` — ∞ = `i64::MAX`, the largest end word).
-pub const CLAIM_HOURS: &str = "SELECT v0, SUM(v2_end - v2_start) FROM (SELECT DISTINCT t0.\"arm\" AS v0, t0.\"source\" AS v1, t0.\"span_start\" AS v2_start, t0.\"span_end\" AS v2_end FROM \"Claim\" AS t0 WHERE ((t0.\"span_end\" < 1800000000) OR (t0.\"span_end\" = 1800000000) OR (9223372036854775807 = t0.\"span_start\") OR (9223372036854775807 < t0.\"span_start\"))) GROUP BY v0";
-
-/// The registry: the calendar's nine rows — the six numbered queries,
+/// The registry: the calendar's remaining rows — the numbered queries,
 /// the conflict family contributing its anti-probe variant as its own
 /// row (`60-validation.md`'s table), plus the roster extension's two
 /// fixed-width interval rows (`slot_scan`, `slot_booking_overlap` —
 /// report-only: measurement infrastructure, not gate claims).
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // the registry is a table, one entry per family
 pub fn all() -> &'static [CalFamily] {
     &[
         CalFamily {
@@ -655,20 +604,6 @@ pub fn all() -> &'static [CalFamily] {
             hand_param_slots: Some(FREE_BUSY_SLOTS),
             param_policy: "The head account wide + narrow, a mid account wide, + 1 miss (translator-unpaired: hand coalesce).",
             indexes: &[],
-        },
-        CalFamily {
-            name: "claim_hours",
-            kind: Kind::Gate,
-            query: claim_hours_query,
-            params: claim_hours_params,
-            golden_sql: CLAIM_HOURS,
-            hand_param_slots: None,
-            param_policy: "No params — the ray-filtered full measure fold; one empty draw.",
-            indexes: &[(
-                "idx_claim_arm_span",
-                "Claim",
-                &["arm", "span_start", "span_end"],
-            )],
         },
         CalFamily {
             name: "slot_scan",
@@ -787,7 +722,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
             Value::U64(rng.range(sizes.persons * 9 / 8)),
             window(rng, ACTIVE_SPAN),
         ])),
-        "rsvp_union" | "claim_hours" => None,
+        "rsvp_union" => None,
         "conflict_pairs" => Some(scalar_draw(vec![Value::U64(
             rng.range(sizes.accounts * 9 / 8),
         )])),
@@ -835,7 +770,7 @@ pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
     match name {
         "busy_scan" | "slot_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),
-        "rsvp_union" | "claim_hours" => scalar_draw(vec![]),
+        "rsvp_union" => scalar_draw(vec![]),
         // The head account and the head room share ordinal 0.
         "conflict_pairs" | "slot_booking_overlap" => scalar_draw(vec![Value::U64(0)]),
         "conflict_free" => scalar_draw(vec![

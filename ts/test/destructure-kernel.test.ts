@@ -168,7 +168,7 @@ test("find keys name the answer columns — renames are real", function renames(
 	assert.ok(pin)
 })
 
-test("aggregates ride find over var references: count, sum, min, max, pack, duration", function aggregates() {
+test("aggregates ride find over var references: count, sum, min, max, pack", function aggregates() {
 	const countQ = query(Theory).rule(function rule(r) {
 		const a = v(Account)
 		return r.match(Account, { holder: a.holder }).find({ holder: a.holder, n: r.count() })
@@ -189,21 +189,11 @@ test("aggregates ride find over var references: count, sum, min, max, pack, dura
 		const a = v(Account)
 		return r.match(Account, { holder: a.holder, window: a.window }).find({ merged: r.pack(a.window) })
 	})
-	const durationProjQ = query(Theory).rule(function rule(r) {
-		const a = v(Account)
-		return r.match(Account, { id: a.id, window: a.window }).find({ id: a.id, span: r.duration(a.window) })
-	})
-	const durationFoldQ = query(Theory).rule(function rule(r) {
-		const a = v(Account)
-		return r.match(Account, { id: a.id, window: a.window }).find({ longest: r.max(r.duration(a.window)) })
-	})
 	assert.ok(db.prepare(countQ))
 	assert.ok(db.prepare(sumQ))
 	assert.ok(db.prepare(minQ))
 	assert.ok(db.prepare(maxQ))
 	assert.ok(db.prepare(packQ))
-	assert.ok(db.prepare(durationProjQ))
-	assert.ok(db.prepare(durationFoldQ))
 })
 
 test("the recursive query ports: rec find + named interior record lower and prepare", function recPorts() {
@@ -301,9 +291,11 @@ test("params stay string-named: param/inSet register by first use and execute un
 	const preparedP = db.prepare(paramQ)
 	assert.deepEqual(
 		sorted(
-			db.read((i) => i.execute(preparedP, { minRank: 2n })).map(function id(row) {
-				return row.id
-			})
+			db
+				.read((i) => i.execute(preparedP, { minRank: 2n }))
+				.map(function id(row) {
+					return row.id
+				})
 		),
 		sorted([2n])
 	)
@@ -324,9 +316,11 @@ test("params stay string-named: param/inSet register by first use and execute un
 	const preparedS = db.prepare(setQ)
 	assert.deepEqual(
 		sorted(
-			db.read((i) => i.execute(preparedS, { acctIds: [10n, 11n] })).map(function id(row) {
-				return row.id
-			})
+			db
+				.read((i) => i.execute(preparedS, { acctIds: [10n, 11n] }))
+				.map(function id(row) {
+					return row.id
+				})
 		),
 		sorted([10n, 11n])
 	)

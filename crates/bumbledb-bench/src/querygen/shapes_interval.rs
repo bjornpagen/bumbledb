@@ -459,20 +459,12 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
     }
 }
 
-/// The measure shape (`docs/architecture/20-query-ir.md` § the
-/// measure), over the U64 window lane — total here: the lane's
-/// sentinel end (`interval_data::U64_SENTINEL_END`) sits below the
-/// element domain's `MAX`, so no window is a ray and `Duration` is
-/// `(end − start)` on both oracles (ray-bearing measure parity is the
-/// verify naive lane's obligation). Three construct kinds: the measure
-/// in a find position, in an order predicate against a literal, and
-/// folded (`Sum`/`Min`/`Max` — `Sum` under a duration bound so the
-/// reachable sum stays far below 2⁶³, the generator's Sum-range duty).
+/// Retired query-side Duration slot. Consumes the same RNG draws the
+/// old measure shape did so corpus seeds stay aligned, then emits a
+/// valid transfer scan (window as a projected var — never `Duration`).
 pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     let transfer = b.add_atom(ids::TRANSFER);
     match rng.range(3) {
-        // Find position: `[extref, Duration(window)]` over a pinned
-        // occurrence, or the open distinct-durations scan.
         0 => {
             if rng.chance(1, 2) {
                 let _payload = pin_transfer(b, rng, cfg, domains, transfer);
@@ -481,39 +473,20 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 b.find_var(id);
             }
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.finds.push(bumbledb::FindTerm::Measure(window));
+            b.find_var(window);
         }
-        // Predicate: `Duration(window) <op> literal` — an order
-        // comparison over the measure word, the selection form.
         1 => {
             let id = b.bind_var(transfer, ids::transfer::ID);
             b.find_var(id);
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.conditions.push(Comparison {
-                op: crate::querygen::shapes::order_op(rng),
-                lhs: Term::Measure(window),
-                rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
-            });
+            let _op = crate::querygen::shapes::order_op(rng);
+            let _lit = rng.range(3 * interval_data::GROUP_SPAN);
+            let _ = window;
         }
-        // Fold: a global Sum/Min/Max over the measure.
         _ => {
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            let op = match rng.range(3) {
-                0 => bumbledb::FoldOp::Sum,
-                1 => bumbledb::FoldOp::Min,
-                _ => bumbledb::FoldOp::Max,
-            };
-            if op == bumbledb::FoldOp::Sum {
-                // The Sum bound: durations capped at a group span, so
-                // the sum tops out near transfers × 4096 ≪ 2⁶³.
-                b.conditions.push(Comparison {
-                    op: bumbledb::CmpOp::Le,
-                    lhs: Term::Measure(window),
-                    rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
-                });
-            }
-            b.finds
-                .push(bumbledb::FindTerm::AggregateMeasure { op, over: window });
+            let _ = rng.range(3);
+            b.find_var(window);
         }
     }
 }

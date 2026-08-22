@@ -46,7 +46,10 @@ struct AssignedFact {
 /// Peak-memory: the identity index drops first. Facts copy into the run
 /// arena; the stage's fact arena then drops. No `BTreeMap` catalog, no
 /// `WriteDelta`, no `CommitPlan`.
-pub(crate) fn admit_catalog(schema: &Schema, mut stage: HeapStage) -> Result<Admission<FrozenCatalog>> {
+pub(crate) fn admit_catalog(
+    schema: &Schema,
+    mut stage: HeapStage,
+) -> Result<Admission<FrozenCatalog>> {
     stage.discard_identity();
     let selections = Selections::encode_lookup(schema, |raw| Ok(stage.lookup_raw(raw)))?;
 

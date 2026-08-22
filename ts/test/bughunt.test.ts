@@ -84,11 +84,17 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const back = must(db.read((i) => i.get(Num, { id: must(id) })))
 		assert.equal(back.u, U64_MAX)
 		assert.equal(back.s, I64_MIN)
-		const max = db.read((i) => i.scan(Num)).find(function byS(row) {
-			return row.s === I64_MAX
-		})
+		const max = db
+			.read((i) => i.scan(Num))
+			.find(function byS(row) {
+				return row.s === I64_MAX
+			})
 		assert.ok(max, "the i64::MAX row reads back")
-		assert.equal(db.read((i) => i.contains(Num, { id: must(id), u: U64_MAX, s: I64_MIN })), true, "contains agrees at the extremes")
+		assert.equal(
+			db.read((i) => i.contains(Num, { id: must(id), u: U64_MAX, s: I64_MIN })),
+			true,
+			"contains agrees at the extremes"
+		)
 	})
 
 	test("out-of-range bigints throw typed errors naming the position", function bigintRange() {
@@ -144,7 +150,10 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const back = must(db.read((i) => i.get(Ray, { id: must(id) })))
 		assert.deepEqual(back.at, { start: 3n, end: U64_MAX })
 		assert.deepEqual(back.sat, { start: I64_MIN, end: I64_MAX })
-		assert.equal(db.read((i) => i.contains(Ray, back)), true)
+		assert.equal(
+			db.read((i) => i.contains(Ray, back)),
+			true
+		)
 	})
 
 	test("an empty interval smuggled past span() is refused typed at the bridge", function emptyInterval() {
@@ -195,7 +204,10 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.equal(written.tag, "accepted")
 		assert.equal(must(db.read((i) => i.get(Txt, { id: must(emptyId) }))).note, "")
 		assert.equal(must(db.read((i) => i.get(Txt, { id: must(astralId) }))).note, "𝔽😀́")
-		assert.equal(db.read((i) => i.contains(Txt, { id: must(emptyId), note: "" })), true)
+		assert.equal(
+			db.read((i) => i.contains(Txt, { id: must(emptyId), note: "" })),
+			true
+		)
 	})
 
 	test("a lone surrogate is refused typed — never silently mangled", function loneSurrogate() {

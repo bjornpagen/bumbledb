@@ -1072,30 +1072,6 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
     assert_eq!(t.sql.matches(" UNION ").count(), 1, "{}", t.sql);
 }
 
-#[test]
-fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
-    // Q(account, Duration(active)) :- Mandate(account, active) — the
-    // measure translates to arithmetic over the two interval columns.
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::MANDATE),
-            bindings: vec![
-                (ids::mandate::ACCOUNT, var(0)),
-                (ids::mandate::ACTIVE, var(1)),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(
-        t.sql,
-        "SELECT DISTINCT t0.\"account\", (t0.\"active_end\" - t0.\"active_start\") \
-         FROM \"Mandate\" AS t0"
-    );
-}
-
 /// The linear transitive closure over `OrgParent` — identity main over
 /// the rec (base arm + one-recursive-atom arm).
 fn closure_query() -> Query {

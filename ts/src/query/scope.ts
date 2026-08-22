@@ -222,12 +222,6 @@ function makeSetParam<const Name extends string>(name: Name): SetParam<Name> {
 	return Object.freeze(value)
 }
 
-/** Builds one measure term over an interval-typed variable reference. */
-function makeDuration<const V extends AnyVar>(over: V): Duration<V> {
-	const value: Duration<V> = { [term]: "duration", over }
-	return Object.freeze(value)
-}
-
 /**
  * One bound field slot: the field's descriptor plus the slot's
  * law-computed CLASS (`undefined` = bare — the slot is in no law). The one
@@ -423,4 +417,4 @@ export type {
 	Var,
 	VarsOf
 }
-export { fieldJoins, inferred, isTerm, makeDuration, makeParam, makeSetParam, renderFieldKind, term, v }
+export { fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }

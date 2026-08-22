@@ -188,7 +188,7 @@ describe("the marshal bijection over closed rosters", function suite() {
 		copyStore(lawlessDir, lawlessCopyDir)
 		const reader = await Db.open(lawlessCopyDir, LawlessReader)
 		assert.throws(function scanLawless() {
-			reader.scan(LawlessAccount)
+			reader.read((i) => i.scan(LawlessAccount))
 		}, /id 7 is outside the Kind roster \(Checking, Savings\) — the column types Kind but no law pins it — a containment statement is the missing piece/)
 	})
 

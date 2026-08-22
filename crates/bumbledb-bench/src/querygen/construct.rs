@@ -53,10 +53,10 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Boundary => boundary(&mut b, rng, cfg, domains),
         Shape::ExistenceWalk => existence_walk(&mut b, rng),
         Shape::DuWalk => du_walk(&mut b, rng),
-        Shape::Measure => measure(&mut b, rng, cfg, domains),
         Shape::ClosedJoin => closed_join(&mut b, rng),
         Shape::GroundFold => ground_fold(&mut b, rng),
         Shape::Pack => pack(&mut b, rng),
+        Shape::Measure => measure(&mut b, rng, cfg, domains),
         Shape::Rules => unreachable!("multi-rule queries assemble their own query"),
     }
     // The grounding and closed shapes are their own deliberate dressing: a

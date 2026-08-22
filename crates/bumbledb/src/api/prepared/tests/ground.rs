@@ -298,7 +298,6 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
     let (answers, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(answers.len(), 2, "the two Det rates");
     assert!(report.contains("query:"), "{report}");
-
 }
 
 /// Eliminated vs grounding-disabled execution: identical result sets under

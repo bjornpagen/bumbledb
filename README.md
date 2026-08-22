@@ -175,7 +175,7 @@ requirement was waived. The main datasets contain 253,264 ledger rows and
 `ANALYZE`, a 256 MiB cache, and matching durability settings.
 
 Every query result was compared with SQLite before timing. The randomized
-verification run covered 2,887 cases, and write outcomes were also compared
+verification run covered 2,879 cases, and write outcomes were also compared
 with a separate straightforward implementation. The primary read tests were
 run three times for durable stores and three times with durability disabled;
 the summary charts use the best median from each group. Raw reports, machine

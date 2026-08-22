@@ -48,8 +48,7 @@ fn converse_twin(query: &Query) -> Option<Query> {
 
 /// Draws generated queries until [`CONVERSE_CASES`] Allen-bearing ones
 /// have been twinned and compared engine-vs-engine (rows and error
-/// verdicts alike — a `MeasureOfRay` on one side of a converse pair
-/// would be its own bug).
+/// verdicts alike).
 pub(super) fn converse_lane(run: &mut Run<'_, target::Target>, cfg: &VerifyConfig) {
     let mut rng = Rng::new(cfg.corpus_gen.seed ^ 0x0115_C09E);
     let mut compared = 0u32;

@@ -5,9 +5,7 @@ use crate::image::ColumnView;
 
 impl Sink for ProjectionSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
-        let ProjectionSources::Plain(sources) = &self.sources else {
-            return self.emit_measured(bindings);
-        };
+        let ProjectionSources::Plain(sources) = &self.sources;
         for (i, source) in sources.iter().enumerate() {
             self.scratch[i] = bindings.get(*source);
         }
@@ -41,9 +39,7 @@ impl Sink for ProjectionSink {
     /// that could skip (D2 leaves stay on the batch path), so every
     /// position inserts.
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
-        let ProjectionSources::Plain(sources) = &self.sources else {
-            return self.begin_scan_measured(scan);
-        };
+        let ProjectionSources::Plain(sources) = &self.sources;
         for (i, slot) in sources.iter().enumerate() {
             self.batch_sources[i] = scan
                 .key_slots
@@ -61,9 +57,6 @@ impl Sink for ProjectionSink {
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
-        if matches!(self.sources, ProjectionSources::Measured { .. }) {
-            return self.scan_run_measured(scan, run);
-        }
         self.scan_count += run.len() as u64;
         // Direct per-row inserts, like every sink path (measured):
         // the pipeline ping-pong
@@ -145,9 +138,7 @@ impl Sink for ProjectionSink {
 
 impl ProjectionSink {
     fn prepare_plain_batch_sources(&mut self, batch: &LeafBatch<'_>) {
-        let ProjectionSources::Plain(sources) = &self.sources else {
-            unreachable!("plain batch path");
-        };
+        let ProjectionSources::Plain(sources) = &self.sources;
         for (i, source) in sources.iter().enumerate() {
             self.batch_sources[i] = batch.source_of(*source);
         }
@@ -160,9 +151,6 @@ impl ProjectionSink {
 
     /// Consume every surviving row. Forbidden nodes take this path.
     fn project_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        if matches!(&self.sources, ProjectionSources::Measured { .. }) {
-            return self.emit_batch_measured(batch);
-        }
         self.prepare_plain_batch_sources(batch);
         let batch_sources = &self.batch_sources[..];
         let scratch = &mut self.scratch[..];
@@ -181,9 +169,6 @@ impl ProjectionSink {
     /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
     /// insert; remaining rows bind nothing sink-relevant.
     fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        if matches!(&self.sources, ProjectionSources::Measured { .. }) {
-            return self.emit_batch_measured_until_skip(batch);
-        }
         self.prepare_plain_batch_sources(batch);
         let batch_sources = &self.batch_sources[..];
         let scratch = &mut self.scratch[..];

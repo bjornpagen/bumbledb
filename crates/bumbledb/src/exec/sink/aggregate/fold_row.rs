@@ -1,6 +1,4 @@
-use crate::exec::sink::{
-    Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, measure, word_to_i64,
-};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
     /// Folds the full binding currently in `binding_scratch`: the
@@ -10,22 +8,6 @@ impl AggregateSink {
     /// per-row paths land here — the scratch row is the one
     /// representation.
     pub(super) fn fold_scratch_row(&mut self) {
-        // The measure computation: two-slot read, ray test, one exact
-        // subtraction into the parsed spec's derived word.
-        // A poisoned sink folds nothing more — the execution's answer is
-        // the typed `MeasureOfRay`, and the error path owes no speed.
-        if matches!(self.ray, crate::exec::sink::RayPoison::Hit(_)) {
-            return;
-        }
-        for i in 0..self.measures.len() {
-            let (derived, slot) = self.measures[i];
-            let (start, end) = (self.binding_scratch[slot], self.binding_scratch[slot + 1]);
-            let Some(duration) = measure(start, end) else {
-                self.ray = crate::exec::sink::RayPoison::Hit([start, end]);
-                return;
-            };
-            self.binding_scratch[derived] = duration;
-        }
         // Binding dedup: fold only the first occurrence of each distinct
         // key — unless the elision proved the stream duplicate-free
         // (single-rule: distinct bindings; multi-rule: the rule-

@@ -34,13 +34,10 @@ pub enum ParamValue {
 }
 
 /// The runtime query errors the semantics define: an aggregate's final
-/// value out of its result type's range, and the measure of a ray —
-/// `Duration` over `[s, ∞)` (the engine's one runtime type error,
-/// `docs/architecture/10-data-model.md`).
+/// value out of its result type's range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryError {
     Overflow { find: usize },
-    MeasureOfRay,
 }
 
 /// One rule's DNF width, **from the definition**: the number of
@@ -62,34 +59,6 @@ pub fn dnf_width(rule: &Rule) -> usize {
         }
     }
     rule.conditions.iter().map(width).product()
-}
-
-/// The measure, from the definition: `|[s, e)| = e − s` over the logical
-/// element values — the model's own arithmetic, deliberately independent
-/// of the engine's encoded-word subtraction (the differential oracle
-/// would otherwise test a function against itself). A ray (`end` at the
-/// element domain's MAX) has no finite measure.
-fn measure_value(value: &Value) -> Result<u64, QueryError> {
-    match value {
-        Value::IntervalU64(interval) => {
-            if interval.is_ray() {
-                Err(QueryError::MeasureOfRay)
-            } else {
-                Ok(interval.end() - interval.start())
-            }
-        }
-        Value::IntervalI64(interval) => {
-            if interval.is_ray() {
-                Err(QueryError::MeasureOfRay)
-            } else {
-                Ok(
-                    u64::try_from(i128::from(interval.end()) - i128::from(interval.start()))
-                        .expect("constructor: end > start, difference below 2^64"),
-                )
-            }
-        }
-        other => panic!("validated: Duration takes an interval, got {other:?}"),
-    }
 }
 
 /// `Pack` from the definition (`docs/architecture/20-query-ir.md`
@@ -150,8 +119,6 @@ enum Substituted {
     Var(usize),
     Lit(Value),
     Set(Vec<Value>),
-    /// The measure of an interval variable (`Term::Measure`).
-    Measure(usize),
 }
 
 /// A predicate tree after parameter substitution — the input grammar's
@@ -357,10 +324,7 @@ impl NaiveDb {
             .map(|find| match find {
                 FindTerm::Var(var) => var_is_interval(*var),
                 FindTerm::Pack { .. } => true,
-                FindTerm::Measure(_)
-                | FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::AggregateMeasure { .. } => false,
+                FindTerm::Count | FindTerm::Aggregate { .. } => false,
             })
             .collect()
     }
@@ -377,7 +341,7 @@ impl NaiveDb {
         derived: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         if let [rule] = rules {
-            let bindings = self.rule_bindings(rule, params, derived)?;
+            let bindings = self.rule_bindings(rule, params, derived);
             return project(&rule.finds, &bindings);
         }
         let aggregated = head
@@ -390,7 +354,7 @@ impl NaiveDb {
         // one union, set semantics.
         let mut rows = BTreeSet::new();
         for rule in rules {
-            let bindings = self.rule_bindings(rule, params, derived)?;
+            let bindings = self.rule_bindings(rule, params, derived);
             rows.extend(project(&rule.finds, &bindings)?);
         }
         Ok(rows)
@@ -405,7 +369,7 @@ impl NaiveDb {
         rule: &Rule,
         params: &[ParamValue],
         derived: &DerivedWorld<'_>,
-    ) -> Result<BTreeSet<Tuple>, QueryError> {
+    ) -> BTreeSet<Tuple> {
         let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
         for atom in &rule.atoms {
@@ -441,19 +405,8 @@ impl NaiveDb {
         let mut bindings = BTreeSet::new();
         let mut assignment = vec![None; var_count];
         let mut pending = Vec::new();
-        let mut ray = false;
-        enumerate(
-            &env,
-            0,
-            &mut assignment,
-            &mut pending,
-            &mut bindings,
-            &mut ray,
-        );
-        if ray {
-            return Err(QueryError::MeasureOfRay);
-        }
-        Ok(bindings)
+        enumerate(&env, 0, &mut assignment, &mut pending, &mut bindings);
+        bindings
     }
 
     /// The multi-rule aggregate fold: each rule's binding set projected
@@ -470,7 +423,7 @@ impl NaiveDb {
         let head = &rules[0].finds;
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
         for rule in rules {
-            for binding in &self.rule_bindings(rule, params, derived)? {
+            for binding in &self.rule_bindings(rule, params, derived) {
                 let row: Result<Vec<Value>, QueryError> = rule
                     .finds
                     .iter()
@@ -478,11 +431,6 @@ impl NaiveDb {
                         FindTerm::Var(var)
                         | FindTerm::Aggregate { over: var, .. }
                         | FindTerm::Pack { over: var } => Ok(binding.0[usize::from(var.0)].clone()),
-                        // The measure positions project the measure — from
-                        // the definition, ray included.
-                        FindTerm::Measure(var) | FindTerm::AggregateMeasure { over: var, .. } => {
-                            measure_value(&binding.0[usize::from(var.0)]).map(Value::U64)
-                        }
                         // Nullary Count: no fold input — a constant
                         // filler keeps positions stable.
                         FindTerm::Count => Ok(Value::Bool(false)),
@@ -498,7 +446,7 @@ impl NaiveDb {
             let key = Tuple(
                 head.iter()
                     .zip(&row.0)
-                    .filter(|(term, _)| matches!(term, FindTerm::Var(_) | FindTerm::Measure(_)))
+                    .filter(|(term, _)| matches!(term, FindTerm::Var(_)))
                     .map(|(_, value)| value.clone())
                     .collect(),
             );
@@ -519,13 +467,10 @@ impl NaiveDb {
                         .iter()
                         .enumerate()
                         .map(|(index, term)| match term {
-                            FindTerm::Var(_) | FindTerm::Measure(_) => {
-                                Ok(group[0].0[index].clone())
-                            }
+                            FindTerm::Var(_) => Ok(group[0].0[index].clone()),
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                             FindTerm::Count
                             | FindTerm::Aggregate { .. }
-                            | FindTerm::AggregateMeasure { .. }
                             | FindTerm::Pack { .. } => {
                                 unreachable!("validated: Pack mixes with no other aggregate")
                             }
@@ -542,13 +487,11 @@ impl NaiveDb {
                     // The domain rows already hold measure values at the
                     // measure positions, so the union fold reads them
                     // exactly like plain positions.
-                    FindTerm::Var(_) | FindTerm::Measure(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Var(_) => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
-                    FindTerm::Aggregate { op, .. } | FindTerm::AggregateMeasure { op, .. } => {
-                        fold_position(*op, index, group)
-                    }
+                    FindTerm::Aggregate { op, .. } => fold_position(*op, index, group),
                     FindTerm::Pack { .. } => {
                         unreachable!("validated: Pack heads take the segment path")
                     }
@@ -613,7 +556,7 @@ fn count_vars(rule: &Rule) -> usize {
         *count = (*count).max(usize::from(var.0) + 1);
     }
     fn see_term(count: &mut usize, term: &Term) {
-        if let Term::Var(var) | Term::Measure(var) = term {
+        if let Term::Var(var) = term {
             see(count, *var);
         }
     }
@@ -641,10 +584,8 @@ fn count_vars(rule: &Rule) -> usize {
     }
     for find in &rule.finds {
         match find {
-            FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
-            FindTerm::AggregateMeasure { over, .. }
-            | FindTerm::Aggregate { over, .. }
-            | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Var(var) => see(&mut count, *var),
+            FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => see(&mut count, *over),
             FindTerm::Count => {}
         }
     }
@@ -677,7 +618,6 @@ fn substitute_tree(tree: &ConditionTree, params: &[ParamValue]) -> SubstitutedTr
 fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
     match term {
         Term::Var(var) => Substituted::Var(usize::from(var.0)),
-        Term::Measure(var) => Substituted::Measure(usize::from(var.0)),
         Term::Literal(value) => Substituted::Lit(value.clone()),
         Term::Param(id) => match &params[usize::from(id.0)] {
             ParamValue::Scalar(value) => Substituted::Lit(value.clone()),
@@ -692,16 +632,14 @@ fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
 
 /// Nested loops over the positive atoms: place a fact for the atom at
 /// `index`, extend the assignment, recurse; at the leaf judge the deferred
-/// membership tests, the predicates, and the negated atoms in the Kleene
-/// lattice — `Holds` records the full binding, `Ray` poisons the rule
-/// (`ray` is the OR over bindings, itself commutative), `Fails` drops.
+/// membership tests, the predicates, and the negated atoms — `Holds`
+/// records the full binding, `Fails` drops.
 fn enumerate(
     env: &Env<'_>,
     index: usize,
     assignment: &mut Vec<Option<Value>>,
     pending: &mut Vec<(usize, Value)>,
     out: &mut BTreeSet<Tuple>,
-    ray: &mut bool,
 ) {
     if index == env.atoms.len() {
         match leaf_verdict(env, assignment, pending) {
@@ -718,7 +656,6 @@ fn enumerate(
                         .collect(),
                 ));
             }
-            Verdict3::Ray => *ray = true,
             Verdict3::Fails => {}
         }
         return;
@@ -743,7 +680,7 @@ fn enumerate(
             }
         }
         if admitted {
-            enumerate(env, index + 1, assignment, pending, out, ray);
+            enumerate(env, index + 1, assignment, pending, out);
         }
         for var in bound_here {
             assignment[var] = None;
@@ -766,7 +703,6 @@ fn admit(
     bound_here: &mut Vec<usize>,
 ) -> bool {
     match term {
-        Substituted::Measure(_) => unreachable!("validated: no measure in bindings"),
         Substituted::Lit(value) => constrains(fact_value, field_is_interval, value),
         Substituted::Set(values) => values
             .iter()
@@ -873,20 +809,12 @@ fn negated_matches(
     matched
 }
 
-/// The three-valued verdict of one condition evaluation — the strong
-/// Kleene lattice (`lean/Bumbledb/Query/Aggregates.lean: Verdict3`;
-/// ruled 2026-07-23, R6): `Fails` absorbs `and`, `Holds` absorbs `or`,
-/// `Ray` propagates otherwise. Both connectives are commutative and
-/// associative and conjunction distributes over disjunction, so a
-/// tree's verdict is a function of its leaf multiset — evaluation
-/// order is unobservable — and agrees with DNF lowering by
-/// construction. A binding raises `MeasureOfRay` iff its folded
-/// verdict is `Ray`.
+/// Two-valued verdict of one condition evaluation: `Fails` absorbs
+/// `and`, `Holds` absorbs `or`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict3 {
     Holds,
     Fails,
-    Ray,
 }
 
 impl Verdict3 {
@@ -897,7 +825,6 @@ impl Verdict3 {
     fn and(self, other: Self) -> Self {
         match (self, other) {
             (Self::Fails, _) | (_, Self::Fails) => Self::Fails,
-            (Self::Ray, _) | (_, Self::Ray) => Self::Ray,
             (Self::Holds, Self::Holds) => Self::Holds,
         }
     }
@@ -905,7 +832,6 @@ impl Verdict3 {
     fn or(self, other: Self) -> Self {
         match (self, other) {
             (Self::Holds, _) | (_, Self::Holds) => Self::Holds,
-            (Self::Ray, _) | (_, Self::Ray) => Self::Ray,
             (Self::Fails, Self::Fails) => Self::Fails,
         }
     }
@@ -946,36 +872,8 @@ fn leaf_comparison(
             ),
             Substituted::Lit(value) => Some(value.clone()),
             Substituted::Set(_) => None,
-            // The measure, from the definition — `None` is the ray,
-            // exactly `Value.measure?`'s refusal arm.
-            Substituted::Measure(var) => {
-                let interval = assignment[*var]
-                    .clone()
-                    .expect("validated: predicate variables are bound");
-                match measure_value(&interval) {
-                    Ok(duration) => Some(Value::U64(duration)),
-                    Err(QueryError::MeasureOfRay) => None,
-                    Err(other) => panic!("measure raises only MeasureOfRay: {other:?}"),
-                }
-            }
         }
     };
-    // A measure side: the one partial leaf — a ray renders `Ray`, the
-    // lattice decides whether the surrounding tree demands it.
-    if matches!(lhs, Substituted::Measure(_)) || matches!(rhs, Substituted::Measure(_)) {
-        let (Some(left), Some(right)) = (resolve(lhs), resolve(rhs)) else {
-            return Verdict3::Ray;
-        };
-        let a = point(&left).expect("the measure and its bound are integers");
-        let b = point(&right).expect("the measure and its bound are integers");
-        return Verdict3::of(match op {
-            CmpOp::Lt => a < b,
-            CmpOp::Le => a <= b,
-            CmpOp::Gt => a > b,
-            CmpOp::Ge => a >= b,
-            _ => unreachable!("validated: measures compare under order operators"),
-        });
-    }
     // A set is legal on one side of Eq only: "any element" — value in set.
     if let (CmpOp::Eq, Substituted::Set(values), other)
     | (CmpOp::Eq, other, Substituted::Set(values)) = (op, lhs, rhs)
@@ -1057,14 +955,8 @@ fn pack_group_rows(
             .enumerate()
             .map(|(index, find)| match find {
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
-                FindTerm::Measure(var) => {
-                    measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
-                }
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
-                FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::AggregateMeasure { .. }
-                | FindTerm::Pack { .. } => {
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
                 }
             })
@@ -1085,15 +977,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
         for find in finds {
             match find {
                 FindTerm::Var(var) => key.push(binding.0[usize::from(var.0)].clone()),
-                // A measure find is a group-key position: the projected
-                // value is the measure, from the definition.
-                FindTerm::Measure(var) => {
-                    key.push(Value::U64(measure_value(&binding.0[usize::from(var.0)])?));
-                }
-                FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::AggregateMeasure { .. }
-                | FindTerm::Pack { .. } => {}
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
             }
         }
         groups.entry(Tuple(key)).or_default().push(binding);
@@ -1109,16 +993,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 .enumerate()
                 .map(|(index, find)| match find {
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
-                    FindTerm::Measure(var) => {
-                        measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
-                    }
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
                     FindTerm::Aggregate { op, over } => fold(*op, *over, group, index),
-                    FindTerm::AggregateMeasure { op, over } => {
-                        fold_duration(*op, *over, group, index)
-                    }
                     FindTerm::Pack { .. } => {
                         unreachable!("validated: Pack heads take the segment path")
                     }
@@ -1162,36 +1040,6 @@ fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, Qu
                 .expect("groups are nonempty");
             Ok(picked.clone())
         }
-    }
-}
-
-/// One measure fold over a group's binding set: measures computed from
-/// the definition (a ray raises), then folded exactly as `Sum`/`Min`/
-/// `Max` over u64 values — Sum in i128 with the one finalize range check.
-fn fold_duration(
-    op: FoldOp,
-    over: VarId,
-    group: &[&Tuple],
-    find: usize,
-) -> Result<Value, QueryError> {
-    let measures: Result<Vec<u64>, QueryError> = group
-        .iter()
-        .map(|binding| measure_value(&binding.0[usize::from(over.0)]))
-        .collect();
-    let measures = measures?;
-    match op {
-        FoldOp::Sum => {
-            let total: i128 = measures.iter().map(|m| i128::from(*m)).sum();
-            u64::try_from(total)
-                .map(Value::U64)
-                .map_err(|_| QueryError::Overflow { find })
-        }
-        FoldOp::Min => Ok(Value::U64(
-            measures.iter().copied().min().expect("groups are nonempty"),
-        )),
-        FoldOp::Max => Ok(Value::U64(
-            measures.iter().copied().max().expect("groups are nonempty"),
-        )),
     }
 }
 

@@ -105,11 +105,8 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
         .finds
         .iter()
         .filter_map(|f| match f {
-            FindTerm::Var(v) | FindTerm::Measure(v) => Some(*v),
-            FindTerm::Count
-            | FindTerm::Pack { .. }
-            | FindTerm::Aggregate { .. }
-            | FindTerm::AggregateMeasure { .. } => None,
+            FindTerm::Var(v) => Some(*v),
+            FindTerm::Count | FindTerm::Pack { .. } | FindTerm::Aggregate { .. } => None,
         })
         .collect();
     validate(&fj_plan, &normalized, schema, &sink_vars).expect("valid plan")

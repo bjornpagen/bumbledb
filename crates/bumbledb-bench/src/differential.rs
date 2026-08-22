@@ -65,8 +65,7 @@ pub enum ConditionalVerdict {
 }
 
 /// One query's outcome, on either side: the answer set, or one of the
-/// defined typed runtime errors (aggregate overflow; the measure of a
-/// ray — the engine's one runtime type error; and
+/// defined typed runtime errors (aggregate overflow; and
 /// [`bumbledb::Error::DerivedBudgetExceeded`] on a derived-tuples trip.
 /// Naive reach is deliberately unbudgeted, so an engine trip surfaces
 /// as a readable divergence, never a harness crash).
@@ -74,10 +73,9 @@ pub enum ConditionalVerdict {
 pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
-    MeasureOfRay,
     /// [`bumbledb::Error::DerivedBudgetExceeded`] — a typed execution
-    /// error (`MeasureOfRay`'s model), carried as identity. Naive is
-    /// unbudgeted, so an engine trip is a readable divergence.
+    /// error, carried as identity. Naive is unbudgeted, so an engine
+    /// trip is a readable divergence.
     DerivedBudget,
 }
 
@@ -142,7 +140,6 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                 let model = match naive.query(query, params) {
                     Ok(answers) => Answers::Ok(answers),
                     Err(QueryError::Overflow { .. }) => Answers::Overflow,
-                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
                 };
                 if engine != model {
                     return Err(Divergence::Query {
@@ -339,7 +336,6 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
                 .collect(),
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
-        Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
         Err(Error::DerivedBudgetExceeded { .. }) => Answers::DerivedBudget,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }

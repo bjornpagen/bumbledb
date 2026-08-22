@@ -988,38 +988,6 @@ pub enum ValidationError {
     PackInputType {
         find: FindIndex,
     },
-    /// A `Term::Measure` in an atom binding: the measure is a
-    /// computation over a bound interval variable, not a bindable value
-    /// — its legal positions are a find term, the aggregated input of
-    /// `Sum`/`Min`/`Max`, and one side of an order comparison
-    /// (`docs/architecture/20-query-ir.md`, § the measure).
-    DurationInBinding {
-        atom: AtomIndex,
-        field: FieldId,
-    },
-    /// `Duration(v)` over a variable that did not resolve to an interval
-    /// type: the measure is defined by the interval denotation and by
-    /// nothing else.
-    DurationOverNonInterval {
-        var: VarId,
-    },
-    /// A `FindTerm::AggregateMeasure` whose op is not `Sum`/`Min`/`Max`
-    /// — `Count` is nullary and Pack coalesces intervals, not measures.
-    DurationAggregateOp {
-        find: FindIndex,
-    },
-    /// A `Term::Measure` under any operator but the order comparisons
-    /// (`Lt`/`Le`/`Gt`/`Ge`) — the measure's one comparison position
-    /// (`docs/architecture/20-query-ir.md`, § the measure).
-    DurationComparisonOperator {
-        index: usize,
-    },
-    /// `Duration` on both sides of one comparison: the legal shape is one
-    /// measure side against a u64 term or literal — write two
-    /// comparisons against a shared bound, or compute in the host.
-    DurationBothSides {
-        index: usize,
-    },
     /// Planner cap: the exhaustive left-deep DP accepts at most
     /// `plan::planner::MAX_OCCURRENCES` atom occurrences — negated
     /// occurrences counted, they consume plan-time work.
@@ -1079,12 +1047,6 @@ pub enum ValidationError {
     AggregateInInterior {
         interior: InteriorId,
     },
-    /// A measure find on an interior or rec **head**.
-    MeasureInInterior {
-        interior: InteriorId,
-    },
-    /// A measure site in a rec **body** (comparison / binding).
-    MeasureInRec,
 }
 
 /// Which side of a containment statement the commit-time judgment found
@@ -1829,35 +1791,14 @@ pub enum Error {
     PointParamAtCeiling {
         param: ParamId,
     },
-    /// `Duration` reached a ray: an interval with `end == MAX` denotes
-    /// `[s, ∞)`, and a ray has no finite measure — **the engine's one
-    /// runtime type error** (`docs/architecture/10-data-model.md`, the
-    /// point-domain law). Boundedness is not provable at validation, so
-    /// the subtraction path tests `end == MAX` and raises here, carrying
-    /// the offending fact's two encoded interval words (order-preserving
-    /// column form — I64 endpoints are the sign-flipped biased words).
-    /// The alternative — silently yielding `MAX` — would fabricate
-    /// arithmetic. Hosts exclude rays first: an `Allen` predicate
-    /// (`DISJOINT` from the ray-detecting probe `[MAX−1, MAX)`) or a
-    /// bounded-end filter on the measured atom runs before the measure
-    /// by the filter-order law (`docs/architecture/20-query-ir.md`,
-    /// § the measure).
-    MeasureOfRay {
-        /// The offending interval's encoded start word.
-        start: u64,
-        /// The offending interval's encoded end word (`u64::MAX` — the
-        /// ray's ∞ in both element encodings).
-        end: u64,
-    },
     /// A capacity statement's Duration weight or dependent Duration bound
     /// reached a ray at judge time: an interval with `end == MAX` denotes
     /// `[s, ∞)`, and a ray has no finite measure — the typed COMMIT
-    /// refusal naming the row (ruled 2026-07-24, C10; the
-    /// [`Error::MeasureOfRay`] precedent enforced at the law site).
-    /// Boundedness is not provable at validation, so the measure path
-    /// tests `end == MAX` and refuses the commit whole — never a
-    /// violation (the law is not judged false; its measure is undefined)
-    /// and never a silent `MAX` (fabricated arithmetic).
+    /// refusal naming the row (ruled 2026-07-24, C10). Boundedness is
+    /// not provable at validation, so the measure path tests
+    /// `end == MAX` and refuses the commit whole — never a violation
+    /// (the law is not judged false; its measure is undefined) and never
+    /// a silent `MAX` (fabricated arithmetic).
     CapacityRayMeasure {
         /// The capacity statement whose measure met the ray.
         statement: StatementId,
@@ -1872,7 +1813,8 @@ pub enum Error {
     /// *size* is data-shaped: a foreign query may legally demand a
     /// quadratic closure, and an unbounded table crossing the trust
     /// boundary is what the recorded v0 OS-backstop argument never
-    /// priced. On `MeasureOfRay`'s model: aborts the query, the snapshot
+    /// priced. On the same abort-not-poison model as a capacity ray
+    /// refusal: aborts the query, the snapshot
     /// stays usable, the payload is counts — never strings. The
     /// documented default
     /// ([`crate::api::prepared::reach::DEFAULT_REACH_ROUNDS`] /
@@ -1926,7 +1868,6 @@ pub enum ErrorFamily {
     ForeignPreparedQuery,
     ForeignWitness,
     Param,
-    MeasureOfRay,
     CapacityRayMeasure,
     DerivedBudgetExceeded,
     Overflow,
@@ -2008,7 +1949,6 @@ impl Error {
             | Self::ParamScalarExpected { .. }
             | Self::ParamElementTypeMismatch { .. }
             | Self::PointParamAtCeiling { .. } => family_only(ErrorFamily::Param),
-            Self::MeasureOfRay { .. } => family_only(ErrorFamily::MeasureOfRay),
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
             Self::DerivedBudgetExceeded { .. } => family_only(ErrorFamily::DerivedBudgetExceeded),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),

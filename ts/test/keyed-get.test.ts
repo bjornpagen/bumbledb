@@ -148,9 +148,12 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			freshGrp = g.id
 		})
 		assert.equal(outcome.tag, "accepted", "the commit lands")
-		assert.ok(freshGrp !== undefined)
+		if (freshGrp === undefined) {
+			throw new Error("the write minted a group id")
+		}
+		const committedGrp = freshGrp
 		assert.equal(
-			db.read((i) => i.get(Program, programGrpKey, { grp: freshGrp })),
+			db.read((i) => i.get(Program, programGrpKey, { grp: committedGrp })),
 			preCommit,
 			"the committed keyed answer agrees with the pre-commit one"
 		)

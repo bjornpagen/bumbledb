@@ -9,17 +9,24 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::corpus;
-    use crate::corpus_gen::{GenConfig, Scale};
-    use crate::families::{self, param_args};
+    use crate::families;
     use crate::schema::Ledger;
     use bumbledb::Db;
 
+    #[cfg(feature = "obs")]
+    use crate::corpus;
+    #[cfg(feature = "obs")]
+    use crate::corpus_gen::{GenConfig, Scale};
+    #[cfg(feature = "obs")]
+    use crate::families::param_args;
+
+    #[cfg(feature = "obs")]
     const CFG: GenConfig = GenConfig {
         seed: 1,
         scale: Scale::S,
     };
 
+    #[cfg(feature = "obs")]
     fn corpus_db(tag: &str) -> (std::path::PathBuf, Db<Ledger>) {
         let dir = std::env::temp_dir().join(format!("bumbledb-tripwires-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -71,34 +78,6 @@ mod tests {
                 "{membership} must not key-probe"
             );
         }
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The calendar aggregate family's plan regime, pinned (structural, no wall
-    /// clock — docs/architecture/60-validation.md § the calendar
-    /// benchmark):
-    /// - `claim_hours` binds the claim key (`source`), so the fold's
-    ///   distinct-bindings elision engages (the `balance` regime);
-    #[test]
-    fn calendar_family_regimes_are_pinned() {
-        use crate::calendar::{Scheduling, families as cal};
-        let dir = std::env::temp_dir().join("bumbledb-tripwires-calendar");
-        let _ = std::fs::remove_dir_all(&dir);
-        let db = bumbledb::Db::create(&dir, Scheduling)
-            .expect("create")
-            .expect("accepted");
-        let prepared = |name: &str| {
-            let family = cal::all()
-                .iter()
-                .find(|f| f.name == name)
-                .expect("registered");
-            db.prepare(&(family.query)()).expect("prepares")
-        };
-        assert!(
-            prepared("claim_hours").distinct_bindings(),
-            "the source binding covers the claim key — the fold elides its seen set"
-        );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -40,45 +40,6 @@ fn normalize_rule(
     normalize_rule_with(schema, signatures, rule, rule.classified_comparisons())
 }
 
-/// A written rule's **ray probe** (the Kleene verdict algebra, ruled
-/// 2026-07-23, R6): the rule's atoms, negations, and memberships with
-/// every condition replaced by ONE filter — `measured` intersects the
-/// ray probe `[MAX−1, ∞)`, which only rays do (bounded ends encode
-/// strictly below the ∞ sentinel and half-open adjacency excludes the
-/// touch) — so the probe enumerates exactly the bindings whose measured
-/// interval is a ray. The prepared query folds each one's verdict over
-/// the written rule's disjuncts (`exec/verdict.rs`) and raises
-/// `MeasureOfRay` iff some verdict is Ray.
-#[must_use]
-pub fn normalize_ray_probe(
-    schema: &Schema,
-    signatures: &[&crate::ir::validate::Signature],
-    rule: &RuleWitness<'_>,
-    measured: VarId,
-) -> NormalizedQuery {
-    let probe = match rule.var_type(measured) {
-        ValueType::Interval {
-            element: bumbledb_theory::schema::IntervalElement::U64,
-            ..
-        } => Value::IntervalU64(
-            bumbledb_theory::interval::Interval::ray(u64::MAX - 1).expect("below the ceiling"),
-        ),
-        ValueType::Interval {
-            element: bumbledb_theory::schema::IntervalElement::I64,
-            ..
-        } => Value::IntervalI64(
-            bumbledb_theory::interval::Interval::ray(i64::MAX - 1).expect("below the ceiling"),
-        ),
-        other => unreachable!("validated: the measure reads an interval variable, got {other:?}"),
-    };
-    let is_ray = crate::ir::validate::ClassifiedComparison::AllenVarConst {
-        var: measured,
-        other: crate::ir::validate::SealedConst::Literal(probe),
-        mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
-    };
-    normalize_rule_with(schema, signatures, rule, std::slice::from_ref(&is_ray))
-}
-
 /// [`normalize_rule`]'s body over an explicit comparison list — the one
 /// extra caller is the ray probe, whose comparisons are not the rule's.
 fn normalize_rule_with(
@@ -121,10 +82,10 @@ fn normalize_rule_with(
         })
         .collect();
 
-    let (residuals, word_residuals, allen_residuals, duration_residuals) = {
+    let (residuals, word_residuals, allen_residuals) = {
         let mut span = crate::obs::span(crate::obs::names::PLACE_COMPARISONS);
         let placed = place_comparisons(comparisons, &mut occurrences);
-        span.set_count((placed.0.len() + placed.1.len() + placed.2.len() + placed.3.len()) as u64);
+        span.set_count((placed.0.len() + placed.1.len() + placed.2.len()) as u64);
         placed
     };
 
@@ -154,10 +115,6 @@ fn normalize_rule_with(
                 let (left, right, _) = r.allen_sides();
                 (left.var(), right.var())
             }))
-            .chain(duration_residuals.iter().map(|r| {
-                let (interval, scalar, _) = r.duration_sides();
-                (interval.var(), scalar.var())
-            }))
             .all(|(lhs, rhs)| {
                 !occurrences
                     .iter()
@@ -186,7 +143,6 @@ fn normalize_rule_with(
         residuals,
         word_residuals,
         allen_residuals,
-        duration_residuals,
         anti_probes,
         slot_widths,
         dead,
@@ -237,9 +193,7 @@ fn lower_atom(
     // Pass 1 — variable positions: the first *domain* binding of each
     // variable (a scalar field, or an interval field read by value).
     // Membership positions bind no variable — they are conditions, lowered
-    // to filters in pass 2. `Term::Measure` never appears in a binding
-    // (validation: `DurationInBinding`), so both passes match it
-    // unreachable.
+    // to filters in pass 2.
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
@@ -323,7 +277,6 @@ fn lower_atom(
                     });
                 }
             }
-            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
             Term::Literal(value) => {
                 let membership = field_type.is_interval()
                     && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));

@@ -24,7 +24,6 @@ mod folded;
 mod ground;
 mod key_probe;
 mod latch;
-mod measure;
 mod pack;
 mod params;
 mod reach;

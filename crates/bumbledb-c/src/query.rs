@@ -34,7 +34,6 @@ pub enum bdb_term_kind {
     Param,
     ParamSet,
     Literal,
-    Measure,
 }
 
 c_tag!(bdb_term_kind {
@@ -42,10 +41,9 @@ c_tag!(bdb_term_kind {
     Param,
     ParamSet,
     Literal,
-    Measure,
 });
 
-/// One term. `var` is read for `Var`/`Measure`, `param` for
+/// One term. `var` is read for `Var`, `param` for
 /// `Param`/`ParamSet`, `literal` for `Literal`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -119,22 +117,18 @@ pub struct bdb_agg_op {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum bdb_find_term_kind {
     Var,
-    Measure,
     Aggregate,
-    AggregateMeasure,
     Count,
 }
 
 c_tag!(bdb_find_term_kind {
     Var,
-    Measure,
     Aggregate,
-    AggregateMeasure,
     Count,
 });
 
-/// One find term. `var` is read for `Var`/`Measure`; `op` plus `over` for
-/// `Aggregate`/`AggregateMeasure` (folds always carry `over`); `Count` is
+/// One find term. `var` is read for `Var`; `op` plus `over` for
+/// `Aggregate` (folds always carry `over`); `Count` is
 /// nullary and does not read `over`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -331,7 +325,6 @@ fn term_in(view: &bdb_term) -> BridgeResult<Term> {
         bdb_term_kind::Param => Term::Param(ParamId(view.param)),
         bdb_term_kind::ParamSet => Term::ParamSet(ParamId(view.param)),
         bdb_term_kind::Literal => Term::Literal(value_in(&view.literal)?),
-        bdb_term_kind::Measure => Term::Measure(VarId(view.var)),
     })
 }
 
@@ -378,7 +371,6 @@ fn head_op_in(op: u32) -> BridgeResult<HeadOp> {
 fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
     Ok(match tag_in::<bdb_find_term_kind>(view.kind)? {
         bdb_find_term_kind::Var => FindTerm::Var(VarId(view.var)),
-        bdb_find_term_kind::Measure => FindTerm::Measure(VarId(view.var)),
         bdb_find_term_kind::Count => FindTerm::Count,
         bdb_find_term_kind::Aggregate => {
             let op = match tag_in::<bdb_head_op>(view.op.kind)? {
@@ -401,10 +393,6 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
                 over: VarId(view.over),
             }
         }
-        bdb_find_term_kind::AggregateMeasure => FindTerm::AggregateMeasure {
-            op: fold_op_in(view.op)?,
-            over: VarId(view.over),
-        },
     })
 }
 

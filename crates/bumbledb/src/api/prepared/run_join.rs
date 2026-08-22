@@ -47,9 +47,6 @@ where
     // per (generation, resolved filters) like any occurrence
     // (docs/architecture/40-execution.md, § anti-probe filters) — and
     // measured positive occurrences, whose whole filter list
-    // `split_filters` pins residual so the Eq runs before the
-    // subtraction (the filter-order law,
-    // docs/architecture/20-query-ir.md § the measure).
     debug_assert!(
         resolved_filters
             .iter()
@@ -57,13 +54,7 @@ where
             .all(|(occ_idx, filters)| {
                 plan.is_negated(crate::ir::normalize::OccId(
                     u16::try_from(occ_idx).expect("occurrence ids fit u16"),
-                )) || filters.iter().any(|f| {
-                    matches!(
-                        f,
-                        FilterPredicate::DurationCompare { .. }
-                            | FilterPredicate::DurationFieldsCompare { .. }
-                    )
-                }) || filters.iter().all(|f| {
+                )) || filters.iter().all(|f| {
                     !matches!(
                         f,
                         FilterPredicate::Compare {
@@ -73,7 +64,7 @@ where
                     )
                 })
             }),
-        "an Eq-constant reaches a positive occurrence's view filters only under a measure predicate"
+        "an Eq-constant does not reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         // A discharged occurrence (grounding-eliminated or grounding-folded) is

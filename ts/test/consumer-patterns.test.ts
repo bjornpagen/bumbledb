@@ -147,9 +147,11 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		assert.equal(db.read((i) => i.scan(grp)).length, report.grpRows)
 		assert.equal(db.read((i) => i.scan(grpMember)).length, report.grpMemberRows)
 		const sheetRow = must(
-			db.read((i) => i.scan(sheet)).find(function byName(row) {
-				return row.name === "child-sheet"
-			})
+			db
+				.read((i) => i.scan(sheet))
+				.find(function byName(row) {
+					return row.name === "child-sheet"
+				})
 		)
 		assert.equal(String(sheetRow.id), report.sheet)
 		const attemptRow = must(db.read((i) => i.scan(attempt))[0])
@@ -292,8 +294,14 @@ describe("the repair loop against the real theory", function repairLoop() {
 		assert.equal(violation.kind, "capacity")
 		assert.ok(violation.facts.length > 0, "the uncovered parent is cited")
 		/** Rejection is data and the store is untouched — the repair loop's premise. */
-		assert.deepEqual(db.read((i) => i.scan(grp)), grpsBefore)
-		assert.deepEqual(db.read((i) => i.scan(grpMember)), membersBefore)
+		assert.deepEqual(
+			db.read((i) => i.scan(grp)),
+			grpsBefore
+		)
+		assert.deepEqual(
+			db.read((i) => i.scan(grpMember)),
+			membersBefore
+		)
 	})
 
 	test("the rebuilt delta commits (delta rebuild after rejection)", function rebuiltSwap() {
@@ -411,9 +419,11 @@ describe("the repair loop against the real theory", function repairLoop() {
 
 	test("a delete that would dangle references is rejected citing the containments by identity, store untouched", function danglingDelete() {
 		const target = must(
-			db.read((i) => i.scan(grp)).find(function byId(row) {
-				return row.id === must(ids.planGrps[0])
-			})
+			db
+				.read((i) => i.scan(grp))
+				.find(function byId(row) {
+					return row.id === must(ids.planGrps[0])
+				})
 		)
 		const before = db.read((i) => i.scan(grp))
 		const written = db.write(function badDelete(tx) {
@@ -433,7 +443,10 @@ describe("the repair loop against the real theory", function repairLoop() {
 			}
 			assert.ok(violation.direction !== undefined, "containment violations carry a direction")
 		}
-		assert.deepEqual(db.read((i) => i.scan(grp)), before)
+		assert.deepEqual(
+			db.read((i) => i.scan(grp)),
+			before
+		)
 	})
 
 	test("the sheet resupply update (delete + insert with the SAME fresh id) commits in one delta", function sheetResupply() {
@@ -518,7 +531,11 @@ describe("the repair loop against the real theory", function repairLoop() {
 			db.read((i) => i.get(grpMember, { grp: membership?.grp }))
 		}, /missing field objective/)
 		const attemptId = must(ids.attempt)
-		assert.equal(db.read((i) => i.get(attemptText, { attempt: attemptId })), undefined, "keyed miss is undefined")
+		assert.equal(
+			db.read((i) => i.get(attemptText, { attempt: attemptId })),
+			undefined,
+			"keyed miss is undefined"
+		)
 	})
 
 	test("a resupplied duplicate fresh id violates the engine-materialized auto-key: statement is undefined (the repair loop's identity gap)", function autoKeyGap() {

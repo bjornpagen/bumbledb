@@ -232,7 +232,6 @@ wire_tags! {
         PARAM: Term::Param(_) => "param",
         PARAM_SET: Term::ParamSet(_) => "paramSet",
         LITERAL: Term::Literal(_) => "literal",
-        MEASURE: Term::Measure(_) => "measure",
     }
 }
 
@@ -275,8 +274,6 @@ wire_tags! {
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",
-        MEASURE: FindTerm::Measure(_) => "measure",
-        AGGREGATE_MEASURE: FindTerm::AggregateMeasure { .. } => "aggregateMeasure",
     }
 }
 
@@ -362,7 +359,6 @@ wire_tags! {
         FOREIGN_PREPARED: ErrorFamily::ForeignPreparedQuery => "foreignPrepared",
         FOREIGN_WITNESS: ErrorFamily::ForeignWitness => "foreignWitness",
         PARAM: ErrorFamily::Param => "param",
-        MEASURE_OF_RAY: ErrorFamily::MeasureOfRay => "measureOfRay",
         CAPACITY_RAY_MEASURE: ErrorFamily::CapacityRayMeasure => "capacityRayMeasure",
         DERIVED_BUDGET_EXCEEDED: ErrorFamily::DerivedBudgetExceeded => "derivedBudgetExceeded",
         OVERFLOW: ErrorFamily::Overflow => "overflow",

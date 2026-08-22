@@ -1792,23 +1792,8 @@ mod fixed_width_intervals {
         })
     }
 
-    fn measure_query() -> Query {
-        Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-            atoms: vec![Atom {
-                source: bumbledb::AtomSource::Edb(Slot::RELATION),
-                bindings: vec![
-                    (FieldId(1), Term::Var(VarId(1))),
-                    (FieldId(2), Term::Var(VarId(0))),
-                ],
-            }],
-            negated: vec![],
-            conditions: vec![],
-        })
-    }
-
     #[test]
-    fn membership_allen_and_measure_run_over_derived_bounds() {
+    fn membership_and_allen_run_over_derived_bounds() {
         let dir = crate::common::TempDir::new("macro-fixed-kernels");
         let db = Db::create(dir.path(), Jukebox)
             .expect("create")
@@ -1868,24 +1853,6 @@ mod fixed_width_intervals {
             Ok(())
         })
         .expect("allen");
-
-        // The measure of a fixed-width value is the constant w — the
-        // recorded choice: Duration accepts it trivially
-        // (`lean/Bumbledb/Values.lean: fixed_measure_const_u64`).
-        let mut measures = db.prepare(&measure_query()).expect("prepare");
-        db.read(|snap| {
-            let answers = snap.execute_collect(&mut measures, &[] as &[bumbledb::BindValue])?;
-            assert_eq!(answers.len(), 3);
-            for i in 0..answers.len() {
-                assert_eq!(
-                    answers.get(i, 1),
-                    AnswerValue::U64(5),
-                    "Duration of a fixed-width value is the constant w"
-                );
-            }
-            Ok(())
-        })
-        .expect("measure");
     }
 }
 

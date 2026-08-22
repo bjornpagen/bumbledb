@@ -163,35 +163,6 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        // Measure residuals: the line-parallel twin of `run_node`'s pass
-        // — per-parent Slot reads, subtraction feeding the ordinary word
-        // compare. A ray never survives the comparison (its verdict is
-        // Ray, not Fails; the Kleene verdict algebra, R6 — the prepared
-        // query's ray-probe pass renders it).
-        for spec in &self.precompute[node_idx].duration_residual_slots {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let interval_word = super::word_base(cover_vars, spec.interval, |v| self.width_of(v));
-            let scalar_word = super::word_base(cover_vars, spec.scalar, |v| self.width_of(v));
-            let n = scratch.survivors.len();
-            grow_scratch(&mut scratch.mask, n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
-                };
-                let start = value(interval_word, spec.interval_slot, 0);
-                let end = value(interval_word, spec.interval_slot, 1);
-                let pass = end != u64::MAX
-                    && spec
-                        .op
-                        .compare(&(end - start), &value(scalar_word, spec.scalar_slot, 0));
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-        }
         counters.phase_end(node_idx, JoinPhase::Residual);
 
         // Sibling passes: per-parent Slot reads and per-parent cursors —

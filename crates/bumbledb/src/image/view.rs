@@ -12,8 +12,7 @@ mod eval;
 
 pub use apply::apply;
 pub(crate) use eval::{
-    Loaded, OperandAddr, Operands, SlotOps, holds, is_prepare_resolvable, push_handle,
-    render_filter, resolve_filter_into,
+    Loaded, OperandAddr, Operands, holds, is_prepare_resolvable, render_filter, resolve_filter_into,
 };
 
 #[cfg(test)]
@@ -87,11 +86,6 @@ pub enum ViewWordSource {
     Word(u64),
     Param(crate::ir::ParamId),
 }
-
-/// [`FilterPredicate::DurationCompare`]'s constant side — a u64 word or a
-/// bind-time param. Same shape as [`ViewWordSource`]; a distinct name so
-/// the filter site documents the measure, not a membership point.
-pub type WordOrParam = ViewWordSource;
 
 /// [`FilterPredicate::AnyPointIn`]'s set: a bind-time param-set marker or
 /// its resolved word list. The param slice still holds [`Const::WordSet`].
@@ -217,52 +211,9 @@ pub enum FilterPredicate {
         field: OperandAddr,
         outer: IntervalConst,
     },
-    /// The measure against a constant: `(end − start) <op> value` over
-    /// the interval field's two encoded column words — one subtraction,
-    /// exact for both element types (the encodings are unit-spaced
-    /// order-preserving maps onto u64 words: u64 is the identity, I64
-    /// the +2⁶³ bias, so the bias cancels and `end > start` by the
-    /// constructor invariant keeps the difference exact). `op` is an
-    /// order operator and `value` a u64 word (`Word` or `Param`) by
-    /// validation.
-    ///
-    /// **The filter-order law (normative for both measure kinds):** the
-    /// measure evaluates only on facts surviving the atom's *other*
-    /// filters — an `Allen` ray filter or a bounded-end filter on the
-    /// same atom always runs first, so a filtered fact never reaches the
-    /// subtraction. On the survivors a ray (`end == MAX`) never passes
-    /// the comparison AND never errors here: its verdict is Ray, not
-    /// Fails (the Kleene verdict algebra, ruled 2026-07-23, R6), and the
-    /// prepared query's ray-probe pass renders it after the rule loop —
-    /// [`crate::Error::MeasureOfRay`] iff some complete binding's folded
-    /// verdict is Ray (`exec/verdict.rs`).
-    DurationCompare {
-        field: OperandAddr,
-        op: crate::ir::OrderCmp,
-        value: WordOrParam,
-    },
-    /// The same-atom measure comparison: `(end − start) <op> scalar`
-    /// where the u64 side is another field of the same fact (the
-    /// lowering of `Duration(v) <op> w` with both variables bound on one
-    /// occurrence). Ray semantics and the filter-order law as
-    /// [`FilterPredicate::DurationCompare`].
-    DurationFieldsCompare {
-        interval: OperandAddr,
-        op: crate::ir::OrderCmp,
-        scalar: OperandAddr,
-    },
 }
 
 impl FilterPredicate {
-    /// The measure kinds — evaluated last by the filter-order law.
-    #[must_use]
-    pub(crate) fn is_measure(&self) -> bool {
-        matches!(
-            self,
-            Self::DurationCompare { .. } | Self::DurationFieldsCompare { .. }
-        )
-    }
-
     /// Whole-value or word residual sides — kind-grouped lists only.
     pub(crate) fn compare_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::WordCmp) {
         match *self {
@@ -276,18 +227,6 @@ impl FilterPredicate {
         match *self {
             Self::FieldsAllen { left, right, mask } => (left, right, mask),
             _ => unreachable!("kind-grouped Allen residual"),
-        }
-    }
-
-    /// Measure residual sides — kind-grouped lists only.
-    pub(crate) fn duration_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::OrderCmp) {
-        match *self {
-            Self::DurationFieldsCompare {
-                interval,
-                scalar,
-                op,
-            } => (interval, scalar, op),
-            _ => unreachable!("kind-grouped duration residual"),
         }
     }
 }

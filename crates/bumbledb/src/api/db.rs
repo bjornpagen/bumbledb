@@ -392,7 +392,6 @@ impl<S> Db<S> {
     pub fn schema(&self) -> &Schema {
         self.schema.as_ref()
     }
-
 }
 
 /// One parked read lease and the generation it saw.

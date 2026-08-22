@@ -52,17 +52,15 @@ with key order exactly as the TS lowering's object literals insert it
 - headTerm — `{"kind":"var"}` |
   `{"kind":"aggregate","op":"sum"|"min"|"max"|"count"|"pack"}`
 - rule — `{"finds":[…],"atoms":[…],"negated":[…],"conditions":[…]}`
-- find — `{"kind":"var","var":N}` | `{"kind":"measure","var":N}` |
+- find — `{"kind":"var","var":N}` |
   `{"kind":"count"}` | `{"kind":"pack","over":N}` |
   `{"kind":"aggregate","op":AGG,"over":N}` |
-  `{"kind":"aggregateMeasure","op":AGG,"over":N}`
 - AGG — `{"kind":"sum"}` | `{"kind":"min"}` | `{"kind":"max"}`
 - atom — `{"source":{"kind":"edb","relation":N}|{"kind":"interior","interior":N},
   "bindings":[[fieldId, term]…]}` (an interior atom's field ids address head
   POSITIONS; binding order is written order)
 - term — `{"kind":"var","var":N}` | `{"kind":"param","param":N}` |
-  `{"kind":"paramSet","param":N}` | `{"kind":"literal","value":V}` |
-  `{"kind":"measure","var":N}`
+  `{"kind":"paramSet","param":N}` | `{"kind":"literal","value":V}`
 - condition — `{"kind":"leaf","cmp":CMP}` |
   `{"kind":"and"|"or","children":[…]}`
 - CMP — `{"op":OP,"lhs":term,"rhs":term}`; OP —
@@ -120,7 +118,6 @@ production fails the test, as does a case naming an unknown production.
 | `allen-mask-union` | a `\|`-united mask (`BEFORE\|MEETS`) |
 | `negation` | `!atom` — the anti-join |
 | `agg-sum` `agg-min` `agg-max` `agg-count` `agg-pack` | the five remaining aggregates |
-| `duration` | the measure: `Duration(v)` finds, folds, and comparisons |
 | `named-columns` | `name: Agg(…)` head naming (call-site only; the IR is positional) |
 | `multi-rule-union` | several rules, one head — set union |
 | `rec` | `rec name(...)` lines union into one Rec |

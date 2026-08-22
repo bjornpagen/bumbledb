@@ -248,7 +248,6 @@ enum SelValue {
 enum Term {
     Var(Name),
     Param(Param),
-    Measure(Name),
     Lit(Lit),
 }
 
@@ -335,10 +334,8 @@ impl AggOp {
 /// variable names are a debugging sidecar the engine never stores.
 enum HeadTerm {
     Var(Name),
-    Measure(Name),
     Count,
     Agg { op: AggOp, over: Name },
-    AggMeasure { op: AggOp, over: Name },
 }
 
 /// How a parsed rule was introduced: a keyword, or a bare main rule.
@@ -665,32 +662,17 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
-    let measure = first.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_)));
-    let over = if measure {
-        if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
-            return fail(
-                first.span,
-                "query!: the measure folds under Sum/Min/Max only \
-                 (docs/architecture/20-query-ir.md § the measure)",
-            );
-        }
-        let (mut inner, _) = take_paren_group(&mut arg, "the measured variable")?;
-        let var = expect_ident(&mut inner, "a variable")?;
-        if let Some(extra) = inner.next() {
-            return fail(extra.span(), "query!: Duration takes one variable");
-        }
-        var
-    } else {
-        first
-    };
+    if first.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_))) {
+        return fail(
+            first.span,
+            "query!: Duration is gone — compute end − start on the host",
+        );
+    }
+    let over = first;
     if let Some(extra) = arg.next() {
         return fail(extra.span(), "query!: the aggregate takes one argument");
     }
-    Ok(if measure {
-        HeadTerm::AggMeasure { op, over }
-    } else {
-        HeadTerm::Agg { op, over }
-    })
+    Ok(HeadTerm::Agg { op, over })
 }
 
 /// Parses one head term: a variable, `Duration(v)`, an aggregate, or a
@@ -727,12 +709,10 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         return parse_agg(tokens, op);
     }
     if name.text == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
-        let (mut inner, _) = take_paren_group(tokens, "the measured variable")?;
-        let var = expect_ident(&mut inner, "a variable")?;
-        if let Some(extra) = inner.next() {
-            return fail(extra.span(), "query!: Duration takes one variable");
-        }
-        return Ok(HeadTerm::Measure(var));
+        return fail(
+            name.span,
+            "query!: Duration is gone — compute end − start on the host",
+        );
     }
     Ok(HeadTerm::Var(name))
 }
@@ -873,12 +853,10 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
             return Ok(Term::Lit(Lit::Bool(false)));
         }
         if word == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
-            let (mut inner, _) = take_paren_group(tokens, "the measured variable")?;
-            let var = expect_ident(&mut inner, "a variable")?;
-            if let Some(extra) = inner.next() {
-                return fail(extra.span(), "query!: Duration takes one variable");
-            }
-            return Ok(Term::Measure(var));
+            return fail(
+                name.span,
+                "query!: Duration is gone — compute end − start on the host",
+            );
         }
         return Ok(Term::Var(name));
     }
@@ -979,17 +957,6 @@ fn parse_allen_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
     Ok(Leaf::Allen { lhs, mask, rhs })
 }
 
-/// Parses `Duration(v)` compared or contained (the name already
-/// consumed) — the one parenthesized term.
-fn parse_measure_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
-    let (mut inner, _) = take_paren_group(tokens, "the measured variable")?;
-    let var = expect_ident(&mut inner, "a variable")?;
-    if let Some(extra) = inner.next() {
-        return fail(extra.span(), "query!: Duration takes one variable");
-    }
-    finish_term_leaf(tokens, Term::Measure(var))
-}
-
 /// The condition-tree refusal, one message for every non-comparison
 /// shape under `and`/`or`.
 fn tree_refusal<T>(span: Span) -> Parse<T> {
@@ -1039,7 +1006,10 @@ fn parse_cond(tokens: &mut Tokens) -> Parse<Cond> {
             "and" => Ok(Cond::And(parse_tree_children(tokens, &name)?)),
             "or" => Ok(Cond::Or(parse_tree_children(tokens, &name)?)),
             "Allen" => Ok(Cond::Leaf(parse_allen_leaf(tokens)?)),
-            "Duration" => Ok(Cond::Leaf(parse_measure_leaf(tokens)?)),
+            "Duration" => fail(
+                name.span,
+                "query!: Duration is gone — compute end − start on the host",
+            ),
             _ => tree_refusal(name.span),
         };
     }
@@ -1104,17 +1074,10 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
         let mut ahead = tokens.clone();
         ahead.next(); // the group
         if continues_as_term(&mut ahead) {
-            if name.text != "Duration" {
-                return fail(
-                    name.span,
-                    format!(
-                        "query!: `{}(…)` cannot be compared — the only \
-                         parenthesized term is Duration(v)",
-                        name.text
-                    ),
-                );
-            }
-            return Ok(Item::Cond(Cond::Leaf(parse_measure_leaf(tokens)?)));
+            return fail(
+                name.span,
+                "query!: Duration is gone — compute end − start on the host",
+            );
         }
         return Ok(Item::Atom(parse_atom(tokens, name)?));
     }
@@ -1626,10 +1589,6 @@ impl Emitter<'_> {
         Ok(match term {
             Term::Var(name) => Self::var(scope.intern(name)?),
             Term::Param(param) => self.param(param)?,
-            Term::Measure(name) => format!(
-                "::bumbledb::Term::Measure(::bumbledb::VarId({}))",
-                scope.intern(name)?
-            ),
             Term::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
         })
     }
@@ -1893,10 +1852,6 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Var(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Measure(name) => format!(
-                "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
-                scope.head_var(name)?
-            ),
             HeadTerm::Count => "::bumbledb::FindTerm::Count".to_string(),
             HeadTerm::Agg {
                 op: AggOp::Pack,
@@ -1907,12 +1862,6 @@ impl Emitter<'_> {
             ),
             HeadTerm::Agg { op, over } => format!(
                 "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::FoldOp::{}, \
-                     over: ::bumbledb::VarId({}) }}",
-                op.fold_ir_name(),
-                scope.head_var(over)?
-            ),
-            HeadTerm::AggMeasure { op, over } => format!(
-                "::bumbledb::FindTerm::AggregateMeasure {{ op: ::bumbledb::FoldOp::{}, \
                      over: ::bumbledb::VarId({}) }}",
                 op.fold_ir_name(),
                 scope.head_var(over)?
@@ -1928,13 +1877,6 @@ impl Emitter<'_> {
                 HeadTerm::Var(name) => {
                     let _ = write!(finds, "::bumbledb::VarId({}),", scope.head_var(name)?);
                 }
-                HeadTerm::Measure(name) => {
-                    return fail(
-                        name.span,
-                        "query!: an interior/rec head projects bound variables only — \
-                         the measure reads a finished set",
-                    );
-                }
                 HeadTerm::Count => {
                     return fail(
                         Span::call_site(),
@@ -1942,7 +1884,7 @@ impl Emitter<'_> {
                          Count is a fold over a finished set",
                     );
                 }
-                HeadTerm::Agg { over, .. } | HeadTerm::AggMeasure { over, .. } => {
+                HeadTerm::Agg { over, .. } => {
                     return fail(
                         over.span,
                         "query!: an interior/rec head projects bound variables only — \

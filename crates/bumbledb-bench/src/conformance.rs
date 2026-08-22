@@ -64,10 +64,8 @@
 //!   The doc's fold-domain law (`20-query-ir.md` § aggregation: a
 //!   membership term selects, it does not bind) now holds on all three
 //!   oracles, and the third oracle adjudicates the class on every push.
-//! * **Runtime-error executions excluded** (`Overflow`, `MeasureOfRay`):
-//!   the model reads a ray's measure as `none` where the engine raises —
-//!   the recorded Level-0 narrowing; the lane compares answer sets on
-//!   error-free executions only.
+//! * **Runtime-error executions excluded** (`Overflow`):
+//!   the lane compares answer sets on error-free executions only.
 //! * **Slow and wide cases excluded by budget** (naive wall time / answer
 //!   rows): the corpus is a per-push CI lane; the caps are counted and
 //!   recorded, and shrink the case, never the model.
@@ -141,7 +139,7 @@ pub struct Report {
     pub written: u64,
     /// A query/param string literal outside the world's vocabulary.
     pub excluded_unresolved: u64,
-    /// The engine answered `Overflow` / `MeasureOfRay`.
+    /// The engine answered `Overflow`.
     pub excluded_engine_error: u64,
     /// Naive wall time over [`NAIVE_BUDGET_MS`].
     pub excluded_slow: u64,
@@ -499,9 +497,6 @@ fn push_term(
             push_value(world, used, out, value)?;
             out.push('}');
         }
-        Term::Measure(v) => {
-            let _ = write!(out, "{{\"measure\":{}}}", v.0);
-        }
     }
     Ok(())
 }
@@ -570,9 +565,6 @@ fn push_find(out: &mut String, find: &FindTerm) {
         FindTerm::Var(v) => {
             let _ = write!(out, "{{\"var\":{}}}", v.0);
         }
-        FindTerm::Measure(v) => {
-            let _ = write!(out, "{{\"measure\":{}}}", v.0);
-        }
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -584,18 +576,6 @@ fn push_find(out: &mut String, find: &FindTerm) {
                 FoldOp::Max => "max",
             };
             let _ = write!(out, "{{\"agg\":{{\"op\":\"{name}\",\"over\":{}}}}}", over.0);
-        }
-        FindTerm::AggregateMeasure { op, over } => {
-            let name = match op {
-                FoldOp::Sum => "sum",
-                FoldOp::Min => "min",
-                FoldOp::Max => "max",
-            };
-            let _ = write!(
-                out,
-                "{{\"agg_measure\":{{\"op\":\"{name}\",\"over\":{}}}}}",
-                over.0
-            );
         }
     }
 }
@@ -620,7 +600,7 @@ fn count_vars(rule: &Rule) -> u16 {
         *count = (*count).max(var.0 + 1);
     }
     fn see_term(count: &mut u16, term: &Term) {
-        if let Term::Var(var) | Term::Measure(var) = term {
+        if let Term::Var(var) = term {
             see(count, *var);
         }
     }
@@ -648,10 +628,8 @@ fn count_vars(rule: &Rule) -> u16 {
     }
     for find in &rule.finds {
         match find {
-            FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
-            FindTerm::AggregateMeasure { over, .. }
-            | FindTerm::Aggregate { over, .. }
-            | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Var(var) => see(&mut count, *var),
+            FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => see(&mut count, *over),
             FindTerm::Count => {}
         }
     }
@@ -694,7 +672,6 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
             }
             ParamValue::Scalar(_) => unreachable!("validated: set use of a scalar param"),
         },
-        Term::Measure(_) => unreachable!("validated: no measure in bindings"),
     }
 }
 
@@ -1356,7 +1333,6 @@ fn execute_case(
     let model = match world.naive.query(query, params) {
         Ok(rows) => Answers::Ok(rows),
         Err(crate::naive::query::QueryError::Overflow { .. }) => Answers::Overflow,
-        Err(crate::naive::query::QueryError::MeasureOfRay) => Answers::MeasureOfRay,
     };
     let naive_ms = started.elapsed().as_millis();
     let engine = differential::engine_query(&world.db, query, params);
@@ -1367,7 +1343,7 @@ fn execute_case(
     );
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::MeasureOfRay | Answers::DerivedBudget => (None, naive_ms),
+        Answers::Overflow | Answers::DerivedBudget => (None, naive_ms),
     }
 }
 
@@ -1433,7 +1409,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
     // corpus values — the interval-param and point-literal cases).
     let (m_account, _, (m_start, m_end)) = target::mandate(cfg, &domains, 0);
     let instant = m_start.midpoint(m_end);
-    let full_i64 = Value::IntervalI64(
+    let _full_i64 = Value::IntervalI64(
         bumbledb::Interval::<i64>::new(i64::MIN, i64::MAX - 1).expect("nonempty"),
     );
     vec![
@@ -1524,91 +1500,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 ],
                 rec: None,
             },
-            params: vec![],
-        },
-        // The measure at a find position (Transfer windows sit below
-        // the ray by construction — the total lane).
-        HandCase {
-            name: "hand-measure-find",
-            query: Query::single(rule(
-                vec![fv(0), FindTerm::Measure(VarId(1))],
-                vec![atom(
-                    ids::TRANSFER,
-                    &[(ids::transfer::ID, v(0)), (ids::transfer::WINDOW, v(1))],
-                )],
-                vec![],
-                vec![],
-            )),
-            params: vec![],
-        },
-        // A measure fold over ray-free mandate segments (the
-        // COVERED_BY filter excludes every ray first — the documented
-        // host pattern).
-        HandCase {
-            name: "hand-measure-fold-sum",
-            query: Query::single(rule(
-                vec![
-                    fv(0),
-                    FindTerm::AggregateMeasure {
-                        op: FoldOp::Sum,
-                        over: VarId(1),
-                    },
-                ],
-                vec![atom(
-                    ids::MANDATE,
-                    &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
-                )],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: AllenMask::COVERED_BY,
-                    },
-                    lhs: v(1),
-                    rhs: Term::Literal(full_i64.clone()),
-                })],
-            )),
-            params: vec![],
-        },
-        // The colliding-measure lock: two distinct intervals with EQUAL
-        // measure land in ONE group under a `[Measure, Count]` head —
-        // grouping fibers by the measure VALUE, not the interval, so
-        // the answers merge (every collision group's parent interval
-        // has width 256 by construction, and groups are disjoint, so
-        // the collision is guaranteed data, not luck; the COVERED_BY
-        // filter excludes the ray mandates first — the documented host
-        // pattern).
-        HandCase {
-            name: "hand-measure-count-collision",
-            query: Query::single(rule(
-                vec![FindTerm::Measure(VarId(0)), FindTerm::Count],
-                vec![atom(ids::MANDATE, &[(ids::mandate::ACTIVE, v(0))])],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: AllenMask::COVERED_BY,
-                    },
-                    lhs: v(0),
-                    rhs: Term::Literal(full_i64.clone()),
-                })],
-            )),
-            params: vec![],
-        },
-        // The measure in a predicate.
-        HandCase {
-            name: "hand-measure-predicate",
-            query: Query::single(rule(
-                vec![fv(0)],
-                vec![atom(
-                    ids::TRANSFER,
-                    &[(ids::transfer::ID, v(0)), (ids::transfer::WINDOW, v(1))],
-                )],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Lt,
-                    lhs: Term::Measure(VarId(1)),
-                    rhs: Term::Literal(Value::U64(500)),
-                })],
-            )),
             params: vec![],
         },
         // Membership through a variable: the posting instant inside the
@@ -1861,6 +1752,12 @@ pub fn replay_checked_in_corpus() -> usize {
             .expect("corpus names are UTF-8")
             .to_owned();
         let text = std::fs::read_to_string(path).expect("read a corpus case");
+        // Query-side Duration is gone. Checked-in measure IR stays on
+        // disk (do not edit cases/); skip engine+naive replay. Lean
+        // still denotates those files in `lake exe conformance`.
+        if text.contains("\"measure\":") || text.contains("\"agg_measure\":") {
+            continue;
+        }
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
         } else if name.starts_with("complete-") {
@@ -1972,20 +1869,13 @@ mod tests {
         };
 
         // The additive folds — Count (fold-domain size), Sum
-        // (per-binding repetition), the measure Sum — lower cleanly,
-        // the fresh mint sitting above the recorded surface width.
+        // (per-binding repetition) — lower cleanly, the fresh mint
+        // sitting above the recorded surface width.
         for finds in [
             vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
-                    op: FoldOp::Sum,
-                    over: VarId(0),
-                },
-            ],
-            vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::AggregateMeasure {
                     op: FoldOp::Sum,
                     over: VarId(0),
                 },

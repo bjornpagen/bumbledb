@@ -134,11 +134,8 @@ const overlapping = query(Uptime).rule((r) => {
 		.where(r.allen(window, ALLEN.intersects, r.param("incident")))
 		.find({ service, window })
 })
-// total downtime per service (the denotation's one arithmetic):
-const downtime = query(Uptime).rule((r) => {
-	const { service, window } = v(Outage)
-	return r.match(Outage, { service, window }).find({ service, downtime: r.sum(r.duration(window)) })
-})
+// total downtime per service is host arithmetic on the interval
+// endpoints every answer row already carries (`end − start`).
 ```
 
 ## 2. Discriminated unions
@@ -934,11 +931,9 @@ const busy = query(FreeTime).rule((r) => {
 	const { person, span } = v(Claim)
 	return r.match(Claim, { person, span }).find({ person, packed: r.pack(span) })
 })
-// raw claimed time (overlaps double-count — often the wrong question):
-const claimed = query(FreeTime).rule((r) => {
-	const { person, span } = v(Claim)
-	return r.match(Claim, { person, span }).find({ person, claimed: r.sum(r.duration(span)) })
-})
+// raw claimed time is host arithmetic on the interval endpoints every
+// answer row already carries (`end − start`). Overlaps double-count,
+// often the wrong question.
 // Coalesced totals = the two-query composition (pack, then a host fold) —
 // aggregates never nest; free time (gaps) is the two-line host walk over
 // sorted packed answers (host sorts by person then span start/end) — both
@@ -1724,11 +1719,8 @@ const Rooms = schema("Rooms", { Room, Booking }, [
 	)
 ])
 
-// the booked time per room, read back:
-const booked = query(Rooms).rule((r) => {
-	const { id, room, booked } = v(Booking)
-	return r.match(Booking, { id, room, booked }).find({ room, total: r.sum(r.duration(booked)) })
-})
+// the booked time per room is host arithmetic on the `booked`
+// endpoints every answer row already carries (`end − start`).
 ```
 
 Mind the weighted `{0}` and the weighted floor: on a weighted statement

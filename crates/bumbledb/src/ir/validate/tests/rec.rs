@@ -1,4 +1,4 @@
-//! Rec roster: one linear SCC. Empty/missing-self/negation/measure
+//! Rec roster: one linear SCC. Empty/missing-self/negation
 //! shapes are unrepresentable on [`Rec`]; remaining checks are DNF
 //! emptiness, self-in-base, nonlinearity, head alignment, and the pool cap.
 
@@ -148,26 +148,6 @@ fn rejects_nonlinear_rec_arm() {
         ),
     );
     assert_eq!(expect_err(&query), ValidationError::NonlinearRecArm);
-}
-
-#[test]
-fn a_measure_on_main_over_finished_rec_is_legal() {
-    let query = Query {
-        interiors: vec![],
-        rec: Some(Rec {
-            base: NonEmpty::one(rec_rule(
-                vec![VarId(0)],
-                vec![atom(ACCOUNT, vec![(VALIDITY, var(0))])],
-            )),
-            rec: NonEmpty::one(rec_step(vec![VarId(0)], vec![(0, var(0))], vec![])),
-        }),
-        head: vec![HeadTerm::Var],
-        rules: vec![rule(
-            vec![FindTerm::Measure(VarId(0))],
-            vec![interior_atom(0, vec![(0, var(0))])],
-        )],
-    };
-    validate(&schema(), &query).expect("main may measure a finished rec");
 }
 
 #[test]

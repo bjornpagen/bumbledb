@@ -107,14 +107,14 @@ def ledger : List Obligation := [
     "ray_is_the_unbounded_denotation (crates/bumbledb-theory/src/interval.rs)",
 
   .row @measure_ray_none `Bumbledb.measure_ray_none
-    "A ray has no measure — the model reads none where the engine raises the typed error."
-    "crate::Error::MeasureOfRay (crates/bumbledb/src/error.rs)"
-    "a_ray_reaching_duration_raises_and_a_filtered_query_succeeds (crates/bumbledb/src/api/prepared/tests/measure.rs)",
+    "A ray has no duration measure — the constructor marks it; a Duration-weighted capacity law raises the typed write refusal."
+    "crate::Interval::is_ray (crates/bumbledb-theory/src/interval.rs); crate::Error::CapacityRayMeasure (crates/bumbledb/src/error.rs)"
+    "ray_is_the_unbounded_denotation (crates/bumbledb-theory/src/interval.rs); capacity_duration_weight_of_a_ray_refuses_typed (crates/bumbledb/src/storage/commit/tests/marks.rs)",
 
   .row @measure_finite `Bumbledb.measure_finite
-    "A bounded interval's measure is exactly end minus start — the happy path of measure evaluation."
-    "crate::ir::Term::Measure (crates/bumbledb/src/ir.rs)"
-    "duration_find_projects_the_measure_u64 (crates/bumbledb/src/api/prepared/tests/measure.rs); duration_find_projects_the_measure_i64 (crates/bumbledb/src/api/prepared/tests/measure.rs)",
+    "A bounded interval's length is exactly end minus start — the host computes it; the representation carries the two bounds."
+    "crate::Interval::start (crates/bumbledb-theory/src/interval.rs); crate::Interval::end (crates/bumbledb-theory/src/interval.rs)"
+    "accessors_return_the_parsed_bounds (crates/bumbledb-theory/src/interval.rs)",
 
   .row @encode_u64_order_embedding `Bumbledb.encode_u64_order_embedding
     "The unsigned encoding is an order embedding — lexicographic word order equals numeric order."
@@ -314,7 +314,7 @@ def ledger : List Obligation := [
   .row @checkedSum_sound `Bumbledb.checkedSum_sound
     "A successful checked sum is the mathematical sum within bounds — an emitted Sum is exact, and overflow is a typed error, never a wrap."
     "finalize.rs::finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
-    "sum_of_durations_overflow_is_the_typed_overflow_error (crates/bumbledb/src/api/prepared/tests/measure.rs); sum_is_order_independent_near_the_boundary (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
+    "sum_is_order_independent_near_the_boundary (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
 
   .row @wide_accumulator_exact `Bumbledb.wide_accumulator_exact
     "The wide-accumulator argument: fewer than two-to-the-64 terms of 64-bit values cannot overflow the 128-bit accumulator, so the only narrowing point is finalization."
@@ -365,11 +365,6 @@ def ledger : List Obligation := [
     "An aggregate over the empty binding set yields the empty answer set — not a zero row; the SQL reading is refused."
     "finalize.rs::finalize_into (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
     "global_aggregate_over_empty_input_yields_zero_rows (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
-
-  .row @Query.measure_fold_laws `Bumbledb.Query.measure_fold_laws
-    "The measure column is poisoned exactly by a ray in the group — one unbounded interval makes the whole group's measure erroneous, never a value."
-    "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); crate::Error::MeasureOfRay (crates/bumbledb/src/error.rs)"
-    "a_ray_reaching_duration_raises_and_a_filtered_query_succeeds (crates/bumbledb/src/api/prepared/tests/measure.rs)",
 
   /- ## PRD 06 — the sweep -/
 
@@ -559,7 +554,7 @@ def ledger : List Obligation := [
   .row @Query.reach_den_finite `Bumbledb.Query.reach_den_finite
     "Rec heads project bound variables, so the lfp is a finite subset of the active domain."
     "RecRule (crates/bumbledb/src/ir.rs); RecStep (crates/bumbledb/src/ir.rs)"
-    "a_measure_on_main_over_finished_rec_is_legal (crates/bumbledb/src/ir/validate/tests/rec.rs)",
+    "a_linear_reach_validates (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The executable reach lists exactly reachDen."
@@ -643,7 +638,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 103 := rfl
+theorem ledger_count : ledger.length = 102 := rfl
 
 end Bridge
 end Bumbledb

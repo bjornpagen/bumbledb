@@ -144,15 +144,14 @@ fn value(rng: &mut Rng) -> Value {
 
 /// A term over every kind: variables and params from a small pool (so
 /// joins happen), occasionally far ids (so param-id gaps and unbound
-/// variables happen), measures anywhere.
+/// variables happen).
 fn term(rng: &mut Rng) -> Term {
-    match rng.below(10) {
+    match rng.below(9) {
         0..=2 => Term::Var(VarId(u16::try_from(rng.below(5)).expect("small"))),
         3 => Term::Var(VarId(999)),
         4 => Term::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
         5 => Term::Param(ParamId(40)), // a param-id gap
         6 => Term::ParamSet(ParamId(u16::try_from(rng.below(3)).expect("small"))),
-        7 => Term::Measure(VarId(u16::try_from(rng.below(5)).expect("small"))),
         _ => Term::Literal(value(rng)),
     }
 }
@@ -237,19 +236,14 @@ fn find_term(rng: &mut Rng) -> FindTerm {
         1 => FoldOp::Min,
         _ => FoldOp::Max,
     };
-    match rng.below(7) {
+    match rng.below(5) {
         0..=1 => FindTerm::Var(var(rng)),
-        2 => FindTerm::Measure(var(rng)),
-        3 => FindTerm::Count,
-        4 => FindTerm::Aggregate {
+        2 => FindTerm::Count,
+        3 => FindTerm::Aggregate {
             op: fold_op(rng),
             over: var(rng),
         },
-        5 => FindTerm::Pack { over: var(rng) },
-        _ => FindTerm::AggregateMeasure {
-            op: fold_op(rng),
-            over: var(rng),
-        },
+        _ => FindTerm::Pack { over: var(rng) },
     }
 }
 
@@ -421,20 +415,6 @@ fn plausible_query(rng: &mut Rng) -> Query {
             negated: vec![],
             conditions: vec![],
         }),
-        // The measure, projected and compared.
-        4 => Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-            atoms: vec![busy_atom(vec![
-                (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
-                (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
-            ])],
-            negated: vec![],
-            conditions: vec![ConditionTree::Leaf(Comparison {
-                op: CmpOp::Ge,
-                lhs: Term::Measure(VarId(1)),
-                rhs: Term::Literal(Value::U64(rng.below(10_000))),
-            })],
-        }),
         // Negation + selection + membership.
         _ => Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -581,17 +561,6 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     .push((Gauntlet::BUSY_NOTE, Term::Param(ParamId(7))));
             }
         }
-        // The measure in a binding position.
-        11 => {
-            if let Some(atom) = query
-                .rules_mut()
-                .first_mut()
-                .and_then(|r| r.atoms.first_mut())
-            {
-                atom.bindings
-                    .push((Gauntlet::BUSY_PERSON, Term::Measure(VarId(1))));
-            }
-        }
         // The empty query / the empty head.
         12 => {
             if rng.chance(2) {
@@ -687,8 +656,7 @@ fn adversarial_ir_never_panics() {
             Ok(Err(_)) => rejected += 1,
             Err(_) => panic!(
                 "prepare panicked on IR data (seed {seed}) — the trust-boundary law is \
-                 violated by:\n{}\n{query:#?}",
-                format!("{query:#?}")
+                 violated by:\n{query:#?}"
             ),
         }
     }

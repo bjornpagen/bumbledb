@@ -40,7 +40,7 @@ impl TermTypes {
             // A set holds points — always the element reading; the
             // measure is u64-valued (its variable keeps the interval
             // reading — never marked scalar through it).
-            Term::ParamSet(_) | Term::Measure(_) => true,
+            Term::ParamSet(_) => true,
             Term::Literal(value) => {
                 !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..))
             }
@@ -53,7 +53,7 @@ impl TermTypes {
         match term {
             Term::Var(var) => self.scalar_vars.insert(*var),
             Term::Param(param) => self.scalar_params.insert(*param),
-            Term::ParamSet(_) | Term::Literal(_) | Term::Measure(_) => false,
+            Term::ParamSet(_) | Term::Literal(_) => false,
         }
     }
 }

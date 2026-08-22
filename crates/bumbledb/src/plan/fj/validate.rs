@@ -286,17 +286,6 @@ pub fn validate_with_signatures(
         };
         nodes[node].allen_residuals.push(residual.clone());
     }
-    // Measure residuals: the same rule — the earliest node binding the
-    // interval variable and its u64 comparison side.
-    for (residual_idx, residual) in normalized.duration_residuals.iter().enumerate() {
-        let (interval, scalar, _) = residual.duration_sides();
-        let Some(node) = earliest_bound_node(&bound, &[interval.var(), scalar.var()]) else {
-            return Err(PlanError::UnplacedDurationResidual {
-                residual: residual_idx,
-            });
-        };
-        nodes[node].duration_residuals.push(residual.clone());
-    }
     // Anti-probe attachment: the earliest node binding the negated
     // occurrence's whole variable set — probe keys plus point-filter
     // variables (a membership check reads its point variable inside the

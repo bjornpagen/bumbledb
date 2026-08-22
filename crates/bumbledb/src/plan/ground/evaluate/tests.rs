@@ -4,13 +4,11 @@
 //! condition's refusal shape is easier to pin in isolation.
 
 use super::*;
-use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
-};
+use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value};
-use crate::ir::{CmpOp, OrderCmp, WordCmp};
+use crate::ir::{CmpOp, WordCmp};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -497,16 +495,6 @@ fn assert_other_refusals() {
         FilterPredicate::FieldWithin {
             field: f.into(),
             outer: IntervalConst::Param(crate::ir::ParamId(0)),
-        },
-        FilterPredicate::DurationCompare {
-            field: f.into(),
-            op: OrderCmp::Ge,
-            value: WordOrParam::Word(2),
-        },
-        FilterPredicate::DurationFieldsCompare {
-            interval: f.into(),
-            op: OrderCmp::Ge,
-            scalar: FieldId(2).into(),
         },
     ] {
         assert_parse(&filter, false);

@@ -170,14 +170,7 @@ fn rule_arms(
                     }
                     None => return Err(format!("find variable {} unbound", var.0)),
                 },
-                FindTerm::Measure(var) => match b.columns.get(var) {
-                    Some(VarCols::Interval { start, end }) => format!("({end} - {start})"),
-                    _ => return Err(format!("Duration over non-interval variable {}", var.0)),
-                },
-                FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::Pack { .. }
-                | FindTerm::AggregateMeasure { .. } => {
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     return Err("folds on interiors/rec arms are refused".into());
                 }
             };

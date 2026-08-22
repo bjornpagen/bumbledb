@@ -101,8 +101,7 @@ fn typing(rule: &Rule) -> Typing {
                 Term::Param(p) | Term::ParamSet(p) => {
                     t.scalar_params.insert(p.0);
                 }
-                // The measure never appears in bindings (validated).
-                Term::Literal(_) | Term::Measure(_) => {}
+                Term::Literal(_) => {}
             }
         }
     }
@@ -251,10 +250,10 @@ impl Coverage {
             Shape::ExistenceWalk => self.existence_walk += 1,
             Shape::DuWalk => self.du_walk += 1,
             Shape::Rules => self.rules += 1,
-            Shape::Measure => self.measure += 1,
             Shape::ClosedJoin => self.closed_join += 1,
             Shape::GroundFold => self.ground_fold += 1,
             Shape::Pack => self.pack += 1,
+            Shape::Measure => self.measure += 1,
         }
     }
 
@@ -331,15 +330,6 @@ impl Coverage {
     fn record_comparisons(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut has_allen = false;
         for comparison in rule.conditions.iter().map(super::leaf) {
-            // A measure side types the comparison u64 (the measure word)
-            // and is its own construct row.
-            if matches!(comparison.lhs, Term::Measure(_))
-                || matches!(comparison.rhs, Term::Measure(_))
-            {
-                self.duration_predicate += 1;
-                self.matrix[op_index(comparison.op)][0] += 1;
-                continue;
-            }
             let ty = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
                     .var_types
@@ -414,7 +404,6 @@ impl Coverage {
                             Term::Literal(_) => self.negation_literal += 1,
                             Term::Param(_) => self.negation_param += 1,
                             Term::ParamSet(_) => self.negation_set += 1,
-                            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
                             Term::Var(_) => {}
                         }
                     }
@@ -440,7 +429,6 @@ impl Coverage {
                     Term::Literal(_) => self.negation_literal += 1,
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
-                    Term::Measure(_) => unreachable!("validated: no measure in bindings"),
                     Term::Var(var) => {
                         // Membership inside negation: an element-typed
                         // var at an interval field.
@@ -485,16 +473,6 @@ impl Coverage {
                     self.agg_count += 1;
                 }
                 FindTerm::Pack { .. } => {
-                    aggregates += 1;
-                }
-                // The measure positions: one projected word / one fold
-                // like their plain twins, plus their own construct rows.
-                FindTerm::Measure(_) => {
-                    self.duration_find += 1;
-                    projected_words += 1;
-                }
-                FindTerm::AggregateMeasure { .. } => {
-                    self.duration_fold += 1;
                     aggregates += 1;
                 }
             }

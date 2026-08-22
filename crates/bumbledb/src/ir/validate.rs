@@ -271,13 +271,6 @@ pub(crate) enum ClassifiedComparison {
     PointInVarPoint { interval: VarId, point: SealedConst },
     /// Point containment in a constant interval: `outer ∋ scalar-var`.
     VarWithin { var: VarId, outer: SealedConst },
-    /// The measure comparison, the operator sealed measure-on-left:
-    /// `Duration(interval) <op> other`.
-    Duration {
-        interval: VarId,
-        op: crate::ir::OrderCmp,
-        other: DurationOperand,
-    },
 }
 
 /// A classified comparison's sealed constant side: the bind-time param
@@ -287,14 +280,6 @@ pub(crate) enum ClassifiedComparison {
 pub(crate) enum SealedConst {
     Param(ParamId),
     Literal(Value),
-}
-
-/// The measure's comparison side: another rule variable (u64-resolved),
-/// or a sealed constant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DurationOperand {
-    Var(VarId),
-    Const(SealedConst),
 }
 
 /// The interior typing surface handed to the per-rule roster: sealed
@@ -881,10 +866,7 @@ impl<'a> RuleWitness<'a> {
         let has_aggregate = self.rule.finds.iter().any(|term| {
             matches!(
                 term,
-                FindTerm::Count
-                    | FindTerm::Aggregate { .. }
-                    | FindTerm::Pack { .. }
-                    | FindTerm::AggregateMeasure { .. }
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
             )
         });
         if has_aggregate {

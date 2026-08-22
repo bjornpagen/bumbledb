@@ -173,7 +173,7 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal("snapshot" in db, false)
 		assert.deepEqual(
 			Reflect.ownKeys(db).toSorted(),
-			["contains", "count", "execute", "get", "prepare", "read", "scan", "schema", "write", "writeFrom"],
+			["prepare", "read", "schema", "write", "writeFrom"],
 			"the surface is exactly the pinned verbs — no retired write form survives"
 		)
 		db.read(function probeScope(instance) {
@@ -289,11 +289,17 @@ describe("the Db runtime against a real store", function suite() {
 			put(tx, Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
 		})
 		assert.equal(setup.tag, "accepted")
-		assert.deepStrictEqual(db.read((i) => i.get(SavingsTerms, { account: must(ids.graceAccount) })), {
-			account: ids.graceAccount,
-			rate: 3n
-		})
-		assert.equal(db.read((i) => i.get(SavingsTerms, { account: must(ids.adaAccount) })), undefined)
+		assert.deepStrictEqual(
+			db.read((i) => i.get(SavingsTerms, { account: must(ids.graceAccount) })),
+			{
+				account: ids.graceAccount,
+				rate: 3n
+			}
+		)
+		assert.equal(
+			db.read((i) => i.get(SavingsTerms, { account: must(ids.adaAccount) })),
+			undefined
+		)
 		assert.throws(function missingKeyField() {
 			db.read((i) => i.get(SavingsTerms, {}))
 		}, /missing field account/)
@@ -420,9 +426,11 @@ describe("the Db runtime against a real store", function suite() {
 			})
 		})
 		assert.equal(outcome.tag, "moved", "the one-shot writeFrom reports moved instead of retrying")
-		const landed = db.read((i) => i.scan(Holder)).filter(function witnessedRows(holder) {
-			return holder.name.startsWith("wit-count-")
-		})
+		const landed = db
+			.read((i) => i.scan(Holder))
+			.filter(function witnessedRows(holder) {
+				return holder.name.startsWith("wit-count-")
+			})
 		assert.equal(landed.length, 0, "the stale-premise attempt never committed")
 	})
 
@@ -456,9 +464,11 @@ describe("the Db runtime against a real store", function suite() {
 			return instance.generation
 		})
 		assert.equal(after, before, "no commit was issued on the abandon path")
-		const ghosts = db.read((i) => i.scan(Holder)).filter(function abandonedRows(holder) {
-			return holder.name === "never-lands"
-		})
+		const ghosts = db
+			.read((i) => i.scan(Holder))
+			.filter(function abandonedRows(holder) {
+				return holder.name === "never-lands"
+			})
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
 	})
 
@@ -499,9 +509,11 @@ describe("the Db runtime against a real store", function suite() {
 			before,
 			"no commit was issued, not even an empty one"
 		)
-		const ghosts = db.read((i) => i.scan(Holder)).filter(function abandonedRows(holder) {
-			return holder.name === "write-abandon-never-lands"
-		})
+		const ghosts = db
+			.read((i) => i.scan(Holder))
+			.filter(function abandonedRows(holder) {
+				return holder.name === "write-abandon-never-lands"
+			})
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
 	})
 

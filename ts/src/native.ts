@@ -144,8 +144,6 @@ type FindTermIr =
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }
-	| { readonly kind: "measure"; readonly var: number }
-	| { readonly kind: "aggregateMeasure"; readonly op: FoldOpIr; readonly over: number }
 
 /** Host brand: only {@link parseQueryIr} and `lowerQuery` inhabit this. Phantom — not a runtime key. */
 declare const parsedQueryBrand: unique symbol
@@ -181,7 +179,6 @@ type TermIr =
 	| { readonly kind: "param"; readonly param: number }
 	| { readonly kind: "paramSet"; readonly param: number }
 	| { readonly kind: "literal"; readonly value: TaggedValue }
-	| { readonly kind: "measure"; readonly var: number }
 
 /** One comparison operator (mirrors `ir::CmpOp`). */
 type CmpOpIr =
@@ -362,7 +359,6 @@ type ErrorFamilyKind =
 	| "foreignPrepared"
 	| "foreignWitness"
 	| "param"
-	| "measureOfRay"
 	| "capacityRayMeasure"
 	| "derivedBudgetExceeded"
 	| "overflow"

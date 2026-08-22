@@ -1,7 +1,7 @@
 //! Interiors-only vs rec body: the one-engine locks.
 
 use super::*;
-use crate::ir::{CmpOp, NonEmpty, ProjectionRule, Rec, RecRule, RecStep};
+use crate::ir::{CmpOp, ProjectionRule};
 
 fn interiors_only() -> Query {
     Query {
@@ -85,7 +85,7 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
         }],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     match &prepared.pipeline {
         PreparedPipeline::Cq { interiors, rules } => {
             assert!(

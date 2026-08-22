@@ -91,16 +91,7 @@ import type {
 	ShapeOf,
 	VarsOf
 } from "#query/scope.ts"
-import {
-	fieldJoins,
-	inferred,
-	isTerm,
-	makeDuration,
-	makeParam,
-	makeSetParam,
-	renderFieldKind,
-	term
-} from "#query/scope.ts"
+import { fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term } from "#query/scope.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 
 /**
@@ -179,8 +170,6 @@ interface TermOps {
 	readonly param: typeof makeParam
 	/** Names one ∈-set parameter (the IR's `ParamSet`): bound to a readonly array at execution. */
 	readonly inSet: typeof makeSetParam
-	/** The measure of an interval-typed variable: `|[s, e)| = e − s`, u64. */
-	readonly duration: typeof makeDuration
 	readonly eq: typeof eq
 	readonly ne: typeof ne
 	readonly lt: typeof lt
@@ -493,7 +482,6 @@ type QueryReachStart<
 const termOps: TermOps = Object.freeze({
 	param: makeParam,
 	inSet: makeSetParam,
-	duration: makeDuration,
 	eq,
 	ne,
 	lt,
@@ -665,9 +653,7 @@ function resolveBindings(
 					break
 				}
 				case "duration":
-					throw errors.new(
-						`${label}.${fieldName}: the measure is not a field-typed value — it lives in comparisons and find entries`
-					)
+					throw errors.new(`${label}.${fieldName}: Duration is gone — compute end − start on the host`)
 			}
 		} else if (Array.isArray(value)) {
 			const set = membershipSet(`${label}.${fieldName}`, declared.field, value)
@@ -719,7 +705,7 @@ function cmpTermDataOf(value: unknown): CmpTermData {
 			case "setParam":
 				return Object.freeze({ kind: "setParam" as const, name: value.name })
 			case "duration":
-				return Object.freeze({ kind: "measure" as const, ref: value.over })
+				throw errors.new("Duration is gone — compute end − start on the host")
 		}
 	}
 	return Object.freeze({ kind: "literal" as const, value })
@@ -887,10 +873,7 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 			if (isTerm(over) && over[term] === "var") {
 				return Object.freeze({ op: "fold" as const, fold: entry.agg, over })
 			}
-			if (isTerm(over) && over[term] === "duration") {
-				return Object.freeze({ op: "fold" as const, fold: entry.agg, over: Object.freeze({ duration: over.over }) })
-			}
-			throw errors.new(`find ${name} (${entry.agg}): takes a variable or r.duration(v)`)
+			throw errors.new(`find ${name} (${entry.agg}): takes a variable`)
 		}
 		case "pack":
 			return Object.freeze({ op: "pack" as const, over: asVarTerm(`find ${name} (pack)`, over) })
@@ -915,16 +898,9 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			})
 		}
 		if (entry[term] === "duration") {
-			return Object.freeze({
-				name,
-				entry: Object.freeze({ kind: "measure" as const, over: entry.over }),
-				closed: undefined,
-				slot: undefined
-			})
+			throw errors.new(`find ${name}: Duration is gone — compute end − start on the host`)
 		}
-		throw errors.new(
-			`find ${name}: a ${entry[term]} is not projectable — find takes variables, r.duration(v), or aggregates`
-		)
+		throw errors.new(`find ${name}: a ${entry[term]} is not projectable — find takes variables or aggregates`)
 	}
 	if (isAggregateEntry(entry)) {
 		return Object.freeze({
@@ -934,7 +910,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			slot: undefined
 		})
 	}
-	throw errors.new(`find ${name}: not a find entry — find takes variables, r.duration(v), or aggregates`)
+	throw errors.new(`find ${name}: not a find entry — find takes variables or aggregates`)
 }
 
 /**
@@ -2075,12 +2051,12 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 		case "setParam":
 			return { kind: "paramSet", param: paramIdOf(ctx, side.name) }
 		case "measure":
-			return { kind: "measure", var: ids.of(side.ref) }
+			throw errors.new("Duration is gone — compute end − start on the host")
 		case "literal": {
 			const anchor = cmpAnchorOf(ctx, sibling)
 			if (anchor === undefined) {
 				throw errors.new(
-					"query lowering: a comparison literal needs a bound-variable, measure, or anchored-param sibling to type it"
+					"query lowering: a comparison literal needs a bound-variable or anchored-param sibling to type it"
 				)
 			}
 			return { kind: "literal", value: taggedCmpLiteral("comparison literal", anchor, side.value, op) }
@@ -2137,7 +2113,7 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 		return { kind: "var", var: ids.of(entry.over) }
 	}
 	if (entry.kind === "measure") {
-		return { kind: "measure", var: ids.of(entry.over) }
+		throw errors.new("Duration is gone — compute end − start on the host")
 	}
 	const agg = entry.agg
 	switch (agg.op) {
@@ -2145,7 +2121,7 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 			return { kind: "count" }
 		case "fold": {
 			if ("duration" in agg.over) {
-				return { kind: "aggregateMeasure", op: { kind: agg.fold }, over: ids.of(agg.over.duration) }
+				throw errors.new("Duration is gone — compute end − start on the host")
 			}
 			return { kind: "aggregate", op: { kind: agg.fold }, over: ids.of(agg.over) }
 		}

@@ -7,7 +7,7 @@ use crate::error::{Exceeded, FindIndex, Mismatch, RuleIndex, ValidationError};
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 use crate::ir::{
     FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, RecRule, RecStep,
-    Term, VarId,
+    VarId,
 };
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -518,7 +518,7 @@ fn validate_rule(
     schema: &Schema,
     interiors: &InteriorSignatures<'_>,
     rule: &LoweredRule,
-    rec_body: bool,
+    _rec_body: bool,
 ) -> Result<(RuleTyping, Context), ValidationError> {
     if rule.atoms.is_empty() {
         return Err(ValidationError::NoPositiveAtoms);
@@ -536,24 +536,13 @@ fn validate_rule(
     let mut ctx = Context::default();
     ctx.check_atoms(schema, interiors, rule)?;
     let classified = ctx.check_comparisons(rule)?;
-    if rec_body
-        && rule
-            .conditions
-            .iter()
-            .any(|cmp| matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_)))
-    {
-        return Err(ValidationError::MeasureInRec);
-    }
     ctx.check_membership_domains()?;
     let group_key: BTreeSet<VarId> = rule
         .finds
         .iter()
         .filter_map(|term| match term {
-            FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
-            FindTerm::Count
-            | FindTerm::Aggregate { .. }
-            | FindTerm::Pack { .. }
-            | FindTerm::AggregateMeasure { .. } => None,
+            FindTerm::Var(var) => Some(*var),
+            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => None,
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
@@ -586,9 +575,7 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .iter()
         .map(|term| match term {
             FindTerm::Var(var) => var_type(var),
-            FindTerm::Measure(_) | FindTerm::Count | FindTerm::AggregateMeasure { .. } => {
-                ValueType::U64
-            }
+            FindTerm::Count => ValueType::U64,
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => var_type(over),
         })
         .collect()

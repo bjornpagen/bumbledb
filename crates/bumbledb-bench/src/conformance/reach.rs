@@ -100,10 +100,7 @@ fn carries_fold(query: &Query) -> bool {
         rule.finds.iter().any(|find| {
             matches!(
                 find,
-                FindTerm::Count
-                    | FindTerm::Aggregate { .. }
-                    | FindTerm::Pack { .. }
-                    | FindTerm::AggregateMeasure { .. }
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
             )
         })
     })

@@ -236,29 +236,20 @@ fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
-        FindTerm::Measure(var) => {
-            out.push_str("Duration(");
-            var_name(out, *var);
-            out.push(')');
-        }
         FindTerm::Count => out.push_str("Count"),
         FindTerm::Aggregate { op, over } => {
-            aggregate(out, *op, *over, false);
+            aggregate(out, *op, *over);
         }
         FindTerm::Pack { over } => {
             out.push_str("Pack(");
             var_name(out, *over);
             out.push(')');
         }
-        FindTerm::AggregateMeasure { op, over } => {
-            aggregate(out, *op, *over, true);
-        }
     }
 }
 
-/// One aggregate head term: `Sum(v0)`, `Count`, `Pack(v1)`,
-/// `Sum(Duration(v0))`.
-fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId, measure: bool) {
+/// One aggregate head term: `Sum(v0)`, `Count`, `Pack(v1)`.
+fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId) {
     let name = match op {
         crate::ir::FoldOp::Sum => "Sum",
         crate::ir::FoldOp::Min => "Min",
@@ -266,13 +257,7 @@ fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId, me
     };
     out.push_str(name);
     out.push('(');
-    if measure {
-        out.push_str("Duration(");
-        var_name(out, over);
-        out.push(')');
-    } else {
-        var_name(out, over);
-    }
+    var_name(out, over);
     out.push(')');
 }
 
@@ -335,13 +320,6 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
                     Some(handle) => out.push_str(&handle),
                     None => literal(&mut out, value),
                 }
-            }
-            // Rejected by validation (`DurationInBinding`); rendered
-            // anyway — the diagnostic pictures the mistake.
-            Term::Measure(var) => {
-                out.push_str(" == Duration(");
-                var_name(&mut out, *var);
-                out.push(')');
             }
         }
     }
@@ -427,11 +405,6 @@ fn term(out: &mut String, term: &Term) {
         Term::Var(var) => var_name(out, *var),
         Term::Param(param) | Term::ParamSet(param) => param_name(out, *param),
         Term::Literal(value) => literal(out, value),
-        Term::Measure(var) => {
-            out.push_str("Duration(");
-            var_name(out, *var);
-            out.push(')');
-        }
     }
 }
 

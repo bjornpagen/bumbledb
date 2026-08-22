@@ -904,7 +904,7 @@ fn ray_booking(schema: &Schema, room: u64, start: u64, num: u64) -> Vec<u8> {
 /// C10: a ray-valued Duration WEIGHT met at measure time is the typed
 /// commit refusal naming the row — never a violation (the law is not
 /// judged false; its measure is undefined), never a silent `MAX`
-/// (ruled 2026-07-24; the R6 `MeasureOfRay` precedent at the law site).
+/// (ruled 2026-07-24; [`crate::Error::CapacityRayMeasure`] at the law site).
 #[test]
 fn capacity_duration_weight_of_a_ray_refuses_typed() {
     let schema = duration_schema(Bound::Lit(10));

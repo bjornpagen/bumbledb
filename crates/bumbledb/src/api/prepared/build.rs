@@ -219,28 +219,9 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
             )
         },
     );
-    // The ray probes (the Kleene verdict algebra, ruled 2026-07-23,
-    // R6): per written rule with measure conditions, one probe per
-    // measured variable plus the rule's compiled verdict fold — the
-    // mainline rules drop rays (a ray never Holds), so the probes are
-    // the ONE place a Ray verdict is rendered, after the rule loop.
-    // A dead-main query with no interiors skips them at execution (the
-    // zero-iteration main loop; a dead disjunct's constant refutation is
-    // a Fails leaf, so its verdict is never Ray anyway).
-    let ray_probes = if rules.is_empty() {
-        Vec::new()
-    } else {
-        prepare_ray_probes(catalog, images, &schema, witness, signatures)?
-    };
-
-    let interior_slots = interiors.iter().flat_map(|interior| {
-        interior.rules.iter().map(PreparedRule::slot_count).chain(
-            interior
-                .ray_probes
-                .iter()
-                .flat_map(|set| set.probes.iter().map(|p| p.rule.plan.slot_count())),
-        )
-    });
+    let interior_slots = interiors
+        .iter()
+        .flat_map(|interior| interior.rules.iter().map(PreparedRule::slot_count));
     let rec_max = match &reach {
         PreparedReach::Cq => 0,
         PreparedReach::Reach { driver, .. } => driver
@@ -255,11 +236,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
         rules
             .iter()
             .map(PreparedRule::slot_count)
-            .chain(
-                ray_probes
-                    .iter()
-                    .flat_map(|set| set.probes.iter().map(|p| p.rule.plan.slot_count())),
-            )
             .chain(interior_slots)
             .max()
             .unwrap_or(0)
@@ -267,22 +243,9 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     );
 
     let unresolved_literals = rules.iter().map(pending_literals).sum::<u32>()
-        + ray_probes
-            .iter()
-            .flat_map(|set| &set.probes)
-            .map(|probe| plan_pending_literals(&probe.rule.plan))
-            .sum::<u32>()
         + interiors
             .iter()
-            .flat_map(|interior| {
-                interior.rules.iter().map(pending_literals).chain(
-                    interior
-                        .ray_probes
-                        .iter()
-                        .flat_map(|set| &set.probes)
-                        .map(|probe| plan_pending_literals(&probe.rule.plan)),
-                )
-            })
+            .flat_map(|interior| interior.rules.iter().map(pending_literals))
             .sum::<u32>()
         + match &reach {
             PreparedReach::Cq => 0,
@@ -323,7 +286,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
         param_word_memo: Vec::new(),
         missed_params: Vec::new(),
         sink,
-        ray_probes,
         bindings,
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
@@ -384,17 +346,11 @@ fn prepare_interior<C: CatalogRead, I: ImageBind>(
             )
         },
     );
-    let ray_probes = if rules.is_empty() {
-        Vec::new()
-    } else {
-        prepare_ray_probes_for(catalog, images, schema, &witnesses, signatures)?
-    };
     Ok(PreparedInterior {
         rules,
         sink,
         field_types: columns.iter().map(|c| *c.ty()).collect(),
         units,
-        ray_probes,
     })
 }
 
@@ -823,10 +779,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     if rule.rule().finds.iter().any(|term| {
         matches!(
             term,
-            FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::Pack { .. }
-                | FindTerm::AggregateMeasure { .. }
+            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
         )
     }) {
         let group_key: std::collections::BTreeSet<crate::ir::VarId> = rule
@@ -834,11 +787,8 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
             .finds
             .iter()
             .filter_map(|term| match term {
-                FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
-                FindTerm::Count
-                | FindTerm::Aggregate { .. }
-                | FindTerm::Pack { .. }
-                | FindTerm::AggregateMeasure { .. } => None,
+                FindTerm::Var(var) => Some(*var),
+                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => None,
             })
             .collect();
         fold_split(&mut fj, &group_key);
@@ -877,165 +827,6 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         memo,
         pinned: pins.into_boxed_slice(),
     }))
-}
-
-/// The ray probes (the Kleene verdict algebra, ruled 2026-07-23, R6):
-/// per written rule with measure conditions, one probe rule per
-/// measured interval variable — the rule's atoms, negations, and
-/// memberships with every condition replaced by the is-ray filter
-/// (`ir/normalize::normalize_ray_probe`) — plus the rule's compiled
-/// verdict fold over ALL its lowered disjuncts (dead and subsumed
-/// included: a constant refutation is a Fails leaf and folds itself
-/// out). Grouping reads the mint set, not `written`: a cross-written
-/// collapse erases the latter but unions the former, so each rule
-/// folds exactly its own disjunct set. Disjuncts of one written rule
-/// share one variable scope — one slot layout serves the group's
-/// probes and its verdict.
-fn prepare_ray_probes<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
-    schema: &Schema,
-    witness: &crate::ir::validate::ValidatedQuery,
-    signatures: &[&crate::ir::validate::Signature],
-) -> Result<Vec<super::RayProbeSet>> {
-    let members: Vec<_> = witness.rules().collect();
-    prepare_ray_probes_for(catalog, images, schema, &members, signatures)
-}
-
-fn prepare_ray_probes_for<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
-    schema: &Schema,
-    rules: &[crate::ir::validate::RuleWitness<'_>],
-    signatures: &[&crate::ir::validate::Signature],
-) -> Result<Vec<super::RayProbeSet>> {
-    use crate::ir::validate::ClassifiedComparison;
-    let mut groups: Vec<u16> = rules
-        .iter()
-        .flat_map(|rule| rule.minted().to_vec())
-        .collect();
-    groups.sort_unstable();
-    groups.dedup();
-    let mut sets = Vec::new();
-    for written in groups {
-        let members: Vec<crate::ir::validate::RuleWitness<'_>> = rules
-            .iter()
-            .copied()
-            .filter(|rule| rule.minted().contains(&written))
-            .collect();
-        let mut measured: Vec<crate::ir::VarId> = members
-            .iter()
-            .flat_map(crate::ir::validate::RuleWitness::classified_comparisons)
-            .filter_map(|comparison| match comparison {
-                ClassifiedComparison::Duration { interval, .. } => Some(*interval),
-                _ => None,
-            })
-            .collect();
-        measured.sort_unstable();
-        measured.dedup();
-        if measured.is_empty() {
-            continue;
-        }
-        let template = members[0];
-        let mut probes = Vec::with_capacity(measured.len());
-        for var in measured {
-            let normalized =
-                crate::ir::normalize::normalize_ray_probe(schema, signatures, &template, var);
-            if normalized.dead.is_some() {
-                continue;
-            }
-            probes.push(prepare_ray_probe(
-                catalog,
-                images,
-                schema,
-                &template,
-                &normalized,
-                var,
-                signatures,
-            )?);
-        }
-        if probes.is_empty() {
-            continue;
-        }
-        let disjuncts: Vec<&[ClassifiedComparison]> = members
-            .iter()
-            .map(crate::ir::validate::RuleWitness::classified_comparisons)
-            .collect();
-        let plan = &probes[0].rule.plan;
-        let verdict = crate::exec::verdict::CompiledVerdict::compile(
-            &disjuncts,
-            &|var| plan.slot_of(var),
-            &|var| plan.width_of(var),
-        );
-        sets.push(super::RayProbeSet { verdict, probes });
-    }
-    Ok(sets)
-}
-
-/// One probe rule's pipeline tail — `prepare_rule_variant` minus
-/// classification (a probe is always Free Join: the arbiter consumes
-/// bindings, never a point fetch), minus the fold split (no aggregate),
-/// minus pins (probe plan quality never gates staleness), with EVERY
-/// variable sink-relevant: the verdict fold reads arbitrary condition
-/// slots, so no suffix is skippable — exactly the aggregate plan's
-/// relevance rule.
-fn prepare_ray_probe<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
-    schema: &Schema,
-    rule: &RuleWitness<'_>,
-    normalized: &NormalizedQuery,
-    measured: crate::ir::VarId,
-    signatures: &[&crate::ir::validate::Signature],
-) -> Result<super::RayProbe> {
-    let mut stats = Vec::with_capacity(normalized.occurrences.len());
-    for occurrence in normalized
-        .occurrences
-        .iter()
-        .filter(|o| o.role.participates())
-    {
-        let rows = if occurrence.bind.edb().is_none() {
-            0
-        } else {
-            crate::plan::selectivity::relation_rows_on(
-                catalog,
-                schema,
-                occurrence
-                    .bind
-                    .edb()
-                    .expect("EDB bind is a stored relation"),
-            )?
-        };
-        stats.push(crate::plan::selectivity::occurrence_stats_on(
-            catalog, images, schema, occurrence, rows,
-        )?);
-    }
-    let order = plan_order(normalized, schema, &stats);
-    let mut fj = binary2fj(normalized, &order);
-    factor(&mut fj);
-    gj_split(&mut fj);
-    let sink_vars: std::collections::BTreeSet<crate::ir::VarId> =
-        rule.var_types().map(|(var, _)| var).collect();
-    let plan =
-        crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
-            .expect("binary2fj + factor + gj_split construct valid plans");
-    let executor = Executor::new(&plan);
-    let occurrence_count = plan.occurrences().len();
-    let memo = build_view_memo(&plan);
-    Ok(super::RayProbe {
-        measured_slot: plan.slot_of(measured),
-        rule: FreeJoinRule {
-            plan,
-            executor,
-            finds: Vec::new(),
-            dedup_spans: Box::default(),
-            resolved_filters: vec![Vec::new(); occurrence_count],
-            resolved_selections: vec![Vec::new(); occurrence_count],
-            resolution: super::ResolutionState::Pending,
-            memo,
-            pinned: Box::default(),
-        },
-    })
 }
 
 /// COLT sources with their fixed column schemas over [`View::Unbound`]:
@@ -1208,16 +999,6 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 slot: layout.slot_of(*var),
                 width: layout.width_of(*var),
             },
-            // The measure positions: one u64 word computed from the
-            // interval variable's two-slot span (the sinks own the
-            // subtraction and the ray check — `exec::sink`).
-            FindTerm::Measure(var) => FindSpec::Duration {
-                slot: layout.slot_of(*var),
-            },
-            FindTerm::AggregateMeasure { op, over } => FindSpec::AggDuration {
-                op: *op,
-                slot: layout.slot_of(*over),
-            },
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
             FindTerm::Pack { over } => FindSpec::Pack {
                 slot: layout.slot_of(*over),
@@ -1275,11 +1056,7 @@ fn key_probe_find_table(
                     .expect("find slots come from the key-probe plan's layout");
                 Some((var.field, *column.ty()))
             }
-            // aggregate and measure key_probes keep the sink path
-            FindSpec::Agg(_)
-            | FindSpec::Pack { .. }
-            | FindSpec::Duration { .. }
-            | FindSpec::AggDuration { .. } => None,
+            FindSpec::Agg(_) | FindSpec::Pack { .. } => None,
         })
         .collect::<Option<Vec<_>>>()
 }
@@ -1310,11 +1087,7 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
                 Some(radix) if radix > 0 => radixes.push(radix),
                 _ => return Vec::new(),
             },
-            FindTerm::Measure(_) => return Vec::new(),
-            FindTerm::Count
-            | FindTerm::Aggregate { .. }
-            | FindTerm::Pack { .. }
-            | FindTerm::AggregateMeasure { .. } => {}
+            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }
     if radixes.is_empty() {
@@ -1346,7 +1119,7 @@ fn make_sink(
 ) -> EitherSink {
     let all_plain = finds
         .iter()
-        .all(|spec| matches!(spec, FindSpec::Var { .. } | FindSpec::Duration { .. }));
+        .all(|spec| matches!(spec, FindSpec::Var { .. }));
     if all_plain {
         // Word-level source expansion through the layout map: an
         // interval find contributes its two consecutive slots and a

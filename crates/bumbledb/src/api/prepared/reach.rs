@@ -261,24 +261,6 @@ impl<S> PreparedQuery<S> {
                     &self.pipeline.interiors()[i].field_types,
                     &self.pipeline.interiors()[i].sink,
                 );
-                if ran {
-                    let latched = {
-                        let sets = &mut self.pipeline.interiors_mut()[i].ray_probes;
-                        run_ray_probe_sets(
-                            sets,
-                            Some(&mut self.derived),
-                            self.schema.as_ref(),
-                            catalog,
-                            images,
-                            &self.resolved_params,
-                            &self.missed_params,
-                            self.latch.is_latched() && self.params.is_empty(),
-                            &mut self.bindings,
-                            counters,
-                        )?
-                    };
-                    self.latch = self.latch.credit(latched);
-                }
             }
             interiors_span.set_pair(n_interiors as u64, interior_emits);
         }
@@ -545,91 +527,6 @@ fn fill_plan_images(
         };
         derived.occ_images.insert(occ_idx, image);
     }
-}
-
-/// One ray-probe protocol: resolve interns, latch filters, run the
-/// probe Free Join into the arbiter, raise on the first Ray. Main
-/// passes no derived images; each interior stage fills finished
-/// images before the join.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the prepared query's split borrows are clearer unpacked"
-)]
-pub(super) fn run_ray_probe_sets<Cnt: Counters, C: CatalogRead, I: ImageBind>(
-    sets: &mut [super::RayProbeSet],
-    mut derived: Option<&mut DerivedImages>,
-    schema: &Schema,
-    catalog: &C,
-    images: &I,
-    resolved_params: &[crate::image::view::Const],
-    missed_params: &[bool],
-    fast_eligible: bool,
-    bindings: &mut Bindings,
-    counters: &mut Cnt,
-) -> Result<u32> {
-    let mut latched = 0u32;
-    let empty = OccImages::default();
-    let mut no_retired = Vec::new();
-    for set in sets {
-        set.verdict.resolve_interns(catalog)?;
-        let super::RayProbeSet { verdict, probes } = set;
-        for probe in probes {
-            if let Some(derived) = derived.as_mut() {
-                fill_plan_images(&probe.rule.plan, derived, DerivedBind::Finished);
-            }
-            let resolved =
-                if fast_eligible && probe.rule.resolution == super::ResolutionState::Complete {
-                    true
-                } else {
-                    let complete = super::bind::resolve_filters(
-                        catalog,
-                        &mut probe.rule.plan,
-                        resolved_params,
-                        missed_params,
-                        &mut probe.rule.resolved_filters,
-                        &mut probe.rule.resolved_selections,
-                        &mut latched,
-                    )?;
-                    probe.rule.resolution = if complete {
-                        super::ResolutionState::Complete
-                    } else {
-                        super::ResolutionState::Pending
-                    };
-                    complete
-                };
-            if !resolved {
-                continue;
-            }
-            bindings.resize(probe.rule.plan.slot_count());
-            let mut arbiter = crate::exec::verdict::RayArbiter::new(
-                verdict,
-                resolved_params,
-                probe.measured_slot,
-            );
-            let (occ_images, retired) = match derived.as_mut() {
-                Some(derived) => (&derived.occ_images, &mut derived.retired),
-                None => (&empty, &mut no_retired),
-            };
-            run_join(
-                &probe.rule.plan,
-                schema,
-                images,
-                &mut probe.rule.executor,
-                bindings,
-                &probe.rule.resolved_filters,
-                &probe.rule.resolved_selections,
-                &mut probe.rule.memo,
-                occ_images,
-                retired,
-                &mut arbiter,
-                counters,
-            )?;
-            if let Some([start, end]) = arbiter.measure_of_ray() {
-                return Err(crate::error::Error::MeasureOfRay { start, end });
-            }
-        }
-    }
-    Ok(latched)
 }
 
 /// Runs one plan unit into a projection sink (interior or rec base).

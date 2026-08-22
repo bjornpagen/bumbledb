@@ -1,7 +1,7 @@
 use super::oracle::{LARGE_BOUNDARY, ParamAnchor, param_anchors, u64_domain};
 use super::target::{self, Domains};
 use super::*;
-use bumbledb::{Fact, Query, Value};
+use bumbledb::{Query, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::translate::translate;
@@ -87,10 +87,10 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("existence_walk", cov.existence_walk, 8);
     band("du_walk", cov.du_walk, 6);
     band("rules", cov.rules, 10);
-    band("measure", cov.measure, 8);
     band("closed_join", cov.closed_join, 8);
     band("ground_fold", cov.ground_fold, 7);
     band("pack", cov.pack, 7);
+    band("measure", cov.measure, 8);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -130,10 +130,6 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("rules_disjoint", cov.rules_disjoint),
         ("rules_overlap", cov.rules_overlap),
         ("rules_aggregate", cov.rules_aggregate),
-        // The measure's three construct kinds.
-        ("duration_find", cov.duration_find),
-        ("duration_predicate", cov.duration_predicate),
-        ("duration_fold", cov.duration_fold),
         ("negations", cov.negations),
         ("negation_key_covered", cov.negation_key_covered),
         ("negation_open", cov.negation_open),
@@ -219,7 +215,7 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
     let db = target::publish_admitted(&dir);
     let mut rng = Rng::new(SEED);
     let (mut eliminated, mut refused) = (0u32, 0u32);
-    for i in 0..N {
+    for _i in 0..N {
         let (query, _, tags) = random_query_tagged(&mut rng, CFG);
         let Some(variant) = tags.ground else { continue };
         let mut prepared = db.prepare(&query).expect("grounding shapes validate");
@@ -681,15 +677,15 @@ bumbledb::schema! {
 }
 
 /// A 66k-edge single-source chain exceeds the default 2^16-round budget
-/// with a trivial tuple count — the DerivedBudgetExceeded pin, no knob.
+/// with a trivial tuple count — the `DerivedBudgetExceeded` pin, no knob.
 #[test]
 fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
+    use bumbledb::Fact;
     use bumbledb::ir::{
         Atom, AtomSource, FindTerm, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep,
         Rule, Term, VarId,
     };
     use bumbledb::schema::FieldId;
-    use bumbledb::Fact;
 
     const CHAIN: u64 = 66_000;
     let dir = crate::fixture::TempDir::new("querygen-rounds-budget");

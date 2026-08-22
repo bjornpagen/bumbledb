@@ -1,7 +1,7 @@
 use bumbledb::{Answers, Db, Query};
 
 use crate::calendar;
-use crate::families::{Draw, Kind, has_sets, param_args, set_bindings};
+use crate::families::{Draw, Kind, param_args, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
 use crate::translate::{Translated, translate};
@@ -62,10 +62,6 @@ impl BenchRun<'_> {
     /// The shared measurement core: warm both engines under the exact
     /// protocol, frequency-checked, traced and profiled where the modes
     /// ask.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )] // one family's full protocol, linear
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,

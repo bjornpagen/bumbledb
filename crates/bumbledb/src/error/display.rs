@@ -952,30 +952,6 @@ impl fmt::Display for ValidationError {
             Self::PackInputType { find } => {
                 write!(f, "find {find}: Pack folds an interval variable only")
             }
-            Self::DurationInBinding { atom, field } => write!(
-                f,
-                "atom {atom}, field {}: Duration is a computation, not a bindable value",
-                field.0
-            ),
-            Self::DurationOverNonInterval { var } => {
-                write!(
-                    f,
-                    "Duration over variable {}, which is not an interval",
-                    var.0
-                )
-            }
-            Self::DurationAggregateOp { find } => {
-                write!(f, "find {find}: Duration aggregates are Sum/Min/Max only")
-            }
-            Self::DurationComparisonOperator { index } => write!(
-                f,
-                "comparison {index}: Duration compares under order operators only"
-            ),
-            Self::DurationBothSides { index } => write!(
-                f,
-                "comparison {index}: Duration on both sides — one measure side \
-                 against a u64 term or literal"
-            ),
             Self::TooManyAtoms { count } => {
                 write!(f, "{count} atom occurrences exceed the planner cap")
             }
@@ -1028,14 +1004,6 @@ impl fmt::Display for ValidationError {
                 "interior {} folds — interior and rec heads project bound variables only",
                 interior.0
             ),
-            Self::MeasureInInterior { interior } => write!(
-                f,
-                "interior {} projects a Duration — interior and rec heads project bound variables only",
-                interior.0
-            ),
-            Self::MeasureInRec => {
-                write!(f, "a measure site inside the rec")
-            }
         }
     }
 }
@@ -1155,11 +1123,6 @@ impl fmt::Display for Error {
                 "parameter {}: point value at the domain ceiling — \
                  points are MIN..=MAX-1; MAX is the ray's \u{221e}",
                 param.0
-            ),
-            Self::MeasureOfRay { start, end } => write!(
-                f,
-                "Duration of a ray: encoded interval [{start}, {end}) has no finite \
-                 measure — exclude rays with an Allen predicate or a bounded-end filter"
             ),
             Self::CapacityRayMeasure { statement, fact } => write!(
                 f,

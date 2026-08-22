@@ -74,7 +74,7 @@ pub(super) fn calendar_case_count(cfg: &VerifyConfig) -> u64 {
         .iter()
         .map(|family| {
             let fixed = (family.params)(&cfg.corpus_gen).len() as u64;
-            let random = if matches!(family.name, "rsvp_union" | "claim_hours") {
+            let random = if matches!(family.name, "rsvp_union") {
                 0
             } else {
                 u64::from(families::RANDOM_DRAWS)

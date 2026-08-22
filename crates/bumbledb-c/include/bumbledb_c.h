@@ -92,7 +92,6 @@ typedef enum bdb_error_kind {
   BDB_ERROR_KIND_FRESH_EXHAUSTED,
   BDB_ERROR_KIND_TRANSACTION_POISONED,
   BDB_ERROR_KIND_PARAM,
-  BDB_ERROR_KIND_MEASURE_OF_RAY,
   BDB_ERROR_KIND_CAPACITY_RAY_MEASURE,
   BDB_ERROR_KIND_DERIVED_BUDGET_EXCEEDED,
   BDB_ERROR_KIND_OVERFLOW,
@@ -224,9 +223,7 @@ typedef enum bdb_head_op {
 // A find term's tag (`bumbledb::ir::FindTerm`).
 typedef enum bdb_find_term_kind {
   BDB_FIND_TERM_KIND_VAR,
-  BDB_FIND_TERM_KIND_MEASURE,
   BDB_FIND_TERM_KIND_AGGREGATE,
-  BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
   BDB_FIND_TERM_KIND_COUNT,
 } bdb_find_term_kind;
 
@@ -243,7 +240,6 @@ typedef enum bdb_term_kind {
   BDB_TERM_KIND_PARAM,
   BDB_TERM_KIND_PARAM_SET,
   BDB_TERM_KIND_LITERAL,
-  BDB_TERM_KIND_MEASURE,
 } bdb_term_kind;
 
 // A condition node's tag.
@@ -563,8 +559,8 @@ typedef struct bdb_agg_op {
   uint32_t kind;
 } bdb_agg_op;
 
-// One find term. `var` is read for `Var`/`Measure`; `op` plus `over` for
-// `Aggregate`/`AggregateMeasure` (folds always carry `over`); `Count` is
+// One find term. `var` is read for `Var`; `op` plus `over` for
+// `Aggregate` (folds always carry `over`); `Count` is
 // nullary and does not read `over`.
 typedef struct bdb_find_term {
   uint32_t kind;
@@ -573,7 +569,7 @@ typedef struct bdb_find_term {
   uint16_t over;
 } bdb_find_term;
 
-// One term. `var` is read for `Var`/`Measure`, `param` for
+// One term. `var` is read for `Var`, `param` for
 // `Param`/`ParamSet`, `literal` for `Literal`.
 typedef struct bdb_term {
   uint32_t kind;

@@ -295,9 +295,7 @@ fn occurrence_estimate<C: CatalogRead>(
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
             | FilterPredicate::FieldsPointIn { .. }
-            | FilterPredicate::FieldWithin { .. }
-            | FilterPredicate::DurationCompare { .. }
-            | FilterPredicate::DurationFieldsCompare { .. } => RANGE_KEEP_DEN,
+            | FilterPredicate::FieldWithin { .. } => RANGE_KEEP_DEN,
             FilterPredicate::FieldsAllen { .. } | FilterPredicate::FieldAllen { .. } => {
                 unreachable!("handled above")
             }
@@ -827,7 +825,7 @@ mod tests {
 
     const CYCLE_VOCAB: RelationId = RelationId(0);
     const CYCLE_A: RelationId = RelationId(1);
-    const CYCLE_B: RelationId = RelationId(2);
+    const _CYCLE_B: RelationId = RelationId(2);
     const CYCLE_C: RelationId = RelationId(3);
 
     fn cyclic_schema() -> Schema {
@@ -893,5 +891,4 @@ mod tests {
         .validate()
         .expect("valid cyclic fixture")
     }
-
 }

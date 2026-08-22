@@ -195,7 +195,6 @@ fn term_json(term: &Term) -> String {
         Term::Param(p) => format!("{{\"kind\":\"param\",\"param\":{}}}", p.0),
         Term::ParamSet(p) => format!("{{\"kind\":\"paramSet\",\"param\":{}}}", p.0),
         Term::Literal(value) => format!("{{\"kind\":\"literal\",\"value\":{}}}", value_json(value)),
-        Term::Measure(v) => format!("{{\"kind\":\"measure\",\"var\":{}}}", v.0),
     }
 }
 
@@ -210,16 +209,10 @@ fn fold_op_json(op: FoldOp) -> String {
 fn find_json(find: &FindTerm) -> String {
     match find {
         FindTerm::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
-        FindTerm::Measure(v) => format!("{{\"kind\":\"measure\",\"var\":{}}}", v.0),
         FindTerm::Count => "{\"kind\":\"count\"}".to_string(),
         FindTerm::Pack { over } => format!("{{\"kind\":\"pack\",\"over\":{}}}", over.0),
         FindTerm::Aggregate { op, over } => format!(
             "{{\"kind\":\"aggregate\",\"op\":{},\"over\":{}}}",
-            fold_op_json(*op),
-            over.0
-        ),
-        FindTerm::AggregateMeasure { op, over } => format!(
-            "{{\"kind\":\"aggregateMeasure\",\"op\":{},\"over\":{}}}",
             fold_op_json(*op),
             over.0
         ),
@@ -584,18 +577,6 @@ fn cases() -> Vec<Case> {
         { (org, busy: Pack(active)) | Mandate(org, active); },
         { (v0, Pack(v1)) | Mandate(org: v0, active: v1); });
 
-    corpus_case!(cases, true, "mandate-durations",
-        ["duration"],
-        "(org, Duration(active)) | Mandate(org, active);",
-        { (org, Duration(active)) | Mandate(org, active); },
-        { (v0, Duration(v1)) | Mandate(org: v0, active: v1); });
-
-    corpus_case!(cases, true, "long-mandates",
-        ["duration"],
-        "(org, Sum(Duration(active))) | Mandate(org, active), Duration(active) >= 3600;",
-        { (org, Sum(Duration(active))) | Mandate(org, active), Duration(active) >= 3600; },
-        { (v0, Sum(Duration(v1))) | Mandate(org: v0, active: v1), Duration(v1) >= 3600; });
-
     corpus_case!(cases, true, "usd-or-eur-accounts",
         ["multi-rule-union"],
         "(id) | Account(id, currency == Usd);\n\
@@ -678,7 +659,6 @@ const REQUIRED_PRODUCTIONS: &[&str] = &[
     "agg-max",
     "agg-count",
     "agg-pack",
-    "duration",
     "named-columns",
     "multi-rule-union",
     "rec",
@@ -771,14 +751,14 @@ fn the_corpus_replays_byte_identical() {
     }
 }
 
-/// The production-coverage enumeration: at least 20 cases, unique names,
+/// The production-coverage enumeration: at least 19 cases, unique names,
 /// every required production witnessed, no case naming an unknown one.
 #[test]
 fn every_production_is_covered() {
     let cases = cases();
     assert!(
-        cases.len() >= 20,
-        "the corpus holds at least 20 cases (got {})",
+        cases.len() >= 19,
+        "the corpus holds at least 19 cases (got {})",
         cases.len()
     );
     let mut names = BTreeSet::new();

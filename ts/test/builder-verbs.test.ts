@@ -117,14 +117,18 @@ describe("TS builder verb set", function suite() {
 		const start = range.at(0n)
 		const next = range.at(1n)
 		assert.equal(typeof start, "bigint")
-		assert.equal(next, start! + 1n)
+		assert.equal(typeof next, "bigint")
+		if (typeof start !== "bigint" || typeof next !== "bigint") {
+			throw new Error("reserve minted two ids")
+		}
+		assert.equal(next, start + 1n)
 		builder.load(Holder, [
-			{ id: start!, name: "ada" },
-			{ id: next!, name: "grace" }
+			{ id: start, name: "ada" },
+			{ id: next, name: "grace" }
 		])
 		const owned = accepted(await builder.admit())
-		assert.equal(owned.get(Holder, { id: start! })?.name, "ada")
-		assert.equal(owned.get(Holder, { id: next! })?.name, "grace")
+		assert.equal(owned.get(Holder, { id: start })?.name, "ada")
+		assert.equal(owned.get(Holder, { id: next })?.name, "grace")
 		owned[Symbol.dispose]()
 	})
 
@@ -188,14 +192,23 @@ describe("TS builder verb set", function suite() {
 			assert.equal(report.changed, 1n)
 			assert.equal(tx.contains(Marker, {}), true)
 		})
-		assert.equal(db.read((i) => i.contains(Marker, {})), true)
-		assert.equal(db.read((i) => i.count(Marker)), 1n)
+		assert.equal(
+			db.read((i) => i.contains(Marker, {})),
+			true
+		)
+		assert.equal(
+			db.read((i) => i.count(Marker)),
+			1n
+		)
 		db.write(function deleteMarker(tx) {
 			const report = tx.delete(Marker, [{}])
 			assert.equal(report.submitted, 1n)
 			assert.equal(report.changed, 1n)
 		})
-		assert.equal(db.read((i) => i.count(Marker)), 0n)
+		assert.equal(
+			db.read((i) => i.count(Marker)),
+			0n
+		)
 		owned[Symbol.dispose]()
 	})
 

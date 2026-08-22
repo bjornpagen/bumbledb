@@ -7,8 +7,8 @@
 //! typed, `insert_dyn` dynamic).
 
 use bumbledb::ir::{
-    Atom, AtomSource, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, NonEmpty, ParamId,
-    ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
+    Atom, AtomSource, FindTerm, FoldOp, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
+    RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::FieldId;
 use bumbledb::schema::ValidateDescriptor as _;

@@ -363,13 +363,6 @@ fn var_is_dead(
         return false;
     }
     if normalized
-        .duration_residuals
-        .iter()
-        .any(|r| residual_mentions(r, var))
-    {
-        return false;
-    }
-    if normalized
         .anti_probes
         .iter()
         .any(|p| p.probe_bindings.iter().any(|(_, v)| *v == var))
@@ -388,9 +381,6 @@ fn residual_mentions(residual: &FilterPredicate, var: VarId) -> bool {
     let (left, right) = match residual {
         FilterPredicate::FieldsCompare { left, right, .. }
         | FilterPredicate::FieldsAllen { left, right, .. } => (*left, *right),
-        FilterPredicate::DurationFieldsCompare {
-            interval, scalar, ..
-        } => (*interval, *scalar),
         _ => unreachable!("kind-grouped residual list"),
     };
     left.var() == var || right.var() == var
@@ -494,7 +484,6 @@ fn subsumes(
         && subset(&keeper.residuals, &candidate.residuals)
         && subset(&keeper.word_residuals, &candidate.word_residuals)
         && subset(&keeper.allen_residuals, &candidate.allen_residuals)
-        && subset(&keeper.duration_residuals, &candidate.duration_residuals)
         && negated_within(keeper, candidate)
 }
 
@@ -624,9 +613,7 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
         match term {
             // A projected variable, and the measure positions' interval
             // variable (the measure reads it).
-            FindTerm::Var(var)
-            | FindTerm::Measure(var)
-            | FindTerm::AggregateMeasure { over: var, .. } => {
+            FindTerm::Var(var) => {
                 vars.insert(*var);
             }
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => {

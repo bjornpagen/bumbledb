@@ -98,8 +98,6 @@ pub enum PlanError {
     UnplacedWordResidual { residual: usize },
     /// An `Allen` residual's variables are never both bound.
     UnplacedAllenResidual { residual: usize },
-    /// A measure residual's variables are never both bound.
-    UnplacedDurationResidual { residual: usize },
     /// An anti-probe's variable set is never fully bound (validation
     /// guarantees negated-atom variables are positive-atom-bound, so
     /// this names a hand-built plan or query).
@@ -210,10 +208,6 @@ pub struct PlanOccurrence {
 }
 
 impl PlanOccurrence {
-    pub(crate) fn occ_bind(&self) -> OccBind {
-        self.bind
-    }
-
     pub(crate) fn source(&self) -> crate::ir::AtomSource {
         self.bind.source()
     }
@@ -249,12 +243,6 @@ pub struct PlanNode {
     /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
     /// masks are pure ALU over gathered batch words too).
     pub allen_residuals: Vec<FilterPredicate>,
-    /// Cross-atom measure residuals evaluated at this node — two-slot
-    /// read + ray test + subtraction feeding the ordinary word compare;
-    /// same placement rule as `residuals` (a fifth grouped-by-kind list,
-    /// per the refusal above: the subtraction is pure ALU over gathered
-    /// batch words).
-    pub duration_residuals: Vec<FilterPredicate>,
     /// Anti-probes evaluated at this node: each negated occurrence
     /// attaches to the earliest node binding its whole variable set —
     /// its probe keys **and** its point-filter variables
@@ -347,11 +335,6 @@ impl ValidatedPlan {
     #[must_use]
     pub fn is_negated(&self, occ: OccId) -> bool {
         self.occurrences[usize::from(occ.0)].role == Role::Negated
-    }
-
-    #[must_use]
-    pub(crate) fn distinctness(&self) -> Distinctness {
-        self.distinctness
     }
 
     #[must_use]

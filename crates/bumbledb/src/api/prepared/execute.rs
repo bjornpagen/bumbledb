@@ -114,9 +114,6 @@ impl<S> PreparedQuery<S> {
         // folded `Duration`): the engine's one runtime type error,
         // raised before finalize — never a partial result. Executor-side
         // rays (measure residuals) already surfaced through `run_join`.
-        if let Some([start, end]) = self.sink.measure_of_ray() {
-            return Err(crate::error::Error::MeasureOfRay { start, end });
-        }
         if !ran {
             return Ok(()); // every rule short-circuited: empty result
         }
@@ -163,36 +160,7 @@ impl<S> PreparedQuery<S> {
         for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, catalog, images, counters)?;
         }
-        if ran {
-            self.run_ray_probes(catalog, images, counters)?;
-        }
         Ok(ran)
-    }
-
-    /// One written rule's probes: resolve (the rule loop's latch
-    /// discipline verbatim), run the probe's Free Join into the
-    /// [`crate::exec::verdict::RayArbiter`], and raise on the first
-    /// Ray verdict.
-    pub(super) fn run_ray_probes<Cnt: Counters, C: CatalogRead, I: ImageBind>(
-        &mut self,
-        catalog: &C,
-        images: &I,
-        counters: &mut Cnt,
-    ) -> Result<()> {
-        let latched = super::reach::run_ray_probe_sets(
-            &mut self.ray_probes,
-            None,
-            self.schema.as_ref(),
-            catalog,
-            images,
-            &self.resolved_params,
-            &self.missed_params,
-            self.latch.is_latched() && self.params.is_empty(),
-            &mut self.bindings,
-            counters,
-        )?;
-        self.latch = self.latch.credit(latched);
-        Ok(())
     }
 
     /// One rule of the loop: re-aim the sink's slot tables at the rule's

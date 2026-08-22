@@ -119,7 +119,6 @@ fn interval_pair_query(
         residuals: vec![],
         word_residuals,
         allen_residuals,
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     }
@@ -418,7 +417,6 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     };
@@ -601,7 +599,6 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     };
@@ -703,7 +700,6 @@ fn negated_membership_rejects_only_covered_events() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: vec![],
-        duration_residuals: Vec::new(),
         slot_widths: [(x, SlotWidth::ONE), (t, SlotWidth::ONE)]
             .into_iter()
             .collect(),
@@ -936,7 +932,6 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
                 mask: *mask,
             })
             .collect(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths: [
             (VarId(0), SlotWidth::ONE),
@@ -1378,7 +1373,6 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: vec![residual(1, m1), residual(3, m2)],
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths: slot_widths.clone(),
     };
@@ -1518,7 +1512,6 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
                 right: OperandAddr::from(VarId(3)),
                 mask,
             }],
-            duration_residuals: Vec::new(),
             anti_probes: vec![],
             slot_widths: slot_widths.clone(),
         };

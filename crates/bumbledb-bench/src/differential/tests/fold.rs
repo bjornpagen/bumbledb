@@ -343,7 +343,6 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
             let model = match naive.query(&query, &params) {
                 Ok(rows) => Answers::Ok(rows),
                 Err(QueryError::Overflow { .. }) => Answers::Overflow,
-                Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
             };
             assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
             assert_eq!(on, model, "engine and model disagree: {query:?}");

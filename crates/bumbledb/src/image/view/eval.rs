@@ -5,8 +5,6 @@
 //! `None`; every other outcome is `Some`. There is no second walk.
 //! Static dispatch, never `dyn`.
 
-use std::sync::Arc;
-
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::WordCmp;
 use crate::obs;
@@ -15,10 +13,7 @@ use crate::storage::catalog::CatalogRead;
 use crate::storage::dict;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
-use super::{
-    BoundView, Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource,
-    WordOrParam,
-};
+use super::{Const, FilterPredicate, IntervalConst, MaskConst, SetConst, ViewWordSource};
 
 /// Address of one operand in a provider's space. Image and fact
 /// providers interpret [`Self::at`] as a [`FieldId`]; binding and batch
@@ -331,9 +326,7 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
         )
     };
     match filter {
-        FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. }
-        | FilterPredicate::AnyPointIn { .. } => false,
+        FilterPredicate::AnyPointIn { .. } => false,
         FilterPredicate::Compare { op, value, .. } => match (op, value) {
             (WordCmp::Eq, Const::WordSet(_) | Const::Words(_) | Const::Interval { .. })
             | (WordCmp::Ne, Const::Words(_) | Const::Interval { .. })
@@ -412,38 +405,7 @@ pub(crate) fn holds<O: Operands>(
                 }
             })
         }
-        FilterPredicate::DurationCompare { field, op, value } => {
-            let (start, end) = ops.pair(*field)?;
-            if end == u64::MAX {
-                None
-            } else {
-                Some(op.compare(&(end - start), &resolve_duration_word(value, params)))
-            }
-        }
-        FilterPredicate::DurationFieldsCompare {
-            interval,
-            op,
-            scalar,
-        } => {
-            let (start, end) = ops.pair(*interval)?;
-            if end == u64::MAX {
-                None
-            } else {
-                Some(op.compare(&(end - start), &ops.word(*scalar)?))
-            }
-        }
     })
-}
-
-fn resolve_duration_word(value: &WordOrParam, params: &[Const]) -> u64 {
-    match value {
-        WordOrParam::Word(word) => *word,
-        WordOrParam::Param(param) => match &params[usize::from(param.0)] {
-            Const::Word(word) => *word,
-            Const::Byte(byte) => u64::from(*byte),
-            _ => unreachable!("param slice: measure param resolves to a word"),
-        },
-    }
 }
 
 fn compare_loaded<O: Operands>(
@@ -539,8 +501,6 @@ fn interval_at(image: &RelationImage, field: FieldId, position: usize) -> (u64, 
 }
 
 /// Conjunction over an image row. Infallible: image decode already ran.
-/// Measure kinds stay true here — the filter-order law refines them
-/// after this walk ([`refine_measure`]).
 #[must_use]
 pub(crate) fn row_holds(
     image: &RelationImage,
@@ -550,18 +510,10 @@ pub(crate) fn row_holds(
 ) -> bool {
     let ops = ImageRow { image, position };
     predicates.iter().all(|predicate| {
-        if predicate.is_measure() {
-            return true;
-        }
         holds(predicate, &ops, params)
             .unwrap_or_else(|e| match e {})
             .unwrap_or(false)
     })
-}
-
-/// The single column of a scalar field, through its span.
-fn scalar_column(image: &RelationImage, field: OperandAddr) -> ColumnView<'_> {
-    image.column(usize::from(image.span(field.field()).first_column))
 }
 
 /// An interval field's two word-column slices.
@@ -572,107 +524,6 @@ fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64
     match (image.column(first), image.column(first + 1)) {
         (ColumnView::Words(starts), ColumnView::Words(ends)) => (starts, ends),
         _ => unreachable!("an interval span covers two word columns"),
-    }
-}
-
-/// One measure predicate over the current survivors. A full view takes
-/// the fused dense kernel; survivor views refine scalar, position by
-/// position. A ray never survives here.
-pub(crate) fn refine_measure(
-    image: &Arc<RelationImage>,
-    predicate: &FilterPredicate,
-    params: &[Const],
-    view: View,
-    spare: &mut Vec<u32>,
-) -> View {
-    match predicate {
-        FilterPredicate::DurationCompare { field, op, value } => {
-            let bound = resolve_word(value, params);
-            let (lo, hi) = match op {
-                crate::ir::OrderCmp::Lt => match bound.checked_sub(1) {
-                    Some(hi) => (0, hi),
-                    None => (1, 0),
-                },
-                crate::ir::OrderCmp::Le => (0, bound),
-                crate::ir::OrderCmp::Gt => match bound.checked_add(1) {
-                    Some(lo) => (lo, u64::MAX),
-                    None => (1, 0),
-                },
-                crate::ir::OrderCmp::Ge => (bound, u64::MAX),
-            };
-            let (starts, ends) = interval_columns(image, *field);
-            match view {
-                View::Bound(BoundView::All(_)) => {
-                    let mut positions = std::mem::take(spare);
-                    positions.clear();
-                    crate::exec::kernel::filter_duration_range_u64(
-                        starts,
-                        ends,
-                        lo,
-                        hi,
-                        &mut positions,
-                    );
-                    View::Bound(BoundView::Survivors {
-                        image: Arc::clone(image),
-                        positions,
-                    })
-                }
-                View::Bound(BoundView::Survivors {
-                    image: view_image,
-                    mut positions,
-                }) => {
-                    let mut cursor = 0usize;
-                    for read in 0..positions.len() {
-                        let p = positions[read] as usize;
-                        let (start, end) = (starts[p], ends[p]);
-                        positions[cursor] = positions[read];
-                        cursor +=
-                            usize::from(end != u64::MAX && lo <= end - start && end - start <= hi);
-                    }
-                    positions.truncate(cursor);
-                    View::Bound(BoundView::Survivors {
-                        image: view_image,
-                        positions,
-                    })
-                }
-                View::Unbound => unreachable!("apply binds the view it filters"),
-            }
-        }
-        FilterPredicate::DurationFieldsCompare {
-            interval,
-            op,
-            scalar,
-        } => {
-            let (starts, ends) = interval_columns(image, *interval);
-            let scalars = match scalar_column(image, *scalar) {
-                ColumnView::Words(words) => words,
-                ColumnView::Bytes(_) => unreachable!("validated: the measure side is u64"),
-            };
-            let mut positions = match view {
-                View::Bound(BoundView::All(_)) => {
-                    let mut positions = std::mem::take(spare);
-                    positions.clear();
-                    positions
-                        .extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
-                    positions
-                }
-                View::Bound(BoundView::Survivors { positions, .. }) => positions,
-                View::Unbound => unreachable!("apply binds the view it filters"),
-            };
-            let mut cursor = 0usize;
-            for read in 0..positions.len() {
-                let p = positions[read] as usize;
-                let (start, end) = (starts[p], ends[p]);
-                positions[cursor] = positions[read];
-                cursor += usize::from(end != u64::MAX && op.compare(&(end - start), &scalars[p]));
-            }
-            positions.truncate(cursor);
-            View::Bound(BoundView::Survivors {
-                image: Arc::clone(image),
-                positions,
-            })
-        }
-        _ => unreachable!("refine_measure takes the measure kinds"),
     }
 }
 
@@ -741,10 +592,7 @@ pub(crate) fn kernel_scan(
             );
             return true;
         }
-        FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsPointIn { .. }
-        | FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => {
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
             return false;
         }
     }
@@ -965,23 +813,7 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
                 mask: mask_of(*mask, params),
             };
         }
-        FilterPredicate::DurationCompare { field, op, value } => {
-            let resolved = match value {
-                WordOrParam::Word(_) => *value,
-                WordOrParam::Param(param) => match &params[usize::from(param.0)] {
-                    Const::Word(word) => WordOrParam::Word(*word),
-                    _ => unreachable!("param slice: a measure compares against a u64 word"),
-                },
-            };
-            *dst = FilterPredicate::DurationCompare {
-                field: *field,
-                op: *op,
-                value: resolved,
-            };
-        }
-        FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsPointIn { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => {
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
             dst.clone_from(template);
         }
     }
@@ -1138,9 +970,7 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
             );
             out.push(')');
         }
-        FilterPredicate::AnyPointIn { .. }
-        | FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => {
+        FilterPredicate::AnyPointIn { .. } => {
             render_unparsed_filter(out, filter);
         }
     }
@@ -1204,8 +1034,6 @@ mod gate {
         "FieldAllen",
         "FieldsPointIn",
         "FieldWithin",
-        "DurationCompare",
-        "DurationFieldsCompare",
     ];
 
     fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

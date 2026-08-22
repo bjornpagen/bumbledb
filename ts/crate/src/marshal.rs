@@ -950,7 +950,6 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
         tags::term::VAR => Ok(Term::Var(var_in(obj, "var", "var term")?)),
         tags::term::PARAM => Ok(Term::Param(param_in(obj, "param", "param term")?)),
         tags::term::PARAM_SET => Ok(Term::ParamSet(param_in(obj, "param", "paramSet term")?)),
-        tags::term::MEASURE => Ok(Term::Measure(var_in(obj, "var", "measure term")?)),
         tags::term::LITERAL => {
             let value: Object = req(obj, "value", "literal term")?;
             Ok(Term::Literal(tagged_value(&value)?))
@@ -998,7 +997,6 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     let kind: String = req(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
-        tags::find_term::MEASURE => Ok(FindTerm::Measure(var_in(obj, "var", "measure find")?)),
         tags::find_term::COUNT => {
             if obj.get::<f64>("over")?.is_some() {
                 return Err(err("bumbledb marshal: Count carries no over".to_string()));
@@ -1013,13 +1011,6 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
             Ok(FindTerm::Aggregate {
                 op: fold_op_in(&op)?,
                 over: var_in(obj, "over", "aggregate find")?,
-            })
-        }
-        tags::find_term::AGGREGATE_MEASURE => {
-            let op: Object = req(obj, "op", "aggregateMeasure find")?;
-            Ok(FindTerm::AggregateMeasure {
-                op: fold_op_in(&op)?,
-                over: var_in(obj, "over", "aggregateMeasure find")?,
             })
         }
         other => Err(err(format!(

@@ -35,7 +35,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
-pub use normalize::{normalize_ray_probe, normalize_rules};
+pub use normalize::normalize_rules;
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
@@ -301,10 +301,6 @@ pub struct NormalizedQuery {
     /// (interval `Eq`/`Ne` comparisons canonicalize here too — exactly
     /// one interval-pair form reaches the planner).
     pub allen_residuals: Vec<FilterPredicate>,
-    /// Cross-atom measure residuals: two-slot read + ray test +
-    /// subtraction feeding the ordinary word comparison
-    /// ([`FilterPredicate::DurationFieldsCompare`]).
-    pub duration_residuals: Vec<FilterPredicate>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
     /// order — minus the ones the grounding-evaluator folded away
     /// (`plan/ground/evaluate.rs` deletes a folded negated occurrence's

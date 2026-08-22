@@ -532,10 +532,6 @@ struct NodeScratch {
     /// 0/1 (batch key words and binding slots lay intervals out
     /// identically — the `SlotWidth` layout).
     allen_sources: Vec<(Source, Source)>,
-    /// Measure-residual operand sources, aligned with the node's
-    /// `duration_residuals` list: the interval side at its word base
-    /// (pair read at offsets 0/1), the u64 side at its single word.
-    duration_sources: Vec<(Source, Source)>,
     /// Allen-residual endpoint gather scratch: the four per-survivor
     /// endpoint streams `[a.start | a.end | b.start | b.end]`, each of
     /// the survivor count, gathered per residual pass and classified
@@ -630,16 +626,6 @@ struct AllenResidualSpec {
     mask: crate::allen::AllenMask,
 }
 
-/// Measure residual: operator, interval/scalar vars, and slots.
-#[derive(Clone, Copy)]
-struct DurationResidualSpec {
-    op: crate::ir::OrderCmp,
-    interval: crate::ir::VarId,
-    scalar: crate::ir::VarId,
-    interval_slot: usize,
-    scalar_slot: usize,
-}
-
 /// Per-node executor precompute: residual slot layouts, resolved Allen
 /// masks, and probe specs for the node they describe. Construction
 /// derives each field from that node's plan lists; nothing here is a
@@ -653,7 +639,6 @@ struct NodePrecompute {
     /// at construction; param masks would be rewritten in place by
     /// [`Executor::bind_allen_masks`] before every execution.
     allen_masks: Vec<crate::allen::AllenMask>,
-    duration_residual_slots: Vec<DurationResidualSpec>,
     point_probes: Vec<PointProbeSpec>,
     anti_probes: Vec<AntiProbeSpec>,
 }

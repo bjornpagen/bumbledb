@@ -13,15 +13,11 @@
 //!   degenerate corner (finding 085): Allen, `PointIn`, params, and
 //!   ray-bearing measure leaves under 1–2 atoms, optional negation,
 //!   and aggregate heads over overlapping disjuncts (R2's re-keyed
-//!   union fold; R6's Kleene raise, tree-quantified).
+//!   union fold).
 //! - **`Pack`**: `SQLite` cannot express the coalescing fold
 //!   ([`crate::translate::Inexpressible::PackAggregate`]) — these rows
 //!   run **naive-only by decision**, counted and reported, never
 //!   silently dropped.
-//! - **The measure's rays**: `Duration` over the ray-bearing mandate
-//!   corpus — `MeasureOfRay` on both sides (typed identity through the
-//!   differential runner's `Answers` verdict), and the `Allen(DISJOINT)`
-//!   ray filter keeping the same query answers.
 //! - **Error parity** ([`error_parity`]): cap-exceeding DNF, the
 //!   vanished query (every disjunct empty), and the vacuous masks
 //!   (EMPTY and FULL) — the engine's typed validation verdict compared
@@ -289,13 +285,8 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                     )],
                 ),
             };
-            let mut rich_leaf = |rng: &mut Rng| match rng.range(6) {
+            let mut rich_leaf = |rng: &mut Rng| match rng.range(3) {
                 0 => leaf(
-                    op_of(rng),
-                    var(0),
-                    Term::Literal(Value::U64(rng.range(sizes.accounts + 2))),
-                ),
-                1 => leaf(
                     CmpOp::Allen {
                         mask: match rng.range(4) {
                             0 => AllenMask::INTERSECTS,
@@ -307,23 +298,9 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                     var(1),
                     interval_literal(rng),
                 ),
-                2 => leaf(
+                1 => leaf(
                     CmpOp::PointIn,
                     var(1),
-                    Term::Literal(Value::I64(at_literal(rng))),
-                ),
-                // The measure leaf — the tree grammar's one partial
-                // predicate, over rays (even accounts carry `[s, ∞)`).
-                3 => leaf(
-                    order_op(rng),
-                    Term::Measure(VarId(1)),
-                    Term::Literal(Value::U64(
-                        rng.range(u64::try_from(4 * AT_STEP).expect("positive")),
-                    )),
-                ),
-                _ if joined => leaf(
-                    op_of(rng),
-                    var(2),
                     Term::Literal(Value::I64(at_literal(rng))),
                 ),
                 _ => leaf(
@@ -401,16 +378,7 @@ fn op_of(rng: &mut Rng) -> CmpOp {
 }
 
 /// A uniformly drawn order operator (the measure's roster).
-fn order_op(rng: &mut Rng) -> CmpOp {
-    match rng.range(4) {
-        0 => CmpOp::Lt,
-        1 => CmpOp::Le,
-        2 => CmpOp::Gt,
-        _ => CmpOp::Ge,
-    }
-}
-
-/// The `Pack` rows (naive-only by decision) and the measure's ray rows.
+/// The `Pack` rows (naive-only by decision).
 /// Returns the ops and the count of `SQLite`-inexpressible cases, each
 /// one asserted to be exactly the enumerated `PackAggregate` routing.
 fn pack_and_measure_ops() -> (Vec<Op>, u64) {
@@ -457,51 +425,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         );
     }
     let naive_only = pack_queries.len() as u64;
-    let mut ops: Vec<Op> = pack_queries.into_iter().map(query).collect();
-
-    // The measure over the ray-bearing corpus (even accounts carry a
-    // `[s, ∞)` segment by construction): unfiltered, both sides raise
-    // `MeasureOfRay` — the typed verdict compared whole by the
-    // differential runner; filtered by the ray probe, both answers.
-    let ray_filter = leaf(
-        CmpOp::Allen {
-            mask: AllenMask::DISJOINT,
-        },
-        var(1),
-        Term::Literal(Value::IntervalI64(
-            bumbledb::Interval::<i64>::new(i64::MAX - 1, i64::MAX).expect("nonempty interval"),
-        )),
-    );
-    let measure = |finds: Vec<FindTerm>, conditions: Vec<ConditionTree>| {
-        query(Query::single(Rule {
-            finds,
-            atoms: vec![mandate_atom()],
-            negated: vec![],
-            conditions,
-        }))
-    };
-    ops.push(measure(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-        vec![],
-    ));
-    ops.push(measure(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-        vec![ray_filter.clone()],
-    ));
-    ops.push(measure(
-        vec![FindTerm::AggregateMeasure {
-            op: FoldOp::Sum,
-            over: VarId(1),
-        }],
-        vec![],
-    ));
-    ops.push(measure(
-        vec![FindTerm::AggregateMeasure {
-            op: FoldOp::Sum,
-            over: VarId(1),
-        }],
-        vec![ray_filter],
-    ));
+    let ops: Vec<Op> = pack_queries.into_iter().map(query).collect();
     (ops, naive_only)
 }
 

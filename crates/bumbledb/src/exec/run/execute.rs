@@ -1,9 +1,9 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive,
-    DurationResidualSpec, Executor, LeafPrecompute, NodePrecompute, NodeScratch, PipeTables,
-    PointProbeSpec, ResidualSpec, Sink, ValidatedPlan, WordResidualSpec,
+    AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor,
+    LeafPrecompute, NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, ResidualSpec, Sink,
+    ValidatedPlan, WordResidualSpec,
 };
 use crate::plan::fj::PlanNode;
 use std::num::NonZeroUsize;
@@ -131,26 +131,11 @@ impl NodePrecompute {
             })
             .collect();
         let allen_masks = allen_residual_slots.iter().map(|spec| spec.mask).collect();
-        let duration_residual_slots = node
-            .duration_residuals
-            .iter()
-            .map(|r| {
-                let (interval, scalar, op) = r.duration_sides();
-                DurationResidualSpec {
-                    op,
-                    interval: interval.var(),
-                    scalar: scalar.var(),
-                    interval_slot: plan.slot_of(interval.var()),
-                    scalar_slot: plan.slot_of(scalar.var()),
-                }
-            })
-            .collect();
         Self {
             residual_slots,
             word_residual_slots,
             allen_residual_slots,
             allen_masks,
-            duration_residual_slots,
             point_probes: point_probes_of(plan, node),
             anti_probes: anti_probes_of(plan, node),
         }
@@ -271,7 +256,6 @@ impl Executor {
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
                     allen_sources: Vec::new(),
-                    duration_sources: Vec::new(),
                     allen_gather: Vec::new(),
                     allen_codes: Vec::new(),
                     anti_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),

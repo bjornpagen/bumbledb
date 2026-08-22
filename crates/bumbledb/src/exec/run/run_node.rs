@@ -123,19 +123,6 @@ impl Executor {
                 resolve(spec.rhs, spec.rhs_slot),
             ));
         }
-        // Measure residuals: the interval side at its word base (pair
-        // read at offsets 0/1), the u64 side at its single word.
-        scratch.duration_sources.clear();
-        for spec in &self.precompute[node_idx].duration_residual_slots {
-            let resolve = |var: crate::ir::VarId, slot: usize| {
-                super::word_base(cover_vars, var, |v| self.width_of(v))
-                    .map_or(Source::Slot(slot), Source::Batch)
-            };
-            scratch.duration_sources.push((
-                resolve(spec.interval, spec.interval_slot),
-                resolve(spec.scalar, spec.scalar_slot),
-            ));
-        }
 
         // The overlap enumeration (finding 012; overlap_leaf.rs): a
         // touching-mask Allen residual against an outer constant
@@ -350,33 +337,6 @@ impl Executor {
                 }
                 for &keep in &scratch.mask[..n] {
                     counters.residual(node_idx, keep != 0);
-                }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-            }
-            // Measure residuals: per survivor, read the interval pair at
-            // the word base, test the ray — a ray never survives the
-            // comparison (its verdict is Ray, not Fails; the Kleene
-            // verdict algebra, R6 — the prepared query's ray-probe pass
-            // renders it) — subtract, and compare the u64 word;
-            // survivors compact on the same cursor-write. The gathered
-            // shape stays scalar per the standing rule (the dense
-            // stride-1 twin is the view kernel,
-            // `exec::kernel::filter_duration_range_u64`).
-            for (r_idx, (interval_src, scalar_src)) in scratch.duration_sources.iter().enumerate() {
-                let op = self.precompute[node_idx].duration_residual_slots[r_idx].op;
-                let n = scratch.survivors.len();
-                grow_scratch(&mut scratch.mask, n);
-                for k in 0..n {
-                    let e = scratch.survivors[k];
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    let value = |src: &Source, offset: usize| match *src {
-                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
-                        Source::Slot(slot) => bindings.get(slot + offset),
-                    };
-                    let (start, end) = (value(interval_src, 0), value(interval_src, 1));
-                    let pass = end != u64::MAX && op.compare(&(end - start), &value(scalar_src, 0));
-                    counters.residual(node_idx, pass);
-                    scratch.mask[k] = u8::from(pass);
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }

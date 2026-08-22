@@ -22,7 +22,7 @@ pub(in crate::exec::sink) fn parse_finds(
 /// [`parse_finds`] into retained buffers for the rule-loop re-aim path.
 pub(in crate::exec::sink) fn parse_finds_into(
     finds: &[FindSpec],
-    slot_count: usize,
+    _slot_count: usize,
     parsed: &mut Vec<SinkSpec>,
     measures: &mut Vec<(usize, usize)>,
 ) {
@@ -31,27 +31,6 @@ pub(in crate::exec::sink) fn parse_finds_into(
     for find in finds {
         let spec = match *find {
             FindSpec::Var { slot, width } => SinkSpec::Var { slot, width },
-            FindSpec::Duration { slot } => {
-                let derived = slot_count + measures.len();
-                measures.push((derived, slot));
-                SinkSpec::Var {
-                    slot: derived,
-                    width: 1,
-                }
-            }
-            FindSpec::AggDuration { op, slot } => {
-                let derived = slot_count + measures.len();
-                measures.push((derived, slot));
-                SinkSpec::Agg(AggSpec::Fold {
-                    op,
-                    slot: derived,
-                    width: 1,
-                    // The measure is u64 — the unsigned wide accumulator
-                    // with the single finalize range check, like every
-                    // Sum(U64).
-                    signed: false,
-                })
-            }
             FindSpec::Agg(spec) => SinkSpec::Agg(spec),
             FindSpec::Pack { slot } => SinkSpec::Pack { slot },
         };
@@ -294,7 +273,6 @@ impl AggregateSink {
             finds,
             measures,
             real_slots: slot_count,
-            ray: crate::exec::sink::RayPoison::Clear,
             group_state,
         }
     }
@@ -382,18 +360,9 @@ impl AggregateSink {
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
         }
-        self.ray = crate::exec::sink::RayPoison::Clear;
         if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();
         }
-    }
-
-    /// The measure poison: the first ray a measure position reached —
-    /// the execution's answer is the typed
-    /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
-    #[must_use]
-    pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
-        self.ray.span()
     }
 }
 

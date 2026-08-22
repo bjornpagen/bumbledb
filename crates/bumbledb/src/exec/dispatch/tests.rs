@@ -183,7 +183,6 @@ fn single_with_widths(occurrence: Occurrence, wide_vars: &[u16]) -> NormalizedQu
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     }
@@ -264,7 +263,6 @@ fn a_second_atom_or_a_residual_stays_free_join() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths: [(VarId(0), SlotWidth::ONE)].into_iter().collect(),
     };

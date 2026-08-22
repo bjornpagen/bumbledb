@@ -13,7 +13,6 @@ mod fold;
 mod ground;
 mod identity_bytes;
 mod marks;
-mod measure;
 mod pack;
 mod recursive;
 mod witness;

@@ -9,8 +9,7 @@
 use super::render;
 use crate::ir::validate::validate;
 use crate::ir::{
-    Atom, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, ParamId, Query, Rule, Term, Value,
-    VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -243,38 +242,6 @@ fn pack_head_golden() {
 
 /// The Duration head, golden: the measure projected and folded, plus a
 /// measure comparison — `Duration(v)` in every legal position.
-#[test]
-fn duration_head_golden() {
-    let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::AggregateMeasure {
-                op: FoldOp::Sum,
-                over: VarId(1),
-            },
-        ],
-        atoms: vec![Atom {
-            source: crate::ir::AtomSource::Edb(BUSY),
-            bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
-        }],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Ge,
-            lhs: Term::Measure(VarId(1)),
-            rhs: Term::Literal(Value::U64(3600)),
-        })],
-    });
-    let schema = calendar();
-    validate(&schema, &query).expect("the golden query is a real query");
-    assert_eq!(
-        render(&schema, &query),
-        "(v0, Sum(Duration(v1))) | Busy(person: v0, during: v1), Duration(v1) >= 3600;"
-    );
-}
-
-/// Membership renders point-first (`point in interval`); a param set in
-/// a binding is membership too (`field in ?N`); a scalar param binding is
-/// the selection form with the param admitted.
 #[test]
 fn membership_and_param_forms() {
     let query = Query::single(Rule {

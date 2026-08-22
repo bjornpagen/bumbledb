@@ -97,8 +97,6 @@ use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
 use bumbledb_theory::schema::{FieldId, RelationId};
 
-pub(crate) use crate::image::view::push_handle;
-
 use super::var_is_dead;
 
 /// One evaluator step of the grounding loop: finds the first foldable

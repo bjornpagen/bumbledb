@@ -1,9 +1,9 @@
 use super::{IntervalWord, Occurrence, lower_literal::lower_literal, lower_literal::point_word};
 use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, MaskConst, OperandAddr, ViewWordSource, WordOrParam,
+    Const, FilterPredicate, IntervalConst, MaskConst, OperandAddr, ViewWordSource,
 };
-use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{OrderCmp, VarId};
+use crate::ir::VarId;
+use crate::ir::validate::{ClassifiedComparison, SealedConst};
 use bumbledb_theory::allen::AllenMask;
 
 /// The lowered constant of a sealed comparison side. String stays a
@@ -15,14 +15,6 @@ fn sealed_interval(constant: &SealedConst) -> IntervalConst {
         Const::Interval { start, end } => IntervalConst::Interval { start, end },
         Const::Param(param) => IntervalConst::Param(param),
         _ => unreachable!("validated: Allen/within constants are intervals"),
-    }
-}
-
-fn sealed_word(constant: &SealedConst) -> WordOrParam {
-    match sealed_const(constant) {
-        Const::Word(word) => WordOrParam::Word(word),
-        Const::Param(param) => WordOrParam::Param(param),
-        _ => unreachable!("validated: measure constants are u64 words"),
     }
 }
 
@@ -101,12 +93,10 @@ pub(super) fn place_comparisons(
     Vec<FilterPredicate>,
     Vec<FilterPredicate>,
     Vec<FilterPredicate>,
-    Vec<FilterPredicate>,
 ) {
     let mut residuals = Vec::new();
     let mut word_residuals = Vec::new();
     let mut allen_residuals = Vec::new();
-    let mut duration_residuals = Vec::new();
     for comparison in comparisons {
         match comparison {
             // Scalar var-vs-var: same-atom is a per-atom field
@@ -237,74 +227,7 @@ pub(super) fn place_comparisons(
                         outer: sealed_interval(outer),
                     });
             }
-            // The measure, operator sealed measure-on-left: constant and
-            // same-atom variable sides push down as filters on the
-            // measured variable's first positive occurrence (where the
-            // filter-order law holds — an occurrence's other filters run
-            // first, so a checked fact never reaches the subtraction);
-            // only the cross-atom variable side is a residual.
-            ClassifiedComparison::Duration {
-                interval,
-                op,
-                other,
-            } => place_duration(occurrences, &mut duration_residuals, *interval, *op, other),
         }
     }
-    (
-        residuals,
-        word_residuals,
-        allen_residuals,
-        duration_residuals,
-    )
-}
-
-/// Places one measure comparison, `Duration(interval) <op> other` (the
-/// operator already sealed measure-on-left). Constant sides and same-atom
-/// variable sides push down as filters on the measured variable's first
-/// positive occurrence; only the cross-atom variable side becomes a
-/// residual ([`FilterPredicate::DurationFieldsCompare`]).
-fn place_duration(
-    occurrences: &mut [Occurrence],
-    duration_residuals: &mut Vec<FilterPredicate>,
-    interval: VarId,
-    op: OrderCmp,
-    other: &DurationOperand,
-) {
-    let (occ_idx, interval_field) = field_of(occurrences, interval);
-    match other {
-        DurationOperand::Var(scalar) => {
-            // Same-atom when the u64 variable is bound on the measured
-            // variable's occurrence; cross-atom is the residual.
-            let same = occurrences[occ_idx]
-                .vars
-                .iter()
-                .find(|(_, v)| v == scalar)
-                .map(|(field, _)| OperandAddr::from(*field));
-            match same {
-                Some(scalar_field) => {
-                    occurrences[occ_idx]
-                        .filters
-                        .push(FilterPredicate::DurationFieldsCompare {
-                            interval: interval_field,
-                            op,
-                            scalar: scalar_field,
-                        });
-                }
-                None => duration_residuals.push(FilterPredicate::DurationFieldsCompare {
-                    interval: OperandAddr::from(interval),
-                    op,
-                    scalar: OperandAddr::from(*scalar),
-                }),
-            }
-        }
-        DurationOperand::Const(value) => {
-            occurrences[occ_idx]
-                .filters
-                .push(FilterPredicate::DurationCompare {
-                    field: interval_field,
-                    op,
-                    value: sealed_word(value),
-                });
-        }
-    }
+    (residuals, word_residuals, allen_residuals)
 }

@@ -3,7 +3,7 @@ use crate::encoding::{ValueRef, decode_field, encode_fact, encode_i64, encode_u6
 use crate::error::Result as DbResult;
 use crate::image::build;
 use crate::ir::ParamId;
-use crate::ir::{OrderCmp, WordCmp};
+use crate::ir::WordCmp;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
@@ -505,73 +505,4 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
         sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
         [1, 3]
     );
-}
-
-/// The measure path (findings 051/115): the pooled survivor buffer
-/// round-trips through an all-measure apply instead of being dropped,
-/// the mixed list runs infallible-first over the SAME borrowed slice
-/// (no partition, no predicate clones), and the fields-measure arm
-/// dispatches on the View variant directly.
-#[test]
-fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
-    let dir = TempDir::new("view-measure-path");
-    let image = interval_image(&dir);
-    // Durations of P_ROWS' `during`: 7, 3, 7, 4, 2 (by id).
-    let dur_lt = |bound: u64| FilterPredicate::DurationCompare {
-        field: P_DURING.into(),
-        op: OrderCmp::Lt,
-        value: WordOrParam::Word(bound),
-    };
-
-    // All-measure: the caller's pooled buffer seeds the survivors (051).
-    let buf = Vec::with_capacity(64);
-    let ptr = buf.as_ptr();
-    let view = apply(&image, &[dur_lt(4)], &[], buf);
-    assert_eq!(sorted_ids(&view), [2, 5]);
-    let recycled = view.recycle();
-    assert_eq!(
-        recycled.as_ptr(),
-        ptr,
-        "the pooled survivor buffer round-trips through the all-measure path"
-    );
-
-    // Mixed list: the infallible predicate runs first over the same
-    // borrowed slice, the measure refines its survivors (order law).
-    let mixed = vec![
-        FilterPredicate::Compare {
-            field: P_ID.into(),
-            op: WordCmp::Ge,
-            value: Const::Word(3),
-        },
-        dur_lt(5),
-    ];
-    assert_eq!(sorted_ids(&apply(&image, &mixed, &[], recycled)), [4, 5]);
-
-    // The fields measure through both live variant arms (115): the
-    // identity extension (an All input) and the in-place survivor
-    // refinement (a mixed list). Durations vs the u64 id column:
-    // only id 5 (duration 2) sits strictly under its id.
-    let fields_lt = FilterPredicate::DurationFieldsCompare {
-        interval: P_DURING.into(),
-        op: OrderCmp::Lt,
-        scalar: P_ID.into(),
-    };
-    assert_eq!(
-        sorted_ids(&apply(
-            &image,
-            std::slice::from_ref(&fields_lt),
-            &[],
-            Vec::new()
-        )),
-        [5]
-    );
-    let mixed = vec![
-        FilterPredicate::Compare {
-            field: P_ID.into(),
-            op: WordCmp::Ge,
-            value: Const::Word(4),
-        },
-        fields_lt,
-    ];
-    assert_eq!(sorted_ids(&apply(&image, &mixed, &[], Vec::new())), [5]);
 }

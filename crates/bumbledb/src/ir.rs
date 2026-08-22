@@ -127,19 +127,6 @@ pub enum Term {
     /// (`docs/architecture/20-query-ir.md`, § param sets).
     ParamSet(ParamId),
     Literal(Value),
-    /// The **measure** of an interval-typed rule variable: `|[s, e)| =
-    /// e − s`, type u64 — the one arithmetic the point-set denotation
-    /// defines (`docs/architecture/10-data-model.md`; everything else is
-    /// endpoint math and stays refused). Legal in exactly one term
-    /// position: one side of an order comparison (`Lt`/`Le`/`Gt`/`Ge`)
-    /// against a u64-typed term or literal — never in an atom binding
-    /// (the measure is a computation, not a bindable value; typed
-    /// rejection), never under `Eq`/`Ne`/`Allen`/`PointIn`, never on
-    /// both sides. A ray (`end == MAX`) has no finite measure: the
-    /// subtraction raises the typed execution error
-    /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
-    /// `Allen` check or a bounded-end filter on the same atom first.
-    Measure(VarId),
 }
 
 /// One atom: a source with named-field bindings. Absence of a field *is*
@@ -227,19 +214,13 @@ impl FoldOp {
     }
 }
 
-/// One find term: a projected variable, the measure, nullary count, a
-/// fold over a variable, pack, or a fold over the measure. Count cannot
-/// carry a variable; folds and pack cannot omit one.
+/// One find term: a projected variable, nullary count, a fold over a
+/// variable, or pack. Count cannot carry a variable; folds and pack
+/// cannot omit one. Length of an interval is host arithmetic on the
+/// endpoints the answer row already carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
-    /// The measure at a find position: projects surface `Duration(over)` —
-    /// one u64 value per binding, `end − start` of the interval variable
-    /// (see [`Term::Measure`]; the variable must be interval-typed and
-    /// atom-bound). The projected measure is a group-key position under
-    /// aggregation, exactly like a plain variable find. A ray has no finite
-    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
-    Measure(VarId),
     /// Nullary: |the group's binding set|, result type U64.
     Count,
     /// `Sum`/`Min`/`Max` over a bound variable.
@@ -249,13 +230,6 @@ pub enum FindTerm {
     },
     /// The coalescing fold over an interval-typed variable.
     Pack {
-        over: VarId,
-    },
-    /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)`.
-    /// Accumulates exactly as the same fold over a u64 variable. A ray
-    /// has no finite measure and raises [`crate::Error::MeasureOfRay`].
-    AggregateMeasure {
-        op: FoldOp,
         over: VarId,
     },
 }
@@ -268,11 +242,9 @@ impl FindTerm {
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
-            Self::Var(_) | Self::Measure(_) => HeadTerm::Var,
+            Self::Var(_) => HeadTerm::Var,
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
-            Self::Aggregate { op, .. } | Self::AggregateMeasure { op, .. } => {
-                HeadTerm::Aggregate(op.head_op())
-            }
+            Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),
         }
     }
@@ -403,13 +375,6 @@ pub enum OrderCmp {
     Le,
     Gt,
     Ge,
-}
-
-impl OrderCmp {
-    /// Evaluates the operator over ordered operands.
-    pub(crate) fn compare<T: Ord>(self, left: &T, right: &T) -> bool {
-        WordCmp::from(self).compare(left, right)
-    }
 }
 
 /// One comparison condition. `Eq` between two variables is unification and

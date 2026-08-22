@@ -1,7 +1,5 @@
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
-use crate::exec::sink::{
-    FindSpec, ProjectionSink, ProjectionSources, SinkSpec, extend_sources, sources_of,
-};
+use crate::exec::sink::{FindSpec, ProjectionSink, ProjectionSources, SinkSpec, sources_of};
 use crate::exec::wordmap::WordMap;
 
 impl ProjectionSink {
@@ -21,12 +19,10 @@ impl ProjectionSink {
     fn with_capacity_hint_sources(sources: ProjectionSources, hint: usize) -> Self {
         let arity = match &sources {
             ProjectionSources::Plain(slots) => slots.len(),
-            ProjectionSources::Measured { sources, .. } => sources.len(),
         };
         Self {
             finds: Vec::new(),
             sources,
-            ray: crate::exec::sink::RayPoison::Clear,
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
             batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
@@ -58,7 +54,6 @@ impl ProjectionSink {
         parse_finds_into(finds, slot_count, &mut self.finds, &mut measures);
         match &mut self.sources {
             ProjectionSources::Plain(slots) => {
-                debug_assert!(measures.is_empty(), "plain heads have no measures");
                 slots.clear();
                 for find in &self.finds {
                     if let SinkSpec::Var { slot, width } = find {
@@ -66,20 +61,10 @@ impl ProjectionSink {
                     }
                 }
             }
-            ProjectionSources::Measured {
-                sources,
-                measures: dest,
-                ..
-            } => {
-                debug_assert!(!measures.is_empty(), "measured heads keep measures");
-                *dest = measures;
-                extend_sources(&self.finds, dest, sources);
-            }
         }
         debug_assert_eq!(
             match &self.sources {
                 ProjectionSources::Plain(slots) => slots.len(),
-                ProjectionSources::Measured { sources, .. } => sources.len(),
             },
             self.scratch.len(),
             "one head, fixed word arity"
@@ -118,17 +103,8 @@ impl ProjectionSink {
         self.len() == 0
     }
 
-    /// The measure poison: the first ray a projected measure reached —
-    /// the execution's answer is the typed
-    /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
-    #[must_use]
-    pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
-        self.ray.span()
-    }
-
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
-        self.ray = crate::exec::sink::RayPoison::Clear;
     }
 }

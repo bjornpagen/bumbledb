@@ -189,17 +189,6 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 		const { org, active } = v(Mandate)
 		return r.match(Mandate, { org, active }).find({ org, active: r.pack(active) })
 	}),
-	"mandate-durations": query(Ledger).rule((r) => {
-		const { org, active } = v(Mandate)
-		return r.match(Mandate, { org, active }).find({ org, active: r.duration(active) })
-	}),
-	"long-mandates": query(Ledger).rule((r) => {
-		const { org, active } = v(Mandate)
-		return r
-			.match(Mandate, { org, active })
-			.where(r.ge(r.duration(active), 3600n))
-			.find({ org, active: r.sum(r.duration(active)) })
-	}),
 	"usd-or-eur-accounts": query(Ledger)
 		.rule((r) => {
 			const { id } = v(Account)
@@ -462,7 +451,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 				return file.endsWith(".json")
 			})
 			.sort()
-		assert.ok(files.length >= 20, `the corpus holds at least 20 cases (got ${files.length})`)
+		assert.ok(files.length >= 19, `the corpus holds at least 19 cases (got ${files.length})`)
 
 		let skipped = 0
 		for (const file of files) {

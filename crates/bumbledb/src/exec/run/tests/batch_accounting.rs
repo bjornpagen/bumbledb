@@ -165,7 +165,6 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     };

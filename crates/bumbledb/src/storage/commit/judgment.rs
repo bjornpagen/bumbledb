@@ -249,8 +249,8 @@ impl SlotShape {
 /// order-preserving column words (I64 endpoints are the sign-flipped
 /// biased words, so differences are value differences). A ray
 /// (`end == u64::MAX` in both element encodings) has no finite measure —
-/// the typed commit refusal naming the row (ruled 2026-07-24, C10; the
-/// R6 precedent, `crate::error::Error::MeasureOfRay`'s judge-side twin).
+/// the typed commit refusal naming the row (ruled 2026-07-24, C10;
+/// [`crate::Error::CapacityRayMeasure`]).
 /// An INVERTED general tail (`end < start`) is unrepresentable by
 /// construction — the value codec only encodes nonempty intervals — so
 /// stored bytes reading back inverted convict corruption, never wrap

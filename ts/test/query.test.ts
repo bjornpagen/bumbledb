@@ -790,14 +790,6 @@ describe("the query surface against a real store", function suite() {
 					.where(r.lt(b, 100n))
 					.find({ acct })
 			}),
-			// the measure as an order side and a projected entry
-			query(Ledger).rule((r) => {
-				const { id: acct, active: w } = v(Account)
-				return r
-					.match(Account, { id: acct, active: w })
-					.where(r.lt(r.duration(w), 100n))
-					.find({ acct, w: r.duration(w) })
-			}),
 			// nested and/or trees
 			query(Ledger).rule((r) => {
 				const { id: acct, kind: k, balance: b } = v(Account)
@@ -818,11 +810,6 @@ describe("the query surface against a real store", function suite() {
 			query(Ledger).rule((r) => {
 				const { holder: h, balance: b } = v(Account)
 				return r.match(Account, { holder: h, balance: b }).find({ h, b: r.max(b) })
-			}),
-			// the folds over the measure
-			query(Ledger).rule((r) => {
-				const { holder: h, active: w } = v(Account)
-				return r.match(Account, { holder: h, active: w }).find({ h, w: r.sum(r.duration(w)) })
 			}),
 			// pack (the coalescing fold)
 			query(Ledger).rule((r) => {

@@ -22,7 +22,6 @@ impl Signature {
             .iter()
             .map(|term| match term {
                 FindTerm::Var(var) => SignatureColumn::Project { ty: var_type(var) },
-                FindTerm::Measure(_) => SignatureColumn::Project { ty: ValueType::U64 },
                 FindTerm::Count => SignatureColumn::Fold {
                     ty: ValueType::U64,
                     op: AggKind::Count,
@@ -34,10 +33,6 @@ impl Signature {
                 FindTerm::Pack { over } => SignatureColumn::Fold {
                     ty: var_type(over),
                     op: AggKind::Pack,
-                },
-                FindTerm::AggregateMeasure { op, .. } => SignatureColumn::Fold {
-                    ty: ValueType::U64,
-                    op: AggKind::of(*op),
                 },
             })
             .collect();
@@ -72,14 +67,6 @@ impl Context {
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {
                         return Err(ValidationError::UnboundFindVariable { var: *var });
-                    }
-                }
-                FindTerm::Measure(var) => {
-                    if !self.atom_vars.contains(var) {
-                        return Err(ValidationError::UnboundFindVariable { var: *var });
-                    }
-                    if !self.resolved_var_type(*var).is_interval() {
-                        return Err(ValidationError::DurationOverNonInterval { var: *var });
                     }
                 }
                 FindTerm::Count => {
@@ -131,21 +118,6 @@ impl Context {
                         return Err(ValidationError::PackInputType { find });
                     }
                     if fold_seen {
-                        return Err(ValidationError::MixedPackAndFold { find });
-                    }
-                }
-                FindTerm::AggregateMeasure { over, .. } => {
-                    fold_seen = true;
-                    if !self.atom_vars.contains(over) {
-                        return Err(ValidationError::UnboundFindVariable { var: *over });
-                    }
-                    if !self.resolved_var_type(*over).is_interval() {
-                        return Err(ValidationError::DurationOverNonInterval { var: *over });
-                    }
-                    if group_key.contains(over) {
-                        return Err(ValidationError::AggregateOverGroupKey { find });
-                    }
-                    if pack_seen {
                         return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }

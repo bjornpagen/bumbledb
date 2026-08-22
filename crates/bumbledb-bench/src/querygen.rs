@@ -70,6 +70,9 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::ExistenceWalk, 8),
     (Shape::DuWalk, 6),
     (Shape::Rules, 10),
+    // Retired query-side Duration: the slot stays in this position so
+    // `SHAPE_WEIGHTS` still pins the corpus RNG stream. The construct
+    // emits a valid transfer scan after consuming the old measure() draws.
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
     (Shape::GroundFold, 7),
@@ -110,11 +113,6 @@ enum Shape {
     /// duplicate head answers across
     /// rules, and the rules ∧ aggregate union fold.
     Rules,
-    /// The measure over the U64 window lane: `Duration` in a find
-    /// position, in a predicate, and folded — total here (the lane's
-    /// sentinel end sits below the ray); ray-bearing measure parity is
-    /// the verify naive lane's.
-    Measure,
     /// Closed relations in the drawable atom pool (`shapes_closed.rs`):
     /// joins against the vocabularies with/without payload projections
     /// and payload-column selections, plus handle literals and handle
@@ -130,6 +128,10 @@ enum Shape {
     /// the typed expressibility gate (finding 025: the grammar escapes
     /// the ⊆ SQL-expressible cap).
     Pack,
+    /// Retired query-side Duration slot. Kept in the weight table so
+    /// corpus replay's RNG stream stays pinned; the construct no longer
+    /// emits `Duration` / measure finds.
+    Measure,
 }
 
 /// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
@@ -307,10 +309,12 @@ pub struct Coverage {
     pub existence_walk: u64,
     pub du_walk: u64,
     pub rules: u64,
-    pub measure: u64,
     pub closed_join: u64,
     pub ground_fold: u64,
     pub pack: u64,
+    /// Retired Duration shape slot — still counted so the coverage
+    /// band holds the weight-8 draw.
+    pub measure: u64,
     /// The closed-relation pattern classes (`shapes_closed.rs`): the
     /// plain join, the payload-column selection, the handle literal,
     /// and the handle param set — all four counted by the closed-class
@@ -372,11 +376,6 @@ pub struct Coverage {
     pub rules_disjoint: u64,
     pub rules_overlap: u64,
     pub rules_aggregate: u64,
-    /// The measure's construct kinds: `Duration` finds, predicates, and
-    /// folds (`Sum`/`Min`/`Max` over the measure).
-    pub duration_find: u64,
-    pub duration_predicate: u64,
-    pub duration_fold: u64,
     /// Negated atoms, and their binding-shape split: key-covered (a
     /// fresh key field bound) vs open; literal/param/set/membership
     /// bindings inside; zero-binding negated gates; open negations over

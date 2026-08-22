@@ -405,42 +405,15 @@ fn aggregate_heads_golden() {
     );
 }
 
-/// `Pack` (the coalescing fold) and the measure forms: a `Duration`
-/// fold in the head and a measure comparison in the body.
+/// `Pack` (the coalescing fold).
 #[test]
-fn pack_and_duration_round_trip() {
+fn pack_round_trip() {
     let packed = query!(Scheduling {
         (person, busy: Pack(span)) | Claim(person, span);
     });
     assert_eq!(
         pin("packed", Scheduling, &packed),
         "(v0, Pack(v1)) | Claim(person: v0, span: v1);"
-    );
-
-    let long_meetings = query!(Scheduling {
-        (person, Sum(Duration(span))) | Claim(person, span), Duration(span) >= 3600;
-    });
-    let normalized = "(v0, Sum(Duration(v1))) | Claim(person: v0, span: v1), Duration(v1) >= 3600;";
-    assert_eq!(pin("long-meetings", Scheduling, &long_meetings), normalized);
-    let reparsed = query!(Scheduling {
-        (v0, Sum(Duration(v1))) | Claim(person: v0, span: v1), Duration(v1) >= 3600;
-    });
-    assert_eq!(
-        pin("long-meetings-fixed-point", Scheduling, &reparsed),
-        normalized
-    );
-
-    let durations = query!(Scheduling {
-        (Duration(span)) | Claim(span);
-    });
-    let normalized = "(Duration(v0)) | Claim(span: v0);";
-    assert_eq!(pin("durations", Scheduling, &durations), normalized);
-    let reparsed = query!(Scheduling {
-        (Duration(v0)) | Claim(span: v0);
-    });
-    assert_eq!(
-        pin("durations-fixed-point", Scheduling, &reparsed),
-        normalized
     );
 }
 
@@ -756,18 +729,17 @@ fn condition_tree_normalized_text_is_a_fixed_point() {
     );
 }
 
-/// The tree's leaf vocabulary is every comparison — `Allen`, point
-/// membership, and the measure nest under `or`/`and` exactly as the TS
-/// condition grammar admits them (one condition language, two identical
-/// surfaces).
+/// The tree's leaf vocabulary — `Allen` and point membership nest
+/// under `or`/`and` exactly as the TS condition grammar admits them
+/// (one condition language, two identical surfaces).
 const MANDATE_TOUCH_NORMALIZED: &str = "(v0) | Mandate(org: v0, active: v1), \
-     or(Allen(v1, INTERSECTS, ?0), and(?1 in v1, Duration(v1) >= 3600));";
+     or(Allen(v1, INTERSECTS, ?0), ?1 in v1);";
 
 #[test]
 fn condition_tree_comparison_leaves_round_trip() {
     let touching = query!(Ledger {
         (org) | Mandate(org, active),
-                or(Allen(active, INTERSECTS, ?window), and(?p in active, Duration(active) >= 3600));
+                or(Allen(active, INTERSECTS, ?window), ?p in active);
     });
     assert_eq!(
         pin("mandate-touch", Ledger, &touching),
@@ -775,7 +747,7 @@ fn condition_tree_comparison_leaves_round_trip() {
     );
     let reparsed = query!(Ledger {
         (v0) | Mandate(org: v0, active: v1),
-               or(Allen(v1, INTERSECTS, ?0), and(?1 in v1, Duration(v1) >= 3600));
+               or(Allen(v1, INTERSECTS, ?0), ?1 in v1);
     });
     assert_eq!(
         pin("mandate-touch-fixed-point", Ledger, &reparsed),

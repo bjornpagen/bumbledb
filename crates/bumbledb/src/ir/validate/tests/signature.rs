@@ -170,28 +170,6 @@ fn cases() -> Vec<Case> {
         }
     }
 
-    // The measure, projected: one U64 word per binding, both elements.
-    for field in [PU, PI] {
-        cases.push(case(
-            format!("duration over field {field}"),
-            vec![FindTerm::Measure(VarId(0))],
-            vec![(field, 0)],
-            vec![ValueType::U64],
-        ));
-    }
-
-    // The measure, folded (Sum/Min/Max of Duration): U64, both elements.
-    for op in [FoldOp::Sum, FoldOp::Min, FoldOp::Max] {
-        for field in [PU, PI] {
-            cases.push(case(
-                format!("{op:?} duration over field {field}"),
-                vec![FindTerm::AggregateMeasure { op, over: VarId(0) }],
-                vec![(field, 0)],
-                vec![ValueType::U64],
-            ));
-        }
-    }
-
     // Pack: the packed segment shares its input's interval type.
     cases.push(case(
         "pack over interval<u64>",
@@ -217,19 +195,6 @@ fn cases() -> Vec<Case> {
         ],
         vec![(U, 0), (I, 1)],
         vec![ValueType::U64, ValueType::I64, ValueType::U64],
-    ));
-    cases.push(case(
-        "projected measure + folded measure",
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Measure(VarId(1)),
-            FindTerm::AggregateMeasure {
-                op: FoldOp::Max,
-                over: VarId(2),
-            },
-        ],
-        vec![(U, 0), (PU, 1), (PI, 2)],
-        vec![ValueType::U64, ValueType::U64, ValueType::U64],
     ));
     cases.push(case(
         "bool group key + pack",

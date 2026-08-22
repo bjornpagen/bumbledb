@@ -59,7 +59,7 @@ function parseFind(context: string, find: FindTermIr): void {
 		}
 		return
 	}
-	if (find.kind === "pack" || find.kind === "aggregate" || find.kind === "aggregateMeasure") {
+	if (find.kind === "pack" || find.kind === "aggregate") {
 		if (!("over" in raw)) {
 			throw errors.new(`${context}: ${find.kind} requires over`)
 		}
@@ -70,12 +70,10 @@ function parseFind(context: string, find: FindTermIr): void {
 function findFamily(find: FindTermIr): "var" | "aggregate" {
 	switch (find.kind) {
 		case "var":
-		case "measure":
 			return "var"
 		case "count":
 		case "pack":
 		case "aggregate":
-		case "aggregateMeasure":
 			return "aggregate"
 	}
 }

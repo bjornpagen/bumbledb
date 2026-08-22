@@ -117,31 +117,6 @@ describe("the comparison pairing walls", function suite() {
 		assert.equal(numericAgainstBoolean.data.rules.length, 1)
 	})
 
-	test("the measure pair: the sibling lives in u64 — i64/bool siblings and a second measure are compile-refused", function measurePairs() {
-		const measureAgainstSigned = query(World).rule((r) => {
-			const { id, window, delta } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, window, delta })
-					// @ts-expect-error — the measure is u64 by definition; an i64 sibling is IllegalComparison
-					.where(r.lt(r.duration(window), delta))
-					.find({ n: id })
-			)
-		})
-		assert.equal(measureAgainstSigned.data.rules.length, 1)
-		const measureAgainstMeasure = query(World).rule((r) => {
-			const { id, window, phase } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, window, phase })
-					// @ts-expect-error — two measures never meet (DurationBothSides)
-					.where(r.lt(r.duration(window), r.duration(phase)))
-					.find({ n: id })
-			)
-		})
-		assert.equal(measureAgainstMeasure.data.rules.length, 1)
-	})
-
 	test("the pointIn pair: the point lives in the interval's element domain", function pointInPair() {
 		const signedPointInUnsigned = query(World).rule((r) => {
 			const { id, delta, window } = v(Reading)
@@ -170,15 +145,13 @@ describe("the comparison pairing walls", function suite() {
 		assert.equal(crossElement.data.rules.length, 1)
 	})
 
-	test("the legal pairs stay legal: same-domain vars, sibling-typed opens, the measure's u64 roster, one-element allen", function legalPairs() {
+	test("the legal pairs stay legal: same-domain vars, sibling-typed opens, one-element allen", function legalPairs() {
 		const legal = query(World).rule((r) => {
 			const { id, flag, count, window, other } = v(Reading)
 			return r
 				.match(Reading, { id, flag, count, window, other })
 				.where(r.lt(count, r.param("cap")))
 				.where(r.lt(flag, true))
-				.where(r.lt(r.duration(window), count))
-				.where(r.ge(r.duration(window), 100n))
 				.where(r.pointIn(count, window))
 				.where(r.pointIn(5n, window))
 				.where(r.pointIn(r.param("t"), window))

@@ -259,7 +259,6 @@ fn normalized(
         residuals,
         word_residuals: vec![],
         allen_residuals: Vec::new(),
-        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     }

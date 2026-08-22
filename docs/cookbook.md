@@ -68,13 +68,8 @@ let overlapping = query!(Uptime {
 });
 ```
 
-Total downtime per service — the denotation's one arithmetic:
-
-```rust
-let downtime = query!(Uptime {
-    (service, Sum(Duration(window))) | Outage(service, window);
-});
-```
+Total downtime per service is host arithmetic on the interval endpoints
+every answer row already carries (`end − start`).
 
 ## 2. Discriminated unions
 
@@ -858,13 +853,9 @@ let busy = query!(FreeTime {
 });
 ```
 
-Raw claimed time — overlaps double-count, often the wrong question:
-
-```rust
-let claimed = query!(FreeTime {
-    (person, Sum(Duration(span))) | Claim(person, span);
-});
-```
+Raw claimed time is host arithmetic on the interval endpoints every
+answer row already carries (`end − start`). Overlaps double-count, often
+the wrong question.
 
 Coalesced totals = the two-query composition (Pack, then a host fold) —
 aggregates never nest; free time (gaps) is the two-line host walk over
@@ -1625,10 +1616,5 @@ weaker law than the unit exclusion), and `<=[w]{1..*}` ("positive total")
 is not "at least one booking" — that intent is the bare containment. Choose
 by what you mean (`70-api.md` § the ban table, per-aggregate).
 
-The booked time per room, read back:
-
-```rust
-let booked = query!(Rooms {
-    (room, total: Sum(Duration(booked))) | Booking(id, room, booked);
-});
-```
+The booked time per room is host arithmetic on the `booked` endpoints
+every answer row already carries (`end − start`).

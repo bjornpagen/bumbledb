@@ -83,8 +83,6 @@ recipe!(r01, Uptime, {
         => "(v0) | Outage(service: v0, window: v1), ?0 in v1;";
     overlapping: { (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident); }
         => "(v0, v1) | Outage(service: v0, window: v1), Allen(v1, INTERSECTS, ?0);";
-    downtime: { (service, Sum(Duration(window))) | Outage(service, window); }
-        => "(v0, Sum(Duration(v1))) | Outage(service: v0, window: v1);";
 });
 
 recipe!(r02, Grading, {
@@ -445,8 +443,6 @@ recipe!(r18, FreeTime, {
 }, queries {
     busy: { (person, busy: Pack(span)) | Claim(person, span); }
         => "(v0, Pack(v1)) | Claim(person: v0, span: v1);";
-    claimed: { (person, Sum(Duration(span))) | Claim(person, span); }
-        => "(v0, Sum(Duration(v1))) | Claim(person: v0, span: v1);";
 });
 
 recipe!(r19, Ledger, {
@@ -748,9 +744,6 @@ recipe!(r32, Rooms, {
     Booking(room) <= Room(id);
     Booking(room, booked) -> Booking;
     Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
-}, queries {
-    booked: { (room, total: Sum(Duration(booked))) | Booking(id, room, booked); }
-        => "(v1, Sum(Duration(v2))) | Booking(id: v0, room: v1, booked: v2);";
 });
 
 /// The roster, exhaustively — one entry per doc recipe, in doc order: the
@@ -1013,7 +1006,7 @@ fn doc_blocks_match_the_compiled_copies() {
         query_fences += doc.queries.len();
     }
     assert_eq!(
-        query_fences, 36,
+        query_fences, 33,
         "the doc's compiled query fences, exhaustively"
     );
 }

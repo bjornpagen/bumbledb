@@ -153,24 +153,14 @@ fn random_rule(rng: &mut Rng) -> Rule {
 }
 
 fn random_find(rng: &mut Rng) -> FindTerm {
-    match rng.range(6) {
+    match rng.range(5) {
         0 | 1 => FindTerm::Var(var(rng)),
         2 => FindTerm::Aggregate {
             op: random_fold(rng),
             over: var(rng),
         },
         3 => FindTerm::Count,
-        4 => FindTerm::Pack { over: var(rng) },
-        _ => {
-            if rng.chance(1, 2) {
-                FindTerm::Measure(var(rng))
-            } else {
-                FindTerm::AggregateMeasure {
-                    op: random_fold(rng),
-                    over: var(rng),
-                }
-            }
-        }
+        _ => FindTerm::Pack { over: var(rng) },
     }
 }
 
@@ -248,13 +238,10 @@ fn random_rec(rng: &mut Rng) -> Rec {
 }
 
 fn random_term(rng: &mut Rng) -> Term {
-    match rng.range(8) {
+    match rng.range(7) {
         0..=2 => Term::Var(var(rng)),
         3 => Term::Param(param(rng)),
         4 => Term::ParamSet(param(rng)),
-        // `Duration` in a binding position is a typed rejection — a draw,
-        // not a mode.
-        5 => Term::Measure(var(rng)),
         _ => Term::Literal(random_value(rng)),
     }
 }

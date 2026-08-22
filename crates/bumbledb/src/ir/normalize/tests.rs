@@ -2,12 +2,11 @@ use super::lower_literal::lower_literal;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::image::view::{
-    Const, FilterPredicate, IntervalConst, OperandAddr, SetConst, ViewWordSource, WordOrParam,
+    Const, FilterPredicate, IntervalConst, OperandAddr, SetConst, ViewWordSource,
 };
 use crate::ir::validate::validate;
 use crate::ir::{
-    Atom, CmpOp, Comparison, ConditionTree, FindTerm, OrderCmp, ParamId, Query, Rule, Term, Value,
-    WordCmp,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value, WordCmp,
 };
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -1112,129 +1111,6 @@ fn sweep_contains_param_placements() {
             outer: IntervalConst::Param(ParamId(0)),
         }]
     );
-}
-
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one pinned placement per measure shape
-fn sweep_duration_placements() {
-    // The measure's placements: constant sides (literal and param, both
-    // written orders — measure-second mirrors the operator), the
-    // same-atom variable side, and the cross-atom residual.
-    let p_atom = || Atom {
-        source: crate::ir::AtomSource::Edb(P),
-        bindings: vec![(P_EMP, var(0)), (P_DURING, var(1))],
-    };
-    let duration = || Term::Measure(VarId(1));
-
-    let literal = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Lt,
-            lhs: duration(),
-            rhs: Term::Literal(Value::U64(5)),
-        }],
-    );
-    assert_eq!(
-        normalized(&literal).occurrences[0].filters,
-        vec![FilterPredicate::DurationCompare {
-            field: P_DURING.into(),
-            op: OrderCmp::Lt,
-            value: WordOrParam::Word(5),
-        }]
-    );
-
-    // Written measure-second: `5 ≥ Duration(x)` places as `≤`.
-    let mirrored = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Ge,
-            lhs: Term::Literal(Value::U64(5)),
-            rhs: duration(),
-        }],
-    );
-    assert_eq!(
-        normalized(&mirrored).occurrences[0].filters,
-        vec![FilterPredicate::DurationCompare {
-            field: P_DURING.into(),
-            op: OrderCmp::Le,
-            value: WordOrParam::Word(5),
-        }]
-    );
-
-    let param = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Le,
-            lhs: duration(),
-            rhs: Term::Param(ParamId(0)),
-        }],
-    );
-    assert_eq!(
-        normalized(&param).occurrences[0].filters,
-        vec![FilterPredicate::DurationCompare {
-            field: P_DURING.into(),
-            op: OrderCmp::Le,
-            value: WordOrParam::Param(ParamId(0)),
-        }]
-    );
-
-    // Same-atom u64 variable side: the field composition.
-    let same_atom = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Gt,
-            lhs: duration(),
-            rhs: var(0),
-        }],
-    );
-    assert_eq!(
-        normalized(&same_atom).occurrences[0].filters,
-        vec![FilterPredicate::DurationFieldsCompare {
-            interval: P_DURING.into(),
-            op: OrderCmp::Gt,
-            scalar: P_EMP.into(),
-        }]
-    );
-
-    // Cross-atom u64 variable side: the measure residual — and written
-    // measure-second it mirrors, exactly like the constant form.
-    for (lhs, rhs, placed_op) in [
-        (duration(), var(2), OrderCmp::Lt),
-        (var(2), duration(), OrderCmp::Gt),
-    ] {
-        let cross = query(
-            vec![
-                p_atom(),
-                Atom {
-                    source: crate::ir::AtomSource::Edb(S),
-                    bindings: vec![(FieldId(0), var(2))],
-                },
-            ],
-            vec![],
-            vec![Comparison {
-                op: CmpOp::Lt,
-                lhs,
-                rhs,
-            }],
-        );
-        let norm = normalized(&cross);
-        assert!(norm.occurrences.iter().all(|occ| occ.filters.is_empty()));
-        assert_eq!(
-            norm.duration_residuals,
-            vec![FilterPredicate::DurationFieldsCompare {
-                interval: OperandAddr::from(VarId(1)),
-                op: placed_op,
-                scalar: OperandAddr::from(VarId(2)),
-            }]
-        );
-    }
 }
 
 #[test]
