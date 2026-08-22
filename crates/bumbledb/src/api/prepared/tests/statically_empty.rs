@@ -236,7 +236,7 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let rows: Vec<(u64, u64, (i64, i64), i64)> = (0..40u64)
         .map(|i| {
-            let score = i64::try_from(i).expect("small") - 20; 
+            let score = i64::try_from(i).expect("small") - 20;
             (i + 1, i % 5, (0, 10), score)
         })
         .collect();
@@ -253,7 +253,6 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     };
 
     for round in 0..64 {
-
         let count = next() % 4 + 1;
         let conditions: Vec<Comparison> = (0..count)
             .map(|_| {
