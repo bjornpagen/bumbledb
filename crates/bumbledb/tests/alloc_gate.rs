@@ -112,7 +112,6 @@ fn schema() -> SchemaDescriptor {
                     },
                 ],
             },
-
             RelationDescriptor {
                 extension: None,
                 name: "Blob".into(),
@@ -143,7 +142,6 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-
             StatementDescriptor::Capacity {
                 target: Side {
                     relation: RelationId(1),
@@ -213,7 +211,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
             let person = id % 6;
             let start = (id * 7) % 40;
             let end = if id % 5 == 4 {
-                u64::MAX 
+                u64::MAX
             } else {
                 start + 1 + id % 9
             };
@@ -799,7 +797,6 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
     for round in 0..8u64 {
         db.write(|tx| {
             for doc in 0..5u64 {
-
                 tx.insert_dyn(
                     ITEM,
                     [&[
@@ -819,7 +816,6 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
         .expect("accepted");
         db.write(|tx| {
             for doc in 0..5u64 {
-
                 tx.delete_dyn(
                     ITEM,
                     [&[
@@ -964,7 +960,6 @@ fn escalation_gate(
     }
     let mut growth_events = 0u64;
     for i in 1..params.len() {
-
         alloc_counter::reset();
         snap.execute(prepared, &params[i], &mut out).expect(label);
         if alloc_counter::count() > 0 {
@@ -1013,7 +1008,6 @@ fn borrowed_struct_gate() {
         Ok(id)
     }));
     db.write(|tx| {
-
         tx.insert([&GateItem {
             id: item,
             memo: "memo-borrowed",
@@ -1045,7 +1039,6 @@ fn borrowed_struct_gate() {
     // The snapshot twin (ruled 2026-07-23, R15): the committed-state
 
     db.read(|snap| {
-
         let key = GateItemByMemo {
             memo: "memo-borrowed",
         };
@@ -1104,7 +1097,6 @@ fn zero_warm_allocation_gate() {
     ];
 
     db.read(|snap| {
-
         for batch in [1usize, 2, 64, 128] {
             let mut join = db.prepare(&join_query())?;
             join.set_batch_size(batch);
