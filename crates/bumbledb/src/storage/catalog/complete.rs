@@ -10,8 +10,6 @@ use crate::storage::catalog::{CatalogRead, FactCursor};
 use crate::storage::commit::judgment::{Checker, Probe, Selections, collect, satisfies};
 use crate::storage::keys::{self, DeterminantImage};
 
-/// Source-to-target complete admission. Key obligations were judged in
-/// the merge; this walk is containments and capacities only.
 pub(crate) fn judge_complete<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,
@@ -92,9 +90,6 @@ fn judge_containment<C: CatalogRead>(
     Ok(())
 }
 
-/// Source-to-target: a miss is [`Direction::SourceUnsatisfied`].
-/// [`Direction::TargetRequired`] is the reverse-edge / deleted-target
-/// scan — complete admission does not run that walk.
 fn probe_source<C: CatalogRead>(
     schema: &Schema,
     checker: &mut Checker<'_, C>,
