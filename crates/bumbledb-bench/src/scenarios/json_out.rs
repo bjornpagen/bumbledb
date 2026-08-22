@@ -1,8 +1,3 @@
-//! The scenario report's machine-consumable artifact (`scenarios.json`),
-//! hand-rolled through `crate::json` (the dependency quarantine forbids
-//! serde). Charts pin from committed copies of this file — the rendered
-//! markdown is for humans, this is for tooling.
-
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -10,11 +5,6 @@ use super::{LaneOutcome, QueryReport};
 use crate::harness::{Protocol, Stats};
 use crate::{json, report};
 
-/// The one stats JSON format, shared with the ledger report's emitter
-/// (`report/json_out.rs` imports this — one format, two artifacts). It
-/// lives here rather than under `report/` because this packet owns the
-/// scenario seam; the spelling is byte-identical to the report's
-/// original.
 pub(crate) fn push_stats(out: &mut String, stats: &Stats) {
     let _ = write!(
         out,
@@ -71,9 +61,6 @@ fn push_query(out: &mut String, r: &QueryReport) {
     out.push('}');
 }
 
-/// Renders the scenario run as JSON — every field, hand-rolled;
-/// timestamp and git rev resolved at runtime
-/// (`report::{timestamp_iso8601, git_rev}`).
 #[must_use]
 pub fn to_json(reports: &[QueryReport], proto: Protocol, seed: u64) -> String {
     let mut out = String::new();
