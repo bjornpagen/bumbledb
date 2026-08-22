@@ -1,23 +1,10 @@
-//! The recursion/closure lane — the roster extension's measurement
-//! infrastructure for the landed recursion vocabulary
-//! (`docs/architecture/20-query-ir.md` § engine recursion,
-//! `docs/architecture/40-execution.md` § the linear reach driver): a third
-//! corpus world whose EDGE SHAPES are the point — one deep chain (the
-//! depth axis: one new tuple per round, the round-overhead price) and
-//! one wide tree (the fanout axis: frontier width, few rounds) — driven
-//! through `Db::prepare` (`AtomSource::Interior`, the reach pipeline,
-//! the finished-image slot) against `SQLite`'s recursive CTE.
-//!
-//! Discipline mirrors the primary suite: seeded corpus regenerated per
-//! run (never stored), verify-before-time (every family × draw is
-//! row-identical across engines before a single timed sample — inline
-//! here, since the recursion surface is translator-inexpressible and so
-//! lives outside the stamped family registry), the exact warm protocol,
-//! and the alloc window on request (the fixpoint's per-round transient
-//! images are exactly the allocation-sensitive machinery —
-//! `tests/alloc_gate.rs` pins the steady state; the bench lane reports
-//! the measured window). Families are `Kind::Report`: measurement, not
-//! gate claims.
+//! The recursion/closure lane — the roster extension's measurement: a third
+//! corpus world whose EDGE SHAPES are the point — one deep chain (the depth
+//! axis: one new tuple per round, the round-overhead price) and one wide tree
+//! (the fanout axis: frontier width, few rounds) — driven through `Db::prepare`
+//! (`AtomSource::Interior`, the reach pipeline, row-identical across engines
+//! before a single timed sample — inline lives outside the stamped family
+//! registry), the exact warm protocol,
 
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
@@ -51,7 +38,6 @@ bumbledb::schema! {
     Edge(dst) <= Node(id);
 }
 
-/// Relation and field ids by declaration order.
 pub mod ids {
     use bumbledb::{FieldId, RelationId};
 
@@ -65,11 +51,7 @@ pub mod ids {
     }
 }
 
-/// The validated closure schema, memoized for the mirror's DDL.
-///
 /// # Panics
-///
-/// Never in practice: the declaration passes the acceptance gate.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -81,24 +63,18 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// The closure corpus shape: one chain component and one complete
-/// `fanout`-ary tree component, disjoint — depth and fanout as data,
-/// no RNG anywhere (the shapes ARE the measurement).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClosSizes {
-    /// Chain edges: `0 → 1 → … → chain` (closure from node 0 runs
-    /// `chain` fixpoint rounds of one new tuple each).
+
     pub chain: u64,
-    /// The tree's branching factor.
+
     pub fanout: u64,
-    /// The tree's depth (root = depth 0).
+
     pub depth: u32,
 }
 
 impl ClosSizes {
-    /// Two size points: `Tiny` for the naive/differential slice, the
-    /// standard shape for every timed scale (the closure world prices
-    /// the driver, not the ledger's mass — its identity is the shape).
+
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
@@ -115,36 +91,27 @@ impl ClosSizes {
         }
     }
 
-    /// Tree node count: `(fanout^(depth+1) - 1) / (fanout - 1)`.
     #[must_use]
     pub fn tree_nodes(&self) -> u64 {
         (self.fanout.pow(self.depth + 1) - 1) / (self.fanout - 1)
     }
 
-    /// The tree root's node id (the chain occupies `0..=chain`).
     #[must_use]
     pub fn tree_base(&self) -> u64 {
         self.chain + 1
     }
 
-    /// Total node count.
     #[must_use]
     pub fn nodes(&self) -> u64 {
         self.tree_base() + self.tree_nodes()
     }
 
-    /// Total edge count (`chain` chain edges + `tree_nodes - 1` tree
-    /// edges).
     #[must_use]
     pub fn edges(&self) -> u64 {
         self.chain + self.tree_nodes() - 1
     }
 }
 
-/// One edge row by index: chain edges first (`i → i + 1`), then the
-/// tree in heap layout (edge `t` connects `parent(t) → t` for
-/// `t in 1..tree_nodes`, `parent(t) = (t - 1) / fanout`, both offset by
-/// [`ClosSizes::tree_base`]).
 #[must_use]
 pub fn edge_row(sizes: &ClosSizes, i: u64) -> Vec<Value> {
     if i < sizes.chain {
@@ -159,7 +126,6 @@ pub fn edge_row(sizes: &ClosSizes, i: u64) -> Vec<Value> {
     }
 }
 
-/// One relation's full row stream — pure function of the sizes.
 pub fn relation_rows(sizes: ClosSizes, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         ids::NODE => Box::new((0..sizes.nodes()).map(|i| vec![Value::U64(i)])),
@@ -168,10 +134,6 @@ pub fn relation_rows(sizes: ClosSizes, rel: RelationId) -> Box<dyn Iterator<Item
     }
 }
 
-/// The transitive-closure query from a param anchor:
-/// `Reach(x) | Edge(src = ?0, dst = x);
-///  Reach(y) | Reach(x), Edge(src = x, dst = y);
-///  Q(x) | Reach(x)` — identity main over the finished rec.
 #[must_use]
 pub fn closure_query() -> Query {
     use bumbledb::ir::{AtomSource, HeadTerm};
@@ -207,12 +169,8 @@ pub fn closure_query() -> Query {
     }
 }
 
-/// The recursive CTE the mirror runs — `UNION` (not `UNION ALL`) is the
-/// set-semantics twin of the rec's seen-set.
 pub const CLOSURE_SQL: &str = "WITH RECURSIVE reach(n) AS (SELECT \"dst\" FROM \"Edge\" WHERE \"src\" = ?1 UNION SELECT e.\"dst\" FROM \"Edge\" AS e, reach AS r WHERE e.\"src\" = r.n) SELECT n FROM reach";
 
-/// One closure family: a Query (interiors empty, one rec, identity
-/// main), its seeded anchors, and the hand-written recursive-CTE mirror.
 pub struct ClosureFamily {
     pub name: &'static str,
     pub kind: Kind,
@@ -225,14 +183,13 @@ pub struct ClosureFamily {
 fn depth_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     vec![
-        // The chain head: `chain` rounds of one new tuple — the pure
-        // depth shape (per-round overhead dominates).
+
         scalar_draw(vec![Value::U64(0)]),
-        // The midpoint: half the rounds.
+
         scalar_draw(vec![Value::U64(sizes.chain / 2)]),
-        // The chain tail: the one-round closure.
+
         scalar_draw(vec![Value::U64(sizes.chain - 1)]),
-        // The miss: no edges, the empty fixpoint.
+
         scalar_draw(vec![Value::U64(sizes.nodes() + 1_000_000)]),
     ]
 }
@@ -241,20 +198,17 @@ fn fanout_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     let base = sizes.tree_base();
     vec![
-        // The root: `depth` rounds of exponentially widening frontiers
-        // — the pure fanout shape (per-tuple cost dominates).
+
         scalar_draw(vec![Value::U64(base)]),
-        // A depth-1 subtree root: one fanout-narrower closure.
+
         scalar_draw(vec![Value::U64(base + 1)]),
-        // A leaf: the empty closure.
+
         scalar_draw(vec![Value::U64(sizes.nodes() - 1)]),
-        // The miss.
+
         scalar_draw(vec![Value::U64(sizes.nodes() + 1_000_000)]),
     ]
 }
 
-/// The closure registry: two families, one Query, two corpus shapes
-/// selected by anchor — depth against fanout on the same driver.
 #[must_use]
 pub fn all() -> &'static [ClosureFamily] {
     &[
@@ -277,20 +231,13 @@ pub fn all() -> &'static [ClosureFamily] {
     ]
 }
 
-/// The mirror's DDL: mapped tables plus the statement-derived indexes
-/// (the two `Edge` containments give the honest opponent its `src` and
-/// `dst` indexes).
 #[must_use]
 pub fn ddl() -> Vec<String> {
     sqlmap::schema_ddl(schema())
 }
 
-/// Loads the closure corpus into a fresh engine store and a `SQLite`
 /// mirror file — targets before sources, the loader law.
-///
 /// # Errors
-///
-/// Engine and `SQLite` errors, stringified.
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
@@ -299,14 +246,7 @@ pub fn load_stores(
     load_stores_sized(dir, ClosSizes::of(cfg.scale), mode)
 }
 
-/// [`load_stores`] with the sizes given directly — one loader, sized.
-/// This lane's identity stays [`ClosSizes::of`]; the curves lane
-/// (`crate::lanes::curves`) passes its lane-local `curve_sizes(scale)`
-/// ladder through here without touching that identity.
-///
 /// # Errors
-///
-/// Engine and `SQLite` errors, stringified.
 pub fn load_stores_sized(
     dir: &Path,
     sizes: ClosSizes,
@@ -337,7 +277,6 @@ pub fn load_stores_sized(
     Ok((db, conn))
 }
 
-/// The one param slot of [`CLOSURE_SQL`].
 fn translated() -> Translated {
     Translated {
         sql: CLOSURE_SQL.to_owned(),
@@ -345,13 +284,7 @@ fn translated() -> Translated {
     }
 }
 
-/// Verify-before-time, inline: every draw row-identical across engines
-/// (the recursion surface lives outside the stamped registry, so the
-/// law is enforced at the lane's own gate).
-///
 /// # Errors
-///
-/// The first mismatch, rendered — or either engine's error.
 pub fn verify_family(
     db: &Db<Reachability>,
     conn: &rusqlite::Connection,
@@ -386,14 +319,10 @@ pub fn verify_family(
     Ok(())
 }
 
-/// The timed closure lane: build the scratch world, verify every
-/// family × draw, then measure both engines under the exact warm
-/// protocol — report-only rows beside the read families.
-///
+/// The timed closure lane: build the scratch world, verify every family × draw,
+/// then measure both engines under the exact warm protocol — report-only rows
+/// beside the read families.
 /// # Errors
-///
-/// Refusals (RAM-backed scratch), verify mismatches, and engine errors
-/// — each message names the family.
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,
@@ -406,9 +335,7 @@ pub fn bench_families(
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
     }
-    // The device-honesty rule is symmetric: this lane times reads
-    // against its scratch world, so the scratch is checked exactly like
-    // the write families'.
+
     crate::devhonesty::assert_disk_backed(scratch, "the timed closure families")
         .map_err(|refusal| refusal.to_string())?;
     let dir = scratch.join("closure");
