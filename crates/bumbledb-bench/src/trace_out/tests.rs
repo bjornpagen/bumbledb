@@ -43,8 +43,6 @@ fn the_chrome_writer_is_golden_and_structurally_valid() {
         ]\n";
     assert_eq!(text, expected);
 
-    // Structural validity: balanced brackets, one object per event,
-    // ts monotone nondecreasing in file order.
     assert_eq!(text.matches('{').count(), text.matches('}').count());
     assert_eq!(text.matches("\"name\":").count(), 5);
     let ts: Vec<f64> = text
@@ -62,8 +60,7 @@ fn the_chrome_writer_is_golden_and_structurally_valid() {
 
 #[test]
 fn every_registered_name_is_escape_free_ascii() {
-    // The writer relies on the registry discipline instead of
-    // escaping machinery.
+
     assert!(FlameSummary::compute(&[]).rows.is_empty());
     let names = [
         bumbledb::obs::names::PREPARE,
