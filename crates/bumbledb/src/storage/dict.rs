@@ -170,7 +170,6 @@ mod tests {
 
     #[test]
     fn reverse_entries_carry_raw_bytes_with_no_tag() {
-
         let dir = TempDir::new("dict-untagged");
         let schema = empty_schema();
         let env = env(&dir);
@@ -211,7 +210,6 @@ mod tests {
 
     #[test]
     fn a_dropped_delta_leaves_no_dictionary_entries() {
-
         // with it — LMDB never saw them, and the counter never advanced,
 
         let dir = TempDir::new("dict-abort");
