@@ -48,14 +48,6 @@ pub use apply::apply;
 pub use write::commit;
 pub(crate) use write::{flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids};
 
-/// Named commit-pipeline markers. The former crashpoint harness died with
-/// the fuzzer; the sites remain as documentation of the atomicity
-/// structure and expand to nothing.
-macro_rules! crashpoint {
-    ($name:literal) => {};
-}
-pub(crate) use crashpoint;
-
 /// The applied-but-uncommitted state after phases 1-2: the open LMDB
 /// write transaction plus the one thing the executor alone can know —
 /// the row ids it minted. Everything else the later phases consume lives
@@ -109,12 +101,10 @@ impl Judged<'_> {
         }
         let new_generation = self.txn.generation()?.next();
         self.txn.put_generation(new_generation)?;
-        crashpoint!("after-judgment");
         {
             let _s = crate::obs::span(crate::obs::names::LMDB_COMMIT);
             self.txn.commit()?;
         }
-        crashpoint!("after-commit");
         Ok(CommitReport::Changed { new_generation })
     }
 }

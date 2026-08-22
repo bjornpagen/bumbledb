@@ -10,7 +10,7 @@ use crate::storage::keys::{self, StatKind};
 use bumbledb_theory::schema::RelationId;
 
 use super::plan::plan_commit;
-use super::{CommitReport, apply, crashpoint, judgment};
+use super::{CommitReport, apply, judgment};
 
 /// The bound on [`commit_bounded`]'s retries of the transient
 /// commit-sync class — a decision, not a knob. With the 10 ms-doubling
@@ -137,7 +137,6 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<Admission<Comm
         return Ok(Admission::Accepted(CommitReport::Noop { generation }));
     }
 
-    crashpoint!("after-staging");
     let mut commit_span = obs::span(obs::names::COMMIT);
     // The plan: every derivable key byte and check set, computed as a
     // pure function of (delta, schema) before the write lock. Selection
@@ -162,7 +161,6 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<Admission<Comm
                 }
                 Admission::Accepted(applied) => applied,
             };
-            crashpoint!("before-judgment");
             let judged = match applied.judge(&plan)? {
                 Admission::Rejected(violations) => {
                     return Ok(Admission::Rejected(violations));
@@ -415,7 +413,6 @@ pub(super) fn flush_counters(
             }
         };
         data.put(txn.raw_mut(), &key, updated.to_le_bytes().as_slice())?;
-        crashpoint!("mid-write-s");
     }
     for (rel, next) in row_id_next {
         let key = keys::stat_key(*rel, StatKind::RowIdHighWater);

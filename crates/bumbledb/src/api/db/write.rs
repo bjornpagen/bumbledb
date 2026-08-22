@@ -2,9 +2,7 @@ use std::sync::PoisonError;
 
 use super::{Db, ReadInstance, ThreadKey, WriteTx, WriterThreadReset};
 use crate::error::{Admission, Committed, ConditionalWrite, Error, Result};
-use crate::storage::commit::{
-    commit, crashpoint, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids,
-};
+use crate::storage::commit::{commit, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids};
 use crate::storage::env::Environment;
 
 impl Drop for WriterThreadReset<'_> {
@@ -325,7 +323,6 @@ impl<S> Db<S> {
             // store just advanced.
             self.generation
                 .store(new_generation.storage_word(), Ordering::Release);
-            crashpoint!("after-memo-update");
         }
         Ok(ConditionalWrite::Accepted(Committed {
             value: out,

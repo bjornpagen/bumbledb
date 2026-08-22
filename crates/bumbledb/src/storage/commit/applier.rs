@@ -8,7 +8,7 @@ use crate::storage::keys;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::plan::{DeleteOp, DeterminantOp, InsertOp, MarkWeight};
-use super::{Applier, crashpoint, decode_row_id};
+use super::{Applier, decode_row_id};
 
 /// The three-state insert landing: a free row id may put; a refused
 /// fresh-key conflict still walks remaining keys for a complete
@@ -164,7 +164,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                 }
                 if let Landing::Free(row) = landing {
                     self.put_data(u_len, row.0.to_le_bytes().as_slice())?;
-                    crashpoint!("mid-write-u");
                 }
             }
             DeterminantOp::Pointwise {
@@ -187,7 +186,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                 }
                 if let Landing::Free(row) = landing {
                     self.put_data(u_len, row.0.to_le_bytes().as_slice())?;
-                    crashpoint!("mid-write-u");
                 }
                 self.probe_neighbors(rel, *statement, u_len, *tail, fact)?;
             }
@@ -238,10 +236,8 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                 }));
             }
         }
-        crashpoint!("mid-write-m");
         let f_key = keys::fact_key(rel, row.0);
         self.catalog.put(CatalogMap::Data, &f_key, op.core.fact)?;
-        crashpoint!("mid-write-f");
         Ok(())
     }
 
@@ -257,7 +253,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
                 }
                 MarkWeight::Unit => self.put_data(r_len, &[])?,
             }
-            crashpoint!("mid-write-r");
         }
         Ok(())
     }
