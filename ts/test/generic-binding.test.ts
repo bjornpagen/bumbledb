@@ -136,7 +136,6 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("the cross-class walls still refuse on the general path — the added form widened nothing", function wallsHold() {
-
 		assert.throws(function crossClassJoin() {
 			query(Ledger).rule((r) => {
 				const { id: h } = v(Holder)
@@ -180,7 +179,6 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("an aliased extra-key record is refused at every full-binding site — ExactVars restores the pre-0.16.0 exactness", function aliasedExtraKey() {
-
 		// general form refused it (CheckBindings → the unknown-field arm).
 
 		// refused at compile time AND by the construction twin (`relation R
@@ -252,7 +250,6 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("r.match(A, v(B)) is refused — concrete owners", function crossOwnerConcrete() {
-
 		// where the first shared field (id) is a cross-class reuse — refused at
 
 		assert.throws(function fullForeignRecord() {
@@ -264,7 +261,6 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("r.match(A, v(B)) is refused — generic owners", function crossOwnerGeneric() {
-
 		// it as they always have. Never called: the pin is the compile refusal.
 		function fullForeignRecord<Rels extends SchemaRelations, R extends QueryRelation<Rels>>(
 			theory: Schema<Rels>,
@@ -290,7 +286,6 @@ describe("the generic full-binding law", function suite() {
 	})
 
 	test("the DELIBERATE exclusion: not() gains no full-binding form", function notExcluded() {
-
 		// rule; a full-fresh-var negation is a boundness refusal at
 
 		// recorded ruling). Never called: the pin is the compile refusal.
