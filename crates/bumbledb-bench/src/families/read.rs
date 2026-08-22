@@ -287,7 +287,6 @@ fn stats_query() -> Query {
 }
 
 fn stats_params(_: &GenConfig) -> Vec<Draw> {
-
     vec![scalar_draw(vec![])]
 }
 
@@ -353,7 +352,6 @@ fn skew_query() -> Query {
 }
 
 fn skew_params(_: &GenConfig) -> Vec<Draw> {
-
     vec![
         scalar_draw(vec![Value::U64(0)]),
         scalar_draw(vec![Value::U64(1)]),
@@ -390,7 +388,6 @@ fn spread_query() -> Query {
 }
 
 fn spread_params(_: &GenConfig) -> Vec<Draw> {
-
     vec![scalar_draw(vec![])]
 }
 
@@ -437,7 +434,6 @@ fn triangle_query() -> Query {
 }
 
 fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
-
     let sizes = Sizes::of(cfg.scale);
     let hot = sizes.hot_accounts();
     let width = (sizes.accounts / 100).max(1);
@@ -542,7 +538,6 @@ fn latest_posting_per_account_query() -> Query {
 }
 
 fn latest_posting_per_account_params(_: &GenConfig) -> Vec<Draw> {
-
     vec![scalar_draw(vec![])]
 }
 
@@ -635,7 +630,7 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 pub fn all() -> &'static [Family] {
     &[
         Family {
