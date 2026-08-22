@@ -10,7 +10,6 @@
 //! (`bumbledb-bench/src/calendar.rs`) — transcribed here declaration for
 //! declaration (the bench crate is quarantined; its schemas are data and
 //! travel as text), plus a compact Tax-shaped fixture.
-
 use bumbledb::ir::render::render;
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Query, Schema, Theory};
