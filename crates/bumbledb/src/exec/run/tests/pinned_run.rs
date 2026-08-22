@@ -54,7 +54,6 @@ fn pinned_run_matches_the_recursive_path() {
     let rows = vec![(1u64, 10u64), (1, 11), (1, 12), (2, 1), (3, 2), (3, 6)];
     for residuals in [
         vec![],
-
         vec![FilterPredicate::FieldsCompare {
             left: OperandAddr::from(VarId(0)),
             right: OperandAddr::from(VarId(1)),
