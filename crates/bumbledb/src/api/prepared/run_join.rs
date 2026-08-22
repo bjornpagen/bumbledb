@@ -6,9 +6,6 @@ use crate::image::ViewEpoch;
 use crate::image::view::apply;
 use crate::obs;
 
-/// Resets the owned COLT sources against this execution's images and
-/// views (buffer ping-pong: old survivor buffers recycle into the new
-/// views), then runs the join into the sink.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
@@ -16,8 +13,8 @@ use crate::obs;
 #[expect(
     clippy::too_many_lines,
     reason = "the bind-then-probe-then-join protocol reads as one pass"
-)] // the prepared query's split borrows;
-// bundling them into a struct would only rename the same ten things
+)] 
+
 pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
@@ -39,14 +36,7 @@ where
 {
     let views_span = obs::span(obs::names::VIEWS);
     memo.tick += 1;
-    // Lowering routes every positive occurrence's Eq-constant into
-    // selections; a leak here would silently resurrect the per-param
-    // view scan (docs/architecture/40-execution.md). Two exemptions:
-    // negated occurrences, whose Eq-constants ARE view filters — the
-    // ordinary filtered view their anti-probes run against, memoized
-    // per (generation, resolved filters) like any occurrence
-    // (docs/architecture/40-execution.md, § anti-probe filters) — and
-    // measured positive occurrences, whose whole filter list
+
     debug_assert!(
         resolved_filters
             .iter()
@@ -67,26 +57,11 @@ where
         "an Eq-constant does not reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // A discharged occurrence (grounding-eliminated or grounding-folded) is
-        // unreachable at execution — no subatom, no anti-probe — so it
-        // earns no view and, above all, no image build
-        // (`plan/ground.rs`: skipping this build is the rewrite's
-        // payoff; for a fold, the sealed extension was already read at
-        // prepare and nothing remains to bind).
+
         if occurrence.role.discharged() {
             continue;
         }
-        // The Interior bind (40-execution.md § the linear reach driver): a transient image is
-        // valid for ONE ROUND of ONE EXECUTION — a lifetime the
-        // generation vocabulary cannot express — so it lives entirely
-        // outside the view-memo axiom's machinery: never
-        // `ImageCache::get_or_build`, never `memo.bind`, never parked,
-        // never pinned by staleness. The bind is the ordinary miss path
-        // — `apply` over the driver-supplied image into a per-round
-        // `Colt::reset`, survivor buffers recycled through the existing
-        // `spare` ping-pong — and every generation-keyed
-        // mechanism never learns recursion exists
-        // (`docs/architecture/40-execution.md` § the linear reach driver).
+
         if occurrence.bind.edb().is_none() {
             let image = derived_images.image(occ_idx);
             let mut build_span = obs::span_args(
@@ -97,9 +72,7 @@ where
             if buffer.capacity() == 0
                 && let Some(pooled) = derived_retired.pop()
             {
-                // The entry unbind parked the second circulating
-                // survivor buffer (one spare slot, two buffers); the
-                // first spare-starved rebind takes it back.
+
                 buffer = pooled;
             }
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
@@ -118,15 +91,9 @@ where
                 unreachable!("Interior continued above")
             }
         };
-        // Closed → theory identity; frozen → this owned instance;
-        // store → the snapshot generation. Identity is checked before
-        // the memo uses the epoch, so Frozen cannot alias another owner.
+
         let epoch = images.epoch(schema, relation)?;
-        // Warm fast path: an active or parked binding for this exact
-        // (epoch, resolved residual filters) pair — the COLT's view
-        // is still exactly right, and so are its forced tries (selections
-        // live in the trie, not the view, so param churn never lands
-        // here). No cache lock, no filter scan, no re-force.
+
         if memo.bind(occ_idx, epoch, &resolved_filters[occ_idx]) {
             obs::event(
                 obs::names::VIEW_MEMO_HIT,
@@ -134,15 +101,7 @@ where
             );
             continue;
         }
-        // The occurrence dedup (docs/architecture/40-execution.md):
-        // another occurrence whose ACTIVE binding is this exact
-        // (epoch, resolved residual filters) over the same relation
-        // with the same trie orientation holds a byte-identical view and
-        // byte-identical forced state — a cyclic self-join was scanning
-        // and re-forcing the same 428k-row view once per occurrence. The
-        // canonical root forces eagerly first (the one force the join
-        // was about to pay lazily anyway), then the rebuild is a pool
-        // copy instead of an image scan plus a per-occurrence re-force.
+
         if let Some(canon) = dedup_source(plan, memo, occ_idx, epoch, resolved_filters) {
             let buffer = std::mem::take(memo.spare_mut(occ_idx));
             let [canon_colt, colt] = memo
@@ -172,17 +131,7 @@ where
         memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
     }
     views_span.end();
-    // Selection probes (docs/architecture/40-execution.md): each occurrence's Eq constants
-    // resolve to trie keys probed once per execution — set-bound levels
-    // probe once per element and union survivors inside `select` — and a
-    // miss means no fact matches, so the whole conjunctive query is
-    // empty and the join never runs (the sink stays reset: a zero-emit
-    // execution).
-    // One batched span over the whole loop (Gap A): the probes force
-    // selection levels lazily, and without this span that dominant cold
-    // cost masqueraded as rule self-time. Zero-cost off, batch
-    // granularity — never a span per occurrence, and the per-occurrence
-    // probe stays the existing point event.
+
     let mut selections_span = obs::span(obs::names::SELECTIONS);
     let mut probed = 0u64;
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
@@ -207,21 +156,13 @@ where
     selections_span.set_pair(probed, 1);
     selections_span.end();
     let _join = obs::span(obs::names::JOIN);
-    // The executor monomorphizes per concrete sink type — callers match
+
     // their sink enum once per execution BEFORE this call (`run_rule`'s
-    // `EitherSink` match; the reach driver's rec and interior sinks), so
-    // no per-emit enum branch exists on the hot path.
+
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
     Ok(())
 }
 
-/// The occurrence-dedup scan: an occurrence other than `occ` whose
-/// *active* binding is exactly (`epoch`, occ's resolved residual
-/// filters) over the same relation with the same trie orientation
-/// ([`crate::exec::colt::Colt::same_shape`]). Derived and discharged
-/// occurrences never carry [`super::Binding::Bound`], so the active
-/// match excludes them for free. O(occurrences) compares, only inside the sanctioned
-/// rebuild window — the warm path never gets here.
 fn dedup_source(
     plan: &crate::plan::fj::ValidatedPlan,
     memo: &ViewMemo,
