@@ -1,17 +1,3 @@
-/**
- * The exact-count pins (one-representation PRD 40) against a REAL durable
- * store: `count` is a structural read of the engine's maintained counter —
- * never a scan, never an estimate, `bigint` by the wire law — and one name
- * at every layer. Five pins: count ≡ BigInt(scan().length) in the SAME
- * lease after mixed commits (the TS twin of the engine pin); the snapshot
- * law (a held lease reports the pre-commit count, a fresh lease the new
- * one); an empty relation is `0n` — a value, never an empty result to
- * reinterpret; a closed relation is a type error (`MemberRelation`
- * excludes it, exactly as `scan`) AND the runtime wall throws on the
- * untyped path; and `OwnedInstance.count` agrees with its own scan of
- * the one frozen catalog.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -34,13 +20,11 @@ const Holder = relation("Holder", { id: u64.fresh, name: str })
 const Unwritten = relation("Unwritten", { id: u64.fresh })
 const Counted = schema("Counted", { Kind, Holder, Unwritten }, [])
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
 }
 
-/** The seeded facts the sequential tests hand forward. */
 const facts: { ada?: Fact<typeof Holder> } = {}
 
 describe("the exact count against a real store", function suite() {
