@@ -1,5 +1,4 @@
 //! lanes — it still runs, and must run, on bare metal before a release.
-
 use super::volume_identity;
 
 #[test]
@@ -106,7 +105,7 @@ mod on_a_live_ram_disk {
         }
     }
 
-    /// before a release: `cargo test -p bumbledb-bench
+    /// Bare-metal before a release: `cargo test -p bumbledb-bench timed_families_refuse_a_live_ram_disk -- --ignored`.
     #[test]
     #[ignore = "needs a live ram disk (hdiutil attach); run on bare metal before a release"]
     fn timed_families_refuse_a_live_ram_disk() {
