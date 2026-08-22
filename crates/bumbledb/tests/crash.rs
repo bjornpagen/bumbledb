@@ -1,6 +1,3 @@
-//! Kill-during-commit crash injection (docs/architecture/60-validation.md):
-//! a child process commits a known delta sequence in a loop, the parent
-//! SIGKILLs it mid-flight, and the reopened database must be *some*
 //! consistent committed state — LMDB atomicity exercised, not trusted.
 
 use std::process::{Command, Stdio};
@@ -26,14 +23,11 @@ fn item(k: u64) -> Item {
     }
 }
 
-/// The child body: every committed state is exactly one live item (insert
-/// `k`, delete `k-1` in one transaction), so any consistent post-crash
-/// state is enumerable. Run only via the parent test below.
 #[test]
 #[ignore = "crash-child body; spawned by kill_during_commit_leaves_a_consistent_database"]
 fn crash_child_commit_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_DIR") else {
-        return; // ran directly (e.g. `--ignored` sweeps): nothing to do
+        return; 
     };
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for k in 1..u64::MAX {
@@ -77,7 +71,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
         let _ = child.wait();
 
         // Reopen: format + fingerprint verify, then sweep consistency
-        // through the public surface.
+
         let db = Db::open(dir.path(), Store).expect("open after crash");
         let live: Vec<Item> = db
             .read(|snap| snap.scan_facts::<Item>()?.collect())
@@ -92,7 +86,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
         }
 
         db.write(|tx| {
-            // M consistency: re-inserting the live fact is a no-op.
+
             if let Some(existing) = live.first() {
                 assert_eq!(
                     tx.insert([existing])?.changed(),
@@ -100,8 +94,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
                     "round {round}: committed fact not visible to membership"
                 );
             }
-            // Q consistency: the fresh-id generator continues past every
-            // committed id (a collision would break the fresh's auto-key statement).
+
             let next: ItemId = tx.reserve(1)?.start().expect("nonempty");
             assert!(
                 next.0 > max_seen || live.is_empty(),
@@ -113,8 +106,6 @@ fn kill_during_commit_leaves_a_consistent_database() {
         .expect("write after crash")
         .unwrap();
 
-        // S consistency: image build cross-checks the stored row count
-        // against a fresh F scan (RowCountMismatch is a hard error).
         let count = db
             .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
             .expect("count after crash");
@@ -122,14 +113,11 @@ fn kill_during_commit_leaves_a_consistent_database() {
     }
 }
 
-/// The counters-only child: every write is a no-op
-/// commit that flushes only dirty `Q` marks — one LMDB value in one
-/// transaction. Run only via the parent test below.
 #[test]
 #[ignore = "crash-child body; spawned by kill_during_counters_only_commit_leaves_q_consistent"]
 fn crash_child_reserve_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_RESERVE_DIR") else {
-        return; // ran directly (e.g. `--ignored` sweeps): nothing to do
+        return; 
     };
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for _ in 0..u64::MAX {
@@ -142,10 +130,6 @@ fn crash_child_reserve_loop() {
     }
 }
 
-/// Kill during the counters-only commit shape. The
-/// reopened `Q` mark is either an old or a new committed value, never
-/// torn — a torn 8-byte counter would surface as `Corruption` (or a
-/// non-monotonic reserve) on the very next reserve.
 #[test]
 fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
@@ -174,8 +158,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
         let _ = child.wait();
 
         let db = Db::open(dir.path(), Store).expect("open after crash");
-        // No facts ever committed: the store is empty and the generation
-        // never moved — Q marks are not query-visible state.
+
         let count = db
             .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
             .expect("scan after crash");
@@ -185,7 +168,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
             0,
             "round {round}: a counters-only commit moved the generation"
         );
-        // Q is readable (not torn) and strictly monotonic across writes.
+
         let a: ItemId = db
             .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
             .expect("reserve after crash")
@@ -197,7 +180,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
             .unwrap()
             .value;
         assert_eq!(b.0, a.0 + 1, "round {round}: Q mark torn or regressed");
-        // And a real insert with the minted id commits cleanly.
+
         db.write(|tx| {
             let id: ItemId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&item(id.0)]).map(|_| ())
