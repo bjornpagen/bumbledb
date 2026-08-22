@@ -1,26 +1,7 @@
-//! The stride-band falsifier (`m2max.cache.16k-pitch-aliasing`; the
-//! dense sweep's correction — Insight 16): the shipped 384 B tolerance
-//! against the widened 2 KiB twin, laid out side by side in ONE process
-//! and exercised interleaved through the real filter-evaluation surface
-//! (`view::apply`'s scalar conjunction — an 8-stream lockstep DRAM
-//! scan) and the image's own lockstep multi-column fill (8 store
-//! streams, the decode scatter's shape).
-//!
-//! The layout is TRACED, never assumed: every arm asserts its strides'
-//! residues before a single span is timed.
-//!
 //! VERDICT (2026-07-16, this file's falsifiers, re-runnable): the
-//! widening is REFUTED — at image-scale pitches the band decays by
-//! ~1.5 KiB of residue (1 KiB costs ~1.1× on the tight kernel, 1.00×
-//! on the real filter surface, which is retire-bound) and padding a
-//! 2 KiB residue inverts (~0.9×). `PAD_TOLERANCE` stays 384; these
-//! tests are the permanent falsifier record.
-//!
 //! RE-RUN (2026-07-17, post-T1 — the recorded re-open trigger): the
-//! band is unmoved under the reshaped four-lane bitmask scan kernels
 //! (residues 384/512/768/1024/2048 → 1.44/1.34/1.22/1.09/0.97× on the
-//! 24-stream kernel at the 4 MiB pitch; the filter surface 1.00×).
-//! The refutation stands; the numbers live on `PAD_TOLERANCE`.
+//! residues before a single span is timed.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,30 +14,18 @@ use bumbledb_theory::schema::FieldId;
 use bumbledb_theory::schema::IntervalElement;
 use bumbledb_theory::schema::ValueType;
 
-/// The shipped rule (production `PAD_TOLERANCE`).
 const SHIPPED: usize = 384;
-/// The widened twin the reread proposed — measured and refuted here.
+
 const WIDENED: usize = 2048;
 
-/// 8 u64 columns → 8 lockstep streams (the ledger's ≥8-stream regime).
 const COLS: usize = 8;
 
-/// `rows × 8 B = 16 MiB + 1 KiB`: the natural stride lands residue
-/// 1024 off a 16 KiB multiple — inside the measured ~48 B–2 KiB poison
-/// band, outside the shipped 384 B rule. 8 columns × 16 MiB ≈ 128 MiB
-/// per image: DRAM tier.
 const POISON_ROWS: usize = 2_097_280;
-/// `rows × 8 B = 16 MiB` exactly: residue 0, the measured-clean shape,
-/// identical under both rules — the healthy control.
+
 const HEALTHY_ROWS: usize = 2_097_152;
 
-/// Columns whose fill values carry the top bit — chosen so predicates
-/// `c0 ≤ c1`, `c2 ≤ c3`, `c4 ≤ c5` hold for EVERY row (the conjunction
-/// reads all eight streams) while `c6 ≤ c7` fails for every row (no
-/// survivor stream competes with the eight loads).
 const HIGH: [u64; COLS] = [0, 1 << 63, 0, 1 << 63, 0, 1 << 63, 1 << 63, 0];
 
-/// splitmix-style avalanche: fresh data per (seed, column, row).
 fn mix(seed: u64, c: usize, i: usize) -> u64 {
     let mut z = seed ^ ((c as u64) << 56) ^ (i as u64);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -64,7 +33,6 @@ fn mix(seed: u64, c: usize, i: usize) -> u64 {
     z ^ (z >> 31)
 }
 
-/// The word-column start indices, traced from the sealed layout.
 fn word_starts(image: &RelationImage) -> Vec<usize> {
     image
         .columns
@@ -76,7 +44,6 @@ fn word_starts(image: &RelationImage) -> Vec<usize> {
         .collect()
 }
 
-/// Consecutive same-slab strides in bytes.
 fn strides(image: &RelationImage) -> Vec<usize> {
     word_starts(image)
         .windows(2)
@@ -84,8 +51,6 @@ fn strides(image: &RelationImage) -> Vec<usize> {
         .collect()
 }
 
-/// The lockstep multi-column fill — per row, one store to every column
-/// (the decode scatter's stream shape), timed.
 fn fill(image: &mut Arc<RelationImage>, seed: u64) -> Duration {
     let img = Arc::get_mut(image).expect("no view holds the arm between spans");
     let rows = img.row_count;
@@ -100,11 +65,6 @@ fn fill(image: &mut Arc<RelationImage>, seed: u64) -> Duration {
     t.elapsed()
 }
 
-/// The tight 8-stream lockstep read — the ledger's poison regime
-/// (`m2max.cache.16k-pitch-aliasing` measured 8.13 vs 1.78–2.09 ns/row
-/// on exactly this shape): one dependent-free load per stream per row,
-/// nothing else. This is the layout fix's constructed pathological
-/// case; the filtered scan below is the family surface.
 #[inline(never)]
 fn lockstep_sum(image: &RelationImage) -> (Duration, u64) {
     let col = |i: usize| match image.column(i) {
@@ -130,10 +90,6 @@ fn lockstep_sum(image: &RelationImage) -> (Duration, u64) {
     (t.elapsed(), acc)
 }
 
-/// The 24-stream twin of [`lockstep_sum`] — the second pitch point:
-/// the smallest stride at which a real image can hold ≥8 (here 24)
-/// simultaneous DRAM-tier streams, 16× closer to the ledger's
-/// small-pitch regime than the 8-column configuration.
 #[inline(never)]
 fn lockstep_sum24(image: &RelationImage) -> (Duration, u64) {
     let col = |i: usize| match image.column(i) {
@@ -183,9 +139,6 @@ fn lockstep_sum24(image: &RelationImage) -> (Duration, u64) {
     (t.elapsed(), a0.wrapping_add(a1).wrapping_add(a2))
 }
 
-/// One real filtered scan: four same-atom `FieldsCompare` predicates
-/// over the eight columns — no kernel shape, so `apply` runs its scalar
-/// conjunction, reading all eight streams per row.
 fn scan(
     image: &Arc<RelationImage>,
     preds: &[FilterPredicate],
@@ -211,14 +164,9 @@ fn median(mut xs: Vec<f64>) -> f64 {
     xs[xs.len() / 2]
 }
 
-/// Alternation depth: 5 fresh-data blocks × 3 A/B pairs each.
 const BLOCKS: u64 = 5;
 const PAIRS_PER_BLOCK: u64 = 3;
 
-/// The interleaved A/B (ignored: measured evidence, run release through
-/// `scripts/measure.sh`). Predicted: ≥3× ns/row on the unpadded shipped
-/// rule at the 1 KiB residue; the widened twin at parity with the
-/// exact-multiple control; the store-side fill reported alongside.
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 #[expect(
@@ -227,15 +175,14 @@ const PAIRS_PER_BLOCK: u64 = 3;
 )]
 fn stride_band_ab_falsifier() {
     let field_types = vec![ValueType::U64; COLS];
-    // Arm A — the shipped rule: residue 1024 passes unpadded (poison).
+
     let mut poison = image_with_tolerance(&field_types, POISON_ROWS, SHIPPED);
-    // Arm B — the widened rule: the same shape pads to the exact multiple.
+
     let mut cured = image_with_tolerance(&field_types, POISON_ROWS, WIDENED);
-    // Control: the exact multiple, identical under both rules.
+
     let healthy_shipped = image_with_tolerance(&field_types, HEALTHY_ROWS, SHIPPED);
     let mut healthy = image_with_tolerance(&field_types, HEALTHY_ROWS, WIDENED);
 
-    // Trace the layout, never assume it.
     for &s in &strides(&poison) {
         assert_eq!(s % SET_STRIDE, 1024, "arm A sits at the 1 KiB residue");
         assert!(s >= 16 * 1024 * 1024, "DRAM-scale stride");
@@ -266,8 +213,6 @@ fn stride_band_ab_falsifier() {
         })
         .collect();
 
-    // Warm every arm once (untimed): fault the slabs in, settle the
-    // allocator; the timed spans then measure steady-state DRAM scans.
     let warm_seed = 0xD6E8_FEB8_6659_FD93;
     fill(&mut poison, warm_seed);
     fill(&mut cured, warm_seed);
@@ -291,10 +236,9 @@ fn stride_band_ab_falsifier() {
     let mut sink = 0u64;
 
     for block in 0..BLOCKS {
-        // Fresh data per block: the TAGE discipline (the scan loop is
-        // near-branchless, but the ledger's law is cheap to obey).
+
         let seed = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(block + 1);
-        // The store-side lockstep, interleaved, order alternating.
+
         let (fill_a, fill_b) = if block % 2 == 0 {
             let a = fill(&mut poison, seed);
             let b = fill(&mut cured, seed);
@@ -322,8 +266,7 @@ fn stride_band_ab_falsifier() {
             };
             let (h, buf2) = scan(&healthy, &preds, std::mem::take(&mut buf));
             buf = buf2;
-            // The tight kernel — the pathological case itself,
-            // interleaved in the same alternation order.
+
             let (ka, kb) = if flip {
                 let (kb, sb) = lockstep_sum(&cured);
                 let (ka, sa) = lockstep_sum(&poison);
@@ -399,17 +342,11 @@ fn stride_band_ab_falsifier() {
     );
 }
 
-/// The second pitch point (ignored: measured evidence): 24 u64 columns
-/// at `rows × 8 B = 4 MiB + 1 KiB` — the smallest stride family at
-/// which a real image holds ≥8 simultaneous DRAM-tier streams
-/// (24 × 4 MiB ≈ 101 MB, past the SLC), 16× closer to the ledger's
-/// small-pitch regime than the 8 × 16 MiB configuration. Healthy
-/// control: `rows × 8 B = 4 MiB` exactly (pure pow-2 pitch).
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_ab_falsifier_small_pitch() {
-    const ROWS_POISON: usize = 524_416; // ×8 = 4 MiB + 1 KiB
-    const ROWS_HEALTHY: usize = 524_288; // ×8 = 4 MiB exactly
+    const ROWS_POISON: usize = 524_416; 
+    const ROWS_HEALTHY: usize = 524_288; 
     let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS_POISON, SHIPPED);
     let mut cured = image_with_tolerance(&field_types, ROWS_POISON, WIDENED);
@@ -426,7 +363,6 @@ fn stride_band_ab_falsifier_small_pitch() {
     }
     assert_eq!(poison.byte_size(), cured.byte_size(), "allocation unmoved");
 
-    // Warm (fault the slabs), then interleave kernel-only pairs.
     let warm_seed = 0xA076_1D64_78BD_642F;
     fill(&mut poison, warm_seed);
     fill(&mut cured, warm_seed);
@@ -489,17 +425,10 @@ fn stride_band_ab_falsifier_small_pitch() {
     );
 }
 
-/// The discriminator (ignored: measured evidence): the ledger's own
-/// headline stagger — residue 128 B, which even the shipped 384 B rule
-/// pads — at the 4 MiB pitch point. If this also measures ~1×, no
-/// residue in the band reproduces at image-scale pitches (the poison
-/// band is a small-pitch phenomenon the image's own geometry cannot
-/// reach); if it measures ≥3×, the band is real here but narrower than
-/// 1 KiB. Tolerance 0 constructs the never-padded natural layout.
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_ab_residue_128_discriminator() {
-    const ROWS: usize = 524_304; // ×8 = 4 MiB + 128 B
+    const ROWS: usize = 524_304; 
     let field_types = vec![ValueType::U64; 24];
     let mut poison = image_with_tolerance(&field_types, ROWS, 0);
     let mut cured = image_with_tolerance(&field_types, ROWS, SHIPPED);
@@ -559,11 +488,6 @@ fn stride_band_ab_residue_128_discriminator() {
     );
 }
 
-/// The band-edge sweep (ignored: measured evidence): residues 128 B –
-/// 2 KiB at the 4 MiB pitch point, each unpadded arm (tolerance 0)
-/// against the padded cure, interleaved — locates where the poison
-/// band ends at image-scale pitches, i.e. whether the shipped 384 B
-/// tolerance is already right-sized there.
 #[test]
 #[ignore = "measured falsifier: run release through scripts/measure.sh"]
 fn stride_band_residue_sweep() {
@@ -587,7 +511,7 @@ fn stride_band_residue_sweep() {
             fill(&mut poison, seed);
             fill(&mut cured, seed);
             if block == 0 {
-                // Warm pass (untimed ratios discarded via warmup scans).
+
                 let (_, s0) = lockstep_sum24(&poison);
                 let (_, s1) = lockstep_sum24(&cured);
                 sink = sink.wrapping_add(s0).wrapping_add(s1);
@@ -622,16 +546,10 @@ fn stride_band_residue_sweep() {
     }
 }
 
-/// The falsifier's placement mechanism itself (fast, always-on): the
-/// parameterized padder lays the two arms out exactly as the twins
-/// claim — the shipped tolerance leaves a 1 KiB residue unpadded, the
-/// widened twin pads it to the exact multiple — and the allocation
-/// never moves (the slack is pre-paid per column).
 #[test]
 fn widened_band_pads_the_kilobyte_residue() {
     let field_types = vec![ValueType::U64; COLS];
-    // 8320 × 8 B = 65 KiB = 4 × 16 KiB + 1 KiB: past the tier gate,
-    // residue 1024.
+
     let rows = 8320;
     let shipped = image_with_tolerance(&field_types, rows, SHIPPED);
     let widened = image_with_tolerance(&field_types, rows, WIDENED);
@@ -648,24 +566,6 @@ fn widened_band_pads_the_kilobyte_residue() {
     );
 }
 
-/// The standard-corpus spot check, traced through the real allocator:
-/// the refuted widening would have moved exactly one ledger-corpus
-/// layout — Holder at L (its 100,096 B stride sits at residue 1792,
-/// where the sweep measured the band already past parity) — every
-/// other relation's layout is byte-identical at every scale, and the
-/// allocated bytes never change anywhere (the per-column slack is
-/// pre-paid). Ignored like its measured siblings, but for
-/// host-pinning, not timing: the `["Holder@L"]` answer transcribes the
-/// reference host's allocator base alignment (the macOS M2 Max) —
-/// under another allocator (linux/glibc) every base shifts and every
-/// shape moves. Run on the reference host, where it pins the
-/// tolerance-independence of allocation and the corpus's distance
-/// from the band.
-///
-/// Shapes and row counts transcribed from `bumbledb-bench`
-/// (`src/schema.rs`, `corpus_gen::Sizes::of`): postings P with
-/// `accounts = P/200`, `holders = accounts/4`, `entries = P/2`,
-/// `mandates = accounts × 4`.
 #[test]
 #[ignore = "host-pinned falsifier: the expected set transcribes the reference host's allocator layout — run on the macOS M2 Max"]
 fn corpus_shapes_move_only_where_the_band_says() {
@@ -673,7 +573,7 @@ fn corpus_shapes_move_only_where_the_band_says() {
     let iv = Interval {
         element: IntervalElement::I64,
     };
-    // (name, field types, [S rows, M rows, L rows])
+
     let shapes: Vec<(&str, Vec<ValueType>, [usize; 3])> = vec![
         ("Holder", vec![U64, Str], [125, 1_250, 12_500]),
         ("Account", vec![U64, U64, U64], [500, 5_000, 50_000]),
