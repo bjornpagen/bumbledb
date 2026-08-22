@@ -76,7 +76,6 @@ fn the_witness_walks_the_permuted_key_order() {
         inserts: vec![
             (POOL, vec![Value::U64(1), Value::U64(9)]),
             (POOL, vec![Value::U64(2), Value::U64(3)]),
-
             device(1, 9, 0),
             device(1, 9, 1),
             device(2, 3, 2),
