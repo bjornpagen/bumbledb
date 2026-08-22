@@ -1,13 +1,10 @@
-//! The primerlane report artifact: plain data, hand-rolled JSON +
-//! markdown (the dependency quarantine) — the before/after evidence
-//! table 80-acceptance.md attaches to every condition (gate G4).
+//! The primerlane report artifact: plain data, hand-rolled JSON + markdown (the
+//! dependency quarantine) — the before/after evidence
 
 use std::fmt::Write as _;
 
 use crate::report::Provenance;
 
-/// One measured phase: wall time by std `Instant`, rows processed, and
-/// (under `--alloc`) the phase's allocation window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhaseRow {
     pub name: &'static str,
@@ -16,10 +13,6 @@ pub struct PhaseRow {
     pub alloc: Option<PhaseAlloc>,
 }
 
-/// One phase's allocation window ([`bumbledb::alloc_counter`]): window
-/// events and bytes, plus the absolute peak-live high-water read at
-/// phase end (peak is process-monotone; the per-phase reading is the
-/// high-water as of that phase's close).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhaseAlloc {
     pub allocs: u64,
@@ -29,7 +22,6 @@ pub struct PhaseAlloc {
     pub peak_live_bytes: u64,
 }
 
-/// The whole primerlane report, plain data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrimerlaneReport {
     pub provenance: Provenance,
@@ -62,7 +54,6 @@ fn push_phase(out: &mut String, row: &PhaseRow) {
     out.push('}');
 }
 
-/// The machine-consumable primerlane artifact.
 #[must_use]
 pub fn to_json(report: &PrimerlaneReport) -> String {
     let mut out = String::new();
@@ -84,7 +75,6 @@ pub fn to_json(report: &PrimerlaneReport) -> String {
     out
 }
 
-/// The human table.
 #[must_use]
 pub fn to_markdown(report: &PrimerlaneReport) -> String {
     let alloc = report.phases.iter().any(|row| row.alloc.is_some());
