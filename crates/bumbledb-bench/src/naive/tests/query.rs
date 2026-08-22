@@ -1,10 +1,3 @@
-//! Query goldens: the `20-query-ir.md` semantics landmarks — duplicate
-//! witnesses collapse, the aggregation footgun triples the sum, the
-//! empty-input global aggregate is empty, an Arg tie yields every
-//! attaining row, membership boundaries, and negation against
-//! multiplicities — plus the membership/equality bivalence and param
-//! sets.
-
 use std::collections::BTreeSet;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
@@ -17,9 +10,6 @@ use crate::fixture::{atom, field, var};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb, Tuple};
 
-/// The fixture schema: Posting(id, account, amount), PostingTag(posting,
-/// tag), Mandate(account, active: interval<u64>) — no statements; query
-/// evaluation never consults them.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -101,8 +91,7 @@ fn rows(raw: Vec<Vec<Value>>) -> BTreeSet<Tuple> {
 
 #[test]
 fn duplicate_witnesses_collapse() {
-    // Two postings on account 7: projecting the account yields ONE row —
-    // existential variables never multiply projection output.
+
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 100),
@@ -122,8 +111,7 @@ fn duplicate_witnesses_collapse() {
 
 #[test]
 fn aggregation_footgun_triples_the_sum() {
-    // Joining the multiplicity-adding PostingTag into the aggregate
-    // multiplies the binding set: 3 tags on one posting of 100 ⇒ 300.
+
     let db = db(vec![posting(1, 7, 100), tag(1, 0), tag(1, 1), tag(1, 2)]);
     let plain = Query::single(Rule {
         finds: vec![
@@ -164,7 +152,7 @@ fn aggregation_footgun_triples_the_sum() {
 
 #[test]
 fn empty_input_global_aggregate_is_the_empty_set() {
-    // Over empty input the result is the empty set — not a 0 or NULL row.
+
     let db = db(vec![]);
     let query = Query::single(Rule {
         finds: vec![
@@ -183,7 +171,7 @@ fn empty_input_global_aggregate_is_the_empty_set() {
 
 #[test]
 fn membership_boundaries_are_half_open() {
-    // Mandate active over [10, 20): the start is in, the end is out.
+
     let db = db(vec![mandate(1, 10, 20)]);
     for (point, expect_hit) in [(9u64, false), (10, true), (19, true), (20, false)] {
         let query = Query::single(Rule {
@@ -206,9 +194,7 @@ fn membership_boundaries_are_half_open() {
 
 #[test]
 fn point_variable_membership_uses_the_scalar_anchor() {
-    // The point variable is anchored by a scalar field (Posting.account)
-    // and tested by membership against Mandate.active — only accounts
-    // whose value lies inside some mandate interval survive.
+
     let db = db(vec![
         posting(1, 12, 5),
         posting(2, 25, 5),
@@ -231,8 +217,7 @@ fn point_variable_membership_uses_the_scalar_anchor() {
 
 #[test]
 fn interval_variable_on_interval_fields_is_value_equality() {
-    // A variable occurring ONLY on interval fields is interval-typed:
-    // binding it in two atoms joins on interval identity, not overlap.
+
     let db = db(vec![
         mandate(1, 10, 20),
         mandate(2, 10, 20),
@@ -259,9 +244,7 @@ fn interval_variable_on_interval_fields_is_value_equality() {
 
 #[test]
 fn negation_rejects_once_regardless_of_multiplicities() {
-    // Posting 1 carries two tags, posting 3 none: the negated atom
-    // rejects the tagged posting exactly once — no multiplicity effects,
-    // plain anti-join over sets.
+
     let db = db(vec![
         posting(1, 7, 100),
         posting(3, 8, 5),
@@ -348,7 +331,7 @@ fn allen_masks_use_the_point_set_definitions() {
             }),
         ],
     });
-    // [10,20) and [20,30) are adjacent, not intersecting.
+
     assert_eq!(
         db.query(&overlapping, &[]).unwrap(),
         rows(vec![
@@ -356,7 +339,7 @@ fn allen_masks_use_the_point_set_definitions() {
             vec![Value::U64(2), Value::U64(3)],
         ])
     );
-    // COVERS against a literal: only [15,25) ⊇ [16,22).
+
     let covering = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(MANDATE, &[(0, var(0)), (1, var(1))])],
@@ -394,8 +377,7 @@ fn sum_overflow_is_the_one_runtime_error() {
 
 #[test]
 fn a_query_denotes_the_set_union_of_its_rules_denotations() {
-    // Two rules over one head: account 7's amounts, account 8's amounts.
-    // The union is a set — the shared amount 100 appears once.
+
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 250),
@@ -426,8 +408,7 @@ fn a_query_denotes_the_set_union_of_its_rules_denotations() {
 
 #[test]
 fn variables_are_rule_scoped_in_the_model_too() {
-    // VarId(0) is the projected I64 amount in rule 0 and an unprojected
-    // U64 account in rule 1 — two variables, one id, two scopes.
+
     let db = db(vec![posting(1, 7, 100), posting(2, 8, 250)]);
     let first = Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -462,10 +443,9 @@ fn variables_are_rule_scoped_in_the_model_too() {
 
 #[test]
 fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
-    // Sum over the union of the two rules' head projections: accounts 7
+
     // and 8 contribute {100, 250} ∪ {100} = {100, 250} → 350 (the
-    // rules-IR definition; the executor's spanning seen-set implements
-    // the same dedup).
+
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 250),
