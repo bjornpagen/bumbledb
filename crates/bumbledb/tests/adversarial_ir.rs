@@ -114,7 +114,7 @@ fn term(rng: &mut Rng) -> Term {
         0..=2 => Term::Var(VarId(u16::try_from(rng.below(5)).expect("small"))),
         3 => Term::Var(VarId(999)),
         4 => Term::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
-        5 => Term::Param(ParamId(40)), 
+        5 => Term::Param(ParamId(40)),
         6 => Term::ParamSet(ParamId(u16::try_from(rng.below(3)).expect("small"))),
         _ => Term::Literal(value(rng)),
     }
@@ -154,7 +154,6 @@ fn cmp_op(rng: &mut Rng) -> CmpOp {
         5 => CmpOp::Ge,
         6 => CmpOp::PointIn,
         7 => CmpOp::Allen {
-
             mask: match rng.below(4) {
                 0 => AllenMask::EMPTY,
                 1 => AllenMask::FULL,
@@ -322,7 +321,6 @@ fn plausible_query(rng: &mut Rng) -> Query {
         })],
     };
     match rng.below(6) {
-
         0 => Query::single(projection(
             BUSY,
             Gauntlet::BUSY_PERSON,
@@ -389,10 +387,9 @@ fn plausible_query(rng: &mut Rng) -> Query {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn mutate(rng: &mut Rng, query: &mut Query) {
     match rng.below(16) {
-
         0 => {
             if let Some(atom) = query
                 .rules_mut()
