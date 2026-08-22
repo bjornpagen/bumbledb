@@ -1,7 +1,3 @@
-//! Raw-ABI tests: every case calls the extern "C"
-//! surface exactly as C would — views built in the test frame, callbacks
-//! as C function pointers, errors destroyed through the ABI. No C harness
-//! needed; the point is that the FOREIGN BRIDGE is correct.
 #![expect(
     unsafe_code,
     reason = "the raw-ABI tests play the C caller: context pointers round-trip \
@@ -50,10 +46,6 @@ use crate::schema::{
 use crate::value::{bdb_param, bdb_param_kind, bdb_string_view, bdb_value, bdb_value_kind};
 use crate::{bdb_abi_version, bdb_callback_control, bdb_status, bdb_version};
 
-// ---------------------------------------------------------------------------
-// C-caller plumbing
-// ---------------------------------------------------------------------------
-
 fn sv(text: &str) -> bdb_string_view {
     bdb_string_view {
         data: text.as_ptr(),
@@ -99,16 +91,14 @@ fn v_interval_i64(start: i64, end: i64) -> bdb_value {
     value
 }
 
-/// A fresh store path under the system temp root. The path must not
-/// exist: `create` refuses any existing destination, including an empty
-/// directory.
+/// The path must not exist: `create` refuses any existing destination,
+/// including an empty directory.
 fn temp_store(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-c-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
 
-/// Destroys an ABI error, asserting the destroy path itself.
 fn destroy_error(error: *mut bdb_error) {
     assert!(!error.is_null(), "expected an error payload");
     assert_eq!(bdb_error_destroy(error), bdb_status::Ok);
@@ -125,8 +115,6 @@ fn error_message(error: *const bdb_error) -> String {
     String::from_utf8(bytes.to_vec()).expect("error message is UTF-8")
 }
 
-// Closure-to-C-callback trampolines: the generic F is smuggled through the
-// context pointer, exactly as a C caller smuggles its state.
 extern "C" fn read_trampoline<
     F: FnMut(*const bdb_instance_ref, *const bdb_witness) -> bdb_callback_control,
 >(
@@ -238,10 +226,6 @@ fn db_write_from<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
     (status, error)
 }
 
-// ---------------------------------------------------------------------------
-// The Service/Outage theory, as C views
-// ---------------------------------------------------------------------------
-
 const SERVICE: u32 = 0;
 const OUTAGE: u32 = 1;
 const OUTAGE_SERVICE: u16 = 0;
@@ -305,10 +289,6 @@ fn blank_statement(kind: bdb_statement_spec_kind) -> bdb_statement_spec {
     }
 }
 
-/// Builds the §39 Uptime spec as borrowed C views on this frame and runs
-/// `f` against it: Service { fresh id: u64, name: str }, Outage
-/// { service: u64, window: interval<i64> }, contained(Outage.service ⊆
-/// Service.id), key(Outage.service, Outage.window).
 fn with_uptime_spec<R>(f: impl FnOnce(&bdb_schema_spec) -> R) -> R {
     let mut interval_i64 = vt(bdb_value_type_kind::Interval);
     interval_i64.element = u32::from(bdb_interval_element::I64);
@@ -395,9 +375,6 @@ fn err_text(error: *mut bdb_error) -> String {
     text
 }
 
-/// The materialized key-statement ids the keyed-read tests aim at,
-/// resolved through the ENGINE's own lowering of the same C views (the
-/// bridge marshal under test feeds the engine introspection).
 fn key_statement_ids() -> (u16, u16) {
     let spec = with_uptime_spec(|view| schema_spec_in(view).ok().expect("spec marshals"));
     let descriptor = spec.descriptor().expect("descriptor admits");
@@ -421,8 +398,6 @@ fn key_statement_ids() -> (u16, u16) {
     )
 }
 
-/// Inserts one Service row (fresh-allocated id, returned) and one Outage
-/// row over `window` through the write ABI, committing.
 fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
     let mut minted = 0u64;
     let (status, error) = db_write(db, |tx| {
@@ -478,10 +453,6 @@ fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
     minted
 }
 
-// ---------------------------------------------------------------------------
-// The DownAt query (§39), as C views
-// ---------------------------------------------------------------------------
-
 fn blank_agg() -> bdb_agg_op {
     bdb_agg_op {
         kind: u32::from(bdb_head_op::Count),
@@ -520,9 +491,6 @@ fn cmp_op(kind: bdb_cmp_op_kind) -> bdb_cmp_op {
     }
 }
 
-/// `DownAt(t) = { service | Outage(service, window), t in window }` —
-/// one Edb atom over Outage, a `PointIn` condition (interval lhs, point
-/// rhs), one projected find.
 fn with_down_at_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     let bindings = [
         bdb_binding {
@@ -579,8 +547,6 @@ fn with_down_at_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     f(&query)
 }
 
-/// `NamesOf(ids) = { name | Service(id, name), id in ids }` — the set
-/// param lane plus a string find.
 fn with_names_of_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     let bindings = [
         bdb_binding {
@@ -635,10 +601,6 @@ fn prepare(db: *mut bdb_db, query: &bdb_query) -> *mut bdb_prepared {
     prepared
 }
 
-// ---------------------------------------------------------------------------
-// §35 cases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn create_refuses_existing_destination() {
     let dir = temp_store("exists");
@@ -680,7 +642,6 @@ fn create_open_close() {
     });
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
 
-    // Destroying a null handle is misuse, not a crash.
     assert_eq!(bdb_db_destroy(null_mut()), bdb_status::Misuse);
 }
 
@@ -795,8 +756,6 @@ fn insert_delete_contains_get_dyn() {
     let (outage_key, service_key) = key_statement_ids();
     let id = seed_service_outage(db, "api", (100, 200));
 
-    // Keyed reads on both the declared pointwise key and the
-    // fresh-implied key, snapshot side.
     let (status, error) = db_read(db, |instance, _witness| {
         let mut error: *mut bdb_error = null_mut();
         let keys = [v_u64(id), v_interval_i64(100, 200)];
@@ -850,7 +809,6 @@ fn insert_delete_contains_get_dyn() {
         assert_eq!(text, b"api");
         assert_eq!(bdb_row_set_destroy(row), bdb_status::Ok);
 
-        // A missing key writes null, not an error.
         let misses = [v_u64(id + 999)];
         let mut row: *mut bdb_row_set = null_mut();
         assert_eq!(
@@ -870,7 +828,6 @@ fn insert_delete_contains_get_dyn() {
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
 
-    // Delete/insert + final-state point reads, tx side.
     let (status, error) = db_write(db, |tx| {
         let mut error: *mut bdb_error = null_mut();
         let outage_row = [v_u64(id), v_interval_i64(100, 200)];
@@ -978,8 +935,6 @@ fn write_from_ok_and_moved() {
     let db = create_uptime(&dir);
     let id = seed_service_outage(db, "gamma", (0, 10));
 
-    // The sanctioned nesting: write_from with the read callback's own
-    // still-live witness.
     let (status, error) = db_read(db, |_instance, witness| {
         let (status, error) = db_write_from(db, witness, |tx| {
             let row = [v_u64(id), v_interval_i64(50, 60)];
@@ -1008,7 +963,7 @@ fn write_from_ok_and_moved() {
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
 
     // A state-changing commit after the witness: ConditionalWrite::Moved,
-    // reported as a write-admission arm under OK, not an error kind.
+
     let (status, error) = db_read(db, |_instance, witness| {
         let (status, error) = db_write(db, |tx| {
             let row = [v_u64(id), v_interval_i64(70, 80)];
@@ -1094,8 +1049,7 @@ fn stale_witness_is_misuse() {
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "read: {}", err_text(error));
-    // The witness lives in a retired heap slot, so this replay is a
-    // real MISUSE (alive=false), not a use-after-free of a stack frame.
+
     let (status, error) = db_write_from(db, stashed, |_tx| bdb_callback_control::Ok);
     assert_eq!(status, bdb_status::Misuse);
     assert!(error.is_null(), "misuse allocates no error");
@@ -1302,8 +1256,6 @@ fn prepare_execute_scalar_param_and_decode() {
             "answers access is bounds-checked bridge-side"
         );
 
-        // Re-execute into the SAME carrier (capacity reuse, §23): a
-        // parameter matching nothing leaves it validly empty.
         let params = [bdb_param {
             kind: u32::from(bdb_param_kind::Scalar),
             scalar: v_i64(9_999),
@@ -1417,8 +1369,7 @@ fn pointwise_key_violation_is_rejected_and_renderable() {
     let db = create_uptime(&dir);
     let id = seed_service_outage(db, "flaky", (10, 20));
     let (status, admission, error) = db_write_admit(db, |tx| {
-        // Overlaps [10, 20) for the same service: the pointwise key
-        // (service, window) convicts at commit.
+
         let row = [v_u64(id), v_interval_i64(15, 25)];
         let mut report = bdb_mutation_report {
             submitted: 0,
@@ -1475,7 +1426,6 @@ fn pointwise_key_violation_is_rejected_and_renderable() {
     );
     assert_eq!(bdb_violations_destroy(violations), bdb_status::Ok);
 
-    // The rejected delta committed nothing.
     let (status, error) = db_read(db, |instance, _witness| {
         let row = [v_u64(id), v_interval_i64(15, 25)];
         let mut contains: u8 = 1;
@@ -1525,8 +1475,7 @@ fn marshal_refusals_are_typed_fact_shape() {
     let dir = temp_store("marshal");
     let db = create_uptime(&dir);
     let (status, error) = db_write(db, |tx| {
-        // An empty interval is unrepresentable in the engine: the bridge
-        // refuses it at marshal, typed.
+
         let row = [v_u64(1), v_interval_i64(20, 10)];
         let mut report = bdb_mutation_report {
             submitted: 0,
@@ -1640,7 +1589,7 @@ fn insert_null_out_report_does_not_commit() {
         assert_eq!(status, bdb_status::Misuse);
         assert!(error.is_null());
         // Ok after misuse: the call must not have applied. Abort would
-        // hide a live delta behind a dropped commit.
+
         bdb_callback_control::Ok
     });
     assert_eq!(status, bdb_status::Ok, "write: {}", err_text(error));
