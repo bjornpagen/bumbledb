@@ -1,6 +1,4 @@
-//! The foldability conditions, positive and negative per condition,
 //! against the honest pipeline (validate → normalize → grounding) over a
-//! closed-relation fixture theory — plus direct predicate tests where a
 //! condition's refusal shape is easier to pin in isolation.
 
 use super::*;
@@ -40,12 +38,6 @@ const SCHED: u32 = 2;
 const KIND: u32 = 3;
 const CAL: u32 = 4;
 
-/// Item(id fresh, kind u64, score i64) — `kind` references Kind;
-/// Loose(id fresh, k u64) — NO containment (the domain-guarantee
-/// negative); Sched(id fresh, cal u64) — no containment either (the
-/// positive fold needs none); Kind closed (rank u64; ranks 10/20/20/30);
-/// Cal closed (span interval<u64>; 2..5 and 5..9). One statement:
-/// Item(kind) <= Kind(id).
 fn theory() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -145,8 +137,6 @@ fn var(id: u16) -> Term {
     Term::Var(VarId(id))
 }
 
-/// Runs the full honest pipeline over one rule: validate → normalize →
-/// grounding (elimination and evaluation in the one fixpoint).
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut normalized = normalize_rules(schema, &[], witness.rules()).remove(0);
@@ -162,7 +152,6 @@ fn roles(normalized: &NormalizedQuery) -> Vec<Role> {
         .collect()
 }
 
-/// The plan-constant sets attached to one occurrence's filter list.
 fn attached_sets(normalized: &NormalizedQuery, idx: usize) -> Vec<Vec<u64>> {
     normalized.occurrences[idx]
         .filters
@@ -192,7 +181,6 @@ fn folded_neg(relation: u32, survivors: &[u64]) -> Role {
     })
 }
 
-/// `Q(i, v) :- Item(id = i, kind = x, score = v), Kind(id = x, rank == 20)`.
 fn selected_fold_query(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -205,9 +193,6 @@ fn selected_fold_query(rank: u64) -> Query {
     })
 }
 
-/// The fold: a ψ-selected closed atom whose only escaping variable is
-/// the join id becomes `Role::Folded` and its surviving id-set lands on
-/// the sibling as a plan-constant membership.
 #[test]
 fn a_filtered_closed_atom_folds_to_a_membership_set() {
     let schema = theory();
@@ -225,8 +210,6 @@ fn a_filtered_closed_atom_folds_to_a_membership_set() {
     assert!(normalized.dead.is_none());
 }
 
-/// The off switch covers the evaluator too — the dual-run differential's
-/// contract (`with_grounding_disabled` bypasses the whole fixpoint).
 #[test]
 fn the_off_switch_bypasses_the_evaluator() {
     let schema = theory();
@@ -238,8 +221,6 @@ fn the_off_switch_bypasses_the_evaluator() {
     assert!(attached_sets(&normalized, 0).is_empty());
 }
 
-/// Condition 1 negative — a live payload variable (projected rank)
-/// escapes the atom: the fold refuses and the virtual-image join stays.
 #[test]
 fn a_live_payload_variable_blocks_the_fold() {
     let schema = theory();
@@ -257,9 +238,6 @@ fn a_live_payload_variable_blocks_the_fold() {
     assert!(attached_sets(&normalized, 0).is_empty());
 }
 
-/// Condition 1 positive control — the same payload variable bound but
-/// dead folds (S = the whole extension; the containment-eliminator
-/// refuses closed targets, so the mark is the evaluator's).
 #[test]
 fn a_dead_payload_variable_folds() {
     let schema = theory();
@@ -280,8 +258,8 @@ fn a_dead_payload_variable_folds() {
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0, 1, 2, 3]]);
 }
 
-/// Condition 2 negative — a param-bearing filter defers to bind time,
-/// which is REFUSED v0: the fold must not judge stage-3 values.
+/// Condition 2 negative — a param-bearing filter defers to bind time, which is
+/// REFUSED v0: the fold must not judge stage-3 values.
 #[test]
 fn a_param_filter_blocks_the_fold() {
     let schema = theory();
@@ -302,10 +280,6 @@ fn a_param_filter_blocks_the_fold() {
     assert!(attached_sets(&normalized, 0).is_empty());
 }
 
-/// Condition 2 as an exhaustive parser matrix: every filter kind and
-/// every symbolic sub-vocabulary either narrows to its exact typed form
-/// or refuses. In particular, the old gate's admitted-but-unevaluable
-/// pairings (set inequality and non-word order) refuse here.
 #[test]
 fn resolvable_parser_is_total_over_the_filter_vocabulary() {
     assert_word_and_field_compares_parse();
@@ -501,9 +475,6 @@ fn assert_other_refusals() {
     }
 }
 
-/// The parsed evaluator preserves the pre-parser id-set pins over the
-/// sealed fixture extensions: scalar equality/range/set and interval
-/// membership/Allen all select exactly the established rows.
 #[test]
 fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
     let schema = theory();
@@ -566,10 +537,6 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
     }
 }
 
-/// Direction 4 — a negated closed atom with `k` bound positively folds
-/// to membership in the COMPLEMENT: the anti-probe rejected `k ∈ S`, so
-/// the sibling keeps `k ∈ extension ∖ S`, and the probe descriptor is
-/// deleted.
 #[test]
 fn a_negated_closed_atom_folds_to_the_complement() {
     let schema = theory();
@@ -598,11 +565,6 @@ fn a_negated_closed_atom_folds_to_the_complement() {
     );
 }
 
-/// Direction 4 negative — the domain guarantee: without a containment
-/// carrying `k` into the closed relation's ids, `k ∉ S` and
-/// `k ∈ complement` disagree on out-of-extension values, so the fold
-/// refuses and the anti-probe stays. (Loose.k has no statement — the
-/// same query over Item folds above.)
 #[test]
 fn a_negated_fold_without_the_domain_guarantee_refuses() {
     let schema = theory();
@@ -621,11 +583,6 @@ fn a_negated_fold_without_the_domain_guarantee_refuses() {
     assert_eq!(normalized.anti_probes.len(), 1, "the probe stays");
 }
 
-/// Direction 4, the |S| == 0 side of the direction pin: an empty
-/// surviving set means the anti-probe never rejects — the negated atom
-/// deletes outright (NO membership, NO rule death), domain guarantee
-/// not needed (`k ∉ ∅` holds for every `k`; Loose's guarantee-free
-/// binder proves the case).
 #[test]
 fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
     let schema = theory();
@@ -648,9 +605,6 @@ fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
     assert!(normalized.dead.is_none(), "the rule is NOT empty");
 }
 
-/// Direction 4, the complement-∅ side: an unfiltered negated closed
-/// atom's S is the whole extension — under the domain guarantee every
-/// binding's `k` is rejected, so the rule is dead.
 #[test]
 fn an_empty_complement_kills_the_rule() {
     let schema = theory();
@@ -668,9 +622,6 @@ fn an_empty_complement_kills_the_rule() {
     );
 }
 
-/// The dead gate: a var-less closed gate with a satisfiable selection
-/// deletes outright — no membership to attach, nothing multiplies any
-/// fold domain.
 #[test]
 fn a_satisfied_var_less_gate_deletes_outright() {
     let schema = theory();
@@ -692,10 +643,6 @@ fn a_satisfied_var_less_gate_deletes_outright() {
     assert!(normalized.dead.is_none());
 }
 
-/// The gate's negative — a gate binding a variable (dead, but bound)
-/// refuses: under an aggregate sink the fold domain is over ALL query
-/// variables, and deleting the binder would collapse |S| bindings into
-/// one.
 #[test]
 fn a_var_binding_gate_refuses() {
     let schema = theory();
@@ -703,9 +650,7 @@ fn a_var_binding_gate_refuses() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ITEM, &[(0, var(0))]),
-            // rank == 20 plus a bound-but-dead id variable: no live k
-            // (nothing else binds Var 1), so this is gate-shaped — and
-            // must refuse.
+
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
         ],
         negated: vec![],
@@ -715,8 +660,6 @@ fn a_var_binding_gate_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// |S| == 0 kills the rule — the statically-empty channel with the
-/// evaluator's rendered reason (the fold's `dead` picture discipline).
 #[test]
 fn an_empty_surviving_set_kills_the_rule() {
     let schema = theory();
@@ -728,8 +671,6 @@ fn an_empty_surviving_set_kills_the_rule() {
     );
 }
 
-/// |S| == 0 on a var-less gate kills the rule too (the gate's own
-/// negative-side twin of the delete above).
 #[test]
 fn an_unsatisfiable_gate_kills_the_rule() {
     let schema = theory();
@@ -749,9 +690,6 @@ fn an_unsatisfiable_gate_kills_the_rule() {
     );
 }
 
-/// A single-atom closed scan with a live projected handle refuses: the
-/// membership set has no other binder to land on, and deleting the only
-/// participating occurrence would leave the rule bodyless.
 #[test]
 fn a_fold_with_no_membership_home_refuses() {
     let schema = theory();
@@ -769,9 +707,6 @@ fn a_fold_with_no_membership_home_refuses() {
     assert!(normalized.dead.is_none());
 }
 
-/// Multi-rule queries fold per rule, independently: the same closed
-/// atom folds in the rule where its payload is dead and refuses in the
-/// rule projecting it (no cross-rule state — the grounding's per-rule law).
 #[test]
 fn multi_rule_queries_fold_per_rule_independently() {
     let schema = theory();
@@ -793,8 +728,7 @@ fn multi_rule_queries_fold_per_rule_independently() {
         negated: vec![],
         conditions: vec![],
     };
-    // Q1 spelling: `Query::single` constructs `Cq` (no rec). Two-rule
-    // CQ via the public rules list — engine owns `ir.rs` field vis.
+
     let query = Query {
         interiors: vec![],
         head: fold_rule.head(),
@@ -819,14 +753,10 @@ fn multi_rule_queries_fold_per_rule_independently() {
     assert!(attached_sets(&rules[1], 0).is_empty());
 }
 
-/// The interval evaluation paths: a literal membership binding
-/// (`PointIn`) and a literal `Allen` predicate (`FieldAllen`) evaluate
-/// against the sealed rows through the scalar classify — n ≤ 256, never
-/// the batch kernel.
 #[test]
 fn interval_filters_evaluate_against_the_sealed_extension() {
     let schema = theory();
-    // 3 ∈ span: only X = 2..5 survives.
+
     let membership = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -843,7 +773,6 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
     );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 
-    // Allen(span, BEFORE, 6..8): X = 2..5 is before, Y = 5..9 covers.
     let allen = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -869,9 +798,6 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 }
 
-/// The fixpoint composes folds: a second closed atom over the same join
-/// variable receives the first fold's membership and evaluates it as an
-/// ordinary filter — the surviving set intersects.
 #[test]
 fn a_second_closed_atom_folds_over_the_first_folds_set() {
     let schema = theory();
@@ -879,9 +805,7 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ITEM, &[(0, var(0)), (1, var(1))]),
-            // rank >= 20 survives {1, 2, 3}; rank <= 20 survives
-            // {0, 1, 2}; the sibling must end with both sets attached
-            // (their conjunction is {1, 2}).
+
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
@@ -902,8 +826,7 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
         ],
         "both closed occurrences fold (the second sees the first's set as a filter)"
     );
-    // The Item occurrence carries both memberships; their conjunction
-    // is the honest intersection.
+
     let sets = attached_sets(&normalized, 0);
     assert_eq!(sets.len(), 2);
     assert!(
@@ -912,10 +835,6 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
     );
 }
 
-/// The fold's picture prints the vocabulary's names: a word at the
-/// relation's own id position renders as its handle, a membership set as
-/// a handle set, and an out-of-range word visibly wrong as `Kind(9?)` —
-/// the `ir/render` fallback convention, byte-exact.
 #[test]
 fn the_folded_picture_prints_handles_at_the_id_position() {
     let schema = theory();
@@ -937,7 +856,7 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
         folded_picture(&schema, relation, &[eq_id(Const::WordSet(vec![0, 2]))]),
         "Kind{id ∈ {A, C}}"
     );
-    // A payload column stays a plain value — handles live at the id.
+
     assert_eq!(
         folded_picture(
             &schema,
