@@ -112,7 +112,6 @@ impl Answers {
                 Interval::<u64>::new(start, end).expect("stored invariant: start < end"),
             ),
             IntervalElement::I64 => {
-
                 let decode = |word: u64| (word ^ (1 << 63)).cast_signed();
                 Cell::IntervalI64(
                     Interval::<i64>::new(decode(start), decode(end))
@@ -150,7 +149,6 @@ impl Answers {
 }
 
 impl<'a> Answer<'a> {
-
     /// # Panics
 
     #[must_use]
