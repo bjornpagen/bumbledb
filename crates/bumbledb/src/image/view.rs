@@ -38,10 +38,7 @@ pub enum Const {
 
     Words(Box<[u64]>),
 
-    Interval {
-        start: u64,
-        end: u64,
-    },
+    Interval { start: u64, end: u64 },
 
     Param(crate::ir::ParamId),
 
@@ -49,9 +46,7 @@ pub enum Const {
 
     WordSet(Vec<u64>),
 
-    PendingIntern {
-        bytes: Box<[u8]>,
-    },
+    PendingIntern { bytes: Box<[u8]> },
 }
 
 /// View-evaluator point word: a resolved literal or a bind-time param.
@@ -113,7 +108,6 @@ pub type MaskConst = bumbledb_theory::allen::AllenMask;
 /// the representation-over-control-flow answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {
-
     Compare {
         field: OperandAddr,
         op: crate::ir::WordCmp,
@@ -131,7 +125,10 @@ pub enum FilterPredicate {
         point: ViewWordSource,
     },
 
-    AnyPointIn { field: OperandAddr, set: SetConst },
+    AnyPointIn {
+        field: OperandAddr,
+        set: SetConst,
+    },
 
     FieldsAllen {
         left: OperandAddr,
@@ -157,7 +154,6 @@ pub enum FilterPredicate {
 }
 
 impl FilterPredicate {
-
     pub(crate) fn compare_sides(&self) -> (OperandAddr, OperandAddr, crate::ir::WordCmp) {
         match *self {
             Self::FieldsCompare { left, right, op } => (left, right, op),
@@ -177,7 +173,6 @@ impl FilterPredicate {
 /// Prepare stores [`View::Unbound`]; the executor holds this after bind.
 #[derive(Debug)]
 pub enum BoundView {
-
     All(Arc<RelationImage>),
 
     Survivors {
@@ -187,7 +182,6 @@ pub enum BoundView {
 }
 
 impl BoundView {
-
     #[must_use]
     pub fn image(&self) -> &Arc<RelationImage> {
         match self {
@@ -221,14 +215,12 @@ impl BoundView {
 /// A three-variant representation, not a sentinel vector.
 #[derive(Debug)]
 pub enum View {
-
     Unbound,
 
     Bound(BoundView),
 }
 
 impl View {
-
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
