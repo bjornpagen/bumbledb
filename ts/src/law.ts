@@ -1,6 +1,6 @@
 /**
  * The law-typing engine (owner ruling 2026-07-18, "option 2, zero debate"):
- * THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema()`
+ * THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
  * computes every field's domain FROM the statement list, at BOTH the type
  * level (this module's type machinery, reading the statements tuple type)
  * and at runtime (a plain union-find over the same pairs), and the two
@@ -8,21 +8,21 @@
  *
  * The three class laws (ratified; implemented exactly):
  *
- *   1. GENERATORS — a `fresh` field is a generator and names its class by
- *      its declaration coordinate (`"Account.id"`); a closed relation's
- *      synthetic id is a generator named `"Kind.id"`.
- *   2. GENERATOR-LESS classes are named by their least member coordinate
- *      in relation-declaration × field-declaration order (readable off the
- *      relation record and each member's frozen field list at the VALUE
- *      tier — deterministic, pinned forever; the wire reads only this
- *      tier). At the TYPE tier the same class is carried as its
- *      member-coordinate SET (see {@link ClassOfCoord}): TypeScript's
- *      union member order is not observably deterministic, so a type-level
- *      least-member pick would drift between compilations — the set is the
- *      canonical deterministic spelling, the runtime name is always a
- *      member of it, and the join judgment is identical at both tiers.
- *   3. BARE — a field in no law has NO class and pairs only with bare in
- *      queries (the deliberate sum-domain pointer stays legal).
+ * 1. GENERATORS — a `fresh` field is a generator and names its class by
+ * its declaration coordinate (`"Account.id"`); a closed relation's
+ * synthetic id is a generator named `"Kind.id"`.
+ * 2. GENERATOR-LESS classes are named by their least member coordinate
+ * in relation-declaration × field-declaration order (readable off the
+ * relation record and each member's frozen field list at the VALUE
+ * tier — deterministic, pinned forever; the wire reads only this
+ * tier). At the TYPE tier the same class is carried as its
+ * member-coordinate SET (see {@link ClassOfCoord}): TypeScript's
+ * union member order is not observably deterministic, so a type-level
+ * least-member pick would drift between compilations — the set is the
+ * canonical deterministic spelling, the runtime name is always a
+ * member of it, and the join judgment is identical at both tiers.
+ * 3. BARE — a field in no law has NO class and pairs only with bare in
+ * queries (the deliberate sum-domain pointer stays legal).
  *
  * THE WALL: a class containing more than one generator is a contradiction
  * (two mints cannot share a carrier) — a schema-level COMPILE error (the
@@ -32,17 +32,17 @@
  * statement). The TARGET-KEY WALL ({@link TargetKeyWall},
  * 60-containment-parity) rides the same constraint seam: a containment/
  * mirrors/capacity target projection that resolves no key of its relation
- * is the same kind of schema-level compile error, with `schema()`'s
+ * is the same kind of schema-level compile error, with `schema`'s
  * `verifyTargetKeys` as its authoritative runtime twin.
  *
  * Every paired face of the statement tuple unions its positionwise field
  * slots: containment (ψ-selected targets included — a selection changes
  * pairing not at all), the `==` bijection, and capacity source/target pairs.
- * `key()` statements pair nothing (an FD constrains one relation's own
+ * `key` statements pair nothing (an FD constrains one relation's own
  * rows; it identifies no carriers).
  *
  * The type tier reads pairs off the statement types' exact face data, so
- * spell the statement list INLINE in `schema()` (the `const` type
+ * spell the statement list INLINE in `schema` (the `const` type
  * parameter keeps the tuple precise). A widened `Statement[]` list
  * degrades the TYPE tier to generators-only (no pair is readable off a
  * widened type) — the runtime map stays complete and authoritative, and
@@ -62,75 +62,42 @@ import type { AnyRelation, RelationFields } from "#relation.ts"
 import type { SchemaRelation, SchemaRelations } from "#schema.ts"
 import { renderStatement, type Statement } from "#statements.ts"
 
-// ————————————————————————————————————————————————————————————————————————
-// The class-map shapes.
-// ————————————————————————————————————————————————————————————————————————
-
-/** One relation's computed classes: field name → class name, `undefined` = bare. */
 type RelationClasses = { readonly [field: string]: string | undefined }
 
-/**
- * The class map a schema carries — relation name → field name → the
- * computed class name (`undefined` = bare). THE domain authority: queries
- * and the wire lowering read domains from here and nowhere else. The wide
- * shape is the default every `Schema`-generic surface accepts; a concrete
- * schema's `classes` property carries the EXACT computed map
- * ({@link ClassesOf}) at the type level and the frozen runtime twin
- * (`computeClasses`) at the value level — one property, two tiers, one
- * computation.
- */
 type SchemaClasses = { readonly [relation: string]: RelationClasses }
 
-/** Looks one relation's class record up in a schema's class map (absent relation = no classes). */
 type ClassRecordOf<Classes extends SchemaClasses, N extends string> = N extends keyof Classes
 	? Classes[N]
 	: Record<never, never>
 
-/** Looks one field's class up in a relation's class record (absent field = bare). */
 type ClassLookup<CR, K> = K extends keyof CR ? CR[K] & (string | undefined) : undefined
 
-// ————————————————————————————————————————————————————————————————————————
-// Coordinates.
-// ————————————————————————————————————————————————————————————————————————
-
-/** A closed member's declared payload-column record (`never` on ordinary relations). */
 type MemberColumns<M> = M extends AnyClosed ? M["columns"] : never
 
-/** The field names of one schema member: a relation's declared fields; a closed relation's sealed `id` + columns. */
 type MemberFieldNames<M extends SchemaRelation> = M extends AnyClosed
 	? "id" | (keyof MemberColumns<M> & string)
 	: M extends AnyRelation
 		? keyof RelationFields<M> & string
 		: never
 
-/** The fresh-marked field names of one field block. */
 type FreshFieldNames<Fields> = {
 	[F in keyof Fields & string]: Fields[F] extends { readonly fresh: true } ? F : never
 }[keyof Fields & string]
 
-/** One member's generator coordinates: fresh fields; a closed relation's synthetic id. */
 type MemberGenerators<N extends string, M extends SchemaRelation> = M extends AnyClosed
 	? `${N}.id`
 	: M extends AnyRelation
 		? `${N}.${FreshFieldNames<RelationFields<M>>}`
 		: never
 
-/** Every generator coordinate of a relation record (a union). */
 type GeneratorsOf<Rels extends SchemaRelations> = {
 	[N in keyof Rels & string]: MemberGenerators<N, Rels[N]>
 }[keyof Rels & string]
 
-// ————————————————————————————————————————————————————————————————————————
-// Pairs: the positionwise slot pairs of every paired face.
-// ————————————————————————————————————————————————————————————————————————
-
-/** One paired-slot pair of coordinates. */
 type Pair = readonly [string, string]
 
-/** A list of slot pairs. */
 type PairList = readonly Pair[]
 
-/** Zips two faces' projections into coordinate pairs, positionwise. */
 type ZipCoords<
 	SN extends string,
 	SP extends readonly string[],
@@ -143,13 +110,6 @@ type ZipCoords<
 		: Acc
 	: Acc
 
-/**
- * One statement's slot pairs: containments (bidirectional included — pair
- * unions are symmetric) and capacity statements pair their two faces
- * positionwise;
- * `key()` pairs nothing. A widened face (owner name or projection no
- * longer literal) contributes nothing — the runtime map stays complete.
- */
 type StatementPairs<St extends Statement> = St["data"] extends {
 	readonly source: infer S extends FaceData
 	readonly target: infer T extends FaceData
@@ -161,7 +121,6 @@ type StatementPairs<St extends Statement> = St["data"] extends {
 			: ZipCoords<S["owner"]["name"], S["projection"], T["owner"]["name"], T["projection"]>
 	: []
 
-/** Every slot pair of a statements tuple, in written order. */
 type PairsOf<Stmts extends readonly Statement[], Acc extends PairList = []> = Stmts extends readonly [
 	infer H extends Statement,
 	...infer T extends readonly Statement[]
@@ -169,11 +128,6 @@ type PairsOf<Stmts extends readonly Statement[], Acc extends PairList = []> = St
 	? PairsOf<T, readonly [...Acc, ...StatementPairs<H>]>
 	: Acc
 
-// ————————————————————————————————————————————————————————————————————————
-// Union-find over the pairs: connected components as coordinate unions.
-// ————————————————————————————————————————————————————————————————————————
-
-/** The component (a union of coordinates) containing `X`, or `never` when `X` is in none. */
 type CompOf<Comps extends readonly string[], X extends string> = Comps extends readonly [
 	infer H extends string,
 	...infer T extends readonly string[]
@@ -183,7 +137,6 @@ type CompOf<Comps extends readonly string[], X extends string> = Comps extends r
 		: CompOf<T, X>
 	: never
 
-/** Rebuilds the component list without the component `C` (components are disjoint; identity is mutual extension). */
 type WithoutComp<
 	Comps extends readonly string[],
 	C extends string,
@@ -194,7 +147,6 @@ type WithoutComp<
 		: WithoutComp<T, C, readonly [...Acc, H]>
 	: Acc
 
-/** Unions one pair into the component list: create, extend, keep, or merge. */
 type AddPair<Comps extends readonly string[], A extends string, B extends string> = [
 	CompOf<Comps, A>,
 	CompOf<Comps, B>
@@ -210,7 +162,6 @@ type AddPair<Comps extends readonly string[], A extends string, B extends string
 				: readonly [...WithoutComp<WithoutComp<Comps, CA>, CB>, CA | CB]
 	: Comps
 
-/** Folds every pair into connected components (tail-recursive — the whole walk is one loop). */
 type BuildComps<Pairs extends PairList, Comps extends readonly string[] = readonly []> = Pairs extends readonly [
 	infer P extends Pair,
 	...infer T extends PairList
@@ -218,21 +169,8 @@ type BuildComps<Pairs extends PairList, Comps extends readonly string[] = readon
 	? BuildComps<T, AddPair<Comps, P[0], P[1]>>
 	: Comps
 
-// ————————————————————————————————————————————————————————————————————————
-// The wall and the names.
-// ————————————————————————————————————————————————————————————————————————
-
-/** Whether a union holds two or more members (`All` captures the whole union across distribution). */
 type IsMulti<U, All = U> = [U] extends [never] ? false : U extends unknown ? ([All] extends [U] ? false : true) : never
 
-/**
- * The named, self-locating compile verdict of the one-generator wall: the
- * generator coordinates that collided and the paired slots (rendered
- * `A.x ~ B.y`, statement order) whose chain unified them. Intersected into
- * `schema()`'s statements parameter, so the error lands ON the statement
- * list with this key naming the law. The runtime twin throws from
- * `computeClasses` with the same content, naming the exact statement.
- */
 interface ClassWall<Generators extends string, Chain extends readonly string[]> {
 	readonly "schema class wall — the statements unify two generators into one class (two mints cannot share a carrier)": {
 		readonly generators: Generators
@@ -240,7 +178,6 @@ interface ClassWall<Generators extends string, Chain extends readonly string[]> 
 	}
 }
 
-/** The paired slots lying inside component `C`, rendered — the wall's self-locating chain. */
 type ChainOf<Pairs extends PairList, C extends string, Acc extends readonly string[] = []> = Pairs extends readonly [
 	infer P extends Pair,
 	...infer T extends PairList
@@ -250,7 +187,6 @@ type ChainOf<Pairs extends PairList, C extends string, Acc extends readonly stri
 		: ChainOf<T, C, Acc>
 	: Acc
 
-/** Scans the components for a two-generator class: `unknown` (lawful) or the {@link ClassWall}. */
 type WallScan<Comps extends readonly string[], Gens extends string, Pairs extends PairList> = Comps extends readonly [
 	infer H extends string,
 	...infer T extends readonly string[]
@@ -260,18 +196,12 @@ type WallScan<Comps extends readonly string[], Gens extends string, Pairs extend
 		: WallScan<T, Gens, Pairs>
 	: unknown
 
-// ————————————————————————————————————————————————————————————————————————
-// The target-key wall, type tier (60-containment-parity).
-// ————————————————————————————————————————————————————————————————————————
-
-/** Set equality of two string-literal unions: mutual subset (duplicate-safe — a union already dedupes). */
 type SetEq<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 
-/** One declared `key()` read off the tuple: owner name, projection field set (as a union). */
 type KeyEntry = readonly [string, string]
 
 /**
- * Every declared `key()` of a statements tuple as {@link KeyEntry} rows —
+ * Every declared `key` of a statements tuple as {@link KeyEntry} rows —
  * the declared half of the target-key roster (the implied half is read off
  * each target face's own relation value: fresh marks, closed ids). A
  * statement-tuple union or any undecidable key element degrades the WHOLE
@@ -295,17 +225,6 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 		: DeclaredKeysOf<T, Acc>
 	: Acc
 
-/**
- * Whether a projection type is PROVABLY a concrete field set — the
- * whitelist judgment, every check tuple-bracketed against distribution: a
- * single non-union type, a fixed-length tuple (no rest tail, no
- * `string[]`), every element a single string literal. A projection UNION
- * (`flag ? ["scope","value"] as const : ["value"] as const` inside one
- * `key()`) is judged WHOLE and fails here — a naked-parameter recursion
- * would distribute over the arms and answer true per-arm while
- * {@link DeclaredKeysOf} rosters the MERGED field set, a roster entry
- * matching no runtime key.
- */
 type LiteralProjection<P extends readonly string[]> = [true] extends [IsMulti<P>]
 	? false
 	: [number] extends [P["length"]]
@@ -318,12 +237,6 @@ type LiteralProjection<P extends readonly string[]> = [true] extends [IsMulti<P>
 					: LiteralProjection<T>
 			: true
 
-/**
- * Whether one statement's `data` is statically a SINGLE concrete
- * `key()` description: exactly one `KeyData` (no union), a literal owner
- * name, a literal projection tuple. Anything less is an undecidable key
- * claim — the roster cannot state which key(s) the value carries.
- */
 type DecidableKeyData<D> = [D] extends [
 	{
 		readonly kind: "key"
@@ -349,26 +262,26 @@ type DecidableKeyData<D> = [D] extends [
  * tuple-bracketed against distribution:
  *
  * - SINGULAR — `Stmts` itself is a single non-union type (a ternary
- *   between two individually-lawful `as const` statement lists infers a
- *   UNION of tuples; a naked `Stmts` would distribute the scan
- *   ({@link TargetKeyScan}) and the roster ({@link DeclaredKeysOf})
- *   INDEPENDENTLY, cross-judging one arm's faces against the other
- *   arm's keys). The union test is the house device ({@link IsMulti}).
+ * between two individually-lawful `as const` statement lists infers a
+ * UNION of tuples; a naked `Stmts` would distribute the scan
+ * ({@link TargetKeyScan}) and the roster ({@link DeclaredKeysOf})
+ * INDEPENDENTLY, cross-judging one arm's faces against the other
+ * arm's keys). The union test is the house device ({@link IsMulti}).
  * - FIXED-LENGTH — `Stmts` is a literal tuple with no rest tail:
- *   `[number] extends [Stmts["length"]]` detects a rest/array length. A
- *   rest-tail tuple (`readonly [typeof stmt, ...Statement[]]`) peels its
- *   literal head and hides EVERY key in the tail from a head-peeling
- *   roster read — the scan would judge the head against a roster blind
- *   to keys the value tier can see.
+ * `[number] extends [Stmts["length"]]` detects a rest/array length. A
+ * rest-tail tuple (`readonly [typeof stmt,...Statement[]]`) peels its
+ * literal head and hides EVERY key in the tail from a head-peeling
+ * roster read — the scan would judge the head against a roster blind
+ * to keys the value tier can see.
  * - CONCRETE ELEMENTS — every element is a single non-union statement
- *   (per-element {@link IsMulti}), and every element whose
- *   `data["kind"]` type INCLUDES `"key"` is a single concrete `KeyData`
- *   with a literal owner name and a projection that is itself a single
- *   non-union fixed-length tuple of string literals
- *   ({@link DecidableKeyData}, {@link LiteralProjection}). A bare
- *   `Statement` element, a `Statement` union, a `KeyStatement` union, a
- *   widened owner, a widened or union projection each make the roster
- *   UNKNOWABLE.
+ * (per-element {@link IsMulti}), and every element whose
+ * `data["kind"]` type INCLUDES `"key"` is a single concrete `KeyData`
+ * with a literal owner name and a projection that is itself a single
+ * non-union fixed-length tuple of string literals
+ * ({@link DecidableKeyData}, {@link LiteralProjection}). A bare
+ * `Statement` element, a `Statement` union, a `KeyStatement` union, a
+ * widened owner, a widened or union projection each make the roster
+ * UNKNOWABLE.
  *
  * Any failure is the tier's one forbidden verdict in waiting — a false
  * wall — so anything outside the whitelist degrades the WHOLE
@@ -395,14 +308,6 @@ type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMul
 					: DecidableRoster<T>
 			: true
 
-/**
- * The named, self-locating compile verdict of the target-key wall: the
- * target relation whose projection resolves no key, and the projection's
- * field set. Intersected into `schema()`'s statements parameter exactly as
- * {@link ClassWall}; the runtime twin (`schema.ts`'s `verifyTargetKeys`)
- * throws the same judgment naming the exact statement, and stays
- * authoritative — this tier degrades to silent on any widened shape.
- */
 interface TargetKeyWall<Target extends string, Projection extends string> {
 	readonly "schema target-key wall — a containment/mirrors/capacity target projection matches no key of the target relation (declare the key() it resolves, or project an existing one)": {
 		readonly target: Target
@@ -410,7 +315,6 @@ interface TargetKeyWall<Target extends string, Projection extends string> {
 	}
 }
 
-/** Whether the projection set matches some declared key of relation `N` — `true`, or the wall. */
 type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly KeyEntry[]> = Keys extends readonly [
 	infer H extends KeyEntry,
 	...infer T extends readonly KeyEntry[]
@@ -424,27 +328,12 @@ type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly
 		: DeclaredKeyMatch<N, PU, T>
 	: TargetKeyWall<N, PU>
 
-/**
- * Whether the projection set is exactly one fresh-implied key of the
- * ordinary owner `O` — every fresh field implies the singleton key
- * `R(field) -> R`, so the match is: a single (non-union) literal inside
- * the fresh-name union.
- */
 type FreshKeyMatch<PU extends string, O extends AnyRelation> = [PU] extends [FreshFieldNames<RelationFields<O>>]
 	? true extends IsMulti<PU>
 		? false
 		: true
 	: false
 
-/**
- * One target face's judgment: silent on any widened shape (owner name or
- * projection no longer literal — the value tier stays authoritative);
- * closed owner ⇒ the projection set is exactly the synthetic `id` (the
- * engine's `ClosedTargetNotHandle` rule — closedness, not key absence);
- * ordinary owner ⇒ a fresh-implied singleton or a declared `key()`
- * set-match (the engine's `matching_functionality` — permutations
- * resolve, subsets/supersets refuse).
- */
 type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = string extends F["owner"]["name"]
 	? true
 	: string extends F["projection"][number]
@@ -459,16 +348,6 @@ type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = str
 					: DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 				: true
 
-/**
- * One statement's judgment: two-faced statements judge their WRITTEN
- * target face; a `key()` judges nothing. The type of a `contained()` and
- * a `mirrors()` value is one shape (`ContainedStatement` carries the
- * containment|mirrors data union), so a mirrors' REVERSE orientation is
- * not statically distinguishable from a plain containment's source —
- * judging it would fire false walls on lawful containments. The reverse
- * face is the value tier's (best effort degrades; the runtime twin judges
- * both orientations, always).
- */
 type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St["data"] extends {
 	readonly source: FaceData
 	readonly target: infer Tg extends FaceData
@@ -476,7 +355,6 @@ type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St
 	? JudgeTargetFace<Tg, Keys>
 	: true
 
-/** Folds the judgment over the tuple: `unknown` (lawful/unjudgeable) or the first {@link TargetKeyWall}. */
 type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly KeyEntry[]> = Stmts extends readonly [
 	infer H extends Statement,
 	...infer T extends readonly Statement[]
@@ -486,19 +364,6 @@ type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly Key
 		: JudgeStatement<H, Keys>
 	: unknown
 
-/**
- * The schema-level statement laws as one constraint: resolves to `unknown`
- * (a no-op intersection into the statements parameter) when the statement
- * list is lawful, to the named {@link ClassWall} on a two-generator class,
- * and to the named {@link TargetKeyWall} on a containment target that
- * resolves no key (60-containment-parity, type tier). Both walls degrade
- * to silent on a widened `Statement[]`, and the target-key wall runs
- * ONLY inside the {@link DecidableRoster} whitelist — a single non-union
- * fixed-length tuple of single concrete statements with fully-literal
- * key data (a distributed scan, a rest-blind roster, or a partial roster
- * would each fire false walls on literal faces); their runtime twins are
- * authoritative.
- */
 type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = WallScan<
 	BuildComps<PairsOf<Stmts>>,
 	GeneratorsOf<Rels>,
@@ -506,24 +371,6 @@ type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly State
 > &
 	([DecidableRoster<Stmts>] extends [true] ? TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>> : unknown)
 
-/**
- * One coordinate's class per the three laws, at the TYPE tier: its
- * component's single generator (the exact literal — a generator names its
- * class); a component-less generator is its own class; a component-less
- * non-generator is bare (`undefined`); and a GENERATOR-LESS component is
- * carried as its member-coordinate SET (the union of the component's
- * coordinates — a canonical, deterministic type). The set REPRESENTS the
- * runtime's least-member class name faithfully: the runtime name is by
- * construction a member, two slots share a class exactly when their sets
- * are identical (so `JoinOk` judges identically at both tiers), and bare
- * never equals a set. The least-member PICK itself is deliberately not
- * made at the type tier: TypeScript's union member order is not observably
- * deterministic (the same key union tuples differently across checking
- * contexts — measured, not conjectured), so any type-level "least in
- * declaration order" would drift between compilations; the ratified
- * declaration-order name lives at the VALUE tier (`computeClasses`), which
- * is the only tier the wire reads.
- */
 type ClassOfCoord<Comps extends readonly string[], Gens extends string, C extends string> = [CompOf<Comps, C>] extends [
 	infer M extends string
 ]
@@ -538,43 +385,23 @@ type ClassOfCoord<Comps extends readonly string[], Gens extends string, C extend
 			: never
 	: never
 
-/** The computed class map over precomputed components/generators. */
 type ComputedClasses<Rels extends SchemaRelations, Comps extends readonly string[], Gens extends string> = {
 	readonly [N in keyof Rels & string]: {
 		readonly [F in MemberFieldNames<Rels[N]>]: ClassOfCoord<Comps, Gens, `${N}.${F}`>
 	}
 }
 
-/**
- * THE type-level class map of a schema: relation name → field name → the
- * law-computed class (`undefined` = bare) — what `schema()` returns as the
- * `classes` property's type, and what query joins compare. Generator
- * classes are exact name literals; generator-less classes are their
- * member-coordinate sets (see {@link ClassOfCoord} — the runtime map's
- * least-member name is always a member, so the property type is honest).
- */
 type ClassesOf<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = ComputedClasses<
 	Rels,
 	BuildComps<PairsOf<Stmts>>,
 	GeneratorsOf<Rels>
 >
 
-// ————————————————————————————————————————————————————————————————————————
-// The runtime twin: the same computation as a plain union-find.
-// ————————————————————————————————————————————————————————————————————————
-
-/** One relation's declared coordinates and generator flags, in declaration order. */
 interface MemberCoords {
 	readonly relation: string
 	readonly fields: ReadonlyArray<{ readonly name: string; readonly generator: boolean }>
 }
 
-/**
- * Reads every member's coordinates off the relation record, declaration
- * order throughout — the sealed shape through THE one reader
- * (`sealedFieldsOf`): a closed member's generator is its synthetic `id`
- * (ordinal 0), an ordinary member's generators are its fresh-marked fields.
- */
 function memberCoords(relations: SchemaRelations): MemberCoords[] {
 	const out: MemberCoords[] = []
 	for (const [relationName, member] of Object.entries(relations)) {
@@ -590,7 +417,6 @@ function memberCoords(relations: SchemaRelations): MemberCoords[] {
 	return out
 }
 
-/** A plain union-find over coordinate strings, with per-root generator rosters. */
 interface UnionFind {
 	find(coord: string): string
 	union(a: string, b: string): string
@@ -598,7 +424,6 @@ interface UnionFind {
 	markGenerator(coord: string): void
 }
 
-/** Builds the union-find. */
 function makeUnionFind(): UnionFind {
 	const parent = new Map<string, string>()
 	const generators = new Map<string, string[]>()
@@ -641,7 +466,6 @@ function makeUnionFind(): UnionFind {
 	}
 }
 
-/** The paired faces of one statement, or undefined for a key (an FD pairs nothing). */
 function statementFaces(statement: Statement): readonly [FaceData, FaceData] | undefined {
 	const data = statement.data
 	if (data.kind === "key") {
