@@ -233,4 +233,3 @@ pub(super) fn write_survivor_keeps(
     }
     (write, pos)
 }
-
