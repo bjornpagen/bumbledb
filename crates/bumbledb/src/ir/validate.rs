@@ -5,7 +5,6 @@
 //! checked off in code order below — it is exhaustive by contract.
 //! The query shape first (rules are validated one at a time; every
 //! across rules after each rule's own fixpoint):
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::allen::AllenMask;
@@ -489,7 +488,6 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: the interior count overflowed
     /// `u32` (validation already refused that).
     #[must_use]
@@ -500,7 +498,6 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: the derived count overflowed
     /// `u32` (validation already refused that).
     #[must_use]
@@ -515,7 +512,6 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: an index at or beyond
     #[must_use]
     pub fn rule(&self, index: usize) -> RuleWitness<'_> {
@@ -565,7 +561,6 @@ impl ValidatedQuery {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: an unknown `ParamId` (the
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
@@ -616,7 +611,6 @@ impl<'a> RuleWitness<'a> {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: an unknown `VarId` (the witness
     #[must_use]
     pub fn var_type(&self, var: VarId) -> &ValueType {
