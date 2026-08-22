@@ -41,7 +41,6 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::ExistenceWalk, 8),
     (Shape::DuWalk, 6),
     (Shape::Rules, 10),
-
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
     (Shape::GroundFold, 7),
@@ -84,7 +83,6 @@ enum Shape {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClosedVariant {
-
     Join,
 
     JoinSelected,
@@ -98,7 +96,6 @@ enum ClosedVariant {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GroundVariant {
-
     Walk,
 
     WalkExtraField,
@@ -122,7 +119,7 @@ fn leaf(tree: &bumbledb::ConditionTree) -> &Comparison {
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
-)] 
+)]
 #[derive(Default)]
 struct Builder {
     atoms: Vec<Atom>,
@@ -153,7 +150,6 @@ struct Builder {
 }
 
 impl Builder {
-
     fn saw_rung(&mut self, rung: interval_data::Rung) {
         self.ladder[match rung {
             interval_data::Rung::Equal => 0,
@@ -167,7 +163,7 @@ impl Builder {
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
-)] 
+)]
 #[derive(Debug, Clone, Copy, Default)]
 struct GenTags {
     miss: bool,
@@ -184,7 +180,6 @@ struct GenTags {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RulesVariant {
-
     Disjoint,
 
     Overlap,
@@ -278,7 +273,6 @@ pub struct Coverage {
     pub rules_aggregate: u64,
 
     /// the multiply-witnessed relations (rejection must not depend on
-
     pub negations: u64,
     pub negation_key_covered: u64,
     pub negation_open: u64,
