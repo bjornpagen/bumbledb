@@ -21,7 +21,6 @@ pub const REACH_CASE_SEED_BASE: u64 = 0x0014_0000;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ReachReport {
-
     pub attempted: u64,
 
     pub written: u64,
@@ -36,7 +35,6 @@ pub struct ReachReport {
 }
 
 impl ReachReport {
-
     #[must_use]
     pub fn coverage_line(&self) -> String {
         format!(
