@@ -1,12 +1,6 @@
-//! Complete obligation roster: exhaustive [`StatementView`] match, not a
-//! hand list beside the spine. Closed-constant statements are skipped;
-//! a closed source against an ordinary target stays in.
-
 use super::*;
 use crate::schema::{CompleteObligation, Pairing};
 
-/// Closed Kind requiring ordinary Bucket rows — one of the shapes an
-/// empty incremental plan would miss.
 fn closed_source_ordinary_target() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -36,7 +30,7 @@ fn closed_source_ordinary_target() -> Schema {
 #[test]
 fn complete_roster_skips_closed_constant_and_keeps_instance_dependent() {
     let schema = closed_source_ordinary_target();
-    // Kind's closed auto-key is closed-constant; Bucket's key and the
+
     // closed→ordinary containment are instance-dependent.
     let roster: Vec<_> = schema.complete_obligations().iter().collect();
     assert_eq!(roster.len(), 2, "{roster:?}");
