@@ -34,15 +34,9 @@ enum Cell {
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
 
-    FixedBytes {
-        off: u32,
-        len: u32,
-    },
+    FixedBytes { off: u32, len: u32 },
 
-    Str {
-        off: u32,
-        len: u32,
-    },
+    Str { off: u32, len: u32 },
 }
 
 #[derive(Clone, Copy)]
@@ -63,7 +57,6 @@ pub(super) enum CellView<'c> {
 /// [`CollectionBuilder`] / [`AcceptedCollection::from_value_rows`].
 #[derive(Debug)]
 pub struct AcceptedCollection {
-
     relation: RelationId,
 
     arity: u16,
@@ -80,7 +73,6 @@ pub struct AcceptedCollection {
 }
 
 impl AcceptedCollection {
-
     /// # Errors
 
     pub fn from_value_rows(
@@ -177,7 +169,6 @@ pub struct CollectionBuilder<'s> {
 }
 
 impl<'s> CollectionBuilder<'s> {
-
     /// # Panics
 
     #[must_use]
@@ -230,7 +221,6 @@ impl<'s> CollectionBuilder<'s> {
             .into());
         }
         if row.is_empty() {
-
             // zero-rows precondition holds by construction. The refusal
 
             return Err(FactShapeError::ArityMismatch {
