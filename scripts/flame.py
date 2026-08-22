@@ -30,11 +30,6 @@ import html
 import os
 import sys
 
-
-# --------------------------------------------------------------------------
-# Folded stacks
-# --------------------------------------------------------------------------
-
 def parse_folded(text):
     """Folded text -> list of (frames, weight). The weight is the last
     whitespace token; the stack (which never contains a space) is the rest."""
@@ -47,19 +42,14 @@ def parse_folded(text):
         out.append((head.split(";"), int(weight)))
     return out
 
-
-# --------------------------------------------------------------------------
-# The flame tree (shared by the plain and differential renderers)
-# --------------------------------------------------------------------------
-
 class Node:
     __slots__ = ("name", "children", "before", "after")
 
     def __init__(self, name):
         self.name = name
         self.children = {}
-        self.before = 0   # self weight charged here (profile A / the only one)
-        self.after = 0    # self weight charged here in profile B (diff only)
+        self.before = 0   
+        self.after = 0    
 
     def child(self, name):
         node = self.children.get(name)
@@ -67,7 +57,6 @@ class Node:
             node = Node(name)
             self.children[name] = node
         return node
-
 
 def build_tree(stacks, slot):
     """Folds parsed folded lines into a tree, charging each line's weight to
@@ -79,7 +68,6 @@ def build_tree(stacks, slot):
             node = node.child(frame)
         setattr(node, slot, getattr(node, slot) + weight)
     return root
-
 
 def totals(node):
     """(before_total, after_total, depth) over the subtree; `depth` counts the
@@ -93,18 +81,12 @@ def totals(node):
         depth = max(depth, kd + 1)
     return b, a, depth
 
-
-# --------------------------------------------------------------------------
-# SVG rendering
-# --------------------------------------------------------------------------
-
 WIDTH = 1200
 MARGIN = 10
 FRAME_H = 16
 HEADER_H = 34
 FONT = 12
-CHAR_W = 7.0  # monospace advance at FONT px, approximate
-
+CHAR_W = 7.0  
 
 def _hot_color(name):
     """A deterministic warm color per frame name (the flamegraph.pl 'hot'
@@ -120,7 +102,6 @@ def _hot_color(name):
     b = int(55 * v3)
     return "rgb(%d,%d,%d)" % (r, g, b)
 
-
 def _diff_color(before, after, scale):
     """Red = grew (after > before, a regression), blue = shrank; intensity is
     |delta| / scale. White at no change."""
@@ -132,7 +113,6 @@ def _diff_color(before, after, scale):
     if delta > 0:
         return "rgb(255,%d,%d)" % (fade, fade)
     return "rgb(%d,%d,255)" % (fade, fade)
-
 
 def _rect(x, w, y, label, color, tip):
     x, w, y = round(x, 2), round(w, 2), round(y, 2)
@@ -147,7 +127,6 @@ def _rect(x, w, y, label, color, tip):
             'fill="%s" stroke="white" stroke-width="0.5"/>%s</g>'
             % (html.escape(tip), x, y, w, FRAME_H, color, text))
 
-
 def _svg_document(rects, title, max_depth):
     height = HEADER_H + (max_depth + 1) * FRAME_H + MARGIN
     parts = [
@@ -161,7 +140,6 @@ def _svg_document(rects, title, max_depth):
     parts.extend(rects)
     parts.append('</svg>')
     return "\n".join(parts) + "\n"
-
 
 def _layout(node, x, avail, base_total, depth, max_depth, rects, weight_of,
             color_of, tip_of):
@@ -182,13 +160,12 @@ def _layout(node, x, avail, base_total, depth, max_depth, rects, weight_of,
                     weight_of, color_of, tip_of)
         cursor += px
 
-
 def render_svg(folded_text, title):
     root = build_tree(parse_folded(folded_text), "before")
     total, _, depth = totals(root)
     if total <= 0:
         return _svg_document([], title + " (empty)", 0)
-    max_depth = depth - 1  # `depth` counts the synthetic root level
+    max_depth = depth - 1  
     rects = []
     avail = WIDTH - 2 * MARGIN
 
@@ -197,16 +174,13 @@ def render_svg(folded_text, title):
         return b
 
     def tip_of(name, node, base):
-        # Percent of the PROFILE total, not of the enclosing frame — the
-        # same denominator the top table uses, so one frame never reads
-        # two different percentages from the same tool.
+
         b, _, _ = totals(node)
         return "%s  %.3f us  %.1f%%" % (name, b / 1000.0, 100.0 * b / total)
 
     _layout(root, MARGIN, avail, total, 0, max_depth, rects,
             weight_of, lambda node: _hot_color(node.name), tip_of)
     return _svg_document(rects, title, max_depth)
-
 
 def render_diff_svg(diff_text, title):
     """Widths come from profile B (the 'after' run); color encodes B-vs-A per
@@ -229,7 +203,7 @@ def render_diff_svg(diff_text, title):
     _, total_after, depth = totals(root)
     if total_after <= 0:
         return _svg_document([], title + " (empty)", 0)
-    max_depth = depth - 1  # `depth` counts the synthetic root level
+    max_depth = depth - 1  
 
     scale = 0
     stack = [root]
@@ -259,12 +233,6 @@ def render_diff_svg(diff_text, title):
             weight_of, color_of, tip_of)
     return _svg_document(rects, title, max_depth)
 
-
-# --------------------------------------------------------------------------
-# The top-N self-time table (self time lives on each folded line's terminal
-# frame, so a leaf-keyed sum is the whole story)
-# --------------------------------------------------------------------------
-
 def top_table(folded_text, n):
     self_by_name = {}
     stacks_by_name = {}
@@ -284,11 +252,6 @@ def top_table(folded_text, n):
     out.append("total self %.3f us" % (total / 1000.0))
     return "\n".join(out) + "\n"
 
-
-# --------------------------------------------------------------------------
-# Differential folded
-# --------------------------------------------------------------------------
-
 def diff_folded(a_text, b_text):
     """`stack before after` lines over the union of both profiles' stacks,
     sorted by stack (difffolded.pl's output, with the leading stack kept
@@ -299,17 +262,11 @@ def diff_folded(a_text, b_text):
     return "".join("%s %d %d\n" % (";".join(k), a.get(k, 0), b.get(k, 0))
                    for k in keys)
 
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
-
 def _read(path):
     if path == "-":
         return sys.stdin.read()
     with open(path, "r", encoding="utf-8") as fh:
         return fh.read()
-
 
 def cmd_render(folded_src, out_dir, name):
     folded = _read(folded_src)
@@ -323,7 +280,6 @@ def cmd_render(folded_src, out_dir, name):
     sys.stdout.write(top_table(folded, 10))
     sys.stderr.write("flame: %s\nflame: %s\n" % (folded_path, svg_path))
 
-
 def cmd_diff(a_folded, b_folded, out_dir, name):
     os.makedirs(out_dir, exist_ok=True)
     diff = diff_folded(_read(a_folded), _read(b_folded))
@@ -334,7 +290,6 @@ def cmd_diff(a_folded, b_folded, out_dir, name):
     with open(svg_path, "w", encoding="utf-8") as fh:
         fh.write(render_diff_svg(diff, name + " (red=grew, blue=shrank)"))
     sys.stderr.write("flame: %s\nflame: %s\n" % (diff_path, svg_path))
-
 
 def _selftest():
     here = os.path.dirname(os.path.abspath(__file__))
@@ -359,7 +314,6 @@ def _selftest():
 
     sys.stderr.write("flame selftest: OK (svg, diff folded, diff svg)\n")
     return 0
-
 
 def main(argv):
     if len(argv) < 2:
@@ -387,7 +341,6 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
