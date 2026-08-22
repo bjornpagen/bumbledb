@@ -1,13 +1,3 @@
-/**
- * C-SDK-2 verification probe (adversarial): the finding claims a generic
- * fresh-id lookup over `MemberRelation<Rels>` is UNSPELLABLE through the
- * SDK's `get`, forcing the graph-builder's `rowById` scan+find workaround.
- * This probe attempts the direct spelling: a generic helper that takes the
- * exported `KeyFact<R>` and delegates to `snap.get`, with monomorphic call
- * sites passing `{ id }`. If this file typechecks and the runtime
- * assertions pass, the "unspellable" claim is refuted.
- */
-
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
@@ -21,7 +11,6 @@ import type { RunStoreSchema } from "#test/fixtures/run-store-schema.ts"
 import { grp, runStoreSchema, sheet } from "#test/fixtures/run-store-schema.ts"
 import { put } from "#test/put.ts"
 
-/** The same relations record the graph-builder's `PromptRels` names. */
 type Rels = RunStoreSchema["relations"]
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-c-sdk-2-"))
@@ -30,12 +19,6 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/**
- * The claimed-unspellable generic point read, spelled: `KeyFact<R>` is an
- * exported type, so the helper takes the key OBJECT (call sites write
- * `{ id }`) and `snap.get(relation, key)` typechecks with zero casts —
- * no scan, no `Fact<R> extends { id: infer I }` contortion, no widening.
- */
 function rowByKey<R extends MemberRelation<Rels>>(
 	snap: ReadInstance<Rels>,
 	relation: R,
@@ -69,11 +52,7 @@ before(async function create() {
 			context: "partition pending"
 		})
 		grpId = grpRow.id
-		/**
-		 * A minted-then-deleted grp: its bare structural id provably misses
-		 * without any cast (the id is real, the row is gone from the final
-		 * state).
-		 */
+
 		const doomed = put(tx, grp, { sheet: sheetRow.id, label: "doomed", context: "c" })
 		missingGrpId = doomed.id
 		tx.delete(grp, [{ id: doomed.id, sheet: sheetRow.id, label: "doomed", context: "c" }])
