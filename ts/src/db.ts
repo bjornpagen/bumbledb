@@ -291,7 +291,6 @@ function abandonedOutcome<Rels extends SchemaRelations, R>(
 }
 
 interface WriteTx<Rels extends SchemaRelations> {
-
 	insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
 
 	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
@@ -315,7 +314,6 @@ interface Witness<Rels extends SchemaRelations> extends Disposable {
 }
 
 interface ReadInstance<Rels extends SchemaRelations> {
-
 	readonly generation: bigint
 
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
@@ -352,28 +350,27 @@ interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecor
 }
 
 interface Db<Rels extends SchemaRelations> {
-
 	readonly schema: Schema<Rels>
 
 	read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R>
 	/**
- * One delta transaction: builds the delta synchronously through `fn`,
- * commits, and returns the domain outcome. A throw from `fn` aborts
- * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
- * commit by returning {@link abandon}`(payload)`: the transaction rolls
- * back — nothing is committed, not even an empty commit — and the
- * outcome is `{ tag: "abandoned", abandoned: payload }`.
- */
+	 * One delta transaction: builds the delta synchronously through `fn`,
+	 * commits, and returns the domain outcome. A throw from `fn` aborts
+	 * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
+	 * commit by returning {@link abandon}`(payload)`: the transaction rolls
+	 * back — nothing is committed, not even an empty commit — and the
+	 * outcome is `{ tag: "abandoned", abandoned: payload }`.
+	 */
 	write<R>(fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteOutcome<Rels, SyncResult<R>>
 
 	writeFrom<R>(witness: Witness<Rels>, fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteFromOutcome<Rels, SyncResult<R>>
 	/**
- * Prepares a query value built against THIS schema (identity is the
- * membership rule): lowers it to the engine IR, pins the plan, and
- * returns the typed {@link Prepared} value. Every IR roster refusal —
- * rule caps, rec roster, type rules — is the ENGINE's typed
- * judgment and throws here carrying its message intact.
- */
+	 * Prepares a query value built against THIS schema (identity is the
+	 * membership rule): lowers it to the engine IR, pins the plan, and
+	 * returns the typed {@link Prepared} value. Every IR roster refusal —
+	 * rule caps, rec roster, type rules — is the ENGINE's typed
+	 * judgment and throws here carrying its message intact.
+	 */
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
 }
 
@@ -1634,7 +1631,6 @@ const InstanceBuilder = Object.freeze({
  * hold the `Db` this process opened.
  */
 const Db = Object.freeze({
-
 	async create<Rels extends SchemaRelations>(
 		storePath: string,
 		theory: Schema<Rels>
