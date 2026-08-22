@@ -84,7 +84,6 @@ pub struct TargetKeyCandidate {
 /// sweeper reports the same facts as [`crate::StoreFinding::Corruption`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorruptionError {
-
     InvalidBool(u8),
 
     InvalidInterval([u8; 16]),
@@ -92,16 +91,23 @@ pub enum CorruptionError {
     InvalidFixedIntervalStart([u8; 8]),
 
     /// 2026-07-23, R18). A half-created store (no `_meta` over an empty
-
     MetaMissing,
 
     DanglingInternId(InternId),
 
-    MissingFact { relation: RelationId, row_id: u64 },
+    MissingFact {
+        relation: RelationId,
+        row_id: u64,
+    },
 
-    MembershipDesync { relation: RelationId, row_id: u64 },
+    MembershipDesync {
+        relation: RelationId,
+        row_id: u64,
+    },
 
-    DispositionDesync { relation: RelationId },
+    DispositionDesync {
+        relation: RelationId,
+    },
 
     WrongFactWidth {
         relation: RelationId,
@@ -109,10 +115,12 @@ pub enum CorruptionError {
         mismatch: Mismatch<usize>,
     },
 
-    RowCountMismatch { relation: RelationId, stored: u64 },
+    RowCountMismatch {
+        relation: RelationId,
+        stored: u64,
+    },
 
     /// over-approximates any one relation's rows. The reopen-trust
-
     CounterDesync {
         relation: RelationId,
         exceeded: Exceeded<u64>,
@@ -231,7 +239,10 @@ pub enum CorruptionError {
         key: Box<[u8]>,
     },
 
-    Malformed { key: Box<[u8]>, what: &'static str },
+    Malformed {
+        key: Box<[u8]>,
+        what: &'static str,
+    },
 }
 
 /// A schema declaration error. Every illegal schema shape has a
@@ -333,15 +344,18 @@ pub enum SchemaError {
 /// can forget it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementErrorKind {
-
-    UnknownRelation { relation: RelationId },
+    UnknownRelation {
+        relation: RelationId,
+    },
 
     UnknownField {
         relation: RelationId,
         field: FieldId,
     },
 
-    EmptyProjection { relation: RelationId },
+    EmptyProjection {
+        relation: RelationId,
+    },
 
     DuplicateProjectionField {
         relation: RelationId,
@@ -354,7 +368,6 @@ pub enum StatementErrorKind {
     },
 
     /// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff` —
-
     DegenerateSelectionSet {
         relation: RelationId,
         field: FieldId,
@@ -366,27 +379,26 @@ pub enum StatementErrorKind {
         field: FieldId,
     },
 
-    CapacityInvertedWindow { lo: u64, hi: u64 },
+    CapacityInvertedWindow {
+        lo: u64,
+        hi: u64,
+    },
 
     /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`), and a
-
     CapacityVacuousWindow,
 
     /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
     /// meaning, one spelling: drop the window and declare the
-
     CapacityContainmentWindow,
     /// Roster "an interval position in a capacity projection" — refused
 
     /// (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
-
     CapacityIntervalPosition {
         relation: RelationId,
         field: FieldId,
     },
 
     /// the typed polarity refusal (a negative weight would let an insert
-
     CapacityWeightNotU64 {
         relation: RelationId,
         field: FieldId,
@@ -410,8 +422,9 @@ pub enum StatementErrorKind {
     },
 
     /// a dimension error (ruled 2026-07-24, C18; the legal pairings:
-
-    CapacityDimensionMixing { field: FieldId },
+    CapacityDimensionMixing {
+        field: FieldId,
+    },
 
     FunctionalityMultipleIntervals {
         relation: RelationId,
@@ -423,13 +436,21 @@ pub enum StatementErrorKind {
         field: FieldId,
     },
 
-    DuplicateFunctionality { earlier: StatementId },
+    DuplicateFunctionality {
+        earlier: StatementId,
+    },
 
-    DeterminantKeyTooWide { width: usize },
+    DeterminantKeyTooWide {
+        width: usize,
+    },
 
-    ContainmentArityMismatch { mismatch: Mismatch<usize> },
+    ContainmentArityMismatch {
+        mismatch: Mismatch<usize>,
+    },
 
-    ContainmentTypeMismatch { position: usize },
+    ContainmentTypeMismatch {
+        position: usize,
+    },
 
     SelectedFieldProjected {
         relation: RelationId,
@@ -442,7 +463,6 @@ pub enum StatementErrorKind {
     },
 
     /// has the descriptor in hand, and the refusal must speak the
-
     NoMatchingTargetKey {
         target: RelationId,
         target_name: Box<str>,
@@ -459,11 +479,11 @@ pub enum StatementErrorKind {
         available: Box<[TargetKeyCandidate]>,
     },
     /// An interval position on a containment with a closed side — refused
-
-    ClosedContainmentInterval { relation: RelationId },
+    ClosedContainmentInterval {
+        relation: RelationId,
+    },
 
     /// set may equal the refused projection — the refusal reason is
-
     ClosedTargetNotHandle {
         target: RelationId,
         target_name: Box<str>,
@@ -471,13 +491,17 @@ pub enum StatementErrorKind {
         projection_names: Box<[Box<str>]>,
     },
 
-    ClosedStatementRefuted { relation: RelationId, row: RowIndex },
+    ClosedStatementRefuted {
+        relation: RelationId,
+        row: RowIndex,
+    },
 
-    DuplicateStatement { earlier: StatementId },
+    DuplicateStatement {
+        earlier: StatementId,
+    },
 }
 
 impl StatementErrorKind {
-
     #[must_use]
     pub fn at(self, statement: StatementId) -> SchemaError {
         SchemaError::Statement {
@@ -491,8 +515,9 @@ impl StatementErrorKind {
 /// field, or key statement. These are not fact shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DynIdError {
-
-    UnknownRelation { relation: RelationId },
+    UnknownRelation {
+        relation: RelationId,
+    },
 
     UnknownField {
         relation: RelationId,
@@ -516,7 +541,6 @@ pub enum DynIdError {
 /// Id-resolution failures are [`DynIdError`], nested as [`Self::Id`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactShapeError {
-
     Id(DynIdError),
     ArityMismatch {
         relation: RelationId,
@@ -528,8 +552,9 @@ pub enum FactShapeError {
     },
 
     /// collection). ETL input is data, so the bound is a typed refusal,
-
-    PayloadBound { relation: RelationId },
+    PayloadBound {
+        relation: RelationId,
+    },
 }
 
 impl From<DynIdError> for FactShapeError {
@@ -548,7 +573,6 @@ impl From<DynIdError> for FactShapeError {
 /// same per-atom rules and share the same diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
-
     EmptyRuleSet,
 
     TooManyRules {
@@ -583,7 +607,6 @@ pub enum ValidationError {
     },
 
     /// query (ruled 2026-07-23, R1): under the head-projection law a
-
     CountAcrossRules {
         rules: usize,
     },
@@ -650,7 +673,6 @@ pub enum ValidationError {
     /// An order operator over a closed-bound variable (ruled 2026-07-23,
 
     /// declaration-order accident, not semantics — refused exactly as
-
     OrderComparisonOnClosedReference {
         index: usize,
     },
@@ -679,12 +701,10 @@ pub enum ValidationError {
         var: VarId,
     },
     /// Negation safety: a variable occurring in a negated atom must occur
-
     NegatedVariableUnbound {
         var: VarId,
     },
     /// Datalog safety: a find (or aggregate-input) variable bound by no
-
     UnboundFindVariable {
         var: VarId,
     },
@@ -706,7 +726,6 @@ pub enum ValidationError {
     /// variable (ruled 2026-07-23, R4): its words are declaration
 
     /// accident — refused exactly as the order comparison is
-
     AggregateOverClosedReference {
         find: FindIndex,
     },
@@ -723,7 +742,6 @@ pub enum ValidationError {
     },
 
     /// sighting and is refused. *Trigger* for admitting it: a real query
-
     MultiplePackTerms {
         find: FindIndex,
     },
@@ -745,7 +763,6 @@ pub enum ValidationError {
     },
 
     /// (the rec). Counted with `usize` before any
-
     InteriorIdOverflow {
         count: usize,
     },
@@ -792,7 +809,6 @@ pub enum ValidationError {
 /// directions, source before target ([`Violations`]' sort key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Direction {
-
     SourceUnsatisfied,
 
     TargetRequired,
@@ -810,7 +826,6 @@ pub enum Admission<T> {
 }
 
 impl<T> Admission<T> {
-
     /// # Panics
 
     #[track_caller]
@@ -874,7 +889,6 @@ pub enum ConditionalWrite<R> {
 }
 
 impl<R> ConditionalWrite<R> {
-
     /// # Panics
 
     #[track_caller]
@@ -910,7 +924,6 @@ impl<R> ConditionalWrite<R> {
 /// shapes, not an optional incumbent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conflict {
-
     Scalar,
 
     Pointwise { incumbent: Box<[u8]> },
@@ -921,7 +934,6 @@ pub enum Conflict {
 /// .
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
-
     Functionality {
         statement: StatementRef,
         fact: Box<[u8]>,
@@ -944,7 +956,6 @@ pub enum Violation {
         /// width crosses untruncated (ruled 2026-07-24, C3). On
 
         /// 2026-07-24, C14: the clip serves the verdict, the full sum
-
         measure: u128,
     },
 }
@@ -1045,7 +1056,6 @@ pub struct CitedFact {
 }
 
 impl CitedFact {
-
     pub(crate) fn new(
         relation: RelationId,
         field_count: usize,
@@ -1078,12 +1088,10 @@ pub(crate) type CitedCitations = Box<[(Violation, Box<[CitedFact]>)]>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violations {
-
     citations: CitedCitations,
 }
 
 impl Violations {
-
     pub(crate) fn seal(schema: &crate::schema::Schema, mut found: Vec<Violation>) -> Admission<()> {
         if found.is_empty() {
             return Admission::Accepted(());
@@ -1180,7 +1188,6 @@ impl<'a> IntoIterator for &'a Violations {
 /// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowKind {
-
     Aggregate { find: FindIndex },
 
     OriginCapacity,
@@ -1260,7 +1267,6 @@ impl From<heed::Error> for LmdbFailure {
 /// renders through `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-
     /// Storage format version mismatch — checked before the fingerprint.
     FormatMismatch {
         mismatch: Mismatch<u32>,
@@ -1272,7 +1278,6 @@ pub enum Error {
     /// `create` refused a directory that already holds an LMDB
 
     /// Open-time: a foreign LMDB environment, or a half-created empty
-
     AlreadyInitialized,
 
     DestinationExists {
@@ -1293,7 +1298,6 @@ pub enum Error {
 
     /// not diagnosing LMDB.
     ReadersFull {
-
         max_readers: u32,
     },
 
@@ -1308,7 +1312,6 @@ pub enum Error {
     },
 
     /// delta. Checked at every write-surface entry before any encoding
-
     ClosedRelationWrite {
         relation: RelationId,
     },
@@ -1316,7 +1319,6 @@ pub enum Error {
     /// a raw OS errno from its write/sync path — on macOS the data-page
 
     /// meta write; LMDB reports one errno for the phase and names no
-
     CommitSync {
         /// Bounded retries consumed before the error escaped.
         retries: u32,
@@ -1325,7 +1327,6 @@ pub enum Error {
 
     /// after catching, still abort — no prefix reaches LMDB.
     TransactionPoisoned {
-
         source: Box<Error>,
     },
 
@@ -1361,9 +1362,7 @@ pub enum Error {
     },
 
     /// refusal naming the row (ruled 2026-07-24, C10). Boundedness is
-
     CapacityRayMeasure {
-
         statement: StatementId,
 
         fact: Box<[u8]>,
@@ -1372,9 +1371,7 @@ pub enum Error {
     /// (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`), but derived
 
     /// refusal: aborts the query, the snapshot
-
     DerivedBudgetExceeded {
-
         rounds: u32,
 
         tuples: u64,
@@ -1383,7 +1380,6 @@ pub enum Error {
     Overflow(OverflowKind),
 
     /// limit — NOT the map size; do not sweep it with the map constant.)
-
     ResultBytesOverflow,
 
     Corruption(CorruptionError),
@@ -1445,7 +1441,6 @@ fn family_source<'a>(
 }
 
 impl Error {
-
     #[doc(hidden)]
     #[must_use]
     pub fn hatch() -> Self {
