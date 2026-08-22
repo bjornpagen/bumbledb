@@ -73,7 +73,6 @@ pub enum Violation {
 impl Violation {
     /// before source (1) before target (2). `ClosedRelationWrite` is
     /// refused before any judgment and never sorts beside statement
-
     fn citation(self) -> (u16, u8, u32) {
         match self {
             Self::Functionality { statement } | Self::Capacity { statement, .. } => {
@@ -171,7 +170,6 @@ impl NaiveDb {
     /// refuses those before any final state is formed).
 
     /// # Panics
-
     pub fn load_candidate(&mut self, facts: &[(RelationId, Vec<Value>)]) {
         for (rel, fact) in facts {
             assert!(
@@ -190,7 +188,6 @@ impl NaiveDb {
     }
 
     /// incremental `judge` cannot see without a holds-before premise.
-
     #[must_use]
     pub fn judge_complete(&self) -> Vec<Violation> {
         let state = &self.relations;
@@ -275,7 +272,6 @@ impl NaiveDb {
     }
 
     /// # Errors
-
     pub fn apply_from(&mut self, witnessed: u64, delta: &Delta) -> Result<(), ConditionalAbort> {
         if witnessed != self.generation {
             return Err(ConditionalAbort::Moved {
@@ -287,7 +283,6 @@ impl NaiveDb {
     }
 
     /// # Errors
-
     pub fn apply(&mut self, delta: &Delta) -> Result<(), Vec<Violation>> {
         let (next, minted) = self.judged(delta)?;
 
@@ -303,7 +298,6 @@ impl NaiveDb {
     /// order; source before target within one statement), deduplicated.
 
     /// states): a delta op naming a closed relation is refused before
-
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
         self.judged(delta).err().unwrap_or_default()
@@ -340,7 +334,6 @@ impl NaiveDb {
     /// The plan-phase ray refusal (C17's write-time strengthening of
 
     /// weight position is a ray refuses the whole commit before a
-
     fn ray_weight_refusal(&self, delta: &Delta) -> Option<Violation> {
         for (rel, fact) in &delta.inserts {
             let fact = Tuple(fact.clone());
@@ -398,7 +391,6 @@ impl NaiveDb {
     }
 
     /// (materialized statement order; source before target within one
-
     fn judge(
         &self,
         state: &[BTreeSet<Tuple>],
@@ -512,7 +504,6 @@ impl NaiveDb {
     }
 
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). Returns the
-
     #[expect(
         clippy::too_many_arguments,
         reason = "the parameter list IS the capacity statement's descriptor, spelled flat"
@@ -646,7 +637,6 @@ impl NaiveDb {
     }
 
     /// engine's compiled member set — the model must not share the
-
     fn target_facts<'a>(
         &'a self,
         state: &'a [BTreeSet<Tuple>],
