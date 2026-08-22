@@ -4,7 +4,6 @@
 //! [`SchemaDescriptor`] and its descriptor family, [`LiteralSet`]/[`Side`],
 //! the [`spec`] lowering, and the shared [`value_matches`] check — lives in
 //! `bumbledb-theory` (the parity roster is normative there) and is
-
 pub mod fingerprint;
 pub mod manifest;
 pub mod render;
@@ -646,7 +645,6 @@ impl Schema {
     }
 
     /// # Errors
-
     pub(crate) fn check_fresh_field(
         &self,
         relation: RelationId,
