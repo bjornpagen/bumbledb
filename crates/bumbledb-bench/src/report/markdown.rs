@@ -210,7 +210,6 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
     }
 }
 
-/// The markdown artifact.
 #[must_use]
 pub fn to_markdown(report: &RunReport) -> String {
     let mut out = String::new();
