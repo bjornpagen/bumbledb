@@ -18,7 +18,6 @@ use crate::storage::env::ReadTxn;
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
-
     /// # Errors
 
     /// # Panics
