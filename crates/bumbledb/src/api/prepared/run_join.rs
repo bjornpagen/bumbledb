@@ -14,7 +14,6 @@ use crate::obs;
     clippy::too_many_lines,
     reason = "the bind-then-probe-then-join protocol reads as one pass"
 )]
-
 pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
