@@ -2,7 +2,6 @@ use crate::exec::run::{LeafBatch, LeafSource};
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
-
     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
@@ -16,7 +15,6 @@ impl AggregateSink {
     }
 
     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
-
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
         }
