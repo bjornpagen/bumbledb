@@ -1,70 +1,9 @@
-//! The curves lane: four families as scale curves at S/M/L with inline
-//! oracle gates, plus the cold/warm/memoized warmth panel —
-//! REPORT-class ([`crate::lanes`] carries the charter).
-//!
-//! A scale curve is data, not a script: [`CURVE_FAMILIES`] is a
-//! registry over the EXISTING family definitions — `triangle` and
-//! `point` from [`crate::families`] (point is the crud/point-regime key
-//! probe), `busy_scan` from [`crate::calendar::families`], and
-//! `closure_fanout` over [`crate::closure::closure_query`] (the
-//! rings-shaped recursive mass family — the transitive-closure world).
-//! Zero new query semantics; only corpus scale is parameterized, the
-//! closure world through the lane-owned [`curve_sizes`] ladder so the
-//! existing closure lane's identity ([`ClosSizes::of`], constant across
-//! S/M/L by design) is untouched.
-//!
-//! **The oracle law** is carried by control-flow shape borrowed from
-//! `scenarios::run_query`: inside [`curve_point`] the gate call
-//! DOMINATES the timing call — for every draw the engine's answers and
-//! the `SQLite` twin's answers must be value-identical multisets
-//! ([`crate::compare::multisets`]) before anything reaches a timer. The
-//! ledger/calendar corpora come from the digest-keyed cache
-//! ([`crate::driver::ensure_corpus`]) READ-ONLY, and the verify stamp
-//! is NOT required: the law is satisfied by the INLINE per-draw
-//! multiset gate — the scenarios/closure precedent (recursion and
-//! scenario worlds live outside the stamped family registry and gate
-//! inline; this lane says so here and does the same).
-//!
-//! **The DNF cap** ([`DnfCap`]) is a typed outcome, not an exception
-//! path: a capped `SQLite` region produces `Ok(None)` and the point
-//! carries a [`CapEvent`] naming where it fired (`"gate"`, `"timing"`,
-//! `"hand"`) with a `None` stats field — "excluded" is representable
-//! and countable instead of a dropped row. The deadline re-arms PER
-//! REGION (one gate pass or one whole timing protocol block); a capped
-//! TIMING block reports the whole block as capped, honestly
-//! excluded-and-counted. A capped GATE means NEITHER side is timed —
-//! never time what is not verified.
-//!
-//! **`SQLite` parity per lane**: ledger/calendar twins open through
-//! [`crate::sqlite_run::open_for_bench`] (WAL, `synchronous=FULL`,
-//! 256 MiB cache, 1 GiB mmap, checkpointed) with
-//! [`crate::sqlite_run::FairnessCheck`] asserted before timing
-//! (indexes + ANALYZE present); the closure twin loads through the
-//! closure lane's own loader (configured session, statement-derived
-//! indexes, ANALYZE). Statements are prepared once and reused. The
-//! `SQLite` side is the CANONICAL translation everywhere — and where
-//! the canonical rendering inflates SQL (the Allen 9-basic OR-chain of
-//! `busy_scan`), the hand-tuned twin [`BUSY_SCAN_HAND`] runs beside it,
-//! gated exactly like the canonical before it is timed. Both are
-//! reported — we never flatter ourselves.
-//!
-//! **The warmth panel** ([`warmth_panel`], `--warmth`) makes the
-//! (relation, generation) image cache and the resolved-filter view
-//! slots (docs/architecture/50-storage.md) — the memo the warm suite
-//! otherwise silently enjoys — an explicit three-point representation
-//! {cold, warm, memoized}, measured symmetrically on both engines
-//! (per-round reopen for cold/warm, a reused prepared statement for
-//! memoized), so the flatterer becomes a chart instead of a default.
-//! Honesty bound: reopen-cold is process-fresh but OS-page-cache-warm —
-//! as close to cold as the harness allows without dropping kernel
-//! caches. The panel runs at the FIRST scale in `--scales`
-//! (deterministic and Tiny-testable), only on stores already gated at
-//! that scale this run.
-//!
-//! **Quantum-floor rebatch is deliberately omitted** (the closure
-//! lane's `measure_batched` re-run): this lane is report-class and its
-//! curve scales put medians well above the 500 ns floor; a Tiny smoke
-//! run may quantize, and Tiny is never published.
+//! A scale curve is data, not a script: [`CURVE_FAMILIES`] is a `point` from
+//! [`crate::families`] (point is the crud/point-regime key probe), `busy_scan`
+//! from [`crate::calendar::families`], and ([`crate::compare::multisets`])
+//! before anything reaches a timer. The REGION (one gate pass or one whole
+//! timing protocol block); a capped [`crate::sqlite_run::FairnessCheck`]
+//! asserted before timing gated exactly like the canonical before it is timed.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -86,7 +25,6 @@ use crate::report::{self, GhzReport, Provenance};
 use crate::sqlite_run::{self, FairnessCheck, PreparedFamily, open_for_bench};
 use crate::translate::{ParamSlot, Translated, translate};
 
-/// The whole curves report, plain data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurvesReport {
     pub provenance: Provenance,
@@ -96,7 +34,6 @@ pub struct CurvesReport {
     pub families: Vec<FamilyCurve>,
 }
 
-/// One family's curve across the scale ladder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FamilyCurve {
     pub name: &'static str,
@@ -105,11 +42,6 @@ pub struct FamilyCurve {
     pub warmth: Option<Warmth>,
 }
 
-/// One (family, scale) point. Absent stats mean the engine never
-/// produced a timing for the point (a cap event says why). `ghz` is the
-/// merged clock-proxy bracket over every timed block at the point — the
-/// contamination discriminator every other timed lane carries (finding
-/// 072): a co-tenant's slow-clock span is recorded, never invisible.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurvePoint {
     pub scale: &'static str,
@@ -122,16 +54,14 @@ pub struct CurvePoint {
     pub ghz: Option<GhzReport>,
 }
 
-/// Where the DNF cap fired: `"gate"` (the oracle pass), `"timing"`
-/// (the canonical twin), or `"hand"` (the hand-tuned twin).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapEvent {
     pub at: &'static str,
 }
 
-/// The cold/warm/memoized panel, both engines — one proxy bracket
-/// around the whole panel (the reopen rounds are not idempotent, so
-/// the stamp annotates, never re-runs).
+/// The cold/warm/memoized panel, both engines — one proxy bracket around the
+/// whole panel (the reopen rounds are not idempotent, so the stamp annotates,
+/// never re-runs).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Warmth {
     pub ours_cold: Stats,
@@ -187,8 +117,6 @@ fn push_warmth(out: &mut String, warmth: Option<&Warmth>) {
     out.push('}');
 }
 
-/// The machine-consumable curves artifact — hand-rolled, like
-/// `report/json_out.rs`.
 #[must_use]
 pub fn to_json(report: &CurvesReport) -> String {
     let mut out = String::new();
@@ -222,11 +150,6 @@ pub fn to_json(report: &CurvesReport) -> String {
     out
 }
 
-// ---------------------------------------------------------------------
-// The registry: four curve families over the existing definitions.
-// ---------------------------------------------------------------------
-
-/// Which corpus world a curve family runs against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum World {
     Ledger,
@@ -244,17 +167,11 @@ impl World {
     }
 }
 
-/// One curve family: a name into an existing registry plus its world.
 struct CurveFamily {
     name: &'static str,
     world: World,
 }
 
-/// The lane roster: `triangle` (the cyclic self-join), `point` (the
-/// crud/point-regime key probe), `busy_scan` (the Allen-mask scan whose
-/// canonical SQL is the inflated 9-basic OR-chain — the hand-twin
-/// case), and `closure_fanout` (the rings-shaped recursive mass family
-/// — the transitive-closure world).
 const CURVE_FAMILIES: [CurveFamily; 4] = [
     CurveFamily {
         name: "triangle",
@@ -274,8 +191,6 @@ const CURVE_FAMILIES: [CurveFamily; 4] = [
     },
 ];
 
-/// Resolves `--families` against the roster; an unknown name is an
-/// `Err` listing the four.
 fn select(names: Option<&[String]>) -> Result<Vec<&'static CurveFamily>, String> {
     let Some(names) = names else {
         return Ok(CURVE_FAMILIES.iter().collect());
@@ -294,14 +209,6 @@ fn select(names: Option<&[String]>) -> Result<Vec<&'static CurveFamily>, String>
         .collect())
 }
 
-// ---------------------------------------------------------------------
-// The closure curve ladder — lane-local; `ClosSizes::of` untouched.
-// ---------------------------------------------------------------------
-
-/// The lane-owned closure scale ladder: ~10x edge growth per step
-/// (S ≈ 8.8k edges, M ≈ 78k, L ≈ 709k; the test pins the ratios). The
-/// `Tiny` arm matches `ClosSizes::of(Tiny)` so the smoke slice is the
-/// closure lane's own fuzz point.
 fn curve_sizes(scale: Scale) -> ClosSizes {
     match scale {
         Scale::Tiny => ClosSizes {
@@ -327,9 +234,6 @@ fn curve_sizes(scale: Scale) -> ClosSizes {
     }
 }
 
-/// The fanout anchors, mirroring `closure::fanout_params`' four-draw
-/// shape but computed from the lane's own sizes: the tree root, a
-/// depth-1 subtree root, a leaf, and the miss.
 fn closure_curve_params(sizes: &ClosSizes) -> Vec<Draw> {
     let base = sizes.tree_base();
     vec![
@@ -340,16 +244,8 @@ fn closure_curve_params(sizes: &ClosSizes) -> Vec<Draw> {
     ]
 }
 
-// ---------------------------------------------------------------------
-// The DNF cap (LAW 5): a typed outcome, re-armed per region.
-// ---------------------------------------------------------------------
-
-/// The number of `SQLite` VM ops between deadline checks: coarse enough
-/// that the handler's `Instant::now()` read vanishes against any region
-/// worth capping, fine enough that even a Tiny gate query crosses it.
 const CAP_GRANULARITY_OPS: std::ffi::c_int = 4_096;
 
-/// The per-region `SQLite` wall-clock bound.
 #[derive(Debug, Clone, Copy)]
 struct DnfCap {
     cap: Duration,
@@ -357,19 +253,11 @@ struct DnfCap {
 
 impl DnfCap {
     /// Runs one region (one gate pass or one whole timing protocol
-    /// block) under the cap: installs the progress handler with a
+
     /// deadline captured at entry, ALWAYS clears it before returning,
-    /// and folds an interrupt into `Ok(None)` — exceeded-cap as data.
-    ///
-    /// Cap detection matches the handler's own typed record of its
-    /// trip, never the error text: the interrupt it induces arrives
-    /// here stringified through the compare/sample seams (where the
-    /// `rusqlite::ErrorCode::OperationInterrupted` code is folded into
-    /// a message), so the handler stores the trip in a flag at the
-    /// moment it returns `true` — the one place the code fires. A trip
+
     /// observed after the region completed keeps its finished result;
-    /// an error without a trip propagates untouched. The zero cap is
-    /// the degenerate budget: no region fits inside it, including its
+
     /// first op — excluded before entry.
     fn guarded<T>(
         self,
@@ -403,23 +291,13 @@ impl DnfCap {
     }
 }
 
-// ---------------------------------------------------------------------
-// Family bundles: everything a (family, scale) point needs, as data.
-// ---------------------------------------------------------------------
-
-/// The hand-tuned `busy_scan` twin (LAW 4's inflated-canonical case):
-/// `INTERSECTS` over half-open intervals is exactly
-/// `start < window_end AND window_start < end`, beside the canonical
-/// 9-basic OR-chain golden (`calendar::families::BUSY_SCAN`). Gated
-/// exactly like the canonical before it is ever timed; both are
-/// reported — we never flatter ourselves.
+/// Gated exactly like the canonical before it is ever timed; both are reported
+/// — we never flatter ourselves.
 const BUSY_SCAN_HAND: &str = "SELECT DISTINCT t0.\"person\", t0.\"span_start\", t0.\"span_end\" FROM \"Claim\" AS t0 WHERE t0.\"arm\" = 0 AND t0.\"span_start\" < ?2 AND ?1 < t0.\"span_end\"";
 
-/// [`BUSY_SCAN_HAND`]'s positional slots: the window's two halves.
 const BUSY_SCAN_HAND_SLOTS: [ParamSlot; 2] =
     [ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))];
 
-/// The one param slot of [`closure::CLOSURE_SQL`].
 fn closure_translated() -> Translated {
     Translated {
         sql: closure::CLOSURE_SQL.to_owned(),
@@ -427,11 +305,6 @@ fn closure_translated() -> Translated {
     }
 }
 
-/// One (family, scale) unit of work, fully resolved: the engine query,
-/// the family's existing draws, the canonical `SQLite` twin, the
-/// optional hand twin, and the world's fact count. All four families
-/// draw scalars only, so the canonical SQL is one statement per point,
-/// prepared once and rebound per draw.
 struct Bundle {
     query: Query,
     draws: Vec<Draw>,
@@ -512,13 +385,6 @@ fn bundle_for(family: &CurveFamily, cfg: &GenConfig) -> Result<Bundle, String> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Gate then time — the run_query shape, per (family, scale).
-// ---------------------------------------------------------------------
-
-/// The inline oracle gate for one `SQLite` lane: every draw's result
-/// multiset must equal the engine's, or the point is an `Err` — nothing
-/// downstream of a disagreement is ever timed.
 fn gate_lane(
     conn: &rusqlite::Connection,
     label: &str,
@@ -542,9 +408,9 @@ fn gate_lane(
     Ok(())
 }
 
-/// Times one `SQLite` lane under the cap: the whole protocol block is
-/// one capped region (statement prepared once, draws rotated); a trip
-/// anywhere reports the block as capped — `Ok(None)`.
+/// Times one `SQLite` lane under the cap: the whole protocol block is one
+/// capped region (statement prepared once, draws rotated); a trip anywhere
+/// reports the block as capped — `Ok(None)`.
 fn time_lane(
     conn: &rusqlite::Connection,
     cap: DnfCap,
@@ -566,10 +432,6 @@ fn time_lane(
     })
 }
 
-/// One (family, scale) point: gate (capped) → time ours → time the
-/// canonical twin (capped) → gate + time the hand twin (capped). The
-/// gate call dominates the timing call — nothing reaches a timer
-/// without a value-identical multiset agreement in this same function.
 fn curve_point<S>(
     name: &str,
     scale_label: &'static str,
@@ -590,7 +452,6 @@ fn curve_point<S>(
         .map(|column| *column.ty())
         .collect();
 
-    // The engine's answers for every draw — the gate's left side.
     let mut buffer = Answers::new();
     let mut ours_answers = Vec::with_capacity(bundle.draws.len());
     for draw in &bundle.draws {
@@ -600,8 +461,6 @@ fn curve_point<S>(
         ours_answers.push(compare::from_answers(&buffer, &types));
     }
 
-    // THE GATE: one capped region over every draw. Capped ⇒ neither
-    // side is timed — never time what is not verified.
     let gate = cap.guarded(conn, || {
         gate_lane(
             conn,
@@ -625,9 +484,6 @@ fn curve_point<S>(
         });
     }
 
-    // Ours: the run_query timing shape — draws rotated, uncapped (the
-    // engine answers for its own latency), bracketed by the retry-capable
-    // proxy (fsync-free read timing is idempotent).
     let mut rotation = Rotation::new(bundle.draws.clone());
     let (ours, mut ghz) = clockproxy::frequency_checked(|| {
         harness::measure(proto, || {
@@ -639,9 +495,6 @@ fn curve_point<S>(
     })?;
     let answers = ours.work / u64::from(proto.samples.max(1));
 
-    // Theirs: the canonical twin under the cap; ours stats are kept
-    // either way. Every timed block's stamp merges into the point's one
-    // verdict — contamination of any block dirties the point.
     let theirs = time_lane(conn, cap, &bundle.canonical, &bundle.draws, &types, proto)?;
     let theirs = theirs.map(|(stats, stamp)| {
         ghz = ghz.merge(stamp);
@@ -653,9 +506,8 @@ fn curve_point<S>(
         None
     };
 
-    // The hand twin (busy_scan): gated exactly like the canonical
     // before it is timed; a cap here leaves the canonical results
-    // intact (the first cap event wins the one report slot).
+
     let mut theirs_hand = None;
     if let Some(hand) = &bundle.hand {
         let hand_label = format!("{name}[hand]");
@@ -693,10 +545,6 @@ fn curve_point<S>(
     })
 }
 
-// ---------------------------------------------------------------------
-// The warmth panel: {cold, warm, memoized}, both engines.
-// ---------------------------------------------------------------------
-
 /// Reopen-cold rounds discarded before recording begins.
 const WARMTH_DISCARDED: usize = 2;
 /// Reopen-cold rounds recorded.
@@ -711,17 +559,12 @@ fn elapsed_ns(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// Opens the engine store, absorbing the transient typed
-/// `EnvironmentLocked` window — the engine's own drop-order test
-/// (`dropping_the_handle_never_leaks_an_env_already_opened_window`)
-/// documents the retry loop keyed on the typed error as the sanctioned
-/// reopen pattern. The window is real under a parallel test suite:
-/// dropping a handle releases the advisory flock synchronously, but a
-/// concurrently forked child (the device-honesty probes spawn `mount`/
-/// `hdiutil`) holds the inherited lock fd through its fork→exec
-/// window. Bounded; every other error propagates. Retrying happens
-/// strictly BEFORE any timed region — cold timing starts at the first
-/// execute, never at open.
+/// Opens the engine store, absorbing the transient typed `EnvironmentLocked`
+/// window — the engine's own drop-order test
+/// (`dropping_the_handle_never_leaks_an_env_already_opened_window`) documents
+/// the retry loop keyed on the typed error as the sanctioned reopen pattern.
+/// Retrying happens strictly BEFORE any timed region — cold timing starts at
+/// the first execute, never at open.
 fn open_absorbing_lock_window<S: bumbledb::Theory + Copy>(
     path: &Path,
     theory: S,
@@ -738,16 +581,10 @@ fn open_absorbing_lock_window<S: bumbledb::Theory + Copy>(
     }
 }
 
-/// The three-point warmth panel over one already-gated (family, scale)
-/// store pair, both engines symmetric — nobody can call it one-sided.
-/// Per reopen-cold round: drop and reopen the store, prepare (excluded
-/// from the timed region — the timed-region law), time exactly the
-/// first execution (`cold`), then the second execution of the same
-/// prepared statement (`warm`); `memoized` is one open + one prepare
-/// under [`MEMO_PROTOCOL`]. What the engine side prices is the
-/// (relation, generation) image cache and the resolved-filter view
-/// slots (docs/architecture/50-storage.md). Reopens commit nothing —
-/// the corpus cache stays read-only.
+/// Per reopen-cold round: drop and reopen the store, prepare (excluded from the
+/// timed region — the timed-region law), time exactly the first execution
+/// (`cold`), then the second execution of the same prepared statement (`warm`);
+/// `memoized` is one open + one prepare under [`MEMO_PROTOCOL`].
 fn warmth_panel<S: bumbledb::Theory + Copy>(
     theory: S,
     db_path: &Path,
@@ -816,8 +653,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     };
 
     // Theirs, symmetric: per round drop the connection, reopen, prepare
-    // the canonical SQL, time exec1/exec2 (full drain through the
-    // PreparedFamily walk).
+
     let mut cold = Vec::with_capacity(WARMTH_ROUNDS);
     let mut warm = Vec::with_capacity(WARMTH_ROUNDS);
     for round in 0..(WARMTH_DISCARDED + WARMTH_ROUNDS) {
@@ -861,8 +697,8 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     })
 }
 
-/// [`warmth_panel`] under one non-retrying proxy bracket (reopen rounds
-/// are not idempotent): the stamp annotates the whole panel.
+/// [`warmth_panel`] under one non-retrying proxy bracket (reopen rounds are not
+/// idempotent): the stamp annotates the whole panel.
 fn warmth_panel_stamped<S: bumbledb::Theory + Copy>(
     theory: S,
     db_path: &Path,
@@ -875,11 +711,6 @@ fn warmth_panel_stamped<S: bumbledb::Theory + Copy>(
     Ok(warmth)
 }
 
-// ---------------------------------------------------------------------
-// The lane driver.
-// ---------------------------------------------------------------------
-
-/// One world's open stores at one scale.
 struct WorldStores<S> {
     db: Db<S>,
     conn: rusqlite::Connection,
@@ -888,9 +719,9 @@ struct WorldStores<S> {
 }
 
 impl<S> WorldStores<S> {
-    /// Drops the live handles and keeps the paths — the warmth panel's
+
     /// reopen rounds need the store CLOSED first (one LMDB environment
-    /// per store per process).
+
     fn into_paths(self) -> (PathBuf, PathBuf) {
         let Self {
             db,
@@ -904,7 +735,6 @@ impl<S> WorldStores<S> {
     }
 }
 
-/// The run-long context every scale pass shares.
 struct LaneCtx<'a> {
     args: &'a crate::cli::CurvesArgs,
     selected: Vec<&'static CurveFamily>,
@@ -913,12 +743,12 @@ struct LaneCtx<'a> {
     scratch: PathBuf,
 }
 
-/// One scale pass: open exactly the worlds the selected families need
-/// (the ledger/calendar pair from the digest-keyed cache, read-only,
-/// fairness asserted before timing; the closure world into scratch
-/// through the sized loader), then gate-and-time every selected family,
-/// then — at the first scale under `--warmth` — drop the live handles
-/// and run the panel on the already-gated stores.
+/// One scale pass: open exactly the worlds the selected families need (the
+/// ledger/calendar pair from the digest-keyed cache, read-only, fairness
+/// asserted before timing; the closure world into scratch through the sized
+/// loader), then gate-and-time every selected family, then — at the first scale
+/// under `--warmth` — drop the live handles and run the panel on the
+/// already-gated stores.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -999,7 +829,6 @@ fn run_scale(
         None
     };
 
-    // The DVFS ramp eater (the driver/bench.rs precedent): the world
     // loads above end in fsync-heavy commits that drop the core to its
     // DVFS floor — eat the ramp before the first timed block.
     clockproxy::warm_up(std::time::Duration::from_millis(200));
@@ -1051,9 +880,7 @@ fn run_scale(
         let calendar = calendar.map(WorldStores::into_paths);
         let closure_paths = closure_world.map(WorldStores::into_paths);
         for ((family, bundle), curve) in ctx.selected.iter().zip(&bundles).zip(curves.iter_mut()) {
-            // Only stores gated at this scale this run enter the panel:
-            // a capped gate left `ours` empty, and an unverified store
-            // is never measured.
+
             if curve.rows.last().is_none_or(|point| point.ours.is_none()) {
                 continue;
             }
@@ -1082,7 +909,6 @@ fn opt_p50(stats: Option<&Stats>) -> String {
     stats.map_or_else(|| "—".to_owned(), |s| s.p50.to_string())
 }
 
-/// The human-readable table — hand-rolled, like `scenarios/render.rs`.
 fn render(report: &CurvesReport) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# Curves report\n");
@@ -1153,16 +979,7 @@ fn render(report: &CurvesReport) -> String {
     out
 }
 
-/// The curves lane entry point: per scale in order, gate-and-time every
-/// selected family (the gate dominates the timing — see the module
-/// doc), assemble the report, write `curves-report.json` +
-/// `curves-report.md`, print the markdown, and remove the scratch.
-///
 /// # Errors
-///
-/// Refusals (RAM-backed `--dir`, unknown `--families` names), corpus or
-/// world setup failures, an oracle disagreement (`ENGINES DISAGREE` —
-/// nothing is timed), and engine or `SQLite` errors — all as messages.
 pub fn run(args: &crate::cli::CurvesArgs) -> Result<i32, String> {
     let selected = select(args.families.as_deref())?;
     if args.scales.is_empty() {
@@ -1330,7 +1147,7 @@ mod tests {
             provenance.get("timestamp").and_then(Json::as_str),
             Some("2026-07-19T00:00:00Z")
         );
-        // Boost-off keeps the pre-boost provenance shape.
+
         assert!(provenance.get("shared_machine").is_none());
         assert_eq!(parsed.get("seed").and_then(Json::as_f64), Some(3.0));
         assert_eq!(parsed.get("samples").and_then(Json::as_f64), Some(16.0));
@@ -1362,12 +1179,12 @@ mod tests {
         assert_eq!(theirs.get("max").and_then(Json::as_f64), Some(205.0));
         assert_eq!(rows[0].get("theirs_hand"), Some(&Json::Null));
         assert_eq!(rows[0].get("cap"), Some(&Json::Null));
-        // The contamination discriminator rides every point (finding 072).
+
         let ghz = rows[0].get("ghz").expect("ghz");
         assert_eq!(ghz.get("pre").and_then(Json::as_f64), Some(3.5));
         assert_eq!(ghz.get("contaminated").and_then(Json::as_bool), Some(false));
         assert_eq!(rows[1].get("ghz"), Some(&Json::Null));
-        // The capped point: theirs is null and the cap event says where.
+
         assert_eq!(rows[1].get("theirs"), Some(&Json::Null));
         assert_eq!(
             rows[1]
@@ -1393,8 +1210,6 @@ mod tests {
         );
     }
 
-    /// The whole lane at Tiny: all four families gated then timed, one
-    /// point each, no cap events, the hand twin timed for `busy_scan`.
     #[test]
     fn tiny_scale_gates_then_reports() {
         let dir = scratch("curves-tiny-e2e");
@@ -1444,9 +1259,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A zero cap is the degenerate budget: the gate region is
     /// excluded before entry, and an unverified point is never timed
-    /// on either side.
+
     #[test]
     fn zero_cap_reports_exceeded_and_skips_timing() {
         let dir = scratch("curves-zero-cap");
@@ -1483,8 +1297,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The warmth panel lands all six stats, both engines, at the
-    /// first (and only) scale.
     #[test]
     fn warmth_panel_reports_cold_warm_memoized() {
         let dir = scratch("curves-warmth");
@@ -1521,8 +1333,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The lane-local ladder pin: ~10x edge growth per step, and the
-    /// Tiny arm equals the closure lane's own fuzz point.
     #[test]
     fn closure_curve_sizes_grow_tenfold_ish() {
         assert_eq!(curve_sizes(Scale::Tiny), ClosSizes::of(Scale::Tiny));
@@ -1533,9 +1343,6 @@ mod tests {
         assert!(l / m >= 8, "M→L edges grew {l}/{m}");
     }
 
-    /// The gate path really compares — by construction: a deliberately
-    /// WRONG hand SQL (the unfiltered `Claim` scan, which agrees with
-    /// the engine only over an empty corpus) must land the disagree
     /// refusal, proving the hand twin cannot reach a timer unverified.
     #[test]
     fn hand_twin_is_gated_before_timing() {
@@ -1581,7 +1388,7 @@ mod tests {
         )
         .expect_err("the wrong twin must be refused");
         assert!(err.contains("ENGINES DISAGREE"), "{err}");
-        // The genuine hand twin passes the same gate.
+
         let hand = bundle.hand.as_ref().expect("busy_scan carries the twin");
         gate_lane(&conn, "busy_scan[hand]", hand, &bundle.draws, &ours, &types)
             .expect("the real twin agrees");
