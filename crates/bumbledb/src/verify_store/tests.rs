@@ -45,7 +45,7 @@ fn judgment_capacity(
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -617,7 +617,6 @@ fn wrong_fact_width_is_a_contextual_finding() {
 fn noncanonical_field_encodings_are_each_found() {
     let (_dir, db) = canonical_field_fixture_with_healthy_sibling("verify-field-encodings");
     replace_fact_bytes(&db, RelationId(0), 0, |fact| {
-
         fact[0] = 2;
         fact[8] = 1;
         fact[9..17].copy_from_slice(&10u64.to_be_bytes());
@@ -658,7 +657,6 @@ fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
                 intern_id: InternId::from_raw(99),
                 next_id: InternId::from_raw(2),
             }),
-
             StoreFinding::Corruption(CorruptionError::DanglingInternId(InternId::from_raw(99))),
         ]
     );
@@ -930,7 +928,6 @@ fn missing_determinant_is_found_from_the_fact_side() {
                 row_id: 0,
                 determinant_key: u.into(),
             }),
-
             // desync convicts twice, once per broken invariant.
             judgment_containment(db.schema(), CLAIM_BOOKING, claim_bytes(&db, 7, 2, 8).into()),
         ]
@@ -986,7 +983,6 @@ fn determinant_key_byte_flip_is_found_against_the_live_fact() {
 
 #[test]
 fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
-
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-u");
     let u = key(|b| keys::determinant_key(b, HOLDER, HOLDER_KEY, &encode_u64(1)));
     raw_write(&db, |txn| {
@@ -1009,7 +1005,6 @@ fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
 
 #[test]
 fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
-
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-desync");
     replace_fact_bytes(&db, HOLDER, 1, |fact| {
         fact[..8].copy_from_slice(&0u64.to_be_bytes());
@@ -1026,7 +1021,6 @@ fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
 
 #[test]
 fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
-
     let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-high-water");
     let water = keys::stat_key(HOLDER, StatKind::RowIdHighWater).to_vec();
     raw_write(&db, |txn| {
@@ -1289,7 +1283,6 @@ fn absent_counters_are_found_against_the_fact_tally() {
 
 #[test]
 fn a_stored_row_for_a_closed_relation_is_the_finding() {
-
     let dir = TempDir::new("verify-closed");
     let decl = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -1454,7 +1447,6 @@ fn closed_subset_schema() -> SchemaDescriptor {
 
 #[test]
 fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
-
     let dir = TempDir::new("verify-closed-r");
     let db = Db::create(dir.path(), closed_subset_schema())
         .expect("create")
@@ -1481,7 +1473,6 @@ fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
 
 #[test]
 fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
-
     let dir = TempDir::new("verify-closed-member");
     let db = Db::create(dir.path(), closed_subset_schema())
         .expect("create")
@@ -1520,7 +1511,6 @@ fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
 
 #[test]
 fn an_uncovered_domain_quantification_is_a_judgment_violation() {
-
     let dir = TempDir::new("verify-closed-domain");
     let mut decl = closed_subset_schema();
     decl.relations.push(RelationDescriptor {
