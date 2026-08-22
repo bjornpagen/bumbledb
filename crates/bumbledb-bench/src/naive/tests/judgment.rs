@@ -714,7 +714,7 @@ mod target_side {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
