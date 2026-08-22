@@ -9,11 +9,9 @@ use std::collections::BTreeSet;
 /// contributes its full atom; each subsequent occurrence contributes a
 /// probe subatom on its available variables, then opens a node with its
 /// remaining variables.
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations: `order` referencing an
 /// occurrence the normalized query lacks.
+/// Only on programmer-invariant violations: `order` referencing an
 #[must_use]
 pub fn binary2fj(normalized: &NormalizedQuery, order: &JoinOrder) -> FjPlan {
     let occurrence = |occ: OccId| {
