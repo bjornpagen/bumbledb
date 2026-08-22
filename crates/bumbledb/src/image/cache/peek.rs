@@ -21,7 +21,6 @@ impl ImageCache {
     /// # Errors
 
     /// # Panics
-
     #[cfg(test)]
     pub fn peek(
         &self,
