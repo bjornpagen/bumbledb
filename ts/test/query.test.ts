@@ -145,11 +145,11 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	/**
- * The typed execute seam — exactly the shape the `Db` runtime consumes:
- * lower → engine prepare → positional params via the query's own
- * registry → decode by the head. Cast-free: `Row` and `Params` ride the
- * query value.
- */
+	 * The typed execute seam — exactly the shape the `Db` runtime consumes:
+	 * lower → engine prepare → positional params via the query's own
+	 * registry → decode by the head. Cast-free: `Row` and `Params` ride the
+	 * query value.
+	 */
 	function run<Row, P extends ParamsRecord>(q: Query<Rels, Row, P>, params: P): Row[] {
 		const prepared = native.dbPrepare(db, lowerQuery(q))
 		if (!prepared.ok) {
@@ -224,13 +224,13 @@ describe("the query surface against a real store", function suite() {
 
 	test("a union head holds the class wall — one answer column is one id space", function unionHeadClassWall() {
 		/**
- * Rule 0 binds x at Holder.id (class "Holder.id"), rule 1 at
- * Account.id (class "Account.id"): the identical pairing at any
- * join/eq position is refused, and the head is a reuse site too — a
- * consumer reading the column as Holder ids would silently receive
- * Account ids. The engine cannot backstop this (the wire IR carries
- * no domains), so the SDK holds the wall at construction.
- */
+		 * Rule 0 binds x at Holder.id (class "Holder.id"), rule 1 at
+		 * Account.id (class "Account.id"): the identical pairing at any
+		 * join/eq position is refused, and the head is a reuse site too — a
+		 * consumer reading the column as Holder ids would silently receive
+		 * Account ids. The engine cannot backstop this (the wire IR carries
+		 * no domains), so the SDK holds the wall at construction.
+		 */
 		assert.throws(function crossClassUnion() {
 			query(Ledger)
 				.rule((r) => {
@@ -264,7 +264,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("a rec head holds the class wall — the sealed slot binds every rule", function recHeadClassWall() {
-
 		assert.throws(function pollutedRecHead() {
 			query(Ledger)
 				.reach("reach", {
@@ -621,7 +620,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("reference identity IS the join: one var value reused joins; two fresh mints never join", function referenceIdentityJoin() {
-
 		const joined = query(Ledger).rule((r) => {
 			const { id: acct, holder: h } = v(Account)
 			const { name } = v(Holder)
@@ -657,7 +655,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("the name-collision join is unrepresentable: same-named columns of two mints are unrelated variables", function nameCollision() {
-
 		const twoParents = query(Ledger).rule((r) => {
 			const a = v(Parent)
 			const b = v(Parent)
@@ -685,7 +682,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("find keys name the answer columns: renames are real", function renamesAreReal() {
-
 		const renamed = query(Ledger).rule((r) => {
 			const { id: h } = v(Holder)
 			return r.match(Holder, { id: h }).find({ renamed: h })
@@ -712,7 +708,6 @@ describe("the query surface against a real store", function suite() {
 
 	test("the engine's prepare accepts every construct the surface can spell (the IR-bijection pin)", function prepareSweep() {
 		const constructs: AnyQuery[] = [
-
 			query(Ledger).rule((r) => {
 				const { id: h } = v(Holder)
 				return r.match(Holder, { id: h }).where(r.ne(h, 1n)).find({ h })
@@ -863,7 +858,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("TYPE WALLS: the unwritable queries are unwritable (each expect-error real)", function typeWalls() {
-
 		const varDied = query(Ledger).rule((r) => {
 			const { id: h } = v(Holder)
 			// @ts-expect-error — r.var died with 0.6.0
@@ -1018,7 +1012,6 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("THE FOUR JOIN LAWS: same-class joins+lowers, cross-class refuses at the use site, bare↔bare joins, bare↔classed refuses", function joinLaws() {
-
 		const sameClass = query(Ledger).rule((r) => {
 			const { id: acct, holder: h } = v(Account)
 			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).find({ acct })
