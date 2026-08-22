@@ -3,14 +3,12 @@
 use super::View;
 
 impl View {
-
     /// # Panics
 
     /// Only on a programmer-invariant violation: an image beyond the u32
 
     #[cfg(test)]
     pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
-
         let (all, survivors) = match self {
             Self::Unbound => (0..0u32, [].iter()),
             Self::Bound(super::BoundView::All(image)) => (
