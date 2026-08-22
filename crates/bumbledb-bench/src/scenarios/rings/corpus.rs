@@ -1,17 +1,9 @@
-//! The rings corpus: a power-law hub transfer graph with a planted
-//! wash ring, and two bipartite-bomb relations whose exact triangle
-//! answer is a construction theorem. Row counts live in [`Sizes`];
-//! every param policy upstairs depends only on the fixed value horizon
-//! constants, never on `Sizes` — so the smoke gate runs the SAME
-//! queries and params as the night run, only smaller.
-
 use bumbledb::{Interval, Value};
 
 use super::ids;
 use crate::corpus_gen::Rng;
 use crate::scenarios::mix;
 
-/// The corpus row counts — the one axis the smoke twin varies.
 pub struct Sizes {
     pub parties: u64,
     pub transfers: u64,
@@ -19,10 +11,6 @@ pub struct Sizes {
     pub bomb2_m: u64,
 }
 
-/// The night-run corpus. Tier magnitudes are exponent arithmetic, never
-/// timed at authoring: tier 1 m=48 → m³ ≈ 1.1e5 closing probes (sized
-/// to finish within the cap); tier 2 m=384 → m³ ≈ 5.7e7, ≥ two decades
-/// past tier 1 (the exponent evidence).
 pub const FULL: Sizes = Sizes {
     parties: 20_000,
     transfers: 60_000,
@@ -30,8 +18,6 @@ pub const FULL: Sizes = Sizes {
     bomb2_m: 384,
 };
 
-/// The smoke corpus: same generators, tiny counts — the tier-0 oracle
-/// gate's world.
 #[cfg(test)]
 pub const SMOKE: Sizes = Sizes {
     parties: 64,
@@ -40,14 +26,11 @@ pub const SMOKE: Sizes = Sizes {
     bomb2_m: 8,
 };
 
-/// ~0.1% of parties are hubs (never fewer than two).
 const fn hubs(parties: u64) -> u64 {
     let h = parties / 1000;
     if h < 2 { 2 } else { h }
 }
 
-/// The value horizon — size-independent: the param policies fix their
-/// thresholds against these constants, never against [`Sizes`].
 pub const RG_BASE: i64 = 1_700_000_000;
 pub const RG_HORIZON: i64 = 30_000_000;
 
@@ -56,7 +39,6 @@ fn party_row(seed: u64, i: u64) -> Vec<Value> {
     vec![Value::U64(i), Value::U64(rng.range(4))]
 }
 
-/// One endpoint under the hub law: 15% of draws land on a hub.
 fn endpoint(rng: &mut Rng, parties: u64, h: u64) -> u64 {
     if rng.chance(3, 20) {
         rng.range(h)
@@ -65,11 +47,6 @@ fn endpoint(rng: &mut Rng, parties: u64, h: u64) -> u64 {
     }
 }
 
-/// The transfer rows: hub-skewed random edges, a 1-in-8 reciprocal
-/// echo (same amount, same span, swapped endpoints), then the planted
-/// wash ring 0→1→2→0 (amount `9_999`, one identical span). Ids are the
-/// row position, so every row is distinct and both engines load
-/// identical sets.
 fn transfers(seed: u64, z: &Sizes) -> Vec<Vec<Value>> {
     let h = hubs(z.parties);
     let horizon = u64::try_from(RG_HORIZON - 200_000).expect("positive horizon");
@@ -108,17 +85,6 @@ fn transfers(seed: u64, z: &Sizes) -> Vec<Vec<Value>> {
     out
 }
 
-/// One bipartite bomb: sides A = `0..m` and B = `m..2m`, every cross
-/// pair in BOTH directions (2m² rows), then one planted directed
-/// triangle on t = {2m, 2m+1, 2m+2}.
-///
-/// THEOREM (the analytic oracle): the bipartite part is triangle-free.
-/// Every generated bipartite edge crosses sides, so a directed 3-cycle
-/// inside it would alternate A→B→A→B and close only through an A→A or
-/// B→B edge — which this generator cannot emit. The planted ids touch
-/// neither side. Hence the triangle query's full binding set is exactly
-/// the 3 rotations of the planted cycle, asserted (not eyeballed) in
-/// `rings/tests.rs` at smoke scale.
 fn bomb(m: u64) -> Vec<Vec<Value>> {
     let mut out = Vec::new();
     for a in 0..m {
@@ -137,7 +103,6 @@ fn bomb(m: u64) -> Vec<Vec<Value>> {
     out
 }
 
-/// Every writable relation's rows, in containment order.
 fn rows(seed: u64, z: &Sizes) -> super::Rows {
     vec![
         (
