@@ -6,13 +6,11 @@ use super::WriteDelta;
 
 impl WriteDelta<'_> {
     /// # Errors
-
     pub fn intern_str(&mut self, view: &ReadTxn<'_>, value: &str) -> Result<InternId> {
         self.intern(view, value.as_bytes())
     }
 
     /// # Errors
-
     pub fn resolve_str(&self, view: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
         self.resolve(view, value.as_bytes())
     }
