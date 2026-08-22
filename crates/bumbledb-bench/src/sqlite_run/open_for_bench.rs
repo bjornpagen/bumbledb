@@ -4,33 +4,13 @@ use rusqlite::Connection;
 
 use crate::corpus;
 
-/// Opens a loaded oracle for a timing run. Every pragma's fairness
-/// rationale:
-/// - `journal_mode=WAL` (asserted): `SQLite`'s best self for the
-///   read-heavy profile.
-/// - `synchronous=FULL`: pinned by `00-product.md` — both engines pay
-///   the same fsync bill.
-/// - `cache_size=-262144` (256 MiB): the corpus should be
-///   memory-resident, as it is for bumbledb.
-/// - `mmap_size` covering the whole file ([`mmap_whole_file`]):
-///   zero-copy page reads — the analogue of the engine's LMDB mapping,
-///   which maps the whole store unconditionally.
-/// - `wal_autocheckpoint=0` plus one `wal_checkpoint(TRUNCATE)` now:
-///   no checkpoint I/O lands inside a measured window.
-///
-/// No cache pre-warming beyond that: warmups are the warm-up,
-/// identically to ours.
-///
 /// # Errors
-///
 /// `SQLite` errors verbatim; the mmap coverage refusal as a
-/// `SQLITE_MISUSE`-free string wrapped into `rusqlite::Error` is
-/// avoided by panicking instead — see Panics.
-///
+/// `SQLITE_MISUSE`-free string wrapped into `rusqlite::Error` is avoided by
+/// panicking instead — see Panics.
 /// # Panics
-///
-/// If WAL refuses to engage, or the effective mmap cannot cover the
-/// file — the fairness protocol is unconditional.
+/// If WAL refuses to engage, or the effective mmap cannot cover the file — the
+/// fairness protocol is unconditional.
 pub fn open_for_bench(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     corpus::configure_sqlite(&conn)?;
@@ -40,19 +20,7 @@ pub fn open_for_bench(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// The memory-residency parity law (finding 074): the oracle's whole
-/// file is mmapped — the size derives from the file (plus WAL-growth
-/// headroom, floored at the historical 1 GiB), never a constant a
-/// scale bump can outgrow — and the value actually in effect is read
-/// back: `SQLite` silently clamps at its compile-time ceiling
-/// (`SQLITE_MAX_MMAP_SIZE`), and a clamp below the file size would
-/// hand the tail to pread+memcpy through the page cache, a one-sided
-/// handicap on exactly the whole-scan families.
-///
 /// # Errors
-///
-/// The connection lacking a file path, the stat failing, or the
-/// effective mmap falling short of the file — each named.
 pub fn mmap_whole_file(conn: &Connection) -> Result<(), String> {
     const FLOOR: u64 = 1 << 30;
     const HEADROOM: u64 = 256 << 20;
