@@ -1,5 +1,4 @@
 //! COLT, the executor, sinks, kernels, dispatch, and introspection.
-
 pub mod colt;
 pub mod dispatch;
 pub mod kernel;
