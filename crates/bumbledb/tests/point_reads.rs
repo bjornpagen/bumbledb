@@ -100,7 +100,6 @@ fn point_reads_fall_through_to_committed_state() {
         .value;
 
     db.write(|tx| {
-
         let other = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
         tx.insert([&Account {
             id: other,
@@ -155,7 +154,6 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         .value;
 
     db.write(|tx| {
-
         assert_eq!(
             tx.insert([&Account {
                 id,
