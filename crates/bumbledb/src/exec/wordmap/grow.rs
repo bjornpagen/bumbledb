@@ -5,9 +5,7 @@ use super::{WINDOW, WordMap, ctrl_tag, hash_core, hash_words};
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {
         let new_capacity = (self.capacity() * 2).max(WINDOW);
-        // Rehash visibility (docs/architecture/60-validation.md): sink-map
-        // growth inside a measured execution is exactly the presizing
-        // opportunity the trace should surface.
+
         crate::obs::event(
             crate::obs::names::WORDMAP_GROW,
             crate::obs::TraceArgs::Pair(new_capacity as u64, self.arity as u64),
@@ -20,14 +18,10 @@ impl<V: Copy> WordMap<V> {
                 .collect(),
         );
         self.ctrl = vec![0; new_capacity + WINDOW - 1];
-        // Fresh slabs carry no stale slots: only dense-listed (live)
-        // entries rehash — a growth is also the death of every stale
-        // key. `set_ctrl` re-stamps each rehashed slot into the live
-        // generation, so the stamp fill value is never read.
+
         self.stamps = vec![0; new_capacity];
         self.stale = 0;
-        // The rehash re-probes every key, so it rides the same const-
-        // arity dispatch as the entry points.
+
         match self.arity {
             0 => self.rehash_core::<0>(&old_keys, &old_values),
             1 => self.rehash_core::<1>(&old_keys, &old_values),
@@ -42,12 +36,6 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
-    /// The rehash body with the key width fixed at K. Re-probes in dense
-    /// (insertion) order so iteration order — and with it every
-    /// downstream determinism property — survives growth. All keys are
-    /// distinct; the probe lands on empties. The dense list is rewritten
-    /// in place: a rehash never changes the entry count, so the buffer it
-    /// has is the buffer it needs — no fresh allocation, ever.
     fn rehash_core<const K: usize>(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
         for i in 0..self.dense.len() {
             let old_idx = self.dense[i] as usize;
@@ -58,13 +46,12 @@ impl<V: Copy> WordMap<V> {
             self.set_ctrl(new_idx, ctrl_tag(hash));
             self.keys[new_idx * K..new_idx * K + K].copy_from_slice(key);
             // SAFETY: old_idx was occupied (dense-listed), so its value
-            // was initialized; the copy moves it to the new slot.
+
             self.values[new_idx].write(unsafe { old_values[old_idx].assume_init_read() });
             self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
         }
     }
 
-    /// [`WordMap::rehash_core`], runtime-arity form (the dyn widths).
     fn rehash_dyn(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
         for i in 0..self.dense.len() {
             let old_idx = self.dense[i] as usize;
@@ -76,7 +63,7 @@ impl<V: Copy> WordMap<V> {
             self.keys[new_idx * self.arity..(new_idx + 1) * self.arity]
                 .copy_from_slice(&old_keys[key_range]);
             // SAFETY: old_idx was occupied (dense-listed), so its value
-            // was initialized; the copy moves it to the new slot.
+
             self.values[new_idx].write(unsafe { old_values[old_idx].assume_init_read() });
             self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
         }
