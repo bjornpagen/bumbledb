@@ -3,7 +3,6 @@
 //! committed pre-state, executable judge: `lean/Bumbledb/Decide.lean:
 //! Txn.judgeB`, proved ids. Format in `lean/conformance/README.md` § judgment
 //! cases.
-
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -1413,7 +1412,6 @@ mod tests {
     }
 
     /// containment's holds-before premise fails on a store whose
-
     /// § "Domain quantification, worked"). Demonstrated 2026-07-15:
     #[test]
     fn domain_quantification_judgments_are_outside_the_lane() {
