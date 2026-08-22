@@ -18,7 +18,6 @@ pub struct MutationReport {
 }
 
 impl MutationReport {
-
     pub const EMPTY: Self = Self {
         submitted: 0,
         changed: 0,
@@ -75,14 +74,12 @@ impl<T: Fresh> FreshWord for T {
 /// The exclusive bound is a count, never a minted `T`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreshRange<T> {
-
     Empty,
 
     NonEmpty { start: T, count: NonZeroU64 },
 }
 
 impl<T> FreshRange<T> {
-
     #[must_use]
     pub fn start(self) -> Option<T> {
         match self {
