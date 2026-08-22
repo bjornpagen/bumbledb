@@ -1,10 +1,3 @@
-//! The graph fan-out scenario: a power-law directed graph. Multi-hop
-//! traversals are worst-case join fan-out — every hop multiplies by the
-//! out-degree, and hub starts make the intermediate sets explode. This
-//! is the regime where WCOJ-class execution is supposed to earn its
-//! keep; `SQLite` runs the same conjunctive SQL through nested-loop +
-//! B-tree plans.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term, Value,
@@ -37,14 +30,7 @@ bumbledb::schema! {
     Edge(src, dst) -> Edge;
 }
 
-/// Relation ids by declaration order.
-/// The validated scenario schema, memoized for the inspection surfaces
-/// (DDL rendering, typing); the store is created from [`Graph`]'s
-/// descriptor (`scenarios::load`).
-///
 /// # Panics
-///
-/// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -65,7 +51,7 @@ pub mod ids {
 
 pub const NODES: u64 = 100_000;
 pub const EDGES: u64 = 500_000;
-/// 0.1% of nodes are hubs holding ~30% of edge sources.
+
 const HUBS: u64 = NODES / 1000;
 
 fn node_row(seed: u64, i: u64) -> Vec<Value> {
@@ -84,8 +70,7 @@ fn edge_row(seed: u64, i: u64) -> Vec<Value> {
     } else {
         HUBS + rng.range(NODES - HUBS)
     };
-    // Destination locality: half the edges land near the source (real
-    // graphs cluster), half anywhere — reciprocal edges arise naturally.
+
     let dst = if rng.chance(1, 2) {
         (src + 1 + rng.range(64)) % NODES
     } else {
@@ -98,7 +83,6 @@ fn edge_row(seed: u64, i: u64) -> Vec<Value> {
     ]
 }
 
-/// Distinct (src, dst) pairs so both engines load the identical edge set.
 fn distinct_edges(seed: u64) -> Vec<Vec<Value>> {
     let mut loaded = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -118,8 +102,6 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// Param policy shared by the traversal queries: one hub, two normal
-/// nodes, one miss.
 fn start_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
     let mut rng = Rng::new(mix(seed, 901, salt));
     vec![
@@ -130,7 +112,6 @@ fn start_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// g1 — direct out-neighbors.
 fn neighbors() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -143,7 +124,6 @@ fn neighbors() -> Query {
     })
 }
 
-/// g2 — two hops out.
 fn two_hop() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -162,7 +142,6 @@ fn two_hop() -> Query {
     })
 }
 
-/// g3 — three-hop reach, counted (the intermediate explosion, folded).
 fn three_hop_count() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Count],
@@ -185,7 +164,6 @@ fn three_hop_count() -> Query {
     })
 }
 
-/// g4 — mutual (reciprocal) edges among a node kind: the 2-cycle.
 fn mutual() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -208,7 +186,6 @@ fn mutual() -> Query {
     })
 }
 
-/// g5 — triangles through a start node: the 3-cycle, counted.
 fn triangles_from() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Count],
@@ -231,7 +208,6 @@ fn triangles_from() -> Query {
     })
 }
 
-/// g6 — weighted hop with node filter: ranges on both hop and target.
 fn weighted_hop() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -283,7 +259,6 @@ fn weighted_hop_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// The scenario registration.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
