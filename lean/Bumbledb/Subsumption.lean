@@ -9,24 +9,24 @@ machine-checked: each theorem spends an extension judgment against an
 original one.
 
 * **A floored capacity law implies the reverse containment**
-  (`window_floor_containment`): `B(Y | ψ) <=[w]{n..m} A(X | φ)` with
-  `n ≥ 1` yields `B(Y | ψ) <= A(X | φ)` — a positive measure floor
-  inhabits the group UNDER ANY WEIGHT (`natSum [] = 0`), so the
-  extension strictly generalizes what the original vocabulary already
-  says. The floor half generalizes to every weight; the `{1..*}` BAN
-  fires on the Count instance only, because only there is the floor
-  equivalent to containment — a weight-0 row satisfies containment
-  but not a sum floor (the per-aggregate ban law,
-  `docs/design/capacity-laws.md` § 6).
+ (`window_floor_containment`): `B(Y | ψ) <=[w]{n..m} A(X | φ)` with
+ `n ≥ 1` yields `B(Y | ψ) <= A(X | φ)` — a positive measure floor
+ inhabits the group UNDER ANY WEIGHT (`natSum [] = 0`), so the
+ extension strictly generalizes what the original vocabulary already
+ says. The floor half generalizes to every weight; the `{1..*}` BAN
+ fires on the Count instance only, because only there is the floor
+ equivalent to containment — a weight-0 row satisfies containment
+ but not a sum floor (the per-aggregate ban law,
+ `docs/design/capacity-laws.md` § 6).
 * **Keyed `==` is the `{1}` window at unit weight**
-  (`keyed_eq_unit_window`, `unit_window_containsEq`): forward,
-  key-backed equality forces the unit-weight point window; backward,
-  that window plus the forward containment reconstructs bare `==`.
-  The key premises stay ACCEPTANCE-side, exactly the acceptance ≠
-  denotation discipline — the reconstruction returns `ContainsEq`,
-  and upgrading it to `KeyBackedEquality` costs exactly the two key
-  premises acceptance resolves (`TargetKeyAccepted`, each direction),
-  never a new judgment.
+ (`keyed_eq_unit_window`, `unit_window_containsEq`): forward,
+ key-backed equality forces the unit-weight point window; backward,
+ that window plus the forward containment reconstructs bare `==`.
+ The key premises stay ACCEPTANCE-side, exactly the acceptance ≠
+ denotation discipline — the reconstruction returns `ContainsEq`,
+ and upgrading it to `KeyBackedEquality` costs exactly the two key
+ premises acceptance resolves (`TargetKeyAccepted`, each direction),
+ never a new judgment.
 
 The extension form this module reads — the capacity statement — is
 ACCEPTED by the engine at declaration
