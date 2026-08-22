@@ -1,28 +1,3 @@
-//! The randomized query generator (docs/architecture/60-validation.md
-//! § differential and property tests): seeded random valid queries over
-//! the target ledger schema — the fuel for `verify`'s randomized half.
-//!
-//! Construction is correct **by construction**: fresh dense `VarId`s,
-//! dense `ParamId`s allocated at their use site, literals typed from the
-//! schema walk, and every comparison operator applied only where its
-//! type-legality cell is legal — the illegal cells of the (operator,
-//! type) matrix are *unemittable*, not filtered after. The engine's
-//! `validate` is the assertion, not the filter: a generated query
-//! failing validation is a generator bug.
-//!
-//! The target schema is the [`target`] seam: the generator's grammar is
-//! schema-specific by design, and everything schema-shaped it consumes
-//! (relation/field ids, domains, vocabulary, the deterministic corpus
-//! value functions) comes from that one module — a schema change lands
-//! there without touching the grammar.
-//!
-//! [`random_query`] is the one randomized entry (stamp/fuzz/contradict/
-//! opgen): it draws [`QueryClass`] then a CQ [`Shape`] or an
-//! interiors/rec shape. [`random_cq_query`] and [`random_reach_query`]
-//! are the corpus reconstructers: the RNG stream (`SHAPE_WEIGHTS`,
-//! `range(8)`) is pinned so replay keeps 268 answers; they construct
-//! `Query::Cq` / `Query::Reach`, not a product.
-
 use bumbledb::{AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
 
 mod builder;
@@ -53,10 +28,6 @@ pub use shapes_recursive::{
     RecursiveCoverage, RecursiveVariant, random_reach_query, recursive_coverage,
 };
 
-/// The shape grammar's weights (drawn by range over the sum). The five
-/// original join shapes keep their proportions; the redesign's surface
-/// joins the table: point membership, interval joins, the
-/// adjacent-touching boundary probes, and remaining folds.
 const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::KeyProbe, 10),
     (Shape::Star, 15),
@@ -70,18 +41,15 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::ExistenceWalk, 8),
     (Shape::DuWalk, 6),
     (Shape::Rules, 10),
-    // Retired query-side Duration: the slot stays in this position so
-    // `SHAPE_WEIGHTS` still pins the corpus RNG stream. The construct
-    // emits a valid transfer scan after consuming the old measure() draws.
+
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
     (Shape::GroundFold, 7),
     (Shape::Pack, 7),
 ];
 
-/// Filter dressing applies to every shape with this percent chance…
 const DRESS_PCT: u64 = 60;
-/// …and the repeated in-atom variable to qualifying atoms with this one.
+
 const REPEAT_VAR_PCT: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,87 +60,56 @@ enum Shape {
     SelfJoin,
     Gated,
     Aggregate,
-    /// Point membership against an interval field: literal, param, and
-    /// var points (the var case constructs its scalar anchor first).
+
     Membership,
-    /// `Allen` masks (composites and random singletons) and `Eq`/`Ne`
-    /// between interval terms, plus the `PointIn` predicate.
+
     IntervalJoin,
-    /// The adjacent-touching boundary: query literals recomputed to touch
-    /// a corpus interval exactly at its endpoint, both polarities.
+
     Boundary,
-    /// The grounding's existence walk (`shapes_ground.rs`): the containment
-    /// target joined on its full key with nothing else read from it —
-    /// eliminable — plus the extra-projected-field near-miss.
+
     ExistenceWalk,
-    /// The discriminated-union one-sided walk, both `==` directions,
-    /// plus the missing-φ near-miss.
+
     DuWalk,
-    /// Multi-rule queries (`shapes_rules.rs`): rule counts 2–4,
-    /// overlapping and provably-disjoint arm sets (DU-arm unions),
-    /// duplicate head answers across
-    /// rules, and the rules ∧ aggregate union fold.
+
     Rules,
-    /// Closed relations in the drawable atom pool (`shapes_closed.rs`):
-    /// joins against the vocabularies with/without payload projections
-    /// and payload-column selections, plus handle literals and handle
-    /// param sets on referencing fields.
+
     ClosedJoin,
-    /// The fold-shaped pattern PRD 07 targets, under its own family
-    /// knob: a closed atom whose only escaping variable is the join id.
+
     GroundFold,
-    /// The coalescing fold over the Mandate claims (`FindTerm::Pack`):
-    /// grouped (account or closed-org key) and global, composed with
-    /// the shared dressing/param/negation machinery. `SQLite` cannot
-    /// spell it — the verify lane routes Pack draws to the naive leg by
-    /// the typed expressibility gate (finding 025: the grammar escapes
-    /// the ⊆ SQL-expressible cap).
+
     Pack,
-    /// Retired query-side Duration slot. Kept in the weight table so
-    /// corpus replay's RNG stream stays pinned; the construct no longer
-    /// emits `Duration` / measure finds.
+
     Measure,
 }
 
-/// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
-/// [`Shape::GroundFold`]) — the generator's intent, counted by the
-/// closed-class self-test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClosedVariant {
-    /// A join through the closed atom's id (payload projected or not).
+
     Join,
-    /// The join under a payload-column selection (the ψ shape).
+
     JoinSelected,
-    /// A handle literal on a referencing field.
+
     HandleLiteral,
-    /// A handle param set on a referencing field.
+
     HandleSet,
-    /// The fold shape (dead payload variable included half the time).
+
     Fold,
 }
 
-/// Which grounding-shape variant a query is ([`Shape::ExistenceWalk`] /
-/// [`Shape::DuWalk`]) — the generator's intent, which the coverage
-/// contract and the engine-backed structural test hold it to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GroundVariant {
-    /// Eliminable existence walk (projection or aggregate sink).
+
     Walk,
-    /// Near-miss: one extra projected target field — must refuse.
+
     WalkExtraField,
-    /// DU one-sided, the header falls (child-to-header direction).
+
     DuHeader,
-    /// DU one-sided, the child falls (header-to-child direction).
+
     DuChild,
-    /// Near-miss: φ missing from the header occurrence — must refuse.
+
     DuMissingPhi,
 }
 
-/// The generator's queries carry flat conjunctions — every predicate
-/// tree is a leaf ([`Builder::into_query`] wraps them); its readers
-/// (coverage, oracles, tests) unwrap through here. The tree grammar's
-/// OR shapes are the DNF property suite's territory
-/// (`naive/tests/dnf.rs`), never the generator's.
 fn leaf(tree: &bumbledb::ConditionTree) -> &Comparison {
     match tree {
         bumbledb::ConditionTree::Leaf(comparison) => comparison,
@@ -182,14 +119,10 @@ fn leaf(tree: &bumbledb::ConditionTree) -> &Comparison {
     }
 }
 
-/// Accumulating query state: atoms, negated atoms, predicates, finds,
-/// fresh id counters, the registry of variables the shapes bound
-/// (group-key candidates), and each bound variable's anchoring
-/// (relation, field) — the provenance the negation pass draws from.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
-)] // independent generation-fact flags.
+)] 
 #[derive(Default)]
 struct Builder {
     atoms: Vec<Atom>,
@@ -199,34 +132,28 @@ struct Builder {
     next_var: u16,
     next_param: u16,
     bound: Vec<VarId>,
-    /// Every `bind_var`'s (var, relation, field) — negation templates and
-    /// membership anchors select by provenance, never by hope.
+
     anchors: Vec<(VarId, RelationId, FieldId)>,
-    /// Whether dressing emitted an out-of-vocabulary string or bytes
-    /// literal.
+
     miss: bool,
-    /// Whether dressing emitted an in-vocabulary bytes literal (a
-    /// recomputed extref) / an out-of-vocabulary one.
+
     bytes_hit: bool,
     bytes_miss: bool,
-    /// Boundary-shape polarity: the query literal touches a corpus
-    /// interval at the corpus interval's start / at its end.
+
     adjacent_left: bool,
     adjacent_right: bool,
-    /// Boundary-shape ladder rungs drawn for this query's interval
-    /// literals ([`interval_data::Rung`] — systematized for every
-    /// interval literal draw).
+
     ladder: [bool; 4],
-    /// Whether an `Allen` predicate carries a random (unnamed) mask.
+
     random_mask: bool,
-    /// Which grounding-shape variant this query is, when the shape is one.
+
     ground: Option<GroundVariant>,
-    /// Which closed-relation class this query is, when the shape is one.
+
     closed: Option<ClosedVariant>,
 }
 
 impl Builder {
-    /// Records one ladder-rung draw ([`interval_data::Rung`]).
+
     fn saw_rung(&mut self, rung: interval_data::Rung) {
         self.ladder[match rung {
             interval_data::Rung::Equal => 0,
@@ -237,13 +164,10 @@ impl Builder {
     }
 }
 
-/// Generation facts the query alone cannot reveal (hit-vs-miss and the
-/// boundary polarities are corpus-content properties; the grounding variant
-/// is the generator's intent, engine-verified in the tests).
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent booleans mirror the external configuration"
-)] // independent corpus-content tags.
+)] 
 #[derive(Debug, Clone, Copy, Default)]
 struct GenTags {
     miss: bool,
@@ -258,26 +182,18 @@ struct GenTags {
     closed: Option<ClosedVariant>,
 }
 
-/// Which multi-rule variant a [`Shape::Rules`] query is
-/// (`shapes_rules.rs`) — the generator's intent, held to its band by the
-/// coverage contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RulesVariant {
-    /// Provably-disjoint arms: one relation, distinct vocabulary selections on
-    /// the discriminant field.
+
     Disjoint,
-    /// Overlapping arms with duplicate head answers across rules (the
-    /// union's teeth) — including the DU twin (`JournalEntry` import
-    /// arm vs `ImportBatch`, equal denotations by the `==` statement).
+
     Overlap,
-    /// The multi-rule aggregate head (the union fold).
+
     Aggregate,
 }
 
-/// The comparison-type axis of the coverage matrix — all six types.
 pub const CMP_TYPES: [&str; 6] = ["u64", "i64", "bool", "string", "bytes", "interval"];
-/// The operator axis, in `CmpOp` order — all eight operators (the Allen
-/// row counts every mask; the representative here is only a row label).
+
 pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Eq,
     CmpOp::Ne,
@@ -291,10 +207,6 @@ pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::PointIn,
 ];
 
-/// Construct counts over a generated batch — the coverage contract's
-/// evidence (`60-validation.md`: the exact form the coverage test pins
-/// at n = 1000). `matrix[op][type]` counts comparisons per (operator,
-/// structural type).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Coverage {
     pub key_probe: u64,
@@ -312,21 +224,14 @@ pub struct Coverage {
     pub closed_join: u64,
     pub ground_fold: u64,
     pub pack: u64,
-    /// Retired Duration shape slot — still counted so the coverage
-    /// band holds the weight-8 draw.
+
     pub measure: u64,
-    /// The closed-relation pattern classes (`shapes_closed.rs`): the
-    /// plain join, the payload-column selection, the handle literal,
-    /// and the handle param set — all four counted by the closed-class
-    /// self-test (the fourth write-side class lives in [`writes`]).
+
     pub closed_join_plain: u64,
     pub closed_join_selected: u64,
     pub closed_handle_literal: u64,
     pub closed_handle_set: u64,
-    /// The grounding variants (`shapes_ground.rs`): eliminable shapes
-    /// (existence walks and both DU `==` directions) vs the near-miss
-    /// refusals — the coverage contract asserts both appear per run,
-    /// and the engine-backed test holds each tag to its verdict.
+
     pub ground_eliminable: u64,
     pub ground_extra_field: u64,
     pub ground_missing_phi: u64,
@@ -335,27 +240,24 @@ pub struct Coverage {
     pub gates: u64,
     pub misses: u64,
     pub params: u64,
-    /// `Term::ParamSet` occurrences (bindings and `Eq` sides).
+
     pub param_sets: u64,
     pub repeated_vars: u64,
     pub agg_sum: u64,
     pub agg_min: u64,
     pub agg_max: u64,
     pub agg_count: u64,
-    /// Aggregates whose input variable is u64-typed.
+
     pub agg_u64: u64,
-    /// Aggregate-bearing find lists with more than one aggregate.
+
     pub multi_aggregate: u64,
-    /// Membership bindings by point-term kind and by element type.
+
     pub membership_literal: u64,
     pub membership_param: u64,
     pub membership_var: u64,
     pub membership_u64: u64,
     pub membership_i64: u64,
-    /// Interval comparisons by element type: `Allen` masks per lane,
-    /// composite (≥2 basics) vs singleton mask draws, random (unnamed)
-    /// masks, per-basic occurrence across every literal mask (all 13
-    /// reachable per run), and `PointIn` per lane.
+
     pub allen_u64: u64,
     pub allen_i64: u64,
     pub allen_composite: u64,
@@ -364,23 +266,19 @@ pub struct Coverage {
     pub allen_basics: [u64; 13],
     pub point_in_u64: u64,
     pub point_in_i64: u64,
-    /// Boundary-shape polarities (corpus-adjacent query literals).
+
     pub adjacent_left: u64,
     pub adjacent_right: u64,
-    /// Boundary-shape ladder rungs (equal/adjacent/nested/ray) drawn by
-    /// the shapes' interval literals.
+
     pub ladder: [u64; 4],
-    /// Multi-rule queries by arm count (2/3/4) and by variant; the
-    /// duplicate-head DU twin counts under overlap.
+
     pub rules_arms: [u64; 3],
     pub rules_disjoint: u64,
     pub rules_overlap: u64,
     pub rules_aggregate: u64,
-    /// Negated atoms, and their binding-shape split: key-covered (a
-    /// fresh key field bound) vs open; literal/param/set/membership
-    /// bindings inside; zero-binding negated gates; open negations over
+
     /// the multiply-witnessed relations (rejection must not depend on
-    /// witness count).
+
     pub negations: u64,
     pub negation_key_covered: u64,
     pub negation_open: u64,
@@ -390,39 +288,27 @@ pub struct Coverage {
     pub negation_membership: u64,
     pub negation_gate: u64,
     pub negation_multi_witness: u64,
-    /// The structural compositions where bugs hide — asserted ≥ 1 per
-    /// run.
+
     pub neg_and_aggregate: u64,
     pub set_and_negation: u64,
     pub membership_and_allen: u64,
     pub mask_and_negation: u64,
-    /// Var-vs-var comparisons whose variables bind in different atoms.
+
     pub cross_residuals: u64,
-    /// Wide projections — the >8-projected-word class the executor's
-    /// hoist paths must never cap (docs/architecture/40-execution.md,
-    /// scan-fold pushdown): all-scalar find lists past 8 words, and
-    /// find lists carrying ≥4 interval-typed finds (≥8 interval words).
+
     pub wide_scalar: u64,
     pub wide_interval: u64,
-    /// In-vocabulary / out-of-vocabulary bytes literals.
+
     pub bytes_hits: u64,
     pub bytes_misses: u64,
-    /// Equality-spine cost-bound violations
-    /// (`docs/architecture/60-validation.md` § the generator contract):
-    /// an atom carrying a var-point membership or a cross-atom
-    /// `Allen`/`PointIn` occurrence with neither an equality join
-    /// variable nor an equality selection, or a negated atom whose only
-    /// bindings are memberships. Asserted **zero** — the Cartesian
-    /// degenerate (`40-execution.md`) must be unemittable.
+
     pub spine_violations: u64,
-    /// Comparison counts per `(CMP_OPS index, CMP_TYPES index)`.
+
     pub matrix: [[u64; 6]; 8],
 }
 
-/// Which set each of the four generated param draws is.
 const PARAM_DRAWS: usize = 4;
 
-/// Which of the four draws is being filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DrawKind {
     Hit,
