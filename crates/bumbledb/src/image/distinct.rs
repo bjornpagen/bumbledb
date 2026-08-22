@@ -5,7 +5,6 @@
 //! commit pay it again; persisting the counting state makes the append
 //! path O(tail) exact (the image oracle's served-vs-rebuilt equality
 //! whole count pass per demanded column and every re-prepare after a
-
 use super::{Column, RelationImage};
 
 impl RelationImage {
