@@ -1,5 +1,5 @@
 /-!
-# Values — the value universe (Level 0, PRD 02)
+# Values — the value universe (Level 0, 
 
 The value universe: the structural types (Bool, U64, I64, Str,
 FixedBytes n, Interval over an orderable element domain, and the
@@ -9,7 +9,7 @@ interval with rays and measure, and the order-embedding encodings.
 Types are encodings — hard structural typing; nominal safety lives
 in host Rust newtypes, never here.
 
-**The admission rule** (normative — `docs/architecture/10-data-model.md`):
+**The admission rule** (normative —:
 a type parameter is admitted iff it CHANGES THE ENCODING. The width
 `w` of `interval<E, w>` does — the encoding is ONE word, the start;
 the end derives as `start + w` — so the parameter is a type. A
@@ -19,102 +19,102 @@ parameter that merely checks values would be a CHECK constraint
 ## Deliberate absences (design facts, not gaps)
 
 * **Str carries NO order.** `StrId` is an opaque intern identity with
-  decidable equality only. The intern id is a per-database allocation
-  accident: two databases intern the same string to different ids, so
-  any order on ids would order the interning history, not the values.
-  The order-refusal is a typing fact — no `LT`/`LE`/`Ord` instance
-  exists for `StrId` (machine-checked in `Countermodels.lean`).
+ decidable equality only. The intern id is a per-database allocation
+ accident: two databases intern the same string to different ids, so
+ any order on ids would order the interning history, not the values.
+ The order-refusal is a typing fact — no `LT`/`LE`/`Ord` instance
+ exists for `StrId` (machine-checked in `Countermodels.lean`).
 * **The empty interval is unrepresentable.** `Interval` carries the
-  invariant `h : start < «end»` as a field, mirroring
-  `crate::Interval` (whose constructors return `Option`). A fact never
-  denotes nothing; the vacuous-coverage countermodel over a raw bounds
-  pair lives in `Countermodels.lean` — its unrepresentability here is
-  the point.
+ invariant `h: start < «end»` as a field, mirroring
+ `crate::Interval` (whose constructors return `Option`). A fact never
+ denotes nothing; the vacuous-coverage countermodel over a raw bounds
+ pair lives in `Countermodels.lean` — its unrepresentability here is
+ the point.
 * **`Interval` itself carries NO order.** The lexicographic-by-start
-  order the encoding has (`encode_interval_order`) is an encoding
-  fact, not semantics — mirroring the Rust type's deliberate
-  non-`Ord`. The order theorem is stated over the encoded pair, and
-  no `LT` instance is installed on `Interval`.
+ order the encoding has (`encode_interval_order`) is an encoding
+ fact, not semantics — mirroring the Rust type's deliberate
+ non-`Ord`. The order theorem is stated over the encoded pair, and
+ no `LT` instance is installed on `Interval`.
 * **The Allen mask is not a field type.** It anchors only the Allen
-  comparison's mask position (PRD 05's territory); nothing storable
-  carries one, so it has no place in the value universe.
+ comparison's mask position ( territory); nothing storable
+ carries one, so it has no place in the value universe.
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * `U64`/`I64` are modeled as the bounded subtypes
-  `{n : Nat // n < 2^64}` and `{x : Int // -(2^63) ≤ x ∧ x < 2^63}`.
-  The bound is the type, exactly as in Rust: the interval ceiling
-  `end ≤ MAX_END` needs no extra invariant field.
+ `{n: Nat // n < 2^64}` and `{x: Int // -(2^63) ≤ x ∧ x < 2^63}`.
+ The bound is the type, exactly as in Rust: the interval ceiling
+ `end ≤ MAX_END` needs no extra invariant field.
 * The word domain is `Nat` — the encodings are order-embedding
-  CLAIMS, not byte layouts. `encodeI64` is the bias form
-  `x ↦ (x + 2^63).toNat`, which is what the byte-level sign-bit flip
-  computes on two's-complement words; the engine's exhaustive order
-  suite samples the byte fact itself.
+ CLAIMS, not byte layouts. `encodeI64` is the bias form
+ `x ↦ (x + 2^63).toNat`, which is what the byte-level sign-bit flip
+ computes on two's-complement words; the engine's exhaustive order
+ suite samples the byte fact itself.
 * `FixedBytes n` is `n` raw bytes (`Byte`, `0..256`). Encoding
-  zero-pads to a multiple of 8 (`paddedByteCount n` = `⌈n/8⌉ × 8`)
-  matching `encoding.rs::fixed_bytes_words` / `10-data-model.md`.
-  The pad is encoding, not data. The engine then stores those padded
-  bytes as `⌈n/8⌉` machine words; at this altitude each pad-byte is
-  one abstract `Word` `0..256`.
+ zero-pads to a multiple of 8 (`paddedByteCount n` = `⌈n/8⌉ × 8`)
+ matching `encoding.rs::fixed_bytes_words` / `10-data-model.md`.
+ The pad is encoding, not data. The engine then stores those padded
+ bytes as `⌈n/8⌉` machine words; at this altitude each pad-byte is
+ one abstract `Word` `0..256`.
 * `encode_interval_order` is stated concretely over the I64 domain
-  (the sign-flipped, interesting half); `encode_interval_order_u64`
-  is its U64 companion. Generalizing over an abstract order-embedding
-  class would cost more proof plumbing than the two real domains
-  justify.
+ (the sign-flipped, interesting half); `encode_interval_order_u64`
+ is its U64 companion. Generalizing over an abstract order-embedding
+ class would cost more proof plumbing than the two real domains
+ justify.
 * `Set` is defined in-tree (`α → Prop` with membership): core Lean
-  v4.32.0 has no `Set`, and mathlib is refused.
+ v4.32.0 has no `Set`, and mathlib is refused.
 * **`Value` mirrors the STORABLE sum.** The Allen mask is a comparison
-  operator, not a value variant — nothing storable carries one.
-  The str carrier is split across two Rust types — `Value::String`
-  holds raw UTF-8 the encoder refuses, while `encode_fact`'s
-  `ValueRef::String(u64)` arm carries the id encoding modeled here.
-  The mirror of this `Value` is `Value ⊎ ValueRef` with callers peeling
-  first (all three `encode_literal` call sites route `String` elsewhere).
+ operator, not a value variant — nothing storable carries one.
+ The str carrier is split across two Rust types — `Value::String`
+ holds raw UTF-8 the encoder refuses, while `encode_fact`'s
+ `ValueRef::String(u64)` arm carries the id encoding modeled here.
+ The mirror of this `Value` is `Value ⊎ ValueRef` with callers peeling
+ first (all three `encode_literal` call sites route `String` elsewhere).
 * **The sentinel intern id is unmodeled.** `StrId.id` is unbounded and
-  every id is a value; Rust reserves `SENTINEL_ID = u64::MAX`
-  (`storage/dict.rs::SENTINEL_ID`) as never-minted dictionary state —
-  unobservable while the mint invariant holds, so the spec stays
-  silent.
+ every id is a value; Rust reserves `SENTINEL_ID = u64::MAX`
+ (`storage/dict.rs::SENTINEL_ID`) as never-minted dictionary state —
+ unobservable while the mint invariant holds, so the spec stays
+ silent.
 * **`fixedBytes n` is total over ℕ here; Rust declares `1..=64`
-  only** (`encoding.rs::MAX_FIXED_BYTES`). The extra
-  generality is dead — widths no code implements —
-  and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
-  false rides it.
+ only** (`encoding.rs::MAX_FIXED_BYTES`). The extra
+ generality is dead — widths no code implements —
+ and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
+ false rides it.
 * **Storage membership is blake3 of `fact_bytes`, not encoding
-  equality.** `value_eq_iff_encode_eq` is Lean identity. The store
-  treats hash equality as fact equality — collisions are an accepted
-  extra-theoretic assumption (`10-data-model.md`, `50-storage.md`); a
-  blake3 collision unifies two Lean-distinct facts. Hashing is
-  extra-theoretic mechanism this module does not own (`lean/README.md`).
+ equality.** `value_eq_iff_encode_eq` is Lean identity. The store
+ treats hash equality as fact equality — collisions are an accepted
+ extra-theoretic assumption (`10-data-model.md`, `50-storage.md`); a
+ blake3 collision unifies two Lean-distinct facts. Hashing is
+ extra-theoretic mechanism this module does not own (`lean/README.md`).
 * **The fixed-width carrier is concrete per element domain**
-  (`FixedU64`/`FixedI64`), like `encode_interval_order`: the two real
-  domains cost less than an abstract order-embedding class. The
-  carrier is the START SCALAR with the Q2 subtype bound
-  `0 < w ∧ start + w < maxEnd`: a wide value is unrepresentable (the
-  width is the type's), a `w = 0` carrier is EMPTY (a fact never
-  denotes nothing), and the derived end sits strictly below the
-  ceiling — fixed-width values are NEVER rays, by construction
-  (`FixedU64.not_ray`); rays stay exclusive to the general type. The
-  Rust mirror spells the family as the one `Interval` variant with an
-  optional width (pattern-totality is Rust's exhaustiveness idiom;
-  a new constructor is Lean's) — same universe, same encodings.
+ (`FixedU64`/`FixedI64`), like `encode_interval_order`: the two real
+ domains cost less than an abstract order-embedding class. The
+ carrier is the START SCALAR with the Q2 subtype bound
+ `0 < w ∧ start + w < maxEnd`: a wide value is unrepresentable (the
+ width is the type's), a `w = 0` carrier is EMPTY (a fact never
+ denotes nothing), and the derived end sits strictly below the
+ ceiling — fixed-width values are NEVER rays, by construction
+ (`FixedU64.not_ray`); rays stay exclusive to the general type. The
+ Rust mirror spells the family as the one `Interval` variant with an
+ optional width (pattern-totality is Rust's exhaustiveness idiom;
+ a new constructor is Lean's) — same universe, same encodings.
 * **The decode/corruption boundary is spec-silent SUPPORT.** Only
-  encode is modeled; decode's strictness (`InvalidBool` on any byte
-  ≠ 0/1, `InvalidInterval` on `start ≥ end`, `NonzeroFixedBytesPad`)
-  is behavior the spec does not determine — it makes the canonical
-  encoding the ONLY accepted bytes, supporting (never contradicting)
-  the canonical-bytes theorem.
+ encode is modeled; decode's strictness (`InvalidBool` on any byte
+ ≠ 0/1, `InvalidInterval` on `start ≥ end`, `NonzeroFixedBytesPad`)
+ is behavior the spec does not determine — it makes the canonical
+ encoding the ONLY accepted bytes, supporting (never contradicting)
+ the canonical-bytes theorem.
 * **The str-order refusal is a TYPING fact here, a DYNAMIC fact in
-  Rust.** This tree installs no `LT`/`LE`/`Ord` instance on `StrId`,
-  so an order comparison on strings is unwritable; the engine's
-  intern ids are bare `u64` words (`Ord` in Rust, as any word is),
-  and the refusal is enforced at the validation boundary instead —
-  `Error::OrderComparisonOnString`
-  (`ir/validate/context.rs::screen_order_operand`) rejects the
-  comparison on accepted
-  rules. The model's refusal is strictly stronger (unwritable vs
-  dynamically rejected) — sound direction, recorded like its
-  siblings above.
+ Rust.** This tree installs no `LT`/`LE`/`Ord` instance on `StrId`,
+ so an order comparison on strings is unwritable; the engine's
+ intern ids are bare `u64` words (`Ord` in Rust, as any word is),
+ and the refusal is enforced at the validation boundary instead —
+ `Error::OrderComparisonOnString`
+ (`ir/validate/context.rs::screen_order_operand`) rejects the
+ comparison on accepted
+ rules. The model's refusal is strictly stronger (unwritable vs
+ dynamically rejected) — sound direction, recorded like its
+ siblings above.
 -/
 
 namespace Bumbledb
@@ -227,7 +227,7 @@ def Interval.measure [DecidableEq α] (iv : Interval α) : Option Nat :=
   if iv.isRay then none else some (PointDomain.gap iv.start iv.«end»)
 
 /-- Interval membership is decidable by the two boundary comparisons
-(PRD 13 wants computable forms). -/
+( wants computable forms). -/
 instance [DecidableLT α] [DecidableLE α] (x : α) (iv : Interval α) :
     Decidable (x ∈ iv.points) :=
   inferInstanceAs (Decidable (iv.start ≤ x ∧ x < iv.«end»))
@@ -507,17 +507,17 @@ inductive ValueType where
   | u64
   | i64
   /-- Interned string identity — equality only, NO order (see the
-  module doc). -/
+ module doc). -/
   | str
   /-- `bytes<N>`: the length is the type. -/
   | fixedBytes (n : Nat)
   /-- A nonempty half-open interval over an orderable scalar. -/
   | interval (e : Elem)
   /-- `interval<E, w>`: the width is the type — the encoding stores
-  ONLY the start (one word); the end derives as `start + w`. Admitted
-  under the admission rule (the parameter changes the encoding — the
-  `fixedBytes n` precedent, generalized); `w ≥ 1` is the accepted
-  grammar, and the `w = 0` carrier is empty by the Q2 bound. -/
+ ONLY the start (one word); the end derives as `start + w`. Admitted
+ under the admission rule (the parameter changes the encoding — the
+ `fixedBytes n` precedent, generalized); `w ≥ 1` is the accepted
+ grammar, and the `w = 0` carrier is empty by the Q2 bound. -/
   | intervalFixed (e : Elem) (w : Nat)
 deriving DecidableEq
 
@@ -575,8 +575,7 @@ def encodeAt : (t : ValueType) → t.carrier → List Word
   | .fixedBytes _, bs => padFixedBytes bs
   | .interval .u64, iv => [(encodeIntervalU64 iv).1, (encodeIntervalU64 iv).2]
   | .interval .i64, iv => [(encodeIntervalI64 iv).1, (encodeIntervalI64 iv).2]
-  -- ONE word: the width is the type's, never the bytes' — the end is
-  -- derived, so encoding it would be transcription.
+
   | .intervalFixed .u64 _, v => [encodeU64 v.val]
   | .intervalFixed .i64 _, v => [encodeI64 v.val]
 
@@ -608,7 +607,7 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     cases a; cases b; cases heq; rfl
   | .fixedBytes n, a, b =>
     simp only [encodeAt, padFixedBytes] at heq
-    -- Same pad length on both sides, so the raw-byte prefixes decide.
+
     have hmap : a.val.map (fun b : Byte => b.val) =
         b.val.map (fun b : Byte => b.val) :=
       List.append_cancel_right heq
@@ -629,8 +628,7 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     exact Interval.ext ((encodeI64_eq_iff _ _).mp heq.1)
       ((encodeI64_eq_iff _ _).mp heq.2)
   | .intervalFixed .u64 _, a, b =>
-    -- One word decides the whole value: the start determines the
-    -- derived interval, so the scalar injectivity is the identity law.
+
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     exact Subtype.ext ((encodeU64_eq_iff _ _).mp heq)
   | .intervalFixed .i64 _, a, b =>
@@ -651,7 +649,7 @@ two order extremes ARE the two quantifiers — `Max` over a bool column
 is Any (the `||`-fold, `encode_bool_max_any`), `Min` is All (the
 `&&`-fold, `encode_bool_min_all`) — the documented idiom, true with
 no dedicated operators. The denotation's order vocabulary carries the
-bool arm (`Value.orderWord`'s `OrderTag.bool`, PRD 04, with
+bool arm (`Value.orderWord`'s `OrderTag.bool`, with
 `Value.vlt_bool` / `Value.vle_bool` realizing the embedding on the
 value order — the R3 widening, discharged); the implementations'
 validation rosters widen beside it (`ir/validate/finds.rs`, the
