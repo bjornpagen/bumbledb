@@ -101,7 +101,7 @@ fn stamp_costs_match_the_measured_model() {
 fn nested_start_capture_extends_instead_of_discarding() {
     start_capture();
     event(names::SAMPLE, TraceArgs::Count(1));
-    start_capture(); 
+    start_capture();
     event(names::TOUCH, TraceArgs::Count(2));
     let events = finish_capture();
     assert_eq!(
