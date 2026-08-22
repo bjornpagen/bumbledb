@@ -14,12 +14,6 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { loadNativeBinding } from "#native.ts"
 
-/**
- * A platform-arch pair that is NEVER the running host and NEVER installed:
- * no linux package ships at all, so any linux pair differing from the host
- * itself (whose locally built package the build links by name) is a
- * guaranteed-absent foreign target on every host.
- */
 const foreign =
 	process.platform === "linux" && process.arch === "x64"
 		? { platform: "linux", arch: "arm64" }
