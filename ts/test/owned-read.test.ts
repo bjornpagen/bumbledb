@@ -1,10 +1,3 @@
-/**
- * Issue 03: one way to read an owned instance — direct native methods,
- * no lease, no `read(fn)`. A hot get loop mints no per-call handle.
- * A generic host typed against the shared read surface compiles against
- * both `ReadInstance` and `OwnedInstance`.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -34,10 +27,6 @@ const Holder = relation("Holder", { id: u64.fresh, name: str })
 const Ledger = schema("OwnedRead", { Holder }, [])
 type Rels = (typeof Ledger)["relations"]
 
-/**
- * The shared read surface both arms structurally satisfy. Assigning a
- * `ReadInstance` and an `OwnedInstance` here is the type-level gate.
- */
 function againstSharedRead<Rels extends SchemaRelations>(host: {
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
