@@ -1,6 +1,5 @@
 //! Exit codes: 0 ok / gates won; 1 verify mismatch or gate loss; 2 usage or
 //! refusal (each refusal names the remedy).
-
 use bumbledb_bench::{cli, driver, families, lanes};
 
 fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
