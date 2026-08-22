@@ -1,15 +1,3 @@
-//! Targeted differential tests over the freshest recursion/finalize
-//! machinery: the reach driver's incremental accumulator
-//! (`api/prepared/reach.rs` + `image/build.rs: TransientImage::append`
-//! — append floors, watermark drift, ping-pong halves across many
-//! rounds, finished-interior reads, repeat executions on one
-//! prepared handle) and the column-major finalize
-//! (`api/prepared/finalize.rs` — strided cell writes, byte-heap ranges
-//! for interned strings across columns, interval two-word cells, the
-//! aggregate drain). Every expectation is computed naively in-test
-//! (`BTreeSet` fixpoints over the same tiny worlds), so a divergence is a
-//! defect, never a golden drift.
-
 use std::collections::BTreeSet;
 
 use bumbledb::ir::{
@@ -81,10 +69,6 @@ fn pair_rule(finds: (u16, u16), atoms: Vec<Atom>) -> Rule {
     }
 }
 
-/// `rec(x, z) | Edge(x, z); rec(x, z) | Edge(x, y), interior 0(y, z)` —
-/// the right-linear closure with identity main: on a diameter-`d` graph
-/// the driver runs ~`d` rounds, so the accumulator appends and the delta
-/// ping-pong flip many times within one execution.
 fn closure_query() -> Query {
     Query {
         interiors: vec![],
@@ -109,7 +93,6 @@ fn closure_query() -> Query {
     }
 }
 
-/// The naive transitive closure (the in-test oracle).
 fn naive_closure(edges: &BTreeSet<(u64, u64)>) -> BTreeSet<(u64, u64)> {
     let mut closed: BTreeSet<(u64, u64)> = edges.clone();
     loop {
@@ -139,12 +122,12 @@ fn answer_pairs(answers: &Answers) -> BTreeSet<(u64, u64)> {
         .collect()
 }
 
-/// A deep chain (diameter ~48) plus a cycle and a self-loop: dozens of
-/// fixpoint rounds against one prepared handle, executed repeatedly on
-/// one snapshot (warm pools: the append floor must reset per execution),
-/// then re-executed after a commit that grows the seen-set past the
-/// retained capacity (the append's rebuild-whole arm) — every answer set
-/// compared against the naive closure.
+/// A deep chain (diameter ~48) plus a cycle and a self-loop: dozens of fixpoint
+/// rounds against one prepared handle, executed repeatedly on one snapshot
+/// (warm pools: the append floor must reset per execution), then re-executed
+/// after a commit that grows the seen-set past the retained capacity (the
+/// append's rebuild-whole arm) — every answer set compared against the naive
+/// closure.
 #[test]
 fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     const CHAIN: u64 = 48;
@@ -154,8 +137,8 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
         .expect("accepted");
     let mut edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     edges.insert((10, 3)); // a back edge: a cycle inside the chain
-    edges.insert((7, 7)); // a self-loop
-    edges.insert((5, 30)); // a shortcut: multiple derivations of one pair
+    edges.insert((7, 7)); 
+    edges.insert((5, 30)); 
     db.write(|tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
@@ -181,13 +164,12 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("read");
 
     // Grow the graph: the same prepared handle re-executes against a new
-    // generation whose fixpoint is larger than every retained high-water
-    // (the accumulator's rebuild-whole and doubling-headroom arms).
+
     let mut more = edges.clone();
     for n in CHAIN..(CHAIN + 16) {
         more.insert((n, n + 1));
     }
-    more.insert((CHAIN + 16, 0)); // one giant cycle: the closure saturates
+    more.insert((CHAIN + 16, 0)); 
     db.write(|tx| {
         for &(src, dst) in more.difference(&edges) {
             tx.insert([&Edge { src, dst }])?;
@@ -211,11 +193,6 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("read");
 }
 
-/// A finished named interior (finite Edge copy) feeding a linear rec
-/// whose base is Link and whose step joins the interior: the rec round
-/// loop reads the interior's FINISHED image every round while appending
-/// its own accumulator. Two recursive SCCs are unwritable this cut;
-/// this is the interiors-then-rec path the reach query became.
 #[test]
 fn a_finished_interior_feeds_a_linear_rec() {
     let dir = common::TempDir::new("hunt-interior-then-rec");
@@ -239,7 +216,6 @@ fn a_finished_interior_feeds_a_linear_rec() {
     .expect("write")
     .unwrap();
 
-    // out = lfp( Link ∪ Edge ∘ out )
     let mut expected: BTreeSet<(u64, u64)> = links.clone();
     loop {
         let mut next = expected.clone();
@@ -298,10 +274,6 @@ fn a_finished_interior_feeds_a_linear_rec() {
     .expect("read");
 }
 
-/// A fold at the output head over a finished rec: the aggregate drain
-/// (`finalize_into` → `push_resolved_answer`) runs on rows grouped from
-/// the rec's finished image — per-source reachable-set counts, against
-/// the naive closure's group counts.
 #[test]
 fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let dir = common::TempDir::new("hunt-fold");
@@ -372,13 +344,11 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
     .expect("read");
 }
 
-/// Typed payload THROUGH the accumulator: the Reach query itself is
-/// recursive and its head carries `(u64, str, bool, interval<u64>)` — the
-/// transient delta/accumulated images must transpose an intern word, a
-/// bool (stored as a BYTE column and read back as 0/1), and a two-word
-/// interval per row, round after round, and finalize then resolves the
-/// same seen-set. Item attributes propagate along edges; the oracle is
-/// the naive reachability product.
+/// Typed payload THROUGH the accumulator: the Reach query itself is recursive
+/// and its head carries `(u64, str, bool, interval<u64>)` — the transient
+/// delta/accumulated images must transpose an intern word, a bool (stored as a
+/// BYTE column and read back as 0/1), and a two-word interval per row, round
+/// after round, and finalize then resolves the same seen-set.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -404,8 +374,6 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     .expect("write")
     .unwrap();
 
-    // out(x, n, f, s) | Item(id: x, name: n, flag: f, span: s)
-    // out(y, n, f, s) | out(x, n, f, s), Edge(x, y)
     let query = Query {
         interiors: vec![],
         rec: Some(Rec {
@@ -414,10 +382,10 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
                 atoms: vec![Atom {
                     source: AtomSource::Edb(Item::RELATION),
                     bindings: vec![
-                        (FieldId(0), v(0)), // id
-                        (FieldId(3), v(1)), // name
-                        (FieldId(2), v(2)), // flag
-                        (FieldId(5), v(3)), // span
+                        (FieldId(0), v(0)), 
+                        (FieldId(3), v(1)), 
+                        (FieldId(2), v(2)), 
+                        (FieldId(5), v(3)), 
                     ],
                 }],
                 conditions: vec![],
@@ -456,8 +424,6 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         }],
     };
 
-    // The naive oracle: each item row lands on its own node and every
-    // node reachable from it.
     let closed = naive_closure(&edges);
     let expected: BTreeSet<(u64, String, bool, (u64, u64))> = rows
         .iter()
@@ -512,10 +478,6 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
     .expect("read");
 }
 
-/// A budget abort mid-fixpoint leaves the prepared handle reusable: a
-/// 66k-edge single-source chain trips the default rounds budget, then
-/// the SAME handle re-executes and raises the same typed error — a
-/// poisoned pool would panic or change the error shape.
 #[test]
 fn a_budget_abort_leaves_the_prepared_handle_correct() {
     const CHAIN: u64 = 66_000;
@@ -547,7 +509,6 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     }
 }
 
-/// Single-source reach from node 0: one new node per round, linear tuples.
 fn single_source_chain_query() -> Query {
     Query {
         interiors: vec![],
@@ -589,12 +550,6 @@ fn single_source_chain_query() -> Query {
     }
 }
 
-/// One recursive handle, alternating parameter envelopes: the source-
-/// anchored closure `interior 0(z) | Edge(src: ?0, dst: z); interior 0(z) | interior 0(y),
-/// Edge(y, z)` re-executes with sources whose reachable sets differ
-/// wildly in size and round count — every pooled half must be refilled
-/// (or appended) to exactly the new execution's rows, never the larger
-/// previous envelope's. The oracle is per-source naive reachability.
 #[test]
 fn alternating_param_envelopes_reuse_the_pools_correctly() {
     use bumbledb::ir::ParamId;
@@ -602,8 +557,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
     let db = Db::create(dir.path(), Hunt)
         .expect("create")
         .expect("accepted");
-    // Node 0 heads a 30-chain; node 50 heads a 2-chain; node 90 has no
-    // outgoing edge (an empty result between two big ones).
+
     let edges: BTreeSet<(u64, u64)> = (0..30)
         .map(|n| (n, n + 1))
         .chain([(50, 51), (51, 52)])
@@ -657,7 +611,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         // big → small → empty → big → small: every transition where a
-        // stale pooled suffix or floor could leak rows.
+
         for &src in &[0u64, 50, 90, 0, 50, 90, 0] {
             let answers = snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(src)])?;
             let got: BTreeSet<u64> = answers
@@ -680,10 +634,6 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
     .expect("read");
 }
 
-/// The item fixtures for the finalize hunts: duplicate strings across
-/// rows AND across columns (the resolve memo must hand out one byte
-/// range per distinct intern), distinct payloads, intervals whose bounds
-/// differ per row.
 fn item_rows() -> Vec<Item<'static>> {
     let pad = |s: &[u8]| -> [u8; 12] {
         let mut out = [0u8; 12];
@@ -705,7 +655,7 @@ fn item_rows() -> Vec<Item<'static>> {
             score: 0,
             flag: false,
             name: "beta",
-            tag: "alpha", // collides with row 1's NAME across columns
+            tag: "alpha", 
             span: Interval::<u64>::new(0, 9).expect("nonempty"),
             payload: pad(b"two-two-two!"),
         },
@@ -713,7 +663,7 @@ fn item_rows() -> Vec<Item<'static>> {
             id: 3,
             score: 42,
             flag: true,
-            name: "alpha", // duplicate within the name column
+            name: "alpha", 
             tag: "y",
             span: Interval::<u64>::new(100, 101).expect("nonempty"),
             payload: pad(b""),
@@ -723,7 +673,7 @@ fn item_rows() -> Vec<Item<'static>> {
             score: i64::MIN,
             flag: false,
             name: "delta",
-            tag: "delta", // the same intern in two columns of ONE row
+            tag: "delta", 
             span: Interval::<u64>::new(7, u64::MAX >> 2).expect("nonempty"),
             payload: pad(b"\xff\x00\xfe123"),
         },
@@ -732,12 +682,6 @@ fn item_rows() -> Vec<Item<'static>> {
 
 type ResolvedRow = (String, (u64, u64), i64, String, bool, Vec<u8>, u64);
 
-/// The resolving column-major fill: two string columns straddling an
-/// interval (two-word) column, a bytes<12> (two-word) column, and word
-/// columns — a scan rule (no key probe: the sink path) whose answers are
-/// checked field by field against the inserted facts. A wrong word
-/// cursor, a strided-slot mixup, or a byte-heap range shared across the
-/// wrong columns changes some cell.
 #[test]
 fn resolving_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-resolved");
@@ -754,17 +698,15 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
     .expect("write")
     .unwrap();
 
-    // find(name, span, score, tag, flag, payload, id) — deliberately
-    // scrambled against field order, interval mid-tuple.
     let query = Query::single(Rule {
         finds: vec![
-            FindTerm::Var(VarId(3)), // name
-            FindTerm::Var(VarId(5)), // span
-            FindTerm::Var(VarId(1)), // score
-            FindTerm::Var(VarId(4)), // tag
-            FindTerm::Var(VarId(2)), // flag
-            FindTerm::Var(VarId(6)), // payload
-            FindTerm::Var(VarId(0)), // id
+            FindTerm::Var(VarId(3)), 
+            FindTerm::Var(VarId(5)), 
+            FindTerm::Var(VarId(1)), 
+            FindTerm::Var(VarId(4)), 
+            FindTerm::Var(VarId(2)), 
+            FindTerm::Var(VarId(6)), 
+            FindTerm::Var(VarId(0)), 
         ],
         atoms: vec![Atom {
             source: AtomSource::Edb(Item::RELATION),
@@ -833,13 +775,6 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
     .expect("read");
 }
 
-/// The columnar fill's strided word arms (`fill_resolved_answers` →
-/// `fill_fixed_column`): no string/bytes column, interval mid-tuple —
-/// the interval column must advance the word cursor by TWO or every
-/// column to its right reads the wrong words. (This falsifier refereed
-/// the all-words fast path until the Measure phase merged it —
-/// cleanup-0.5.0 ruling 7, the gravestone at `api/prepared/finalize.rs`
-/// — and it pins the surviving route's cursor discipline the same way.)
 #[test]
 fn word_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-words");
@@ -856,7 +791,6 @@ fn word_columnar_finalize_reproduces_every_cell() {
     .expect("write")
     .unwrap();
 
-    // find(id, span, flag, score): interval second, word columns after.
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
