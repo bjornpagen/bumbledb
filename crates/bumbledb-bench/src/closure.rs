@@ -5,7 +5,6 @@
 //! (`AtomSource::Interior`, the reach pipeline, row-identical across engines
 //! before a single timed sample — inline lives outside the stamped family
 //! registry), the exact warm protocol,
-
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
