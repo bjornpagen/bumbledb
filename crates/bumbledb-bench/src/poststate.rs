@@ -1,11 +1,7 @@
-//! The shared post-state comparator — the write-verification extension
-//! of the writebench pattern: after a write lane runs on both twins,
-//! post-state equality is ONE comparator over ONE canonical row form
-//! ([`crate::compare::Answer`]), shared by every write family. "Verified
-//! by post-state comparison" is a fold both worlds reuse, never
-//! per-family prose: scan the engine, `SELECT` the mirror in
-//! field-declaration order, and judge the multisets through the same
-//! diff every read family already trusts ([`crate::compare::multisets`]).
+//! "Verified by post-state comparison" is a fold both worlds reuse, never
+//! per-family prose: scan the engine, `SELECT` the mirror in field-declaration
+//! order, and judge the multisets through the same of the writebench pattern:
+//! after a write lane runs on both twins,
 
 use bumbledb::schema::Relation;
 use bumbledb::{Db, RelationId, Value};
@@ -14,8 +10,6 @@ use rusqlite::Connection;
 use crate::compare::{self, Answer, Owned};
 use crate::sqlmap;
 
-/// One stored [`Value`] into the canonical cell. UTF-8 is proved at
-/// [`Value::String`] construction; a mask is not a stored field.
 fn owned(value: &Value) -> Owned {
     match value {
         Value::Bool(v) => Owned::Bool(*v),
@@ -28,13 +22,7 @@ fn owned(value: &Value) -> Owned {
     }
 }
 
-/// One relation's full committed state on the engine, as canonical
-/// answers: a snapshot scan decoded cell-by-cell through the total
-/// [`Value`] → [`Owned`] map.
-///
 /// # Errors
-///
-/// Engine scan errors, stringified.
 pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String> {
     let rows: Vec<Vec<Value>> = db
         .read(|snap| snap.scan(rel)?.collect())
@@ -45,17 +33,7 @@ pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String
         .collect())
 }
 
-/// One relation's full committed state on the `SQLite` mirror, as
-/// canonical answers: a `SELECT` of the quoted column list in
-/// field-declaration order (an interval-typed field contributes its two
-/// `_start`/`_end` columns — the [`sqlmap::schema_ddl`] column naming),
-/// decoded per field through the normative mapping
-/// ([`sqlmap::from_sql_value`] / [`sqlmap::interval_from_sql`]).
-///
 /// # Errors
-///
-/// `SQLite` errors, stringified; mapping mismatches with the field
-/// named.
 pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>, String> {
     let mut columns: Vec<String> = Vec::new();
     for field in relation.fields() {
@@ -93,14 +71,7 @@ pub fn sqlite_rows(conn: &Connection, relation: &Relation) -> Result<Vec<Answer>
     Ok(out)
 }
 
-/// The post-state judgment: value-identical multiset agreement, with a
-/// failure naming the world and relation — the twins performed the same
-/// mutations, or the run is invalid.
-///
 /// # Errors
-///
-/// The [`compare::multisets`] mismatch, rendered under the world and
-/// relation names.
 pub fn assert_identical(
     world: &str,
     relation: &str,
