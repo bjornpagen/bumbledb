@@ -6,7 +6,6 @@ use bumbledb_theory::schema::RelationId;
 use super::ImageCache;
 
 impl ImageCache {
-
     pub(super) fn keys(&self) -> Vec<(RelationId, GenerationId)> {
         let mut keys = Vec::new();
         for (rel, cache) in self.ordinary_slots() {
