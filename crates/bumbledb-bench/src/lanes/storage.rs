@@ -1,64 +1,10 @@
-//! The storage lane: on-disk bytes per corpus scale, both engines —
-//! REPORT-class ([`crate::lanes`] carries the charter).
-//!
-//! Byte accounting is one measuring function over one on-disk
-//! representation — [`file_bytes`] (`std::fs::metadata` length) applied
-//! to the engine's `data.mdb`, the `SQLite` file, and its `-wal`
-//! sibling — so "measured after checkpoint/sync" is not a convention
-//! but the only expressible reading: every `SQLite` lane checkpoints
-//! (TRUNCATE) and drops its connection before any stat, and the wal
-//! size is a REPORTED FIELD, so an uncheckpointed emission is visible
-//! in the data instead of silently inflating a number.
-//!
-//! **Not a timed lane**: no wall clock feeds this report, so
-//! `devhonesty::assert_disk_backed` is NOT required here — the
-//! verify-lane exemption precedent (docs/architecture/60-validation.md:
-//! lanes that check answers rather than clocks may run on the ram
-//! disk). It is still oracle-disciplined: every load is the one
-//! generator stream both stores share, and per-relation row counts are
-//! cross-checked across the engine store, the generator sizes, and
-//! both `SQLite` lanes before a single byte is recorded — an
-//! inequality is `Err`, nothing is reported.
-//!
-//! The four byte lanes per (scale, world):
-//!
-//! - **engine raw**: `Db::create` + the world loader, `disk_size()`
-//!   (which equals the `data.mdb` stat — a unit test pins the two
-//!   reads together so the churn stat path and the live path cannot
-//!   drift).
-//! - **engine compacted**: `Db::compact` into a sibling directory (the
-//!   `ensure_corpus` discipline, `driver/corpus.rs`), reopened and
-//!   re-statted.
-//! - **sqlite indexed** — the parity config, documented per lane
-//!   ([`crate::corpus::configure_sqlite`]): WAL, `synchronous=FULL`,
-//!   `fullfsync=ON`, 256 MiB page cache, `temp_store=MEMORY`; full DDL
-//!   including the family indexes and the closed vocabularies'
-//!   extension INSERTs; prepared-statement inserts in 4096-row
-//!   transactions; `ANALYZE`; truncating WAL checkpoint.
-//! - **sqlite table-only**: [`crate::sqlmap::table_ddl`] ONLY — the
-//!   representational split in `sqlmap`, never a string filter over
-//!   the indexed DDL — plus the extension INSERTs (extension rows are
-//!   schema surface; without them the corpora differ — their tables
-//!   carry only the PRIMARY KEY); the same row streams; **no
-//!   ANALYZE** — table-only is the no-secondary-structure lane, and
-//!   `sqlite_stat1` would itself be secondary structure.
-//!
-//! `facts` is the generator row count summed over the writable
-//! relations (`0..RELATIONS` per world); the closed vocabularies are
-//! virtual/extension surface, excluded from the fact count.
-//!
-//! ## The churn-checkpoint seam
-//!
-//! `--churn-dir` names a directory whose immediate subdirectories, in
-//! lexicographic name order, are churn checkpoints. Inside each:
-//! `db/data.mdb` (optional) and `oracle.sqlite` plus its optional
-//! `oracle.sqlite-wal` sibling (optional). One [`ChurnRow`] per
-//! checkpoint, `None` for absent artifacts; an empty churn directory
-//! is an `Err` naming the contract. A future churn harness composes
-//! with this lane through data on disk — checkpoint subdirectories —
-//! not through code coupling, and the reported wal bytes are the
-//! honesty mechanism: a churn protocol that forgot to checkpoint shows
-//! a fat wal, visibly.
+//! Byte accounting is one measuring function over one on-disk representation —
+//! [`file_bytes`] (`std::fs::metadata` length) applied to the engine's
+//! `data.mdb`, the `SQLite` file, and its `-wal` but the only expressible
+//! reading: every `SQLite` lane checkpoints sibling — so "measured after
+//! checkpoint/sync" is not a convention (TRUNCATE) and drops its connection
+//! before any stat, and the wal honesty mechanism: a churn protocol that forgot
+//! to checkpoint shows
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -73,8 +19,6 @@ use crate::json;
 use crate::report::{self, Provenance};
 use crate::sqlmap;
 
-/// The whole storage report, plain data. (`PartialEq` only: the
-/// provenance's shared-machine stamp carries load-average floats.)
 #[derive(Debug, Clone, PartialEq)]
 pub struct StorageReport {
     pub provenance: Provenance,
@@ -83,14 +27,12 @@ pub struct StorageReport {
     pub churn: Vec<ChurnRow>,
 }
 
-/// One corpus scale's worlds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScaleStorage {
     pub scale: &'static str,
     pub worlds: Vec<WorldStorage>,
 }
 
-/// One world's byte accounting at one scale, both engines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorldStorage {
     pub world: &'static str,
@@ -103,7 +45,6 @@ pub struct WorldStorage {
     pub sqlite_tableonly_wal_bytes: u64,
 }
 
-/// One churn-ladder step's post-state bytes (`None` = not measured).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChurnRow {
     pub name: String,
@@ -151,8 +92,6 @@ fn push_churn(out: &mut String, row: &ChurnRow) {
     out.push('}');
 }
 
-/// The machine-consumable storage artifact — hand-rolled, like
-/// `report/json_out.rs`.
 #[must_use]
 pub fn to_json(report: &StorageReport) -> String {
     let mut out = String::new();
@@ -183,24 +122,16 @@ pub fn to_json(report: &StorageReport) -> String {
     out
 }
 
-/// One file's on-disk bytes — THE measuring function of this lane
-/// (`std::fs::metadata` length). A missing file is an `Err` naming the
-/// path; the one sanctioned absence is the `-wal` sibling, which
-/// [`wal_bytes`] reads as 0 (a truncated-checkpoint wal may be
-/// unlinked).
 fn file_bytes(path: &Path) -> Result<u64, String> {
     std::fs::metadata(path)
         .map(|meta| meta.len())
         .map_err(|e| format!("stat {}: {e}", path.display()))
 }
 
-/// The `-wal` sibling of a `SQLite` file.
 fn wal_path(db_file: &Path) -> PathBuf {
     PathBuf::from(format!("{}-wal", db_file.display()))
 }
 
-/// The wal sibling's bytes; absence reads 0 (a truncating checkpoint
-/// may unlink it) — the reported-field honesty mechanism.
 fn wal_bytes(db_file: &Path) -> Result<u64, String> {
     let wal = wal_path(db_file);
     if wal.exists() {
@@ -211,27 +142,23 @@ fn wal_bytes(db_file: &Path) -> Result<u64, String> {
 }
 
 /// One world's lane wiring: the theory value, the schema surfaces, the
-/// generator's expected per-relation counts, and the three loaders —
-/// the worlds differ only in these, so the byte protocol itself is
-/// written once ([`measure_world`]).
+/// generator's expected per-relation counts, and the three loaders — the worlds
+/// differ only in these, so the byte protocol itself is written once
+/// ([`measure_world`]).
 struct WorldSpec<'a, S> {
     world: &'static str,
     theory: S,
     schema: &'static bumbledb::Schema,
     descriptor: bumbledb::schema::SchemaDescriptor,
-    /// Generator rows per writable relation (index = relation id) —
-    /// the count oracle every lane must agree with.
+
     expected: Vec<u64>,
     load_engine: &'a dyn Fn(&Db<S>) -> Result<(), String>,
-    /// The full parity loader (DDL + indexes + ANALYZE + checkpoint),
-    /// returning the live connection for the count cross-check.
+
     load_indexed: &'a dyn Fn(&Path) -> Result<Connection, String>,
-    /// The shared per-relation row streams, into whatever tables the
-    /// connection carries — the table-only lane's row source.
+
     load_rows: &'a dyn Fn(&Connection) -> Result<(), String>,
 }
 
-/// Per-relation `SELECT COUNT(*)` over the writable relations.
 fn sqlite_counts(
     conn: &Connection,
     schema: &bumbledb::Schema,
@@ -251,12 +178,6 @@ fn sqlite_counts(
         .collect()
 }
 
-/// The lane-local table-only loader: [`sqlmap::table_ddl`] ONLY (plus
-/// the closed vocabularies' extension INSERTs — schema surface, their
-/// tables carrying only the PRIMARY KEY), the shared row streams, no
-/// ANALYZE (table-only is the no-secondary-structure lane;
-/// `sqlite_stat1` would itself be secondary structure). The caller
-/// counts, checkpoints, drops, and stats.
 fn load_sqlite_tableonly<S>(path: &Path, spec: &WorldSpec<'_, S>) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     crate::corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
@@ -272,16 +193,14 @@ fn load_sqlite_tableonly<S>(path: &Path, spec: &WorldSpec<'_, S>) -> Result<Conn
     Ok(conn)
 }
 
-/// A truncating WAL checkpoint — the only reading the byte stat admits.
 fn checkpoint_truncate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .map_err(|e| format!("wal_checkpoint(TRUNCATE): {e}"))
 }
 
-/// The byte protocol for one (scale, world): engine raw → engine
-/// compacted → sqlite indexed → sqlite table-only, then the count
-/// cross-check (engine scans == generator sizes == both `SQLite`
-/// lanes) before anything is recorded.
+/// The byte protocol for one (scale, world): engine raw → engine compacted →
+/// sqlite indexed → sqlite table-only, then the count cross-check (engine scans
+/// == generator sizes == both `SQLite` lanes) before anything is recorded.
 fn measure_world<S: bumbledb::Theory + Copy>(
     scale_dir: &Path,
     spec: &WorldSpec<'_, S>,
@@ -289,7 +208,6 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let world = spec.world;
     let fail = |stage: &str, detail: String| format!("{world}: {stage}: {detail}");
 
-    // ENGINE RAW: create + load, stat live.
     let raw_dir = scale_dir.join(format!("{world}-raw"));
     let db = Db::create(&raw_dir, spec.theory)
         .map_err(|e| fail("create raw", format!("{e:?}")))?
@@ -319,7 +237,6 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     }
     drop(db);
 
-    // SQLITE INDEXED: the full parity loader, counts on the live
     // connection, truncating checkpoint, drop, stat.
     let indexed_file = scale_dir.join(format!("{world}-indexed.sqlite"));
     let conn = (spec.load_indexed)(&indexed_file)?;
@@ -330,7 +247,6 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let sqlite_indexed_bytes = file_bytes(&indexed_file)?;
     let sqlite_indexed_wal_bytes = wal_bytes(&indexed_file)?;
 
-    // SQLITE TABLE-ONLY: same discipline over the index-free tables.
     let tableonly_file = scale_dir.join(format!("{world}-tableonly.sqlite"));
     let conn = load_sqlite_tableonly(&tableonly_file, spec).map_err(|e| fail("table-only", e))?;
     let tableonly_counts = sqlite_counts(&conn, spec.schema, spec.expected.len())
@@ -341,7 +257,7 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let sqlite_tableonly_wal_bytes = wal_bytes(&tableonly_file)?;
 
     // COUNT CROSS-CHECK: every lane against the generator, before any
-    // byte is recorded.
+
     for (rel, expected) in spec.expected.iter().enumerate() {
         let name = spec
             .schema
@@ -375,7 +291,6 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     })
 }
 
-/// The ledger world's lane wiring at one config.
 fn measure_ledger(scale_dir: &Path, cfg: GenConfig) -> Result<WorldStorage, String> {
     let sizes = Sizes::of(cfg.scale);
     let expected: Vec<u64> = (0..crate::schema::ids::RELATIONS)
@@ -410,7 +325,6 @@ fn measure_ledger(scale_dir: &Path, cfg: GenConfig) -> Result<WorldStorage, Stri
     )
 }
 
-/// The calendar world's lane wiring at one config.
 fn measure_calendar(scale_dir: &Path, cfg: GenConfig) -> Result<WorldStorage, String> {
     let sizes = CalSizes::of(cfg.scale);
     let expected: Vec<u64> = (0..crate::calendar::ids::RELATIONS)
@@ -450,10 +364,6 @@ fn measure_calendar(scale_dir: &Path, cfg: GenConfig) -> Result<WorldStorage, St
     )
 }
 
-/// Reads the churn-checkpoint directory contract: immediate
-/// subdirectories in lexicographic name order, one [`ChurnRow`] each,
-/// `None` for absent artifacts. An empty churn directory is an `Err`
-/// naming the contract.
 fn measure_churn(dir: &Path) -> Result<Vec<ChurnRow>, String> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| format!("churn dir {}: {e}", dir.display()))?;
@@ -503,7 +413,6 @@ fn opt_cell(value: Option<u64>) -> String {
     value.map_or_else(|| "—".to_owned(), |v| v.to_string())
 }
 
-/// The human-readable table — hand-rolled, like `scenarios/render.rs`.
 fn render(report: &StorageReport) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# Storage report\n");
@@ -569,18 +478,7 @@ fn render(report: &StorageReport) -> String {
     out
 }
 
-/// The storage lane entry point: per scale, per world, the four byte
-/// lanes under the count cross-check; then the churn checkpoints if a
-/// churn directory was named. Writes `storage-report.json` and
-/// `storage-report.md` under the out directory, prints the markdown,
-/// and removes the scratch stores (the report is the artifact;
-/// L-scale scratch is gigabytes).
-///
 /// # Errors
-///
-/// Setup/IO failures, engine or `SQLite` load failures, a count
-/// cross-check inequality (named by world/relation/lane), or an empty
-/// churn directory — all as messages; nothing is reported on error.
 pub fn run(args: &StorageArgs) -> Result<i32, String> {
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
@@ -716,7 +614,7 @@ mod tests {
             world.get("engine_compacted_bytes").and_then(Value::as_f64),
             Some(2000.0)
         );
-        // The derived per-fact columns: compacted/facts and friends.
+
         assert_eq!(
             world.get("engine_bytes_per_fact").and_then(Value::as_f64),
             Some(2.0)
@@ -758,11 +656,6 @@ mod tests {
         assert_eq!(churn[0].get("sqlite_wal_bytes"), Some(&Value::Null));
     }
 
-    /// The whole lane at Tiny: both worlds measured, every byte field
-    /// positive, compaction never grows the store, dropping the
-    /// secondary structure never grows the `SQLite` file, wal fields
-    /// present, and `facts` equals the generator sums computed
-    /// independently here.
     #[test]
     #[expect(
         clippy::cast_precision_loss,
@@ -814,9 +707,7 @@ mod tests {
                 let value = world.get(field).and_then(Value::as_f64).expect(field);
                 assert!(value > 0.0, "{field} must be positive, got {value}");
             }
-            // Wal bytes are REPORTED fields (present, possibly 0 —
-            // the truncating checkpoint is exactly what makes 0 the
-            // honest reading).
+
             assert!(
                 world
                     .get("sqlite_indexed_wal_bytes")
@@ -864,14 +755,12 @@ mod tests {
             worlds[1].get("world").and_then(Value::as_str),
             Some("calendar")
         );
-        // The report is the artifact; the scratch stores are gone.
+
         assert!(!out.join("scratch").exists(), "scratch removed");
         assert!(out.join("storage-report.md").exists(), "markdown artifact");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The engine's `disk_size()` equals the `data.mdb` stat — the
-    /// churn seam's stat path and the live path cannot drift.
     #[test]
     fn disk_size_equals_the_stat_path() {
         let dir = scratch("storage-lane-disksize");
@@ -895,8 +784,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The churn-checkpoint directory contract: subdirectories in name
-    /// order, absent artifacts as JSON null.
     #[test]
     fn churn_checkpoints_are_measured() {
         let dir = scratch("storage-lane-churn");
@@ -909,8 +796,7 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        // c0: a Tiny compacted engine store under db/ plus a Tiny
-        // sqlite store; c1: only a sqlite file.
+
         let load_dir = dir.join("db-load");
         let db = Db::create(&load_dir, crate::schema::Ledger)
             .expect("create")
@@ -956,7 +842,7 @@ mod tests {
                 .expect("c0 sqlite bytes")
                 > 0.0
         );
-        // c1 carries no engine store: null in the JSON, by contract.
+
         assert_eq!(churn[1].get("engine_bytes"), Some(&Value::Null));
         assert!(
             churn[1]
