@@ -1,6 +1,5 @@
 //! Lazy frozen image slots: one [`OnceLock`] per relation, armed on first
 //! query that needs the image. Admission does not build images.
-
 use std::sync::Arc;
 
 use super::bind::ImageBind;
