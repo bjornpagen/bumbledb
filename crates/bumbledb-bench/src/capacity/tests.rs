@@ -118,29 +118,20 @@ fn power_stream(mass: Mass) -> Vec<Op> {
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, power_rows);
     ops.extend([
-
         write(vec![], vec![device(base, 1, 1)]),
-
         write(vec![], vec![pool(100, 5)]),
-
         write(
             vec![],
             vec![device(base + 1, 100, 3), device(base + 2, 100, 3)],
         ),
-
         write(vec![], vec![device(base + 3, 100, 3)]),
-
         write(
             vec![],
             vec![device(base + 4, 100, 0), device(base + 5, 100, 0)],
         ),
-
         write(vec![pool(100, 5)], vec![pool(100, 2)]),
-
         write(vec![pool(100, 5)], vec![pool(100, 10)]),
-
         write(vec![], vec![device(base + 6, 100, 7)]),
-
         write(vec![], vec![device(base + 7, 100, 1)]),
     ]);
     ops
@@ -175,15 +166,10 @@ fn the_calendar_verdicts_agree_with_the_naive_model() {
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, calendar_rows);
     ops.extend([
-
         write(vec![], vec![booking(base, 1, 500_000, 500_001)]),
-
         write(vec![], vec![room(100, 0, 10)]),
-
         write(vec![], vec![booking(base + 1, 100, 0, 6)]),
-
         write(vec![], vec![booking(base + 2, 100, 6, 12)]),
-
         write(vec![], vec![booking(base + 3, 100, 0, 4)]),
     ]);
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
