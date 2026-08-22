@@ -576,13 +576,6 @@ fn poisoned_builder_admits_as_err() {
     }
 }
 
-/// The accepted transport against the empty base
-/// (`proposals/one-representation/20`): `load_accepted` /
-/// `delete_accepted` are the builder-fed twins of `load_dyn` /
-/// `delete_dyn` — same reports, same never-mint delete, same one-parse
-/// law (a shape-illegal row refuses the WHOLE collection at
-/// construction, so nothing an accepted verb can receive ever stages a
-/// prefix).
 #[test]
 fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
     let mut builder = InstanceBuilder::new(Named).expect("valid");
@@ -602,9 +595,6 @@ fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
     );
     assert_eq!(builder.intern_count(), 0);
 
-    // The parse-all-first law lives at the constructor now: the illegal
-    // row refuses the whole collection, so no partial proof reaches the
-    // stage.
     let ok = vec![Value::String("ok".into())];
     let bad = Vec::<Value>::new();
     let err =
@@ -617,7 +607,6 @@ fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
             .expect("nothing staged")
     );
 
-    // The load disposition mints exactly as `load_dyn`.
     let real = crate::AcceptedCollection::from_value_rows(Label::RELATION, &fields, [&ok])
         .expect("shape-lawful");
     let report = builder.load_accepted(&real).expect("load");
@@ -626,7 +615,6 @@ fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
     assert_eq!(builder.intern_count(), 1);
     assert!(builder.contains_dyn(Label::RELATION, &ok).expect("staged"));
 
-    // Empty is lawful, both dispositions.
     let empty = crate::AcceptedCollection::from_value_rows(
         Label::RELATION,
         &fields,
@@ -640,7 +628,6 @@ fn accepted_verbs_mirror_the_dyn_lane_on_the_heap_base() {
     );
 }
 
-/// The closed wall holds on the accepted lane exactly as on `load_dyn`.
 #[test]
 fn closed_relation_accepted_load_is_refused() {
     let mut builder = InstanceBuilder::new(WithClosed).expect("valid");
