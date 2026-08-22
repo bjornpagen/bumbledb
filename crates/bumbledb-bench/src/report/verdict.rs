@@ -13,7 +13,6 @@ impl Verdict {
     }
 }
 
-/// The gate rule, pinned here.
 #[must_use]
 pub fn verdict(kind: Kind, ours_p50: u64, theirs_p50: u64) -> Verdict {
     match kind {
