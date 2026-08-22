@@ -26,7 +26,7 @@ fn schema() -> SchemaDescriptor {
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT_DOMAIN: u64 = 5;
-const AMOUNT_SPREAD: u64 = 7; 
+const AMOUNT_SPREAD: u64 = 7;
 
 fn corpus(rng: &mut Rng, rows: u64) -> NaiveDb {
     let mut db = NaiveDb::new(&schema());
