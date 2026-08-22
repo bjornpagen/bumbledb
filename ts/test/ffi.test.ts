@@ -1,14 +1,3 @@
-/**
- * PRD-04 FFI semantic pins against a REAL durable store in a temp dir — the
- * SDK's ground truth for the bridge: create with a spec using every field
- * type, both closed tiers, and all three statement forms; delta writes with
- * fresh-mint return and live final-state point reads; one violation of each
- * statement form arriving with canonical spellings and decoded facts; a
- * recursive closure query; the generation witness; manifest and open-error
- * outcomes; hostile-caller capacity shapes at the raw wire (the marshal's
- * refusals as thrown bridge errors, dossier § 4.4).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -36,7 +25,6 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/** Relation ids by declaration order in the spec below. */
 const STATUS = 0
 const KIND = 1
 const PERSON = 2
@@ -49,12 +37,6 @@ function mintedStart(range: { empty: true } | { empty: false; start: bigint }): 
 	return range.start
 }
 
-/**
- * The test theory: every field type (bool, u64 incl. fresh, i64, str,
- * bytes<4>, interval<i64>), both closed tiers (bare Status, columned Kind),
- * and all three statement forms (fd, containment, capacity with a
- * handle-literal selection).
- */
 const spec: SchemaSpec = {
 	relations: [
 		{
@@ -105,11 +87,7 @@ const spec: SchemaSpec = {
 		{
 			name: "Edge",
 			fields: [
-				// `from` pairs `Person.id` in the containment and the window
-				// below, so the coherence wall requires the shared label
-				// (M5: the faces of a dependency agree on their newtype, or
-				// neither carries one); `to` sits in no paired-face
-				// statement and stays deliberately bare.
+
 				{ name: "from", valueType: { kind: "u64" }, newtype: "PersonId", fresh: false },
 				{ name: "to", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 				{ name: "weight", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
@@ -267,13 +245,6 @@ describe("ffi round trip against a real store", function suite() {
 		const target = { relation: "Person", projection: ["id"], selection: [] } as const
 		const source = { relation: "Edge", projection: ["from"], selection: [] } as const
 
-		/**
-		 * The dossier's explicitly forbidden implicit-lit compat: the old wire
-		 * spelled a bound as a bare BigInt; the capacity wire spells bounds
-		 * ONLY as tagged objects ({kind:"lit"|"field"|"durationField"}). A
-		 * bare BigInt must refuse at the marshal — a future lenient arm
-		 * re-admitting the positional shape would land here.
-		 */
 		const bareBigintBound: SchemaSpec = {
 			relations: spec.relations,
 			statements: [
@@ -355,7 +326,7 @@ describe("ffi round trip against a real store", function suite() {
 
 			const active = { start: -5n, end: 10n }
 			const adaRow = personRow(p1, "ada", 0n, -3n, new Uint8Array([1, 2, 3, 4]), active, true)
-			/** The one flat row-major cells array: four rows, arity-strided (20-accepted-collection). */
+
 			const cells = [
 				...adaRow,
 				...personRow(p2, "grace", 0n, 7n, new Uint8Array([5, 6, 7, 8]), active, false),
