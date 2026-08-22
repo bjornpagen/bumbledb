@@ -4,7 +4,6 @@
 //! artifact is a list, one [`NormalizedQuery`] per rule, because the query
 //! is a rule list. Each rule lowers exactly as the conjunctive query did:
 //! distinct-variable atom
-
 use std::collections::BTreeMap;
 
 use crate::image::view::FilterPredicate;
@@ -42,7 +41,7 @@ pub struct OccId(pub u16);
 /// [`OccId`] downstream. One occurrence table holds all four states;
 /// occurrence ids never move.
 /// - `Positive`: joins the plan — the only role
-/// [`Role::participates`] admits.
+///   [`Role::participates`] admits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
     Positive,
