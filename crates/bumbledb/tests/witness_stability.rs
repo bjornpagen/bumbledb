@@ -1,36 +1,7 @@
-//! Witness stability under probe re-ordering — the determinism
-//! obligation the T8 commit-size sweep carries (the W8 lane in
-//! `bumbledb-bench/src/sweep.rs` grades fact hashes to re-order the
-//! source-side probes; these fixtures pin what re-ordering may and may
-//! not change).
-//!
-//! The contract, stated exactly (`error.rs :: Violations::seal`): a
-//! rejection is the COMPLETE citation set — stable-sorted and deduped
-//! by `(statement, direction)` — so the citation LIST is
 //! probe-order-invariant by construction, and the Lean side compares
-//! verdicts by that list (`lean/Main.lean :: RVerdict`, list `BEq`).
-//! What is NOT inside the citation identity is the surviving witness:
-//! the stable sort keeps the FIRST-DISCOVERED `fact` per citation, so
-//! re-ordering probes can change the cited fact bytes while the
-//! citations stay identical.
-//!
-//! The normative boundary these fixtures draw:
-//!
-//! - NORMATIVE (the first two tests): the sealed citation list — and,
-//!   today, the whole rejection value — is invariant under everything a
-//!   host can vary: transaction call order is erased by the delta's set
-//!   semantics before any probe runs.
-//! - NON-NORMATIVE, pinned so a change is loud (the remaining tests):
-//!   WHICH violating fact survives as the witness is an artifact of
-//!   each check list's scan order — since the W8 source sort landed
-//!   (`judgment.rs :: check_source`, licensed by the commit-size
-//!   sweep's measured curve), target-KEY order on all three sides: the
-//!   source side sorts its probe worklist by (containment, key bytes,
-//!   fact bytes); the capacity and target check lists were B-tree-sorted
-//!   already. The source-side pin below is the licensed flip this
-//!   header used to promise — hash-least became key-least with the
-//!   sort, as a deliberate commit. Any further re-order must again flip
-//!   only that assertion, never the citation-list ones.
+//! verdicts by that list (`lean/Main.lean:: RVerdict`, list `BEq`).
+//! today, the whole rejection value — is invariant under everything a
+//! semantics before any probe runs.
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Direction, Theory, Violation, Violations};
@@ -61,9 +32,6 @@ bumbledb::schema! {
     WParent(id) <={0..2} WChild(parent);
 }
 
-/// Canonical fact bytes of a child `(id, parent, flag)` — three
-/// big-endian words (`encoding/encode.rs :: encode_fact` over an
-/// all-u64 relation). The violation payloads cite exactly these bytes.
 fn child_bytes(id: u64, parent: u64, flag: u64) -> [u8; 24] {
     let mut out = [0u8; 24];
     out[..8].copy_from_slice(&id.to_be_bytes());
@@ -72,7 +40,6 @@ fn child_bytes(id: u64, parent: u64, flag: u64) -> [u8; 24] {
     out
 }
 
-/// Canonical fact bytes of a parent `(id, kind)`.
 fn parent_bytes(id: u64, kind: u64) -> [u8; 16] {
     let mut out = [0u8; 16];
     out[..8].copy_from_slice(&id.to_be_bytes());
@@ -107,10 +74,6 @@ fn rejection<T: std::fmt::Debug>(outcome: bumbledb::Result<bumbledb::Admission<T
     common::expect_rejected(outcome)
 }
 
-/// One identically-seeded world per call: parents 1, 2, 3; children
-/// 100 and 101 under parent 3 (committed separately, so their storage
-/// row order is commit order — deterministic whatever any within-commit
-/// scan does).
 fn seeded_world(tag: &str) -> (common::TempDir, Db<WitnessWorld>) {
     let dir = common::TempDir::new(tag);
     let db = Db::create(dir.path(), WitnessWorld)
@@ -124,14 +87,8 @@ fn seeded_world(tag: &str) -> (common::TempDir, Db<WitnessWorld>) {
     (dir, db)
 }
 
-/// The multi-citation rejected commit: four children under missing
-/// parents (source side, four candidate witnesses), the delete of
-/// parent 3 whose two children survive (target side, two candidates),
-/// and three children under parent 1 bursting the `{0..2}` window.
-/// `order` permutes the transaction's CALL order — the one order a host
-/// controls.
 fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations {
-    // (child id, parent) — parents 900.. are missing; parent 1 exists.
+
     let calls: [(u64, u64); 7] = [
         (200, 900),
         (201, 901),
@@ -142,8 +99,7 @@ fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations 
         (302, 1),
     ];
     rejection(db.write(|tx| {
-        // The delete rides at a different position per order too: odd
-        // permutations lead with it.
+
         if order[0] != 0 {
             tx.delete([&WParent {
                 id: WParentId(3),
@@ -168,11 +124,10 @@ fn multi_violation_commit(db: &Db<WitnessWorld>, order: &[usize]) -> Violations 
     }))
 }
 
-/// NORMATIVE: the sealed citation list — one citation per violated
-/// `(statement, direction)`, sorted — is invariant under the
-/// transaction's call order, and so (today) is the entire rejection
-/// value, witnesses included: the delta erases call order before any
-/// probe runs.
+/// NORMATIVE: the sealed citation list — one citation per violated `(statement,
+/// direction)`, sorted — is invariant under the transaction's call order, and
+/// so (today) is the entire rejection value, witnesses included: the delta
+/// erases call order before any probe runs.
 #[test]
 fn the_sealed_citation_list_is_call_order_invariant() {
     let (_keep_a, db_a) = seeded_world("witness-order-a");
@@ -184,8 +139,6 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     assert_eq!(forward, reversed, "call order never reaches the verdict");
     assert_eq!(forward, shuffled, "call order never reaches the verdict");
 
-    // The complete set: the containment cited once per direction, the
-    // capacity law cited once — whatever the count of convicting facts.
     let [
         (
             Violation::Containment {
@@ -223,9 +176,6 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     );
 }
 
-/// NORMATIVE: the same fact set produces the same rejection on an
-/// independently built store — the verdict is a function of
-/// (state, delta), never of process history.
 #[test]
 fn the_rejection_is_reproducible_across_stores() {
     let (_keep_a, db_a) = seeded_world("witness-repro-a");
@@ -237,17 +187,9 @@ fn the_rejection_is_reproducible_across_stores() {
     );
 }
 
-/// NON-NORMATIVE PIN, source side — the licensed flip, flipped (see the
-/// header): `check_source` sorts its probe worklist by target key, so
-/// the surviving witness of a multi-violation source citation is the
-/// KEY-LEAST violator — the least parent key here. The fixture keeps
-/// the delta's hash-least candidate a DIFFERENT fact (blake3 over the
-/// canonical bytes, the engine's `encoding/fact_hash.rs` identity), so
-/// a silent revert to delta-order discovery is impossible.
 #[test]
 fn the_source_witness_is_the_key_least_violator() {
-    // Parents descend with call order, so first-called, hash-least, and
-    // key-least are all distinct candidates unless the pin says so.
+
     let kids: [(u64, u64); 6] = [
         (9001, 700),
         (9002, 650),
@@ -262,8 +204,7 @@ fn the_source_witness_is_the_key_least_violator() {
         .copied()
         .min_by_key(|&(id, parent)| *blake3::hash(&child_bytes(id, parent, 0)).as_bytes())
         .expect("nonempty");
-    // The fixture's discrimination preconditions: if an encoding change
-    // re-rolls the hashes into a coincidence, re-pick the ids above.
+
     assert_ne!(
         hash_least.1, 450,
         "re-pick fixture ids: the hash-least violator must differ from the key-least one"
@@ -316,10 +257,10 @@ fn the_source_witness_is_the_key_least_violator() {
     );
 }
 
-/// NON-NORMATIVE PIN, capacity side: the capacity check list is a B-tree
-/// of touched parents, so a multi-parent capacity rejection's witness is
-/// the KEY-LEAST violating parent — already what a sorted source side
-/// would produce; the W8 sort must not change this one.
+/// NON-NORMATIVE PIN, capacity side: the capacity check list is a B-tree of
+/// touched parents, so a multi-parent capacity rejection's witness is the
+/// KEY-LEAST violating parent — already what a sorted source side would
+/// produce; the W8 sort must not change this one.
 #[test]
 fn the_capacity_witness_is_the_key_least_violating_parent() {
     let dir = common::TempDir::new("witness-capacity");
@@ -363,11 +304,6 @@ fn the_capacity_witness_is_the_key_least_violating_parent() {
     );
 }
 
-/// NON-NORMATIVE PIN, target side: the surviving-source scan walks the
-/// statement's `R` prefix in key order — source row ids ascend within
-/// one determinant — so the witness of a delete rejection is the
-/// FIRST-COMMITTED surviving requirer. Also untouched by the W8 sort
-/// (the target check list is already sorted).
 #[test]
 fn the_target_witness_is_the_first_committed_survivor() {
     let dir = common::TempDir::new("witness-target");
