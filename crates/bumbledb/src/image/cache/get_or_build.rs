@@ -23,7 +23,6 @@ struct Base {
 }
 
 impl ImageCache {
-
     /// LMDB read, no eviction. First touch builds into the relation's
 
     /// # Errors
@@ -174,7 +173,6 @@ impl ImageCache {
         let claimed = catalog.row_count(rel)?;
         let base_rows = base.image.row_count() as u64;
         let image = match claimed.cmp(&base_rows) {
-
             std::cmp::Ordering::Less => {
                 return Err(Error::Corruption(CorruptionError::RowCountMismatch {
                     relation: rel,
