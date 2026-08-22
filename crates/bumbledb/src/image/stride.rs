@@ -1,6 +1,5 @@
 //! The stride-padding placement mechanism for [`StridePadder`]
 //! (measured).
-
 use super::{LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, StridePadder};
 
 impl StridePadder {
