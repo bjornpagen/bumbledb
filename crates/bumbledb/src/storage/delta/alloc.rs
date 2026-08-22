@@ -6,7 +6,6 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 use super::{FreshMark, WriteDelta};
 
 impl WriteDelta<'_> {
-
     /// `EscapedIdBurn` drop guard for the closure region, which covers
 
     /// # Errors
