@@ -15,7 +15,6 @@ use super::finalize::finalize;
 use super::run_join::run_join;
 
 impl<S> PreparedQuery<S> {
-
     /// # Errors
 
     /// # Panics
@@ -70,7 +69,6 @@ impl<S> PreparedQuery<S> {
         images: &I,
         out: &mut Answers,
     ) -> Result<()> {
-
         if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
             return self.execute_key_probe_direct(catalog, out);
         }
@@ -97,11 +95,10 @@ impl<S> PreparedQuery<S> {
         ran: bool,
         out: &mut Answers,
     ) -> Result<()> {
-
         // raised before finalize — never a partial result. Executor-side
 
         if !ran {
-            return Ok(()); 
+            return Ok(());
         }
         let _s = obs::span(obs::names::FINALIZE);
         finalize(
@@ -120,7 +117,6 @@ impl<S> PreparedQuery<S> {
         images: &I,
         counters: &mut Cnt,
     ) -> Result<bool> {
-
         if self.pipeline.has_derived() {
             let derived_ran = self.run_derived(catalog, images, counters)?;
             if self.pipeline.main_rules().is_empty() {
@@ -204,7 +200,6 @@ impl<S> PreparedQuery<S> {
                         complete
                     };
                 if resolved {
-
                     // bound param) resolve into the executor before the
 
                     rule.executor.bind_allen_masks(&self.resolved_params);
@@ -298,7 +293,6 @@ impl<S> PreparedQuery<S> {
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {
-
                 match crate::exec::dispatch::fact_operand(fact, *field)? {
                     crate::exec::dispatch::FactOperand::Word(word) => {
                         out.push_fixed_bytes(*len, &[word]);
