@@ -1,38 +1,6 @@
-//! The wire-tag tables — ONE declarative table per mirrored core enum
-//! (cleanup-0.5.0 U3 kill 10, the `wire_tags!` macro).
-//!
-//! Every enum the bridge mirrors as `{ kind: "…" }` tagged objects is
-//! maintained in THREE places: the core Rust enum, this crate's string
-//! matches, and the TS type unions (`ts/src/native.ts` / `ts/src/spec.ts`).
-//! The engine deliberately refuses serde ("a downstream binding serializes
-//! it however it likes" — `bumbledb/src/schema/manifest.rs`), so the single
-//! source lives HERE, bridge-side, as one table per enum emitting:
-//!
-//! - `tag(&E) -> &'static str` — the EXHAUSTIVE variant → tag map. No
-//!   wildcard arm exists, so a NEW core variant breaks THIS crate's compile
-//!   and the author lands the wire decision with the variant, instead of
-//!   the old silent `other =>` drift (~90 unprotected arms across 16 match
-//!   sites).
-//! - one named `const` per tag — the `*_in` parsers match against these
-//!   (const str patterns), so the IN direction reads the same SPELLINGS.
-//!   For UNIT-ONLY enums (`for unit E` tables) the pattern column is a
-//!   constructor path, so the table ALSO emits `parse(tag) -> Option<E>`
-//!   and the compile tripwire covers both directions — a new unit variant
-//!   breaks compile in exactly one place, the table. Payload-carrying
-//!   enums keep their hand parser arms with a catch-all `other =>`
-//!   refusal (a `pat` fragment is unspellable in expression position, and
-//!   the payload doctrine below keeps their marshaling by hand), so THEIR
-//!   in-direction misses still surface only at runtime, caught by the
-//!   TS-side integration suite.
-//! - `TAGS` — every tag in core declaration order; the `tags.json` golden
-//!   (`ts/test/fixtures/tags.json`, verified by `golden::tags_json_matches`
-//!   below) is rendered from these, and a TS test
-//!   (`ts/test/wire-tags.test.ts`) pins `native.ts`/`spec.ts`'s unions
-//!   against the same file — closing the TS direction too.
-//!
-//! Payload field marshaling stays by hand in `marshal.rs` (the
-//! u64-as-bigint law rejects a full serde-JSON crossing); only the TAG
-//! vocabulary is generated.
+//! The wire-tag tables: one declarative table per mirrored core enum.
+//! A new core variant breaks compile here; payload marshaling stays in
+//! `marshal.rs`.
 
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, LiteralSetSpec, LiteralSpec, StatementSpec, WeightSpec,
@@ -45,15 +13,6 @@ use bumbledb::{
 
 use crate::marshal::OwnedParam;
 
-/// One wire-tag table: named tag consts (the parsers' patterns), the
-/// exhaustive `tag()` map (the compile tripwire + the OUT direction), and
-/// the declaration-order `TAGS` roster (the golden's source).
-///
-/// A UNIT-ONLY enum spells its table `for unit E` — the pattern column is
-/// then a constructor path, so the table also emits `parse()` and the
-/// compile tripwire covers BOTH wire directions (a payload-carrying enum
-/// cannot: a `pat` fragment is unspellable in expression position, so its
-/// IN direction stays a hand arm per the payload doctrine below).
 macro_rules! wire_tags {
     ($(#[$doc:meta])* mod $mod_name:ident for unit $enum_ty:ty {
         $($const_name:ident : $variant:path => $tag:literal),+ $(,)?
@@ -250,10 +209,6 @@ wire_tags! {
     }
 }
 
-/// The compile-side proof that `head_op`'s table covers `AggOp` too: the
-/// engine's own `AggOp::head_op` is exhaustive over `AggOp`, so a new
-/// `AggOp` variant breaks THAT compile; this map ties each `AggOp` to the
-/// shared table's tag through it.
 #[allow(dead_code)]
 pub(crate) fn agg_op_tag(op: AggOp) -> &'static str {
     head_op::tag(&op.head_op())
@@ -367,7 +322,6 @@ wire_tags! {
     }
 }
 
-/// Admission discriminant (`Db.create`, builder `admit`).
 pub(crate) mod admission_tag {
     pub(crate) const ACCEPTED: &str = "accepted";
     pub(crate) const REJECTED: &str = "rejected";
@@ -375,7 +329,6 @@ pub(crate) mod admission_tag {
     pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED];
 }
 
-/// Write / writeFrom outcome discriminant.
 pub(crate) mod write_tag {
     pub(crate) const ACCEPTED: &str = "accepted";
     pub(crate) const REJECTED: &str = "rejected";
@@ -385,7 +338,6 @@ pub(crate) mod write_tag {
     pub(crate) const TAGS: &[&str] = &[ACCEPTED, REJECTED, ABANDONED, MOVED];
 }
 
-/// `dbCreate`/`dbOpen` declaration-boundary kinds (not theory admission).
 pub(crate) mod open_kind {
     pub(crate) const SCHEMA_ERROR: &str = "schemaError";
     pub(crate) const NEWTYPE_MISMATCH: &str = "newtypeMismatch";
@@ -394,18 +346,12 @@ pub(crate) mod open_kind {
     pub(crate) const TAGS: &[&str] = &[SCHEMA_ERROR, NEWTYPE_MISMATCH, FINGERPRINT_MISMATCH];
 }
 
-/// `dbPrepare` roster-error kind.
 pub(crate) mod prepare_kind {
     pub(crate) const IR_ERROR: &str = "irError";
     #[allow(dead_code)]
     pub(crate) const TAGS: &[&str] = &[IR_ERROR];
 }
 
-/// The golden: `ts/test/fixtures/tags.json` renders every table above, and
-/// this test verifies the committed file matches — structure-compared (the
-/// TS repo's formatter owns the bytes). The TS half
-/// (`ts/test/wire-tags.test.ts`) pins the type unions against the same
-/// file, closing the core-enum → bridge → TS chain in both directions.
 #[cfg(test)]
 mod golden {
     use serde_json::Value as Json;
