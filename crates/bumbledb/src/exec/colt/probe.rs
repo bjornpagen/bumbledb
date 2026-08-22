@@ -3,7 +3,6 @@ use super::hash_words;
 use super::{Colt, Cursor, Map, Slot, ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask};
 
 impl Colt {
-
     #[cfg(test)]
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
         self.get_prehashed(cursor, level, key, hash_words(key))
@@ -30,7 +29,6 @@ impl Colt {
     ) -> Option<Cursor> {
         debug_assert_eq!(key.len(), self.arity_at(level));
         match cursor {
-
             Cursor::Row(position) => self
                 .position_matches(level, position, key)
                 .then_some(Cursor::Row(position)),
@@ -89,8 +87,7 @@ impl Colt {
                 #[expect(
                     clippy::needless_range_loop,
                     reason = "the explicit constant range is the intended unroll shape"
-                )] 
-
+                )]
                 for i in 0..A {
                     eq &= self.buckets[base + i * 8 + slot] == key[i];
                 }
