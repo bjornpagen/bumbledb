@@ -1,8 +1,3 @@
-//! The `churn` driver command: registry selection, the device-honesty
-//! gate, the per-run driver loop, and the series artifacts. This module
-//! itself never times anything — [`crate::churn::run`] owns the clock,
-//! and every timed NUMBER arrives only via the owner's night session.
-
 use std::path::{Path, PathBuf};
 
 use crate::churn;
@@ -10,24 +5,13 @@ use crate::cli;
 use crate::corpus_gen::GenConfig;
 use crate::report;
 
-/// `churn`: the long-lived degradation lanes — every selected registry
-/// run driven end to end ([`churn::run::run_spec`]), the series report
-/// written as `churn-report.json` + `churn-report.md`.
-///
-/// Report-class exit semantics: completing = `Ok(0)` — nothing here
-/// gates a claim. Every failure — a per-sample oracle gate mismatch, an
-/// end-state disagreement, a refusal (unknown run name, RAM-backed
-/// scratch, a bad schedule) — is `Err`, which `main` renders as exit 2,
-/// and the messages name the failing lane or probe.
-///
+/// Every failure — a per-sample oracle gate mismatch, an end-state
+/// disagreement, a refusal (unknown run name, RAM-backed scratch, a bad
+/// schedule) — is `Err`, which `main` renders as exit 2, and the messages name
+/// the failing lane or probe.
 /// # Errors
-///
-/// Refusals and gate disagreements, each naming the offending lane,
-/// probe, or knob.
 pub fn cmd_churn(args: &cli::ChurnArgs) -> Result<i32, String> {
-    // The device-honesty rule is symmetric: churn times reads AND
-    // writes against its scratch, so the scratch root refuses a
-    // RAM-backed volume exactly like every timed lane.
+
     crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed churn lanes")
         .map_err(|refusal| refusal.to_string())?;
     let out_dir = args.out.clone().unwrap_or_else(|| {
@@ -47,9 +31,9 @@ pub fn cmd_churn(args: &cli::ChurnArgs) -> Result<i32, String> {
         vacuum_every: args.vacuum_every,
         analyze_every: args.analyze_every,
     };
-    // Selection against the registry's own data: an unknown run name is
+
     // a refusal listing the known names — the list is the registry's,
-    // never a literal.
+
     let registry = churn::lanes::all();
     let selected: Vec<&churn::lanes::RunSpec> = match &args.runs {
         None => registry.iter().collect(),
@@ -97,10 +81,6 @@ mod tests {
 
     use super::cmd_churn;
 
-    /// The end-to-end smoke: the nosync run (ephemeral stores, S-scale
-    /// load, 4 cycles — seconds, not measurement) completes with exit 0
-    /// and both series artifacts land in the out dir, the JSON one
-    /// parsing through the crate's own parser.
     #[test]
     fn churn_cmd_nosync_smoke_writes_artifacts() {
         let scratch = std::env::temp_dir().join("bumbledb-bench-churn-cmd-scratch");
