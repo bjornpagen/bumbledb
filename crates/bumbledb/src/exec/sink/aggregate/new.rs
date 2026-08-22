@@ -4,11 +4,6 @@ use crate::exec::sink::{
 };
 use crate::exec::wordmap::WordMap;
 
-/// Parses prepare's find vocabulary into the measure-free execution
-/// vocabulary. Every measure becomes a derived scratch word past the
-/// rule's real slots; the companion table records (derived word,
-/// interval start slot) for the one subtraction site. No execution
-/// consumer can observe the symbolic measure variants.
 pub(in crate::exec::sink) fn parse_finds(
     finds: &[FindSpec],
     slot_count: usize,
@@ -19,7 +14,6 @@ pub(in crate::exec::sink) fn parse_finds(
     (parsed, measures)
 }
 
-/// [`parse_finds`] into retained buffers for the rule-loop re-aim path.
 pub(in crate::exec::sink) fn parse_finds_into(
     finds: &[FindSpec],
     _slot_count: usize,
@@ -38,8 +32,6 @@ pub(in crate::exec::sink) fn parse_finds_into(
     }
 }
 
-/// The one Pack slot of a find list, if any (validation: at most one
-/// Pack per head — shared by construction and per-rule re-aiming).
 fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
     let mut packs = finds.iter().filter_map(|f| match f {
         SinkSpec::Pack { slot } => Some(*slot),
@@ -51,17 +43,13 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 }
 
 impl AggregateSink {
-    /// Builds the sink. `slot_count` is the plan's binding-slot count in
-    /// **words** (an interval variable holds two — the `SlotWidth` layout);
-    /// Unhinted, seen-set-retaining construction (tests).
+
     #[cfg(test)]
     #[must_use]
     pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
         Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0, &[])
     }
 
-    /// Unhinted dense-group construction (tests): the radixes are the
-    /// schema-proven per-word domains (finding 049).
     #[cfg(test)]
     #[must_use]
     pub fn new_dense(
@@ -78,7 +66,6 @@ impl AggregateSink {
         )
     }
 
-    /// Unhinted elided construction (tests): the proof is mandatory.
     #[cfg(test)]
     #[must_use]
     pub fn new_distinct(
@@ -95,21 +82,6 @@ impl AggregateSink {
         )
     }
 
-    /// Presized construction: the dedup seen-set
-    /// takes the plan's output estimate; the group map takes a small
-    /// clamp of it (groups are few — the estimate bounds bindings, not
-    /// groups).
-    ///
-    /// Dedup is structural: this constructor keys a single rule's whole
-    /// slot array; [`Self::for_union`] keys the head projection
-    /// (hand-written provenance) and [`Self::for_dnf_union`] the shared
-    /// slot arrays (DNF-derived provenance — R2);
-    /// [`Self::without_seen_set`] alone accepts the proof and
-    /// omits the map. Multi-rule sinks always retain the spanning union
-    /// representation, even when the rules are provably disjoint.
-    /// `dense_groups` is the single-rule dense-domain proof (finding
-    /// 049): per group-key word, the schema-proven radix — empty keeps
-    /// the open-domain map.
     #[must_use]
     pub fn with_capacity_hint(
         finds: &[FindSpec],
@@ -120,19 +92,13 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::Bindings, hint, dense_groups)
     }
 
-    /// Presized multi-rule construction, hand-written provenance: the
-    /// head-projection seen-set is structurally mandatory because it is
-    /// the union representation.
     #[must_use]
     pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
         Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
     }
 
-    /// Presized multi-rule construction, DNF-derived provenance (ruled
     /// 2026-07-23, R2): the union seen-set re-keys on the **shared slot
-    /// arrays** — `spans` is rule 0's full slot array in `VarId` order,
-    /// re-supplied per rule at [`Self::aim`] — so disjunction widens
-    /// membership without moving the fold domain (the or-transparency
+
     /// law, `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
     #[must_use]
     pub fn for_dnf_union(
@@ -144,9 +110,6 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), hint, &[])
     }
 
-    /// Presized single-rule construction without a binding seen-set. The
-    /// only entry requires the plan proof by value; `dense_groups` as
-    /// [`Self::with_capacity_hint`].
     #[must_use]
     pub fn without_seen_set(
         finds: &[FindSpec],
@@ -171,8 +134,7 @@ impl AggregateSink {
         hint: usize,
         dense_groups: &[u16],
     ) -> Self {
-        // Parse first: everything below sees the measure-free execution
-        // vocabulary over the extended scratch row.
+
         let (finds, measures) = parse_finds(finds, slot_count);
         let scratch_words = slot_count + measures.len();
         let group_spans: Vec<(usize, usize)> = finds
@@ -187,9 +149,7 @@ impl AggregateSink {
             .iter()
             .filter(|f| matches!(f, SinkSpec::Agg(_)))
             .count();
-        // The union key by provenance (R2): head projection for a
-        // hand-written rule set, the shared slot arrays for a
-        // DNF-derived one. Live state is the arm, not a flattened product.
+
         let (dedup, union_words) = match regime {
             DedupRegime::Bindings => (
                 DedupState::Bindings {
@@ -221,10 +181,7 @@ impl AggregateSink {
             }
             DedupRegime::Elided(witness) => (DedupState::Elided { witness }, 0),
         };
-        // The group representation (finding 049): dense when the caller
-        // proved every key word a small domain — the product is capped
-        // at construction, so the table is at most `DENSE_GROUPS_CAP`
-        // words and the untouched-slot scan at finalize stays trivial.
+
         let groups = if dense_groups.is_empty() {
             GroupTable::Hashed(WordMap::with_capacity_hint(key_words, hint.min(4096)))
         } else {
@@ -277,19 +234,9 @@ impl AggregateSink {
         }
     }
 
-    /// Re-aims the slot tables at one rule's binding layout (the rule
-    /// loop, docs/architecture/40-execution.md): the head positions are
-    /// fixed — arity, ops, widths, types — but each rule supplies its own
-    /// slots, so every slot-addressed table rebuilds in place (capacities
-    /// retained; the shared maps — groups, seen, value sets — carry
-    /// across rules untouched: the spanning is the union). Single-rule
-    /// sinks are built aimed and never call this.
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize, shared_slots: &[(usize, usize)]) {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
-        // The parse, per rule: derived words sit past this
-        // rule's real slots (the head's measure positions are fixed, so
-        // the measure count never changes across rules) — rebuilt into
-        // retained capacity (the warm allocation contract).
+
         parse_finds_into(finds, slot_count, &mut self.finds, &mut self.measures);
         self.real_slots = slot_count;
         self.group_spans.clear();
@@ -300,9 +247,7 @@ impl AggregateSink {
             }));
         match &mut self.dedup {
             DedupState::DnfUnion { spans, .. } => {
-                // DNF-derived provenance (R2): the caller supplies this
-                // rule's full slot array in `VarId` order — the shared
-                // vocabulary every disjunct reads identically.
+
                 spans.clear();
                 spans.extend_from_slice(shared_slots);
             }
@@ -320,41 +265,28 @@ impl AggregateSink {
         }
     }
 
-    /// Groups held (finalize's reservation).
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
     }
 
-    /// Distinct bindings the seen-set holds — the union observable the
-    /// rule loop reads per rule (absorbed = emitted − newly-seen).
-    /// `None` when the seen-set is elided (the single-rule
-    /// distinct-bindings proof: every emit is first-seen).
     #[must_use]
     pub fn distinct_seen(&self) -> Option<usize> {
         self.dedup.seen().map(WordMap::len)
     }
 
-    /// Whether the binding seen-set is elided (the plan proved distinct
-    /// bindings) — the elision observable.
     #[cfg(test)]
     #[must_use]
     pub fn seen_elided(&self) -> bool {
         matches!(self.dedup, DedupState::Elided { .. })
     }
 
-    /// Whether the group table took the dense representation (finding
-    /// 049) — the construction observable.
     #[cfg(test)]
     #[must_use]
     pub fn dense_group_table(&self) -> bool {
         matches!(self.groups, GroupTable::Dense { .. })
     }
 
-    /// Empties the sink for the next execution, retaining capacity.
-    /// Called once per execution, never
-    /// per rule: the seen-set spanning rules IS the union
-    /// (docs/architecture/40-execution.md § the rule loop).
     pub fn reset(&mut self) {
         self.groups.clear();
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
@@ -366,30 +298,18 @@ impl AggregateSink {
     }
 }
 
-/// The dedup regime, structural at construction (ruled 2026-07-23, R2:
-/// the multi-rule key splits by written-rule provenance).
 #[derive(Debug, Clone, Copy)]
 enum DedupRegime<'k> {
-    /// Single rule: the whole slot array.
+
     Bindings,
-    /// Hand-written multi-rule: the head projection — the rules' only
-    /// shared vocabulary.
+
     Union,
-    /// DNF-derived multi-rule: the shared slot arrays — rule 0's full
-    /// slot spans in `VarId` order, one variable scope across disjuncts.
+
     DnfUnion(&'k [(usize, usize)]),
-    /// Single rule under the plan's distinct-bindings proof: no set.
+
     Elided(crate::plan::fj::DistinctWitness),
 }
 
-/// One head position's contribution to the union dedup key: the slot
-/// span the position reads — a group variable's span, a fold input's
-/// span, or a Pack input's two-word span (the fold domain projected to
-/// the head carries the *raw claim*, so the spanning seen-set keys
-/// (group, claim) pairs and the coalesce folds the union — 20-query-ir
-/// § aggregation); the nullary `Count` reads nothing and contributes
-/// nothing (the naive model's "constant filler", represented as
-/// absence).
 fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
     match find {
         SinkSpec::Var { slot, width } | SinkSpec::Agg(AggSpec::Fold { slot, width, .. }) => {
@@ -400,8 +320,6 @@ fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
     }
 }
 
-/// The multi-rule dedup-key spans over one rule's binding layout — the
-/// head projection, position by position.
 fn union_key_spans(finds: &[SinkSpec]) -> Vec<(usize, usize)> {
     finds.iter().filter_map(union_span).collect()
 }
