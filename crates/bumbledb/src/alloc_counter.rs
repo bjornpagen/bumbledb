@@ -8,9 +8,7 @@
 //! Sanctioned allocation windows, documented per the protocol: the first
 //! execution after prepare (COLT pools, sink maps, and view buffers grow
 //! to their high-water), the first execution after a commit (image
-
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
