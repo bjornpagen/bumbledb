@@ -1,16 +1,6 @@
-//! The grounding-evaluator's execution shape (docs/architecture/
-//! 40-execution.md, § the ground: elimination and evaluation): a folded
-//! occurrence never builds an image or binds a view, its plan-constant
-//! set rides the param-set selection machinery (and never counts as an
-//! unresolved literal — the PRD 09 latch), introspection carries the fold
-//! line, and the |S| == 0 verdict prepares to the statically-empty
-//! plan.
-
 use super::*;
 use bumbledb_theory::schema::Row;
 
-/// Reading(id fresh, kind u64, value i64) referencing the closed
-/// Kind(rank u64; ranks 10/20/20/30) through Reading(kind) <= Kind(id).
 pub(super) fn closed_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -102,7 +92,6 @@ pub(super) fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, 
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// `Q(id, value) :- Reading(id, kind = x, value), Kind(id = x, rank == <rank>)`.
 pub(super) fn fold_query(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -141,7 +130,6 @@ fn values_of(buffer: &Answers) -> Vec<i64> {
     values
 }
 
-/// The readings fixture: kinds 0..=3, values tagged by kind.
 pub(super) const READINGS: &[(u64, u64, i64)] = &[
     (1, 0, 100),
     (2, 1, 210),
@@ -150,10 +138,6 @@ pub(super) const READINGS: &[(u64, u64, i64)] = &[
     (5, 3, 300),
 ];
 
-/// The fold executes correctly and its plan-constant set never counts
-/// as an unresolved literal — the fully-latched fast path stays open
-/// (zero pending literals, zero params ⇒ `resolve_filters` is
-/// skipped from the second execution on).
 #[test]
 fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
     let dir = TempDir::new("folded-answers");
@@ -177,18 +161,13 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
         vec![210, 211, 220],
         "kinds 1 and 2 (rank 20)"
     );
-    // Warm re-execution rides the fully-latched fast path (the resolved
-    // tables are final) and answers identically.
+
     let out = prepared
         .execute_collect(&txn, &cache, &[] as &[BindValue])
         .expect("warm execute");
     assert_eq!(values_of(&out), vec![210, 211, 220]);
 }
 
-/// The `[shape]` leg: the folded occurrence never builds an image and
-/// never binds a view — exactly one `VIEW_BUILD` (the Reading occurrence)
-/// and one `IMAGE_BUILD` (Reading's) appear; the closed relation's
-/// synthesized image is never touched.
 #[cfg(feature = "trace")]
 #[test]
 fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
@@ -220,9 +199,6 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
     );
 }
 
-/// introspection carries the fold line (the Eliminated-reporting precedent),
-/// and the structured stats mirror it — the surviving set as handles,
-/// the vocabulary's names (the handle set IS the payload).
 #[test]
 fn introspection_reports_the_fold_with_its_filters_and_handles() {
     let dir = TempDir::new("folded-introspect");
@@ -238,9 +214,6 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
     assert!(report.contains("query:"), "{report}");
 }
 
-/// |S| == 0 is the statically-empty channel: the rule dies at prepare
-/// with the evaluator's rendered reason, and an all-dead query
-/// prepares to the statically-empty query.
 #[test]
 fn an_empty_fold_prepares_the_statically_empty_query() {
     let dir = TempDir::new("folded-empty");
