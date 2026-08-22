@@ -352,6 +352,79 @@ while IFS= read -r hit; do
   fi
 done < <(grep -nEi -- "$purged_spelling" "${purged_docs[@]}" 2>/dev/null || true)
 
+# ---- (i): comment hygiene (proposals/purge/comment-gates.md) ----------
+# Banned tokens in comments across crates/*/src, ts/src, ts/crate, lean/.
+# Allowlist mechanism mirrors lane (f): exact-phrase entries, each with a
+# one-line justification. Zero-match assertion per token; a nonzero match
+# names file:line and fails the lane. Loud vacuous guard: scanning zero
+# comments is a fail, not a pass.
+#
+# DISABLED until wave 4 (the comment purge must land first). Enable with
+# BUMBLEDB_CENSUS_LANE_I=1.
+if [ "${BUMBLEDB_CENSUS_LANE_I:-}" = "1" ]; then
+  lane_i_scanned=0
+  lane_i_allow=''
+  # Justification roster (exact phrases; empty until wave-4 enablement
+  # records the licensed survivors that still spell a banned token):
+  #   (none yet — wave 4 fills this when the purge is done)
+
+  banned_tokens=(
+    'audit/'
+    'PRD '
+    'docs/architecture'
+    'formerly'
+    'previously'
+    ' was deleted'
+    'no longer'
+    'TODO'
+    'FIXME'
+    'XXX'
+  )
+  hash_re='[0-9a-f]{8,10}'
+
+  extract_comments() {
+    scripts/comment-diff-guard.sh --extract-comments "$1" 2>/dev/null || true
+  }
+
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    case "$src" in
+      *'/target/'* | *'/node_modules/'* | *'/.lake/'*) continue ;;
+    esac
+    extracted=$(extract_comments "$src")
+    [ -n "$extracted" ] || continue
+    while IFS= read -r crow; do
+      [ -n "$crow" ] || continue
+      lane_i_scanned=$((lane_i_scanned + 1))
+      cline="${crow%%:*}"
+      ctext="${crow#*:}"
+      if [ -n "$lane_i_allow" ] && printf '%s' "$ctext" | grep -qE -- "$lane_i_allow"; then
+        continue
+      fi
+      for tok in "${banned_tokens[@]}"; do
+        if printf '%s' "$ctext" | grep -qF -- "$tok"; then
+          echo "spec-census: FAIL — comment-hygiene token '$tok': $src:$cline: $ctext" >&2
+          fail=1
+        fi
+      done
+      if printf '%s' "$ctext" | grep -qE -- "\\b${hash_re}\\b"; then
+        echo "spec-census: FAIL — comment-hygiene commit-hash token: $src:$cline: $ctext" >&2
+        fail=1
+      fi
+    done <<< "$extracted"
+  done < <(find crates/*/src ts/src ts/crate lean \
+             \( -name '*.rs' -o -name '*.ts' -o -name '*.lean' \) \
+             ! -path '*/.lake/*' ! -path '*/target/*' ! -path '*/node_modules/*' \
+             | sort)
+
+  if [ "$lane_i_scanned" -eq 0 ]; then
+    echo "spec-census: FAIL — lane (i) scanned zero comments (vacuous pass)" >&2
+    fail=1
+  fi
+else
+  echo "spec-census: lane (i) comment-hygiene skipped (set BUMBLEDB_CENSUS_LANE_I=1 to enable)"
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
