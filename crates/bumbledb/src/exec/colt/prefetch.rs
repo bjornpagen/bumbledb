@@ -1,7 +1,6 @@
 use super::{Colt, Cursor, NodeState};
 
 impl Colt {
-
     #[inline(always)]
     pub fn prefetch_bucket(&self, cursor: Cursor, hash: u64) {
         let Cursor::Node(node) = cursor else { return };
