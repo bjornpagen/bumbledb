@@ -1011,7 +1011,6 @@ mod tests {
     }
 
     /// same body again REFUSES — and the refusal commits NOTHING (the
-
     #[test]
     fn delete_refuses_a_missing_row() {
         let dir = scratch("delete-refusal");
