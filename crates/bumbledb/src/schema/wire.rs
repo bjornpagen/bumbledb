@@ -1,6 +1,5 @@
 //! Shared descriptor-wire tags. The encoder ([`super::fingerprint`]) names
 //! these discriminants; the bytes are the historical stream (tag 1 remains
-
 use super::{Bound, FieldId};
 
 macro_rules! wire_tag {
