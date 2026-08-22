@@ -69,7 +69,6 @@ fn a_fresh_store_is_format_8() {
 
 #[test]
 fn create_refuses_an_existing_environment() {
-
     let dir = TempDir::new("env-create-refuses");
     let schema = schema();
     drop(Environment::create(dir.path(), &schema).expect("create"));
