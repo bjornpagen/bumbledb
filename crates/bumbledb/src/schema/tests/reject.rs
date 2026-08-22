@@ -66,7 +66,6 @@ fn rejects_fresh_on_non_u64() {
 
 #[test]
 fn rejects_fixed_bytes_widths_outside_the_range() {
-
     for len in [0u16, 65] {
         let decl = one_relation(vec![field("hash", ValueType::FixedBytes { len })]);
         assert_eq!(
@@ -86,7 +85,6 @@ fn rejects_fixed_bytes_widths_outside_the_range() {
 
 #[test]
 fn rejects_interval_widths_outside_the_range() {
-
     let fixed = |width: u64| ValueType::FixedInterval {
         element: IntervalElement::U64,
         width,
@@ -110,7 +108,6 @@ fn rejects_interval_widths_outside_the_range() {
 
 #[test]
 fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
-
     let wide = |name: String, count: usize, value_type: ValueType, columns: usize| {
         let decl = one_relation(
             (0..count)
@@ -147,14 +144,10 @@ fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
 
 #[test]
 fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
-
     // mints the auto-key's FieldId before relation validation runs, so
 
     // width rejection cannot run until after the ids are minted).
-    for filler in [
-        ValueType::U64,
-        ValueType::FixedBytes { len: 0 }, 
-    ] {
+    for filler in [ValueType::U64, ValueType::FixedBytes { len: 0 }] {
         let mut fields: Vec<FieldDescriptor> = (0..66_000)
             .map(|i| field(&format!("c{i}"), filler))
             .collect();
@@ -175,7 +168,6 @@ fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
 
 #[test]
 fn rejects_a_statement_roster_past_the_u16_id_space() {
-
     // count gate must fire before any per-statement validation walks
 
     let statement = StatementDescriptor::Containment {
@@ -203,7 +195,6 @@ fn rejects_a_statement_roster_past_the_u16_id_space() {
 
 #[test]
 fn the_column_count_boundary_is_exact() {
-
     let mut fields: Vec<FieldDescriptor> = (0..8_191)
         .map(|i| field(&format!("hash{i}"), ValueType::FixedBytes { len: 64 }))
         .collect();
@@ -283,7 +274,6 @@ fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
 
 #[test]
 fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
-
     let decl = two_relations(
         vec![field("a", ValueType::U64), field("b", ValueType::I64)],
         vec![field("x", ValueType::U64), field("y", ValueType::I64)],
@@ -701,7 +691,6 @@ fn rejects_duplicate_statement() {
 
 #[test]
 fn rejects_duplicate_statement_up_to_selection_order() {
-
     let a = side_where(
         RelationId(0),
         &[FieldId(0)],
@@ -753,7 +742,6 @@ fn closed_currency(rows: Vec<Row>) -> SchemaDescriptor {
 
 #[test]
 fn rejects_an_empty_extension() {
-
     assert_eq!(
         closed_currency(vec![]).validate().unwrap_err(),
         SchemaError::EmptyExtension {
@@ -794,7 +782,6 @@ fn rejects_a_duplicate_handle() {
 
 #[test]
 fn rejects_an_extension_arity_mismatch() {
-
     assert_eq!(
         closed_currency(vec![row("Usd", vec![Value::U64(2), Value::U64(9)])])
             .validate()
@@ -812,7 +799,6 @@ fn rejects_an_extension_arity_mismatch() {
 
 #[test]
 fn rejects_an_extension_value_type_mismatch() {
-
     // after the synthetic id.
     assert_eq!(
         closed_currency(vec![row("Usd", vec![Value::Bool(true)])])
@@ -828,7 +814,6 @@ fn rejects_an_extension_value_type_mismatch() {
 
 #[test]
 fn rejects_a_ray_axiom() {
-
     let of_element = |element, value| SchemaDescriptor {
         relations: vec![closed(
             "Quarter",
@@ -868,7 +853,6 @@ fn rejects_a_ray_axiom() {
 
 #[test]
 fn rejects_str_on_a_closed_relation() {
-
     let decl = SchemaDescriptor {
         relations: vec![closed(
             "Currency",
@@ -888,7 +872,6 @@ fn rejects_str_on_a_closed_relation() {
 
 #[test]
 fn rejects_fresh_on_a_closed_relation() {
-
     let decl = SchemaDescriptor {
         relations: vec![closed(
             "Currency",
@@ -908,7 +891,6 @@ fn rejects_fresh_on_a_closed_relation() {
 
 #[test]
 fn rejects_a_user_declared_id_on_a_closed_relation() {
-
     let decl = SchemaDescriptor {
         relations: vec![closed(
             "Currency",
@@ -947,7 +929,6 @@ fn closed_window() -> RelationDescriptor {
 
 #[test]
 fn rejects_an_interval_position_into_a_closed_target() {
-
     // walk with virtual storage — refused v0, trigger recorded.
     let decl = SchemaDescriptor {
         relations: vec![
@@ -979,7 +960,6 @@ fn rejects_an_interval_position_into_a_closed_target() {
 
 #[test]
 fn rejects_an_interval_position_from_a_closed_source() {
-
     // — the same v0 refusal, source arm.
     let decl = SchemaDescriptor {
         relations: vec![
@@ -1014,7 +994,6 @@ fn rejects_an_interval_position_from_a_closed_source() {
 
 #[test]
 fn rejects_a_closed_target_projection_that_is_not_the_id() {
-
     // a payload-column target is refused by the closedness rule itself —
 
     let decl = SchemaDescriptor {
@@ -1049,7 +1028,6 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
 
 #[test]
 fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
-
     // point-read-served key whose field set equals the refused
 
     // available. The refusal names closedness, the actual rule.
@@ -1070,9 +1048,7 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
             },
         ],
         statements: vec![
-
             fd(RelationId(0), &[FieldId(1)]),
-
             containment(
                 side(RelationId(1), &[FieldId(0)]),
                 side(RelationId(0), &[FieldId(1)]),
@@ -1093,7 +1069,6 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
 
 #[test]
 fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
-
     let decl = SchemaDescriptor {
         relations: vec![
             closed(
@@ -1127,7 +1102,6 @@ fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
 
 #[test]
 fn rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range() {
-
     let decl = SchemaDescriptor {
         relations: vec![
             closed(
@@ -1161,7 +1135,6 @@ fn rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range() 
 
 #[test]
 fn rejects_a_declared_key_the_axioms_refute() {
-
     let decl = SchemaDescriptor {
         relations: vec![closed(
             "Currency",
@@ -1185,7 +1158,6 @@ fn rejects_a_declared_key_the_axioms_refute() {
 
 #[test]
 fn rejects_a_declared_pointwise_key_the_axioms_refute() {
-
     let decl = SchemaDescriptor {
         relations: vec![closed(
             "Window",
@@ -1253,7 +1225,6 @@ fn extension_tree() -> SchemaDescriptor {
 
 #[test]
 fn rejects_an_empty_literal_set() {
-
     let mut decl = extension_tree();
     decl.statements.push(containment(
         side_where_sets(
@@ -1276,7 +1247,6 @@ fn rejects_an_empty_literal_set() {
 
 #[test]
 fn rejects_a_singleton_spelled_as_a_set() {
-
     let mut decl = extension_tree();
     decl.statements.push(containment(
         side_where_sets(
@@ -1299,7 +1269,6 @@ fn rejects_a_singleton_spelled_as_a_set() {
 
 #[test]
 fn rejects_a_duplicate_literal_within_a_set() {
-
     let mut decl = extension_tree();
     decl.statements.push(containment(
         side_where_sets(
@@ -1324,7 +1293,6 @@ fn rejects_a_duplicate_literal_within_a_set() {
 
 #[test]
 fn rejects_a_set_literal_of_the_wrong_type() {
-
     let mut decl = extension_tree();
     decl.statements.push(containment(
         side_where_sets(
@@ -1382,7 +1350,6 @@ fn rejects_a_capacity_with_an_interval_position() {
 
 #[test]
 fn rejects_a_signed_weight() {
-
     // the illegal weight is a typed refusal, never a checked runtime
 
     let mut decl = extension_tree();
@@ -1408,7 +1375,6 @@ fn rejects_a_signed_weight() {
 
 #[test]
 fn rejects_a_non_u64_weight() {
-
     let mut decl = extension_tree();
     decl.statements.push(capacity_weighted(
         side(RelationId(0), &[FieldId(0)]),
@@ -1429,7 +1395,6 @@ fn rejects_a_non_u64_weight() {
 
 #[test]
 fn rejects_a_duration_weight_over_a_scalar() {
-
     let mut decl = extension_tree();
     decl.statements.push(capacity_weighted(
         side(RelationId(0), &[FieldId(0)]),
@@ -1450,7 +1415,6 @@ fn rejects_a_duration_weight_over_a_scalar() {
 
 #[test]
 fn rejects_an_unknown_weight_field() {
-
     let mut decl = extension_tree();
     decl.statements.push(capacity_weighted(
         side(RelationId(0), &[FieldId(0)]),
@@ -1471,7 +1435,6 @@ fn rejects_an_unknown_weight_field() {
 
 #[test]
 fn rejects_a_signed_dependent_bound() {
-
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field("cap", ValueType::I64));
     decl.statements.push(capacity_weighted(
@@ -1493,7 +1456,6 @@ fn rejects_a_signed_dependent_bound() {
 
 #[test]
 fn rejects_a_duration_bound_over_a_scalar() {
-
     let mut decl = extension_tree();
     decl.statements.push(capacity_weighted(
         side(RelationId(0), &[FieldId(0)]),
@@ -1543,7 +1505,6 @@ fn rejects_a_unit_window_against_a_duration_bound() {
 
 #[test]
 fn rejects_a_u64_weight_against_a_duration_bound() {
-
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field(
         "span",
@@ -1566,7 +1527,6 @@ fn rejects_a_u64_weight_against_a_duration_bound() {
 
 #[test]
 fn rejects_a_duration_weight_against_a_u64_field_bound() {
-
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field("cap", ValueType::U64));
     decl.statements.push(capacity_weighted(
@@ -1584,7 +1544,6 @@ fn rejects_a_duration_weight_against_a_u64_field_bound() {
 
 #[test]
 fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
-
     // resolved window (`lean/Bumbledb/Schema.lean: den_closed_constant`).
 
     let decl = SchemaDescriptor {
@@ -1626,7 +1585,6 @@ fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
 
 #[test]
 fn rejects_an_inverted_window() {
-
     let mut decl = extension_tree();
     decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
@@ -1642,7 +1600,6 @@ fn rejects_an_inverted_window() {
 
 #[test]
 fn rejects_the_vacuous_window() {
-
     // (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
     let mut decl = extension_tree();
     decl.statements.push(capacity(
@@ -1659,7 +1616,6 @@ fn rejects_the_vacuous_window() {
 
 #[test]
 fn rejects_the_containment_respelled_as_a_window() {
-
     // (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
 
     let mut decl = extension_tree();
@@ -1677,7 +1633,6 @@ fn rejects_the_containment_respelled_as_a_window() {
 
 #[test]
 fn rejects_a_capacity_whose_target_is_no_key() {
-
     let mut decl = extension_tree();
     decl.statements = vec![capacity(
         side(RelationId(1), &[FieldId(0)]),
@@ -1720,7 +1675,6 @@ fn rejects_a_window_arity_mismatch() {
 
 #[test]
 fn rejects_a_closed_to_closed_window_the_axioms_refute() {
-
     // (`lean/Bumbledb/Schema.lean: den_closed_constant`). The cited row
 
     let decl = SchemaDescriptor {
@@ -1795,7 +1749,6 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
 /// Panics` contract now names only the unreachable 2^32-relations case.
 #[test]
 fn the_id_width_caps_refuse_typed_rather_than_panicking() {
-
     let count = u32::from(u16::MAX) + 1;
     let relations: Vec<RelationDescriptor> = (0..=count)
         .map(|idx| RelationDescriptor {
