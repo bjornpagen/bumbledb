@@ -472,7 +472,6 @@ describe("the target-key wall at the engine — parity through native.dbCreate",
 	})
 
 	test("row 8 sub-case at the engine: a DECLARED payload key whose field set equals the projection — still ClosedTargetNotHandle", async function closedPayloadKeyed() {
-
 		// exactly the refused field set, and the rule is CLOSEDNESS, not key
 
 		// refusal below can only be the closed target's own.
