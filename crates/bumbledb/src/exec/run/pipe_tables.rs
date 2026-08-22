@@ -1,5 +1,4 @@
 //! The pipelined executor's static shape tables.
-
 use super::{PipeTables, ValidatedPlan};
 
 impl PipeTables {
