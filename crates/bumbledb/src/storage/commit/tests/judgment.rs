@@ -1,12 +1,3 @@
-//! The containment source-side judgment (PRD 08 criteria): scalar determinant
-//! probes with and without target selections, conditional sources (σ
-//! gating both the `R` writes and the probes), the coverage-walk matrix,
-//! and the `==` pair's insert-time totality.
-//!
-//! Own fixture — richer than the shared one: a `==` pair, a selected
-//! scalar target, a pointwise target with selected and unselected
-//! coverage statements, and a selected source.
-
 use crate::encoding::{ValueRef, encode_u64};
 use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::Schema;
@@ -32,7 +23,6 @@ const SESSION: RelationId = RelationId(5);
 const REST: RelationId = RelationId(6);
 const REPORT: RelationId = RelationId(7);
 
-/// Declared statement order (no fresh fields, so no auto-keys).
 const TOTALITY: StatementId = StatementId(4);
 const ARM: StatementId = StatementId(5);
 const TRANSFER_ACCOUNT: StatementId = StatementId(6);
@@ -40,13 +30,6 @@ const SESSION_COVER: StatementId = StatementId(7);
 const REST_COVER: StatementId = StatementId(8);
 const REPORT_ACCOUNT: StatementId = StatementId(9);
 
-/// Parent(id; key id) == Child(parent; key parent), lowered to the two
-/// statements [`TOTALITY`] and [`ARM`]. Transfer(account) <=
-/// Account(id | active == true): a selected scalar target.
-/// Session(worker, span) <= Shift(worker, span) and Rest(worker, span) <=
-/// Shift(worker, span | rested == true): coverage against a pointwise
-/// key, unselected and selected. Report(subject | urgent == true) <=
-/// Account(id): a conditional source.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -216,7 +199,6 @@ fn report(schema: &Schema, subject: u64, urgent: bool) -> Vec<u8> {
     )
 }
 
-/// Inserts all facts in one delta and commits.
 fn insert_all(
     env: &Environment,
     schema: &Schema,
@@ -225,8 +207,6 @@ fn insert_all(
     apply_delta(env, schema, &[], facts)
 }
 
-/// Commits `base`, then inserts `facts` in a second delta; on an abort,
-/// asserts the base state survived untouched.
 fn base_then_insert(
     name: &str,
     base: &[(RelationId, Vec<u8>)],
@@ -273,7 +253,6 @@ fn assert_source_violation(
     assert_eq!(**fact, *source_fact, "the violation names the source fact");
 }
 
-/// Every committed `R` key of one statement (direct LMDB inspection).
 fn reverse_entries(env: &Environment, statement: StatementId) -> Vec<Vec<u8>> {
     let prefix = key(|b| keys::reverse_prefix(b, statement, &[]));
     committed_data(env)
@@ -282,8 +261,6 @@ fn reverse_entries(env: &Environment, statement: StatementId) -> Vec<Vec<u8>> {
         .filter(|k| k.starts_with(&prefix))
         .collect()
 }
-
-// ---------- scalar containment ----------
 
 #[test]
 fn scalar_source_without_target_aborts() {
@@ -296,14 +273,6 @@ fn scalar_source_without_target_aborts() {
     );
 }
 
-/// The T8 walker's verdicts over one sorted probe group: an interleaved
-/// batch — every even account exists, every odd one dangles — walks one
-/// shared cursor through hits and misses (a miss leaves the next
-/// stored key PENDING; the following probe answers from that slot).
-/// The sealed rejection cites the statement once with the KEY-LEAST
-/// violator (the licensed witness, `tests/witness_stability.rs`); the
-/// all-present twin walks the same cursor green, and a probe past the
-/// group's last stored key misses off the exhausted cursor.
 #[test]
 fn a_sorted_probe_group_judges_through_the_shared_cursor() {
     let schema = schema();
@@ -311,8 +280,7 @@ fn a_sorted_probe_group_judges_through_the_shared_cursor() {
         .step_by(2)
         .map(|id| (ACCOUNT, account(&schema, id, true)))
         .collect();
-    // Interleaved hits and misses: the key-least violator (transfer 1)
-    // is the citation's witness.
+
     let mixed: Vec<(RelationId, Vec<u8>)> = (0..40)
         .map(|id| (TRANSFER, transfer(&schema, id)))
         .collect();
@@ -321,7 +289,7 @@ fn a_sorted_probe_group_judges_through_the_shared_cursor() {
         TRANSFER_ACCOUNT,
         &transfer(&schema, 1),
     );
-    // Every probe hits: the same cursor answers 20 ascending probes.
+
     let all_present: Vec<(RelationId, Vec<u8>)> = (0..40)
         .step_by(2)
         .map(|id| (TRANSFER, transfer(&schema, id)))
@@ -329,7 +297,7 @@ fn a_sorted_probe_group_judges_through_the_shared_cursor() {
     base_then_insert("judg-sorted-walker-green", &base, &all_present)
         .expect("every probe hits through the walker")
         .unwrap();
-    // Past the end: the probe lands beyond the group's last stored key.
+
     assert_source_violation(
         base_then_insert(
             "judg-sorted-walker-tail",
@@ -369,8 +337,7 @@ fn scalar_source_with_pre_committed_target_commits() {
 
 #[test]
 fn scalar_target_failing_the_target_selection_aborts() {
-    // The determinant hit alone is not the proof: the found account is outside
-    // the statement's target σ (active == true).
+
     let schema = schema();
     let t = transfer(&schema, 9);
     assert_source_violation(
@@ -384,13 +351,9 @@ fn scalar_target_failing_the_target_selection_aborts() {
     );
 }
 
-// ---------- conditional sources (σ on the source side) ----------
-
 #[test]
 fn out_of_sigma_source_commits_without_a_target_and_writes_no_reverse_edge() {
-    // A non-urgent report is outside the statement's source σ: no target
-    // required, and — asserted by direct inspection of the committed `R`
-    // prefix — no reverse edge written.
+
     let dir = TempDir::new("judg-conditional-outside");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -426,7 +389,7 @@ fn in_sigma_source_writes_its_reverse_edge() {
     )
     .expect("commit")
     .expect("admitted");
-    // Exactly one edge: R | statement | key_bytes | source_rel | source_row.
+
     let expected = key(|b| keys::reverse_key(b, REPORT_ACCOUNT, &encode_u64(5), REPORT, 0));
     assert_eq!(reverse_entries(&env, REPORT_ACCOUNT), vec![expected]);
 }
@@ -451,8 +414,6 @@ fn deleting_a_source_removes_its_reverse_edge() {
         .expect("admitted");
     assert!(reverse_entries(&env, REPORT_ACCOUNT).is_empty());
 }
-
-// ---------- the coverage walk (unselected target) ----------
 
 #[test]
 fn exact_single_segment_covers() {
@@ -486,8 +447,7 @@ fn abutting_chain_covers() {
 
 #[test]
 fn entry_segment_overhang_covers() {
-    // The entry case with no exact-start segment: the group's predecessor
-    // [5, 25) is still running at the source's start.
+
     let schema = schema();
     base_then_insert(
         "judg-cover-overhang",
@@ -518,7 +478,7 @@ fn interior_gap_aborts() {
 
 #[test]
 fn source_start_before_first_segment_aborts() {
-    // The entry gap: no segment is running at s.
+
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -534,7 +494,7 @@ fn source_start_before_first_segment_aborts() {
 
 #[test]
 fn source_end_past_last_segment_aborts() {
-    // Prefix exhaustion: the chain runs out below e.
+
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -550,9 +510,7 @@ fn source_end_past_last_segment_aborts() {
 
 #[test]
 fn ray_target_covers_a_bounded_source() {
-    // The point-domain law: `end == MAX` denotes the ray `[s, ∞)`, and ∞
-    // is just the largest end word — ordinary byte comparison judges the
-    // coverage with no special case.
+
     let schema = schema();
     base_then_insert(
         "judg-cover-ray-target",
@@ -565,9 +523,7 @@ fn ray_target_covers_a_bounded_source() {
 
 #[test]
 fn ray_source_not_covered_by_bounded_targets() {
-    // A source ray requires target coverage to ∞: bounded targets always
-    // leave a gap — the chain exhausts below `MAX`, the ordinary
-    // prefix-exhaustion violation.
+
     let schema = schema();
     let s = session(&schema, 1, 15, u64::MAX);
     assert_source_violation(
@@ -583,9 +539,7 @@ fn ray_source_not_covered_by_bounded_targets() {
 
 #[test]
 fn ray_source_covered_by_ray_target() {
-    // Coverage to ∞ is satisfiable only by a target chain reaching a ray
-    // — `covered` becomes `MAX` and the walk terminates at the source's
-    // own end, same loop, no ray awareness.
+
     let schema = schema();
     base_then_insert(
         "judg-cover-ray-source-ray",
@@ -598,8 +552,7 @@ fn ray_source_covered_by_ray_target() {
 
 #[test]
 fn another_prefix_group_does_not_cover() {
-    // The walk never leaves the scalar-prefix group: worker 2's segment
-    // proves nothing for worker 1.
+
     let schema = schema();
     let s = session(&schema, 1, 10, 20);
     assert_source_violation(
@@ -612,8 +565,6 @@ fn another_prefix_group_does_not_cover() {
         &s,
     );
 }
-
-// ---------- the coverage walk (selected target) ----------
 
 #[test]
 fn selected_chain_inside_sigma_commits() {
@@ -647,8 +598,7 @@ fn entry_segment_failing_sigma_aborts() {
 
 #[test]
 fn mid_chain_segment_failing_sigma_aborts() {
-    // The second consumed segment is outside σ: the walk pays one F get
-    // per segment and aborts there.
+
     let schema = schema();
     let r = rest(&schema, 1, 10, 20);
     assert_source_violation(
@@ -664,8 +614,6 @@ fn mid_chain_segment_failing_sigma_aborts() {
         &r,
     );
 }
-
-// ---------- the == pair (two statements, both source-side on insert) ----------
 
 #[test]
 fn parent_alone_aborts_on_the_totality_statement() {
