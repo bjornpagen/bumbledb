@@ -42,7 +42,6 @@ enum Image {
 }
 
 impl DeterminantImage {
-
     #[must_use]
     pub(crate) fn scratch() -> Self {
         Self(Image::Inline {
@@ -190,7 +189,6 @@ pub enum Namespace {
 }
 
 impl Namespace {
-
     #[must_use]
     pub const fn tag(self) -> u8 {
         self as u8
@@ -255,7 +253,6 @@ pub enum StatKind {
 }
 
 impl StatKind {
-
     #[must_use]
     pub const fn from_byte(byte: u8) -> Option<Self> {
         match byte {
@@ -432,7 +429,6 @@ pub fn stat_key(relation: RelationId, stat: StatKind) -> [u8; STAT_KEY_LEN] {
 /// `None` on anything not shaped like a reverse-edge key (corrupt data).
 #[must_use]
 pub fn parse_reverse_key(key: &[u8]) -> Option<(StatementId, &[u8], RelationId, u64)> {
-
     let rest = rest_after(key, Namespace::Reverse)?;
     let (&statement, rest) = rest.split_first_chunk()?;
     let (rest, &source_row) = rest.split_last_chunk()?;
@@ -572,7 +568,6 @@ mod tests {
 
     #[test]
     fn determinant_key_golden_bytes() {
-
         let determinant = [1u8, 2, 3];
         let u = key(|b| determinant_key(b, RelationId(2), StatementId(5), &determinant));
         assert_eq!(
@@ -583,7 +578,6 @@ mod tests {
 
     #[test]
     fn determinant_key_keeps_a_16_byte_interval_determinant_contiguous() {
-
         let mut determinant = Vec::new();
         determinant.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
         determinant.extend_from_slice(&encode_interval_u64(
@@ -605,7 +599,6 @@ mod tests {
 
     #[test]
     fn reverse_key_golden_bytes_are_statement_scoped() {
-
         let key_bytes = [7u8, 8];
         let r = key(|b| reverse_key(b, StatementId(5), &key_bytes, RelationId(9), 11));
         assert_eq!(
@@ -724,11 +717,11 @@ mod tests {
         determinant_image(layout.encoded(&fact), &key_projection, &mut key_bytes);
 
         let mut expected = Vec::new();
-        expected.extend_from_slice(&encode_u64(0x1111_1111_1111_1111)); 
-        expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222)); 
+        expected.extend_from_slice(&encode_u64(0x1111_1111_1111_1111));
+        expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222));
         expected.extend_from_slice(&encode_interval_u64(
             bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval"),
-        )); 
+        ));
         assert_eq!(key_bytes.as_bytes(), expected);
 
         let r = key(|b| reverse_key(b, StatementId(4), &key_bytes, RelationId(1), 5));
@@ -766,7 +759,6 @@ mod tests {
 
     #[test]
     fn keys_sort_by_namespace_then_components() {
-
         let ordered = vec![
             fact_key(RelationId(1), 5).to_vec(),
             fact_key(RelationId(1), 6).to_vec(),
@@ -790,7 +782,6 @@ mod tests {
 
     #[test]
     fn determinant_image_identity_is_bytes_across_representations() {
-
         let wide = vec![0xCD; DETERMINANT_INLINE + 8];
         let mut spilled = DeterminantImage::scratch();
         spilled.extend(&wide);
@@ -819,7 +810,6 @@ mod tests {
 
     #[test]
     fn determinant_image_spill_boundary_is_exactly_inline_capacity() {
-
         let mut at_cap = DeterminantImage::scratch();
         at_cap.extend(&encode_u64(0xDEAD_BEEF_0000_0001));
         at_cap.extend(&encode_interval_u64(
@@ -920,7 +910,6 @@ mod tests {
 
     #[test]
     fn determinant_width_bound_matches_reverse_overhead() {
-
         assert_eq!(MAX_DETERMINANT_WIDTH, 511 - 15);
 
         let determinant = vec![0xEE; MAX_DETERMINANT_WIDTH];
