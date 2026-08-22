@@ -66,17 +66,16 @@ impl<T: Element> Interval<T> {
         Self::new(start, Self::MAX_END)
     }
 
+    /// Fixed-width `[start, start + width)`; never a ray.
     /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`,
-    /// `lean/Bumbledb/Countermodels.lean:
-
+    /// `lean/Bumbledb/Countermodels.lean: unit_slot_at_ceiling_unconstructible`.
     #[must_use]
     pub fn fixed(start: T, width: u64) -> Option<Self> {
         let end = start.add_width(width).filter(|end| *end < Self::MAX_END)?;
         Self::new(start, end)
     }
 
-    /// The schema macro's ground-axiom seam (ruled 2026-07-23, R14):
-
+    /// Macro ground-axiom seam: the caller already proved `start < end`; this constructor does not re-check.
     #[doc(hidden)]
     #[must_use]
     pub const fn __ground_axiom(start: T, end: T) -> Self {
