@@ -7,11 +7,10 @@ use crate::ir::FoldOp;
 fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
     let dir = TempDir::new("sink-footgun");
     let schema = schema();
-    // Two postings of amount 100 to account 7.
+
     let postings = vec![(1u64, 7u64, 100i64), (2, 7, 100)];
     let views = views_of(&dir, &schema, &postings, &[]);
 
-    // Fresh ids bound: two distinct bindings -> Sum = 200.
     let normalized_bound = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -22,8 +21,6 @@ fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(200)]]);
 
-    // Fresh ids unbound: the two facts collapse to one binding -> 100.
-    // This documents the set-semantics footgun deliberately.
     let normalized_unbound = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
@@ -42,8 +39,7 @@ fn joining_a_three_tag_relation_triples_the_sum() {
     let postings = vec![(1u64, 7u64, 100i64)];
     let tags = vec![(1u64, 10u64), (1, 11), (1, 12)];
     let views = views_of(&dir, &schema, &postings, &tags);
-    // Sum(amount) by account joined with tags: the 3 tag bindings
-    // multiply the binding set — exactly the documented footgun.
+
     let normalized = normalized(
         &schema,
         vec![
@@ -74,7 +70,6 @@ fn witnessed_elision_matches_the_seen_set_path() {
     let finds =
         |plan: &ValidatedPlan| vec![var_spec(plan, 1), agg_spec(plan, FoldOp::Sum, 2, true)];
 
-    // Elided path (as the plan proves) vs forced seen-set path.
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
     let mut elided = AggregateSink::new_distinct(
@@ -127,15 +122,13 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
         FindSpec::Agg(AggSpec::Count),
     ];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
-    // The empty set — not a [NULL] or [0] row (documented divergence
-    // from SQL's ungrouped-aggregate behavior).
+
     assert!(rows.is_empty());
 }
 
 #[test]
 fn sum_is_order_independent_near_the_boundary() {
-    // {i64::MAX, 1, -2} sums to MAX-1 under any fold order thanks to
-    // i128 accumulation; {MAX, 1} overflows deterministically.
+
     let sum_find = FindSpec::Agg(AggSpec::Fold {
         op: FoldOp::Sum,
         slot: 0,
