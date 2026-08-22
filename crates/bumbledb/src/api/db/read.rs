@@ -5,7 +5,6 @@ use crate::storage::env::GenerationId;
 
 impl<S> Db<S> {
     /// Runs `f` over one LMDB read lease: a consistent generation for
-
     /// # Errors
     pub fn read<R>(&self, f: impl FnOnce(&ReadInstance<'_, S>) -> Result<R>) -> Result<R> {
         use std::sync::atomic::Ordering;
