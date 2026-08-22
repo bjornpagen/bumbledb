@@ -4,7 +4,6 @@ use super::{
 };
 
 impl Colt {
-
     /// # Panics
 
     /// Only on programmer-invariant violations: undersized caller buffers.
