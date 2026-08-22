@@ -1,5 +1,4 @@
 //! Image binding: epoch + lazy image, generic over frozen or store.
-
 use std::sync::Arc;
 
 use super::RelationImage;
