@@ -5,7 +5,6 @@
 //! checkpoint/sync" is not a convention (TRUNCATE) and drops its connection
 //! before any stat, and the wal honesty mechanism: a churn protocol that forgot
 //! to checkpoint shows
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
