@@ -1,14 +1,3 @@
-//! The converse property lane (`docs/architecture/60-validation.md`
-//! § the two oracles, the Allen families): `Allen(a, b, m) ≡
-//! Allen(b, a, converse(m))` is a theorem of the coordinate system, so
-//! for every generated query carrying literal-mask `Allen` predicates
-//! the *converse twin* — every Allen leaf's operands swapped and its
-//! mask conversed — must produce the identical result set on the
-//! engine. The twin is built mechanically from the original
-//! ([`converse_twin`]), so the lane quantifies over exactly the
-//! generator's mask distribution: named composites, singletons, and
-//! random masks, over both element lanes and every operand shape.
-
 use bumbledb::{CmpOp, ConditionTree, Query};
 
 use crate::corpus_gen::Rng;
@@ -18,20 +7,15 @@ use crate::verify::{MAX_BUNDLES, Run, VerifyConfig};
 
 use super::run::positional;
 
-/// How many converse pairs one verify run compares.
 const CONVERSE_CASES: u32 = 100;
 
-/// The converse twin: every literal-mask `Allen` leaf with operands
-/// swapped and the mask conversed — semantics-preserving per leaf by
-/// the converse theorem, so the whole query's denotation is unchanged.
-/// `None` when the query carries no `Allen` predicate.
 fn converse_twin(query: &Query) -> Option<Query> {
     let mut twin = query.clone();
     let mut any = false;
     let _ = crate::walk::every_rule_mut(&mut twin, |rule| {
         for tree in &mut rule.conditions {
             let ConditionTree::Leaf(comparison) = tree else {
-                continue; // the generator emits flat conjunctions
+                continue; 
             };
             if let CmpOp::Allen { mask } = comparison.op {
                 comparison.op = CmpOp::Allen {
@@ -46,14 +30,10 @@ fn converse_twin(query: &Query) -> Option<Query> {
     any.then_some(twin)
 }
 
-/// Draws generated queries until [`CONVERSE_CASES`] Allen-bearing ones
-/// have been twinned and compared engine-vs-engine (rows and error
-/// verdicts alike).
 pub(super) fn converse_lane(run: &mut Run<'_, target::Target>, cfg: &VerifyConfig) {
     let mut rng = Rng::new(cfg.corpus_gen.seed ^ 0x0115_C09E);
     let mut compared = 0u32;
-    // A generous draw budget: Allen-bearing shapes are a sizable band,
-    // so the budget is slack, not a hidden skip.
+
     for _ in 0..CONVERSE_CASES * 20 {
         if compared >= CONVERSE_CASES || run.bundles.len() >= MAX_BUNDLES {
             break;
