@@ -4,7 +4,6 @@
 //! must have its `R` edge **and its global judgment hold** (the target
 //! tuple present or covered, through the commit path's own probes — one
 //! `F` scan shared across every statement, never a scan per statement).
-
 use std::ops::Bound;
 
 use crate::encoding::InternId;
