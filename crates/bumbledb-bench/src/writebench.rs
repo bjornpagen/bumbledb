@@ -348,7 +348,6 @@ mod tests {
     }
 
     /// The insert-stream runner completes its protocol with positive
-
     #[test]
     fn insert_stream_reports_positive_throughput() {
         let dir = scratch("insert-stream");
@@ -365,7 +364,6 @@ mod tests {
     }
 
     /// The cold protocol runs, and rebuild cost shows: cold p50 is at
-
     #[test]
     fn cold_containment_walk_costs_at_least_warm() {
         let dir = scratch("cold");
@@ -401,7 +399,6 @@ mod tests {
     }
 
     /// The delete lane's protocol runs, and rebuild cost shows:
-
     #[test]
     fn cold_containment_walk_delete_costs_at_least_warm() {
         let dir = scratch("cold-delete");
