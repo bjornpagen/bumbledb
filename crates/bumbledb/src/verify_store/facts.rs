@@ -21,7 +21,7 @@ use super::{StoreFinding, Sweep, namespace_bounds};
 #[expect(
     clippy::too_many_lines,
     reason = "the linear per-fact coherence walk is clearer kept together"
-)] 
+)]
 pub(super) fn sweep<C: CatalogRead + Copy>(
     s: &mut Sweep<'_, C>,
     checker: &mut judgment::Checker<'_, C>,
@@ -245,7 +245,7 @@ fn check_marks<C: CatalogRead + Copy>(
     for &capacity_id in relation.capacity_targets() {
         let statement = schema.capacity(capacity_id);
         let CapacityEnforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
-            continue; 
+            continue;
         };
         {
             let checks = s.selections.capacity(capacity_id);
@@ -260,7 +260,6 @@ fn check_marks<C: CatalogRead + Copy>(
             Ok(Check::Holds) | Err(Error::Corruption(_)) => {}
             Ok(Check::Violated(violation)) => s.push(StoreFinding::Judgment(violation)),
             // A ray met at measure time (C10's judge-side refusal) is
-
             Err(Error::CapacityRayMeasure { .. }) => {
                 s.malformed(determinant.as_bytes(), "capacity measure of a ray");
             }
@@ -370,7 +369,6 @@ fn check_extension_sources<C: CatalogRead + Copy>(
             let statement = schema.containment(containment_id);
             let sid = statement.id;
             for row in rows {
-
                 // before the finding push.
                 let checks = s.selections.containment(containment_id);
                 if !judgment::satisfies(&checks.source, layout, &row.fact) {
