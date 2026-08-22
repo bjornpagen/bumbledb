@@ -22,7 +22,6 @@ const LENGTHS: &[usize] = &[
 fn u64_kernels_match_the_scalar_reference_bit_for_bit() {
     let mut rng = Lcg(42);
     for &len in LENGTHS {
-
         let col: Vec<u64> = (0..len)
             .map(|_| match rng.next() % 8 {
                 0 => 0,
@@ -68,7 +67,6 @@ fn u8_kernel_matches_the_scalar_reference() {
 fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
     let mut rng = Lcg(1717);
     for &len in LENGTHS {
-
         let starts: Vec<u64> = (0..len)
             .map(|_| match rng.next() % 8 {
                 0 => 0,
@@ -134,8 +132,8 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
                     .map(|_| match rng.next() % 6 {
                         0 => 0,
                         1 => u64::MAX,
-                        2 => 1 << 63,       
-                        3 => (1 << 63) - 1, 
+                        2 => 1 << 63,
+                        3 => (1 << 63) - 1,
                         _ => rng.next(),
                     })
                     .collect();
@@ -224,7 +222,6 @@ fn fold_min_max_extent_guard_refuses_wrapping_extents() {
 
 #[test]
 fn gather_folds_pin_the_overflow_and_sign_edges() {
-
     let values = vec![u64::MAX; 1024];
     let mut indices: Vec<u32> = (0..1024).collect();
     indices.extend(std::iter::repeat_n(7u32, 9));
@@ -599,7 +596,6 @@ fn gather_fold_scalar_addressed_twin() {
                 span(*f, &fresh_sets(&mut rng));
             }
             for pair in 0..pairs {
-
                 let run = |k: usize, ns: &mut Vec<Vec<f64>>, rng: &mut Lcg| {
                     let sets = fresh_sets(rng);
                     let (t, n) = span(arms[k].1, &sets);
@@ -644,7 +640,6 @@ fn gather_fold_scalar_addressed_twin() {
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
 fn fold_throughput_contiguous_sum() {
-
     let values: Vec<u64> = (0..262_144u64).map(|i| i ^ (1 << 63)).collect();
     let rate_of = |label: &str, f: &mut dyn FnMut() -> i128| {
         let mut sink = 0i128;
@@ -660,7 +655,7 @@ fn fold_throughput_contiguous_sum() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
-        )] 
+        )]
         let rate = (values.len() as u64 * reps) as f64
             / u64::try_from(elapsed.as_nanos().max(1)).expect("short run") as f64;
         println!("{label}: {rate:.2} rows/ns (sink {sink})");
@@ -808,7 +803,6 @@ fn filter_ab_predicate_scan_reshape() {
             let mut report = |name: &str,
                               a: &mut dyn FnMut(&mut Vec<u32>),
                               b: &mut dyn FnMut(&mut Vec<u32>)| {
-
                 let (mut out_a, mut out_b) = (Vec::new(), Vec::new());
                 a(&mut out_a);
                 b(&mut out_b);
@@ -853,14 +847,14 @@ fn filter_ab_predicate_scan_reshape() {
 fn allen_corpus(len: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>) {
     const MAX: u64 = u64::MAX;
     let named: &[(u64, u64, u64, u64)] = &[
-        (0, 5, 5, 9),     
-        (5, 9, 0, 5),     
-        (0, 10, 3, 7),    
-        (3, 7, 0, 10),    
-        (2, 6, 2, 6),     
-        (3, MAX, 7, MAX), 
-        (0, 5, 5, MAX),   
-        (2, MAX, 2, 6),   
+        (0, 5, 5, 9),
+        (5, 9, 0, 5),
+        (0, 10, 3, 7),
+        (3, 7, 0, 10),
+        (2, 6, 2, 6),
+        (3, MAX, 7, MAX),
+        (0, 5, 5, MAX),
+        (2, MAX, 2, 6),
     ];
     let (mut a_s, mut a_e) = (Vec::with_capacity(len), Vec::with_capacity(len));
     let (mut b_s, mut b_e) = (Vec::with_capacity(len), Vec::with_capacity(len));
@@ -871,7 +865,7 @@ fn allen_corpus(len: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec
             let mut draw = || {
                 let s = rng.next() % 12;
                 match rng.next() % 4 {
-                    0 => (s, MAX), 
+                    0 => (s, MAX),
                     n => (s, s + 1 + n % 12),
                 }
             };
@@ -1050,7 +1044,7 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
 fn allen_dense_scans_record_one_batch_event() {
     use bumbledb_theory::allen::AllenMask;
     let mut rng = Lcg(0xA11E);
-    let len = 300usize; 
+    let len = 300usize;
     let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
 
     crate::obs::start_capture();
@@ -1237,7 +1231,6 @@ fn allen_pooled_reuse_is_bit_identical_to_fresh_outputs() {
 
 #[test]
 fn compaction_keeps_exactly_the_masked_items_in_order() {
-
     let mut items: Vec<u32> = (0..10).collect();
     compact_u32_by_mask(&mut items, &[0; 10]);
     assert!(items.is_empty());
@@ -1265,7 +1258,6 @@ fn compaction_keeps_exactly_the_masked_items_in_order() {
     reason = "reporting accepts lossy integer-to-float conversion"
 )]
 fn allen_filter_counter_spill_ab() {
-
     const N: usize = 8192;
     const BUFS: usize = 4;
     const CALLS: usize = 64;
@@ -1282,7 +1274,7 @@ fn allen_filter_counter_spill_ab() {
                 .collect()
         })
         .collect();
-    let mask_bits = 0b0_0100_0010_0011u16; 
+    let mask_bits = 0b0_0100_0010_0011u16;
     let mut keep_a = vec![0u8; N];
     let mut keep_b = vec![0u8; N];
 
@@ -1338,7 +1330,7 @@ fn allen_filter_counter_spill_ab() {
 /// all-one, alternating — over the lane-stress lengths and a long tail.
 #[test]
 fn compaction_matches_the_safe_reference_bit_for_bit() {
-    let mut rng = Lcg(0xC0 );
+    let mut rng = Lcg(0xC0);
     let lengths = LENGTHS.iter().copied().chain([1_000, 8_192]);
     for len in lengths {
         let source: Vec<u32> = (0..len)
