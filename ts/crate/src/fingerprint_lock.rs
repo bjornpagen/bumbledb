@@ -62,7 +62,7 @@ bumbledb::schema! {
     Holder(id | at == 5..18446744073709551615, digest == b"0123456789abcdef") <= Holder(id);
     SavingsTerms(account | rate_bps == -3) <= SavingsTerms(account);
     Holder(id) <={0..3} Account(holder);
-    Holder(id) <={2..*} Account(holder | status == Frozen);
+    Holder(id) <=[Duration(active)]{2..*} Account(holder | status == Frozen);
     Holder(id) <={1} Account(holder | status == Open);
     Holder(id) <={0} Account(holder | kind == Failed);
     Holder(id) <={1..4} Account(holder | kind == DirectPass);
@@ -87,7 +87,7 @@ bumbledb::schema! {
 /// the twin change there (or vice versa) is exactly the drift this lock
 /// exists to catch. `18446744073709551615` above is `u64::MAX` — the `at`
 /// selection literal is the unbounded ray `[5, ∞)`.
-const PIN: &str = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc";
+const PIN: &str = "588df888bd1f1a21057dbf0742af1d1223cc5c2e28ce265f803af989611f1418";
 
 /// A self-cleaning per-test store directory (the engine's integration
 /// `TempDir` twin — this crate deliberately has no dev-dependencies). The

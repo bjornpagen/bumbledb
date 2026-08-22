@@ -253,7 +253,6 @@ describe("renderStatement", function describeRender() {
 		assert.equal(renderStatement(capacity(target, within(1n), source)), "Holder(id) <={1} Account(holder)")
 		assert.equal(renderStatement(capacity(target, within(0n), source)), "Holder(id) <={0} Account(holder)")
 		assert.equal(renderStatement(capacity(target, within(1n, 3n), source)), "Holder(id) <={1..3} Account(holder)")
-		assert.equal(renderStatement(capacity(target, within(2n, "*"), source)), "Holder(id) <={2..*} Account(holder)")
 		assert.equal(renderStatement(capacity(target, within(0n, 4n), source)), "Holder(id) <={0..4} Account(holder)")
 
 		const { Pool, Device, Room, Booking } = buildRacks()
@@ -478,8 +477,13 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	test("the unit `{1..*}` ban fires at the capacity() call when the floor was computed", function probeComputedFloorOne() {
 		const { Pool, Device } = buildRacks()
 		assert.throws(function computedUnitFloorOne() {
+			// @ts-expect-error — the type tier bans every unit floor (K16); the construction twin still discriminates lo=1
 			capacity(on(Pool, "id"), within(computed(1n), "*"), on(Device, "pool"))
 		}, /says only what the bare containment says/)
+		assert.throws(function computedUnitFloorTwo() {
+			// @ts-expect-error — same ban, general arm: a bare count floor is refused whole
+			capacity(on(Pool, "id"), within(computed(2n), "*"), on(Device, "pool"))
+		}, /bare count floor is refused/)
 
 		const weighted = capacity(on(Pool, "id"), weigh("watts"), within(computed(1n), "*"), on(Device, "pool"))
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")

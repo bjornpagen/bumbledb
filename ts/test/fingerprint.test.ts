@@ -21,7 +21,7 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const PIN = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc"
+const PIN = "588df888bd1f1a21057dbf0742af1d1223cc5c2e28ce265f803af989611f1418"
 
 const RAY_END = 18446744073709551615n
 
@@ -75,7 +75,7 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 	contained(on(Holder.where({ at: span(5n, RAY_END), digest: DIGEST }), "id"), on(Holder, "id")),
 	contained(on(SavingsTerms.where({ rate_bps: -3n }), "account"), on(SavingsTerms, "account")),
 	capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder")),
-	capacity(on(Holder, "id"), within(2n, "*"), on(Account.where({ status: "Frozen" }), "holder")),
+	capacity(on(Holder, "id"), weigh(duration("active")), within(2n, "*"), on(Account.where({ status: "Frozen" }), "holder")),
 	capacity(on(Holder, "id"), within(1n), on(Account.where({ status: "Open" }), "holder")),
 	capacity(on(Holder, "id"), within(0n), on(Account.where({ kind: "Failed" }), "holder")),
 	capacity(on(Holder, "id"), within(1n, 4n), on(Account.where({ kind: "DirectPass" }), "holder")),

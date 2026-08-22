@@ -66,6 +66,7 @@ const exactCapacity = capacity(on(Holder, "id"), within(2n), on(Account.where({ 
 const rangeCapacity = capacity(on(Holder, "id"), within(1n, 4n), on(Account.where({ score: -42n }), "holder"))
 const floorCapacity = capacity(
 	on(Holder, "id"),
+	weigh("weight"),
 	within(2n, "*"),
 	on(Account.where({ kind: ["Checking", "Savings"] }), "holder")
 )
@@ -207,7 +208,7 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 			'Holder(id) <={2} Account(holder | label == "it\\\'s \\"w\\teird\\"\\n\\\\e\\u{301}")'
 		)
 		assert.equal(renderStatement(rangeCapacity), "Holder(id) <={1..4} Account(holder | score == -42)")
-		assert.equal(renderStatement(floorCapacity), "Holder(id) <={2..*} Account(holder | kind == {Checking, Savings})")
+		assert.equal(renderStatement(floorCapacity), "Holder(id) <=[weight]{2..*} Account(holder | kind == {Checking, Savings})")
 		assert.equal(renderStatement(psiTargetCapacity), "Account(id | flag == true) <={0..1} SavingsTerms(account)")
 		assert.equal(
 			renderStatement(literalGauntletCapacity),
