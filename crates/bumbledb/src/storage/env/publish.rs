@@ -18,21 +18,19 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::write_fresh_meta;
 use super::{Environment, GenerationId};
 
-/// Atomic publication as data. A new step extends the crash matrix by
-/// construction; a forgotten crash case is a missing enum arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PublishStep {
-    /// Sibling directory `<name>.staging.<nonce>`.
+
     CreateStaging,
     /// One LMDB write txn: `_data`, `_dict`, fresh `_meta`.
     WriteCatalog,
-    /// Commit the txn and close the staging environment.
+
     CommitAndClose,
-    /// Fsync staging files and the staging directory.
+
     SyncStagingFiles,
-    /// Atomic rename onto the destination. Linearization point.
+
     Rename,
-    /// Fsync the destination parent. Failure is [`Error::PublishedButUnsynced`].
+
     SyncParent,
 }
 
@@ -58,8 +56,6 @@ impl PublishStep {
     }
 }
 
-/// Catalog source for [`Environment::publish`]. Frozen catalogs carry
-/// generation zero; an open store keeps the generation it already has.
 pub(crate) struct PublishCatalog<'a> {
     schema: &'a Schema,
     generation: GenerationId,
@@ -90,9 +86,7 @@ impl<'a> PublishCatalog<'a> {
 }
 
 impl Environment {
-    /// Publishes `catalog` at `path`. The destination must not
-    /// exist. Staging is a sibling `<name>.staging.<nonce>`; a failure
-    /// before [`PublishStep::Rename`] never exposes `path`. A failure
+
     /// after rename is [`Error::PublishedButUnsynced`].
     pub(crate) fn publish(path: &Path, catalog: &PublishCatalog<'_>) -> Result<Self> {
         match publish_inner(path, catalog, OpenLane::Write, None, false)? {
@@ -103,13 +97,11 @@ impl Environment {
         }
     }
 
-    /// Empty-catalog birth: create.
     pub(crate) fn publish_empty(path: &Path, schema: &Schema) -> Result<Self> {
         let catalog = FrozenCatalog::empty();
         Self::publish(path, &PublishCatalog::frozen(&catalog, schema))
     }
 
-    /// Bench-only: same publication, attach with [`OpenLane::Nosync`].
     #[doc(hidden)]
     pub(crate) fn publish_nosync(path: &Path, catalog: &PublishCatalog<'_>) -> Result<Self> {
         match publish_inner(path, catalog, OpenLane::Nosync, None, false)? {
@@ -161,9 +153,7 @@ fn publish_inner(
                 drop(raw.take());
             }
             PublishStep::SyncStagingFiles => {
-                // The first half of the publish durability boundary
-                // (proposals/one-representation/10-measurement.md): the
-                // staging-file fsync sweep, one span per publish.
+
                 let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 sync_staging_files(staging.as_ref().expect("staging lives until Rename"))?;
             }
@@ -171,7 +161,7 @@ fn publish_inner(
                 std::fs::rename(staging.as_ref().expect("staging lives until Rename"), dest)?;
             }
             PublishStep::SyncParent => {
-                // The second half of the durability boundary: the
+
                 // destination dirent-chain fsync after the rename.
                 let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 if fail_parent_sync {
@@ -288,9 +278,7 @@ fn write_from_catalog<C: CatalogRead>(
     let meta = env.create_database(&mut wtxn, Some("_meta"))?;
     let data = env.create_database(&mut wtxn, Some("_data"))?;
     let dict = env.create_database(&mut wtxn, Some("_dict"))?;
-    // The publish data copy, spanned at collection granularity with the
-    // copied key+value bytes as the payload
-    // (proposals/one-representation/10-measurement.md).
+
     let mut copy_span = crate::obs::span(crate::obs::names::PUBLISH_COPY);
     let data_bytes = copy_map(catalog, data, &mut wtxn, CatalogMap::Data)?;
     let dict_bytes = copy_map(catalog, dict, &mut wtxn, CatalogMap::Dictionary)?;
@@ -307,8 +295,6 @@ fn write_from_catalog<C: CatalogRead>(
     Ok(())
 }
 
-/// Copies one map and returns the key+value bytes moved — the
-/// `PUBLISH_COPY` span's payload.
 fn copy_map<C: OrderedRead>(
     catalog: &C,
     dest: Database<Bytes, Bytes>,
