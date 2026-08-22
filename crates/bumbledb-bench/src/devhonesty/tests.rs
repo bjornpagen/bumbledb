@@ -22,7 +22,6 @@ fn unborn_path_answers_with_its_ancestor() {
 
 #[test]
 fn octal_unescape_assembles_multibyte_utf8() {
-
     assert_eq!(super::unescape(r"/mnt/b\303\266se\040dir"), "/mnt/böse dir");
 
     assert_eq!(
