@@ -3,9 +3,6 @@ use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::Scale;
 
-/// A unique-per-run scratch path: pid + wall-clock nanos, so two test
-/// runs (or a wedged prior run's residue — a stale LMDB flock, a
-/// half-compacted cal-db) can never collide on a fixed tag path.
 fn scratch(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -24,7 +21,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-/// The marker short-circuits regeneration (the counter hook).
 #[test]
 fn the_digest_directory_is_reused() {
     let dir = scratch("reuse");
@@ -37,7 +33,7 @@ fn the_digest_directory_is_reused() {
     let second = ensure_corpus_with(&dir, CFG, &mut loader).expect("second");
     assert_eq!(first, second);
     assert_eq!(loads, 1, "the marker short-circuits regeneration");
-    // A different seed keys a different directory.
+
     let other = corpus_paths(
         &dir,
         GenConfig {
@@ -69,7 +65,6 @@ fn the_refusal_messages_substitute_the_flags() {
     );
 }
 
-/// An unstamped bench refuses; the message names verify.
 #[test]
 fn bench_refuses_without_a_stamp() {
     let dir = scratch("refuse");
@@ -114,9 +109,6 @@ fn alloc_without_obs_names_the_cargo_invocation() {
     );
 }
 
-/// Without the obs build a capture is empty — every `--trace`-bearing
-/// command refuses instead of writing span-free artifacts wearing real
-/// names (the shared honesty rule).
 #[cfg(not(feature = "obs"))]
 #[test]
 fn trace_without_obs_refuses_on_every_traced_command() {
@@ -149,8 +141,6 @@ fn trace_without_obs_refuses_on_every_traced_command() {
     }
 }
 
-/// The sweeper's full CLI pipeline on a clean store: gen, then the
-/// driver fn (no spawned process) — an empty report and exit code 0.
 #[test]
 fn verify_store_exits_zero_on_a_clean_corpus() {
     let dir = scratch("verify-store-clean");
@@ -164,7 +154,6 @@ fn verify_store_exits_zero_on_a_clean_corpus() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Without a generated corpus the sweeper refuses; the message names gen.
 #[test]
 fn verify_store_refusal_names_gen() {
     let dir = scratch("verify-store-missing");
@@ -178,11 +167,6 @@ fn verify_store_refusal_names_gen() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The suite's own integration point (unit-scale by S's size):
-/// gen → verify → bench --families point --samples 8, three
-/// artifacts, PARTIAL verdict, and the UNVERIFIED override branding.
-/// (Re-armed by PRD 06: the naive model seeds closed-relation
-/// extensions, so the vocabulary containments commit on both oracles.)
 #[test]
 fn the_full_sequence_runs_at_s() {
     let dir = scratch("e2e");
@@ -233,14 +217,13 @@ fn the_full_sequence_runs_at_s() {
         "the provenance shows how much evidence earned the stamp: {md}"
     );
 
-    // The override path brands the report.
     let lying = BenchArgs {
         families: Some(vec!["point".to_owned()]),
         out: Some(dir.join("lying-out")),
         i_am_lying: true,
         ..args.clone()
     };
-    // Invalidate the stamp by changing the recorded case count.
+
     std::fs::write(paths.root.join(super::CASES_FILE), "26").expect("tamper");
     cmd_bench(&lying).expect("bench --i-am-lying");
     let md = std::fs::read_to_string(dir.join("lying-out").join("report.md")).expect("read");
