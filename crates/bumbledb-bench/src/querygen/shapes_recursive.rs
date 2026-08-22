@@ -1,6 +1,3 @@
-//! Recursive and interiors-heavy Query shapes for the differential /
-//! coverage generators. Mutual and nonlinear are unwritable this cut.
-
 use bumbledb::{
     Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, NonEmpty, ProjectionRule,
     Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
@@ -9,24 +6,23 @@ use bumbledb::{
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::target::{Domains, ids};
 
-/// Which shape a generated query is — the generator's intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecursiveVariant {
-    /// Linear self-recursion: the ancestor closure, one rec atom.
+
     Linear,
-    /// Negation of the finished rec **in main**.
+
     Negation,
-    /// A fold over the finished rec on main.
+
     Fold,
-    /// The empty-Δ-at-round-1 boundary.
+
     EmptyDelta,
-    /// Primer-shaped `reach(x, x)`: main is the diagonal.
+
     PrimerReachXx,
-    /// Deep interior DAG (interior reading interior).
+
     InteriorsDag,
-    /// Main anti-joins an earlier interior.
+
     InteriorsAntiJoin,
-    /// More than 16 interiors.
+
     ManyInteriors,
 }
 
@@ -122,7 +118,6 @@ fn org_literal(rng: &mut Rng, domains: &Domains) -> Term {
     Term::Literal(Value::U64(rng.range(domains.orgs)))
 }
 
-/// One random interiors/rec Query and its variant tag.
 pub fn random_reach_query(rng: &mut Rng, cfg: GenConfig) -> (Query, RecursiveVariant) {
     let domains = Domains::of(cfg.scale);
     let variant = match rng.range(8) {
@@ -300,7 +295,6 @@ fn many_interiors() -> Query {
     }
 }
 
-/// Structural coverage rows, re-derived from the Query.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RecursiveCoverage {
     pub queries: u64,
@@ -316,8 +310,7 @@ pub struct RecursiveCoverage {
 }
 
 impl RecursiveVariant {
-    /// Coverage-report class. Interiors-only shapes are not recursive.
-    /// `Debug` names stay frozen for reach-case provenance.
+
     #[must_use]
     pub fn coverage_class(self) -> &'static str {
         match self {
