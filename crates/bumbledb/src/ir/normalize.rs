@@ -56,7 +56,6 @@ pub enum Role {
 /// Not `Copy` — the parsed id list is the diagnostic source of truth.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FoldedMark {
-
     Positive {
         relation: RelationId,
         survivors: Box<[u64]>,
@@ -80,7 +79,6 @@ pub enum OccBind {
 }
 
 impl OccBind {
-
     #[must_use]
     pub const fn source(self) -> crate::ir::AtomSource {
         match self {
@@ -114,7 +112,6 @@ impl OccBind {
 }
 
 impl Role {
-
     #[must_use]
     pub fn participates(&self) -> bool {
         matches!(self, Self::Positive)
@@ -145,7 +142,6 @@ pub struct Occurrence {
 }
 
 impl Occurrence {
-
     #[must_use]
     pub const fn source(&self) -> crate::ir::AtomSource {
         self.bind.source()
@@ -163,7 +159,6 @@ pub enum IntervalWord {
 }
 
 impl IntervalWord {
-
     #[must_use]
     pub fn offset(self) -> usize {
         match self {
@@ -182,7 +177,6 @@ impl IntervalWord {
 /// binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AntiProbe {
-
     pub occurrence: OccId,
 
     pub probe_bindings: Vec<(FieldId, VarId)>,
@@ -200,7 +194,6 @@ pub struct AntiProbe {
 pub struct SlotWidth(u8);
 
 impl SlotWidth {
-
     pub const ONE: Self = Self(1);
 
     pub const TWO: Self = Self(2);
@@ -228,7 +221,6 @@ impl SlotWidth {
 /// single-occurrence survives to residuals).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedQuery {
-
     pub occurrences: Vec<Occurrence>,
 
     pub residuals: Vec<FilterPredicate>,
