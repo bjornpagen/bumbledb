@@ -1,17 +1,9 @@
 //! Declaration validation: the boundary that turns a [`SchemaDescriptor`]
 //! into the sealed [`Schema`] witness.
-//!
 //! Field checks first, then the statement roster and acceptance gate of
-//! `docs/architecture/30-dependencies.md` — exhaustive, one distinct
-//! [`StatementErrorKind`] per roster line at its [`StatementId`]
+//! — exhaustive, one distinct
 //! (the variant doc comments carry the citations). Every accepted
 //! statement leaves as a typed arena witness; downstream trusts its
-//! shape without re-checking.
-//!
-//! The roster's "FD with selection" and "non-key FD form" lines have no
-//! checks here: [`StatementDescriptor::Functionality`] carries neither a
-//! selection nor a Y side, so both shapes are unrepresentable rather than
-//! rejected.
 
 use std::collections::BTreeMap;
 
@@ -32,35 +24,26 @@ use bumbledb_theory::Value;
 /// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
 /// pass hangs off it here rather than as an inherent method.
 pub trait ValidateDescriptor: Sized {
-    /// Validates the declaration into the sealed [`Schema`] witness.
-    ///
+
     /// # Errors
-    ///
-    /// A distinct [`SchemaError`] per illegal shape — the field checks and
-    /// the full statement roster; see the variant list.
+
     fn validate(self) -> Result<Schema, SchemaError>;
 }
 
 impl ValidateDescriptor for SchemaDescriptor {
     /// # Panics
-    ///
+
     /// Only on one programmer-invariant violation: more than 2³²
-    /// relations (unreachable — the descriptors alone exceed memory).
-    /// Field and statement counts need no panic path: the derived
-    /// column count and the materialized statement count are typed
-    /// rejections ([`SchemaError::RelationTooManyColumns`],
+
     /// [`SchemaError::TooManyStatements`]) checked before any u16 id is
-    /// minted.
+
     #[expect(
         clippy::too_many_lines,
         reason = "the one materialized-order sealing pass — one arm per \
                   statement form, clearer kept together"
     )]
     fn validate(self) -> Result<Schema, SchemaError> {
-        // The derived-column cap runs FIRST — before
-        // `materialized_statements` or the field loop mints any u16 id
-        // from a field index (a fresh field's auto-key carries its
-        // sealed index). See `derived_columns` for the bound.
+
         for (rel_idx, decl) in self.relations.iter().enumerate() {
             let columns = derived_columns(decl);
             if columns > usize::from(u16::MAX) {
@@ -72,10 +55,9 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let descriptors = self.materialized_statements();
-        // The statement-id space is u16 (`StatementId`, and the
-        // per-kind Key/Containment/Capacity ids it bounds): a
+
         // materialized roster past it is a typed rejection before any
-        // per-statement validation walks it — never the id-mint expect.
+
         if descriptors.len() > 1 << 16 {
             return Err(SchemaError::TooManyStatements {
                 count: descriptors.len(),
@@ -88,7 +70,6 @@ impl ValidateDescriptor for SchemaDescriptor {
             relations.push(validate_relation(rel_id, decl)?);
         }
 
-        // Duplicate relation names.
         for (idx, relation) in relations.iter().enumerate() {
             if relations[..idx].iter().any(|r| r.name == relation.name) {
                 return Err(SchemaError::DuplicateRelationName {
@@ -97,18 +78,8 @@ impl ValidateDescriptor for SchemaDescriptor {
             }
         }
 
-        // The statement roster becomes three sealed structures in this one
-        // materialized-order pass: two homogeneous typed arenas and the
-        // StatementId spine selecting between them. Duplicate checks look
-        // backward; containment target-key resolution sees the immutable
         // descriptor list, so a key may still be declared after its probe.
-        //
-        // The ONE statement identity: the normalized form (selections
-        // sorted by FieldId, literal sets canonical). Duplicate rejection
-        // and `==` mirror pairing both read this list — never the raw
-        // spelling — so two spellings of one statement cannot fork the
-        // sealed links (two fingerprint-equal schemas seal the same
-        // mirrors).
+
         let normalized: Vec<StatementIdentity> =
             descriptors.iter().map(StatementIdentity::of).collect();
         let key_count = descriptors
@@ -151,11 +122,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 KeyForm::Pointwise { tail, disjoint }
                             }
                             FunctionalityEvidence::Scalar => {
-                                // The first fresh field's auto-key
-                                // (unique per relation —
-                                // DuplicateStatement refuses a second
-                                // spelling): the one id allocator's
-                                // key form, R16.
+
                                 let mint = first_fresh_field(&relations[relation.0 as usize]);
                                 if projection.len() == 1 && mint == Some(projection[0]) {
                                     KeyForm::FreshRow {
@@ -243,10 +210,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                     StatementRef::Capacity(capacity_id)
                 }
             };
-            // Roster "duplicate statements": identical descriptors after
-            // normalization (selections sorted by FieldId). Identical FDs
-            // never reach this — `DuplicateFunctionality` (a set rule, so
-            // a superset of this equality) fired above.
+
             if let Some(earlier) = normalized[..idx].iter().position(|n| *n == normalized[idx]) {
                 return Err(StatementErrorKind::DuplicateStatement {
                     earlier: statement_id(earlier),
@@ -289,19 +253,6 @@ impl ValidateDescriptor for SchemaDescriptor {
     }
 }
 
-/// The `==` partner of the statement at `index`: the first *other*
-/// containment in the NORMALIZED materialized list whose normalized sides
-/// are exactly the swapped sides — the one swapped-sides comparison site,
-/// over the one statement identity ([`StatementIdentity`]), so a respelled literal
-/// set or binding order cannot hide a pair. Sealing calls it over **all**
-/// statements (the lowered pair need not be adjacent — legal for
-/// hand-built descriptors); the declared-side diagnostic renderer calls it
-/// too, because a rejected declaration never seals a field to read. On a
-/// *sealed* list the partner is unique and the links symmetric: a second
-/// candidate mirror would be normalized-equal to the first, and
-/// [`StatementErrorKind::DuplicateStatement`] rejects identical normalized
-/// statements. On a rejected declaration first-match is best-effort
-/// diagnostics.
 fn mirror_of(normalized: &[StatementIdentity], index: usize) -> Option<StatementId> {
     let StatementIdentity::Containment { source, target } = &normalized[index] else {
         return None;
@@ -322,10 +273,7 @@ fn mirror_of(normalized: &[StatementIdentity], index: usize) -> Option<Statement
         .map(|(other, _)| statement_id(other))
 }
 
-/// Every statement's `==` partner over the one normalized identity — the
-/// render-side pre-pass: ONE normalization of the whole materialized list
-/// and one containments-only link table. Keys and capacities cannot have
-/// a partner, so they do not occupy holes.
+/// Keys and capacities cannot have a partner, so they do not occupy holes.
 pub(super) fn mirror_links(
     descriptors: &[StatementDescriptor],
 ) -> BTreeMap<StatementId, StatementId> {
@@ -342,16 +290,15 @@ pub(super) fn mirror_links(
 }
 
 /// The materialized-order [`StatementId`] for a list index (the typed
-/// [`SchemaError::TooManyStatements`] gate runs before any id is
-/// minted, so the expect is a true invariant).
+/// [`SchemaError::TooManyStatements`] gate runs before any id is minted, so the
+/// expect is a true invariant).
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// Fill [`ContainmentStatement::pairing`] after every containment has a
-/// witness id — a partner later in the list is not yet minted at push
-/// time, so the stored identity is the arena id, not a re-resolved
-/// [`StatementId`].
+/// Fill [`ContainmentStatement::pairing`] after every containment has a witness
+/// id — a partner later in the list is not yet minted at push time, so the
+/// stored identity is the arena id, not a re-resolved [`StatementId`].
 fn pair_mirrors(
     containments: &mut [ContainmentStatement],
     order: &[StatementRef],
@@ -378,8 +325,6 @@ fn survivors_of(source: &Relation) -> Survivors {
     }
 }
 
-/// Canonical projection identity. Construction sorts once and refuses
-/// duplicates, so equality cannot accidentally compare written order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FieldSet(Box<[FieldId]>);
 
@@ -397,8 +342,6 @@ impl FieldSet {
     }
 }
 
-/// A validated projection carries both statement order (execution and key
-/// permutation) and its canonical set (identity and key resolution).
 struct Projection<'a> {
     ordered: &'a [FieldId],
     fields: FieldSet,
@@ -417,23 +360,15 @@ impl Projection<'_> {
 #[derive(Clone, Copy)]
 enum FunctionalityEvidence {
     Scalar,
-    /// The disjointness proof WITH the tail the gate derived it from —
-    /// what validation learned survives to sealing (parse, don't
-    /// validate), so no consumer re-derives the trailing encoding.
+
     Pointwise(DisjointDeterminantProof, ValueType),
 }
 
-/// The projection positions holding interval-typed fields — the one scan
-/// behind the FD interval gate and the containment pointwise gate.
-/// Q1 — element-domain typing at interval positions: two interval types
-/// of one element domain match positionally WHATEVER their widths (the
-/// pointwise judgments quantify over points, which carry an element
-/// domain and not a width — `lean/Bumbledb/Schema.lean: Value.points`;
-/// the coverage walk is width-blind by construction,
-/// `storage/commit/judgment.rs::check_coverage`). Every other position
-/// demands exact structural equality — scalar typing is untouched, and
-/// u64-vs-i64 interval pairs still mismatch
-/// (`docs/architecture/30-dependencies.md` § Q1).
+/// Q1 — element-domain typing at interval positions: two interval types of one
+/// element domain match positionally WHATEVER their widths (the pointwise
+/// judgments quantify over points, which carry an element domain and not a
+/// width — `lean/Bumbledb/Schema.lean: Value.points`; the coverage walk is
+/// width-blind by construction, `storage/commit/judgment.rs::check_coverage`).
 fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
     match (a.interval_element(), b.interval_element()) {
         (Some(ea), Some(eb)) => ea == eb,
@@ -455,11 +390,6 @@ fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec
         .collect()
 }
 
-/// A deterministic total order over literal values — the canonical order
-/// of a disjunctive binding's set (`docs/architecture/30-dependencies.md`
-/// § validation roster: literal sets seal sorted and duplicate-free).
-/// Within one validated binding every literal shares the field's type, so
-/// the cross-variant rank only makes the comparison total on plain data.
 fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
     fn rank(value: &Value) -> u8 {
         match value {
@@ -488,10 +418,8 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
     }
 }
 
-/// One binding's literal set in canonical form: `Many` sorts by
-/// [`literal_cmp`]. Duplicates were rejected by
-/// [`validate_side_shape`] before any side seals, so sorting is the whole
-/// canonicalization.
+/// Duplicates were rejected by [`validate_side_shape`] before any side seals,
+/// so sorting is the whole canonicalization.
 fn canonical_literals(literals: &LiteralSet) -> LiteralSet {
     match literals {
         LiteralSet::One(_) => literals.clone(),
@@ -503,9 +431,6 @@ fn canonical_literals(literals: &LiteralSet) -> LiteralSet {
     }
 }
 
-/// One side with every disjunctive binding in canonical (sorted) literal
-/// order — what seals into the arena and what the fingerprint hashes, so
-/// two spellings of one set are one statement.
 fn canonical_side(side: &Side) -> Side {
     Side {
         relation: side.relation,
@@ -518,11 +443,6 @@ fn canonical_side(side: &Side) -> Side {
     }
 }
 
-/// One side in statement-identity form: each literal set canonical, then
-/// the selection sorted by [`FieldId`]. The only constructor sorts, so
-/// identity comparison cannot spell a raw or merely-literal-sorted
-/// [`Side`]. Sealed arenas still store [`canonical_side`] (literal order
-/// only); duplicate rejection and [`mirror_of`] compare this type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedSide {
     relation: RelationId,
@@ -546,9 +466,6 @@ impl NormalizedSide {
     }
 }
 
-/// THE statement identity (roster "duplicate statements (identical
-/// normalized sides and form)"). Duplicate rejection and [`mirror_of`]
-/// both compare this form — never a raw [`StatementDescriptor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StatementIdentity {
     Functionality {
@@ -599,8 +516,6 @@ impl StatementIdentity {
     }
 }
 
-/// Roster "FD …" lines: `R(X) -> R` under the acceptance gate. Returns the
-/// sealed scalar shape or the proof minted by the accepted pointwise arm.
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
@@ -611,10 +526,6 @@ fn validate_functionality(
     let relation = known_relation(id, relation_id, relations)?;
     let projection = validate_projection(id, relation_id, projection, relation)?;
 
-    // Roster ">1 interval position" and "interval not in final position":
-    // the neighbor probe needs the scalar prefix as its group; two interval
-    // positions would be 2-D exclusion, which the ordered determinant cannot
-    // answer.
     let positions = interval_positions(&relation.fields, projection.ordered());
     if positions.len() > 1 {
         return Err(StatementErrorKind::FunctionalityMultipleIntervals {
@@ -633,8 +544,7 @@ fn validate_functionality(
         }
         .at(id));
     }
-    // The trailing interval encoding, derived HERE once — the closed-arm
-    // collision probe below and the sealed witness both consume it.
+
     let tail = interval_position.map(|pos| {
         let idx = usize::from(projection.ordered()[pos].0);
         match relation.fields[idx].value_type {
@@ -643,10 +553,6 @@ fn validate_functionality(
         }
     });
 
-    // Roster "duplicate statements", FD form: one field *set* per relation
-    // — a second FD over the same set (any order) asserts the same
-    // judgment, so its determinant is pure write amplification, and rejecting it
-    // is what makes containment target-key resolution unambiguous.
     let this_set = projection.fields();
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
         if let StatementDescriptor::Functionality {
@@ -663,9 +569,6 @@ fn validate_functionality(
         }
     }
 
-    // Roster "determinant width overflow": Σ field widths (intervals count 16)
-    // must fit `MAX_DETERMINANT_WIDTH` — rejected at declaration, never
-    // discovered at write time.
     let width: usize = projection
         .ordered()
         .iter()
@@ -675,12 +578,6 @@ fn validate_functionality(
         return Err(StatementErrorKind::DeterminantKeyTooWide { width }.at(id));
     }
 
-    // A key on a closed relation is judged here, once: the axioms ARE the
-    // final state (no commit ever touches the relation), so a colliding
-    // pair refutes the statement now or never. Scalar keys collide on
-    // equal projected bytes; a pointwise key collides when the scalar
-    // prefix agrees and the intervals share a point — the ordered-neighbor
-    // probe's judgment, run over ≤256 sealed rows instead of a determinant.
     if let Some(rows) = relation.body.closed_rows() {
         let layout = &relation.layout;
         let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
@@ -698,10 +595,7 @@ fn validate_functionality(
                     None => true,
                     Some((pos, tail)) => {
                         let idx = usize::from(projection.ordered()[pos].0);
-                        // Half-open `[s, e)` intersection on the
-                        // order-preserving words (a fixed-width field's
-                        // end derives from the type's width). Sealed rows
-                        // encode at validate, so a malformed tail is a
+
                         // programmer invariant, never data.
                         let (a_start, a_end) = crate::encoding::interval_words(
                             tail,
@@ -733,9 +627,6 @@ fn validate_functionality(
     })
 }
 
-/// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
-/// Returns the resolved target key, its permutation, and the shared
-/// interval position.
 fn validate_containment(
     id: StatementId,
     source: &Side,
@@ -746,12 +637,7 @@ fn validate_containment(
     let target_projection = validate_side_pair(id, source, target, relations)?;
 
     // Interval positions on closed containments: refused v0. A pointwise
-    // judgment against a closed target would mix the coverage walk with
-    // virtual storage, and a constant source's coverage demand has no
-    // delete-time re-judgment path — either closed side refuses
-    // (`docs/architecture/30-dependencies.md`; trigger: a census
-    // sighting). One check covers both sides: the pair gate's positional
-    // type match makes the sides' interval positions identical.
+
     let target_fields = &relations[target.relation.0 as usize].fields;
     let source_closed = matches!(
         relations[source.relation.0 as usize].body,
@@ -784,11 +670,6 @@ fn validate_containment(
         relations[source.relation.0 as usize].interval_tail(&source.projection),
     )?;
 
-    // Both sides constant: the judgment is decidable here, and a theory
-    // whose axioms refute its own statement has no model to commit — the
-    // source extension's φ-rows must all sit inside the compiled member
-    // set (a closed source under an *ordinary* target stays commit-judged:
-    // the target can shrink).
     if let (Enforcement::Closed { members }, Some(rows)) = (
         &resolved,
         relations[source.relation.0 as usize].body.closed_rows(),
@@ -803,11 +684,7 @@ fn validate_containment(
                 continue;
             }
             let word = decoded_word(layout, source.projection[0], &row.fact);
-            // An out-of-range word narrows to non-membership — the same
-            // miss the commit path takes (`storage/commit/judgment.rs`)
-            // and the `AxiomIndex` contract ("values beyond `u8::MAX`
-            // are absent") applied at validate: the row escapes the
-            // member set, so the statement is refuted, never a panic.
+
             if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: source.relation,
@@ -821,34 +698,24 @@ fn validate_containment(
     Ok(resolved)
 }
 
-/// What the capacity gate learned, sealed — the enforcement plan plus
-/// the interval tails a Duration weight or bound reads through (parse,
-/// don't validate: no judge re-walks the field rosters).
 struct SealedCapacity {
     enforcement: CapacityEnforcement,
     weight: SealedWeight,
     hi: SealedBound,
 }
 
-/// Roster "capacity …" lines: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` under
-/// the acceptance gate (`docs/architecture/30-dependencies.md`). The
-/// premises are exactly the model's
-/// (`lean/Bumbledb/Admission.lean: capacityForm`;
-/// `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the promised
-/// plan): the canonical window vocabulary with its weight-sensitivity
+/// The premises are exactly the model's (`lean/Bumbledb/Admission.lean:
+/// capacityForm`; `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the
+/// promised plan): the canonical window vocabulary with its weight-sensitivity
 /// law, WEIGHT typing (a `[field]` weight is a u64 SOURCE position, a
-/// `[Duration(field)]` weight an interval one), DEPENDENT-BOUND typing
-/// (a bound ident is a u64 or interval position of TARGET's row, by
-/// name against the whole roster — C1; dimension mixing refused — C18),
-/// the shared side shapes, the containment target-key rule reused
-/// verbatim, and the v0 interval refusal narrowed to PROJECTIONS — the
-/// group key identifies facts, and intervals enter through the measure
-/// argument (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
-/// lifting: a sighted counting-over-denotation workload). Closed-side
-/// rules mirror containment's: a closed target compiles the member-set
-/// plan through the same key rule (dependent bounds resolve per
-/// ground-axiom row), and a statement between constants is decided here
-/// outright.
+/// `[Duration(field)]` weight an interval one), DEPENDENT-BOUND typing (a bound
+/// ident is a u64 or interval position of TARGET's row, by name against the
+/// whole roster — C1; dimension mixing refused — C18), the shared side shapes,
+/// the containment target-key rule reused verbatim, and the v0 interval refusal
+/// narrowed to PROJECTIONS — the group key identifies facts, and intervals
+/// enter through the measure argument (`lean/Bumbledb/Capacity.lean` § v0
+/// refusals; *trigger* for lifting: a sighted counting-over-denotation
+/// workload).
 #[expect(
     clippy::too_many_arguments,
     clippy::too_many_lines,
@@ -865,18 +732,11 @@ fn validate_capacity(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<SealedCapacity, SchemaError> {
-    // The window vocabulary is closed (the canonical-utterance law,
-    // `docs/architecture/70-api.md` — the descriptor face of the macro's
-    // ban table, per-aggregate where weight-sensitive): an inverted
-    // literal window is satisfied by no measure, `0..*` provably says
+
     // nothing at any weight (`lean/Bumbledb/Capacity.lean:
-    // capacity_zero_star`), and unit `1..*` is the bare containment's
+
     // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
-    // window_floor_containment` — the ban fires on the count instance
-    // ONLY: a weighted floor of 1 says "positive total", a different
-    // law). Rejecting all three here means a sealed schema holds
-    // canonical windows only — the renderer never faces a banned
-    // spelling.
+
     match hi {
         Some(Bound::Lit(hi)) if hi < lo => {
             return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
@@ -893,10 +753,7 @@ fn validate_capacity(
     let target_projection = validate_side_pair(id, source, target, relations)?;
 
     // The v0 interval refusal, narrowed to projections: capacity
-    // projections carry no interval position, either side (the pair
-    // gate's positional type match makes the sides' interval positions
-    // identical, so one scan suffices). Intervals enter through the
-    // measure argument, never the group key.
+
     let source_fields = &relations[source.relation.0 as usize].fields;
     let positions = interval_positions(source_fields, &source.projection);
     if let Some(pos) = positions.first() {
@@ -907,13 +764,8 @@ fn validate_capacity(
         .at(id));
     }
 
-    // Weight typing — representation does the enforcement: the measure
-    // reads a SOURCE position whose encoding IS the measure's domain. A
     // signed field under `[field]` is the typed polarity refusal (an
-    // insert could lower a sum); a scalar under `[Duration(field)]`
-    // has no interval measure to read. The accepted Duration weight
-    // seals its interval tail — how `end − start` reads off canonical
-    // fact bytes — so no judge re-walks the roster.
+
     let sealed_weight = match weight {
         Weight::Unit => SealedWeight::Unit,
         Weight::Field(field) => {
@@ -941,18 +793,8 @@ fn validate_capacity(
         }
     };
 
-    // Dependent-bound typing: the ident resolved by NAME against
-    // TARGET's whole field roster (C1 — the projection tuple stays the
-    // pure grouping key), u64 or interval per its spelling; and the C18
-    // dimension gate, the PAIRING LAW over the dependent sites — the
-    // window compares the weight's sum against the bound's read, so
-    // their dimensions must agree. A Duration bound (a span of time)
-    // pairs only with a Duration weight: a unit (count) or u64-field
     // window against it mixes dimensions and is refused. A u64-field
-    // bound (a plain quantity) pairs with the unit and u64-field
-    // weights: a Duration weight against it is the same mixing read the
-    // other way. Literal windows stay dimensionless — a Duration weight
-    // under a literal ceiling is the legal calendar shape.
+
     let sealed_hi = match hi {
         None => SealedBound::Unbounded,
         Some(Bound::Lit(n)) => SealedBound::Lit(n),
@@ -987,9 +829,6 @@ fn validate_capacity(
         }
     };
 
-    // Probe-ability, the containment rule reused: Y resolves a declared
-    // key of B (a closed target takes the member-set arm through the same
-    // call — the closed-side mirror).
     let enforcement = resolve_capacity_target(
         id,
         source,
@@ -999,13 +838,8 @@ fn validate_capacity(
         descriptors,
     )?;
 
-    // Both sides constant: the measure judgment is decidable here — per
-    // ψ-selected parent axiom, the φ-selected child axioms sharing its
-    // projected tuple must MEASURE inside the window, the bound resolved
-    // per axiom from the sealed parent row already in hand
     // (`lean/Bumbledb/Schema.lean: den_closed_constant`; a per-row
-    // inverted resolved window refutes outright — no measure passes both
-    // ends). The cited row is the parent axiom whose group fails.
+
     if let (CapacityEnforcement::Closed { .. }, Some(source_rows)) = (
         &enforcement,
         relations[source.relation.0 as usize].body.closed_rows(),
@@ -1022,11 +856,7 @@ fn validate_capacity(
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
             }
-            // The resolved ceiling for THIS parent axiom, read through
-            // the ONE engine definition (`commit::judgment`) — never an
-            // inline re-implementation. Sealed rows hold canonical bytes
-            // and the extension gate refuses ray and inverted intervals,
-            // so the engine's measure refusals are unreachable here.
+
             let resolved_hi = crate::storage::commit::judgment::resolve_bound(
                 sealed_hi,
                 &target_relation.layout,
@@ -1083,9 +913,6 @@ fn validate_capacity(
     })
 }
 
-/// The field descriptor a weight or bound names, or the roster's
-/// "unknown … field ids" rejection — the weight/bound twin of the
-/// projection checks (a hand-built descriptor may carry any id).
 fn known_field(
     id: StatementId,
     relation: RelationId,
@@ -1098,16 +925,12 @@ fn known_field(
         .ok_or(StatementErrorKind::UnknownField { relation, field }.at(id))
 }
 
-/// One encodable literal's sealed canonical bytes, at its field's
-/// encoding (a fixed-width interval binding seals its one-word start).
 fn encoded_literal(literal: &Value, desc: bumbledb_theory::schema::ValueType) -> Box<[u8]> {
     let mut bytes = Vec::with_capacity(16);
     crate::encoding::encode_literal(literal, desc, &mut bytes);
     bytes.into()
 }
 
-/// One side's σ compiled at validate. Closed relations refuse `str`
-/// columns, so interned text is unrepresentable on that arm.
 fn compiled_side(selection: &[(FieldId, LiteralSet)], relation: &Relation) -> CompiledSide {
     if relation.body.closed_rows().is_some() {
         CompiledSide::Closed(encodable_checks(selection, &relation.fields))
@@ -1116,14 +939,6 @@ fn compiled_side(selection: &[(FieldId, LiteralSet)], relation: &Relation) -> Co
     }
 }
 
-/// One side's σ compiled at validate: canonical bytes sealed for every
-/// literal whose encoding is a pure function of the value; `str` literals
-/// stay [`CompiledCheck::Interned`]/[`CompiledCheck::InternedSet`] (their
-/// word is per-database dictionary state, resolved at commit). Singleton
-/// bindings compile to the classic one-compare arms unchanged; disjunctive
-/// bindings seal their alternatives in canonical order. The one compile
-/// walk — the sealed [`ContainmentStatement::checks`] and the
-/// closed-extension evaluations below both consume it.
 fn compiled_checks(
     selection: &[(FieldId, LiteralSet)],
     fields: &[FieldDescriptor],
@@ -1141,8 +956,7 @@ fn compiled_checks(
                     field: *field,
                     bytes: encoded_literal(&literal, desc),
                 },
-                // A validated binding is type-homogeneous: a `str` field's set
-                // is all strings, any other field's set all encodable.
+
                 LiteralSet::Many(values) if matches!(values[0], Value::String(_)) => {
                     CompiledCheck::InternedSet {
                         field: *field,
@@ -1169,7 +983,6 @@ fn compiled_checks(
         .collect()
 }
 
-/// Closed-side σ: interned text is a compile error, not a silent false.
 fn encodable_checks(
     selection: &[(FieldId, LiteralSet)],
     fields: &[FieldDescriptor],
@@ -1201,19 +1014,14 @@ fn encodable_checks(
         .collect()
 }
 
-/// σ over one sealed row: per binding, a byte compare against the sealed
-/// encoding (singleton) or membership among the sealed alternatives (set).
 fn sealed_satisfies(checks: &[EncodableCheck], layout: &FactLayout, fact: &[u8]) -> bool {
     checks.iter().all(|check| check.matches(layout, fact))
 }
 
-/// One u64 field decoded off a sealed row's canonical bytes (big-endian,
-/// order-preserving — `docs/architecture/10-data-model.md`).
 fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
     u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)))
 }
 
-/// Roster "unknown relation … ids": the relation for a statement-named id.
 fn known_relation(
     id: StatementId,
     relation: RelationId,
@@ -1224,8 +1032,6 @@ fn known_relation(
         .ok_or(StatementErrorKind::UnknownRelation { relation }.at(id))
 }
 
-/// Roster "unknown … field ids" and "empty or duplicate-carrying
-/// projections" for one projection.
 fn validate_projection<'p>(
     id: StatementId,
     relation_id: RelationId,
@@ -1260,17 +1066,12 @@ fn validate_projection<'p>(
     })
 }
 
-/// The shared side-pair gate of the two two-sided forms — ONE definition
-/// site, exactly as `resolve_target_key` is shared (the Lean model states
-/// one acceptance rule: `lean/Bumbledb/Admission.lean: containmentForm` /
-/// `capacityForm` take their sides through one structure). Both side
-/// shapes, the |X| = |Y| arity check, the Q1 positional-type loop
-/// (element-domain at interval positions, exact structural equality
-/// elsewhere — `docs/architecture/10-data-model.md` structural equality;
-/// widths free, elements bound), and both σ checks. Returns the validated
-/// target projection — what both callers hand to `resolve_target_key`.
-/// Form-specific refusals (the closed-interval refusal, the capacity window
-/// vocabulary and interval bans) stay with their callers.
+/// The shared side-pair gate of the two two-sided forms — ONE definition site,
+/// exactly as `resolve_target_key` is shared (the Lean model states one
+/// acceptance rule: `lean/Bumbledb/Admission.lean: containmentForm` /
+/// `capacityForm` take their sides through one structure). Form-specific
+/// refusals (the closed-interval refusal, the capacity window vocabulary and
+/// interval bans) stay with their callers.
 fn validate_side_pair<'t>(
     id: StatementId,
     source: &Side,
@@ -1280,8 +1081,6 @@ fn validate_side_pair<'t>(
     validate_side_shape(id, source, relations)?;
     let target_projection = validate_side_shape(id, target, relations)?;
 
-    // Roster "arity mismatch between sides": |X| = |Y| — the judgment
-    // compares whole projected tuples.
     if source.projection.len() != target.projection.len() {
         return Err(StatementErrorKind::ContainmentArityMismatch {
             mismatch: Mismatch {
@@ -1292,8 +1091,6 @@ fn validate_side_pair<'t>(
         .at(id));
     }
 
-    // Roster "positional structural-type mismatch" — including its
-    // called-out interval-against-scalar case.
     let source_fields = &relations[source.relation.0 as usize].fields;
     let target_fields = &relations[target.relation.0 as usize].fields;
     for (position, (s, t)) in source
@@ -1316,12 +1113,6 @@ fn validate_side_pair<'t>(
     Ok(target_projection)
 }
 
-/// One side's id and duplication shape: unknown relation/field ids, empty
-/// or duplicate projection, duplicate selection binding (σ is a set), and
-/// the literal-set canon — a `Many` binding carries at least two distinct
-/// literals (an empty set selects nothing and the one-literal set is the
-/// `One` spelling; both degenerate spellings are rejected so the singleton
-/// arm stays the only singleton by representation).
 fn validate_side_shape<'s>(
     id: StatementId,
     side: &'s Side,
@@ -1370,9 +1161,6 @@ fn validate_side_shape<'s>(
     Ok(projection)
 }
 
-/// One side's selection semantics: roster "a selected field also projected"
-/// (a constant column — write the statement you mean), then the literal
-/// checks against each selected field's structural type.
 fn validate_side_selection(
     id: StatementId,
     side: &Side,
@@ -1402,11 +1190,6 @@ fn validate_side_selection(
     Ok(())
 }
 
-/// Roster "selection literal type mismatch (including out-of-range enum
-/// ordinals)" — the one shared
-/// [`value_matches`] check, so the σ rules cannot drift from the
-/// query-literal and dynamic-fact boundaries. Interval literals already
-/// carry the checked [`crate::Interval`] representation.
 fn validate_selection_literal(
     id: StatementId,
     relation: RelationId,
@@ -1419,12 +1202,6 @@ fn validate_selection_literal(
     })
 }
 
-/// Target-key resolution and the pointwise gate
-/// (`docs/architecture/30-dependencies.md` § the acceptance gate): the
-/// target projection, as a set, must equal the field set of some
-/// `Functionality` statement on the target relation — probe-ability, one
-/// determinant get answers "is this tuple present". Unambiguous because duplicate
-/// field sets are rejected by [`StatementErrorKind::DuplicateFunctionality`].
 fn resolve_target_key(
     id: StatementId,
     source: &Side,
@@ -1436,16 +1213,10 @@ fn resolve_target_key(
 ) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
 
-    // The compiled-subset branch (`docs/architecture/30-dependencies.md`):
-    // a closed target is stage-1-known, so there is no key search, no
-    // permutation, and no determinant-width concern — the enforcement plan is
-    // the answer set itself. The handle id is the one probe-able identity
-    // of a closed relation (the auto-key `R(id) -> R`), so the target
     // projection must be exactly the synthetic id — its OWN refusal, not
-    // the no-matching-key one: a declared payload key may carry exactly
+
     // the refused field set, and the rule here is closedness, not key
-    // absence. ψ folds against the sealed extension here and never
-    // exists at commit.
+
     if let Some(rows) = target_relation.body.closed_rows() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
@@ -1464,9 +1235,6 @@ fn resolve_target_key(
     let target_fields = &target_relation.fields;
     let positions = interval_positions(target_fields, &target.projection);
 
-    // Pointwise gate, "exactly one interval position": no key can carry
-    // two intervals (the FD gate rejects them), so with two or more there
-    // is no pointwise key to resolve — reject without searching.
     if positions.len() > 1 {
         return Err(missing_target_key(id, target, relations, descriptors, true));
     }
@@ -1484,10 +1252,6 @@ fn resolve_target_key(
             interval_position.is_some(),
         ));
     };
-    // Set equality means the resolved key carries the interval field, and
-    // the key's own FD gate forces it last — the key *is* pointwise; the
-    // gate's "key carries its interval" demand is discharged by
-    // construction, not re-checked.
 
     let key_projection_in_order =
         source_key_projection(&source.projection, target_projection, key_projection);
@@ -1522,8 +1286,8 @@ fn resolve_target_key(
     }
 }
 
-/// Capacity's target resolver: [`CapacityEnforcement`] directly. Coverage
-/// is unrepresentable — projections already refused interval positions.
+/// Coverage is unrepresentable — projections already refused interval
+/// positions.
 fn resolve_capacity_target(
     id: StatementId,
     source: &Side,
@@ -1622,9 +1386,7 @@ fn functionality_key_id(descriptors: &[StatementDescriptor], key_idx: usize) -> 
     )
 }
 
-/// The projection's field names off the sealed field roster, owned — the
-/// name payloads every target-key diagnostic carries beside its ids. The
-/// projection was validated (`validate_projection`) before any rejection
+/// The projection was validated (`validate_projection`) before any rejection
 /// citing it, so the index is total.
 fn projection_field_names(relation: &Relation, projection: &[FieldId]) -> Box<[Box<str>]> {
     projection
@@ -1633,9 +1395,6 @@ fn projection_field_names(relation: &Relation, projection: &[FieldId]) -> Box<[B
         .collect()
 }
 
-/// Owned evidence for an exact-target-key rejection. Key ids follow the
-/// functionality-only typed arena order, exactly as successful sealing;
-/// names come off the target's validated field roster.
 fn target_key_candidates(
     target: RelationId,
     relations: &[Relation],
@@ -1700,8 +1459,7 @@ fn missing_target_key(
     }
 }
 
-/// Compiles ψ over one sealed extension into its typed axiom set. The
-/// extension passed validation before statement resolution, so every
+/// The extension passed validation before statement resolution, so every
 /// declaration index is below [`super::MAX_EXTENSION_ROWS`].
 fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
     let psi = encodable_checks(&side.selection, &target.fields);
@@ -1716,17 +1474,10 @@ fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow])
     members
 }
 
-/// One relation's derived column count, for the pre-pass cap in
-/// [`SchemaDescriptor::validate`]: the image's column index is u16
-/// (`crate::image::ColumnSpan`, `column_spans`), so the count is capped
-/// as a typed rejection ([`SchemaError::RelationTooManyColumns`]) —
-/// never discovered at image-build time. An interval field spans two
-/// word columns, a `bytes<N>` field its `⌈N/8⌉` — never counted below
-/// one: `bytes<0>` is invalid, but its width rejection runs only after
-/// the u16 field ids are minted, so the cap must be a true lower bound
-/// on any legal repair of the declaration. A closed relation's
-/// synthetic id contributes its word column. With every field at least
-/// one column, the cap also keeps every `FieldId` within u16.
+/// An interval field spans two word columns, a `bytes<N>` field its `⌈N/8⌉` —
+/// never counted below one: `bytes<0>` is invalid, but its width rejection runs
+/// only after the u16 field ids are minted, so the cap must be a true lower
+/// bound on any legal repair of the declaration.
 fn derived_columns(decl: &RelationDescriptor) -> usize {
     usize::from(decl.extension.is_some())
         + decl
@@ -1740,10 +1491,6 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
             .sum::<usize>()
 }
 
-/// One relation: field checks (duplicate names, enum shape, fresh typing,
-/// the closed-relation column roster), the extension roster for a closed
-/// relation, then the sealed [`Relation`]; the caller fills the statement
-/// indices from the materialized statement list.
 fn validate_relation(
     rel_id: RelationId,
     decl: RelationDescriptor,
@@ -1754,12 +1501,6 @@ fn validate_relation(
         extension,
     } = decl;
 
-    // A closed relation's sealed field list opens with the synthetic
-    // (`id`, U64) field — the handle's declaration index — so determinants,
-    // statements, and queries address it uniformly at `FieldId(0)`. The
-    // macro (the emission) never lets the user declare it; a hand-built
-    // descriptor declaring its own `id` collides here
-    // ([`SchemaError::DuplicateFieldName`]).
     let mut fields = Vec::with_capacity(declared.len() + usize::from(extension.is_some()));
     if extension.is_some() {
         fields.push(FieldDescriptor {
@@ -1779,9 +1520,7 @@ fn validate_relation(
             });
         }
         if let ValueType::FixedBytes { len } = field.value_type {
-            // The bytes<N> width gate: N ∈ 1..=64 — 64 bytes = 8 words =
-            // two cache lines of key material; 0 denotes nothing
-            // (`docs/architecture/10-data-model.md`).
+
             if len == 0 || usize::from(len) > crate::encoding::MAX_FIXED_BYTES {
                 return Err(SchemaError::FixedBytesWidthOutOfRange {
                     relation: rel_id,
@@ -1791,10 +1530,7 @@ fn validate_relation(
             }
         }
         if let ValueType::FixedInterval { width, .. } = field.value_type {
-            // The interval<E, w> width gate: w ≥ 1 (zero points denote
-            // nothing) and w ≤ u64::MAX − 1 (at w = u64::MAX no start
-            // satisfies the Q2 bound in either element domain — an empty
-            // type is a relation no fact can ever inhabit).
+
             if width == 0 || width == u64::MAX {
                 return Err(SchemaError::IntervalWidthOutOfRange {
                     relation: rel_id,
@@ -1809,15 +1545,13 @@ fn validate_relation(
                 field: field_id,
             });
         }
-        // The closed-relation column roster: intrinsic columns are value
-        // types only (`docs/architecture/10-data-model.md`, the
+
         // intrinsic-vs-policy law). `str` is refused — the handle IS the
-        // label, and interned columns on a virtual relation would force
+
         // dictionary writes at open; `fresh` is refused — identity is the
-        // handle, and axioms are never minted. (A vocabulary column needs
+
         // no refusal anymore: a reference to a closed relation is a plain
-        // u64 column plus a declared containment, and no other vocabulary
-        // type exists.)
+
         if extension.is_some() {
             if field.value_type == ValueType::String {
                 return Err(SchemaError::StrOnClosedRelation {
@@ -1855,9 +1589,8 @@ fn validate_relation(
     })
 }
 
-/// The FIRST `Fresh`-generation field of a relation — used only while
-/// sealing keys, before the ordinary arm's `fresh: Option<KeyId>` is
-/// minted. Closed relations refuse Fresh fields, so this is `None` there.
+/// The FIRST `Fresh`-generation field of a relation — used only while sealing
+/// keys, before the ordinary arm's `fresh: Option<KeyId>` is minted.
 fn first_fresh_field(relation: &Relation) -> Option<FieldId> {
     relation
         .fields()
@@ -1866,20 +1599,17 @@ fn first_fresh_field(relation: &Relation) -> Option<FieldId> {
         .map(|idx| FieldId(u16::try_from(idx).expect("field count fits u16")))
 }
 
-/// The extension roster (`docs/architecture/10-data-model.md` § closed
-/// relations): ground axioms validated through the one shared
+/// The extension roster: ground axioms validated through the one shared
 /// [`value_matches`] check and canonically encoded ONCE — each sealed row
 /// carries its full fact bytes (synthetic id ‖ intrinsic values), never
-/// re-encoded after validate (the staging law applied to the feature
-/// itself). `fields` is the sealed list, synthetic id first.
+/// re-encoded after validate (the staging law applied to the feature itself).
 fn validate_extension(
     rel_id: RelationId,
     fields: &[FieldDescriptor],
     layout: &FactLayout,
     rows: &[super::Row],
 ) -> Result<Box<[super::SealedRow]>, SchemaError> {
-    // A closed relation with no rows is a vocabulary of nothing — write
-    // no relation.
+
     if rows.is_empty() {
         return Err(SchemaError::EmptyExtension { relation: rel_id });
     }
@@ -1922,11 +1652,7 @@ fn validate_extension(
                     field: field_id,
                 }
             })?;
-            // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)`
-            // says the theory's constant is still running, and a
-            // still-running span is policy, not an intrinsic property —
-            // the witnessed write that eventually closes it needs an
-            // ordinary relation. Rays stay honest values everywhere else.
+
             let is_ray = match value {
                 Value::IntervalU64(interval) => interval.is_ray(),
                 Value::IntervalI64(interval) => interval.is_ray(),
@@ -1941,7 +1667,7 @@ fn validate_extension(
             }
             // Total here: String and enums (refused columns) and AllenMask
             // (no field type) all fail `value_matches` before reaching the
-            // encoder.
+
             crate::encoding::encode_literal(value, field.value_type, &mut fact);
         }
         debug_assert_eq!(fact.len(), layout.fact_width());
