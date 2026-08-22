@@ -1,23 +1,3 @@
-//! The naive model: the dependency-semantics oracle
-//! (docs/architecture/60-validation.md § the two oracles).
-//!
-//! An obviously-correct in-memory implementation of the data model, both
-//! judgments, and the full query semantics — interiors then rec lfp then
-//! main ([`NaiveDb::query`], the shipping law's naive oracle —
-//! `docs/architecture/60-validation.md` § the two oracles) — nested
-//! loops and `BTreeSet`s,
-//! zero cleverness. It shares the engine's *types* (`bumbledb::ir`,
-//! `bumbledb::schema`) and none of its *algorithms*: a shared bug would be
-//! an invisible bug, so everything here is re-derived from the semantics
-//! chapters (`docs/architecture/30-dependencies.md`, `20-query-ir.md`) by
-//! brute force. The model assumes nothing the engine enforces — containment
-//! collects and merges every matching target segment rather than trusting
-//! the target's own key to keep them disjoint.
-//!
-//! The comparison runner lives beside this module (`crate::differential`
-//! — it drives the engine, which nothing under `naive/` may import);
-//! query evaluation in [`query`].
-
 pub mod query;
 mod tuple;
 
@@ -34,70 +14,36 @@ use bumbledb::{Direction, RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
 
-/// The in-memory reference database: one set of decoded value vectors per
-/// relation. Facts are `Vec<Value>` in field declaration order — the one
-/// blessed shared representation (`bumbledb::ir::Value`). A **closed**
-/// relation's facts sit in the sealed field space (the synthetic id at
-/// position 0, then the declared columns), seeded from the descriptor
-/// extension at construction — the model may materialize the axioms (it
-/// is a model, not the engine), but it never compiles them: closed
-/// judgments are σ over the extension rows by value comparison, and the
-/// independence law keeps the engine's compiled member sets out of here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NaiveDb {
-    /// The materialized statement list; [`StatementId`] indexes it
-    /// (fresh auto-keys first, then the closed auto-keys, then declared
-    /// statements — the same rule the engine pins in its fingerprint).
+
     statements: Vec<StatementDescriptor>,
-    /// Per relation, per **sealed** field position, the value type (a
-    /// closed relation's list opens with the synthetic `U64` id).
+
     field_types: Vec<Vec<ValueType>>,
-    /// A closed relation's extension as decoded tuples in the sealed
-    /// field space (`[U64(row id), declared values...]`), in declaration
-    /// order; `None` = ordinary. The closed-target membership judgment
-    /// reads THIS list — the σ-over-extension definition, never the
-    /// engine's compiled word set.
+
     extensions: Vec<Option<Vec<Tuple>>>,
     relations: Vec<BTreeSet<Tuple>>,
-    /// The state-changing generation: bumped iff an applied delta
-    /// changed committed state — never by a no-op — mirroring the
-    /// engine's storage tx id (the number the image cache keys on).
+
     generation: u64,
-    /// The committed dictionary, as ORDER only: every distinct `str`
-    /// value the committed state ever carried, in first-appearance order
-    /// (extension rows at construction, then each successful delta's
-    /// inserts in op order, fields ascending) — the engine's append-only
-    /// intern allocation, re-derived from the semantics. The model never
-    /// stores words; it needs the ORDER because the engine walks
-    /// capacity parents in encoded-key order, and a `str` key encodes as
-    /// its intern word ([`NaiveDb::encoded_key`]).
+
     dict: Vec<Box<str>>,
 }
 
-/// One write delta: facts to remove and facts to insert, as decoded value
-/// vectors. Set arithmetic — a delete of an absent fact and an insert of a
-/// present fact are no-ops, exactly as on the engine.
 #[derive(Debug, Clone, Default)]
 pub struct Delta {
     pub deletes: Vec<(RelationId, Vec<Value>)>,
     pub inserts: Vec<(RelationId, Vec<Value>)>,
 }
 
-/// One citation of a refused write, identified exactly as the engine's
-/// commit errors identify it: a statement the final state fails (the
-/// statement id, plus the direction for a containment), or a delta
-/// operation naming a closed relation — ground axioms are not data, and
-/// the refusal is typed identically on both oracles (verdict parity
-/// including the typed identity, the direction-divergence lesson
-/// applied at birth). A rejection is the COMPLETE `Vec<Violation>` —
-/// every violated statement, once, in citation order (statement id
-/// ascending, source before target within one statement) — the same
-/// total object as the engine's sealed `Violations`.
-///
-/// The statement phase can mix containment and capacity
-/// citations in one rejection, so [`sealed`] sorts by the explicit
-/// citation key ([`Violation::citation`]) — the engine's own sort key —
-/// never the derived variant order.
+/// One citation of a refused write, identified exactly as the engine's commit
+/// errors identify it: a statement the final state fails (the statement id,
+/// plus the direction for a containment), or a delta operation naming a closed
+/// relation — ground axioms are not data, and the refusal is typed identically
+/// on both oracles (verdict parity including the typed identity, the
+/// direction-divergence lesson applied at birth). A rejection is the COMPLETE
+/// `Vec<Violation>` — every violated statement, once, in citation order
+/// (statement id ascending, source before target within one statement) — the
+/// same
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Violation {
     Functionality {
@@ -107,44 +53,31 @@ pub enum Violation {
         statement: StatementId,
         direction: Direction,
     },
-    /// A capacity statement failed: some ψ-selected parent's child-group
-    /// measure falls outside the window
+
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). The twin carries
     /// the WITNESSED measure (ruled 2026-07-24, C14 — measure parity in
-    /// the differential): the model's full fold over the first violating
-    /// parent in ascending key-tuple order, the same parent the engine's
-    /// plan order discovers first.
+
     Capacity {
         statement: StatementId,
-        /// The witnessed group total — u128 end to end (C3: truncation
-        /// is unrepresentable; for the unit weight this IS the count).
+
         measure: u128,
     },
     /// A delete or insert named a closed relation — refused before the
-    /// delta, exactly the engine's `Error::ClosedRelationWrite`.
+
     ClosedRelationWrite {
         relation: RelationId,
     },
-    /// A capacity statement's `Duration` weight or dependent `Duration`
-    /// bound met a ray — no finite measure exists (C10; the C17 slot
-    /// law's write-time strengthening). The engine's typed
-    /// `Error::CapacityRayMeasure`, carried as the singleton citation so
-    /// the differential compares a VERDICT (both twins used to panic).
-    /// Weight rays refuse at plan time — any φ-selected INSERTED fact
-    /// (a delete removal is key-only and never derives a slot); bound
-    /// rays refuse during the statement walk, discarding whatever the
-    /// walk had collected.
+
     CapacityRayMeasure {
         statement: StatementId,
     },
 }
 
 impl Violation {
-    /// The engine's citation key (`bumbledb::Violation`'s sort and dedup
-    /// key, mirrored): statement id, then direction rank — none (0)
+
     /// before source (1) before target (2). `ClosedRelationWrite` is
     /// refused before any judgment and never sorts beside statement
-    /// citations; its key only has to be total.
+
     fn citation(self) -> (u16, u8, u32) {
         match self {
             Self::Functionality { statement } | Self::Capacity { statement, .. } => {
@@ -163,32 +96,22 @@ impl Violation {
             ),
             Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
             // A refusal, never sorted beside statement citations (the
-            // rejection is always the singleton); total for the sort.
+
             Self::CapacityRayMeasure { statement } => (statement.0, 3, 0),
         }
     }
 }
 
-/// A conditional write's abort cause ([`NaiveDb::apply_from`]): the
-/// witness compare failed, or the final state fails the judgment — the
-/// model twin of the engine's `GenerationMoved` / `CommitRejected`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalAbort {
-    /// The witnessed generation is no longer current (payload: the two
-    /// generations, exactly the engine's error payload).
+
     Moved { witnessed: u64, current: u64 },
-    /// The witness held; the judgment aborted with the complete
-    /// violation set.
+
     Violations(Vec<Violation>),
 }
 
 impl NaiveDb {
-    /// An empty model over a declared schema. The model consumes the raw
-    /// descriptor — public data, no sealed accessors — and re-derives
-    /// everything it needs from it: the sealed field space (a closed
-    /// relation's fields open with the synthetic `U64` id) and the
-    /// extension tuples the closed relations are seeded with — row id =
-    /// declaration index, then the declared values, plain [`Value`]s.
+
     #[must_use]
     pub fn new(schema: &SchemaDescriptor) -> Self {
         let field_types: Vec<Vec<ValueType>> = schema
@@ -219,9 +142,9 @@ impl NaiveDb {
                 })
             })
             .collect();
-        // The committed view of a closed relation IS its extension —
+
         // seeded once, write-refused forever, so queries and judgments
-        // read one consistent state.
+
         let relations = extensions
             .iter()
             .map(|extension| match extension {
@@ -229,8 +152,7 @@ impl NaiveDb {
                 None => BTreeSet::new(),
             })
             .collect();
-        // The create-commit interns the extension rows' `str` values
-        // (declaration order) — the committed dictionary's seed.
+
         let mut dict: Vec<Box<str>> = Vec::new();
         for extension in extensions.iter().flatten() {
             for row in extension {
@@ -253,15 +175,10 @@ impl NaiveDb {
         }
     }
 
-    /// Stage ordinary facts as a complete-admission candidate without
-    /// incremental judgment. Closed relations stay the sealed
-    /// extension; a closed write is a programming error (the surface
     /// refuses those before any final state is formed).
-    ///
+
     /// # Panics
-    ///
-    /// If a fact names a closed relation — complete admission never
-    /// stages those.
+
     pub fn load_candidate(&mut self, facts: &[(RelationId, Vec<Value>)]) {
         for (rel, fact) in facts {
             assert!(
@@ -279,11 +196,8 @@ impl NaiveDb {
         }
     }
 
-    /// Complete initial admission over the current instance: every
-    /// declared obligation, no delta restriction. Closed-source
-    /// containments and empty child groups are visible — the class
     /// incremental `judge` cannot see without a holds-before premise.
-    /// Bridge: `Txn.completeAdmissionB` / `judgeB` over the candidate.
+
     #[must_use]
     pub fn judge_complete(&self) -> Vec<Violation> {
         let state = &self.relations;
@@ -356,30 +270,19 @@ impl NaiveDb {
         sealed(found)
     }
 
-    /// The committed facts of one relation.
     #[must_use]
     pub fn relation(&self, rel: RelationId) -> &BTreeSet<Tuple> {
         &self.relations[rel.0 as usize]
     }
 
-    /// The current state-changing generation — the model's witness. The
-    /// model hands out the integer because the model *is* the semantics;
-    /// the engine's API refuses it and takes the snapshot (evidence,
     /// never a claim — the recorded refusal).
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// The generation witness, naively: one integer compare, then
-    /// [`NaiveDb::apply`] — the semantics is these two lines, which is
-    /// the point (PRD 18).
-    ///
     /// # Errors
-    ///
-    /// [`ConditionalAbort::Moved`] when the witness is stale (the state
-    /// is untouched — the compare runs first); otherwise `apply`'s
-    /// verdict, wrapped.
+
     pub fn apply_from(&mut self, witnessed: u64, delta: &Delta) -> Result<(), ConditionalAbort> {
         if witnessed != self.generation {
             return Err(ConditionalAbort::Moved {
@@ -390,59 +293,29 @@ impl NaiveDb {
         self.apply(delta).map_err(ConditionalAbort::Violations)
     }
 
-    /// Applies a write delta: remove the deletes, insert the inserts, then
-    /// judge the statements over the full final state. Any violation
-    /// returns without applying — the caller compares verdict and
-    /// citation set against the engine's commit result.
-    ///
     /// # Errors
-    ///
-    /// The rejection IS [`NaiveDb::violations`]' complete set — one
-    /// derivation, the same total object the engine's `CommitRejected`
-    /// carries. Nonempty by construction.
+
     pub fn apply(&mut self, delta: &Delta) -> Result<(), Vec<Violation>> {
         let (next, minted) = self.judged(delta)?;
-        // State-changing commits only advance the generation — a no-op
-        // delta (deletes of absent facts, re-inserts of present ones)
-        // leaves it alone, exactly as the engine's tx id does.
+
         if next != self.relations {
             self.generation += 1;
         }
         self.relations = next;
-        // The successful commit flushes its pending mints — the
-        // dictionary is append-only, and a rejected delta's provisional
-        // ids die with it (the engine's phase-4 flush).
+
         self.dict.extend(minted);
         Ok(())
     }
 
-    /// The COMPLETE violation set of one delta against the committed
-    /// state — [`NaiveDb::apply`]'s rejection is exactly this list, one
-    /// derivation: every violated statement, cited once (per direction
-    /// for a containment), sorted ascending (materialized statement
     /// order; source before target within one statement), deduplicated.
-    /// Preemption mirrors the phase structure the engine pins
-    /// (`docs/architecture/30-dependencies.md` § judged on final
+
     /// states): a delta op naming a closed relation is refused before
-    /// any judgment (the singleton set), and key (functionality)
-    /// violations preempt the containment judgment — the containment
-    /// probes are defined over the keyed final state.
-    ///
-    /// The `ops` fuzz oracle (the crucible packet (git ecec1dc3)) compares
-    /// this set against the engine's sealed `Violations` by STRICT
-    /// EQUALITY, order included.
+
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
         self.judged(delta).err().unwrap_or_default()
     }
 
-    /// The candidate final state, judged: `Ok` carries the staged state
-    /// a clean delta commits beside the delta's provisional `str` mints
-    /// (novel strings in insert-op order, the engine's pending-intern
-    /// map); `Err` is the complete violation set. One staging, one
-    /// judgment — the one-derivation doctrine extended to the staging
-    /// computation itself, so [`NaiveDb::apply`] never re-derives the
-    /// state it already judged.
     #[expect(
         clippy::type_complexity,
         reason = "the pair is this function's two-halves contract: the staged state and its mints"
@@ -472,17 +345,9 @@ impl NaiveDb {
     }
 
     /// The plan-phase ray refusal (C17's write-time strengthening of
-    /// C10): the engine slices every capacity edge's INSERT-side weight
-    /// slot at plan time — a delete removal is key-only and never
-    /// derives, so a delete cannot refuse — and any inserted fact that
-    /// some `Duration`-weighted capacity statement φ-selects and whose
+
     /// weight position is a ray refuses the whole commit before a
-    /// single judgment runs, key violations included. The engine's op
-    /// order is `(relation, fact hash)` — the hash is the engine's own
-    /// representation (independence law), so the model walks delta op
-    /// order: the cited statement can differ only when one delta
-    /// carries rays for DISTINCT statements across DISTINCT facts, a
-    /// shape C10 already rules a fixture bug.
+
     fn ray_weight_refusal(&self, delta: &Delta) -> Option<Violation> {
         for (rel, fact) in &delta.inserts {
             let fact = Tuple(fact.clone());
@@ -508,11 +373,6 @@ impl NaiveDb {
         None
     }
 
-    /// The delta's provisional `str` mints, in the engine's mint order:
-    /// inserts in op order, fields ascending, first use only — deletes
-    /// resolve, never mint. Insert-time encoding interns regardless of
-    /// the verdict, so the judgment's key ordering sees these ranks even
-    /// on a delta the commit rejects (where they then die unflushed).
     fn minted(&self, delta: &Delta) -> Vec<Box<str>> {
         let mut minted: Vec<Box<str>> = Vec::new();
         for (_, fact) in &delta.inserts {
@@ -528,10 +388,6 @@ impl NaiveDb {
         minted
     }
 
-    /// The delta's candidate final state beside the facts it genuinely
-    /// establishes (absent before) — the set that separates the two
-    /// containment directions, exactly as the engine's no-op-insert rule
-    /// does. Pure staging; nothing is applied.
     fn staged(&self, delta: &Delta) -> (Vec<BTreeSet<Tuple>>, Vec<BTreeSet<Tuple>>) {
         let mut next = self.relations.clone();
         for (rel, fact) in &delta.deletes {
@@ -548,23 +404,8 @@ impl NaiveDb {
         (next, inserted)
     }
 
-    /// Judges every statement against a candidate final state, mirroring
-    /// the engine's phase structure at statement granularity (so the
-    /// differential runners can compare complete citation sets, not just
-    /// verdicts): functionality per inserted fact — and if any key
-    /// statement fails, that IS the rejection (the containment judgment
-    /// is defined over the keyed final state, so the engine never
-    /// reaches it) — otherwise containment source-side per inserted
-    /// fact, then containment target-side over pre-existing surviving
-    /// facts. Returns the COMPLETE violation list, sorted ascending
     /// (materialized statement order; source before target within one
-    /// statement) and deduplicated — the whole list is `apply`'s
-    /// rejection and [`NaiveDb::violations`]' value.
-    /// A **closed source** (domain quantification) needs no case of its
-    /// own: its "surviving facts" are the seeded extension tuples, φ is
-    /// the same [`satisfies_selection`] value comparison, and the
-    /// ordinary set-containment judgment runs unchanged against the
-    /// mutable target — the A-side tuples ARE φ over the extension.
+
     fn judge(
         &self,
         state: &[BTreeSet<Tuple>],
@@ -593,8 +434,7 @@ impl NaiveDb {
             }
         }
         if !found.is_empty() {
-            // Key violations preempt the containment judgment — the
-            // rejection is the complete set of violated key statements.
+
             return sealed(found);
         }
         for (rel, facts) in inserted.iter().enumerate() {
@@ -621,25 +461,12 @@ impl NaiveDb {
             };
             for fact in &state[source.relation.0 as usize] {
                 if inserted[source.relation.0 as usize].contains(fact) {
-                    // An inserted source was pass-two work — the sides
-                    // partition the final state's sources, so one
-                    // statement is never convicted twice through one
-                    // fact (the engine's target scan skips inserted
-                    // survivors identically).
+
                     continue;
                 }
-                // The target side judges what the delta BROKE: an
+
                 // instance that held before and fails after. This is the
-                // model twin of the delta-restricted judgment
-                // (`30-dependencies.md` § enforcement: per
-                // deleted-and-not-reestablished target tuple) — for
-                // ordinary theories it equals the plain full-state check
-                // by the clean-prestate induction, and for a closed
-                // SOURCE (domain quantification) it is the recorded
-                // semantics: the empty store violates the statement
-                // until the targets land, and commits that never touch
-                // the target cannot observe that (the offline sweeper's
-                // division of authority).
+
                 if satisfies_selection(fact, &source.selection)
                     && self.contained(&self.relations, source, target, fact)
                     && !self.contained(state, source, target, fact)
@@ -651,14 +478,11 @@ impl NaiveDb {
                 }
             }
         }
-        // The capacity form joins the statement phase whole
+
         // (`lean/Bumbledb/Txn.lean` — the statement-phase violation set
-        // carries containment and capacity citations): the
-        // model judges every parent of the FINAL state —
-        // the full judgment the engine's delta-restricted checks are
-        // provably equal to over a clean pre-state
+
         // (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-        // delta_restricted_commit_sound`).
+
         for (sid, statement) in self.statements.iter().enumerate() {
             match statement {
                 StatementDescriptor::Capacity {
@@ -668,16 +492,9 @@ impl NaiveDb {
                     hi,
                     source,
                 } => {
-                    // The dependent Duration bound resolves against
+
                     // every walked parent's own row BEFORE its window
-                    // compares — a ray span has no finite measure, the
-                    // walk errors, and everything the statement phase
-                    // had collected dies with it (the engine's `?`
-                    // through the scan-complete collectors). Every
-                    // final-state parent under such a bound is
-                    // delta-touched (an untouched ray parent could
-                    // never have committed — its own insert was judged),
-                    // so the existence test IS the engine's walk.
+
                     if let Some(Bound::TargetDuration(field)) = hi
                         && self.target_facts(state, target).any(|parent| {
                             satisfies_selection(parent, &target.selection)
@@ -704,22 +521,8 @@ impl NaiveDb {
         sealed(found)
     }
 
-    /// Does some ψ-selected parent's child-group MEASURE fall outside
-    /// its resolved window? Per parent, the children are the φ-selected
-    /// source facts whose projected tuple equals the parent's; the
-    /// measure is Σ weight over the deduplicated group (the `BTreeSet`
-    /// state IS `dedupFacts`), the ceiling resolves against the parent's
-    /// own row (dependent bounds), and O(parents × children) value
-    /// comparison is the point
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). Returns the
-    /// witnessed measure of the violating parent with the least
-    /// ENCODED key ([`NaiveDb::encoded_key`]: the target key's
-    /// determinant field order, `str` positions as intern ranks) — the
-    /// engine's plan iterates touched parents in ascending
-    /// determinant-image byte order and the sealed set keeps the
-    /// first-discovered witness, so the twins agree on WHICH parent's
-    /// total is reported (C14: the engine completes the full walk on
-    /// conviction, so both sides fold the whole group).
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the parameter list IS the capacity statement's descriptor, spelled flat"
@@ -763,14 +566,6 @@ impl NaiveDb {
         witnessed.map(|(_, measure)| measure)
     }
 
-    /// The capacity parent-key field order the engine's walk uses: the
-    /// TARGET KEY's determinant order — the first key (functionality)
-    /// statement on the target relation whose projection is set-equal
-    /// to the capacity target's, exactly the key the validator resolves
-    /// (`Enforcement::ScalarProbe::key_permutation` is its inverse) —
-    /// falling back to the statement's own projection order where no
-    /// such key exists (a closed target's single synthetic-id field, so
-    /// statement order IS determinant order).
     fn determinant_order<'a>(&'a self, target: &'a Side) -> &'a [bumbledb::FieldId] {
         let wanted: BTreeSet<u16> = target.projection.iter().map(|field| field.0).collect();
         self.statements
@@ -795,16 +590,6 @@ impl NaiveDb {
             .unwrap_or(&target.projection)
     }
 
-    /// A parent's key in encoded-comparison space: the key values
-    /// gathered in determinant order, each `str` replaced by its intern
-    /// RANK — the dictionary word the engine's determinant image
-    /// carries, allocated in first-appearance order (committed history,
-    /// then this delta's mints), never the text's lexicographic order.
-    /// Every other stored encoding preserves the decoded order [`Tuple`]
-    /// already spells (u64 big-endian, i64 sign-flipped bias, bool
-    /// bytes, `bytes<N>` verbatim), and within one statement every
-    /// parent shares the key's fixed per-position widths — so the
-    /// per-field surrogate compare IS the image byte compare.
     fn encoded_key(
         &self,
         minted: &[Box<str>],
@@ -822,10 +607,6 @@ impl NaiveDb {
         )
     }
 
-    /// A stored `str`'s intern rank: committed dictionary position, else
-    /// the delta's mint position past the committed length. A stored
-    /// string is always one of the two — anything else is a model bug,
-    /// panicked not tolerated.
     fn intern_rank(&self, minted: &[Box<str>], raw: &str) -> u64 {
         let rank = self
             .dict
@@ -841,10 +622,6 @@ impl NaiveDb {
         u64::try_from(rank).expect("intern rank fits u64")
     }
 
-    /// Does inserting `fact` leave two distinct facts agreeing on the
-    /// projection? Scalar positions by value equality; the interval
-    /// position (if any) by the pointwise overlap test
-    /// `a.start < b.end && b.start < a.end` — O(n²) is the point.
     fn functionality_violated(
         &self,
         state: &[BTreeSet<Tuple>],
@@ -878,14 +655,8 @@ impl NaiveDb {
         false
     }
 
-    /// The target-side candidate facts of a containment: the committed
-    /// state for an ordinary target — or, for a **closed** target, the
-    /// extension rows themselves, from the σ-over-extension *definition*
-    /// (`docs/architecture/30-dependencies.md` § IND into a closed
-    /// target): ψ is applied to the ground axioms by plain value
-    /// comparison on the shared [`Value`] sum. Deliberately NOT the
     /// engine's compiled member set — the model must not share the
-    /// engine's representation (the independence law).
+
     fn target_facts<'a>(
         &'a self,
         state: &'a [BTreeSet<Tuple>],
@@ -897,13 +668,6 @@ impl NaiveDb {
         }
     }
 
-    /// Is one source fact's projected tuple contained in the target side?
-    /// Scalar positions scan for an equal projected tuple among ψ-passing
-    /// target facts (the extension rows when the target is closed —
-    /// [`NaiveDb::target_facts`]); an interval position collects ALL
-    /// matching target segments, sorts and merges them, and tests the
-    /// source interval's containment in the merged union — never assuming
-    /// the target keeps its own segments disjoint.
     fn contained(
         &self,
         state: &[BTreeSet<Tuple>],
@@ -964,24 +728,18 @@ impl NaiveDb {
         }
     }
 
-    /// Whether a **sealed** field position is interval-typed (a closed
-    /// relation's position 0 is the synthetic `U64` id).
     fn is_interval(&self, relation: RelationId, field: bumbledb::FieldId) -> bool {
         self.field_types[relation.0 as usize][field.0 as usize].is_interval()
     }
 
-    /// The sealed field-type table, for the query evaluator's membership
-    /// typing rule ([`query`]).
     pub(crate) fn field_type(&self, relation: usize, field: usize) -> &ValueType {
         &self.field_types[relation][field]
     }
 }
 
-/// Does the fact satisfy a side's σ — per selected field, membership in
-/// the binding's literal set (a singleton set is plain equality —
-/// `lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`)? σ
-/// literals *are* decoded values (the one shared [`Value`] sum), so the
-/// comparison is structural, no conversion anywhere.
+/// Does the fact satisfy a side's σ — per selected field, membership in the
+/// binding's literal set (a singleton set is plain equality —
+/// `lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`)?
 fn satisfies_selection(
     fact: &Tuple,
     selection: &[(bumbledb::FieldId, bumbledb::schema::LiteralSet)],
@@ -994,13 +752,13 @@ fn satisfies_selection(
     })
 }
 
-/// One source fact's measure under a capacity weight: 1 for the unit
-/// (count) instance, the u64 field value for `[field]`, and the interval
-/// measure `end − start` for `[Duration(field)]` — validation guarantees
-/// the encodings (a signed weight field is gate-refused; polarity), so a
-/// mismatch is a fixture bug, panicked not tolerated. A ray has no
-/// finite measure (C10 — the R6 precedent): the model refuses it the way
-/// the engine's typed commit refusal does, loudly.
+/// One source fact's measure under a capacity weight: 1 for the unit (count)
+/// instance, the u64 field value for `[field]`, and the interval measure `end −
+/// start` for `[Duration(field)]` — validation guarantees the encodings (a
+/// signed weight field is gate-refused; polarity), so a mismatch is a fixture
+/// bug, panicked not tolerated. A ray has no finite measure (C10 — the R6
+/// precedent): the model refuses it the way the engine's typed commit refusal
+/// does, loudly.
 fn child_weight(weight: Weight, child: &Tuple) -> u128 {
     match weight {
         Weight::Unit => 1,
@@ -1012,9 +770,6 @@ fn child_weight(weight: Weight, child: &Tuple) -> u128 {
     }
 }
 
-/// A capacity ceiling resolved against the parent's own row: literal,
-/// dependent u64 field, or dependent interval measure (the calendar
-/// law's `{0..Duration(span)}`).
 fn resolve_bound(bound: Bound, parent: &Tuple) -> u128 {
     match bound {
         Bound::Lit(n) => u128::from(n),
@@ -1026,7 +781,6 @@ fn resolve_bound(bound: Bound, parent: &Tuple) -> u128 {
     }
 }
 
-/// Is an interval value a ray (`end == MAX` — no finite measure)?
 fn is_ray(value: &Value) -> bool {
     match value {
         Value::IntervalU64(interval) => interval.is_ray(),
@@ -1035,12 +789,10 @@ fn is_ray(value: &Value) -> bool {
     }
 }
 
-/// The interval measure `end − start`, non-negative by the interval
-/// encoding's order. A ray has no finite measure — the typed refusal is
-/// [`Violation::CapacityRayMeasure`], raised BEFORE any measure folds
-/// (weight rays at the plan phase, bound rays ahead of the statement's
-/// walk), so a ray reaching this fold is a model bug, panicked not
-/// tolerated.
+/// A ray has no finite measure — the typed refusal is
+/// [`Violation::CapacityRayMeasure`], raised BEFORE any measure folds (weight
+/// rays at the plan phase, bound rays ahead of the statement's walk), so a ray
+/// reaching this fold is a model bug, panicked not tolerated.
 fn duration_measure(value: &Value) -> u128 {
     assert!(!is_ray(value), "a ray has no finite measure (C10)");
     let (start, end) = endpoints(value);
@@ -1051,10 +803,9 @@ fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// Seals a raw citation list: sorted by the explicit citation key
-/// (materialized statement order, source before target within one
-/// statement — [`Violation::citation`], the engine's own sort key) and
-/// deduplicated. The model twin of the engine's `Violations::seal`.
+/// Seals a raw citation list: sorted by the explicit citation key (materialized
+/// statement order, source before target within one statement —
+/// [`Violation::citation`], the engine's own sort key) and deduplicated.
 fn sealed(mut found: Vec<Violation>) -> Vec<Violation> {
     found.sort_unstable_by_key(|violation| violation.citation());
     found.dedup();
