@@ -81,9 +81,7 @@ impl<S> Db<S> {
     }
 
     /// ```compile_fail
-
     /// ```
-
     /// # Errors
     pub fn from_instance(path: &Path, instance: &OwnedInstance<S>) -> Result<Self> {
         let env = Environment::publish(
