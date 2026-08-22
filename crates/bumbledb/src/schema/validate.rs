@@ -25,7 +25,6 @@ use bumbledb_theory::Value;
 /// pass hangs off it here rather than as an inherent method.
 pub trait ValidateDescriptor: Sized {
     /// # Errors
-
     fn validate(self) -> Result<Schema, SchemaError>;
 }
 
@@ -35,7 +34,6 @@ impl ValidateDescriptor for SchemaDescriptor {
     /// Only on one programmer-invariant violation: more than 2³²
 
     /// [`SchemaError::TooManyStatements`]) checked before any u16 id is
-
     #[expect(
         clippy::too_many_lines,
         reason = "the one materialized-order sealing pass — one arm per \
