@@ -140,7 +140,6 @@ impl NodePrecompute {
 }
 
 impl Executor {
-
     #[must_use]
     pub fn new(plan: &ValidatedPlan) -> Self {
         Self::with_batch_size(plan, BATCH)
@@ -153,7 +152,7 @@ impl Executor {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
 
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
@@ -181,7 +180,7 @@ impl Executor {
                 node.subatoms
                     .iter()
                     .map(|s| {
-                        let mut words = Vec::new(); 
+                        let mut words = Vec::new();
                         for var in &s.vars {
                             let slot = plan.slot_of(*var);
                             for offset in 0..width_of(*var) {
@@ -211,7 +210,6 @@ impl Executor {
             .enumerate()
             .zip(&precompute)
             .map(|((node_idx, node), pre)| {
-
                 let max_arity = slot_map[node_idx]
                     .iter()
                     .map(Vec::len)
