@@ -23,11 +23,9 @@ pub const fn encode_i64(value: i64) -> [u8; 8] {
 }
 
 /// Encodes an Interval over U64 as `start ‖ end`, each half [`encode_u64`].
-///
 /// Because each half is order-preserving, the 16 bytes sort
 /// lexicographically by `(start, end)` — load-bearing for the storage
-/// layer's neighbor probes (`docs/architecture/50-storage.md`).
-///
+/// layer's neighbor probes.
 /// The checked input type makes `start < end` unconstructible.
 #[must_use]
 pub fn encode_interval_u64(interval: Interval<u64>) -> [u8; 16] {
@@ -55,11 +53,9 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
 /// FIELD'S ENCODING. The field's [`ValueType`] owns the width: the same
 /// checked interval value encodes as 16 bytes at a general interval
 /// position and as its 8-byte start at a fixed-width one.
-///
 /// # Panics
-///
-/// On `String` — programmer invariant: callers peel the interned
 /// variant first.
+/// On `String` — programmer invariant: callers peel the interned
 pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
     let value = match value {
         Value::Bool(v) => ValueRef::Bool(*v),
@@ -93,11 +89,6 @@ pub fn append_field(value: ValueRef, ty: ValueType, out: &mut Vec<u8>) {
     }
 }
 
-/// Appends the canonical encoding of ONE field value when the caller has
-/// already selected the encoding arm (general intervals write both
-/// halves). Typed facts go through [`encode_fact`], which consults the
-/// layout. Bytes payloads write only through [`append_field`] at the
-/// layout type — a width-free buffer has no encoding of its own.
 pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
     match value {
         ValueRef::Bool(v) => {
@@ -124,7 +115,6 @@ pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
     }
 }
 
-/// Appends the canonical encoding of a full fact to `out` — each field
 /// through [`append_field`] at the layout's type, so a general interval
 /// value at a fixed-width slot cannot silently write 16 bytes into 8.
 pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) {
