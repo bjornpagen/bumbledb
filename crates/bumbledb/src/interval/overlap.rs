@@ -1,55 +1,14 @@
-//! The order-based overlap index (ruled 2026-07-23; finding 012 — the
-//! `docs/architecture/40-execution.md` range-accelerator OPEN item,
-//! armed "on violation" and tripped at bench scale by `t2_overlap_join`):
+//! The order-based overlap index:
 //! per key group, the start-sorted position list under an implicit
 //! max-end tree, so "every position whose interval pair overlaps
 //! `[q_start, q_end)`" enumerates in ~O(log n + out) instead of the
 //! group's full n — the `Σ n_k²` all-pairs walk becomes
 //! `Σ n_k log n_k + out` across a per-key self-join. Small groups skip
-//! the tree at query time: one fused flat sweep of the sorted pairs
-//! ([`FLAT_SWEEP_CEILING`]) — the t2-class constant-factor shape.
-//!
-//! The overlap predicate is the half-open shared-point law
-//! (`10-data-model.md`): `a ∩ b ≠ ∅ ⇔ a.start < b.end ∧ b.start <
-//! a.end` over the order-faithful encoded words — rays are ordinary
-//! largest-end words, adjacency (`a.end == b.start`) shares no point
-//! and is correctly excluded. The executor keeps the Allen mask as
-//! data: enumerated candidates still flow through the uniform classify
-//! kernels, so this structure only ever needs to be a *superset* filter
-//! for touching masks (mask ⊆ INTERSECTS ∪ MEETS ∪ `MET_BY` — the
-//! caller's gate, which widens the query window by one word per
-//! abutment component; `overlap_leaf.rs` walks the equivalences).
-//!
-//! One cache serves one execution (the executor resets it per
-//! `execute`): indexes key on the caller's (occurrence, bound prefix)
-//! words — the trie path that minted the group's cursor — and build
-//! exactly once per group, pooled slabs throughout (capacity retained
-//! across executions, the 40-execution allocation contract).
-//!
-//! **Amortization gating**: the first probe of a group never builds —
-//! a once-probed group would pay the whole `n log n` sort for one
-//! query, strictly worse than the generic enumeration it displaces —
-//! so [`OverlapCache::probe`] tallies the first touch as an unbuilt
-//! directory entry (the `p == 0` sentinel: every built index has
-//! `p ≥ 1`) and builds on the second, the probe that proves the group
-//! is re-queried. The declined probe costs one directory insert; the
-//! caller runs generic for it. The floor sits at two because the named
-//! regression is the once-probed group; the wider economics (build ≈
-//! several generic passes) re-pin through the `overlap_profile` rig if
-//! a workload ever shows twice-probed groups dominating.
 
 use std::num::NonZeroU32;
 
-/// The flat-sweep ceiling: groups at or below it answer queries by the
-/// fused pass over the start-sorted pairs; above it the max-end tree
-/// walk keeps the output-sensitive shape (a heavy group's linear sweep
-/// would re-approach the all-pairs cost the index exists to kill).
-/// CONSTRAINT: 128 is provisional from the `overlap_profile` rig's
-/// crossover sweep (release, quiet machine) — re-pin from that sweep,
-/// never by inspection.
 const FLAT_SWEEP_CEILING: usize = 128;
 
-/// One index's directory row: tallied (first probe, no slabs) or built.
 #[derive(Debug, Clone, Copy)]
 enum Dir {
     Tallied {
@@ -77,25 +36,22 @@ impl Dir {
     }
 }
 
-/// Probe outcome: declined by the amortization gate, or a built index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Probe {
     Declined,
     Ready(u32),
 }
 
-/// One query's tree walk, hoisted to this index's slices.
 struct Walk<'a> {
     tree: &'a [u64],
     positions: &'a [u32],
-    /// The `start < q_end` prefix bound (exclusive entry index).
+
     hi: usize,
     q_start: u64,
 }
 
 impl Walk<'_> {
-    /// Reports node `[lo, hi_node)`: prune right of the prefix bound
-    /// or under the max-end bar; leaves report.
+
     fn report(&self, node: usize, lo: usize, hi_node: usize, out: &mut Vec<u32>) {
         if lo >= self.hi || self.tree[node] <= self.q_start {
             return;
@@ -110,32 +66,24 @@ impl Walk<'_> {
     }
 }
 
-/// The per-execution overlap-index cache: an open-addressed directory
-/// over pooled index slabs.
 #[derive(Default)]
 pub(crate) struct OverlapCache {
-    /// `table[i]` holds `dir index + 1`, 0 = empty (power-of-two sized,
-    /// linear probing). Keys compare in full from the key slab on a
-    /// hash hit — aliasing is a probe step, never a wrong answer.
+
     table: Vec<u32>,
     dirs: Vec<Dir>,
     keys: Vec<u64>,
-    /// Start words, ascending per index.
+
     starts: Vec<u64>,
-    /// Image positions, aligned with `starts`.
+
     positions: Vec<u32>,
-    /// Implicit max-end trees. Pad leaves hold 0 — unreachable as an
-    /// end word (`end > start ≥ 0` over order-faithful words), so a pad
-    /// never satisfies `end > q_start`.
+
     tree: Vec<u64>,
-    /// Build scratch: (start, end, position), start-sorted in place.
+
     triples: Vec<(u64, u64, u32)>,
 }
 
 impl OverlapCache {
-    /// Drops every index and key, capacities retained — the caller's
-    /// per-execution boundary (group positions and cursors are only
-    /// stable within one execution).
+
     pub(crate) fn reset(&mut self) {
         self.table.iter_mut().for_each(|slot| *slot = 0);
         self.dirs.clear();
@@ -145,11 +93,6 @@ impl OverlapCache {
         self.tree.clear();
     }
 
-    /// One probe of `key`'s group. The first probe tallies the group
-    /// unbuilt and returns [`Probe::Declined`] — the caller runs its
-    /// generic path, the amortization gate (module docs). The second
-    /// builds from `feed` and every probe from then on is a pure lookup.
-    /// [`Probe::Ready`] carries the directory index for [`Self::query_into`].
     pub(crate) fn probe(
         &mut self,
         key: &[u64],
@@ -206,7 +149,6 @@ impl OverlapCache {
         Probe::Ready(found)
     }
 
-    /// Entry count of a built index — the caller's stability tripwire
     /// (a group must not grow between build and query).
     pub(crate) fn len_of(&self, dir: u32) -> usize {
         match self.dirs[dir as usize] {
@@ -215,19 +157,6 @@ impl OverlapCache {
         }
     }
 
-    /// Every position of index `dir` whose interval overlaps
-    /// `[q_start, q_end)`, into `out` (cleared; start-ordered). Two
-    /// query shapes by group size: at or below the flat-sweep ceiling,
-    /// one fused pass over the start-sorted pairs (starts ascending —
-    /// break at `start ≥ q_end`, filter `end > q_start`), no binary
-    /// search, no tree, no recursion — the t2-class group (~10²
-    /// entries, re-queried once per outer row) pays a short
-    /// predictable loop instead of `log n` cold probes plus a
-    /// recursive walk per row. Above the ceiling, binary search bounds
-    /// the `start < q_end` prefix and the max-end tree walk reports
-    /// `end > q_start` within it — each visited node either prunes or
-    /// has a report in its subtree, the output-sensitive shape a heavy
-    /// group needs.
     pub(crate) fn query_into(&self, dir: u32, q_start: u64, q_end: u64, out: &mut Vec<u32>) {
         out.clear();
         let d = self.dirs[dir as usize];
@@ -271,7 +200,6 @@ impl OverlapCache {
         walk.report(1, 0, p, out);
     }
 
-    /// Directory probe: full-key equality behind the hash.
     fn lookup(&self, hash: u64, key: &[u64]) -> Option<u32> {
         if self.table.is_empty() {
             return None;
@@ -294,8 +222,6 @@ impl OverlapCache {
         }
     }
 
-    /// Inserts a fresh dir, growing at half load (rehash from the key
-    /// slab — the table stores no hashes).
     fn insert(&mut self, hash: u64, dir_idx: u32) {
         if (self.dirs.len() + 1) * 2 > self.table.len() {
             let capacity = (self.table.len() * 2).max(64);
@@ -326,8 +252,6 @@ impl OverlapCache {
 mod tests {
     use super::{OverlapCache, Probe};
 
-    /// A deterministic LCG (the sweep tests' twin) so the property
-    /// sweeps are reproducible.
     struct Lcg(u64);
 
     impl Lcg {
@@ -340,8 +264,6 @@ mod tests {
         }
     }
 
-    /// Random half-open segments over a small domain — dense enough for
-    /// constant adjacency/nesting; every fifth draw a ray.
     fn random_group(rng: &mut Lcg, len: usize) -> Vec<(u64, u64, u32)> {
         (0..len)
             .map(|i| {
@@ -366,8 +288,6 @@ mod tests {
         hits
     }
 
-    /// Probes a key past the amortization gate: the first touch
-    /// tallies (`None`), the second builds — the tests' one entry.
     fn build(cache: &mut OverlapCache, key: &[u64], group: &[(u64, u64, u32)]) -> u32 {
         assert_eq!(
             cache.probe(key, |_| panic!("a first probe never builds")),
@@ -386,8 +306,7 @@ mod tests {
         let mut cache = OverlapCache::default();
         let mut out = Vec::new();
         for round in 0..200u64 {
-            // Group sizes straddle FLAT_SWEEP_CEILING: both query
-            // shapes (fused sweep, tree walk) meet the same oracle.
+
             let len = (rng.next() % 300) as usize;
             let group = random_group(&mut rng, len);
             let dir = build(&mut cache, &[round], &group);
@@ -417,11 +336,10 @@ mod tests {
         let group = [(0u64, 5u64, 0u32), (5, 9, 1), (7, u64::MAX, 2)];
         let dir = build(&mut cache, &[7], &group);
         let mut out = Vec::new();
-        // [5, 7): adjacent to [0,5) — excluded; overlaps [5,9); the ray
-        // starts at its end boundary — excluded (half-open).
+
         cache.query_into(dir, 5, 7, &mut out);
         assert_eq!(out, vec![1]);
-        // A query ray from 6 hits the open segment and the ray.
+
         cache.query_into(dir, 6, u64::MAX, &mut out);
         out.sort_unstable();
         assert_eq!(out, vec![1, 2]);
@@ -459,8 +377,6 @@ mod tests {
         );
     }
 
-    /// The amortization gate's teeth: keys probed exactly once never
-    /// pay the sort — no feed runs, every probe declines.
     #[test]
     fn once_probed_groups_never_build() {
         let mut cache = OverlapCache::default();
@@ -472,7 +388,6 @@ mod tests {
         }
     }
 
-    /// Many keys force directory growth mid-stream; every earlier index
     /// stays reachable and correct after the rehash.
     #[test]
     fn directory_growth_preserves_every_index() {
