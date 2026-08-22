@@ -1,13 +1,4 @@
 //! The capacity ray refusal's differential verdict (C10; the C17 slot
-//! law's write-time strengthening): a ray meeting a capacity
-//! statement's `Duration` weight or dependent `Duration` bound is the
-//! engine's typed `Error::CapacityRayMeasure` — and used to be a PANIC
-//! on both twins (the engine's through the runner's catch-all, the
-//! model's through the measure fold), so the differential compared
-//! nothing. Both sides now render the singleton
-//! `Violation::CapacityRayMeasure` citation: weight rays at the plan
-//! phase (INSERT ops only — a delete removal is key-only and never
-//! derives a slot), bound rays during the statement walk.
 
 use bumbledb::schema::{
     Bound, FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
@@ -40,10 +31,6 @@ fn side(relation: RelationId, projection: &[u16]) -> Side {
     }
 }
 
-/// Pool(name; key name), Device(pool, span, id), with
-/// `Pool(name) <=[Duration(span)]{0..Duration(span)} Device(pool)` —
-/// the calendar-law shape: a Duration weight on the child, a dependent
-/// Duration ceiling on the parent's own span.
 fn descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -91,8 +78,8 @@ fn device(name: u64, start: u64, end: u64, id: u64) -> (RelationId, Vec<Value>) 
     )
 }
 
-/// One write through both twins, verdicts compared whole; returns the
-/// agreed verdict so the caller pins the expected refusal identity.
+/// One write through both twins, verdicts compared whole; returns the agreed
+/// verdict so the caller pins the expected refusal identity.
 fn agreed(db: &Db<SchemaDescriptor>, naive: &mut NaiveDb, delta: &Delta) -> Verdict {
     let engine = engine_write(db, delta);
     let model = match naive.apply(delta) {
@@ -126,9 +113,6 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
         "an inserted ray child refuses at the plan phase"
     );
 
-    // A delete removal is key-only — no slot derives, so a delete
-    // NEVER refuses on a ray (a committed ray child cannot exist for
-    // it to remove; this delete is the clean no-op).
     assert_eq!(
         agreed(
             &db,
@@ -143,7 +127,7 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
     );
 
     // The plan-phase refusal preempts the judgment whole: the same
-    // delta also carries a key violation, and the ray still wins.
+
     assert_eq!(
         agreed(
             &db,
@@ -152,7 +136,7 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
                 deletes: vec![],
                 inserts: vec![
                     pool(1, 0, 100),
-                    pool(1, 200, 300), // duplicate key (name = 1)
+                    pool(1, 200, 300), 
                     device(1, 3, u64::MAX, 0),
                 ],
             },
@@ -161,7 +145,6 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
         "the plan phase runs before any judgment collects"
     );
 
-    // Control: the store still works — a finite delta commits.
     assert_eq!(
         agreed(
             &db,
@@ -184,9 +167,6 @@ fn a_ray_ceiling_refuses_with_one_agreed_verdict() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
-    // The parent's own span is the ray: the dependent ceiling resolves
-    // against it during the statement walk — the finite child passes
-    // the plan phase, the walk refuses.
     assert_eq!(
         agreed(
             &db,
