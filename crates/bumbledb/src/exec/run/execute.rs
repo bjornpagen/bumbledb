@@ -309,7 +309,6 @@ impl Executor {
     /// # Panics
 
     /// Only on programmer-invariant violations (sources not matching the
-
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
