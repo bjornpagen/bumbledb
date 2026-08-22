@@ -11,8 +11,6 @@ impl ViewMemo {
         }
     }
 
-    /// Pins one occurrence's COLT and its binding proof. Interior
-    /// occurrences arrive as [`Binding::Derived`] — they never park.
     pub(super) fn push(&mut self, colt: Colt, active: Binding) {
         self.colts.push(colt);
         self.occs.push(OccMemo {
@@ -26,12 +24,10 @@ impl ViewMemo {
         &mut self.occs[occ].spare
     }
 
-    /// Whether this occurrence is Interior: never epoch-keyed, never parked.
     pub(super) fn is_derived(&self, occ: usize) -> bool {
         matches!(self.occs[occ].active, Binding::Derived)
     }
 
-    /// The active binding matches this exact `(epoch, filters)` pair.
     pub(super) fn active_matches(
         &self,
         occ: usize,
@@ -44,8 +40,6 @@ impl ViewMemo {
         }
     }
 
-    /// Records a just-rebuilt active binding, reusing a vacated
-    /// [`Bound`]'s filter allocation when the slot is already bound.
     pub(super) fn set_bound(&mut self, occ: usize, epoch: ViewEpoch, filters: &[FilterPredicate]) {
         match &mut self.occs[occ].active {
             Binding::Bound(bound) => {
@@ -64,10 +58,6 @@ impl ViewMemo {
         }
     }
 
-    /// Binds `occ`'s active slot to `(epoch, filters)`: an active
-    /// hit is free, a parked hit swaps in, and a miss parks the active
-    /// binding (into an empty slot first, else the LRU victim) and
-    /// reports `false` so the caller rebuilds in place.
     pub(super) fn bind(
         &mut self,
         occ: usize,
@@ -77,12 +67,9 @@ impl ViewMemo {
         let tick = self.tick;
         let colt = &mut self.colts[occ];
         let occ_memo = &mut self.occs[occ];
-        // Stale reaping first: store generations only advance, so a
-        // parked binding superseded by this one is provably unhittable
+
         // — drop it, its pools, and its image Arc. Closed and frozen
-        // epochs never supersede. Fires only when the store moved
-        // (within an epoch every parked entry is current), so the
-        // zero-alloc/zero-dealloc discipline of the warm window holds.
+
         for slot in &mut occ_memo.parked {
             if slot
                 .as_ref()
@@ -104,8 +91,7 @@ impl ViewMemo {
         }) {
             match &mut occ_memo.active {
                 Binding::Derived => {
-                    // Unparkable by construction: bind is never called
-                    // for an Interior occurrence.
+
                     return false;
                 }
                 Binding::Bound(active) => {
@@ -122,14 +108,7 @@ impl ViewMemo {
             }
             return true;
         }
-        // A current-epoch active binding is still hittable — park it
-        // into an empty slot (first park constructs the parked Bound
-        // inside the sanctioned view-rebuild window), else over the LRU
-        // victim (post-reap every survivor is current-epoch, so LRU is
-        // the whole policy). A stale or unbound active can never hit
-        // again: rebuild it in place (zero-residual occurrences always
-        // land here, so their parked slots stay empty forever).
-        // Derived is unparkable — no Bound to move.
+
         if let Binding::Bound(bound) = &occ_memo.active
             && bound.epoch == epoch
         {
