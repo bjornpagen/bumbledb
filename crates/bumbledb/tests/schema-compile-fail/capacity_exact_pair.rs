@@ -1,6 +1,6 @@
 //! `{n..n}` is the exact measure's second spelling — banned; the
 //! canonical exact-measure spelling is `{n}` (the canonical-utterance
-//! law, `docs/architecture/70-api.md`).
+//! law).
 //@ error: an exact measure is written `{2}`
 
 bumbledb::schema! {

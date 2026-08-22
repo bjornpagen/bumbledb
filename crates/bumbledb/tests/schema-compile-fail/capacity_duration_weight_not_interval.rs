@@ -1,6 +1,6 @@
 //! `[Duration(field)]` over a scalar — the interval-measure weight
-//! reads an interval position of the SOURCE row
-//! (`docs/architecture/30-dependencies.md` § weight typing).
+//! reads an interval position of the SOURCE row.
+//!
 //@ error: weight field `watts` on `Device` is not
 //@ error: interval-typed
 

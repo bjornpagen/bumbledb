@@ -1,6 +1,5 @@
 //! The spec-lowering contract, exercised as a foreign host would:
-//! plain data in, a descriptor or the COMPLETE typed issue list out
-//! (`docs/architecture/70-api.md` § the `SchemaSpec` bindings contract).
+//! plain data in, a descriptor or the COMPLETE typed issue list out.
 //! The macro/spec fingerprint parity pin lives engine-side
 //! (`crates/bumbledb/tests/schema_spec.rs`); this file pins the
 //! theory-crate laws alone.

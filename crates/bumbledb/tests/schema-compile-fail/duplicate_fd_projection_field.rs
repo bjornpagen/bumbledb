@@ -1,5 +1,5 @@
 //! A determinant is a field set — duplicate-free
-//! (`docs/architecture/30-dependencies.md` § functionality): a repeated
+//! — a repeated
 //! projection field dies as a teaching error spanned at the second
 //! occurrence, never as rustc's E0124 on the generated key struct's
 //! field the author never wrote.

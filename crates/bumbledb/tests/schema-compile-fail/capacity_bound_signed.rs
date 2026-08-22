@@ -1,7 +1,7 @@
 //! A signed dependent bound — a dependent bound reads a u64 field of
 //! the TARGET's row: a signed encoding cannot bound a non-negative
-//! measure (`docs/architecture/30-dependencies.md` § dependent
-//! bounds).
+//! measure.
+//!
 //@ error: bound field `margin` on `Pool` is signed
 
 bumbledb::schema! {

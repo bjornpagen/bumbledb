@@ -1,5 +1,5 @@
-//! The coherence check (`docs/architecture/30-dependencies.md` § the
-//! taxonomy is checked): the newtypes on a statement's paired faces must
+//! The coherence check:
+//! the newtypes on a statement's paired faces must
 //! agree, positionwise — two labels disagreeing is a spanned teaching
 //! error at both faces, raised by the ONE shared lowering (a closed
 //! relation's synthetic `id` carries the handle newtype).

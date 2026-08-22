@@ -1,4 +1,4 @@
-//! One newtype name = one encoding (`docs/architecture/70-api.md` § the
+//! One newtype name = one encoding (the
 //! `schema!` grammar — rustc polices domains): the duplicate check keys
 //! on the DECLARED encoding, not the rendered Rust type, which is lossy
 //! exactly where the width is the type — `interval<u64, 7>` and

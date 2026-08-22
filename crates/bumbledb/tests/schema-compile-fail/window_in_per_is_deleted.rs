@@ -1,8 +1,8 @@
 //! The `in lo..hi per` window spelling is deleted vocabulary — the
 //! window is B-family, target-left (`Parent(key) <={lo..hi}
 //! Child(field)`), and the grammar itself rejects the old spelling at
-//! expansion, naming the canonical form (the canonical-utterance law,
-//! `docs/architecture/70-api.md`).
+//! expansion, naming the canonical form (the canonical-utterance
+//! law).
 //@ error: the `in lo..hi per` window form is deleted
 
 bumbledb::schema! {

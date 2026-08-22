@@ -3,8 +3,8 @@ import Bumbledb.Schema
 /-!
 # Capacity — the aggregate containment (the capacity cutover, spec statement)
 
-The capacity statement `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`
-(`docs/design/capacity-laws.md`): for every ψ-selected target fact,
+The capacity statement `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`: for
+every ψ-selected target fact,
 the MEASURE of its child group — Σ weight over the deduplicated
 φ-selected source facts sharing its projected key tuple — lies in the
 window, whose bounds resolve against the target's own row. Counting
@@ -97,7 +97,7 @@ it through the enumeration collapse.
  (`capacity_of_empty_parent`) proves every `CapacityLaw` when no
  ψ-selected parent exists. It does **not** license a ray Duration
  child insert: C20 refuses that write at plan time whether or not
- any parent exists (`docs/design/capacity-laws.md` §8b).
+ any parent exists.
 * **Acceptance is not restated.** `Y` a key of `B`, the weight-typing
  roster (signed/non-u64 refusals, the path-weight refusal naming the
  pinned-column idiom), dependent-bound typing, and the dimension

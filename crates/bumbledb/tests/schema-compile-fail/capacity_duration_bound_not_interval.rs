@@ -1,6 +1,6 @@
 //! `{0..Duration(field)}` over a scalar — the Duration bound reads a
-//! TARGET interval position's measure
-//! (`docs/architecture/30-dependencies.md` § dependent bounds).
+//! TARGET interval position's measure.
+//!
 //@ error: bound field `supply` on `Pool` is not
 //@ error: bounds by a TARGET interval's measure
 

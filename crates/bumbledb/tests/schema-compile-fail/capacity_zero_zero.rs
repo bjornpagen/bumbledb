@@ -1,6 +1,6 @@
 //! `{0..0}` is the exclusion's second spelling — banned; the exclusion
-//! is written `{0}` (the canonical-utterance law,
-//! `docs/architecture/70-api.md`).
+//! is written `{0}` (the canonical-utterance
+//! law).
 //@ error: the exclusion is written `{0}`
 
 bumbledb::schema! {

@@ -234,14 +234,12 @@ fn take_group(tokens: &mut Tokens, delimiter: Delimiter, what: &str) -> TokenStr
 fn reject_deleted_word(word: &str) {
     assert!(
         !matches!(word, "unique" | "fk"),
-        "schema!: field-level constraints do not exist; write a statement — \
-         see docs/architecture/30-dependencies.md"
+        "schema!: field-level constraints do not exist; write a statement"
     );
     assert!(
         word != "enum",
         "schema!: the enum type is deleted — a vocabulary is a closed relation \
-         (`closed relation K as KId = {{ A, B }};` plus `Rel(k) <= K(id);` — \
-         see docs/architecture/10-data-model.md)"
+         (`closed relation K as KId = {{ A, B }};` plus `Rel(k) <= K(id);`)"
     );
 }
 
@@ -344,8 +342,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 assert!(
                     matches!(field.ty, FieldTy::U64),
                     "schema!: fresh field `{}` must be u64 — fresh is the mint \
-                     mark, and minted generations are u64 \
-                     (docs/architecture/70-api.md)",
+                     mark, and minted generations are u64",
                     field.name
                 );
                 assert!(
@@ -401,8 +398,7 @@ fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
     assert_eq!(
         peek_ident(tokens).as_deref(),
         Some("as"),
-        "schema!: closed relation `{name}` needs `as NewType` — the handle needs a host type \
-         (docs/architecture/70-api.md)"
+        "schema!: closed relation `{name}` needs `as NewType` — the handle needs a host type"
     );
     tokens.next();
     let (newtype, newtype_span) = spanned_ident(tokens, "the handle newtype's name");
@@ -665,8 +661,7 @@ fn parse_statement(
             let (right, right_span) = spanned_ident(tokens, "the FD's relation name");
             assert!(
                 left.selection.is_empty(),
-                "schema!: an FD takes no selection — the FD form is `R(X) -> R` \
-                 (docs/architecture/30-dependencies.md)"
+                "schema!: an FD takes no selection — the FD form is `R(X) -> R`"
             );
             if let Some(error) = duplicate_determinant_field(&left) {
                 return Err(error);
@@ -684,8 +679,7 @@ fn parse_statement(
                          `{rel}({proj}) -> {rel}` — the projection determines the \
                          tuple, and that closure is what makes a key a key (a \
                          functional dependency over the relation's own attributes); \
-                         `-> {right}` is not a key statement \
-                         (docs/architecture/30-dependencies.md)",
+                         `-> {right}` is not a key statement",
                         rel = left.relation,
                         proj = fields.join(", "),
                     ),
@@ -709,8 +703,7 @@ fn parse_statement(
                 assert!(
                     peek_brace(tokens),
                     "schema!: `<=[w]` names a weight but no window — the capacity \
-                     statement is `Parent(key) <=[w]{{lo..hi}} Child(field)` \
-                     (docs/architecture/30-dependencies.md § the extension form)"
+                     statement is `Parent(key) <=[w]{{lo..hi}} Child(field)`"
                 );
                 (weight, Some(weight_span))
             } else {
@@ -755,8 +748,7 @@ fn parse_statement(
             panic!(
                 "schema!: the `in lo..hi per` window form is deleted — a window is \
                  B-family, target-left: `Parent(key) <={{lo..hi}} Child(field)`, \
-                 with `{{n}}` the exact-count spelling \
-                 (docs/architecture/30-dependencies.md § the extension form)"
+                 with `{{n}}` the exact-count spelling"
             );
         }
         other => {
@@ -783,7 +775,7 @@ fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
                 message: format!(
                     "schema!: `{field}` appears twice in the determinant of \
                      `{rel}({proj}) -> {rel}` — a determinant is a field set, \
-                     duplicate-free (docs/architecture/30-dependencies.md)",
+                     duplicate-free",
                     rel = side.relation,
                     proj = fields.join(", "),
                 ),
@@ -917,8 +909,7 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
     match tokens.next() {
         Some(TokenTree::Ident(ident)) if ident.to_string() == "pub" => {}
         other => panic!(
-            "schema!: the first item names the schema — `pub Name;` — found {other:?} \
-             (docs/architecture/70-api.md)"
+            "schema!: the first item names the schema — `pub Name;` — found {other:?}"
         ),
     }
     let name = expect_ident(&mut tokens, "the schema name");
@@ -946,8 +937,7 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
             panic!(
                 "schema!: `order` statements no longer exist — order is a derivation, \
                  not a dependency: use fractional indexing over a keyed position, or \
-                 the exact-partition interval recipe \
-                 (docs/architecture/30-dependencies.md § refused: order marks)"
+                 the exact-partition interval recipe"
             );
         } else {
             parse_statement(ident, ident_span, &mut tokens, &mut schema.statements)?;
@@ -1245,7 +1235,7 @@ fn field_value_type(relation: &str, field: &Field) -> ValueType {
                 // range error; only the unrepresentable dies here.
                 panic!(
                     "schema!: field `{relation}.{}`: bytes<{len}> does not fit the \
-                     width's domain (1..=64 — docs/architecture/10-data-model.md)",
+                     width's domain (1..=64)",
                     field.name
                 )
             }),
@@ -1471,12 +1461,11 @@ fn check_weight_typing(schema: &SchemaAst, source_relation: &str, weight: &Weigh
                 "schema!: weight field `{name}` on `{source_relation}` is signed — a \
                      `[field]` weight measures a u64 position, and a signed encoding is \
                      refused by polarity: a negative weight would let an insert lower a \
-                     sum (docs/architecture/30-dependencies.md § weight typing)"
+                     sum"
             ),
             Some(_) => panic!(
                 "schema!: weight field `{name}` on `{source_relation}` is not \
-                     u64-encoded — a `[field]` weight measures a u64 SOURCE position \
-                     (docs/architecture/30-dependencies.md § weight typing)"
+                     u64-encoded — a `[field]` weight measures a u64 SOURCE position"
             ),
         },
         WeightSpec::Duration(name) => match declared_type(schema, source_relation, name) {
@@ -1484,7 +1473,7 @@ fn check_weight_typing(schema: &SchemaAst, source_relation: &str, weight: &Weigh
             Some(_) => panic!(
                 "schema!: weight field `{name}` on `{source_relation}` is not \
                      interval-typed — `[Duration(field)]` reads an interval position's \
-                     measure (docs/architecture/30-dependencies.md § weight typing)"
+                     measure"
             ),
         },
     }
@@ -1509,13 +1498,12 @@ fn check_bound_typing(
                 Some(FieldTy::I64) => panic!(
                     "schema!: bound field `{name}` on `{target_relation}` is signed — a \
                      dependent bound reads a u64 field of the TARGET's row (a signed \
-                     encoding cannot bound a non-negative measure) \
-                     (docs/architecture/30-dependencies.md § dependent bounds)"
+                     encoding cannot bound a non-negative measure)"
                 ),
                 Some(_) => panic!(
                     "schema!: bound field `{name}` on `{target_relation}` is not \
                      u64-encoded — a dependent bound reads a u64 field of the TARGET's \
-                     row (docs/architecture/30-dependencies.md § dependent bounds)"
+                     row"
                 ),
             },
             BoundSpec::Duration(name) => {
@@ -1526,8 +1514,7 @@ fn check_bound_typing(
                     panic!(
                         "schema!: bound field `{name}` on `{target_relation}` is not \
                          interval-typed — `{{..Duration(field)}}` bounds by a TARGET \
-                         interval's measure \
-                         (docs/architecture/30-dependencies.md § dependent bounds)"
+                         interval's measure"
                     );
                 }
                 if matches!(weight, WeightSpec::Unit) {

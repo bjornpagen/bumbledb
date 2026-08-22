@@ -72,7 +72,7 @@ C17 measured choice landed: the value-slot arm won the power-budget lane
 (−17%/−21% on the judged surface) and ships as the ONLY form, with C20
 (ruled 2026-08-03) blessing its write-time consequence as doctrine — a
 ray-valued Duration weight refuses at WRITE time, strictly stronger than
-C10's judge-time refusal (`docs/design/capacity-laws.md` §8b). On the TS
+C10's judge-time refusal (the C-series record, `lean/Bumbledb/Capacity.lean`). On the TS
 tier the type walls tighten to the engine's: cross-domain
 order/`pointIn`/Allen spellings and a unit capacity taking a `duration()`
 bound now die at COMPILE time (both were engine refusals at runtime before —
@@ -89,8 +89,8 @@ into pack-time injection (the sdk lane's bootstrap circle died there).
 Before it, `0.8.0` was the capacity release, a deliberate backwards-incompatible
 hard break over `0.7.0` — the count window dies into the CAPACITY statement
 (`Target <=[w]{lo..hi} Source`, the aggregate containment;
-`docs/design/capacity-laws.md` §8 rulings 1-6 + §8b C1-C19, both design docs
-stamped LANDED). The count spelling `<={lo..hi}` survives
+rulings 1-6 + C1-C19, the record now carried by `lean/Bumbledb/Capacity.lean`
+and `lean/Bumbledb/Subsumption.lean`). The count spelling `<={lo..hi}` survives
 character-for-character as the unit-weight instance; weighted measures land
 (`weigh(f(...))`, Duration weights — calendar capacity as one statement);
 dependent hi-bounds read the target row (`ref("supply")` — the power-budget

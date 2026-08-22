@@ -163,8 +163,7 @@ so no count is pinned here):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
   nothing and belonged to the validation-totality fuzz lane (deleted
-  with the fuzzing apparatus, `docs/architecture/60-validation.md` §
-  the deletion record).
+  with the fuzzing apparatus).
 * **unresolved string literals** (31) — the model has no intern
   dictionary; a query/param string outside the world's vocabulary is
   the engine's dictionary-miss latch, excluded on principle.
@@ -271,9 +270,8 @@ sound only under its holds-before premise) while `Txn.judgeB` reads
 the whole final state — a store whose targets have not landed accepts
 every untouching commit yet judges reject in full state
 (`Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`; the
-offline sweeper owns the class per
-`docs/architecture/30-dependencies.md` § "Domain quantification,
-worked"), so such a fixture would be a guaranteed mismatch on a
+offline sweeper owns the class), so such a fixture would be a
+guaranteed mismatch on a
 correct engine verdict. No incremental fixture declares a closed
 source; the Rust half is pinned by
 `domain_quantification_judgments_are_outside_the_lane`. The
@@ -403,6 +401,5 @@ prefix `reach-` selects the evaluator. Do not name them `query-*.json`.
   `judge_complete`; Lean compares `judgeB` / `completeAdmissionB`.
 
 A DISAGREEMENT IS A FINDING — engine bug, naive-model bug, or spec bug
-all count; triage it before anything else merges
-(`docs/architecture/60-validation.md`). Report prominently; never
-"fix" the corpus to make a disagreement go away.
+all count; triage it before anything else merges. Report prominently;
+never "fix" the corpus to make a disagreement go away.

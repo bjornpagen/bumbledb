@@ -1,7 +1,7 @@
 //! The coherence check's half-labeled arm: a labeled face never pairs
 //! with a bare one — bare pairs only with bare (the TS wall's own law,
-//! adopted so the two hosts judge identically;
-//! `docs/architecture/30-dependencies.md` § the taxonomy is checked).
+//! adopted so the two hosts judge identically).
+//!
 //@ error: the containment pairs `Task.owner` (`PersonId`) with `Person.id` (no newtype)
 //@ error: the faces of a dependency agree on their newtype, or neither carries one
 

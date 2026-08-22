@@ -1,6 +1,6 @@
 //! A non-u64, non-signed weight field (`str`) — nothing to measure:
-//! a `[field]` weight reads a u64-encoded SOURCE position
-//! (`docs/architecture/30-dependencies.md` § weight typing).
+//! a `[field]` weight reads a u64-encoded SOURCE position.
+//!
 //@ error: weight field `label` on `Device` is not
 //@ error: u64-encoded
 

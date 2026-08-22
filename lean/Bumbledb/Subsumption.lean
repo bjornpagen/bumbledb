@@ -16,8 +16,7 @@ original one.
  says. The floor half generalizes to every weight; the `{1..*}` BAN
  fires on the Count instance only, because only there is the floor
  equivalent to containment — a weight-0 row satisfies containment
- but not a sum floor (the per-aggregate ban law,
- `docs/design/capacity-laws.md` § 6).
+ but not a sum floor (the per-aggregate ban law).
 * **Keyed `==` is the `{1}` window at unit weight**
  (`keyed_eq_unit_window`, `unit_window_containsEq`): forward,
  key-backed equality forces the unit-weight point window; backward,

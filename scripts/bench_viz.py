@@ -37,8 +37,8 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   churn-size-<run>.svg       store size over cycles, every lane, per run   [churn_report]
   churn-throughput-<run>.svg commits/sec over cycles, every lane, per run  [churn_report]
 
-Retired charts, reasons on the record (docs/architecture/61-bench-lanes.md
-§ the chart inventory): storage-bytes-per-fact.svg and curves-loglog.svg
+Retired charts, reasons on the record: storage-bytes-per-fact.svg
+and curves-loglog.svg
 consumed lane payloads no emitter writes — their data is fully rendered by
 bench-storage.svg / bench-curves.svg from the real flag-shaped reports;
 cold-warm-memo.svg's contract had no theirs-memo slot, so it could not even
@@ -461,8 +461,7 @@ def derive_pools(inputs):
 def prov_note(payload):
     """The shared-machine caveat from the payload's OWN provenance
     stamp — a lane measured on a loaded machine under boosted QoS says
-    so on the chart itself (owner ruling 2026-07-20; the protocol lives
-    in docs/architecture/61-bench-lanes.md)."""
+    so on the chart itself (owner ruling 2026-07-20)."""
     provenance = payload.get("provenance") if isinstance(payload, dict) else None
     if isinstance(provenance, dict) and provenance.get("shared_machine"):
         return " · shared machine, recorded system load"

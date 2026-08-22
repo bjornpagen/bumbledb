@@ -113,7 +113,7 @@ separately bytes — addresses at most u32::MAX ≈ 4 GiB per call.** A push
 that would move an arena past the bound (or a single value longer than
 it) refuses with the typed `FactShapeError::PayloadBound` naming the
 relation — never a panic (ETL input is data; the no-panics-on-the-import
-ruling in `docs/architecture/70-api.md`), enforced at the ONE seam every
+ruling), enforced at the ONE seam every
 variable-width byte lands through (`CollectionBuilder::arena_span`,
 `crates/bumbledb/src/api/db/collection.rs`).
 

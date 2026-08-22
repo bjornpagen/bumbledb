@@ -8,9 +8,8 @@ defect in both reports is the same defect, a value that exists in more than
 one physical or semantic form, and every fix in this set is the same fix,
 collapsing it to one.
 
-These documents are **normative** in the same sense as
-`docs/architecture/`: the contract the implementation is verified against,
-written before the code, updated in lockstep with it. Read
+These documents are **normative**: the contract the implementation is
+verified against, written before the code, updated in lockstep with it. Read
 [00-doctrine.md](00-doctrine.md) first — it is the ruling the rest of the
 set applies, and it is the seed of the `audit/REQUIRED-READING.md` the
 top-level proposals README already cites. [80-acceptance.md](80-acceptance.md)
@@ -64,8 +63,7 @@ consumer.
 - No approximate statistics. The count is an exact structural read.
 - No general inclusion dependencies into non-key target projections. The
   target-key rule is architected and Lean-priced
-  (`docs/architecture/30-dependencies.md` § IND;
-  `lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`);
+  (`lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`);
   this set enforces it everywhere rather than weakening it anywhere.
 - No change to fact semantics, interning equality, fresh order, admission,
   or violations. Primer's three canonical digests are a stop-ship

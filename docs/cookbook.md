@@ -1,17 +1,9 @@
 # The cookbook — modeling intuition as schemas
 
 Worked schemas for the owner and any agent writing a theory. **This document is
-illustrative, never normative**: where a recipe and an architecture chapter
-disagree, the chapter wins and the recipe is amended in the same change
-(`docs/architecture/README.md` rule 5). The chapters it defers to:
-`docs/architecture/10-data-model.md` (the value types — including both
-`interval<E>` and `interval<E, w>` — and the closed-relation
-form, the interval denotation, the modeling discipline, derived relations),
-`30-dependencies.md` (the two
-judgments and their theorems), `20-query-ir.md` (query semantics; § the query
-notation is the grammar the recipes' `query!` fences are written in), `70-api.md`
-(the `schema!` grammar, conditional writes). Refusals cited below live in
-the architecture chapters they cite.
+illustrative, never normative**: the compiled tests are the authority — every
+block here is executed by the sync suites, and a recipe that disagrees with the
+engine is amended in the same change.
 
 Every schema below compiles and validates verbatim against the current engine,
 and every query fence compiles via `query!`, prepares against a real store of
@@ -445,7 +437,7 @@ demoted escape hatch is the spread slot: a scalar `pos: u64` column written
 in gapped strides (1024, 2048, ...) under the same composite key, insertion
 between neighbors one write, renumbering an amortized rarity. That is the
 whole hatch — bumbledb has no lexicographic fractional indexing, because
-string order is refused (`docs/architecture/10-data-model.md`): there is no
+string order is refused: there is no
 "between two strings" to allocate.
 
 ## 10. Trees and ASTs
@@ -1012,8 +1004,7 @@ Guarantee: Lean theorem + represented planner/runtime premise — rule union is
 set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
 key-backed DU arms satisfy the disjoint-arms licence
 (`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`); execution
-always keeps one spanning seen-set
-(`docs/architecture/40-execution.md` § set semantics).
+always keeps one spanning seen-set.
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.

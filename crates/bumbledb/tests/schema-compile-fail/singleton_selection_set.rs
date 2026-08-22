@@ -1,5 +1,5 @@
 //! A one-element literal set is the bare literal's second spelling —
-//! banned (the canonical-utterance law, `docs/architecture/70-api.md`):
+//! banned (the canonical-utterance law):
 //! write `field == L`, no braces. (`DegenerateSelectionSet` is the same
 //! law's descriptor face.)
 //@ error: a one-element set is the bare literal

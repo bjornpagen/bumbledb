@@ -1,8 +1,8 @@
 //! A signed weight field — the typed polarity refusal: a negative
 //! weight would let an insert lower a sum, breaking the delta
 //! scheduler, so the illegal weight is unrepresentable at expansion,
-//! not checked at judge time
-//! (`docs/architecture/30-dependencies.md` § weight typing).
+//! not checked at judge time.
+//!
 //@ error: weight field `drift` on `Device` is signed
 //@ error: refused by polarity
 

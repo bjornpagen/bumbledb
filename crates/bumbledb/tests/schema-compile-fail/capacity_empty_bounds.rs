@@ -1,5 +1,5 @@
 //! The empty window `<={}` names no bounds — banned (the
-//! canonical-utterance law, `docs/architecture/70-api.md`: `{}` does not
+//! canonical-utterance law: `{}` does not
 //! parse): bounds are always explicit.
 //@ error: the window `{}` names no bounds
 //@ error: write `{n}`, `{lo..hi}`, or `{lo..*}`

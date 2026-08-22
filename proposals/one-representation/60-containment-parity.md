@@ -20,7 +20,7 @@ one law, two answers (V8) — and the answer that finally lands speaks ids.
 target relation. Everywhere.** The engine's rule is not an implementation
 accident to be relaxed; it is architected and priced:
 
-- `docs/architecture/30-dependencies.md` § IND: "the target projection Y
+- The IND rule: "the target projection Y
   must be a permutation of some declared key of B", with the Lean theorem
   (`lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`).
 - The enforcement machinery is keyed by the resolved key: source-side `R`

@@ -30,7 +30,7 @@ impl std::fmt::Display for RamBackedRefusal {
             f,
             "device honesty: {} refuse to time against the RAM-backed volume {} \
              ({} on {}) — timed families need a disk; the ram disk is for the \
-             verify/differential/fuzz lanes (docs/architecture/60-validation.md)",
+             verify/differential/fuzz lanes",
             self.family_scope,
             self.identity.mount_point.display(),
             self.identity.fstype,

@@ -99,8 +99,7 @@ fn datalog_refusal<T>(span: Span) -> Parse<T> {
     fail(
         span,
         "query!: `:-` is refused (borrowed Datalog grammar) — the notation is the \
-         statement grammar's query side, promoted: write `(head) | body;` \
-         (docs/architecture/20-query-ir.md § the query notation)",
+         statement grammar's query side, promoted: write `(head) | body;`",
     )
 }
 
@@ -815,8 +814,7 @@ fn tree_refusal<T>(span: Span) -> Parse<T> {
     fail(
         span,
         "query!: a condition tree takes comparisons only — atoms, negation, \
-         and the binding membership stay body items \
-         (docs/architecture/20-query-ir.md § the query notation)",
+         and the binding membership stay body items",
     )
 }
 
@@ -934,8 +932,7 @@ fn validate_derived_name(name: &Name) -> Parse<()> {
             name.span,
             format!(
                 "query!: `{}` is reserved — `and`/`or` are the condition grammar, \
-                 `interior`/`rec` introduce derived tables \
-                 (docs/architecture/20-query-ir.md § the query notation)",
+                 `interior`/`rec` introduce derived tables",
                 name.text
             ),
         );
@@ -951,8 +948,7 @@ fn validate_derived_name(name: &Name) -> Parse<()> {
             format!(
                 "query!: derived-table names begin lowercase (`{}`) — UpperCamel \
                  names are relations, so an interior/rec spelled like a relation \
-                 is unwritable (docs/architecture/20-query-ir.md § the query \
-                 notation)",
+                 is unwritable",
                 name.text
             ),
         );
@@ -1019,8 +1015,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         ident.span,
                         format!(
                             "query!: `{}` is the condition grammar's reserved word — \
-                             an interior/rec cannot take either tree name \
-                             (docs/architecture/20-query-ir.md § the query notation)",
+                             an interior/rec cannot take either tree name",
                             ident.text
                         ),
                     );
@@ -1046,8 +1041,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                             format!(
                                 "query!: derived-table names begin lowercase (`{}`) — UpperCamel \
                                  names are relations, so an interior/rec spelled like a relation \
-                                 is unwritable (docs/architecture/20-query-ir.md § the query \
-                                 notation)",
+                                 is unwritable",
                                 ident.text
                             ),
                         );
@@ -1515,8 +1509,7 @@ impl Emitter<'_> {
                 format!(
                     "query!: unknown derived table `{}` — lowercase names are \
                      interiors or the rec, resolved macro-locally; relations are \
-                     UpperCamel (docs/architecture/20-query-ir.md § the \
-                     query notation)",
+                     UpperCamel",
                     atom.relation.text
                 ),
             );

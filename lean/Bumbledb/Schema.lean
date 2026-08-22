@@ -425,7 +425,7 @@ def Header.functionalityAdmitted (h : Header) (R : RelId)
 The statement forms the dependency-vocabulary extension adds carry
 syntax of their own: the literal window `{lo..hi}` and, over it, the
 capacity statement `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` (the
-`capacity-laws.md` design: the aggregate containment whose unit
+aggregate containment whose unit
 instance is the count window). Syntax only — the denotation lives in
 `Capacity.lean`. -/
 
