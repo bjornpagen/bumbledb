@@ -1,24 +1,7 @@
-//! The scenario suites (docs/architecture/60-validation.md, extended):
-//! additional schema+corpus+query worlds beyond the ledger, each
-//! stressing a different regime — join-order pressure, graph fan-out,
-//! OLAP rollups, point-lookup overhead. Every scenario runs under the
-//! ledger benchmark's exact protocol (`SQLite` file-backed, WAL,
-//! `synchronous=FULL`, fully indexed, prepared statements reused,
-//! `ANALYZE`, DISTINCT in the timed SQL, median-of-samples), and every
+//! Every scenario runs under the `synchronous=FULL`, fully indexed, prepared
+//! statements reused, `ANALYZE`, DISTINCT in the timed SQL, median-of-samples),
+//! and every ledger benchmark's exact protocol (`SQLite` file-backed, WAL,
 //! query is **oracle-gated before it is timed**: each query × param set
-//! must produce value-identical multisets on both engines or the run
-//! fails loudly — no timing without agreement.
-//!
-//! Scenarios are `Kind::Report`-class by design: they exist to *measure*
-//! regimes, not to gate the suite. The ledger's ten families remain the
-//! gate.
-//!
-//! The `SQLite` side of a query is data ([`Twin`]): the canonical
-//! translation, an optional hand-tuned twin lane, or — only where the
-//! translator refuses — a hand-written best shot; every lane is gated.
-//! Adversarial lanes carry a per-sample wall-clock cap ([`CapMs`]): a
-//! tripped lane reports [`LaneOutcome::ExceededCap`] with no
-//! percentiles, excluded from geomeans and counted.
 
 pub mod graph;
 pub mod joins;
@@ -55,125 +38,83 @@ pub use run::{gate_scenario, run};
 
 pub use crate::sqlite_run::{CapMs, DEFAULT_CAP};
 
-/// The `SQLite` twin lane(s) of one scenario query.
 #[derive(Debug, Clone, Copy)]
 pub enum Twin {
-    /// The canonical translation is the one lane (lane name "sqlite").
+
     Canonical,
-    /// Canonical PLUS a hand-tuned rendering (lane "sqlite-tuned") — both
-    /// gated, both timed, both reported (the never-flatter-ourselves law:
-    /// where the canonical rendering inflates SQL — Allen basics OR-chains —
-    /// `SQLite` also gets its best shot).
+
     Tuned(fn() -> crate::translate::Translated),
-    /// The translator refuses the query (`Pack`): the lane ("sqlite-hand") is
-    /// a hand-written best-shot SQL, gated identically — the `free_busy`
-    /// precedent (calendar/families.rs). Legal ONLY where translate errs
-    /// (asserted by test).
+
     Hand(fn() -> crate::translate::Translated),
 }
 
-/// The engine-side surface one scenario query measures — data on the
-/// query, never a branch grown in the runner: the gate/time split folds
-/// over this sum, so a new surface is a new arm here, not a bypass.
 pub enum Surface {
-    /// A prepared query (IR → `PreparedQuery`), executed per sample —
-    /// the default lane; its `SQLite` twins come from [`Twin`] over the
-    /// canonical translation.
+
     Query(fn() -> Query),
-    /// 0.5.0's keyed get: the typed point read through a declared key FD,
-    /// via the dynamic entry the TS SDK bridge calls
-    /// (`ReadInstance::get_dyn` — scenario stores are `Db<SchemaDescriptor>`,
-    /// so the dynamic surface is the reachable twin of the macro-typed
-    /// `snap.get(key)`). The answer is the full fact in field declaration
-    /// order (0 or 1 rows); the `SQLite` twin is the prepared point
-    /// SELECT through the statement's UNIQUE index
-    /// ([`crate::translate::keyed_get`]) — gated and timed exactly like
-    /// every query lane.
+
     KeyedGet {
         relation: RelationId,
-        /// Resolves the key statement on the validated schema —
-        /// statement ids are materialized facts of the schema, never
-        /// literals in a scenario table.
+
         key: fn(&Schema) -> StatementId,
     },
 }
 
-/// One scenario query: IR + seeded param sets + a one-line regime note.
 pub struct ScenarioQuery {
     pub name: &'static str,
     pub surface: Surface,
-    /// Seeded param sets; rotation order is the measurement order.
+
     pub params: fn(u64) -> Vec<Vec<Value>>,
-    /// What regime this query stresses (rendered in the report).
+
     pub about: &'static str,
-    /// Which `SQLite` renderings exist — data on the query, never a
-    /// silently skipped (or silently invented) lane.
+
     pub twin: Twin,
-    /// The per-sample DNF cap for adversarial lanes; `None` = uncapped,
-    /// the progress handler is never installed (existing lanes are
-    /// untouched by construction).
+
     pub cap: Option<CapMs>,
 }
 
-/// One scenario: a schema, a deterministic corpus, extra `SQLite`
-/// indexes for its predicate columns (key/containment indexes come from the
-/// schema statements via [`sqlmap::expected_indexes`]), and a query
-/// list.
 pub struct Scenario {
     pub name: &'static str,
     pub about: &'static str,
-    /// The validated schema, for the inspection surfaces (DDL, typing).
+
     pub schema: fn() -> &'static Schema,
-    /// The declared schema, for store creation — the scenario table is
-    /// data, so its stores share the dynamic `Db<SchemaDescriptor>`
-    /// state (loads and queries are all dynamic-surface).
+
     pub descriptor: fn() -> SchemaDescriptor,
-    /// Relations in containment order with their row iterators.
+
     #[expect(
         clippy::type_complexity,
         reason = "the tuple shape directly represents parallel protocol streams"
     )]
     pub rows: fn(u64) -> Vec<(RelationId, Box<dyn Iterator<Item = Vec<Value>>>)>,
-    /// `CREATE INDEX` statements for predicate columns the statement
-    /// registry does not already cover.
+
     pub extra_indexes: &'static [&'static str],
     pub queries: fn() -> Vec<ScenarioQuery>,
 }
 
-/// The per-query capture modes of a timed scenario run — `trace` and
-/// `alloc` are separate passes, mutually exclusive (the obs doctrine),
-/// enforced by the driver before [`run`] ever sees them.
 #[derive(Debug, Clone, Default)]
 pub struct QueryModes {
-    /// The run's `<out>` root; when set, each query lands warm+cold
-    /// traces under `<out>/trace/scenarios/<scenario>/<query>.{warm,cold}`
-    /// as both `.json` (Chrome) and `.folded` (collapsed stacks).
+
     pub trace_root: Option<std::path::PathBuf>,
-    /// Per-query alloc window over the engine side (needs the obs build;
-    /// off, the harness refuses the mode).
+
     pub alloc: bool,
 }
 
-/// One measured query entry of the scenario report.
 pub struct QueryReport {
     pub scenario: &'static str,
     pub name: &'static str,
     pub about: &'static str,
-    /// Median answers across the rotation (the work sanity check).
+
     pub answers: u64,
     pub ours: harness::Stats,
-    /// The `SQLite` lane(s), one entry per [`Twin`] rendering.
+
     pub lanes: Vec<LaneReport>,
-    /// The warm flame top-10 (+ phase table), when `--trace` ran — the
-    /// report embeds it like the ledger read families do.
+
     pub flame: Option<String>,
-    /// The per-query engine-side alloc window, when `--alloc` ran.
+
     pub alloc: Option<crate::report::AllocReport>,
 }
 
 impl QueryReport {
-    /// First lane's `Timed` ratio — the geomean's input. `None` when the
-    /// primary lane exceeded its cap (a DNF contributes no ratio).
+
     #[must_use]
     pub fn primary_ratio(&self) -> Option<f64> {
         match self.lanes.first()?.outcome {
@@ -183,27 +124,22 @@ impl QueryReport {
     }
 }
 
-/// One `SQLite` lane's result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneReport {
     pub lane: &'static str,
     pub outcome: LaneOutcome,
 }
 
-/// What one `SQLite` lane produced.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LaneOutcome {
     Timed {
         stats: harness::Stats,
         ratio_p50: f64,
     },
-    /// The honest DNF: a sample tripped the per-sample wall-clock cap —
-    /// the lane carries NO percentiles (a censored p50 is not a p50);
-    /// excluded from geomeans and counted by the renderers.
+
     ExceededCap { cap: CapMs },
 }
 
-/// A loaded scenario store pair.
 struct Stores {
     db: Db<SchemaDescriptor>,
     conn: Connection,
