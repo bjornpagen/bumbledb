@@ -1,19 +1,3 @@
-//! The churn report artifact — the degradation curve as data. A churn
-//! run is a TIME SERIES (cycle → sample per lane), a new shape rather
-//! than a retrofit of [`crate::report::RunReport`]'s scalar-median rows;
-//! the JSON key names are NORMATIVE and frozen behind `churn_schema: 1`
-//! (the viz planner charts this schema). `Kind::Report`-class by the
-//! charter — nothing here gates, and nothing here times.
-//!
-//! Engine-specific counters are the sum type [`Counters`]: a lane
-//! carrying the wrong engine's counters is unrepresentable in memory.
-//! The JSON face renders the sum as four documented nullable fields
-//! (`generation`, `id_high_water`, `freelist_count`, `page_count`) with
-//! the OTHER engine's pair as `null`, so the viz layer needs no
-//! tagged-union parsing. The writer is hand-rolled through
-//! [`crate::json`] (the dependency quarantine) and pinned by a parse
-//! round-trip against the crate's own [`crate::json::parse`].
-
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -22,7 +6,6 @@ use crate::churn::probes::ProbeSample;
 use crate::json;
 use crate::report::Provenance;
 
-/// The whole churn run, plain data — everything the renderers print.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChurnReport {
     pub provenance: Provenance,
@@ -30,8 +13,6 @@ pub struct ChurnReport {
     pub runs: Vec<RunSeries>,
 }
 
-/// The run's schedule, as printed: the corpus identity plus the cycle,
-/// sampling, and `SQLite` maintenance strides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigReport {
     pub scale: &'static str,
@@ -42,8 +23,6 @@ pub struct ConfigReport {
     pub analyze_every: u64,
 }
 
-/// One mix's series: the named run, its mix, the working-set size, and
-/// the per-lane time series.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSeries {
     pub name: String,
@@ -52,8 +31,6 @@ pub struct RunSeries {
     pub lanes: Vec<LaneSeries>,
 }
 
-/// One lane's time series — the degradation curve for one engine
-/// configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaneSeries {
     pub lane: String,
@@ -61,7 +38,6 @@ pub struct LaneSeries {
     pub samples: Vec<SamplePoint>,
 }
 
-/// Which engine a lane drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     Bumbledb,
@@ -69,7 +45,7 @@ pub enum Engine {
 }
 
 impl Engine {
-    /// The JSON/markdown spelling.
+
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -79,8 +55,6 @@ impl Engine {
     }
 }
 
-/// One point on the curve: the probe readings at this cycle plus the
-/// write-side and store-size observables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SamplePoint {
     pub cycle: u64,
@@ -91,14 +65,6 @@ pub struct SamplePoint {
     pub counters: Counters,
 }
 
-/// The engine-specific counters, a sum — a lane carrying the wrong
-/// engine's counters is unrepresentable. `generation` and
-/// `id_high_water` are the never-reissue law's observables (both burn
-/// monotonically under churn; the series shows whether anything
-/// degrades with the burn). `freelist_count`/`page_count` are `SQLite`'s
-/// own PRAGMA counters (freelist growth is the delete-heavy lane's
-/// story). The JSON face renders the sum as four flat nullable fields,
-/// the other engine's pair `null`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Counters {
     Ours {
@@ -185,10 +151,6 @@ fn push_run(out: &mut String, run: &RunSeries) {
     out.push_str("]}");
 }
 
-/// The machine-consumable artifact — every field, hand-rolled, frozen
-/// behind `"churn_schema":1`. The [`Counters`] sum renders as four flat
-/// nullable fields (the other engine's pair `null`) — the documented
-/// JSON face of the sum type.
 #[must_use]
 pub fn to_json(report: &ChurnReport) -> String {
     let mut out = String::new();
@@ -216,9 +178,6 @@ pub fn to_json(report: &ChurnReport) -> String {
     out
 }
 
-/// One markdown table row: probes space-joined as `name=p50`, the
-/// counters sum printing its own pair and `-` for the other engine's
-/// columns.
 fn markdown_row(out: &mut String, sample: &SamplePoint) {
     let mut probes = String::new();
     for (index, probe) in sample.probes.iter().enumerate() {
@@ -254,7 +213,6 @@ fn markdown_row(out: &mut String, sample: &SamplePoint) {
     );
 }
 
-/// The human artifact — one table per lane, one row per sample point.
 #[must_use]
 pub fn to_markdown(report: &ChurnReport) -> String {
     let mut out = String::new();
@@ -296,14 +254,7 @@ pub fn to_markdown(report: &ChurnReport) -> String {
     out
 }
 
-/// Writes exactly two artifacts into `out_dir`: `churn-report` with
-/// the `json` extension ([`to_json`]) and with the `md` extension
-/// ([`to_markdown`]). Renders never write outside `out_dir`;
-/// publishing a run is a human copy (the `report.rs` law).
-///
 /// # Errors
-///
-/// I/O errors verbatim.
 pub fn write_artifacts(report: &ChurnReport, out_dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     std::fs::write(out_dir.join("churn-report.json"), to_json(report))?;
@@ -317,8 +268,6 @@ mod tests {
 
     use super::*;
 
-    /// The three registry probes at one sample point (the names are the
-    /// probe registry's — `crate::churn::probes::all`).
     fn probe_samples(base: u64) -> Vec<ProbeSample> {
         vec![
             ProbeSample {
@@ -350,8 +299,6 @@ mod tests {
         }
     }
 
-    /// The in-memory synthetic fixture: provenance hand-built (never
-    /// from git), one steady run, one lane per engine, two samples each.
     fn fixture() -> ChurnReport {
         ChurnReport {
             provenance: Provenance {
@@ -419,9 +366,6 @@ mod tests {
         }
     }
 
-    /// The schema pin: the hand-rolled emission parses back through the
-    /// crate's own parser, with the counters sum rendered as the four
-    /// flat fields — the other engine's pair PRESENT and `null`.
     #[test]
     fn churn_report_json_round_trips_through_the_parser() {
         let text = to_json(&fixture());
@@ -501,7 +445,6 @@ mod tests {
         assert!(p50 > 0.0);
     }
 
-    /// The human artifact names every run, lane, and column.
     #[test]
     fn churn_report_markdown_names_every_lane_and_column() {
         let text = to_markdown(&fixture());
@@ -517,7 +460,6 @@ mod tests {
         );
     }
 
-    /// Both artifacts land in `out_dir` and the JSON one parses.
     #[test]
     fn churn_report_artifacts_land_in_out_dir() {
         let dir = std::env::temp_dir().join("bumbledb-bench-churn-report-artifacts");
