@@ -1,6 +1,5 @@
 //! Database ownership, heap construction, and the lexical read/write
-//! boundary: opaque handles, tagged admissions, per-callback instance
-//! refs, and cloneable witnesses.
+//! boundary: opaque handles, tagged admissions, per-callback instance refs.
 
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -32,8 +31,8 @@ const WRITING_BUSY: u32 = 1 << 17;
 const KIND_STORE: u8 = 1;
 const KIND_HEAP: u8 = 2;
 
-/// Bridge owner identity — compared before execute so a foreign prepared
-/// never reaches the engine. Pointers are never dereferenced after mint.
+/// Bridge owner identity — compared before execute so a foreign prepared never
+/// reaches the engine. Pointers are never dereferenced after mint.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OwnerToken {
     Store(*const Engine),
@@ -403,8 +402,6 @@ enum CallbackEnd<T> {
     Done(T),
 }
 
-/// Post-callback map. A genuine engine error is not the hatch —
-/// abort plus engine failure reports the engine.
 fn conclude_status<T>(
     exit: Exit,
     result: bumbledb::Result<T>,
@@ -506,8 +503,7 @@ impl bdb_instance_ref {
         )]
         // SAFETY: minted from a live `&OwnedInstance` in `bdb_owned_instance_read`;
         // `alive` is cleared before that call returns. The owned handle outlives
-        // the callback (C cannot destroy it during the callback without
-        // racing the same thread).
+
         unsafe {
             body(&*ptr.cast::<OwnedInstance<SchemaDescriptor>>())
         }
@@ -700,7 +696,7 @@ fn call_read_callback(
     let callback = callback.ok_or(Fail::Misuse)?;
     #[expect(unsafe_code, reason = "invoking the caller's extern C function")]
     // SAFETY: non-null was just checked; the ref arguments are heap slots
-    // live for the call. A C++ throw through `callback` is unsupported.
+
     let raw = unsafe { callback(context, instance, witness) };
     tag_in(raw)
 }
@@ -734,10 +730,6 @@ fn exit_of(control: &BridgeResult<bdb_callback_control>) -> Exit {
         Err(_) => Exit::Misuse,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Store lifecycle
-// ---------------------------------------------------------------------------
 
 /// Creates a fresh DURABLE store. Empty that does not hold is
 /// `BDB_ADMISSION_REJECTED` with no directory. `BDB_STATUS_OK` always
@@ -877,10 +869,6 @@ pub extern "C" fn bdb_db_fingerprint(
         Ok(bdb_status::Ok)
     })
 }
-
-// ---------------------------------------------------------------------------
-// Builder / owned instance
-// ---------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
 #[expect(
@@ -1071,7 +1059,6 @@ pub extern "C" fn bdb_owned_instance_destroy(instance: *mut bdb_owned_instance) 
     })
 }
 
-/// Borrows an owned instance through the common [`bdb_instance_ref`]
 /// query surface.
 #[unsafe(no_mangle)]
 #[expect(
@@ -1089,8 +1076,7 @@ pub extern "C" fn bdb_owned_instance_read(
         let instance_ref = Box::new(bdb_instance_ref::heap(&owned.instance));
         let exit = exit_of(&call_owned_callback(callback, context, &instance_ref));
         instance_ref.invalidate();
-        // The owned handle outlives this call; the ref is not stashed on a
-        // db, so keep it alive for stashed-pointer MISUSE by leaking.
+
         let _ = Box::leak(instance_ref);
         match exit {
             Exit::Proceed => Ok(bdb_status::Ok),
@@ -1099,10 +1085,6 @@ pub extern "C" fn bdb_owned_instance_read(
         }
     })
 }
-
-// ---------------------------------------------------------------------------
-// Lexical reads and writes
-// ---------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
 #[expect(
@@ -1298,10 +1280,6 @@ pub extern "C" fn bdb_witness_destroy(witness: *mut bdb_witness) -> bdb_status {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Transaction operations
-// ---------------------------------------------------------------------------
-
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -1457,10 +1435,6 @@ pub extern "C" fn bdb_tx_reserve(
         Ok(bdb_status::Ok)
     })
 }
-
-// ---------------------------------------------------------------------------
-// Instance operations
-// ---------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
 #[expect(
