@@ -1,4 +1,4 @@
-//! The embedding surface: prepared queries, results, Db (docs/architecture).
+//! The embedding surface: prepared queries, results, Db.
 
 pub mod db;
 pub mod prepared;
