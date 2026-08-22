@@ -12,23 +12,15 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::{MetaBlock, classify_meta_block, parse_meta, parse_meta_head};
 
 impl Environment {
-    /// Opens an existing environment, verifying the storage format
-    /// version then the schema fingerprint — each mismatch is a
-    /// distinct hard failure. Format 8 only; every earlier version is
-    /// [`Error::FormatMismatch`].
-    ///
+
     /// # Errors
-    ///
-    /// `EnvironmentLocked` if another handle holds the environment;
-    /// `AlreadyInitialized` on a half-created empty root or a foreign
+
     /// LMDB environment; `FormatMismatch`, then `SchemaMismatch`;
-    /// `Corruption(MetaMissing)` if an initialized store lacks
-    /// bumbledb's databases or meta keys; `Lmdb` otherwise.
+
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         Self::open_lane(path, schema, OpenLane::Write)
     }
 
-    /// Bench-only NOSYNC open of a published store. Not a store kind.
     #[doc(hidden)]
     pub(crate) fn open_nosync(path: &Path, schema: &Schema) -> Result<Self> {
         Self::open_lane(path, schema, OpenLane::Nosync)
@@ -40,8 +32,6 @@ impl Environment {
         Self::verify_and_open(env, lock, schema)
     }
 
-    /// Shared open body: version, then fingerprint. Named databases
-    /// still have to exist (`MetaMissing`); they are not `_meta` keys.
     pub(super) fn verify_and_open(
         env: heed::Env<WithoutTls>,
         lock: std::fs::File,
