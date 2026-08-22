@@ -15,17 +15,13 @@ use super::finalize::finalize;
 use super::run_join::run_join;
 
 impl<S> PreparedQuery<S> {
-    /// Executes with the given parameters into the caller's buffer.
-    ///
+
     /// # Errors
-    ///
-    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time; `Overflow`
-    /// from aggregate finalization; `Lmdb`/`Corruption` from storage.
-    ///
+
     /// # Panics
-    ///
+
     /// Only on programmer-invariant violations (plan/executor pairing,
-    /// validated id widths).
+
     pub(crate) fn execute<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -47,7 +43,6 @@ impl<S> PreparedQuery<S> {
         result
     }
 
-    /// Owned-instance execute: one [`ParamArg`] entry, catalog identity
     /// checked before bind.
     pub(crate) fn execute_on<C: CatalogRead, I: ImageBind>(
         &mut self,
@@ -69,28 +64,20 @@ impl<S> PreparedQuery<S> {
         result
     }
 
-    /// The post-bind execution body shared by every bind shape: the rule
-    /// loop into the one sink, then finalize.
     fn run_bound<C: CatalogRead, I: ImageBind>(
         &mut self,
         catalog: &C,
         images: &I,
         out: &mut Answers,
     ) -> Result<()> {
-        // Direct lane and empty Cq are sealed at build / are the
-        // zero-iteration loop — not re-detected per call.
+
         if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
             return self.execute_key_probe_direct(catalog, out);
         }
         if self.pipeline.is_empty_cq() {
             return Ok(());
         }
-        // Phase attribution engages only under an active obs capture
-        // (docs/architecture/60-validation.md): timing runs — even obs
-        // builds — monomorphize NoopCounters and pay nothing. With
-        // `trace` off, `obs::capturing()` is a compile-time `false` and
-        // `PhaseTimers` its ZST twin — the branch folds away, written
-        // once, `#[cfg]`-free (the obs.rs law).
+
         let ran = if obs::capturing() {
             let mut timers = crate::exec::run::PhaseTimers::new();
             let ran = self.run_rules(catalog, images, &mut timers)?;
@@ -103,19 +90,18 @@ impl<S> PreparedQuery<S> {
     }
 
     /// Drain the sink into `out` after the shared rule loop. Empty
-    /// short-circuit (nothing ran) skips finalize.
+
     pub(super) fn finish_sink<C: CatalogRead>(
         &mut self,
         catalog: &C,
         ran: bool,
         out: &mut Answers,
     ) -> Result<()> {
-        // The sink-side measure poison (a ray reached a projected or
-        // folded `Duration`): the engine's one runtime type error,
+
         // raised before finalize — never a partial result. Executor-side
-        // rays (measure residuals) already surfaced through `run_join`.
+
         if !ran {
-            return Ok(()); // every rule short-circuited: empty result
+            return Ok(()); 
         }
         let _s = obs::span(obs::names::FINALIZE);
         finalize(
@@ -128,23 +114,13 @@ impl<S> PreparedQuery<S> {
         )
     }
 
-    /// The rule loop (docs/architecture/40-execution.md § the rule loop):
-    /// the sink resets ONCE, then every rule runs sequentially into it —
-    /// its seen-set spanning rules is the entire implementation of set
-    /// union; no merge node or concat-then-dedup pass exists. Params were
-    /// bound once and reach every rule through the shared resolved slots.
-    /// `Ok(false)` = every rule short-circuited on an `Eq`-anchored
-    /// dictionary miss (nothing ran, the sink stays reset, and the caller
-    /// skips finalize).
     pub(super) fn run_rules<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
         catalog: &C,
         images: &I,
         counters: &mut Cnt,
     ) -> Result<bool> {
-        // Interiors then rec (if any) then main. Interiors-only never
-        // enters the reach driver (`run_derived` is the Cq derived phase
-        // and the Reach interiors+rec phase).
+
         if self.pipeline.has_derived() {
             let derived_ran = self.run_derived(catalog, images, counters)?;
             if self.pipeline.main_rules().is_empty() {
@@ -163,12 +139,6 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    /// One rule of the loop: re-aim the sink's slot tables at the rule's
-    /// binding layout, resolve this execution's filter constants, and
-    /// run the rule's plan — key probe or Free Join — into the shared
-    /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
-    /// dictionary miss or empty set emptied this conjunctive rule; the
-    /// other rules still run — a rule is one disjunct).
     pub(super) fn run_rule<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         &mut self,
         rule_idx: usize,
@@ -179,8 +149,7 @@ impl<S> PreparedQuery<S> {
         let mut rule_span = obs::span(obs::names::RULE[rule_idx]);
         let emits_before = counters.emits();
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
-        // Re-aim per rule only where a switch exists: a single-rule sink
-        // is built aimed, and the hot single-rule path stays untouched.
+
         let rule_count = self.pipeline.main_rules().len();
         if rule_count > 1 {
             let rule = &self.pipeline.main_rules()[rule_idx];
@@ -189,10 +158,7 @@ impl<S> PreparedQuery<S> {
         }
         let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
-        // The fully-latched fast path: zero pending literals and zero
-        // params of any shape means the resolved tables were written
-        // once and are final — `resolve_filters` is skipped entirely
-        // (one cold branch; the latch only removes work).
+
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);
@@ -229,8 +195,7 @@ impl<S> PreparedQuery<S> {
                             &mut rule.resolved_selections,
                             &mut latched,
                         )?;
-                        // A short-circuited pass leaves later slots
-                        // unwritten; only a completed one arms the skip.
+
                         rule.resolution = if complete {
                             super::ResolutionState::Complete
                         } else {
@@ -239,16 +204,11 @@ impl<S> PreparedQuery<S> {
                         complete
                     };
                 if resolved {
-                    // This execution's Allen-residual masks (literal or
+
                     // bound param) resolve into the executor before the
-                    // join runs — the hot path never touches the param
-                    // slice.
+
                     rule.executor.bind_allen_masks(&self.resolved_params);
-                    // One match per execution: the executor monomorphizes
-                    // per concrete sink type — no per-emit enum branch on
-                    // the hot path. No Interior image slice (and so no
-                    // retired-buffer pool): a query-path plan carries
-                    // only stored occurrences.
+
                     match &mut self.sink {
                         super::EitherSink::Projection(s) => run_join(
                             plan,
@@ -283,18 +243,13 @@ impl<S> PreparedQuery<S> {
                 resolved
             }
         };
-        // The union accounting (docs/architecture/40-execution.md
-        // § observability): emitted = bindings this rule handed the
-        // sink; absorbed = the spanning seen-set's duplicates among
-        // them — an elided seen-set absorbs nothing by proof. Deltas of
-        // O(1) reads; the executor itself counts nothing extra.
+
         let emitted = counters.emits() - emits_before;
         let newly_seen = self
             .sink
             .distinct_seen()
             .map_or(emitted, |seen| (seen - seen_before) as u64);
-        // Saturating: an uncounted path reports emitted = 0 against a
-        // real seen-set delta — the honest args there are (0, 0).
+
         rule_span.set_pair(emitted, emitted.saturating_sub(newly_seen));
         self.latch = self.latch.credit(latched);
         self.derived.occ_images = occ_images;
@@ -302,9 +257,6 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    /// The point fast lane's body: probe + fetch +
-    /// direct cell decode, no sink machinery. The lane is the
-    /// [`PreparedPipeline::PointProbe`] arm sealed at build.
     pub(super) fn execute_key_probe_direct<C: CatalogRead>(
         &mut self,
         catalog: &C,
@@ -346,10 +298,7 @@ impl<S> PreparedQuery<S> {
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {
-                // Inline value: the padded words come straight off the
-                // fact — no dictionary, and no temporary heap (the
-                // operand's fixed block slices straight into the
-                // caller's buffer; this is the point fast lane).
+
                 match crate::exec::dispatch::fact_operand(fact, *field)? {
                     crate::exec::dispatch::FactOperand::Word(word) => {
                         out.push_fixed_bytes(*len, &[word]);
@@ -374,11 +323,8 @@ impl<S> PreparedQuery<S> {
         Ok(())
     }
 
-    /// Convenience path: a fresh buffer per call.
-    ///
     /// # Errors
-    ///
-    /// As [`Self::execute`].
+
     pub(crate) fn execute_collect<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
