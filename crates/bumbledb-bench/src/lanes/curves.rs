@@ -720,7 +720,6 @@ struct WorldStores<S> {
 
 impl<S> WorldStores<S> {
     /// reopen rounds need the store CLOSED first (one LMDB environment
-
     fn into_paths(self) -> (PathBuf, PathBuf) {
         let Self {
             db,
@@ -1258,7 +1257,6 @@ mod tests {
     }
 
     /// excluded before entry, and an unverified point is never timed
-
     #[test]
     fn zero_cap_reports_exceeded_and_skips_timing() {
         let dir = scratch("curves-zero-cap");
