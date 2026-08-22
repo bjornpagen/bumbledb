@@ -4,7 +4,6 @@
 //! [`schema::spec::SchemaSpec`], and the one name→id lowering).
 //! Everything here is plain data and pure judgment: zero dependencies,
 //! zero LMDB/exec reach. The engine crate (`bumbledb`) re-exports this
-
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 
