@@ -111,19 +111,19 @@ fn interval_pair_query(
 }
 
 const ALLEN: &[(u64, u64, u64)] = &[
-    (1, 1, 5),    
-    (2, 5, 10),   
-    (3, 5, 15),   
-    (4, 5, 20),   
-    (5, 5, 25),   
-    (6, 10, 15),  
-    (7, 10, 20),  
-    (8, 10, 25),  
-    (9, 12, 18),  
-    (10, 15, 20), 
-    (11, 15, 25), 
-    (12, 20, 25), 
-    (13, 25, 30), 
+    (1, 1, 5),
+    (2, 5, 10),
+    (3, 5, 15),
+    (4, 5, 20),
+    (5, 5, 25),
+    (6, 10, 15),
+    (7, 10, 20),
+    (8, 10, 25),
+    (9, 12, 18),
+    (10, 15, 20),
+    (11, 15, 25),
+    (12, 20, 25),
+    (13, 25, 30),
 ];
 
 fn surviving_tags(
@@ -322,14 +322,14 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     }
     for (emp, at) in [
         (1u64, 9u64),
-        (1, 10), 
+        (1, 10),
         (1, 15),
         (1, 19),
-        (1, 20), 
+        (1, 20),
         (2, 30),
         (2, 39),
         (2, 40),
-        (3, 35), 
+        (3, 35),
     ] {
         let mut bytes = Vec::new();
         encode_fact(
@@ -408,7 +408,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let dir = TempDir::new("run-membership-carried");
 
@@ -958,10 +958,10 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
         AllenMask::INTERSECTS,
         AllenMask::new(Basic::During.bit()).expect("singleton"),
         AllenMask::OVERLAPS | AllenMask::DURING,
-        AllenMask::DURING | AllenMask::MEETS, 
-        AllenMask::MEETS | AllenMask::MET_BY, 
-        AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY, 
-        AllenMask::BEFORE | AllenMask::DURING, 
+        AllenMask::DURING | AllenMask::MEETS,
+        AllenMask::MEETS | AllenMask::MET_BY,
+        AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY,
+        AllenMask::BEFORE | AllenMask::DURING,
     ];
     for mask in masks {
         let expected = naive_keyed_pairs(mask, &rows);
