@@ -1,7 +1,6 @@
 //! (`Pack` — [`crate::translate::Inexpressible::PackAggregate`]): it is
 //! **reported translator-unpaired, never dropped** — its `SQLite` side is the
 //! engine and the naive model before any timing.
-
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
     VarId,
