@@ -12,15 +12,9 @@ use bumbledb_theory::schema::FieldId;
 /// cover some key (`Functionality`) statement's projection (fresh
 /// auto-keys included) or bind every field (the full-fact `M` path).
 /// Everything else falls through to Free Join.
-///
 /// Eligibility **consumes validation's term typing** through the lowered
 /// filter kinds and never re-infers it: lowering routes a membership
-/// binding into `PointIn`/`FieldsPointIn`, so an `Eq` `Compare` on an
-/// interval field is interval-typed by construction — a membership binding
-/// is not a key cover because it produces no `Eq` `Compare` at all.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (validated-schema id widths).
 #[must_use]
 pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProbePlan> {
@@ -38,15 +32,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     {
         return None;
     }
-    // Decision: a `ParamSet`-bound field disqualifies the fast path in v0
-    // — k key-probe gets would be correct, but the selection-level path
-    // already serves sets (revisit trigger: a measured k-get win). A
-    // plan-constant `WordSet` (the grounding-evaluator's attachment) refuses
-    // identically — one set rule, both producers; unreachable from the
-    // real pipeline (attachments imply a sibling occurrence, so the
-    // table is never single-atom), checked for hand-built queries. A
-    // var-sourced point falls through with them (its evaluation home is
-    // the executor's membership probes).
+
     if !occurrence.point_vars.is_empty()
         || occurrence.filters.iter().any(|filter| {
             matches!(
@@ -61,7 +47,6 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         return None;
     }
 
-    // The fields bound BY VALUE: pinned to a constant by an Eq filter.
     let value_of = |field: FieldId| {
         occurrence.filters.iter().find_map(|f| match f {
             FilterPredicate::Compare {
@@ -73,26 +58,17 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         })
     };
 
-    // An `Interior` occurrence never key-probes: a derived table has no `U`
-    // determinants and no `M` entries — its storage is the fixpoint
-    // driver's transient image — so an `Interior`-reading rule always keeps
-    // the Free Join path.
     let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
         return None;
     };
     let relation = schema.relation(relation_id);
-    // A closed relation has no `U` determinants and no `M` entries — its
-    // storage is the theory (`docs/architecture/50-storage.md` § virtual
-    // relations) — so even a fully key-bound single atom classifies as
-    // Free Join and hits the synthesized image.
+
     if relation.body().closed_rows().is_some() {
         return None;
     }
     let kind = key_probe_candidate(relation, schema, &value_of)?;
     let key_fields: Vec<FieldId> = kind.key().iter().map(|(f, _)| *f).collect();
 
-    // The slot layout over the decoded variables (the `SlotWidth` map,
-    // exported by normalization).
     let mut slot = 0usize;
     let vars: Vec<KeyProbeVar> = occurrence
         .vars
@@ -118,8 +94,6 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     })
 }
 
-/// Prefer a key-statement probe (one `U` get); fall back to the full-fact
-/// membership check when every field is bound by value.
 fn key_probe_candidate(
     relation: &Relation,
     schema: &Schema,
@@ -161,8 +135,6 @@ fn key_probe_candidate(
         })
 }
 
-/// Filters not consumed by the key: everything except one Eq filter per
-/// key field (the consumed constant).
 fn unconsumed_filters(
     filters: &[FilterPredicate],
     mut consumed: Vec<FieldId>,
