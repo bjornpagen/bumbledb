@@ -1,19 +1,11 @@
 //! The predicate-scan kernels, one `std::simd` body per shape on every
-//! target (the crucible packet (git ecec1dc3), Q2 — ADOPT, measured:
-//! the portable bodies beat the retired hand-NEON twins 1.03–1.5× on
-//! the reference host, delete the intrinsic dual and its `unsafe`, and
 //! are Miri-interpretable). The 256-bit width (4 × u64, two vectors per
-//! chunk) amortizes the mask consumption: one `to_bitmask()` vector→GPR
+//! chunk) amortizes the mask consumption: one `to_bitmask` vector→GPR
 //! transfer per chunk, then GPR shifts — never a per-lane extract or a
 //! flag-class increment (`m2max.core.flag-port-asymmetry`: flag µops
 //! confine to 3 of 6 integer ALUs) — and the survivor writes go through
+//! the reference host, delete the intrinsic dual and its `unsafe`, and
 //! one hoisted capacity invariant instead of a per-lane bounds check
-//! (`m2max.codegen.bounds-checks-structural`: the check's second basic
-//! block is a codegen-shape tax, not arithmetic). The u8 shape keeps one
-//! 128-bit vector (16 lanes) — its win is the same one-transfer bitmask.
-//! The scalar tail twin per kernel covers the remainder lanes. The
-//! scalar reference twins ([`super::reference`]) remain the independent
-//! differential oracle.
 
 use std::simd::SimdElement;
 use std::simd::prelude::*;
@@ -54,8 +46,7 @@ pub fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
 /// Point membership over an interval column pair: positions where
 /// `starts[i] <= point AND point < ends[i]` (the half-open rule), in
 /// ascending order. The composition is the existing predicate-scan
-/// shape applied to two columns with an AND — no new kernel shape
-/// (docs/architecture/40-execution.md, § access paths).
+/// .
 pub fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
     debug_assert_eq!(starts.len(), ends.len(), "an interval span's column pair");
     let p = Simd::splat(point);
@@ -70,8 +61,7 @@ pub fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut V
 
 /// Point-*set* membership over an interval column pair: positions where
 /// ANY element of `points` lies in `[starts[i], ends[i])` — the OR over
-/// per-point masks (k small by the documented set assumption,
-/// `docs/architecture/20-query-ir.md` § param sets). An empty set keeps
+/// per-point masks. An empty set keeps
 /// nothing.
 pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out: &mut Vec<u32>) {
     debug_assert_eq!(starts.len(), ends.len(), "an interval span's column pair");
@@ -91,13 +81,6 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
     );
 }
 
-/// Branchless cursor-write over the whole column: lane chunks through
-/// the `keep` mask's bitmask, the remainder through its scalar twin
-/// `keep1`. The output grows through reserved spare capacity — one
-/// `reserve` up front, cursor writes, one `set_len` over the written
-/// prefix — never a zero-fill of slots the cursor overwrites or the
-/// survivor count discards (the `_platform_memset` disease, cured the
-/// same way as the codes/keep buffers).
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -121,13 +104,13 @@ fn push_matching<T, const N: usize>(
     }
     for &item in tail {
         // SAFETY: the reserve above owns one slot per visited position
-        // and the cursor advances at most once each.
+
         unsafe { out.as_mut_ptr().add(write).write(pos) };
         write += usize::from(keep1(item));
         pos = pos.wrapping_add(1);
     }
     // SAFETY: every slot in `[start, write)` was cursor-written above
-    // and `write <= start + col.len() <= capacity` (`u32` carries no
+
     // drop obligation).
     unsafe { out.set_len(write) };
     crate::obs::event(
@@ -136,7 +119,6 @@ fn push_matching<T, const N: usize>(
     );
 }
 
-/// [`push_matching`] over an interval span's (starts, ends) column pair.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -163,13 +145,13 @@ fn push_matching_pair(
     }
     for i in tail_start..starts.len() {
         // SAFETY: the reserve above owns one slot per visited position
-        // and the cursor advances at most once each.
+
         unsafe { out.as_mut_ptr().add(write).write(pos) };
         write += usize::from(keep1(starts[i], ends[i]));
         pos = pos.wrapping_add(1);
     }
     // SAFETY: every slot in `[start, write)` was cursor-written above
-    // and `write <= start + starts.len() <= capacity` (`u32` carries no
+
     // drop obligation).
     unsafe { out.set_len(write) };
     crate::obs::event(
@@ -178,29 +160,21 @@ fn push_matching_pair(
     );
 }
 
-/// The one hoisted position guard (the per-lane `u32::try_from` was a
-/// per-item branch): a column of `len` rows writes positions
-/// `0..len`, so `len − 1` must fit u32 — the same programmer invariant
-/// the per-lane guard asserted, checked once. Returns the first
-/// position's cursor.
+/// The one hoisted position guard (the per-lane `u32::try_from` was a per-item
+/// branch): a column of `len` rows writes positions `0..len`, so `len − 1` must
+/// fit u32 — the same programmer invariant the per-lane guard asserted, checked
+/// once.
 pub(super) fn positions_fit_u32(len: usize) -> u32 {
     let _ = u32::try_from(len.saturating_sub(1)).expect("positions fit u32");
     0
 }
 
-/// The per-chunk branchless survivor writes over the mask's bitmask
-/// (bit `lane` set ⇔ position `pos + lane` survives): each position
-/// lands at the cursor, which advances by the lane's bit — GPR shift
-/// and add per lane, no flag traffic, no per-lane vector→GPR transfer
-/// (`m2max.predict.branchless-flat`'s 1.00 cy/item cursor-write shape).
-/// Returns the advanced (cursor, position) pair.
-///
 /// The callers owe the capacity invariant asserted below: `out` has one
-/// reserved slot per visited position past the initialized prefix and
-/// the cursor advances at most once per position, so on entry
-/// `write + N <= out.capacity()` whenever a full chunk remains — every
-/// lane's store lands in owned capacity, and the caller's final
-/// `set_len(write)` exposes only cursor-written slots.
+/// reserved slot per visited position past the initialized prefix and the
+/// cursor advances at most once per position, so on entry `write + N <=
+/// out.capacity` whenever a full chunk remains — every lane's store lands in
+/// owned capacity, and the caller's final `set_len(write)` exposes only
+/// cursor-written slots.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -218,9 +192,7 @@ fn write_survivor_bits<const N: usize>(
     let ptr = out.as_mut_ptr();
     for lane in 0..N {
         // SAFETY: `write + N <= out.capacity()` on entry (asserted
-        // above, guaranteed by the callers' reserve discipline) and
-        // `write` advances at most once per lane, so every store lands
-        // inside the Vec's owned allocation.
+
         unsafe {
             ptr.add(write).write(pos);
         }
@@ -230,11 +202,6 @@ fn write_survivor_bits<const N: usize>(
     (write, pos)
 }
 
-/// [`write_survivor_bits`]'s keep-byte twin — the Allen dense scans'
-/// compaction tail ([`super::allen`]'s chunk walk): one cursor store
-/// per keep byte, the advance `keep & 1` (`and`+`add` on any of the
-/// 6 ALUs, off the flag triad — [`super::compact_u32_by_mask`]'s
-/// contract; the membership kernels write 0/1 bytes by construction).
 /// Same reserve invariant, same hoisted position guard.
 #[expect(
     unsafe_code,
@@ -257,9 +224,7 @@ pub(super) fn write_survivor_keeps(
     let ptr = out.as_mut_ptr();
     for &k in keep {
         // SAFETY: `write + keep.len() <= out.capacity()` on entry
-        // (asserted above, guaranteed by the callers' reserve
-        // discipline) and `write` advances at most once per byte, so
-        // every store lands inside the Vec's owned allocation.
+
         unsafe {
             ptr.add(write).write(pos);
         }
@@ -269,8 +234,3 @@ pub(super) fn write_survivor_keeps(
     (write, pos)
 }
 
-// The old interval-vs-constant comparison kernels (overlaps, contains,
-// within-over-pairs) are gone with their operators: interval-pair
-// predicates are Allen masks, evaluated by the configuration kernel
-// (`super::allen` — one branchless, flag-free kernel for all 8192
-// masks).
