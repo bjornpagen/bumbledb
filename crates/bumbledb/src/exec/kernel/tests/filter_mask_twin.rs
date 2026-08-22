@@ -122,7 +122,6 @@ fn median(mut xs: Vec<f64>) -> f64 {
 
 #[test]
 fn masked_kernel_and_local_twin_match_the_references_bit_for_bit() {
-
     const LENGTHS: &[usize] = &[
         0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 63, 64, 65, 100, 127, 128, 129, 257, 1023, 4099,
     ];
@@ -172,7 +171,6 @@ const ARMS: [&str; 5] = [
     reason = "nanosecond spans and row counts sit far below 2^52"
 )]
 fn filter_mask_twin_shipped_vs_masked() {
-
     const TIERS: [(&str, usize); 2] = [("l2", 262_144), ("dram", 13_107_200)];
 
     const SELECTIVITIES: [u64; 2] = [1, 50];
@@ -213,7 +211,6 @@ fn filter_mask_twin_shipped_vs_masked() {
                 let v8 = validity_map(seed ^ 8, rows, 8);
                 let mut block_ns: [Vec<f64>; ARMS.len()] = Default::default();
                 for pass in 0..PAIRS_PER_BLOCK {
-
                     let rotate = (block * PAIRS_PER_BLOCK + pass) % ARMS.len();
                     for slot in 0..ARMS.len() {
                         let arm = (slot + rotate) % ARMS.len();
