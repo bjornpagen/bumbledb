@@ -6,9 +6,7 @@ use bumbledb_theory::schema::RelationId;
 
 /// `S` get: the relation's exact row count — the planner's statistic.
 /// Missing means no state-changing commit ever touched the relation: 0.
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure, `Corruption` on a malformed counter value.
 pub fn row_count(txn: &ReadTxn<'_>, rel: RelationId) -> Result<u64> {
     let key = keys::stat_key(rel, StatKind::RowCount);
