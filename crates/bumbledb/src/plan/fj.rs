@@ -301,7 +301,6 @@ impl ValidatedPlan {
     }
 
     /// (ruled 2026-07-23, R2). Total by construction: grounding may have
-
     #[must_use]
     pub fn slot_spans(&self) -> Vec<(VarId, usize, usize)> {
         let mut spans = Vec::with_capacity(self.slots.len());
