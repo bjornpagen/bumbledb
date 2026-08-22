@@ -1,10 +1,3 @@
-//! The signature table (the crucible PRD 04, policy 8): one row per
-//! head form × each legal input type, the expected values read off the
-//! pre-refactor result-row/sink behavior and hand-verified against
-//! `docs/architecture/20-query-ir.md`'s aggregate typing prose. The
-//! TABLE is the pin — it was landed green against the triple derivation
-//! and must stay green, byte-identical, over the reified signature.
-
 use crate::ir::{Atom, FindTerm, FoldOp, Query, Rule, Term, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -13,10 +6,6 @@ use bumbledb_theory::schema::{
     ValueType,
 };
 
-/// R(id fresh u64, b bool, u u64, i i64, s string, x bytes<8>,
-///   pu interval<u64>, pi interval<i64>, ku u64, ki i64) — every value
-/// type at one field, plus one orderable key field per key type (an Arg
-/// row's carry and key are distinct fields).
 fn sig_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -60,7 +49,6 @@ fn sig_schema() -> Schema {
     .expect("valid fixture")
 }
 
-// Field positions in R, by declaration order above.
 const B: u16 = 1;
 const U: u16 = 2;
 const I: u16 = 3;
@@ -69,8 +57,6 @@ const X: u16 = 5;
 const PU: u16 = 6;
 const PI: u16 = 7;
 
-/// Every (field, type) pair of the fixture — the per-type row generators
-/// below iterate this roster so no type is skippable by omission.
 fn type_roster() -> Vec<(u16, ValueType)> {
     vec![
         (B, ValueType::Bool),
@@ -105,8 +91,6 @@ fn interval_i64() -> ValueType {
     }
 }
 
-/// One table row: a single-rule query (finds + one atom's `(field, var)`
-/// bindings) and the signature it must derive.
 struct Case {
     name: String,
     finds: Vec<FindTerm>,
@@ -135,12 +119,9 @@ fn fold(op: FoldOp, over: u16) -> FindTerm {
     }
 }
 
-/// The exhaustive table: one row per `FindTerm`/`AggOp` form × each
-/// legal input type.
 fn cases() -> Vec<Case> {
     let mut cases = Vec::new();
 
-    // Plain projection, every type: the column is the variable's type.
     for (field, ty) in type_roster() {
         cases.push(case(
             format!("var over {ty:?}"),
@@ -150,7 +131,6 @@ fn cases() -> Vec<Case> {
         ));
     }
 
-    // Nullary Count: U64 whatever the rule binds.
     cases.push(case(
         "count",
         vec![FindTerm::Count],
@@ -158,7 +138,6 @@ fn cases() -> Vec<Case> {
         vec![ValueType::U64],
     ));
 
-    // The arithmetic folds, both integer types: the input's type.
     for op in [FoldOp::Sum, FoldOp::Min, FoldOp::Max] {
         for (field, ty) in [(U, ValueType::U64), (I, ValueType::I64)] {
             cases.push(case(
@@ -170,7 +149,6 @@ fn cases() -> Vec<Case> {
         }
     }
 
-    // Pack: the packed segment shares its input's interval type.
     cases.push(case(
         "pack over interval<u64>",
         vec![FindTerm::Pack { over: VarId(0) }],
@@ -184,8 +162,6 @@ fn cases() -> Vec<Case> {
         vec![interval_i64()],
     ));
 
-    // Multi-column heads mixing the forms (group keys + folds, group
-    // keys + measures, group keys + Pack).
     cases.push(case(
         "group key + sum + count",
         vec![
@@ -228,10 +204,6 @@ fn query_of(case: &Case) -> Query {
     })
 }
 
-/// The observation seam the pin swings on: the query's derived output
-/// signature. Pinned against the pre-refactor triple derivation (read
-/// through `prepare`'s result-column iterator), re-anchored to the
-/// validation-sealed signature — the table never moved.
 fn signature_of(schema: &Schema, query: &Query) -> Vec<ValueType> {
     let witness = crate::ir::validate::validate(schema, query).expect("validate");
     witness
