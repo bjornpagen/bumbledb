@@ -71,7 +71,6 @@ pub(super) fn decode_plan(
             let offset = layout.field_offset(field_idx);
             let first = usize::from(span.first_column);
             match (span.width, desc) {
-
                 (ColumnWidth::Word | ColumnWidth::Words { .. }, ValueType::FixedBytes { len }) => {
                     let words = crate::encoding::fixed_bytes_words(*len);
                     let pad_bytes = words * 8 - usize::from(*len);
@@ -152,7 +151,7 @@ pub(super) fn fill_one(
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] 
+)]
 pub(super) fn decode_fact(
     rel: RelationId,
     plan: &[Decode],
@@ -162,7 +161,6 @@ pub(super) fn decode_fact(
     words: &mut [u64],
     bytes: &mut [u8],
 ) -> Result<()> {
-
     if fact_bytes.len() != fact_width {
         return Err(Error::Corruption(CorruptionError::WrongFactWidth {
             relation: rel,
