@@ -171,7 +171,6 @@ fn schema() -> &'static Schema {
 
 #[test]
 fn point_matches_its_hand_written_golden() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -192,7 +191,6 @@ fn point_matches_its_hand_written_golden() {
 
 #[test]
 fn containment_walk_matches_its_hand_written_golden() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -229,7 +227,6 @@ fn containment_walk_matches_its_hand_written_golden() {
 
 #[test]
 fn balance_matches_its_hand_written_golden() {
-
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -264,7 +261,6 @@ fn balance_matches_its_hand_written_golden() {
 
 #[test]
 fn negated_atoms_match_their_goldens() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -324,7 +320,6 @@ fn negated_atoms_match_their_goldens() {
 
 #[test]
 fn param_sets_render_as_literal_in_lists() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -382,7 +377,6 @@ fn param_sets_render_as_literal_in_lists() {
 
 #[test]
 fn set_forms_cover_interval_membership_and_predicate_equality() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -431,7 +425,6 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
 
 #[test]
 fn membership_matches_its_goldens() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -487,7 +480,6 @@ fn membership_matches_its_goldens() {
 
 #[test]
 fn allen_intersects_matches_its_hand_written_golden() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -523,7 +515,6 @@ fn allen_intersects_matches_its_hand_written_golden() {
 
 #[test]
 fn point_in_matches_both_goldens() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -572,7 +563,6 @@ fn point_in_matches_both_goldens() {
 
 #[test]
 fn interval_equality_matches_its_goldens() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -643,7 +633,6 @@ fn interval_equality_matches_its_goldens() {
 
 #[test]
 fn an_interval_find_projects_both_halves() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -741,7 +730,6 @@ fn every_scalar_construct_translates() {
 
 #[test]
 fn global_aggregates_carry_the_having_rule() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Count],
         atoms: vec![Atom {
@@ -908,7 +896,6 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
 
 #[test]
 fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
-
     let query = Query {
         interiors: vec![],
         head: vec![bumbledb::HeadTerm::Var],
@@ -946,7 +933,6 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
 
 #[test]
 fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
-
     let arm = |conditions: Vec<ConditionTree>| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -993,7 +979,6 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
 
 #[test]
 fn a_param_repeated_across_rules_keeps_one_positional_slot() {
-
     let arm = |field: bumbledb::FieldId| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -1070,7 +1055,6 @@ fn the_linear_closure_matches_its_hand_written_golden() {
 
 #[test]
 fn negation_of_finished_rec_matches_its_hand_written_golden() {
-
     let mut query = closure_query();
     match &mut query {
         Query {
