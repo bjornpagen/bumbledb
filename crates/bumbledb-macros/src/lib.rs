@@ -182,7 +182,6 @@ enum Statement {
 }
 
 struct SchemaAst {
-
     name: String,
     relations: Vec<Relation>,
     statements: Vec<Statement>,
@@ -330,7 +329,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
 
     if peek_punct(tokens, ',') {
         let mut lookahead = tokens.clone();
-        lookahead.next(); 
+        lookahead.next();
         if let Some(TokenTree::Ident(ident)) = lookahead.peek() {
             let word = ident.to_string();
             lookahead.next();
@@ -358,8 +357,8 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     field.name
                 );
                 field.fresh = true;
-                tokens.next(); 
-                tokens.next(); 
+                tokens.next();
+                tokens.next();
             }
         }
     }
@@ -661,9 +660,7 @@ fn parse_statement(
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
     let left = parse_side(relation, relation_span, group);
     match tokens.next() {
-
         // (OWNER RULING 2026-07-18: the arrow is canon, never respelled) —
-
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
             expect_punct(tokens, '>');
             let (right, right_span) = spanned_ident(tokens, "the FD's relation name");
@@ -947,7 +944,6 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
             let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
             schema.relations.push(parse_relation(name, body));
         } else if ident == "order" {
-
             panic!(
                 "schema!: `order` statements no longer exist — order is a derivation, \
                  not a dependency: use fractional indexing over a keyed position, or \
@@ -1011,7 +1007,6 @@ pub fn schema(input: TokenStream) -> TokenStream {
 
 #[derive(Default)]
 struct SpanTable {
-
     relations: BTreeMap<(usize, String), Vec<Span>>,
 
     fields: BTreeMap<(usize, String, String), Vec<Span>>,
@@ -2165,7 +2160,6 @@ fn screaming_snake(name: &str) -> String {
 }
 
 fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
-
     let mut claimed: BTreeMap<String, String> = BTreeMap::new();
     let mut claim = |name: String, names: String| {
         if let Some(existing) = claimed.get(&name) {
@@ -2212,7 +2206,6 @@ fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
 }
 
 fn emit_newtypes(out: &mut String, relations: &[Relation]) {
-
     let mut newtypes: BTreeMap<String, (String, String, bool)> = BTreeMap::new();
     for relation in relations {
         for field in &relation.fields {
@@ -2414,7 +2407,6 @@ fn rust_field_ty(field: &Field) -> String {
 }
 
 struct EncodeCx<'s> {
-
     relation: &'s str,
 }
 
@@ -2613,7 +2605,6 @@ fn pascal(name: &str) -> String {
 }
 
 fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
-
     let implied_total: usize = schema
         .relations
         .iter()
@@ -2624,7 +2615,6 @@ fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
         .sum();
     let mut offset = 0usize;
     for statement in &schema.statements {
-
         let width = match statement {
             Statement::Containment {
                 bidirectional: true,
