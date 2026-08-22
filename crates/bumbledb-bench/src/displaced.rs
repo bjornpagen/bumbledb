@@ -209,7 +209,6 @@ pub struct ForeignStream {
 
 impl ForeignStream {
     /// # Panics
-
     #[must_use]
     pub fn new(mib: u64) -> Self {
         Self {
