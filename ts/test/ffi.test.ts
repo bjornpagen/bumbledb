@@ -545,14 +545,6 @@ describe("ffi round trip against a real store", function suite() {
 				}
 			}
 			assert.deepEqual(sortedBigints(reachable), sortedBigints([p1, p2, p3]), "p1 → p2 → p3 → p1 closes; p4 stays out")
-
-			const staleness = native.preparedStaleness(prepared, instance)
-			assert.equal(typeof staleness.maxRatio, "number")
-			assert.ok(staleness.maxRatio >= 1)
-			for (const drift of staleness.perOccurrence) {
-				assert.equal(typeof drift.pinned, "bigint")
-				assert.equal(typeof drift.live, "bigint")
-			}
 		})
 	})
 

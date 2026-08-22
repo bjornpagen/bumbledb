@@ -8,7 +8,6 @@ use crate::ir::{ParamId, Value};
 use crate::obs;
 use crate::storage::catalog::CatalogRead;
 use crate::storage::dict;
-use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::IntervalElement;
 
 impl<S> PreparedQuery<S> {
@@ -45,10 +44,6 @@ impl<S> PreparedQuery<S> {
         } else {
             Err(Error::ForeignPreparedQuery)
         }
-    }
-
-    pub(super) fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
-        self.check_identity(txn.identity())
     }
 
     /// Binds and converts all-scalar parameters (the `&[BindValue]`

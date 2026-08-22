@@ -34,15 +34,12 @@ mod introspect;
 pub(crate) mod reach;
 mod resolve_memo;
 mod run_join;
-mod staleness;
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::build::{prepare, prepare_on};
-use self::staleness::OccurrencePin;
-pub use self::staleness::{OccurrenceDrift, Staleness};
 
 /// One bound scalar payload (`docs/architecture/70-api.md` § facts and
 /// results): the bind surface's value vocabulary. Variable-width
@@ -553,12 +550,22 @@ pub(crate) struct FreeJoinRule {
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
-    /// The staleness pin record (`staleness.rs`): per participating
-    /// occurrence, the statistics the rule's plan was costed with. Cold
-    /// data — written once at build, read only by
-    /// [`PreparedQuery::staleness`] and the stats surface, never by
-    /// execution.
+    /// Per participating occurrence, the statistics the rule's plan was
+    /// costed with. Cold data — written once at build, read only by the
+    /// stats surface, never by execution.
     pinned: Box<[OccurrencePin]>,
+}
+
+/// One occurrence's pinned prepare-time statistics — the stats surface
+/// renders ("estimated from (pinned rows at prepare)"). Participating
+/// occurrences only: negated and grounding-eliminated occurrences enter
+/// no DP state and earn no statistics read at prepare.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OccurrencePin {
+    pub occ_id: crate::ir::normalize::OccId,
+    pub relation: bumbledb_theory::schema::RelationId,
+    pub rows: u64,
+    pub survivors: Option<u64>,
 }
 
 /// One written rule's ray probes (the Kleene verdict algebra, ruled
@@ -601,6 +608,20 @@ pub(crate) struct KeyProbeRule {
 }
 
 impl<S> PreparedQuery<S> {
+    /// The stats surface's rendering of one rule's pin record.
+    pub(super) fn rule_pinned_rows(&self, rule_idx: usize) -> Vec<crate::api::stats::PinnedRows> {
+        self.pipeline.main_rules()[rule_idx]
+            .pinned()
+            .iter()
+            .map(|pin| crate::api::stats::PinnedRows {
+                occurrence: pin.occ_id.0,
+                relation: self.schema.relation(pin.relation).name().to_owned(),
+                rows: pin.rows,
+                survivors: pin.survivors,
+            })
+            .collect()
+    }
+
     fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
         match &self.pipeline {
             PreparedPipeline::PointProbe { .. } => {}

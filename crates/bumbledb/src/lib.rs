@@ -137,10 +137,6 @@ pub use api::db::{
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
 };
-/// Plan-introspection types used by the in-workspace bench harness.
-/// Not embedding API.
-#[doc(hidden)]
-pub use api::prepared::{OccurrenceDrift, Staleness};
 /// Structured execution counters used by the in-workspace bench harness.
 /// Not embedding API.
 #[doc(hidden)]

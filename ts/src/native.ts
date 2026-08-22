@@ -342,23 +342,6 @@ type PrepareResult =
 	| { readonly ok: true; readonly prepared: PreparedHandle }
 	| { readonly ok: false; readonly kind: "irError"; readonly message: string }
 
-/** One occurrence's plan drift (pinned vs live row counts). */
-interface OccurrenceDrift {
-	readonly relation: number
-	readonly pinned: bigint
-	readonly live: bigint
-	readonly ratio: number
-}
-
-/**
- * The pull-based plan-drift report: engine-policy-free — no threshold
- * exists engine-side; the host owns reprepare policy.
- */
-interface Staleness {
-	readonly perOccurrence: readonly OccurrenceDrift[]
-	readonly maxRatio: number
-}
-
 type ErrorFamilyKind =
 	| "formatMismatch"
 	| "schemaMismatch"
@@ -534,8 +517,6 @@ interface Native {
 	 * the structured stats. Store-read only.
 	 */
 	preparedExplain(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): Explain
-	/** The pull-based plan-drift signal against a store read. */
-	preparedStaleness(prepared: PreparedHandle, instance: InstanceHandle): Staleness
 	/** Releases the prepared query. */
 	preparedClose(prepared: PreparedHandle): void
 
@@ -734,7 +715,6 @@ export type {
 	ManifestStatement,
 	Native,
 	NativeWriteOutcome,
-	OccurrenceDrift,
 	OpenKind,
 	OwnedHandle,
 	ParsedQuery,
@@ -745,7 +725,6 @@ export type {
 	QueryParam,
 	RecIr,
 	RuleIr,
-	Staleness,
 	StatementKindTag,
 	TaggedValue,
 	TermIr,

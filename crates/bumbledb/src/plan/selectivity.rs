@@ -21,6 +21,7 @@ use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
+#[cfg(test)]
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::FieldId;
 
@@ -34,14 +35,6 @@ use bumbledb_theory::schema::FieldId;
 /// # Errors
 ///
 /// `Lmdb` from the counter read (ordinary relations only).
-pub(crate) fn relation_rows(
-    txn: &ReadTxn<'_>,
-    schema: &Schema,
-    relation: bumbledb_theory::schema::RelationId,
-) -> crate::error::Result<u64> {
-    relation_rows_on(&txn.catalog(), schema, relation)
-}
-
 pub(crate) fn relation_rows_on<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,

@@ -34,12 +34,6 @@ use super::{Fact, Key};
 ///     let _ = instance.generation();
 /// }
 /// ```
-///
-/// ```compile_fail
-/// fn require_staleness(instance: &bumbledb::OwnedInstance<()>) {
-///     let _ = instance.staleness;
-/// }
-/// ```
 pub struct OwnedInstance<S> {
     pub(super) core: InstanceCore<FrozenSource, S>,
 }

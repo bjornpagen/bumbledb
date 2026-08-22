@@ -40,7 +40,7 @@ mod fingerprint_lock;
 mod marshal;
 mod tags;
 
-use marshal::{ExplainWire, ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
+use marshal::{ExplainWire, ManifestWire, OwnedParam, ValueOut, ViolationWire};
 
 #[napi]
 #[must_use]
@@ -644,10 +644,6 @@ trait InstanceOps {
         prepared: &mut PreparedQuery<SchemaDescriptor>,
         params: &[OwnedParam],
     ) -> Result<bumbledb::ExecutionStats, WireError>;
-    fn staleness(
-        &self,
-        prepared: &PreparedQuery<SchemaDescriptor>,
-    ) -> Result<StalenessWire, WireError>;
     fn generation(&self) -> Result<u64, WireError>;
 }
 
@@ -704,14 +700,6 @@ impl InstanceOps for StoreOps<'_> {
         let (_, stats) = self.0.profile(prepared, &args).map_err(|e| wire(&e))?;
         Ok(stats)
     }
-    fn staleness(
-        &self,
-        prepared: &PreparedQuery<SchemaDescriptor>,
-    ) -> Result<StalenessWire, WireError> {
-        Ok(staleness_wire(
-            prepared.staleness(self.0).map_err(|e| wire(&e))?,
-        ))
-    }
     fn generation(&self) -> Result<u64, WireError> {
         self.0
             .generation()
@@ -762,37 +750,10 @@ impl InstanceOps for HeapOps<'_> {
             "bumbledb: profile is a store-read diagnostic, not an owned-instance method".into(),
         ))
     }
-    fn staleness(
-        &self,
-        _prepared: &PreparedQuery<SchemaDescriptor>,
-    ) -> Result<StalenessWire, WireError> {
-        Err(bridge_error(
-            "bumbledb: staleness is a store-read signal, not an owned-instance method".into(),
-        ))
-    }
     fn generation(&self) -> Result<u64, WireError> {
         Err(bridge_error(
             "bumbledb: generation is a store-read diagnostic, not an owned-instance method".into(),
         ))
-    }
-}
-
-fn staleness_wire(staleness: bumbledb::Staleness) -> StalenessWire {
-    match staleness {
-        bumbledb::Staleness::NoStatistics => StalenessWire {
-            per_occurrence: Vec::new(),
-            max_ratio: 1.0,
-        },
-        bumbledb::Staleness::Measured {
-            per_occurrence,
-            max_ratio,
-        } => StalenessWire {
-            per_occurrence: per_occurrence
-                .iter()
-                .map(|drift| (drift.relation.0, drift.pinned, drift.live, drift.ratio))
-                .collect(),
-            max_ratio,
-        },
     }
 }
 
@@ -1296,17 +1257,6 @@ fn prepared_mut(
     }))
 }
 
-fn prepared_ref(
-    prepared: &External<PreparedHandle>,
-) -> napi::Result<Ref<'_, PreparedQuery<SchemaDescriptor>>> {
-    let inner = live(&prepared.inner, "prepared query")?;
-    #[expect(
-        unsafe_code,
-        reason = "staleness needs &PreparedQuery; JS is single-threaded"
-    )]
-    Ok(Ref::map(inner, |inner| unsafe { &*inner.prepared.get() }))
-}
-
 fn prepare_outcome(
     env: Env,
     result: bumbledb::Result<PreparedQuery<SchemaDescriptor>>,
@@ -1370,16 +1320,6 @@ pub fn prepared_explain(
             .map_err(|error| thrown(env, error))
     })?;
     Ok(ExplainWire(stats))
-}
-
-#[napi]
-pub fn prepared_staleness(
-    env: Env,
-    prepared: &External<PreparedHandle>,
-    instance: &External<InstanceHandle>,
-) -> napi::Result<StalenessWire> {
-    let prepared = prepared_ref(prepared)?;
-    instance.with_instance(|ops| ops.staleness(&prepared).map_err(|error| thrown(env, error)))
 }
 
 #[napi]

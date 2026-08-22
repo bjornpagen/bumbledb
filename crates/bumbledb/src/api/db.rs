@@ -518,9 +518,7 @@ pub struct ReadInstance<'txn, S> {
 }
 
 impl<'txn, S> ReadInstance<'txn, S> {
-    /// The lease's read transaction (reader: the staleness signal —
-    /// [`crate::PreparedQuery::staleness`] takes the instance directly
-    /// rather than routing through a wrapper method).
+    /// The lease's read transaction.
     pub(crate) fn txn(&self) -> &ReadTxn<'_> {
         self.core.source.txn()
     }

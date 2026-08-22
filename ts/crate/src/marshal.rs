@@ -1833,35 +1833,3 @@ fn explain_node_out(env: &Env, node: bumbledb::NodeStats) -> napi::Result<Object
     Ok(node_obj)
 }
 
-/// The staleness report as wire data: per participating occurrence, the
-/// pinned/live counts and the drift ratio, plus the max.
-pub struct StalenessWire {
-    pub(crate) per_occurrence: Vec<(u32, u64, u64, f64)>,
-    pub(crate) max_ratio: f64,
-}
-
-impl ToNapiValue for StalenessWire {
-    #[expect(
-        unsafe_code,
-        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
-                  only builds plain objects and delegates to napi's own impls"
-    )]
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        let mut drifts = Vec::with_capacity(val.per_occurrence.len());
-        for (relation, pinned, live, ratio) in val.per_occurrence {
-            let mut drift = Object::new(&env_handle)?;
-            drift.set("relation", relation)?;
-            drift.set("pinned", pinned)?;
-            drift.set("live", live)?;
-            drift.set("ratio", ratio)?;
-            drifts.push(drift);
-        }
-        obj.set("perOccurrence", drifts)?;
-        obj.set("maxRatio", val.max_ratio)?;
-        // SAFETY: `env` is the live environment napi handed this very call,
-        // and `obj` was created against it.
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
