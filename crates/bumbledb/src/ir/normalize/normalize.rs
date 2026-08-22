@@ -15,9 +15,7 @@ use bumbledb_theory::schema::{FieldId, ValueType};
 /// holds every derived table's sealed signature in `InteriorId` then rec
 /// order, and an
 /// `Interior` binding's field type reads the target's column — `FieldId(i)`
-/// is head position `i` (`docs/architecture/20-query-ir.md` § engine recursion; the
-/// positional reading `lean/Bumbledb/Exec/Reach.lean: tupleFact`
-/// promises). Everything else is the conjunctive lowering, verbatim.
+/// is head position `i`. Everything else is the conjunctive lowering, verbatim.
 #[must_use]
 pub fn normalize_rules<'a>(
     schema: &Schema,
@@ -30,8 +28,6 @@ pub fn normalize_rules<'a>(
         .collect()
 }
 
-/// Lowers one rule — exactly the conjunctive query's lowering, over the
-/// rule's own variable scope.
 fn normalize_rule(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
@@ -40,8 +36,6 @@ fn normalize_rule(
     normalize_rule_with(schema, signatures, rule, rule.classified_comparisons())
 }
 
-/// [`normalize_rule`]'s body over an explicit comparison list — the one
-/// extra caller is the ray probe, whose comparisons are not the rule's.
 fn normalize_rule_with(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
@@ -71,9 +65,6 @@ fn normalize_rule_with(
         ));
     }
 
-    // One anti-probe descriptor per negated occurrence: the probe keys are
-    // its variable bindings; its constant bindings became its filter list
-    // above, evaluated inside the probe.
     let anti_probes: Vec<AntiProbe> = occurrences[positive..]
         .iter()
         .map(|occurrence| AntiProbe {
@@ -89,17 +80,11 @@ fn normalize_rule_with(
         placed
     };
 
-    // The binding-slot widths — the two-slot interval layout, decided at
-    // [`SlotWidth`] and exported here to the plan witness.
     let slot_widths: BTreeMap<VarId, SlotWidth> = rule
         .var_types()
         .map(|(var, value_type)| (var, SlotWidth::of(value_type)))
         .collect();
 
-    // Nothing single-occurrence survives to the residual list
-    // (docs/architecture/20-query-ir.md, § normalization step 5) — across
-    // every residual kind: whole-value, decomposed word, and Allen mask
-    // comparisons.
     debug_assert!(
         residuals
             .iter()
@@ -126,11 +111,6 @@ fn normalize_rule_with(
             })
     );
 
-    // The statically-empty fold (fold.rs), last: with every comparison
-    // placed, each participating occurrence's constant filters fold per
-    // slot and the contradiction rules judge the rule on constants —
-    // stage-2-known emptiness becomes the rule's verdict
-    // (docs/architecture/20-query-ir.md, § normalization).
     let dead = {
         let mut span = crate::obs::span(crate::obs::names::NORMALIZE_FOLD);
         let dead = super::fold::fold(schema, &mut occurrences);
@@ -149,22 +129,14 @@ fn normalize_rule_with(
     }
 }
 
-/// Whether a binding is a **membership** position: an interval field bound
-/// to an element-typed term — the term is a point in the field's interval,
-/// never its value (`docs/architecture/20-query-ir.md`, the membership
-/// rule; validation resolved every term's type).
 fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
     field_type.is_interval() && !term_type.is_interval()
 }
 
-/// Lowers one atom (positive or negated — the rules are identical; only
-/// the role differs) into an occurrence: variable positions plus the
-/// filters lowered out of its constant, repeated-variable, and membership
-/// bindings.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the two-pass binding walk, one arm per term kind
+)] 
 fn lower_atom(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
@@ -174,11 +146,7 @@ fn lower_atom(
     atom: &Atom,
 ) -> Occurrence {
     let occ_id = OccId(u16::try_from(idx).expect("validated: occurrence count fits u16"));
-    // Field types come from the stored relation, or — for an `Interior` atom
-    // — from the target's sealed signature columns (`FieldId(i)` is head
-    // position `i`, typed by `Predicate.columns[i].ty`; the literal
-    // encodings are value-driven, so a predicate column lowers exactly
-    // as a stored field of its type does).
+
     let field_type = |field: FieldId| -> &ValueType {
         match atom.source {
             crate::ir::AtomSource::Edb(relation_id) => {
@@ -190,10 +158,6 @@ fn lower_atom(
         }
     };
 
-    // Pass 1 — variable positions: the first *domain* binding of each
-    // variable (a scalar field, or an interval field read by value).
-    // Membership positions bind no variable — they are conditions, lowered
-    // to filters in pass 2.
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
@@ -206,7 +170,6 @@ fn lower_atom(
         }
     }
 
-    // Pass 2 — filters, in binding order.
     let mut filters = Vec::new();
     let mut point_vars = Vec::new();
     for (field, term) in &atom.bindings {
@@ -214,11 +177,7 @@ fn lower_atom(
         match term {
             Term::Var(var) => {
                 if is_membership(field_type, witness.var_type(*var)) {
-                    // Membership: `start ≤ var < end`. With the point
-                    // variable scalar-bound in this atom, the condition is
-                    // a same-fact field composition; otherwise it reads the
-                    // variable's binding once bound (the point-membership
-                    // scan, docs/architecture/40-execution.md).
+
                     match vars.iter().find(|(_, v)| v == var) {
                         Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
                             interval: (*field).into(),
@@ -227,9 +186,7 @@ fn lower_atom(
                         None => point_vars.push((*field, *var)),
                     }
                 } else {
-                    // A repeated variable keeps its first field binding as
-                    // the variable position; subsequent positions lower to
-                    // same-fact equality filters.
+
                     let (first_field, _) = vars
                         .iter()
                         .find(|(_, v)| v == var)
@@ -259,17 +216,13 @@ fn lower_atom(
             }
             Term::ParamSet(param) => {
                 if field_type.is_interval() {
-                    // A set holds points (validation anchored the element
-                    // type): any element in the field's interval.
+
                     filters.push(FilterPredicate::AnyPointIn {
                         field: (*field).into(),
                         set: SetConst::ParamSet(*param),
                     });
                 } else {
-                    // The selection-level set marker: an Eq compare the
-                    // plan routes into `selections`, carried as a word set
-                    // at bind (docs/architecture/20-query-ir.md, § param
-                    // sets; executor side is PRD 17).
+
                     filters.push(FilterPredicate::Compare {
                         field: (*field).into(),
                         op: WordCmp::Eq,
