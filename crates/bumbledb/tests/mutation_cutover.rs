@@ -1,6 +1,3 @@
-//! 0.13 write algebra: empty is not a minted interval; poison nests the
-//! original error; a no-op does not mark Applied.
-
 mod common;
 
 use bumbledb::{Error, Fact, Fresh, FreshRange, Value};
