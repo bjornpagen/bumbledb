@@ -5,7 +5,6 @@ use crate::ir::Query;
 
 impl<S> Db<S> {
     /// # Errors
-
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         let txn = self.env.read_txn()?;
         prepare(
