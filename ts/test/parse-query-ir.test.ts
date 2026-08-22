@@ -1,15 +1,9 @@
-/**
- * Host `parseQueryIr` pins: rec/main emptiness, Count-with-over, and
- * `dbPrepare` rejecting an unbranded `QueryIr` object literal.
- */
-
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { DbHandle, QueryIr } from "#native.ts"
 import { native } from "#native.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 
-/** A shape-legal one-var query over relation 0. */
 function plainIr(): QueryIr {
 	return {
 		kind: "cq",
