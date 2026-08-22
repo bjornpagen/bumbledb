@@ -17,7 +17,6 @@ mod sealed {
 /// two orderable scalars: no third element type is constructible.
 /// `PointDomain` class (`lean/Bumbledb/Values.lean: PointDomain`): the
 pub trait Element: sealed::Sealed + Copy + Ord {
-
     const MAX_END: Self;
 
     fn add_width(self, width: u64) -> Option<Self>;
@@ -55,7 +54,6 @@ pub struct Interval<T> {
 }
 
 impl<T: Element> Interval<T> {
-
     pub const MAX_END: T = T::MAX_END;
 
     #[must_use]
@@ -102,7 +100,6 @@ impl<T: Element> Interval<T> {
 }
 
 impl<T: Copy> Interval<T> {
-
     /// beyond the parse invariant `start < end`.
     #[must_use]
     pub const fn bounds(self) -> (T, T) {
@@ -111,14 +108,12 @@ impl<T: Copy> Interval<T> {
 }
 
 impl From<Interval<u64>> for crate::value::Value {
-
     fn from(interval: Interval<u64>) -> Self {
         Self::IntervalU64(interval)
     }
 }
 
 impl From<Interval<i64>> for crate::value::Value {
-
     fn from(interval: Interval<i64>) -> Self {
         Self::IntervalI64(interval)
     }
@@ -164,7 +159,6 @@ mod tests {
 
     #[test]
     fn fixed_parses_the_q2_bound() {
-
         let iv = Interval::<u64>::fixed(3, 5).expect("in-domain fixed value");
         assert_eq!((iv.start(), iv.end()), (3, 8));
         assert!(!iv.is_ray());
@@ -189,7 +183,6 @@ mod tests {
 
     #[test]
     fn one_impl_serves_both_elements() {
-
         fn probe<T: Element>(start: T, width: u64) -> Option<Interval<T>> {
             Interval::fixed(start, width)
         }
