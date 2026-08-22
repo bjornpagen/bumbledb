@@ -10,9 +10,6 @@ pub(super) fn digest_over<'a>(items: impl Iterator<Item = (&'a str, String, &'a 
     digest.finalize()
 }
 
-/// The family-list digest: blake3 over every family's name, query IR
-/// (Debug), and golden SQL — a verify-stamp ingredient. Any change to any
-/// family re-baselines every stamp and report.
 #[must_use]
 pub fn digest() -> [u8; 32] {
     digest_over(
