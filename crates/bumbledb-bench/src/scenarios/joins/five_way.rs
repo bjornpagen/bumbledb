@@ -5,8 +5,6 @@ use bumbledb::{
 use super::ids;
 use super::term::{param, var};
 
-/// j4 — the JOB-shaped 5-way: fact table pinched by three dimension
-/// filters (gender, country, year window) on alternating sides.
 pub(super) fn five_way() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -57,7 +55,7 @@ pub(super) fn five_way() -> Query {
 }
 
 pub(super) fn five_way_params(_: u64) -> Vec<Vec<Value>> {
-    // Gender enum, country enum, year window: tight, mid, wide, empty.
+
     vec![
         vec![
             Value::U64(0),
