@@ -1,5 +1,4 @@
 //! Best-effort citation decoration through a still-live candidate dict.
-
 use crate::error::{CitedCitations, CitedFact, Result, Violation, Violations};
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
