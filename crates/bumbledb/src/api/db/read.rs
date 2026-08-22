@@ -5,12 +5,9 @@ use crate::storage::env::GenerationId;
 
 impl<S> Db<S> {
     /// Runs `f` over one LMDB read lease: a consistent generation for
-    /// every query and scan inside. Reuses the parked reader when no
-    /// commit intervened — same committed bits, no `mdb_txn_begin`.
-    ///
+
     /// # Errors
-    ///
-    /// `Lmdb` on lease open; otherwise whatever `f` returns.
+
     pub fn read<R>(&self, f: impl FnOnce(&ReadInstance<'_, S>) -> Result<R>) -> Result<R> {
         use std::sync::atomic::Ordering;
         let generation = GenerationId::from_storage(self.generation.load(Ordering::Acquire));
@@ -20,8 +17,7 @@ impl<S> Db<S> {
             .ok()
             .and_then(|mut slot| slot.take())
             .and_then(|parked| {
-                // A stale parked lease drops here — freeing its
-                // reader slot and unpinning its pages.
+
                 (parked.generation == generation).then_some(parked.txn)
             });
         let txn = match parked {
@@ -44,9 +40,7 @@ impl<S> Db<S> {
             thread_bound: std::marker::PhantomData,
         };
         let result = f(&instance);
-        // Park the lease and the scratch for the next read — only if
-        // each slot is free. A lease that fails the generation check
-        // drops here, freeing its reader slot; scratch still parks.
+
         let ReadInstance { core, .. } = instance;
         let (source, scratch) = core.into_parts();
         let txn = source.into_txn();
