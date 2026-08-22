@@ -7,24 +7,9 @@ use super::{
 };
 
 impl Executor {
-    /// The leaf fast paths. `None` = declined —
-    /// multi-position forced nodes the sink cannot scan, sinks without
-    /// scan support, byte-column folds — and the generic batch path runs
-    /// instead (conservative by construction: correctness never depends
-    /// on a fast path firing).
-    ///
-    /// MEASURED LAW (cleanup-0.5.0 ruling 6, the Measure phase,
+
     /// 2026-07-19): the leaf-elision
-    /// complex — the single-subatom classification
-    /// (`leaf_precompute.rs`), this dispatcher, and the pinned-row arm
-    /// below — measured **1.69–1.71× generic/elided** end-to-end on a
-    /// mixed pinned+scan self-join (700 answers/exec, warm DRAM,
-    /// interleaved min-of-7, two process runs) against the same plan
-    /// with the classification forced off. The pre-stated bar was
-    /// 1.09 (the crucible ADOPT precedent); the branch is KEEP-AS-LAW
-    /// (`docs/architecture/40-execution.md` § the leaf fast paths).
-    /// **Reverses if:** a ledger-suite A/B on the generic batch
-    /// machinery ever lands within the house bar of this path.
+
     pub(super) fn run_leaf_fast<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -47,12 +32,10 @@ impl Executor {
         }
     }
 
-    /// The pinned-row arm: a batch of exactly one, with every batch
-    /// scaffold skipped — gather, residuals, emit.
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] // the run_node context, unpacked
+    )] 
     fn run_leaf_pinned<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -127,37 +110,6 @@ impl Executor {
         }
     }
 
-    /// The pinned-run arm — the fold pushdown for probe-pinned leaves:
-    /// N probe-pass survivors of ONE parent, each pinned to a single
-    /// leaf row (`Cursor::Row`), gathered and emitted as **one**
-    /// [`LeafBatch`] instead of N batches-of-one. The batch-of-one
-    /// shape paid 53–69 ns/tuple of per-emit scaffolding — bindings
-    /// row restore, `run_node` dispatch, per-batch sink staging — for
-    /// exactly one row each (the o4/j5 lanes); here that scaffolding
-    /// amortizes over the run and the sink's constant-group folds see
-    /// real batches (the 0.63 ns/row gather-fold floor). The
-    /// `probe_pass.rs:498` gravestone litigated routing-loop copies
-    /// only, never this aggregation.
-    ///
-    /// Contract (the `probe_pass` leaf arm — the caller):
-    /// - `bindings` is the shared parent row. The per-survivor words
-    ///   the recursive path would have bound per element — the
-    ///   penultimate cover's keys — arrive as batch words instead:
-    ///   `outer_keys` entry-major, one row of `key_slots.len() −
-    ///   leaf_arity` words per position.
-    /// - `key_slots` is the combined slot table: the outer words'
-    ///   slots first, then the leaf cover's own (`slot_map[node][0]`)
-    ///   — asserted below. The sink resolves its sources against the
-    ///   combined table, so outer-varying group keys and fold inputs
-    ///   read the batch, never a stale binding.
-    /// - The sink must be unable to skip (aggregates; the tripwire
-    ///   below): one batched emit cannot attribute a `SkipSuffix` to
-    ///   one survivor's D2 origin, and no aggregate may skip anyway.
-    /// - Leaf residuals are evaluated here against the combined
-    ///   layout; anti-probes, membership probes, and multi-word values
-    ///   never reach this arm (`leaf_precompute.rs` classifies them
-    ///   off the fast paths, and the caller routes through
-    ///   [`Executor::run_leaf_fast`]'s decline in that case).
     #[cfg_attr(
         not(test),
         expect(
@@ -170,7 +122,7 @@ impl Executor {
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] // the run_node context, unpacked
+    )] 
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
@@ -210,8 +162,7 @@ impl Executor {
         counters.batch(node_idx, n);
         counters.phase_start(node_idx, JoinPhase::Descend);
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
-        // Assemble combined entries: the outer words, then the pinned
-        // row's key words gathered straight off the columns.
+
         grow_scratch(&mut scratch.entry_keys, n * arity);
         for (i, &position) in positions.iter().enumerate() {
             let row = &mut scratch.entry_keys[i * arity..(i + 1) * arity];
@@ -222,11 +173,7 @@ impl Executor {
         scratch
             .survivors
             .extend(0..u32::try_from(n).expect("batch fits u32"));
-        // Leaf residuals against the combined layout: a `Slot` source
-        // naming an outer word's slot re-aims at its batch word (that
-        // slot is batch-varying here, not a binding); everything else
-        // reads as the pinned arm does. Resolution is per (residual,
-        // side) — never per entry.
+
         let residual_lists = match &self.leaf {
             super::LeafPrecompute::Fast {
                 scan_residuals,
@@ -288,8 +235,7 @@ impl Executor {
                 key_slots,
                 bindings,
             };
-            // The contract tripwire above: this arm never Licensed-skips,
-            // so the sink consumes the whole batch.
+
             let flow = sink.emit_batch(&batch);
             debug_assert_eq!(flow, Flow::Continue, "non-skipping sinks never skip");
             for _ in 0..scratch.survivors.len() {
