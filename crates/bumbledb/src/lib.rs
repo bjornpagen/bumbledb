@@ -2,9 +2,9 @@
 //! LMDB, executing conjunctive queries with Free Join.
 //! The surface is plain data in, plain data out:
 //! - Declare a schema with the [`schema!`] macro — its `pub Name;` header
-//! names a unit struct implementing [`Theory`], and the body expands
-//! (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
-//! `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
+//!   names a unit struct implementing [`Theory`], and the body expands
+//!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
+//!   `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
@@ -42,10 +42,8 @@
 //! cargo clippy --workspace --all-targets -- -D warnings
 //! cargo test --workspace
 //! ```
-
 #![feature(try_blocks)]
 #![feature(portable_simd)]
-
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 
