@@ -73,16 +73,13 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         rec: None,
     };
     vec![
-
         query(assemble(vec![entry_arm(0), entry_arm(2)])),
         query(assemble(vec![entry_arm(0), entry_arm(1), entry_arm(2)])),
-
         query(assemble(vec![
             posting_arm(AT_BASE, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 4, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 2, vec![FindTerm::Var(VarId(0))]),
         ])),
-
         // (ruled 2026-07-23, R1 — `CountAcrossRules`); the flipped
         // refusal row lives in [`error_parity`].
         query(assemble(vec![
@@ -196,7 +193,6 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     };
     (0..12)
         .map(|round| {
-
             let joined = rng.chance(1, 2);
             let mut atoms = vec![mandate_atom()];
             if joined {
@@ -379,8 +375,9 @@ pub(super) fn algebra_ops(seed: u64, sizes: &Sizes) -> (Vec<Op>, u64) {
 }
 
 enum Expected {
-
-    DnfCap { naive_width: usize },
+    DnfCap {
+        naive_width: usize,
+    },
 
     Vanished,
 
@@ -389,7 +386,9 @@ enum Expected {
     FullMask,
 
     /// typed refusal since R1 (the flipped acceptance row).
-    CountAcrossRules { rules: usize },
+    CountAcrossRules {
+        rules: usize,
+    },
 }
 
 fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
@@ -420,19 +419,16 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
     };
     vec![
         {
-
             let q = Query::single(posting_rule(vec![wide_or(17)]));
             let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (wide Or)", q, Expected::DnfCap { naive_width })
         },
         {
-
             let q = Query::single(posting_rule(vec![wide_or(5), wide_or(4)]));
             let naive_width = dnf_width(&q.rules()[0]);
             ("dnf cap (product)", q, Expected::DnfCap { naive_width })
         },
         (
-
             "vanished query (empty Or)",
             Query::single(posting_rule(vec![
                 ConditionTree::Or(vec![]),
@@ -451,7 +447,6 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             Expected::FullMask,
         ),
         {
-
             let count_head = || vec![FindTerm::Var(VarId(0)), FindTerm::Count];
             let arm = |floor: i64| Rule {
                 finds: count_head(),
