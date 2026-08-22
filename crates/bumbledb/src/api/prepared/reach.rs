@@ -1,10 +1,9 @@
-//! The linear-reach driver (`docs/architecture/40-execution.md` § the
-//! linear reach driver): one rec SCC, interiors then
+//! The linear-reach driver: one rec SCC, interiors then
 //! rec then main. Round 0 runs the base arms through the ordinary rule
 //! loop; rounds ≥ 1 run each rec arm against the watermark frontier
 //! (the unique self-atom is the marked delta occurrence). An empty Δ ends the rec
-//! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
 //! Interiors-only never enters this module's loop.
+//! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
 
 use std::sync::Arc;
 
@@ -30,11 +29,6 @@ pub const DEFAULT_REACH_ROUNDS: u32 = 1 << 16;
 /// to every derived sink (each interior, then the rec table).
 pub const DEFAULT_DERIVED_TUPLES: u64 = 10_000_000;
 
-/// The rec's prepared artifact: base arms (round 0), rec arms
-/// (rounds ≥ 1, each one [`super::RecArm`]), and the rec's
-/// projection sink. Main lives on [`super::PreparedPipeline::Reach`],
-/// not here. Tuples budget lives on [`PreparedQuery`]; rounds budget
-/// lives on the Reach pipeline arm.
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
     pub(super) rec: Vec<RecArm>,
@@ -44,9 +38,6 @@ pub(crate) struct ReachDriver {
     pub(super) scratch: RecPingPong,
 }
 
-/// Per-occurrence derived images for one plan unit. Only live derived
-/// occurrences have a slot — EDB and discharged occurrences are absent,
-/// not `None`.
 #[derive(Default)]
 pub(super) struct OccImages {
     slots: Vec<(usize, Arc<RelationImage>)>,
@@ -71,8 +62,6 @@ impl OccImages {
     }
 }
 
-/// How a derived occurrence binds this round. Rec carries both images
-/// so delta-without-acc is unrepresentable.
 #[derive(Clone, Copy)]
 enum DerivedBind<'a> {
     Finished,
@@ -118,9 +107,6 @@ impl DerivedImages {
     }
 }
 
-/// Rec ping-pong: two working transients each for Δ and accumulated,
-/// flipped each round so buffers recycle. `round_delta` / `round_acc`
-/// are locals in [`run_reach`], not fields.
 #[derive(Default)]
 pub(super) struct RecPingPong {
     delta_a: TransientImage,
@@ -156,7 +142,6 @@ impl RecPingPong {
     }
 }
 
-/// Shared per-run context (split borrows of the prepared query).
 #[derive(Clone, Copy)]
 struct RunCtx<'a, Cat, Img> {
     schema: &'a Schema,
@@ -168,8 +153,7 @@ struct RunCtx<'a, Cat, Img> {
 }
 
 impl<S> PreparedQuery<S> {
-    /// Interiors in declaration order, then rec. One derived tuples
-    /// ledger. Interiors-only never enters [`run_reach`].
+
     #[expect(
         clippy::too_many_lines,
         reason = "the derived phase reads as one protocol: interiors, then rec"
@@ -188,7 +172,7 @@ impl<S> PreparedQuery<S> {
             }
         };
         self.derived.begin(derived_count);
-        // Main's Interior views still hold last execution's published
+
         // Arcs; drop them before refill so TransientImage can get_mut.
         {
             let retired = &mut self.derived.retired;
@@ -300,8 +284,6 @@ impl<S> PreparedQuery<S> {
         Ok(ran)
     }
 
-    /// Fills `derived.occ_images` for a main-rule plan from finished
-    /// interiors (and finished rec).
     pub(super) fn fill_main_images(&mut self, rule_idx: usize) {
         let Some(plan) = main_plan(self.pipeline.main_rules(), rule_idx) else {
             self.derived.occ_images.clear();
@@ -311,9 +293,6 @@ impl<S> PreparedQuery<S> {
     }
 }
 
-/// Rec least fixpoint. Interiors-only never calls this. The driver is
-/// borrowed from the Reach arm so the match stays matched — derived
-/// scratch is a sibling field of the pipeline.
 #[expect(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
@@ -366,7 +345,6 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
     let mut round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
     let mut round_emits_before = counters.emits();
 
-    // Round 0: base arms into the rec sink.
     for rule_idx in 0..driver.base.len() {
         fill_finished_images(&driver.base[rule_idx], derived);
         ran |= run_into_projection(
@@ -529,7 +507,6 @@ fn fill_plan_images(
     }
 }
 
-/// Runs one plan unit into a projection sink (interior or rec base).
 #[expect(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
@@ -572,7 +549,6 @@ fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
     }
 }
 
-/// Runs one rec arm's Free Join into a projection sink.
 #[expect(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
