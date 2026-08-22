@@ -69,8 +69,7 @@ fn a_fresh_store_is_format_8() {
 
 #[test]
 fn create_refuses_an_existing_environment() {
-    // Re-initializing `_meta` over live data would reset the tx id and
-    // dictionary counter — create must refuse, open must still work.
+
     let dir = TempDir::new("env-create-refuses");
     let schema = schema();
     drop(Environment::create(dir.path(), &schema).expect("create"));
@@ -151,10 +150,6 @@ fn generation_is_zero_on_fresh_database() {
     assert_eq!(rtxn.generation().expect("generation").value(), 0);
 }
 
-/// The reader-slot cap is a mechanism, not a promise: >126 concurrent
-/// read snapshots — past LMDB's default reader table — open and hold
-/// simultaneously under the fixed [`MAX_READERS`]. Threads rendezvous on
-/// a barrier so every snapshot is provably live at once, then release.
 #[test]
 fn holds_more_read_snapshots_than_lmdb_default() {
     const READERS: usize = 160;
@@ -173,9 +168,6 @@ fn holds_more_read_snapshots_than_lmdb_default() {
     });
 }
 
-/// The snapshot past the reader table is the typed error naming the
-/// limit — cheap to provoke because `MDB_NOTLS` binds slots to
-/// transaction objects, so one thread exhausts the table alone.
 #[test]
 fn the_snapshot_past_the_reader_table_is_a_typed_error() {
     let dir = TempDir::new("env-readers-full");
@@ -199,7 +191,6 @@ fn the_snapshot_past_the_reader_table_is_a_typed_error() {
     env.read_txn().expect("snapshot after release");
 }
 
-/// Forges the `_meta` of a freshly created store at `dir` and closes it.
 fn forge_meta(dir: &TempDir, forge: impl FnOnce(&Environment, &mut heed::RwTxn)) {
     let env = Environment::create(dir.path(), &schema()).expect("create fixture store");
     let mut wtxn = env.env.write_txn().expect("txn");
@@ -230,9 +221,9 @@ fn a_v4_store_is_a_format_mismatch() {
     );
 }
 
-/// The capacity-cutover refusal (format v7, ruled 2026-07-24): a
-/// pre-cutover store refuses on every open surface with the typed
-/// `FormatMismatch { found: 7 }`. There is NO migration read arm.
+/// The capacity-cutover refusal (format v7, ruled 2026-07-24): a pre-cutover
+/// store refuses on every open surface with the typed `FormatMismatch { found:
+/// 7 }`.
 #[test]
 fn a_format_7_store_is_a_format_mismatch_on_every_open_surface() {
     let dir = TempDir::new("env-marker-v7-pre-admission");
@@ -279,8 +270,6 @@ fn a_pre_cutover_v6_store_is_a_format_mismatch() {
     );
 }
 
-/// A pre-v5 store that also lacks the database roster refuses
-/// `FormatMismatch`: version precedes the roster check.
 #[test]
 fn a_v4_store_without_the_database_roster_is_a_format_mismatch() {
     let dir = TempDir::new("env-marker-v4-no-roster");
@@ -311,9 +300,6 @@ fn a_v4_store_without_the_database_roster_is_a_format_mismatch() {
     );
 }
 
-/// A stored `u64::MAX` dictionary counter —
-/// the miss sentinel, never mintable — is typed Corruption at the
-/// read, not an assert.
 #[test]
 fn a_corrupt_dict_counter_is_typed_corruption() {
     let dir = TempDir::new("env-corrupt-dict-counter");
@@ -347,9 +333,6 @@ fn a_corrupt_dict_counter_is_typed_corruption() {
     ));
 }
 
-/// Mis-sized meta values are the malformed-value corruption NAMING the
-/// key — never `MetaMissing`. The two states point at opposite remedies,
-/// so one error value never encodes both.
 #[test]
 fn a_mis_sized_meta_value_is_malformed_never_missing() {
     use crate::error::CorruptionError;
@@ -397,8 +380,6 @@ fn a_mis_sized_meta_value_is_malformed_never_missing() {
     );
 }
 
-/// The half-created store (empty root, no `_meta`) is classified ONCE:
-/// open refuses it with `AlreadyInitialized` — never `Corruption`.
 #[test]
 fn a_half_created_store_is_not_initialized_on_open() {
     let dir = TempDir::new("env-half-created-taxonomy");
