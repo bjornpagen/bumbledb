@@ -1,43 +1,6 @@
-//! The writes lane: insert stream, commits/sec at batch 1/10/100/1000, and
-//! delete throughput, across the two durability lanes — REPORT-class
-//! ([`crate::lanes`] carries the charter: numbers are claimed only from
-//! the owner's measurement sessions; a tool run never times for
-//! publication).
-//!
 //! The durability axis is [`crate::duralane::DurabilityLane`] — the one
-//! constructor of both sides' config and the authority for every pragma
-//! (`docs/architecture/60-validation.md`; the writes-local twin enum
-//! died into it, finding 071) — so a lane/pragma cross-match is
-//! unrepresentable, and every report row rides inside a lane object
-//! carrying its `lane` and `sqlite_sync` labels: a number can never be
-//! quoted without its durability context.
-//!
-//! **The `SQLite` parity config, per lane** (carried in the report
-//! labels): both lanes load their oracle twin through
-//! [`crate::corpus::load_sqlite`] — WAL asserted, `synchronous=FULL`,
-//! `fullfsync=ON`, `checkpoint_fullfsync=ON`, 256 MiB page cache,
-//! `temp_store=MEMORY`, prepared statements reused via `prepare_cached`,
-//! `ANALYZE` after load, `wal_checkpoint(TRUNCATE)` after load — then
-//! [`DurabilityLane::configure`] applies the lane's whole session
-//! envelope (the sync trio per arm, plus the shared whole-file mmap and
-//! `wal_autocheckpoint=0`) and [`DurabilityLane::assert_parity`] reads
-//! the pragmas back: a misconfigured twin fails before flattering
-//! anyone.
-//!
-//! **Post-state verification is arithmetic over representations, not
-//! spot-checking:** both engines consume the identical seeded
-//! posting-body stream (one [`Rng`], one seed constant per family), so
-//! the expected post-state is exactly `corpus + inserted − deleted`
-//! counts, plus a body-multiset equality with ids projected OUT — the
-//! engine fresh-mints ids (never reissued) and `SQLite` mints `MAX+1`;
-//! those are different representations of the same bodies, so comparing
-//! bodies, not ids, is the honest equality ([`verify_post_state`]).
-//!
-//! **The delete lane is delete-bearing BY CONTRACT** (the
-//! [`crate::writebench::posting_swap`] precedent): a no-op delete
-//! returns `Err` inside the write closure, so the transaction aborts
-//! whole and the lane can never silently degrade into an insert-only
-//! measurement.
+//! `ANALYZE` after load, `wal_checkpoint(TRUNCATE)` after load — then the
+//! pragmas back: a misconfigured twin fails before flattering
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -55,7 +18,6 @@ use crate::schema::{Ledger, Posting, PostingId, ids, schema};
 use crate::sqlite_run::POSTING_INSERT;
 use crate::{clockproxy, corpus, sqlmap, trace_out, writebench};
 
-/// The whole writes report, plain data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WritesReport {
     pub provenance: Provenance,
@@ -65,7 +27,6 @@ pub struct WritesReport {
     pub lanes: Vec<LaneReport>,
 }
 
-/// One durability lane's ladder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaneReport {
     pub lane: &'static str,
@@ -73,7 +34,6 @@ pub struct LaneReport {
     pub rows: Vec<WriteRow>,
 }
 
-/// One (family, batch) cell, both engines.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteRow {
     pub name: String,
@@ -106,8 +66,6 @@ fn push_row(out: &mut String, row: &WriteRow) {
     out.push('}');
 }
 
-/// The machine-consumable writes artifact — hand-rolled, like
-/// `report/json_out.rs`.
 #[must_use]
 pub fn to_json(report: &WritesReport) -> String {
     let mut out = String::new();
@@ -139,10 +97,6 @@ pub fn to_json(report: &WritesReport) -> String {
     out
 }
 
-/// The human artifact: one table per lane, the parity labels in the
-/// heading so no number travels without its durability context, then
-/// the traced twin samples' flame embeds (`--trace`) — `(lane, family,
-/// table)` triples, artifacts under `<out>/trace/writes/<lane>/`.
 fn to_markdown(report: &WritesReport, flames: &[(&'static str, String, String)]) -> String {
     let mut out = String::new();
     let _ = writeln!(
@@ -185,21 +139,12 @@ fn to_markdown(report: &WritesReport, flames: &[(&'static str, String, String)])
     out
 }
 
-/// The commit ladder's seed page (the writebench `cfg.seed ^
-/// 0x0115_000N` idiom, this lane's own page): each batch point draws its
-/// own stream — `cfg.seed ^ COMMIT_SEED ^ batch` — consumed verbatim by
-/// BOTH engines, so their inserted bodies are identical by construction.
 const COMMIT_SEED: u64 = 0x0117_0000;
 
-/// The delete pre-phase's seed page — its own page, so the ladder and
-/// delete streams never overlap.
 const DELETE_SEED: u64 = 0x0117_0100;
 
-/// The `SQLite` posting delete, mirroring [`POSTING_INSERT`]'s shape.
 const POSTING_DELETE: &str = "DELETE FROM \"Posting\" WHERE \"id\" = ?1";
 
-/// One committed transaction per sample, so the mean sample time
-/// inverts to commits/sec.
 #[expect(
     clippy::cast_precision_loss,
     reason = "reporting accepts lossy integer-to-float conversion"
@@ -208,8 +153,6 @@ fn commits_per_sec(stats: &Stats) -> f64 {
     1e9 / (stats.mean_ns.max(1) as f64)
 }
 
-/// One ladder cell from its pair of measurements: `commits_per_sec =
-/// 1e9 / mean_ns`, `rows_per_sec = commits_per_sec × batch`.
 fn ladder_row(
     name: String,
     batch: u32,
@@ -232,8 +175,6 @@ fn ladder_row(
     }
 }
 
-/// The `SQLite` side's `MAX+1` id mint (the `sqlite_run/commits.rs`
-/// shape): dense corpus ids make `MAX+1` a valid fresh id.
 fn next_posting_id(conn: &Connection) -> Result<u64, String> {
     conn.query_row(
         "SELECT COALESCE(MAX(\"id\"), -1) + 1 FROM \"Posting\"",
@@ -244,7 +185,6 @@ fn next_posting_id(conn: &Connection) -> Result<u64, String> {
     .map_err(|e| format!("next id: {e}"))
 }
 
-/// One posting body as the `SQLite` insert's positional params.
 fn posting_params(posting: &Posting) -> [rusqlite::types::Value; 6] {
     use rusqlite::types::Value as Sql;
     [
@@ -257,12 +197,6 @@ fn posting_params(posting: &Posting) -> [rusqlite::types::Value; 6] {
     ]
 }
 
-/// `commit_b{batch}` on the engine: one sample = one `db.write`
-/// reserving and inserting `batch` seeded postings — the
-/// `commit_batch_bumbledb` shape generalized over the ladder. The rng
-/// threads in from the cell (one stream per batch point, shared with
-/// the mirror), so the traced twin sample continues it instead of
-/// re-drawing bodies.
 fn commit_engine(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -287,10 +221,6 @@ fn commit_engine(
     })
 }
 
-/// `commit_b{batch}` on `SQLite`: one sample = `BEGIN IMMEDIATE` +
-/// `batch` bound executions of the reused prepared insert + `COMMIT`,
-/// drawing from THE SAME rng stream as the engine and minting ids
-/// `MAX+1` (the `sqlite_run/commits.rs` shape).
 fn commit_sqlite(
     conn: &Connection,
     cfg: GenConfig,
@@ -318,15 +248,6 @@ fn commit_sqlite(
     })
 }
 
-/// The delete pre-phase (untimed): inserts exactly `total` seeded
-/// postings through the engine path in chunked commits, RECORDING each
-/// committed body; then mirrors the SAME bodies (recorded, never
-/// re-drawn) into `SQLite`, ids minted `MAX+1` and remembered in a
-/// parallel deque. These are the lane's OWN rows — the corpus's
-/// `PostingTag`s reference corpus ids only, so deleting them is
-/// containment-safe by construction (the `posting_swap` precedent).
-/// Rows are consumed in insertion order on both sides, so the surviving
-/// multisets stay equal.
 fn seed_delete_rows(
     db: &Db<Ledger>,
     conn: &Connection,
@@ -379,18 +300,12 @@ fn seed_delete_rows(
     Ok((recorded, mirrored))
 }
 
-/// One timed delete commit on the engine: pops `batch` recorded
-/// postings and deletes each inside ONE `db.write`. Delete-bearing BY
-/// CONTRACT (the [`crate::writebench::posting_swap`] precedent): a
-/// no-op delete returns `Err` INSIDE the closure — the in-closure
-/// sentinel abort drops the delta whole, so a refused delete never
-/// commits the batch's earlier deletes, and the lane can never silently
-/// degrade into an insert-only (or partial) measurement.
-///
+/// Delete-bearing BY CONTRACT (the [`crate::writebench::posting_swap`]
+/// precedent): a no-op delete returns `Err` INSIDE the closure — the in-closure
+/// sentinel abort drops the delta whole, so a refused delete never commits the
+/// batch's earlier deletes, and the lane can never silently degrade into an
+/// insert-only (or partial) measurement.
 /// # Panics
-///
-/// On an undersized deque (a programmer error — the pre-phase sizes it
-/// to `(warmups + samples) × batch` exactly).
 fn delete_recorded(
     db: &Db<Ledger>,
     recorded: &mut VecDeque<Posting>,
@@ -402,10 +317,7 @@ fn delete_recorded(
                 .pop_front()
                 .expect("the pre-phase sized the deque to (warmups + samples) × batch exactly");
             if tx.delete([&victim])?.changed() == 0 {
-                // The in-closure sentinel abort (the posting_swap
-                // idiom): returning `Err` here drops the delta whole,
-                // so nothing this sample deleted ever reaches the
-                // store.
+
                 return Err(bumbledb::Error::from(std::io::Error::other(
                     "the delete lane must be delete-bearing: a recorded posting was absent",
                 )));
@@ -420,9 +332,6 @@ fn delete_recorded(
     .map_err(|e| format!("delete_b{batch}: {e:?}"))
 }
 
-/// `delete_b{batch}` on `SQLite`: one sample = `BEGIN IMMEDIATE` +
-/// `batch` bound deletes popping the parallel deque — each asserted to
-/// affect exactly one row — + `COMMIT`.
 fn delete_sqlite(
     conn: &Connection,
     mirrored: &mut VecDeque<u64>,
@@ -457,11 +366,11 @@ fn delete_sqlite(
 }
 
 /// `insert_stream` on `SQLite`, lane-local (`sqlite_run::insert_stream`
-/// hardwires [`corpus::configure_sqlite`] = FULL, so this variant
-/// applies the lane's pragmas after the standing config on every
-/// throwaway file): pre-seeded throwaway files (the corpus minus
-/// postings, built before any timing), the full posting stream timed as
-/// a host loop of 4096-row transactions per sample.
+/// hardwires [`corpus::configure_sqlite`] = FULL, so this variant applies the
+/// lane's pragmas after the standing config on every throwaway file):
+/// pre-seeded throwaway files (the corpus minus postings, built before any
+/// timing), the full posting stream timed as a host loop of 4096-row
+/// transactions per sample.
 fn insert_stream_sqlite(
     cfg: GenConfig,
     scratch: &Path,
@@ -498,13 +407,6 @@ fn insert_stream_sqlite(
     })
 }
 
-/// The insert-stream throwaway symmetry re-check: the stream load runs
-/// against throwaway pairs, not the lane db, so [`verify_post_state`]
-/// cannot see it — its generator-stream count is already pinned by
-/// writebench's own test, and this cheap witness re-opens pair 0 (the
-/// durable lane through `Db::open`, the nosync lane through
-/// `Db::open_nosync`) and confirms both sides hold exactly the posting
-/// mass.
 fn verify_insert_stream_pair(
     scratch: &Path,
     lane: DurabilityLane,
@@ -534,7 +436,6 @@ fn verify_insert_stream_pair(
     Ok(())
 }
 
-/// One posting cell as `u64`, with the arm named on mismatch.
 fn cell_u64(row: &[Value], index: usize) -> Result<u64, String> {
     match row.get(index) {
         Some(Value::U64(v)) => Ok(*v),
@@ -544,7 +445,6 @@ fn cell_u64(row: &[Value], index: usize) -> Result<u64, String> {
     }
 }
 
-/// One posting cell as `i64`, with the arm named on mismatch.
 fn cell_i64(row: &[Value], index: usize) -> Result<i64, String> {
     match row.get(index) {
         Some(Value::I64(v)) => Ok(*v),
@@ -554,25 +454,9 @@ fn cell_i64(row: &[Value], index: usize) -> Result<i64, String> {
     }
 }
 
-/// A posting body with the id projected out — the shared representation
-/// both engines' minted rows reduce to.
 type Body = (u64, u64, u64, i64, i64);
 
-/// The post-state gate — arithmetic over representations, not
-/// spot-checking:
-///
-/// 1. engine `scan(Posting).count()` == sqlite `COUNT(*)` ==
-///    `expected_postings` (corpus + inserted − deleted, tracked exactly
-///    by the runners);
-/// 2. body-multiset equality above the corpus id ceiling, ids projected
-///    OUT by design: the engine fresh-mints ids (never reissued) and
-///    the mirror mints `MAX+1` — different representations of the same
-///    bodies, so the (entry, account, instrument, amount, at)
-///    projection is the honest shared equality (sorted-vec compare).
-///
 /// # Errors
-///
-/// Any inequality, naming the counts (the caller brands the lane).
 fn verify_post_state(
     db: &Db<Ledger>,
     conn: &Connection,
@@ -637,17 +521,11 @@ fn verify_post_state(
     Ok(())
 }
 
-/// One durability lane, whole: seed the twin pair, run the commit
-/// ladder, run the delete ladder, verify the post-state, then
-/// `insert_stream` — LAST, always (seconds of fsync leave the deepest
-/// clock shadow; nothing measures after it — the `write_families` order
-/// pin, carried here by the same `debug_assert!`). Under `--trace` every
-/// ladder cell's timed pair is followed by its traced twin sample
-/// ([`trace_out::traced_twin`]: rng streams and delete deques carry the
-/// one extra op on BOTH engines, so the post-state arithmetic counts
-/// it); `insert_stream` stays untraced by decision — a traced stream
-/// sample would be seconds of fsync for a profile the commit ladder
-/// already carries.
+/// One durability lane, whole: seed the twin pair, run the commit ladder, run
+/// the delete ladder, verify the post-state, then `insert_stream` — LAST,
+/// always (seconds of fsync leave the deepest clock shadow; nothing measures
+/// after it — the `write_families` order pin, carried here by the same
+/// `debug_assert!`).
 #[expect(
     clippy::too_many_lines,
     reason = "one durability lane, whole — the measured order is the content"
@@ -663,37 +541,24 @@ fn run_lane(
     std::fs::create_dir_all(scratch).map_err(|e| format!("scratch: {e}"))?;
     let sizes = Sizes::of(cfg.scale);
 
-    // (a) The seeded referenced-rows store: the whole corpus (the
-    // non-posting containment targets PLUS the posting mass and its
-    // tags), so the post-state arithmetic starts from the known corpus
-    // counts.
     eprintln!(
         "bench: writes {} — loading the scratch corpus",
         lane.label()
     );
     let db = lane.store_mode().create(&scratch.join("db"), Ledger)?;
     corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load ({}): {e:?}", lane.label()))?;
-    // The oracle twin: fresh file, the standing parity config
-    // (WAL/FULL/fullfsync/cache/temp_store), full DDL + extension DDL,
-    // every relation loaded, ANALYZE, truncating WAL checkpoint — then
-    // the lane's pragmas.
+
     let (conn, _) = corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg)
         .map_err(|e| format!("oracle load ({}): {e}", lane.label()))?;
     lane.configure(&conn)?;
     lane.assert_parity(&conn)?;
 
-    // The traced twin sample is one more invocation per cell, on BOTH
-    // engines — counted here so the post-state arithmetic stays exact.
     let calls = u64::from(proto.warmups + proto.samples) + u64::from(trace_dir.is_some());
     let mut inserted = 0u64;
     let mut deleted = 0u64;
     let mut rows = Vec::new();
     let mut flames: Vec<(String, String)> = Vec::new();
 
-    // (b) The commit ladder: one family per batch point, both engines
-    // bracketed by one proxy stamp (the write_families precedent), then
-    // the cell's traced twin sample — the SAME rng streams continue, so
-    // the traced commit inserts fresh bodies both twins agree on.
     for &batch in batches {
         let name = format!("commit_b{batch}");
         eprintln!("bench: writes {} — {name}", lane.label());
@@ -723,9 +588,6 @@ fn run_lane(
         ));
     }
 
-    // (c) Delete throughput: the same batch ladder, delete-bearing by
-    // contract; the pre-phase is untimed. The traced twin sample pops
-    // the deques' final batch — the drain check still holds exactly.
     for &batch in batches {
         let name = format!("delete_b{batch}");
         eprintln!("bench: writes {} — {name}", lane.label());
@@ -765,14 +627,13 @@ fn run_lane(
     }
 
     // (e) Post-state verification — BEFORE insert_stream: the stream
-    // load runs on throwaway stores, not the lane db (its pairs verify
+
     // in the symmetry re-check below). The gate must pass before the
-    // lane's rows are accepted.
+
     let expected = sizes.postings + inserted - deleted;
     verify_post_state(&db, &conn, sizes.postings, expected)
         .map_err(|e| format!("post-state ({}): {e}", lane.label()))?;
 
-    // (d) INSERT STREAM — LAST in the lane (the fsync-shadow law).
     eprintln!("bench: writes {} — insert_stream", lane.label());
     let stream_scratch = scratch.join("insert-stream");
     std::fs::create_dir_all(&stream_scratch).map_err(|e| format!("insert_stream scratch: {e}"))?;
@@ -792,7 +653,7 @@ fn run_lane(
         theirs.stats,
         Some(ghz.into()),
     ));
-    // The write-order pin: insert_stream is the last row, always.
+
     debug_assert!(
         rows.iter()
             .position(|row| row.name == "insert_stream")
@@ -809,26 +670,16 @@ fn run_lane(
     ))
 }
 
-/// The writes lane entry point: device honesty first, then one
-/// [`run_lane`] per requested lane in args order (the default runs
-/// `Nosync` first and `Durable` last — the fsync-shadow law lifted to
-/// the lane axis: the durable lane's seconds of fsync leave the deepest
 /// clock shadow, so they land after every nosync sample), then the two
-/// artifacts.
-///
 /// # Errors
-///
 /// The device-honesty refusal; setup failures; the post-state gate.
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
-    // Without the obs build a capture is empty — the trace pass refuses
-    // instead of writing span-free artifacts (the shared --trace rule).
+
     if args.trace && !cfg!(feature = "obs") {
         return Err(crate::driver::obs_missing("--trace"));
     }
     // Device honesty FIRST, before creating anything: the timed write
-    // lanes are fsync-bound, so a RAM-backed volume would report a
-    // number physics never signed (the `driver/write_families.rs`
-    // precedent).
+
     crate::devhonesty::assert_disk_backed(&args.dir, "the timed write lanes")
         .map_err(|refusal| refusal.to_string())?;
 
@@ -841,9 +692,7 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
     // Write-appropriate protocol, COLD-family-sized: every sample pays
-    // a real commit (fsync-bound on the durable lane), so few warmups
-    // are needed and 32 samples keep the tail meaningful without hours
-    // of fsync.
+
     let proto = Protocol {
         warmups: 2,
         samples: args.samples.unwrap_or(32),
@@ -893,8 +742,7 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     if args.trace {
         println!("traces: {}", out_dir.join("trace").join("writes").display());
     }
-    // The scratch stores served their purpose; the artifacts are the
-    // run.
+
     let _ = std::fs::remove_dir_all(out_dir.join("scratch"));
     Ok(0)
 }
@@ -1025,7 +873,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get("name").and_then(Value::as_str), Some("append"));
         assert_eq!(rows[0].get("batch").and_then(Value::as_f64), Some(10.0));
-        // Stats objects carry the exact report/json_out.rs shape.
+
         let ours = rows[0].get("ours").expect("ours");
         assert_eq!(ours.get("min").and_then(Value::as_f64), Some(100.0));
         assert_eq!(ours.get("p99").and_then(Value::as_f64), Some(104.0));
@@ -1050,7 +898,7 @@ mod tests {
             rows[0].get("rows_per_sec_theirs").and_then(Value::as_f64),
             Some(6175.0)
         );
-        // Ghz renders like push_ghz: present on row 0, null on row 1.
+
         let ghz = rows[0].get("ghz").expect("ghz");
         assert_eq!(ghz.get("pre").and_then(Value::as_f64), Some(3.5));
         assert_eq!(ghz.get("post").and_then(Value::as_f64), Some(3.25));
@@ -1058,17 +906,11 @@ mod tests {
         assert_eq!(rows[1].get("ghz"), Some(&Value::Null));
     }
 
-    /// One parsed lane's row names plus the report handle — the shared
-    /// spine of the two end-to-end tests.
     fn lane_rows(out: &Path) -> crate::json::Value {
         let raw = std::fs::read_to_string(out.join("writes-report.json")).expect("artifact");
         crate::json::parse(&raw).expect("valid JSON")
     }
 
-    /// The whole tiny ladder on the nosync lane: both engines run every
-    /// family, the post-state gate passes (the run returns 0 only past
-    /// it), and the artifact carries every row with positive stats and
-    /// rates under the lane's durability labels.
     #[test]
     fn tiny_ladder_runs_and_verifies_post_state() {
         let dir = scratch("tiny-ladder");
@@ -1128,14 +970,12 @@ mod tests {
                 assert!(rate > 0.0, "{key} must be positive");
             }
         }
-        // Scratch is removed on success; the artifacts remain.
+
         assert!(!out.join("scratch").exists());
         assert!(out.join("writes-report.md").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The durable lane runs the identical contract — same families,
-    /// same gate — under its own labels.
     #[test]
     fn durable_lane_runs_the_same_contract() {
         let dir = scratch("durable-lane");
@@ -1172,10 +1012,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The delete-bearing contract, falsified from both sides (the
-    /// `posting_swap` test shape): a recorded row deletes once, and the
     /// same body again REFUSES — and the refusal commits NOTHING (the
-    /// generation stands still).
+
     #[test]
     fn delete_refuses_a_missing_row() {
         let dir = scratch("delete-refusal");
@@ -1227,8 +1065,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The post-state gate catches a one-row divergence and names the
-    /// count.
     #[test]
     fn post_state_catches_a_divergence() {
         let dir = scratch("post-state");
@@ -1244,8 +1080,7 @@ mod tests {
         let sizes = Sizes::of(cfg.scale);
         verify_post_state(&db, &conn, sizes.postings, sizes.postings)
             .expect("the twins agree before the divergence");
-        // One extra row into sqlite only — the gate must refuse, naming
-        // the divergent count.
+
         conn.execute(
             POSTING_INSERT,
             rusqlite::params![
@@ -1268,15 +1103,7 @@ mod tests {
         drop((db, conn));
         let _ = std::fs::remove_dir_all(&dir);
     }
-    /// The traced writes path (`--trace`): every commit/delete ladder
-    /// cell lands its traced twin sample as a parseable Chrome+folded
-    /// pair under `<out>/trace/writes/<lane>/`, the `LMDB_COMMIT` span
-    /// reaches the commit cell's artifact (the fsync-bound phase,
-    /// readable from disk), the markdown embeds the flame tables,
-    /// `insert_stream` stays untraced by decision, and the post-state gate still passes
-    /// — the traced twin sample ran on BOTH engines, rng streams and
-    /// deques in lockstep. Tiny, one batch point, two samples: a smoke
-    /// test, not a measurement.
+
     #[cfg(feature = "obs")]
     #[test]
     fn traced_writes_land_the_lmdb_commit_span() {
@@ -1319,7 +1146,7 @@ mod tests {
             commit.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
             "the LMDB commit span reaches the commit cell's artifact"
         );
-        // insert_stream stays untraced by decision.
+
         assert!(!lane_dir.join("insert_stream.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
