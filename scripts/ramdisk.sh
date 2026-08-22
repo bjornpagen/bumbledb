@@ -1,57 +1,4 @@
 #!/usr/bin/env bash
-# The RAM-backed scratch volume for the adversarial lanes
-# (docs/architecture/60-validation.md § the ramdisk sanction). Verify
-# and differential lanes may run their scratch stores on RAM —
-# they check answers, not wall clocks. Every timed lane refuses
-# RAM-backed volumes: `bench` checks its corpus `--dir` (the read
-# families time against it) and its write scratch alike (the
-# device-honesty rule; the bench crate's detector enforces it).
-#
-# Subcommands:
-#   create  [--size-gib N] [--apfs] [--name NAME]  attach + format + mount; prints the mount path
-#   destroy [--name NAME]                          detach/unmount (idempotent)
-#   path    [--name NAME]                          prints the mount path if live; exit 1 otherwise
-#
-# Wiring: the bench crate's test scratch directories
-# (crates/bumbledb-bench/src/fixture.rs TempDir) respect
-# BUMBLEDB_SCRATCH_DIR, so a lane points itself at the ram disk with:
-#
-#   export BUMBLEDB_SCRATCH_DIR="$(scripts/ramdisk.sh path || scripts/ramdisk.sh create)"
-#
-# The verify corpus lanes need no env var — `--dir` already points them
-# anywhere, the ram disk included. `bench` is the opposite: it refuses
-# a RAM-backed `--dir` with the device-honesty refusal (a timed number
-# measured on RAM is a lie). Scratch and verify on the ram disk: yes;
-# bench: no.
-#
-# The sentinel: create writes `.bumbledb-ramdisk` (first line the magic
-# below, second line the backing identity) at the volume root. It is the
-# script's ownership contract — destroy refuses to unmount a directory
-# it did not create, and any future std-only RAM-backedness check may
-# parse it instead of the platform mount tables.
-#
-# Sizing: the default is 5 GiB of plain headroom for the sweeps' many
-# concurrent scratch stores — a store's data file holds only the pages
-# ever committed. (Retraction, cleanup-0.5.0 ruling 1: the old rationale
-# was that an EPHEMERAL store's data file was ftruncated to the full
-# 4 GiB map at open under the retired `MDB_WRITEMAP` flag, and HFS+ has
-# no sparse files, so the volume had to hold map size + slack; with
-# WRITEMAP and the eager capacity contract retired no open allocates
-# the map, and any size that holds the lanes' actual data works.)
-#
-# macOS arm (the canonical M2 Max): hdiutil ram:// needs no sudo; the
-# default filesystem is non-journaled HFS+ (`diskutil erasevolume HFS+`
-# — the journaled personality is spelled "Journaled HFS+"); --apfs is
-# the fallback flag (measured ~0.4 ms slower per small commit,
-# the phase-R harness, crates/bumbledb/tests/ramdisk_phase_r.rs). Every attach is guarded by a trap:
-# a failed create detaches its own device.
-#
-# Linux arm: WRITTEN CAREFULLY BUT UNTESTED (the owner's explicit
-# instruction — this machine is the macOS M2 Max; the code below has
-# never run). Root: a private tmpfs mount with the noswap option where
-# the kernel supports it (6.4+), falling back without. Non-root: a
-# private subdirectory of /dev/shm (already tmpfs; the size argument is
-# then advisory only).
 
 set -euo pipefail
 
@@ -123,14 +70,9 @@ cmd_create_mac() {
     echo "ramdisk.sh: $mnt already exists — destroy it first or pick --name" >&2
     exit 1
   fi
-  # 512-byte sectors: GiB * 2^21.
+
   dev="$(hdiutil attach -nomount "ram://$((SIZE_GIB * 2097152))" | head -n 1 | awk '{print $1}')"
-  # The teardown law: a create that fails past the attach detaches its
-  # own device before exiting. The device name is expanded into the
-  # trap string NOW (double quotes): `dev` is function-local, and an
-  # EXIT trap fires after the function scope is torn down — under
-  # `set -u` a deferred `$dev` dies as 'unbound variable' and the
-  # wired device leaks (reproduced; the fixit record).
+
   trap "hdiutil detach '$dev' >/dev/null 2>&1 || hdiutil detach -force '$dev' >/dev/null 2>&1 || true" EXIT
   diskutil erasevolume "$FS" "$NAME" "$dev" >/dev/null
   printf '%s\n%s\n' "$MAGIC" "$dev" >"$(sentinel "$mnt")"
@@ -153,8 +95,6 @@ cmd_destroy_mac() {
   hdiutil detach "$dev" >/dev/null || hdiutil detach -force "$dev" >/dev/null
 }
 
-# ---- Linux arm: written carefully but UNTESTED (see the header) -------
-
 cmd_create_linux() {
   local mnt
   mnt="$(mount_point)"
@@ -164,26 +104,21 @@ cmd_create_linux() {
   fi
   mkdir -p "$mnt"
   if [ "$(id -u)" = 0 ]; then
-    # A mount that fails leaves no half-made volume behind. Expanded at
-    # trap-set time (double quotes): `mnt` is function-local and the
-    # EXIT trap outlives the function scope — the same unbound-variable
-    # leak the macOS arm had (the fixit record).
+
     trap "umount '$mnt' >/dev/null 2>&1 || true; rmdir '$mnt' >/dev/null 2>&1 || true" EXIT
-    # noswap (kernel 6.4+) keeps the scratch honest RAM; older kernels
-    # refuse the option, so fall back without it.
+
     mount -t tmpfs -o "size=${SIZE_GIB}G,noswap" bumbledb-scratch "$mnt" 2>/dev/null ||
       mount -t tmpfs -o "size=${SIZE_GIB}G" bumbledb-scratch "$mnt"
     printf '%s\n%s\n' "$MAGIC" "tmpfs:$mnt" >"$(sentinel "$mnt")"
     trap - EXIT
   else
-    # /dev/shm is tmpfs by convention; verify rather than assume.
+
     if ! awk '$2 == "/dev/shm" && $3 == "tmpfs"' /proc/mounts | grep -q .; then
       rmdir "$mnt"
       echo "ramdisk.sh: /dev/shm is not tmpfs here and we are not root — no RAM-backed scratch available" >&2
       exit 1
     fi
-    # The size argument is advisory in this arm: the subdirectory
-    # shares /dev/shm's own limit.
+
     printf '%s\n%s\n' "$MAGIC" "shm:$mnt" >"$(sentinel "$mnt")"
   fi
   printf '%s\n' "$mnt"
