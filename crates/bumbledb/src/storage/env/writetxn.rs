@@ -5,9 +5,7 @@ use super::{GenerationId, META_DICT_NEXT_ID, META_TX_ID, WriteTxn};
 
 impl WriteTxn<'_> {
     /// Commits (fsync per LMDB defaults). The write path's one durability
-
     /// # Errors
-
     /// raw OS errno, `Lmdb` on any LMDB-coded failure; either way the
     pub fn commit(self) -> Result<()> {
         self.txn.commit().map_err(Error::from_commit)
