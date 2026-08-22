@@ -1,6 +1,5 @@
 //! Projection-arity coverage cases layered after the structurally-free before
 //! drawing one of these cases through a fresh [`Rng`] cursor.
-
 use bumbledb::Value;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
