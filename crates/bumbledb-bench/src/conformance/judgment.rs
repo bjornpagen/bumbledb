@@ -662,7 +662,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![account(3, 1, 0)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-sum-pass",
             schema: weighted_schema(),
@@ -670,7 +669,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![pool(1), device(1, 4, 0), device(1, 5, 1)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-sum-exceed-refuse",
             schema: weighted_schema(),
@@ -678,7 +676,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![device(1, 3, 2)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-zero-weight-under-floor",
             schema: weighted_schema(),
@@ -686,7 +683,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![pool(2), device(2, 0, 0), device(2, 0, 1)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-pass",
             schema: dependent_schema(),
@@ -694,7 +690,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![supply_pool(1, 10), device(1, 6, 0), device(1, 4, 1)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-exceed",
             schema: dependent_schema(),
@@ -702,9 +697,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![device(1, 5, 1)],
         },
-
         // (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
-
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-lowered-by-target-update",
             schema: dependent_schema(),
@@ -712,7 +705,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![supply_pool(1, 10)],
             inserts: vec![supply_pool(1, 5)],
         },
-
         JudgmentFixture {
             name: "judgment-capacity-duration-weight",
             schema: calendar_schema(),
@@ -755,7 +747,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(3, 9)],
         },
-
         JudgmentFixture {
             name: "judgment-closed-ref-psi-valid",
             schema: closed_psi_schema(),
@@ -763,7 +754,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(1, 0), cur_account(2, 1)],
         },
-
         JudgmentFixture {
             name: "judgment-closed-ref-psi-invalid",
             schema: closed_psi_schema(),
@@ -771,7 +761,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(3, 2)],
         },
-
         JudgmentFixture {
             name: "judgment-fixed-partition-tiling",
             schema: playlist_schema(),
@@ -784,7 +773,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 unit_slot(1, 2, 300),
             ],
         },
-
         JudgmentFixture {
             name: "judgment-fixed-partition-gap",
             schema: playlist_schema(),
@@ -796,7 +784,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 unit_slot(1, 2, 300),
             ],
         },
-
         // (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
         JudgmentFixture {
             name: "judgment-fixed-partition-overlap",
@@ -810,7 +797,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![unit_slot(1, 1, 999)],
         },
-
         JudgmentFixture {
             name: "judgment-fixed-boundary-starts",
             schema: lanes_schema(),
@@ -823,9 +809,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 lane_i(2, i64::MAX - 6),
             ],
         },
-
         // (`lean/Main.lean: RVerdict` list `BEq`, `verdictOf`'s indexed
-
         JudgmentFixture {
             name: "judgment-statement-mixed-citations",
             schema: ledger_schema(),
@@ -833,7 +817,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![account(8, 5, 0), holder(9)],
         },
-
         JudgmentFixture {
             name: "judgment-containment-both-directions",
             schema: permuted_schema(),
@@ -841,9 +824,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![slot(5, 10, 20)],
             inserts: vec![claim(40, 50, 5)],
         },
-
         // (`lean/Bumbledb/Txn.lean: judge_key_preempts` drops the
-
         JudgmentFixture {
             name: "judgment-multi-key-collisions",
             schema: playlist_schema(),
@@ -1077,7 +1058,6 @@ pub(super) fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
                 hi,
                 source,
             } => {
-
                 out.push_str("{\"capacity\":{\"target\":");
                 push_side(out, target);
                 out.push_str(",\"weight\":");
