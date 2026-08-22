@@ -1,6 +1,5 @@
 //! Every runner takes its [`Protocol`] explicitly — tests pass tiny protocols;
 //! no protocol is baked into a runner.
-
 use bumbledb::schema::ValueType;
 use bumbledb::{
     Answers, Atom, AtomSource, Db, FieldId, FindTerm, ParamId, Query, Rule, Term, VarId,
