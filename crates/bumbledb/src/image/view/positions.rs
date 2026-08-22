@@ -3,18 +3,14 @@
 use super::View;
 
 impl View {
-    /// Iterates the view's image positions in ascending order.
-    ///
+
     /// # Panics
-    ///
+
     /// Only on a programmer-invariant violation: an image beyond the u32
-    /// position space (the 32 GiB map physically bounds live rows roughly
-    /// an order of magnitude under u32; the validated scale sits far
-    /// below).
+
     #[cfg(test)]
     pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
-        // Chained empty arms keep one concrete iterator type without
-        // boxing: exactly one arm is nonempty.
+
         let (all, survivors) = match self {
             Self::Unbound => (0..0u32, [].iter()),
             Self::Bound(super::BoundView::All(image)) => (
