@@ -5,7 +5,6 @@ use crate::storage::delta::Disposition;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
-
     /// # Errors
 
     pub fn delete_dyn(
