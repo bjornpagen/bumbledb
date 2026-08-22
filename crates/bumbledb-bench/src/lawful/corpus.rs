@@ -10,7 +10,6 @@ use super::{LawSizes, ids};
 
 pub fn relation_rows(sizes: LawSizes, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
-
         ids::TASK => Box::new(
             (0..sizes.tasks).map(|i| vec![Value::U64(i), Value::U64(i % 3), Value::U64(i)]),
         ),
