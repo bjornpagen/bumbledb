@@ -10,7 +10,6 @@
 //! Ids are monotonic, never reused, append-only; interning happens only
 //! interned values (accepted design: the leak is scoped to repeated text,
 //! the population interning compresses).
-
 use crate::encoding::InternId;
 use crate::error::{CorruptionError, Error, Result};
 use crate::storage::catalog::{LmdbReadCatalog, LmdbWriteCatalog};
