@@ -11,7 +11,6 @@ use crate::report;
 /// the failing lane or probe.
 /// # Errors
 pub fn cmd_churn(args: &cli::ChurnArgs) -> Result<i32, String> {
-
     crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed churn lanes")
         .map_err(|refusal| refusal.to_string())?;
     let out_dir = args.out.clone().unwrap_or_else(|| {
