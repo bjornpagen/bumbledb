@@ -1,7 +1,5 @@
-//! Prepared queries, parameters, and results (docs/architecture/40-execution.md) — the reusable
-//! execution object the allocation contract is written against
-//! (`docs/architecture/20-query-ir.md`, `40-execution.md`, `70-api.md`).
-//!
+//! Prepared queries, parameters, and results — the reusable
+//! execution object the allocation contract is written against.
 //! `prepare` runs the whole pipeline once: validate → normalize →
 //! filtered-view statistics → plan → classify. **Plans pin the statistics
 //! read at prepare time and are never invalidated by writes**; stale plans
@@ -41,36 +39,35 @@ mod tests;
 
 pub(crate) use self::build::{prepare, prepare_on};
 
-/// One bound scalar payload (`docs/architecture/70-api.md` § facts and
-/// results): the bind surface's value vocabulary. Variable-width
+/// One bound scalar payload: the bind surface's value vocabulary. Variable-width
 /// payloads are **borrowed** — the engine only hashes and probes them
 /// (a per-execution intern lookup), so owned payloads would buy
 /// nothing; `&str` also makes non-UTF-8 string params unrepresentable
 /// rather than checked. [`crate::ir::Value`] stays owned by decision:
 /// IR literals are long-lived query data; only the bind surface
-/// borrows (`docs/architecture/20-query-ir.md`).
+/// borrows .
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
     Str(&'a str),
-    /// A `bytes<N>` value: exactly the anchored field's N bytes (any
-    /// other length is a bind-time type mismatch — the length is the
-    /// type). Only hashed into column words at bind; never interned.
+ /// A `bytes<N>` value: exactly the anchored field's N bytes (any
+ /// other length is a bind-time type mismatch — the length is the
+ /// type). Only hashed into column words at bind; never interned.
     FixedBytes(&'a [u8]),
-    /// A half-open `[start, end)`.
+ /// A half-open `[start, end)`.
     IntervalU64(u64, u64),
-    /// A half-open `[start, end)`.
+ /// A half-open `[start, end)`.
     IntervalI64(i64, i64),
 }
 
-/// One positional execution argument (`docs/architecture/70-api.md`
+/// One positional execution argument
 /// § facts and results): params are supplied by `ParamId` position —
 /// scalars as [`BindValue`]s, param sets as slices. Bind checks count,
 /// scalar-vs-set usage against what validation recorded, and element
 /// types; set slices deduplicate into the prepared query's pooled
-/// storage (sets are sets — `docs/architecture/20-query-ir.md`). Set
+/// storage (sets are sets — . Set
 /// elements stay [`crate::ir::Value`]: a set is long-lived host data
 /// re-bound by reference, so its elements never re-box per bind.
 #[derive(Debug, Clone)]
@@ -82,12 +79,10 @@ pub enum ParamArg<'a> {
 /// The one execute bind surface: scalar slices and mixed [`ParamArg`]
 /// slices are the same entry, not twin methods.
 pub trait BindArgs<'a> {
-    /// Bind this argument list onto `prepared` for `txn`.
-    ///
-    /// # Errors
-    ///
-    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time, plus the
-    /// per-position set/scalar errors on mixed arguments.
+ /// Bind this argument list onto `prepared` for `txn`.
+ /// # Errors
+ /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time, plus the
+ /// per-position set/scalar errors on mixed arguments.
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
@@ -162,11 +157,11 @@ pub enum AnswerValue<'a> {
     U64(u64),
     I64(i64),
     String(&'a str),
-    /// A `bytes<N>` find: the value's N raw bytes.
+ /// A `bytes<N>` find: the value's N raw bytes.
     FixedBytes(&'a [u8]),
-    /// An interval find, rematerialized through the checked host type
-    /// (the stored `start < end` invariant makes the re-parse
-    /// infallible — the comment lives at the materialization site).
+ /// An interval find, rematerialized through the checked host type
+ /// (the stored `start < end` invariant makes the re-parse
+ /// infallible — the comment lives at the materialization site).
     IntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
 }
@@ -194,46 +189,44 @@ enum Cell {
 pub struct Answers {
     arity: usize,
     cells: Vec<Cell>,
-    /// The String cells' heap: whole UTF-8-validated strings appended
-    /// end-to-end, so every cell range is a char boundary by
-    /// construction — the type carries the materialization proof and
-    /// `get` never re-validates (parse, don't validate).
+ /// The String cells' heap: whole UTF-8-validated strings appended
+ /// end-to-end, so every cell range is a char boundary by
+ /// construction — the type carries the materialization proof and
+ /// `get` never re-validates (parse, don't validate).
     text: String,
-    /// The `bytes<N>` cells' heap: raw payloads, no text contract.
+ /// The `bytes<N>` cells' heap: raw payloads, no text contract.
     blob: Vec<u8>,
 }
 
-/// The intern-resolution memo (docs/architecture/40-execution.md), two
+/// The intern-resolution memo , two
 /// tiers by lifetime:
-///
 /// - **Per prepared query** (never cleared): the text arena and its
-///   word→arena-range map. The dictionary is append-only, so a resolved
-///   (word → text) pair is FINAL — each distinct intern word pays its
-///   LMDB descent and UTF-8 parse exactly once over the prepared
-///   query's lifetime, and every later finalize copies bytes out of the
-///   arena instead of descending. Memory is the distinct-string
-///   high-water — the explicit trade.
+/// word→arena-range map. The dictionary is append-only, so a resolved
+/// (word → text) pair is FINAL — each distinct intern word pays its
+/// LMDB descent and UTF-8 parse exactly once over the prepared
+/// query's lifetime, and every later finalize copies bytes out of the
+/// arena instead of descending. Memory is the distinct-string
+/// high-water — the explicit trade.
 /// - **Per finalize** (cleared at entry): word→range into THAT call's
-///   answer carrier, so K answers sharing one string cost one byte copy,
-///   not K — plus the run-coherence `last` slot.
-///
+/// answer carrier, so K answers sharing one string cost one byte copy,
+/// not K — plus the run-coherence `last` slot.
 /// Keys are bare words: strings are the one interned type, so the tag
-/// byte died with variable bytes (docs/architecture/50-storage.md).
+/// byte died with variable bytes .
 #[derive(Debug)]
 struct ResolveMemo {
-    /// word → packed `(start, len)` into the buffer's text heap
-    /// (per finalize).
+ /// word → packed `(start, len)` into the buffer's text heap
+ /// (per finalize).
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
-    /// The last resolution: run-coherent columns
-    /// (few distinct interns, clustered answers) skip even the map probe.
+ /// The last resolution: run-coherent columns
+ /// (few distinct interns, clustered answers) skip even the map probe.
     last: Option<(u64, (usize, usize))>,
-    /// word → packed `(start, len)` into [`Self::arena`] (per prepared
-    /// query — append-only, like the dictionary it caches).
+ /// word → packed `(start, len)` into [`Self::arena`] (per prepared
+ /// query — append-only, like the dictionary it caches).
     arena_ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
-    /// The persistent text arena: whole UTF-8-validated strings appended
-    /// end-to-end, once per distinct intern, ever — every range is a
-    /// char boundary by construction (the answer heap's proof, one tier
-    /// up).
+ /// The persistent text arena: whole UTF-8-validated strings appended
+ /// end-to-end, once per distinct intern, ever — every range is a
+ /// char boundary by construction (the answer heap's proof, one tier
+ /// up).
     arena: String,
 }
 
@@ -291,98 +284,96 @@ impl Latch {
 /// Carries the preparing database's schema typestate `S`, so it executes
 /// only against same-schema snapshots (the same-environment check stays
 /// a runtime identity check — [`crate::storage::env::CatalogIdentity`]).
-///
 /// Not shareable across threads:
-///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
 /// require_sync::<bumbledb::PreparedQuery<()>>();
 /// ```
 pub struct PreparedQuery<S> {
     schema: Arc<Schema>,
-    /// The preparing environment's process-distinct identity: plan,
-    /// statistics, and view memo all belong to it, so execution against
-    /// any other environment's snapshot is `Error::ForeignPreparedQuery`
-    /// — checked first at every execution entry.
+ /// The preparing environment's process-distinct identity: plan,
+ /// statistics, and view memo all belong to it, so execution against
+ /// any other environment's snapshot is `Error::ForeignPreparedQuery`
+ /// — checked first at every execution entry.
     identity: crate::storage::env::CatalogIdentity,
-    /// Interiors then rec then main, as one pipeline sum: interiors
-    /// live inside each arm, never as a sidecar. Dead main is
-    /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
-    /// the ONE sink below (docs/architecture/40-execution.md § the
-    /// rule loop): the sink resets once per execution, never per rule,
-    /// and its seen-set spanning rules is the entire implementation of
-    /// ∪ — no merge node, no concat-then-dedup pass exists.
+ /// Interiors then rec then main, as one pipeline sum: interiors
+ /// live inside each arm, never as a sidecar. Dead main is
+ /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
+ /// the ONE sink below
+ /// rule loop): the sink resets once per execution, never per rule,
+ /// and its seen-set spanning rules is the entire implementation of
+ /// ∪ — no merge node, no concat-then-dedup pass exists.
     pub(crate) pipeline: PreparedPipeline,
-    /// Derived-tuples budget. Judged after each interior and between
-    /// rec rounds. Host-settable on every prepared query. The rounds
-    /// axis lives on [`PreparedPipeline::Reach`].
+ /// Derived-tuples budget. Judged after each interior and between
+ /// rec rounds. Host-settable on every prepared query. The rounds
+ /// axis lives on [`PreparedPipeline::Reach`].
     tuples_budget: u64,
-    /// Finished derived images (interiors then rec) plus per-occurrence
-    /// bind scratch for `run_join`'s Interior arm.
+ /// Finished derived images (interiors then rec) plus per-occurrence
+ /// bind scratch for `run_join`'s Interior arm.
     derived: crate::api::prepared::reach::DerivedImages,
-    /// The signature the query defines, sealed at validation and cloned
-    /// here at prepare. It sits beside the pipeline because a dead-main
-    /// Cq still has an arity and buffer types (the empty path's
-    /// `out.arity` reads it).
+ /// The signature the query defines, sealed at validation and cloned
+ /// here at prepare. It sits beside the pipeline because a dead-main
+ /// Cq still has an arity and buffer types (the empty path's
+ /// `out.arity` reads it).
     signature: Signature,
-    /// Dense per-param bind contracts (validation rejects id gaps): one
-    /// sum carries scalar/set/mask shape, element type, and point-domain
-    /// status without parallel flags.
+ /// Dense per-param bind contracts (validation rejects id gaps): one
+ /// sum carries scalar/set/mask shape, element type, and point-domain
+ /// status without parallel flags.
     params: Vec<ParamSpec>,
-    /// Bind-time resolved constants, reused across executions — pooled
-    /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
-    /// is rebound in place (sorted, deduplicated words; capacity
-    /// retained across differently-sized warm re-binds).
+ /// Bind-time resolved constants, reused across executions — pooled
+ /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
+ /// is rebound in place (sorted, deduplicated words; capacity
+ /// retained across differently-sized warm re-binds).
     resolved_params: Vec<Const>,
-    /// `str` literals in the rules' templates still awaiting their
-    /// dictionary word ([`Const::PendingIntern`]): decremented as each
-    /// latches (`bind.rs`), and [`Latch::Latched`] — with no params of
-    /// any shape — is the fully-latched fast path: `resolve_filters` is
-    /// skipped entirely, the resolved tables having been written once
-    /// and final.
+ /// `str` literals in the rules' templates still awaiting their
+ /// dictionary word ([`Const::PendingIntern`]): decremented as each
+ /// latches (`bind.rs`), and [`Latch::Latched`] — with no params of
+ /// any shape — is the fully-latched fast path: `resolve_filters` is
+ /// skipped entirely, the resolved tables having been written once
+ /// and final.
     latch: Latch,
-    /// Per param slot: the last successful String resolution — the
-    /// bound text and its dictionary word (`bind.rs`). A HIT is final
-    /// (the dictionary is append-only: a text's word never changes), so
-    /// re-binding the same text skips the LMDB descent entirely; a MISS
-    /// is NOT final (a later write may intern the text) and invalidates
-    /// the slot. Pooled: the text buffer's capacity survives re-binds.
-    /// Non-String slots never touch theirs.
+ /// Per param slot: the last successful String resolution — the
+ /// bound text and its dictionary word (`bind.rs`). A HIT is final
+ /// (the dictionary is append-only: a text's word never changes), so
+ /// re-binding the same text skips the LMDB descent entirely; a MISS
+ /// is NOT final (a later write may intern the text) and invalidates
+ /// the slot. Pooled: the text buffer's capacity survives re-binds.
+ /// Non-String slots never touch theirs.
     param_word_memo: Vec<ParamWordMemo>,
-    /// Per param: whether this execution's value missed the dictionary
-    /// (String/Bytes only; for a set, whether NO element survived — the
-    /// empty set rides the same short-circuit machinery). A missed value
-    /// under `Eq` on a positive occurrence short-circuits to an empty
-    /// result; under `Ne` the sentinel word matches everything; on a
-    /// negated occurrence it just matches nothing.
+ /// Per param: whether this execution's value missed the dictionary
+ /// (String/Bytes only; for a set, whether NO element survived — the
+ /// empty set rides the same short-circuit machinery). A missed value
+ /// under `Eq` on a positive occurrence short-circuits to an empty
+ /// result; under `Ne` the sentinel word matches everything; on a
+ /// negated occurrence it just matches nothing.
     missed_params: Vec<bool>,
-    /// The sink, reset once per execution with capacities retained —
-    /// **one** sink configuration, owned by the head (its shape is the
-    /// head's: projection vs aggregate, arity, distinctness). Its
-    /// find-spec slot tables are re-aimed per rule as the rule loop
-    /// switches plans (`run_rule`); the dedup keys are head-shaped —
-    /// projected tuples, or head projections under the multi-rule
-    /// aggregate regime — so the seen-set spanning rules is the union.
+ /// The sink, reset once per execution with capacities retained —
+ /// **one** sink configuration, owned by the head (its shape is the
+ /// head's: projection vs aggregate, arity, distinctness). Its
+ /// find-spec slot tables are re-aimed per rule as the rule loop
+ /// switches plans (`run_rule`); the dedup keys are head-shaped —
+ /// projected tuples, or head projections under the multi-rule
+ /// aggregate regime — so the seen-set spanning rules is the union.
     sink: EitherSink,
-    /// The rule-shared binding-slot scratch (docs/architecture/
-    /// 40-execution.md § the rule loop): written in place by each rule's
-    /// recursion, re-sized to the rule's slot layout at rule entry —
-    /// capacity is the high-water across all rules.
+ /// The rule-shared binding-slot scratch
+ /// 40-execution.md § the rule loop): written in place by each rule's
+ /// recursion, re-sized to the rule's slot layout at rule entry —
+ /// capacity is the high-water across all rules.
     bindings: Bindings,
-    /// Aggregate-finalization answer scratch.
+ /// Aggregate-finalization answer scratch.
     answer_scratch: Vec<u64>,
-    /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
+ /// The per-finalize intern-resolution memo .
     resolve_memo: ResolveMemo,
-    /// KeyProbe-key byte scratch.
+ /// KeyProbe-key byte scratch.
     determinant_key: Vec<u8>,
-    /// The query in the rule notation ([`crate::ir::render`]), rendered
-    /// once at prepare — the introspection report's header and the
-    /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
-    /// on diagnostic surfaces, never on the warm path.
+ /// The query in the rule notation ([`crate::ir::render`]), rendered
+ /// once at prepare — the introspection report's header and the
+ /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
+ /// on diagnostic surfaces, never on the warm path.
     rendered: String,
-    /// Marker: a prepared query is single-threaded scratch (`Cell` makes
-    /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
-    /// independent of `S`).
+ /// Marker: a prepared query is single-threaded scratch (`Cell` makes
+ /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
+ /// independent of `S`).
     marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
 
@@ -402,9 +393,9 @@ pub(crate) struct PreparedInterior {
 /// Statically-dead main is `Cq { rules: [] }` — Empty is not a
 /// variant; the empty fast path is the zero-iteration loop.
 pub(crate) enum PreparedPipeline {
-    /// No-interior CQ whose single main rule is a key probe with
-    /// variable finds. The arm stores [`KeyProbeRule`] so a
-    /// [`PreparedRule::FreeJoin`] is unrepresentable.
+ /// No-interior CQ whose single main rule is a key probe with
+ /// variable finds. The arm stores [`KeyProbeRule`] so a
+ /// [`PreparedRule::FreeJoin`] is unrepresentable.
     PointProbe {
         rule: KeyProbeRule,
         finds: Vec<(bumbledb_theory::schema::FieldId, ValueType)>,
@@ -440,8 +431,8 @@ impl PreparedPipeline {
         }
     }
 
-    /// Cq / Reach main rules. [`Self::PointProbe`] is a [`KeyProbeRule`], not a
-    /// tagged [`PreparedRule`] — callers of the fast lane match that arm.
+ /// Cq / Reach main rules. [`Self::PointProbe`] is a [`KeyProbeRule`], not a
+ /// tagged [`PreparedRule`] — callers of the fast lane match that arm.
     pub(super) fn main_rules(&self) -> &[PreparedRule] {
         match self {
             Self::PointProbe { .. } => &[],
@@ -458,7 +449,7 @@ impl PreparedPipeline {
         }
     }
 
-    /// No interiors and no surviving main rules — the zero-iteration Cq.
+ /// No interiors and no surviving main rules — the zero-iteration Cq.
     pub(super) fn is_empty_cq(&self) -> bool {
         matches!(
             self,
@@ -502,35 +493,35 @@ pub(crate) struct RecArm {
 pub(crate) struct FreeJoinRule {
     plan: ValidatedPlan,
     executor: Executor,
-    /// The rule's head projection: per head position, the output spec
-    /// over this rule's binding-slot layout (result types live on the
-    /// query — they are the head's, identical across rules).
+ /// The rule's head projection: per head position, the output spec
+ /// over this rule's binding-slot layout (result types live on the
+ /// query — they are the head's, identical across rules).
     finds: Vec<FindSpec>,
-    /// The rule's full slot array as `VarId`-ordered spans — the
-    /// DNF-derived union regime's shared dedup key (ruled 2026-07-23,
-    /// R2). Aggregate-bearing heads only; empty (and never read) for
-    /// projection heads.
+ /// The rule's full slot array as `VarId`-ordered spans — the
+ /// DNF-derived union regime's shared dedup key (ruled 2026-07-23,
+ /// R2). Aggregate-bearing heads only; empty (and never read) for
+ /// projection heads.
     dedup_spans: Box<[(usize, usize)]>,
-    /// Per occurrence: residual filters with symbolic constants
-    /// substituted, reused — in place, so a set-carrying filter's
-    /// `WordSet` capacity survives re-binds (the allocation contract).
+ /// Per occurrence: residual filters with symbolic constants
+ /// substituted, reused — in place, so a set-carrying filter's
+ /// `WordSet` capacity survives re-binds (the allocation contract).
     resolved_filters: Vec<Vec<FilterPredicate>>,
-    /// Per occurrence, per selection level: this execution's resolved key
-    /// words (docs/architecture/40-execution.md, § selection levels) —
-    /// one word for a scalar constant, the encoded pair for an interval
-    /// constant, k sorted deduplicated words for a set. Reused in place.
+ /// Per occurrence, per selection level: this execution's resolved key
+ /// words —
+ /// one word for a scalar constant, the encoded pair for an interval
+ /// constant, k sorted deduplicated words for a set. Reused in place.
     resolved_selections: Vec<Vec<Vec<u64>>>,
-    /// This rule's resolved tables were fully written by a completed
-    /// `resolve_filters` pass (a short-circuited pass leaves later
-    /// slots unwritten and does not set it) — one leg of the
-    /// fully-latched fast path.
+ /// This rule's resolved tables were fully written by a completed
+ /// `resolve_filters` pass (a short-circuited pass leaves later
+ /// slots unwritten and does not set it) — one leg of the
+ /// fully-latched fast path.
     resolution: ResolutionState,
-    /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
-    /// (whose COLT the executor consumes) plus parked bindings under LRU.
+ /// The view memo : per occurrence, the active binding
+ /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
-    /// Per participating occurrence, the statistics the rule's plan was
-    /// costed with. Cold data — written once at build, read by the
-    /// stats surface when a caller asks.
+ /// Per participating occurrence, the statistics the rule's plan was
+ /// costed with. Cold data — written once at build, read by the
+ /// stats surface when a caller asks.
     #[expect(dead_code, reason = "prepare-time pins for the stats surface")]
     pinned: Box<[OccurrencePin]>,
 }
@@ -552,8 +543,8 @@ pub(crate) struct KeyProbeRule {
     plan: KeyProbePlan,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
-    /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
-    /// this rule's key-probe layout.
+ /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
+ /// this rule's key-probe layout.
     dedup_spans: Box<[(usize, usize)]>,
 }
 
@@ -592,10 +583,10 @@ impl<S> PreparedQuery<S> {
         }
     }
 
-    /// Every prepared rule this query carries — interiors, rec base,
-    /// then main. Rec arms are [`RecArm`], visited via
-    /// [`Self::visit_rec_arms_mut`]. Cold surfaces only (the batch-size
-    /// test affordance).
+ /// Every prepared rule this query carries — interiors, rec base,
+ /// then main. Rec arms are [`RecArm`], visited via
+ /// [`Self::visit_rec_arms_mut`]. Cold surfaces only (the batch-size
+ /// test affordance).
     fn visit_rules_mut(&mut self, mut visit: impl FnMut(&mut PreparedRule)) {
         match &mut self.pipeline {
             PreparedPipeline::PointProbe { .. } => {}
@@ -674,8 +665,8 @@ impl PreparedRule {
         }
     }
 
-    /// The rule's `VarId`-ordered full slot spans — the DNF-derived
-    /// union regime's shared dedup key (R2); empty for projection heads.
+ /// The rule's `VarId`-ordered full slot spans — the DNF-derived
+ /// union regime's shared dedup key (R2); empty for projection heads.
     fn dedup_spans(&self) -> &[(usize, usize)] {
         match self {
             Self::FreeJoin(rule) => &rule.dedup_spans,
@@ -691,11 +682,11 @@ type PreparedMarker<S> = (std::cell::Cell<()>, fn() -> S);
 /// sealed at prepare from validation's recording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParamSpec {
-    /// A scalar slot. `point` marks an element-typed interval position,
-    /// whose domain ceiling is not a point.
+ /// A scalar slot. `point` marks an element-typed interval position,
+ /// whose domain ceiling is not a point.
     Scalar { ty: ValueType, point: bool },
-    /// A set slot. `elem` is the element type, and `point` applies to
-    /// each element.
+ /// A set slot. `elem` is the element type, and `point` applies to
+ /// each element.
     Set { elem: ValueType, point: bool },
 }
 
@@ -721,7 +712,7 @@ enum ResolutionState {
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
 /// Four covers the bench rotation and the handful of bindings real
 /// workloads repeat; memory is bounded by four COLT high-waters per
-/// occurrence per prepared query — the explicit trade (docs/architecture/40-execution.md).
+/// occurrence per prepared query — the explicit trade .
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
@@ -736,9 +727,9 @@ struct Bound {
 
 /// The three proofs a parallel `None` used to conflate.
 enum Binding {
-    /// Never executed, or vacated after a park (the rebuild lands here).
+ /// Never executed, or vacated after a park (the rebuild lands here).
     Unbound,
-    /// Interior occurrence: lives outside the epoch-keyed memo.
+ /// Interior occurrence: lives outside the epoch-keyed memo.
     Derived,
     Bound(Bound),
 }
@@ -758,21 +749,21 @@ struct OccMemo {
     spare: Vec<u32>,
 }
 
-/// The per-occurrence view memo (docs/architecture/40-execution.md):
+/// The per-occurrence view memo :
 /// an epoch-stable source makes a memoized view provably valid for
 /// its whole epoch, so repeated residual bindings (range windows, Ne
 /// constants) skip the rebuild scan entirely. Occurrences whose only
 /// conditions are selections never park — their single binding hits on
-/// epoch alone (docs/architecture/40-execution.md).
+/// epoch alone .
 struct ViewMemo {
-    /// The executor-facing COLTs: each occurrence's *active* binding
-    /// (over [`View::Unbound`] until the first execution — prepare pins
-    /// no image). The kernel takes `&mut [Colt]`; this vector stays.
+ /// The executor-facing COLTs: each occurrence's *active* binding
+ /// (over [`View::Unbound`] until the first execution — prepare pins
+ /// no image). The kernel takes `&mut [Colt]`; this vector stays.
     colts: Vec<Colt>,
-    /// One slot per occurrence: active [`Binding`], parked [`Bound`]s,
-    /// spare survivor buffer.
+ /// One slot per occurrence: active [`Binding`], parked [`Bound`]s,
+ /// spare survivor buffer.
     occs: Vec<OccMemo>,
-    /// The LRU clock, ticked once per execution.
+ /// The LRU clock, ticked once per execution.
     tick: u64,
 }
 
@@ -787,8 +778,8 @@ struct ViewMemo {
 // that tripped the lint are the working set itself.
 enum EitherSink {
     Projection(ProjectionSink),
-    /// Boxed: the batch-fold scratch grew the sink past the
-    /// variant-size lint; one prepared query holds one sink, and the
-    /// indirection is paid once per batch, never per answer.
+ /// Boxed: the batch-fold scratch grew the sink past the
+ /// variant-size lint; one prepared query holds one sink, and the
+ /// indirection is paid once per batch, never per answer.
     Aggregate(Box<AggregateSink>),
 }
