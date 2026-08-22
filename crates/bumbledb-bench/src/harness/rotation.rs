@@ -2,7 +2,6 @@ use super::Rotation;
 
 impl<T> Rotation<T> {
     /// # Panics
-
     #[must_use]
     pub fn new(sets: Vec<T>) -> Self {
         assert!(!sets.is_empty(), "a rotation needs at least one set");
