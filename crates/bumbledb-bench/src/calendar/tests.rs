@@ -70,6 +70,7 @@ fn the_schema_is_statement_complete() {
         {
             closed_keys += 1;
         } else {
+            // Fresh auto-keys lead; declared scalar keys are Attendance(event, person) and Claim(source).
             if autos < 6 && scalar_keys == 0 {
                 autos += 1;
             } else {
