@@ -4,7 +4,7 @@ use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where
 use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 
 fn example() -> SchemaDescriptor {
-    let savings = Value::U64(1); 
+    let savings = Value::U64(1);
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -55,12 +55,10 @@ fn example() -> SchemaDescriptor {
             },
         ],
         statements: vec![
-
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             containment(
                 side_where(
                     RelationId(1),
@@ -73,11 +71,8 @@ fn example() -> SchemaDescriptor {
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
             ),
-
             fd(RelationId(2), &[FieldId(0)]),
-
             fd(RelationId(3), &[FieldId(0)]),
-
             containment(
                 side_where(
                     RelationId(4),
@@ -130,7 +125,6 @@ fn a_bidirectional_pair_renders_as_double_equals_once_from_either_id() {
 
 #[test]
 fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
-
     let declaration = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -150,18 +144,13 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
             },
         ],
         statements: vec![
-
             fd(RelationId(0), &[FieldId(0)]),
-
             fd(RelationId(1), &[FieldId(0)]),
-
             containment(
                 side(RelationId(0), &[FieldId(0)]),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-
             fd(RelationId(2), &[FieldId(0)]),
-
             containment(
                 side(RelationId(1), &[FieldId(0)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -189,7 +178,6 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
 
 #[test]
 fn a_respelled_literal_set_still_seals_the_mirror_pair() {
-
     use crate::schema::tests::side_where_sets;
     let declaration = SchemaDescriptor {
         relations: vec![
@@ -205,10 +193,8 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
             },
         ],
         statements: vec![
-
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(1), &[FieldId(0)]),
-
             containment(
                 side(RelationId(0), &[FieldId(0)]),
                 side_where_sets(
@@ -220,7 +206,6 @@ fn a_respelled_literal_set_still_seals_the_mirror_pair() {
                     )],
                 ),
             ),
-
             containment(
                 side_where_sets(
                     RelationId(1),
@@ -267,7 +252,6 @@ fn declared_rendering_matches_sealed_rendering() {
 
 #[test]
 fn schema_error_diagnostics_render_the_offending_statement() {
-
     let mut declaration = example();
     declaration.statements.remove(4); // drop `Roster(worker) -> Roster`
     let err = declaration
@@ -284,7 +268,6 @@ fn schema_error_diagnostics_render_the_offending_statement() {
 
 #[test]
 fn declaration_scoped_errors_render_without_a_statement_citation() {
-
     let declaration = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -338,12 +321,10 @@ fn closed_reference_selections_render_handles() {
             },
         ],
         statements: vec![
-
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             containment(
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(
@@ -377,7 +358,6 @@ fn closed_reference_selections_render_handles() {
 
 #[test]
 fn unresolvable_names_fall_back_to_id_placeholders() {
-
     let declaration = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -423,7 +403,6 @@ fn extension_forms_render_in_the_grammar() {
         statements: vec![
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(2), &[FieldId(0)]),
-
             capacity(
                 side_where_sets(
                     RelationId(1),
@@ -437,28 +416,24 @@ fn extension_forms_render_in_the_grammar() {
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 2,
                 None,
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 0,
                 Some(4),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 3,
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             capacity(
                 side_where_sets(
                     RelationId(1),
@@ -537,7 +512,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
         ],
         statements: vec![
             fd(RelationId(0), &[FieldId(0)]),
-
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
@@ -545,7 +519,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::TargetField(FieldId(1))),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::DurationOf(FieldId(2)),
@@ -553,7 +526,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::TargetDuration(FieldId(2))),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
@@ -561,7 +533,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 None,
                 side(RelationId(1), &[FieldId(0)]),
             ),
-
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::DurationOf(FieldId(2)),
@@ -569,7 +540,6 @@ fn weighted_capacity_forms_render_in_the_grammar() {
                 Some(Bound::Lit(720)),
                 side(RelationId(1), &[FieldId(0)]),
             ),
-
             capacity_weighted(
                 side(RelationId(0), &[FieldId(0)]),
                 Weight::Field(FieldId(1)),
