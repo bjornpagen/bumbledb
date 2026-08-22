@@ -2,7 +2,6 @@
 //! Nothing here validates semantics: unresolvable names, banned spellings,
 //! shape mismatches beyond marshaling, and every dependency judgment belong
 //! to the engine's own typed boundaries.
-
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
