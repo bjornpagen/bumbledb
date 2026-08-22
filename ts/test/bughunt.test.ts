@@ -65,7 +65,6 @@ const U64_MAX = (1n << 64n) - 1n
 const I64_MAX = (1n << 63n) - 1n
 const I64_MIN = -(1n << 63n)
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
@@ -159,11 +158,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("an empty interval smuggled past span() is refused typed at the bridge", function emptyInterval() {
 		assert.throws(function smuggle() {
 			db.write(function bad(tx) {
-				/**
-				 * Ray.at's value type is the bare structural interval, so the
-				 * plain object is assignable — no cast, the emptiness never
-				 * touches span().
-				 */
+
 				const fake: { start: bigint; end: bigint } = { start: 5n, end: 5n }
 				put(tx, Ray, {
 					at: fake,
@@ -179,10 +174,10 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		})
 		assert.equal(right.tag, "accepted", "the exact-width value lands")
 		/**
-		 * The refusal is the engine's structural-typing judgment: a width-5
-		 * interval is a DIFFERENT type than interval<u64, 2>, so the dyn lane
-		 * reports TypeMismatch ("wrong value kind", relation/field by id).
-		 */
+ * The refusal is the engine's structural-typing judgment: a width-5
+ * interval is a DIFFERENT type than interval<u64, 2>, so the dyn lane
+ * reports TypeMismatch ("wrong value kind", relation/field by id).
+ */
 		assert.throws(
 			function wrongWidth() {
 				db.write(function bad(tx) {
@@ -211,14 +206,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a lone surrogate is refused typed — never silently mangled", function loneSurrogate() {
-		/**
-		 * A lone surrogate is a legal JS value (text truncated mid-emoji),
-		 * but the bridge's UTF-8 crossing would silently replace it with
-		 * U+FFFD: the stored fact would differ from the written one, and two
-		 * DISTINCT JS strings ("\uD800" vs "\uDC00") would collapse to one
-		 * stored fact. The marshal seam refuses the shape typed instead (the
-		 * bijection law) — one seam, so insert and lookup are covered alike.
-		 */
+
 		assert.throws(
 			function insertRefused() {
 				db.write(function seed(tx) {
@@ -243,14 +231,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("the query lane refuses a lone surrogate — inline literal, where() literal, and param", function loneSurrogateQueryLane() {
-		/**
-		 * The same bijection law at the query seam (`query/lower.ts`
-		 * taggedLiteral): without the wall a lone surrogate crosses the
-		 * napi boundary lossily (U+FFFD) and silently matches a fact the
-		 * typed write surface can never store, and the DISTINCT strings
-		 * "\uD800" / "\uDC00" collapse to one wire query — one value
-		 * queried two ways would give contradictory answers.
-		 */
+
 		assert.throws(
 			function inlineLiteralRefused() {
 				db.prepare(
@@ -290,14 +271,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("the schema-literal lane refuses a lone surrogate — where() selections and closed payloads", function loneSurrogateSchemaLane() {
-		/**
-		 * The third string-admission seam (`fields.ts` literalOf): a lone
-		 * surrogate in a selection literal or a closed payload would cross
-		 * dbCreate lossily (stored as U+FFFD engine-side), collapsing two
-		 * distinct TS schema values into one stored theory/fingerprint and
-		 * splitting the engine's canonical rendering (\u{fffd}) from the
-		 * SDK's renderStatement (\u{d800}) — breaking the paste-back law.
-		 */
+
 		assert.throws(
 			function whereSelectionRefused() {
 				Txt.where({ note: "\uD800" })
@@ -315,10 +289,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a mirrors violation maps to the one SDK statement value, both directions", function mirrorViolation() {
-		/**
-		 * The written orientation: a Special item with no Terms row violates
-		 * the `source <= target` slot as spelled.
-		 */
+
 		const missingTerms = db.write(function violate(tx) {
 			put(tx, Item, { kind: "Special", flag: true })
 		})
@@ -334,13 +305,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.ok("orientation" in forward, "a mirrors slot carries orientation")
 		assert.equal(forward.orientation, "written", "the violated slot is the written orientation")
 
-		/**
-		 * The mirrored orientation: a Terms row whose item is not Special
-		 * violates the engine-materialized `target <= source` partner slot.
-		 * `direction` is the engine's per-slot payload VERBATIM (both slots
-		 * report their own source as unsatisfied), so the side of the `==`
-		 * is carried by `orientation`, never by flipping `direction`.
-		 */
 		const seeded = db.write(function seed(tx) {
 			const plain = put(tx, Item, { kind: "Plain", flag: false })
 			put(tx, Terms, { item: plain.id, rate: 1n })
@@ -358,15 +322,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a handle selection without its companion closed-reference containment is refused at schema()", async function undeclaredRefRefused() {
-		/**
-		 * The engine's canonical renderer resolves handle spellings ONLY
-		 * through declared containments (`schema/render.rs` closed_target_of):
-		 * without `contained(on(Item2, "kind"), on(Kind, "id"))` the engine
-		 * would render "kind == 1" where renderStatement prints
-		 * "kind == Special", breaking the paste-back law
-		 * `violation.canonical === renderStatement(statement)`. schema()
-		 * refuses the bare spelling loudly, naming the missing containment.
-		 */
+
 		const Item2 = relation("Item2", { id: u64.fresh, kind: Kind.id })
 		const Terms2 = relation("Terms2", { item: u64 })
 		const bareMirror = mirrors(on(Item2.where({ kind: "Special" }), "id"), on(Terms2, "item"))
@@ -375,9 +331,9 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		}, /no declared containment resolves the closed reference.*contained\(on\(Item2, "kind"\), on\(Kind, "id"\)\)/)
 
 		/**
-		 * With the companion containment declared, the two renderers agree on
-		 * the one spelling — the equality the refusal protects.
-		 */
+ * With the companion containment declared, the two renderers agree on
+ * the one spelling — the equality the refusal protects.
+ */
 		const Full = schema("Full", { Kind, Item2, Terms2 }, [
 			key(Terms2, ["item"]),
 			contained(on(Item2, "kind"), on(Kind, "id")),
@@ -427,9 +383,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			put(tx, Num, { u: 4n, s: 4n })
 		})
 		assert.equal(next.tag, "accepted")
-		/**
-		 * And read scopes still open/close cleanly (no leaked snapshot slots).
-		 */
+
 		assert.equal(typeof db.read((instance) => instance.generation), "bigint")
 	})
 
@@ -450,10 +404,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const before = db.read((instance) => instance.generation)
 		const beforeRows = db.read((i) => i.scan(Num)).length
 		let lateError: unknown
-		/**
-		 * NOTE: `write` now types the callback as `SyncResult` (thenables are
-		 * `never`). The runtime probe still needs a thenable at the seam.
-		 */
+
 		const attempt = errors.trySync(function admitSneaky() {
 			db.write(
 				// @ts-expect-error — SyncResult forbids Promise; this is the runtime thenable probe
@@ -471,12 +422,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		await new Promise((resolve) => setImmediate(resolve))
 		const after = db.read((instance) => instance.generation)
 		if (attempt.error === undefined) {
-			/**
-			 * If the SDK admitted the thenable, the write must still be a real
-			 * write: either the insert landed or nothing (incl. no generation
-			 * move) happened. A spent-transaction error on the late insert with
-			 * an ok:true result is the defect this probes for.
-			 */
+
 			assert.equal(lateError, undefined, "the callback's inserts must not throw spent")
 			assert.equal(db.read((i) => i.scan(Num)).length, beforeRows + 1, "the insert must land if admitted")
 		} else {
