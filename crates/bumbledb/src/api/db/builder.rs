@@ -1,5 +1,4 @@
 //! Unproved heap candidate: collection mutation and overlay point reads.
-//!
 //! No query preparation or execution. [`InstanceBuilder::admit`] consumes
 //! the builder into an [`super::OwnedInstance`].
 
@@ -20,25 +19,20 @@ use crate::storage::read;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 /// Mutable construction of an unproved candidate from an empty base.
-///
 /// Collection `load` / `delete`, `reserve`, and overlay `contains` /
 /// keyed `get`. No query methods — an unproved candidate cannot be
 /// queried. Packed freeze consumes the builder at admission (step 8).
-///
 /// `Send + !Sync`: a host may move the builder onto another thread for
 /// admission.
-///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
 /// require_sync::<bumbledb::InstanceBuilder<()>>();
 /// ```
-///
 /// ```compile_fail
 /// fn require_prepare(builder: &bumbledb::InstanceBuilder<()>) {
 ///     let _ = builder.prepare;
 /// }
 /// ```
-///
 /// ```compile_fail
 /// fn require_execute(builder: &bumbledb::InstanceBuilder<()>) {
 ///     let _ = builder.execute;
@@ -49,11 +43,9 @@ pub struct InstanceBuilder<S> {
 }
 
 impl<S: Theory> InstanceBuilder<S> {
-    /// Validates `theory` and starts an empty candidate.
-    ///
+
     /// # Errors
-    ///
-    /// The typed [`crate::error::SchemaError`] on an invalid declaration.
+
     pub fn new(theory: S) -> Result<Self> {
         let schema = std::sync::Arc::new(theory.descriptor().validate()?);
         Ok(Self {
@@ -70,16 +62,12 @@ impl<S> InstanceBuilder<S> {
         load(&mut self.mutation)
     }
 
-    /// Records a collection of typed inserts against the empty base.
-    /// Empty is lawful. Singleton is `[&fact]`.
-    ///
     /// The whole collection is encoded before any member is staged.
-    ///
+
     /// # Errors
-    ///
-    /// `ClosedRelationWrite` on a closed relation;
+
     /// `TransactionPoisoned` if a prior apply failed after a prefix
-    /// entered the stage.
+
     pub fn load<'f, F: Fact<'f, Schema = S> + 'f>(
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
@@ -87,12 +75,8 @@ impl<S> InstanceBuilder<S> {
         self.observed_load(|mutation| mutation.load(facts))
     }
 
-    /// Records a collection of typed deletes. Never mints: a never-interned
-    /// string proves the fact absent.
-    ///
     /// # Errors
-    ///
-    /// As [`Self::load`].
+
     pub fn delete<'f, F: Fact<'f, Schema = S> + 'f>(
         &mut self,
         facts: impl IntoIterator<Item = &'f F>,
@@ -100,12 +84,10 @@ impl<S> InstanceBuilder<S> {
         self.mutation.delete(facts)
     }
 
-    /// Dynamic-row sibling of [`Self::load`]. The whole collection is
     /// parsed before any member is staged.
-    ///
+
     /// # Errors
-    ///
-    /// As [`Self::load`], plus `FactShape` on arity or type mismatch.
+
     pub fn load_dyn(
         &mut self,
         rel: RelationId,
@@ -114,11 +96,8 @@ impl<S> InstanceBuilder<S> {
         self.observed_load(|mutation| mutation.load_dyn(rel, facts))
     }
 
-    /// Dynamic-row sibling of [`Self::delete`].
-    ///
     /// # Errors
-    ///
-    /// As [`Self::load_dyn`].
+
     pub fn delete_dyn(
         &mut self,
         rel: RelationId,
@@ -127,57 +106,36 @@ impl<S> InstanceBuilder<S> {
         self.mutation.delete_dyn(rel, facts)
     }
 
-    /// Records one shape-proved collection against the empty base — the
-    /// bridge transport lane (`proposals/one-representation/20`),
-    /// semantics exactly as [`Self::load_dyn`]. Bridge/harness surface
-    /// (not embedding API).
-    ///
     /// # Errors
-    ///
-    /// As [`Self::load_dyn`], minus the per-row shape family the
+
     /// constructor already refused.
     #[doc(hidden)]
     pub fn load_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
         self.observed_load(|mutation| mutation.apply_accepted(collection, Disposition::Insert))
     }
 
-    /// The delete disposition of [`Self::load_accepted`] — resolve-only,
-    /// exactly as [`Self::delete_dyn`]. Bridge/harness surface (not
-    /// embedding API).
-    ///
     /// # Errors
-    ///
-    /// As [`Self::load_accepted`].
+
     #[doc(hidden)]
     pub fn delete_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
         self.mutation
             .apply_accepted(collection, Disposition::Delete)
     }
 
-    /// Mints `count` consecutive fresh values. `count == 0` is empty and
-    /// does not advance the sequence.
-    ///
     /// # Errors
-    ///
-    /// As [`super::WriteTx::reserve`].
+
     pub fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {
         self.mutation.reserve(count)
     }
 
-    /// Untyped fresh minting. The witness is schema-bound.
-    ///
     /// # Errors
-    ///
-    /// As [`Self::reserve`]; `FactShape` at the dyn boundary.
+
     pub fn reserve_at(&mut self, field: FreshField<S>, count: u64) -> Result<FreshRange<u64>> {
         self.mutation.reserve_at(field, count)
     }
 
-    /// Resolves `(relation, field)` to a schema-bound fresh-field witness.
-    ///
     /// # Errors
-    ///
-    /// `UnknownRelation`/`UnknownField`/`NotAFreshField`.
+
     pub fn fresh_field(
         &self,
         relation: RelationId,
@@ -187,30 +145,20 @@ impl<S> InstanceBuilder<S> {
         Ok(FreshField::new(relation, field))
     }
 
-    /// Overlay membership of a typed fact.
-    ///
     /// # Errors
-    ///
-    /// Dictionary resolution errors.
+
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.mutation.contains(fact)
     }
 
-    /// Overlay membership of a dynamic fact.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` on an unknown relation or arity/type mismatch.
+
     pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.mutation.contains_dyn(rel, values)
     }
 
-    /// Overlay keyed lookup of a typed fact. Last-wins among net-live
-    /// staged rows; the empty base has no committed shadow.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` when a manual `Key` impl lies about its statement.
+
     #[expect(
         clippy::needless_pass_by_value,
         reason = "a key value is the read's input, spelled `builder.get(id)`"
@@ -237,11 +185,8 @@ impl<S> InstanceBuilder<S> {
         }
     }
 
-    /// Overlay keyed lookup through a data-supplied key statement.
-    ///
     /// # Errors
-    ///
-    /// As [`super::WriteTx::get_dyn`].
+
     pub fn get_dyn(
         &mut self,
         relation: RelationId,
@@ -254,11 +199,8 @@ impl<S> InstanceBuilder<S> {
             .then_some(out))
     }
 
-    /// [`Self::get_dyn`] into a caller-provided buffer.
-    ///
     /// # Errors
-    ///
-    /// As [`Self::get_dyn`].
+
     pub fn get_dyn_into(
         &mut self,
         relation: RelationId,
@@ -274,14 +216,10 @@ impl<S> InstanceBuilder<S> {
         self.mutation.backend.stage.intern_count()
     }
 
-    /// Consumes the builder: packed freeze, complete key merge, complete
-    /// statement roster. `Err` is poison or infrastructure; theory
-    /// failure is [`Admission::Rejected`].
-    ///
     /// # Errors
-    ///
+
     /// `TransactionPoisoned` if a prior apply failed after a prefix
-    /// entered the stage; `Corruption` / `Internal` on infra failure.
+
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
         self.mutation.refuse_poisoned()?;
         let (schema, stage) = self.mutation.into_heap();
