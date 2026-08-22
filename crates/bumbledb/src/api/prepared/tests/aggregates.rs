@@ -1,5 +1,4 @@
 //! (validate → plan → execute → result buffer), including interval finds.
-
 use super::*;
 use crate::ir::FoldOp;
 use bumbledb_theory::schema::IntervalElement;
