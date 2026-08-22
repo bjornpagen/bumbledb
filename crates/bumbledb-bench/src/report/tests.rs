@@ -126,14 +126,12 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 ";
     assert_eq!(to_markdown(&fixture()), expected);
 
-    // The losing render names the family and fails the gate.
     let mut failing = fixture();
     failing.reads[0].verdict = Verdict::Loss;
     let md = to_markdown(&failing);
     assert!(md.contains("FAIL — losing families: point."), "{md}");
     assert!(!failing.all_win());
 
-    // A filtered run withholds the claim, whatever the families did.
     let mut filtered = fixture();
     filtered.partial = true;
     let md = to_markdown(&filtered);
@@ -164,14 +162,10 @@ fn the_json_is_structurally_sound() {
     ] {
         assert!(text.contains(key), "missing {key} in {text}");
     }
-    // Boost-off: no shared-machine keys anywhere — the pre-boost
-    // artifact is unchanged.
+
     assert!(!text.contains("shared_machine"), "{text}");
 }
 
-/// Boost-on stamps the shared-machine honesty fields (owner ruling,
-/// 2026-07-20) into the ledger `report.json` provenance block, and the
-/// markdown face names the same numbers.
 #[test]
 fn a_boosted_run_stamps_shared_machine_provenance() {
     let mut boosted = fixture();
@@ -197,9 +191,6 @@ fn a_boosted_run_stamps_shared_machine_provenance() {
     assert!(md.contains("1.25 2.50 3.75 (start)"), "{md}");
 }
 
-/// The boost→provenance bridge: an engaged boost stamps the block with
-/// the engagement's own start sample and a fresh end sample; no boost
-/// stamps nothing.
 #[test]
 fn the_shared_stamp_bridges_the_engaged_boost() {
     assert_eq!(provenance::shared_stamp(None), None);
@@ -212,8 +203,7 @@ fn the_shared_stamp_bridges_the_engaged_boost() {
     for (slot, expected) in shared.load_start.iter().zip([1.0, 2.0, 3.0]) {
         assert!((slot - expected).abs() < f64::EPSILON, "start {slot}");
     }
-    // load_end is sampled at stamp time: every slot is a real sample
-    // (>= 0) or the explicit -1.0 unsampled marker.
+
     for slot in shared.load_end {
         assert!(
             slot >= 0.0 || (slot + 1.0).abs() < f64::EPSILON,
@@ -256,9 +246,6 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
         "{text}"
     );
 
-    // The merge: two runs; the second's point block is contaminated,
-    // so the min must come from the first even though the second is
-    // numerically lower.
     let mut second = stamped.clone();
     second.reads[0].ours.p50 = 5_000;
     second.reads[0].ours.p95 = 6_000;
@@ -284,17 +271,13 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
         "{merged}"
     );
     assert!(merged.contains("excluded from the minima"), "{merged}");
-    // commit_single is contaminated in BOTH runs: no clean minima.
+
     assert!(
         merged.contains("| commit_single | ~~100.0~~ | ~~100.0~~ | - | - |"),
         "{merged}"
     );
 }
 
-/// The merge's durability gate (finding 020, merge half): runs whose
-/// `config.store` labels differ refuse to merge — a min column across
-/// sync levels labels nothing — and a run carrying no label at all is
-/// named in its own error.
 #[test]
 fn the_merge_refuses_mixed_durability_labels() {
     let mut ephemeral = fixture();
