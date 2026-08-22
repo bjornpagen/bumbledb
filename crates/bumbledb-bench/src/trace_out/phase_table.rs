@@ -1,22 +1,12 @@
 use bumbledb::obs::{Category, TraceEvent};
 
-/// Renders the executor phase table from `Category::Phase` accumulator
-/// events (docs/architecture/60-validation.md): one row per (node, phase)
-/// in node-major, phase-index order, with an `excl_us` column — the
-/// phase's time minus everything attributed one node deeper, meaningful
-/// for `descend` rows (per-row bookkeeping + leaf emits + the next
-/// node's un-phased entry setup). Returns `None` when the capture holds
-/// no phase events (non-join plans, pre-upgrade traces).
 #[must_use]
 pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
     use std::fmt::Write as _;
 
-    // (node, phase) -> (total_ns, calls); node 8 is the overflow bucket.
     let mut cells: Vec<(usize, usize, u64, u64)> = Vec::new();
     for event in events.iter().filter(|e| e.cat() == Category::Phase) {
-        // An accumulator name missing from the registry table is that
-        // event's own defect (an engine ahead of the bench's registry
-        // view) — skip the row, never suppress the whole table.
+
         let Some((phase, node)) = parse_phase(event.point()) else {
             continue;
         };
@@ -51,7 +41,7 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
         "phase", "calls", "total_us", "avg_ns", "excl_us"
     );
     for &(node, phase, ns, calls) in &cells {
-        // Descend's exclusive time subtracts the entire next node.
+
         let excl = if phase == 4 {
             ns.saturating_sub(node_total(node + 1))
         } else {
@@ -70,7 +60,6 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
     Some(out)
 }
 
-/// Recovers `(phase index, node index)` from a phase point.
 fn parse_phase(point: bumbledb::obs::TracePoint) -> Option<(usize, usize)> {
     match point {
         bumbledb::obs::TracePoint::JoinPhase { phase, node } => {
