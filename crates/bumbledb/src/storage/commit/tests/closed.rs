@@ -1,10 +1,3 @@
-//! Compiled subsets (PRD 04): statements over closed relations. The
-//! insert-side membership judgment (plain reference, ψ sub-vocabulary,
-//! out-of-range words), the no-`R`-traffic shape criterion, and the
-//! domain-quantification delete matrix. Verdict parity with the naive
-//! model is the pending PRD 06 cross-check — these tests assert the
-//! engine side.
-
 use crate::encoding::ValueRef;
 use crate::error::{Admission, Direction, Result, Violation};
 use crate::schema::ValidateDescriptor as _;
@@ -26,19 +19,13 @@ const ALERT: RelationId = RelationId(1);
 const ESCALATION: RelationId = RelationId(2);
 const HANDLER: RelationId = RelationId(3);
 
-/// Materialized order: Severity's closed auto-key, then the declared
-/// statements in declaration order.
 const HANDLER_KEY: StatementId = StatementId(1);
 const ALERT_SEVERITY: StatementId = StatementId(2);
 const ESCALATION_SEVERITY: StatementId = StatementId(3);
 const SEVERITY_HANDLED: StatementId = StatementId(4);
 
-/// Severity closed {pages: bool} = Low(false) | Med(true) | High(true).
-/// Alert(severity) <= Severity(id): the plain closed reference.
-/// Escalation(severity) <= Severity(id | pages == true): the ψ-selected
-/// sub-vocabulary. Severity(id) <= Handler(severity): domain
-/// quantification — every severity has a handler, at all times after the
-/// handlers land.
+/// Severity(id) <= Handler(severity): domain quantification — every severity
+/// has a handler, at all times after the handlers land.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -118,8 +105,6 @@ fn handler(schema: &Schema, severity: u64, priority: u64) -> Vec<u8> {
     )
 }
 
-/// Commits `base`, then applies a second delta; on an abort, asserts the
-/// base state survived untouched.
 fn base_then(
     name: &str,
     base: &[(RelationId, Vec<u8>)],
@@ -168,8 +153,6 @@ fn assert_violation(
     assert_eq!(**fact, *named_fact, "the violation names the source fact");
 }
 
-// ---------- the plain closed reference ----------
-
 #[test]
 fn closed_reference_inside_the_extension_commits() {
     base_then("closed-ref-ok", &[], &[], &[(ALERT, alert(&schema(), 2))])
@@ -189,9 +172,6 @@ fn closed_reference_beyond_the_extension_aborts() {
     );
 }
 
-/// A word whose bit position falls beyond the 4×u64 member set entirely
-/// (id ≥ 256): membership is simply false — the same violation as any
-/// dangling reference, no special error.
 #[test]
 fn closed_reference_beyond_the_roster_cap_aborts() {
     let schema = schema();
@@ -203,8 +183,6 @@ fn closed_reference_beyond_the_roster_cap_aborts() {
         &a,
     );
 }
-
-// ---------- the ψ-selected sub-vocabulary ----------
 
 #[test]
 fn subset_member_commits() {
@@ -242,11 +220,6 @@ fn subset_out_of_range_aborts() {
     );
 }
 
-// ---------- the shape criterion: zero R traffic ----------
-
-/// A committed closed-reference source leaves NO `R` entry — the compiled
-/// member set replaced the reverse-edge machinery for the whole statement
-/// class (grep-able sibling of the plan emission's `memberships` split).
 #[test]
 fn closed_target_statements_write_no_reverse_edges() {
     let dir = TempDir::new("closed-no-r");
@@ -273,22 +246,17 @@ fn closed_target_statements_write_no_reverse_edges() {
     }
 }
 
-// ---------- domain quantification (closed source) ----------
-
 fn all_handlers(schema: &Schema) -> Vec<(RelationId, Vec<u8>)> {
     (0..3)
         .map(|severity| (HANDLER, handler(schema, severity, 10)))
         .collect()
 }
 
-/// Deleting the last handler for a covered severity aborts: the constant
-/// source's row 2 is a stranded source the moment its target tuple
-/// disestablishes.
 #[test]
 fn deleting_the_last_handler_for_a_severity_aborts() {
     let schema = schema();
     let severity_high = {
-        // The sealed axiom's canonical bytes — the violation payload.
+
         let rows = schema
             .relation(SEVERITY)
             .body()
@@ -309,8 +277,8 @@ fn deleting_the_last_handler_for_a_severity_aborts() {
     );
 }
 
-/// Replacing a handler in the same commit re-establishes the tuple — the
-/// plain set difference drops the check before any survivor scan runs.
+/// Replacing a handler in the same commit re-establishes the tuple — the plain
+/// set difference drops the check before any survivor scan runs.
 #[test]
 fn replacing_a_handler_in_one_commit_commits() {
     let schema = schema();
@@ -324,9 +292,6 @@ fn replacing_a_handler_in_one_commit_commits() {
     .unwrap();
 }
 
-/// The functionality key on Handler stays enforced alongside the domain
-/// statement: [`HANDLER_KEY`] is the resolved target key the domain
-/// statement probes.
 #[test]
 fn the_domain_statement_resolved_the_handler_key() {
     let schema = schema();
