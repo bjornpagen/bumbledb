@@ -1,6 +1,5 @@
 //! (`lean/Bumbledb/Exec/Reach.lean` is the truth): a fold over a boundary stops
 //! after the base round.
-
 use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
