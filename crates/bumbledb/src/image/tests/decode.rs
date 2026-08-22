@@ -7,9 +7,6 @@ use crate::storage::env::Environment;
 use crate::storage::read;
 use crate::testutil::TempDir;
 
-/// Build-time distinct counts are exact per column type
-/// (docs/architecture/40-execution.md): fresh ids all-distinct, bools 2, and a
-/// skewed i64 column counted through the word set.
 #[test]
 fn distinct_counts_are_exact() {
     let dir = TempDir::new("image-distincts");
@@ -17,13 +14,12 @@ fn distinct_counts_are_exact() {
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let image = build(&txn.catalog(), &schema, R).expect("build");
-    // populated(): ids 0..10, flag i % 2 == 0, kind i % 3 == 0, amount i*7-30.
+
     assert_eq!(image.distinct_count(0), 10, "fresh ids all distinct");
     assert_eq!(image.distinct_count(1), 2, "bools");
     assert_eq!(image.distinct_count(2), 2, "kind bools");
     assert_eq!(image.distinct_count(3), 10, "amounts all distinct");
 
-    // A skewed refresh: 100 more rows sharing 5 amounts.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     for i in 10..110u64 {
@@ -38,10 +34,7 @@ fn distinct_counts_are_exact() {
     let image = build(&txn.catalog(), &schema, R).expect("build");
     assert_eq!(image.row_count(), 110);
     assert_eq!(image.distinct_count(0), 110);
-    // Old 10 distinct amounts + {0..5}, minus the overlaps: the old
-    // amounts are 7i - 30 (…-30, -23, …, 33); {0..5} intersects at
-    // nothing except… 7i-30 ∈ {0,1,2,3,4} ⇔ i has no integer
-    // solution except none (7i = 30..34 has none). 10 + 5 = 15.
+
     assert_eq!(image.distinct_count(3), 15);
 }
 
@@ -56,12 +49,12 @@ fn columns_equal_per_field_decode_of_the_scan() {
 
     for (position, entry) in read::scan(&txn, &schema, R).expect("scan").enumerate() {
         let (_, fact_bytes) = entry.expect("ok");
-        // 8-byte columns hold the byte-order-normalized word.
+
         let id_word = u64::from_be_bytes(field_word_bytes(fact_bytes, 0));
         assert_eq!(image.column_words(0)[position], id_word);
         let amount_word = u64::from_be_bytes(field_word_bytes(fact_bytes, 3));
         assert_eq!(image.column_words(3)[position], amount_word);
-        // 1-byte columns hold the validated byte.
+
         assert_eq!(image.column_bytes(1)[position], fact_bytes.bytes()[8]);
         assert_eq!(image.column_bytes(2)[position], fact_bytes.bytes()[9]);
     }
@@ -72,7 +65,7 @@ fn positions_stay_dense_under_row_id_holes() {
     let dir = TempDir::new("image-holes");
     let schema = schema();
     let env = populated(&dir, &schema);
-    // Delete three facts, punching row-id holes.
+
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     for i in [2u64, 5, 7] {
@@ -87,7 +80,7 @@ fn positions_stay_dense_under_row_id_holes() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn.catalog(), &schema, R).expect("build");
     assert_eq!(image.row_count(), 7);
-    // Every position 0..7 is filled, in scan order.
+
     let scanned: Vec<u64> = read::scan(&txn, &schema, R)
         .expect("scan")
         .map(|e| {
@@ -140,9 +133,7 @@ fn byte_size_covers_rows_and_slab_slack() {
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let image = build(&txn.catalog(), &schema, R).expect("build");
-    // The fixture: 10 rows over 2 word columns (id, amount) and 2 byte
-    // columns (flag, kind). Lower bound: the raw payload; upper bound:
-    // payload plus per-column alignment/stride slack.
+
     let payload = 10 * (2 * 8 + 2);
     assert!(image.byte_size() >= payload, "{}", image.byte_size());
     let slack = 4 * (SET_STRIDE + LINE);
