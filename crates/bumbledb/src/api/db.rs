@@ -5,7 +5,6 @@
 //! — in-memory set arithmetic, nothing touches LMDB until commit, and an
 //! abort (error or panic) never wrote a fact: the one thing every abort
 //! `EscapedIdBurn` drop guard (`db/write.rs`) — the never-reissue law
-
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -249,9 +248,7 @@ pub trait Fresh: Sized + Copy {
 /// definition's descriptor and surface an invalid declaration as the
 pub struct Db<S> {
     /// The reader cache: one parked LMDB read
-
     /// Declared BEFORE `env` — fields drop in declaration order, and
-
     /// before `env` releases the advisory lock, or the drop opens a
     read_cache: Mutex<Option<ParkedReader>>,
     env: Environment,
@@ -271,7 +268,6 @@ pub struct Db<S> {
 
 impl<S> Db<S> {
     /// The LMDB environment (reader: `crate::verify_store` — the sweeper
-
     pub(crate) fn env(&self) -> &Environment {
         &self.env
     }
