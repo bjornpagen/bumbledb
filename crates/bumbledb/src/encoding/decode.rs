@@ -7,10 +7,6 @@ use super::{FactView, I64_SIGN_BIT, InternId, IntervalElement, ValueRef, ValueTy
 use crate::error::{CorruptionError, Error};
 use bumbledb_theory::Interval;
 
-/// The four corruption classes [`decode_field`] can produce. Broader
-/// [`CorruptionError`] variants are not field-decode failures; the sweeper
-/// matches this type exhaustively instead of proving a subset with
-/// `unreachable!`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldDecodeError {
     InvalidBool(u8),
@@ -39,9 +35,7 @@ impl From<FieldDecodeError> for Error {
 }
 
 /// Decodes a canonical Bool byte.
-///
 /// # Errors
-///
 /// [`CorruptionError::InvalidBool`] on any byte other than `0x00`/`0x01`.
 pub const fn decode_bool(byte: u8) -> Result<bool, CorruptionError> {
     match byte {
@@ -63,28 +57,14 @@ pub const fn decode_i64(bytes: [u8; 8]) -> i64 {
     (u64::from_be_bytes(bytes) ^ I64_SIGN_BIT).cast_signed()
 }
 
-/// Decodes an Interval-over-U64's `start ‖ end` bytes into the checked
-/// host type — construction is the validation boundary (parse, don't
-/// validate): the `start < end` proof rides the returned [`Interval`],
-/// so no consumer re-derives it.
-///
 /// # Errors
-///
-/// [`FieldDecodeError::InvalidInterval`] when `start >= end` — a stored
-/// empty or inverted interval denotes nothing, exactly as corrupt as a
-/// non-0/1 Bool byte.
 pub(crate) fn interval_u64_from_words(bytes: [u8; 16]) -> Result<Interval<u64>, FieldDecodeError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
     Interval::new(decode_u64(start_bytes), decode_u64(end_bytes))
         .ok_or(FieldDecodeError::InvalidInterval(bytes))
 }
 
-/// Decodes an Interval-over-I64's `start ‖ end` bytes into the checked
-/// host type, as [`interval_u64_from_words`].
-///
 /// # Errors
-///
-/// [`FieldDecodeError::InvalidInterval`], as [`interval_u64_from_words`].
 pub(crate) fn interval_i64_from_words(bytes: [u8; 16]) -> Result<Interval<i64>, FieldDecodeError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
     Interval::new(decode_i64(start_bytes), decode_i64(end_bytes))
@@ -96,11 +76,8 @@ pub(crate) fn interval_i64_from_words(bytes: [u8; 16]) -> Result<Interval<i64>, 
 /// is additive, so `start_word + w` IS the encoded end), validating the
 /// Q2 bound `start + w < MAX_END` in the word domain — both ceilings
 /// encode to `u64::MAX`. Returns the `(start_word, end_word)` pair.
-///
 /// # Errors
-///
 /// [`FieldDecodeError::InvalidFixedIntervalStart`] when the stored start
-/// sits at or past the bound — the derived end would reach the ceiling
 /// (ray territory, unconstructible in the fixed family) or overflow.
 pub const fn decode_fixed_interval_start(
     bytes: [u8; 8],
@@ -113,10 +90,6 @@ pub const fn decode_fixed_interval_start(
     }
 }
 
-/// Order-preserving `(start, end)` words of an interval-family encoded
-/// tail. Width has one owner: [`ValueType::width`] (16 general, 8 fixed).
-/// `None` when `ty` is not an interval type, the slice is the wrong
-/// width, or a fixed start sits at or past the Q2 bound.
 pub(crate) fn interval_words(ty: ValueType, tail: &[u8]) -> Option<(u64, u64)> {
     if !ty.is_interval() || tail.len() != ty.width() {
         return None;
@@ -135,21 +108,11 @@ pub(crate) fn interval_words(ty: ValueType, tail: &[u8]) -> Option<(u64, u64)> {
     }
 }
 
-/// Validates a `bytes<len>` field's word-padded encoding: `padded` is
-/// the field's `⌈len/8⌉ × 8` stored bytes, and every byte past `len`
-/// must be zero — the pad is encoding, not data, so a nonzero pad byte
-/// is corruption exactly like a non-0/1 Bool byte.
-///
 /// # Errors
-///
-/// [`FieldDecodeError::NonzeroFixedBytesPad`] on any nonzero trailing pad
-/// byte (carrying the offending trailing word).
 fn check_fixed_bytes_pad(padded: &[u8], len: u16) -> Result<(), FieldDecodeError> {
     debug_assert_eq!(padded.len(), super::fixed_bytes_words(len) * 8);
     let n = usize::from(len);
-    // A nonzero pad byte implies at least one stored word, so the
-    // `last_chunk` arm of the chain always holds when the first does —
-    // the offending trailing word rides the error.
+
     if padded[n..].iter().any(|&byte| byte != 0)
         && let Some(&tail) = padded.last_chunk()
     {
@@ -158,8 +121,6 @@ fn check_fixed_bytes_pad(padded: &[u8], len: u16) -> Result<(), FieldDecodeError
     Ok(())
 }
 
-/// The pad-law primitive: padded encoding → [`FixedBytesValue`]. Tests
-/// pin the padded form; typed callers use [`decode_fixed_bytes`].
 #[cfg(test)]
 pub(crate) fn decode_padded_fixed_bytes(
     padded: &[u8],
@@ -169,9 +130,6 @@ pub(crate) fn decode_padded_fixed_bytes(
     Ok(FixedBytesValue::new(&padded[..usize::from(len)]))
 }
 
-/// Splits an interval encoding's `start ‖ end` into its 8-byte halves
-/// (readers: the interval decoders here, the image's word-pair fill, and
-/// the image tests' expectations).
 pub(crate) const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
     let (mut start, mut end) = ([0; 8], [0; 8]);
     let mut i = 0;
@@ -195,12 +153,10 @@ pub fn field_bytes<'bytes>(fact: FactView<'bytes, '_>, field_idx: usize) -> &'by
 /// fields — a field's width is a runtime layout fact the slice type
 /// cannot carry, so every word-field consumer funnels through this
 /// single check instead of checking locally.
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: the addressed field is not
 /// word-width (callers' fields are schema-validated U64/I64/String or a
 /// one-word `bytes<N ≤ 8>`).
+/// Only on a programmer-invariant violation: the addressed field is not
 #[must_use]
 pub fn field_word_bytes(fact: FactView<'_, '_>, field_idx: usize) -> [u8; 8] {
     <[u8; 8]>::try_from(field_bytes(fact, field_idx))
@@ -209,15 +165,11 @@ pub fn field_word_bytes(fact: FactView<'_, '_>, field_idx: usize) -> [u8; 8] {
 
 /// Typed Bool field: the layout-sliced byte through [`decode_bool`],
 /// never a [`ValueRef`].
-///
 /// # Errors
-///
 /// [`FieldDecodeError::InvalidBool`] on any byte other than `0x00`/`0x01`.
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: the addressed field is not
 /// at least one byte (every Bool field is).
+/// Only on a programmer-invariant violation: the addressed field is not
 pub fn decode_bool_at(fact: FactView<'_, '_>, field_idx: usize) -> Result<bool, FieldDecodeError> {
     match field_bytes(fact, field_idx)[0] {
         0x00 => Ok(false),
@@ -228,16 +180,12 @@ pub fn decode_bool_at(fact: FactView<'_, '_>, field_idx: usize) -> Result<bool, 
 
 /// Typed `bytes<N>` field: `N` is the layout arm. Returns the raw
 /// (unpadded) bytes borrowed from the fact; never a [`ValueRef`].
-///
 /// # Errors
-///
 /// [`FieldDecodeError::NonzeroFixedBytesPad`] on a nonzero trailing pad
 /// byte.
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: the addressed field is not
 /// `bytes<N>` (callers are schema-typed).
+/// Only on a programmer-invariant violation: the addressed field is not
 pub fn decode_fixed_bytes<'bytes>(
     fact: FactView<'bytes, '_>,
     field_idx: usize,
@@ -252,16 +200,12 @@ pub fn decode_fixed_bytes<'bytes>(
 
 /// Typed `interval<u64>` field — general (16-byte) or fixed-width
 /// (start word + layout width). Never a [`ValueRef`].
-///
 /// # Errors
-///
 /// [`FieldDecodeError::InvalidInterval`] or
 /// [`FieldDecodeError::InvalidFixedIntervalStart`].
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: the addressed field is not
 /// an interval over U64.
+/// Only on a programmer-invariant violation: the addressed field is not
 pub fn decode_interval_u64(
     fact: FactView<'_, '_>,
     field_idx: usize,
@@ -290,15 +234,11 @@ pub fn decode_interval_u64(
 
 /// Typed `interval<i64>` field — general or fixed-width, as
 /// [`decode_interval_u64`].
-///
 /// # Errors
-///
 /// As [`decode_interval_u64`].
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: the addressed field is not
 /// an interval over I64.
+/// Only on a programmer-invariant violation: the addressed field is not
 pub fn decode_interval_i64(
     fact: FactView<'_, '_>,
     field_idx: usize,
@@ -329,9 +269,7 @@ pub fn decode_interval_i64(
 }
 
 /// Decodes one field of a width-proved fact.
-///
 /// # Errors
-///
 /// [`FieldDecodeError`] on a Bool byte that is not `0x00`/`0x01`, a
 /// `bytes<N>` field with a nonzero pad byte, or an Interval whose
 /// `start >= end` — never a skip, never a default.
@@ -363,14 +301,6 @@ pub fn decode_field(
     }
 }
 
-/// Decodes canonical fact bytes into owned dynamic [`Value`]s — the one
-/// body behind the write transaction's point-read decode
-/// (`WriteTx::get_dyn`), the snapshot's point-read and export decodes
-/// (`ReadInstance::get_dyn` / `ReadInstance::scan`), and the commit boundary's
-/// rejection decode (`storage/commit/write.rs`); only intern resolution
-/// differs by context (pending-first inside a write transaction, the
-/// committed dictionary on a snapshot, pending-then-committed at
-/// rejection), so the resolver is the parameter.
 pub(crate) fn decode_values(
     fact: FactView<'_, '_>,
     resolve_str: impl FnMut(u64) -> crate::error::Result<Box<str>>,
@@ -378,14 +308,6 @@ pub(crate) fn decode_values(
     decode_values_keyed(fact, &[], &[], resolve_str)
 }
 
-/// [`decode_values`] for the keyed point-read hit (`ReadInstance::get_dyn` /
-/// `WriteTx::get_dyn`): fields the key statement's projection fixed take
-/// the caller's supplied values — the `U` probe matched the determinant
-/// byte-for-byte and hash equality is fact equality
-/// (`docs/architecture/10-data-model.md`), so the stored field IS the
-/// supplied one, and resolving it through the reverse dictionary would
-/// re-derive the input with an extra storage descent. Non-projected
-/// fields decode as [`decode_values`] does.
 pub(crate) fn decode_values_keyed(
     fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],
@@ -397,12 +319,6 @@ pub(crate) fn decode_values_keyed(
     Ok(out)
 }
 
-/// [`decode_values_keyed`] into a caller-provided buffer — the pooled
-/// point-read decode (`ReadInstance::get_dyn_into` / `WriteTx::get_dyn_into`):
-/// the values `Vec` is the caller's, its capacity retained across gets,
-/// so a warm keyed get's allocator traffic shrinks to the variable-width
-/// payload boxes alone. Clears `out` first; a decode error leaves the
-/// written prefix (the caller treats `Err` as no result).
 pub(crate) fn decode_values_keyed_into(
     fact: FactView<'_, '_>,
     projection: &[bumbledb_theory::schema::FieldId],
