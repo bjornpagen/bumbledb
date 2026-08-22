@@ -1,7 +1,7 @@
 //! The generator's target schema seam.
 //!
-//! The query grammar is schema-specific by design
-//! (`docs/architecture/60-validation.md` owns the ledger shape); this
+//! The query grammar is schema-specific by design;
+//! this
 //! module is the one place the grammar touches a concrete schema:
 //! relation/field ids, per-relation domains, literal vocabularies, and
 //! the deterministic corpus value functions the dressing recomputes
@@ -21,8 +21,7 @@
 //! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
 //! randomized lane exercises the occurrence elimination and its
 //! refusals against corpora that satisfy the statements by
-//! construction (`docs/architecture/40-execution.md` § the grounding) —
-//! plus the closed-relation write surface (PRD 06): `Currency` carries
+//! construction — plus the closed-relation write surface: `Currency` carries
 //! a payload column (`minor_units`), `CurrencyBacking` is the small
 //! keyed relation the domain quantification `Currency(id) <=
 //! CurrencyBacking(currency)` targets, and `CashRounding` rides the
@@ -418,7 +417,7 @@ pub fn descriptor() -> SchemaDescriptor {
                 // checked-in conformance corpus. Statement-free payload:
                 // its job is the mixed-width Allen query surface beside
                 // Mandate's general `interval<i64>` (Q1's element-domain
-                // rule; `docs/architecture/30-dependencies.md` § Q1).
+                // rule).
                 RelationDescriptor {
                     extension: None,
                     name: "Lane".into(),
@@ -533,7 +532,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             side(ids::POSTING_TAG, ids::posting_tag::TAG, &[]),
             side(ids::TAG, bumbledb::FieldId(0), &[]),
         ),
-        // The PRD 06 closed-relation write surface — appended last, so
+        // The closed-relation write surface — appended last, so
         // no earlier statement id shifts:
         // the key the domain quantification probes,
         StatementDescriptor::Functionality {
@@ -670,8 +669,7 @@ pub fn import_batch_entry(row: u64) -> u64 {
 
 /// Timestamps: `AT_BASE + row × AT_STEP`, strictly monotone — every
 /// posting's `at` is distinct by construction, so `at` is the **tie-free
-/// Arg key** (`docs/architecture/20-query-ir.md`: with distinct keys
-/// ties cannot occur).
+/// Arg key** (with distinct keys ties cannot occur).
 pub const AT_BASE: i64 = 1_700_000_000_000_000;
 pub const AT_STEP: i64 = 50;
 
