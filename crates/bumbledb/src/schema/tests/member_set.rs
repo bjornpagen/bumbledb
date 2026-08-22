@@ -75,7 +75,7 @@ fn exhaustive_member_set_matches_the_naive_bit_walk() {
     for k in 0..=256 {
         let prefix = prefix_pattern(k);
         patterns.push(prefix);
-        patterns.push(prefix.map(|w| !w)); 
+        patterns.push(prefix.map(|w| !w));
     }
     for bit in 0..256usize {
         let mut singleton = [0u64; 4];
