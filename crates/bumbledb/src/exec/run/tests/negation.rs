@@ -1,15 +1,7 @@
-//! Anti-probe correctness (docs/architecture/40-execution.md, § anti-probe
-//! filters): negated atoms reject bindings at their attached node, on the
-//! survivor-compaction machinery. Every fixture also pins batch-size
-//! equality — sizes 1/2/64/256 plus a partial size that divides nothing.
-
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;
 
-/// The batch-size equality harness over one fixture: identical results
-/// at the scalar degenerate size, small sizes, the default's neighbors,
-/// and a partial size (7 divides none of the fixtures' row counts).
 fn assert_batch_equality(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
@@ -24,19 +16,15 @@ fn assert_batch_equality(
     }
 }
 
-/// Postings-without-tag over constructed data: some tagged once, some
-/// multiply — a rejected binding must stay rejected regardless of how
-/// many facts match (a hit is a hit; multiplicity cannot resurrect).
 #[test]
 fn postings_without_tag_ignores_tag_multiplicity() {
     let dir = TempDir::new("run-anti-multiplicity");
     let schema = schema(2);
-    // R0 = postings (id, payload); R1 = tags (id, tag).
+
     let postings: Vec<(u64, u64)> = (0..10).map(|i| (i, 100 + i)).collect();
     let tags = vec![(1u64, 7u64), (2, 7), (2, 8), (3, 7), (3, 8), (3, 9)];
     let views = views_of(&dir, &schema, &[postings.clone(), tags.clone()]);
 
-    // Q(p, a) :- R0(p, a), ¬R1(p).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -61,20 +49,15 @@ fn postings_without_tag_ignores_tag_multiplicity() {
     assert_batch_equality(&plan, &views, &expected);
 }
 
-/// A negated atom with a literal binding rejects only matching-kind
-/// facts: ¬R1(x, 7) probes the filtered view (the literal stays in the
-/// occurrence's filter list, never a selection level — an empty filtered
-/// view must mean passthrough, not an empty query).
 #[test]
 fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
     let dir = TempDir::new("run-anti-literal");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..6).map(|i| (i, i * 10)).collect();
-    // x=1 and x=3 carry kind 7; x=2 carries only kind 8.
+
     let s = vec![(1u64, 7u64), (2, 8), (3, 7), (3, 8)];
     let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
 
-    // Q(x, a) :- R0(x, a), ¬R1(x, 7).
     let mut neg = negated(1, 1, &[(0, 0)]);
     neg.filters = vec![FilterPredicate::Compare {
         field: FieldId(1).into(),
@@ -83,9 +66,7 @@ fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
     }];
     let normalized = normalized(vec![occurrence(0, 0, &[(0, 0), (1, 1)]), neg], vec![]);
     let plan = planned(&normalized, &schema, &[0]);
-    // The witness shape: a negated occurrence's Eq-constant is a view
-    // filter, not a selection (docs/architecture/40-execution.md,
-    // § anti-probe filters).
+
     assert!(plan.occurrences()[1].selections.is_empty());
     assert_eq!(plan.occurrences()[1].filters.len(), 1);
 
@@ -104,8 +85,6 @@ fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
     assert_batch_equality(&plan, &views, &expected);
 }
 
-/// A zero-binding negated atom gates the query both ways: nonempty
-/// relation ⇒ empty result; empty relation ⇒ passthrough.
 #[test]
 fn zero_binding_negated_atom_is_an_emptiness_gate() {
     let schema = schema(2);
@@ -113,7 +92,7 @@ fn zero_binding_negated_atom_is_an_emptiness_gate() {
     for (gate_rows, expect_all) in [(vec![(9u64, 9u64)], false), (vec![], true)] {
         let dir = TempDir::new(&format!("run-anti-gate-{expect_all}"));
         let views = views_of(&dir, &schema, &[r.clone(), gate_rows]);
-        // Q(x, a) :- R0(x, a), ¬R1().
+
         let normalized = normalized(
             vec![occurrence(0, 0, &[(0, 0), (1, 1)]), negated(1, 1, &[])],
             vec![],
@@ -137,9 +116,9 @@ fn zero_binding_negated_atom_is_an_emptiness_gate() {
     }
 }
 
-/// An anti-probe attached to a middle node of the pipeline: the chain
-/// R0(x, y), R1(y, z) with ¬R2(y) rejects at the node that binds y —
-/// survivors compact before any deeper probing.
+/// An anti-probe attached to a middle node of the pipeline: the chain R0(x, y),
+/// R1(y, z) with ¬R2(y) rejects at the node that binds y — survivors compact
+/// before any deeper probing.
 #[test]
 fn negation_at_a_middle_node_compacts_before_descending() {
     let dir = TempDir::new("run-anti-middle");
@@ -149,7 +128,6 @@ fn negation_at_a_middle_node_compacts_before_descending() {
     let blocked = vec![(1u64, 0u64), (3, 0)];
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), blocked.clone()]);
 
-    // Q(x, y, z) :- R0(x, y), R1(y, z), ¬R2(y).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -178,9 +156,6 @@ fn negation_at_a_middle_node_compacts_before_descending() {
     assert_batch_equality(&plan, &views, &expected);
 }
 
-/// An anti-probe over variables bound at different nodes: ¬R2(x, z) in
-/// the chain attaches to the node binding z, reading x from the outer
-/// bindings (Slot source) and z from the batch keys (Batch source).
 #[test]
 fn negation_over_variables_bound_at_different_nodes() {
     let dir = TempDir::new("run-anti-split");
@@ -190,7 +165,6 @@ fn negation_over_variables_bound_at_different_nodes() {
     let blocked = vec![(0u64, 1u64), (2, 3), (1, 0)];
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), blocked.clone()]);
 
-    // Q(x, y, z) :- R0(x, y), R1(y, z), ¬R2(x, z).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -219,9 +193,6 @@ fn negation_over_variables_bound_at_different_nodes() {
     assert_batch_equality(&plan, &views, &expected);
 }
 
-/// Negation under an aggregate: the fold domain excludes rejected
-/// bindings — Sum and Count over postings-without-tag see only the
-/// surviving binding set.
 #[test]
 fn negation_under_an_aggregate_excludes_rejected_bindings() {
     use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, FoldOp};
@@ -232,7 +203,6 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
     let tags = vec![(1u64, 7u64), (2, 7), (2, 8), (3, 7), (3, 8), (3, 9)];
     let views = views_of(&dir, &schema, &[postings.clone(), tags.clone()]);
 
-    // Sum(a), Count() :- R0(p, a), ¬R1(p).
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -278,9 +248,6 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
     }
 }
 
-/// The outer-join idiom pair: the join half and the absence half return
-/// complementary sets — their sizes sum to |A ⋈ B| + |A − πB|, and no x
-/// appears in both halves.
 #[test]
 fn outer_join_idiom_halves_are_complementary() {
     let dir = TempDir::new("run-anti-outer-join");
@@ -289,7 +256,6 @@ fn outer_join_idiom_halves_are_complementary() {
     let b = vec![(2u64, 20u64), (3, 30), (3, 31), (5, 50)];
     let views = views_of(&dir, &schema, &[a.clone(), b.clone()]);
 
-    // Join half: Qj(x, p, q) :- A(x, p), B(x, q).
     let join_half = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -300,7 +266,6 @@ fn outer_join_idiom_halves_are_complementary() {
     let join_plan = planned(&join_half, &schema, &[0, 1]);
     let join_rows = run(&join_plan, &views);
 
-    // Absence half: Qa(x, p) :- A(x, p), ¬B(x).
     let absence_half = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -311,7 +276,6 @@ fn outer_join_idiom_halves_are_complementary() {
     let absence_plan = planned(&absence_half, &schema, &[0]);
     let absence_rows = run(&absence_plan, &views);
 
-    // Oracles: A ⋈ B and A − πB (the anti-semijoin).
     let mut join_oracle = BTreeSet::new();
     for (ax, ap) in &a {
         for (bx, bq) in &b {
@@ -341,7 +305,6 @@ fn outer_join_idiom_halves_are_complementary() {
         "the pair partitions the work: |A ⋈ B| + |A − πB|"
     );
 
-    // Complementary x-sets: no x in both halves; together they cover A.
     let join_xs: BTreeSet<u64> = join_rows
         .iter()
         .map(|row| row[join_plan.slot_of(VarId(0))])
