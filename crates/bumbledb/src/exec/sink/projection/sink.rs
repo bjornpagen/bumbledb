@@ -51,7 +51,6 @@ impl Sink for ProjectionSink {
         let scratch = &mut self.scratch;
         let sources = &self.batch_sources;
         if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-
             let arity = sources.len();
             let rows = &mut self.scan_rows;
             rows.resize(run.len() * arity, 0);
