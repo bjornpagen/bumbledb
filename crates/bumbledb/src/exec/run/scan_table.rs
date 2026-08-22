@@ -1,5 +1,4 @@
 //! The scan-pushdown leaf arm and its residual position filter.
-
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafScan, Operand, Sink, Source,
     ValidatedPlan,
