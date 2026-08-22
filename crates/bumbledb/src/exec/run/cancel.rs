@@ -1,10 +1,8 @@
 //! D2 origin cancellation bookkeeping and the typed execution poison.
-
 use super::{Executor, Poison};
 
 impl Executor {
     /// every loop before a second site can fire) and always paired with
-
     pub(super) fn poison(&mut self, poison: Poison) {
         if !matches!(self.drive_state, super::DriveState::Poisoned(_)) {
             self.drive_state = super::DriveState::Poisoned(poison);
@@ -12,9 +10,7 @@ impl Executor {
     }
 
     /// origin cancelled: the same silent-drop hazard the origin mint
-
     /// `lean/Bumbledb/Exec/Plan.lean: valid_plan_sound` requires.
-
     pub(super) fn advance_cancel_epoch(&mut self) {
         self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
         if self.cancel_epoch == 0 {
