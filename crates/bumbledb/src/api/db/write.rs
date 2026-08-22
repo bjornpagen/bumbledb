@@ -93,11 +93,8 @@ impl<S> ReadInstance<'_, S> {
 impl<S> Db<S> {
     /// delta — LMDB never saw a fact — but fresh ids the closure already
     /// minted burn either way: the `EscapedIdBurn` drop guard flushes the
-
     /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
-
     /// # Errors
-
     /// # Panics
     pub fn write<R>(
         &self,
@@ -113,9 +110,7 @@ impl<S> Db<S> {
     }
 
     /// The engine ships the outcome, never a loop — retry is host policy.
-
     /// # Errors
-
     /// # Panics
     pub fn write_from<R>(
         &self,
