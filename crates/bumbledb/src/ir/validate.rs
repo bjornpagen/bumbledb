@@ -35,12 +35,10 @@ pub use validate::validate;
 /// reference form is the `Interior` atom, typed against these sealed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
-
     pub columns: Box<[SignatureColumn]>,
 }
 
 impl std::fmt::Display for Signature {
-
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("(")?;
         for (index, column) in self.columns.iter().enumerate() {
@@ -81,14 +79,12 @@ impl std::fmt::Display for Signature {
 /// or a projection carrying a fold kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureColumn {
-
     Project { ty: ValueType },
 
     Fold { op: AggKind, ty: ValueType },
 }
 
 impl SignatureColumn {
-
     #[must_use]
     pub fn ty(&self) -> &ValueType {
         match self {
@@ -111,7 +107,6 @@ impl SignatureColumn {
 /// `None` — while a folded measure carries its fold's kind).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggKind {
-
     Sum,
 
     Min,
@@ -124,7 +119,6 @@ pub enum AggKind {
 }
 
 impl std::fmt::Display for AggKind {
-
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Sum => "Sum",
@@ -138,7 +132,6 @@ impl std::fmt::Display for AggKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ClassifiedComparison {
-
     VarVar {
         op: crate::ir::WordCmp,
         lhs: VarId,
@@ -151,7 +144,10 @@ pub(crate) enum ClassifiedComparison {
         value: SealedConst,
     },
 
-    VarInSet { var: VarId, set: ParamId },
+    VarInSet {
+        var: VarId,
+        set: ParamId,
+    },
 
     AllenVarVar {
         lhs: VarId,
@@ -165,11 +161,20 @@ pub(crate) enum ClassifiedComparison {
         mask: MaskConst,
     },
 
-    PointInVarVar { interval: VarId, point: VarId },
+    PointInVarVar {
+        interval: VarId,
+        point: VarId,
+    },
 
-    PointInVarPoint { interval: VarId, point: SealedConst },
+    PointInVarPoint {
+        interval: VarId,
+        point: SealedConst,
+    },
 
-    VarWithin { var: VarId, outer: SealedConst },
+    VarWithin {
+        var: VarId,
+        outer: SealedConst,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,7 +184,6 @@ pub(crate) enum SealedConst {
 }
 
 pub(super) struct InteriorSignatures<'a> {
-
     interiors: &'a [Signature],
 
     derived_count: usize,
@@ -187,11 +191,7 @@ pub(super) struct InteriorSignatures<'a> {
 }
 
 enum InteriorPhase<'a> {
-
-    Cq {
-
-        reader: Option<InteriorId>,
-    },
+    Cq { reader: Option<InteriorId> },
 
     ReachOpen { reader: Option<InteriorId> },
 
@@ -309,7 +309,6 @@ pub struct ValidatedInterior {
 }
 
 impl ValidatedInterior {
-
     #[must_use]
     pub fn signature(&self) -> &Signature {
         &self.signature
@@ -343,7 +342,6 @@ pub struct ValidatedRecArm {
 }
 
 impl ValidatedRecArm {
-
     #[must_use]
     pub(crate) fn self_occ(&self) -> OccId {
         self.self_occ
@@ -360,7 +358,6 @@ pub struct ValidatedRec {
 }
 
 impl ValidatedRec {
-
     #[must_use]
     pub fn signature(&self) -> &Signature {
         &self.signature
@@ -434,7 +431,6 @@ pub struct ValidatedMain {
 }
 
 impl ValidatedMain {
-
     #[must_use]
     pub fn signature(&self) -> &Signature {
         &self.signature
@@ -478,7 +474,6 @@ struct RuleTyping {
 }
 
 impl ValidatedQuery {
-
     #[must_use]
     pub fn interiors(&self) -> &[ValidatedInterior] {
         &self.interiors
@@ -607,7 +602,6 @@ pub struct RuleWitness<'a> {
 }
 
 impl<'a> RuleWitness<'a> {
-
     #[must_use]
     pub fn rule(&self) -> &'a LoweredRule {
         self.rule
@@ -682,13 +676,9 @@ impl<'a> RuleWitness<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TypeSlot {
-
     Mono(ValueType),
 
-    Bivalent {
-
-        interval: ValueType,
-    },
+    Bivalent { interval: ValueType },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -699,7 +689,6 @@ enum ParamKind {
 
 #[derive(Default)]
 struct Context {
-
     var_slots: BTreeMap<VarId, TypeSlot>,
 
     var_types: BTreeMap<VarId, ValueType>,
@@ -711,7 +700,6 @@ struct Context {
     atom_vars: BTreeSet<VarId>,
 
     /// refuse them (ruled 2026-07-23, R4); the row count is the proven
-
     closed_vars: BTreeMap<VarId, u16>,
 
     scalar_bound_vars: BTreeSet<VarId>,
