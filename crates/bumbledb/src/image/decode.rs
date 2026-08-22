@@ -7,36 +7,24 @@ use bumbledb_theory::schema::RelationId;
 
 use super::{Column, ColumnSpan, ColumnWidth};
 
-/// One field's hoisted decode step: static offset,
-/// validation arm resolved once — the row loop runs bare loads/stores.
 pub(super) enum Decode {
     Word {
         offset: usize,
         start: usize,
     },
-    /// A `bytes<N>` field: its `⌈N/8⌉` padded words go to consecutive
-    /// word columns (`starts`, one slab start per column), with the
-    /// trailing pad validated zero — the pad is encoding, not data
-    /// (`pad_mask` covers the last word's pad bytes; 0 for N % 8 == 0).
+
     FixedBytes {
         offset: usize,
         starts: Vec<usize>,
         pad_mask: u64,
     },
-    /// An interval field: the first 8 bytes go to the start column, the
-    /// second 8 to the end column (two ordinary word columns —
-    /// `docs/architecture/50-storage.md`).
+
     Interval {
         offset: usize,
         start_column: usize,
         end_column: usize,
     },
-    /// A fixed-width (`interval<E, w>`) field: ONE stored word — the
-    /// start — filling BOTH word columns, the end derived as
-    /// `start + w` in the order-preserving word domain (the bias is
-    /// additive, so this is exact for either element). Kernels see the
-    /// same two-column shape a general interval fills; the width lives
-    /// only here, in the type.
+
     FixedInterval {
         offset: usize,
         width: u64,
@@ -49,12 +37,9 @@ pub(super) enum Decode {
     },
 }
 
-/// The word-slab start of a column that must be 8-byte.
-///
 /// # Panics
-///
-/// On a programmer-invariant violation: the field→column map put a word
-/// span over a byte column.
+/// On a programmer-invariant violation: the field→column map put a word span
+/// over a byte column.
 fn words_start(column: Column) -> usize {
     match column {
         Column::Words { start } => start,
@@ -62,12 +47,9 @@ fn words_start(column: Column) -> usize {
     }
 }
 
-/// The byte-slab start of a column that must be 1-byte.
-///
 /// # Panics
-///
-/// On a programmer-invariant violation: the field→column map put a byte
-/// span over a word column.
+/// On a programmer-invariant violation: the field→column map put a byte span
+/// over a word column.
 fn bytes_start(column: Column) -> usize {
     match column {
         Column::Bytes { start } => start,
@@ -75,7 +57,6 @@ fn bytes_start(column: Column) -> usize {
     }
 }
 
-/// Builds the per-field decode plan from the field→column map.
 pub(super) fn decode_plan(
     field_types: &[ValueType],
     spans: &[ColumnSpan],
@@ -90,9 +71,7 @@ pub(super) fn decode_plan(
             let offset = layout.field_offset(field_idx);
             let first = usize::from(span.first_column);
             match (span.width, desc) {
-                // A bytes<N> field of any span shape: word loads plus the
-                // pad check (a bytes<8> field has no pad and decodes as a
-                // plain word).
+
                 (ColumnWidth::Word | ColumnWidth::Words { .. }, ValueType::FixedBytes { len }) => {
                     let words = crate::encoding::fixed_bytes_words(*len);
                     let pad_bytes = words * 8 - usize::from(*len);
@@ -107,8 +86,7 @@ pub(super) fn decode_plan(
                             starts: (0..words)
                                 .map(|i| words_start(columns[first + i]))
                                 .collect(),
-                            // BE words put the pad in the last word's low
-                            // bytes; a zero mask means no pad to check.
+
                             pad_mask: if pad_bytes == 0 {
                                 0
                             } else {
@@ -147,9 +125,6 @@ pub(super) fn decode_plan(
         .collect()
 }
 
-/// One scan-entry fill: the row-count ceiling, then the per-fact kernel.
-/// Returns the next position. The row id is discarded at this boundary —
-/// row ids never enter images; positions are dense scan ordinals.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
@@ -174,16 +149,10 @@ pub(super) fn fill_one(
     Ok(position + 1)
 }
 
-/// Decodes one canonical fact through the plan into the slabs at
-/// `position` — one width check up front makes every plan offset
-/// in-bounds. Both fill paths run this: the catalog scan ([`super::build`])
-/// and closed-relation synthesis ([`super::build::synthesize_closed`]),
-/// so a sealed extension decodes through exactly the machinery a stored
-/// fact does.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] // 00-product policy: image decode kernels
+)] 
 pub(super) fn decode_fact(
     rel: RelationId,
     plan: &[Decode],
@@ -193,7 +162,7 @@ pub(super) fn decode_fact(
     words: &mut [u64],
     bytes: &mut [u8],
 ) -> Result<()> {
-    // One width check per fact makes every plan offset in-bounds.
+
     if fact_bytes.len() != fact_width {
         return Err(Error::Corruption(CorruptionError::WrongFactWidth {
             relation: rel,
@@ -208,9 +177,7 @@ pub(super) fn decode_fact(
         match step {
             Decode::Word { offset, start } => {
                 // SAFETY: offset + 8 <= fact_width (layout-derived) and
-                // the width was checked above, so the byte-aligned
-                // array read is in-bounds; position < row_count checked
-                // above, slabs sized to row_count.
+
                 let word = u64::from_be_bytes(unsafe {
                     fact_bytes.as_ptr().add(*offset).cast::<[u8; 8]>().read()
                 });
@@ -224,13 +191,10 @@ pub(super) fn decode_fact(
                 pad_mask,
             } => {
                 // SAFETY: offset + 8 * starts.len() <= fact_width
-                // (layout-derived) and the width was checked above;
-                // slab bounds as for Word.
+
                 let field =
                     unsafe { fact_bytes.get_unchecked(*offset..*offset + 8 * starts.len()) };
-                // `as_chunks` carries the walk's width in its type; the
-                // remainder is empty by construction (the field spans
-                // whole words).
+
                 let (word_bytes, _) = field.as_chunks::<8>();
                 let mut last = 0u64;
                 for (start, &bytes) in starts.iter().zip(word_bytes) {
@@ -240,8 +204,7 @@ pub(super) fn decode_fact(
                     }
                     last = word;
                 }
-                // The pad is encoding, not data: a nonzero trailing
-                // pad byte is corruption — hard error, never a skip.
+
                 if last & pad_mask != 0 {
                     return Err(Error::Corruption(CorruptionError::NonzeroFixedBytesPad(
                         last.to_be_bytes(),
@@ -254,18 +217,15 @@ pub(super) fn decode_fact(
                 end_column,
             } => {
                 // SAFETY: offset + 16 <= fact_width (layout-derived),
-                // width checked above, so the byte-aligned array read
-                // is in-bounds; slab bounds as for Word.
+
                 let halves: [u8; 16] =
                     unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 16]>().read() };
                 let (start_half, end_half) = crate::encoding::split_halves(halves);
                 let start_word = u64::from_be_bytes(start_half);
                 let end_word = u64::from_be_bytes(end_half);
-                // The stored halves are order-preserving words (the
-                // I64 sign-flip lives inside the encoding), so the
+
                 // strict `start < end` invariant IS this u64 compare.
-                // A violation is corruption: hard error, never a skip
-                // (`docs/architecture/50-storage.md`).
+
                 if start_word >= end_word {
                     return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
                 }
@@ -281,12 +241,10 @@ pub(super) fn decode_fact(
                 end_column,
             } => {
                 // SAFETY: offset + 8 <= fact_width (layout-derived, the
-                // fixed encoding is one word), width checked above; slab
-                // bounds as for Word.
+
                 let start_bytes: [u8; 8] =
                     unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 8]>().read() };
-                // The Q2 corruption check and the end derivation are one
-                // shared decoder — hard error, never a skip.
+
                 let (start_word, end_word) =
                     crate::encoding::decode_fixed_interval_start(start_bytes, *width)
                         .map_err(|e| Error::Corruption(e.into()))?;
