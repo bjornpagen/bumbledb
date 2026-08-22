@@ -5,12 +5,9 @@ use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
 
 impl<S> PreparedQuery<S> {
-    /// Executes the query and returns the answers alongside the rendered
-    /// query header — K10's one remaining rendering door.
-    ///
+
     /// # Errors
-    ///
-    /// As [`Self::execute`].
+
     pub(crate) fn introspect(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -28,9 +25,8 @@ impl<S> PreparedQuery<S> {
         Ok((out, report))
     }
 
-    /// The pending-literal explanation is derived from the mutable plan
     /// templates after execution: a hit has already latched to `Word` and
-    /// disappears; a dictionary miss remains owned raw bytes here.
+
     fn pending_literal_note(&self) -> Option<String> {
         if self.latch.is_latched() {
             return None;
@@ -71,19 +67,11 @@ impl<S> PreparedQuery<S> {
         ))
     }
 
-    /// The query in the rule notation, rendered at prepare
-    /// ([`crate::ir::render`] — one rendered block per rule, `;`-terminated):
-    /// the diagnostic twin of the introspection report's header.
     #[must_use]
     pub fn rendered_query(&self) -> &str {
         &self.rendered
     }
 
-    /// Whether the aggregate sink's binding seen-set is elided — the
-    /// regime observable for the batch-fold fast path. A single-rule
-    /// query may elide under its plan's distinct-bindings proof. A
-    /// multi-rule query always returns false: its spanning
-    /// head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match &self.pipeline {
@@ -97,10 +85,6 @@ impl<S> PreparedQuery<S> {
         }
     }
 
-    /// The signature this query defines — the buffer-typing authority:
-    /// one column per head position, the metadata a generic host needs
-    /// to type an (even empty) result. The buffer itself stays typeless:
-    /// stamping owned types per execution would allocate on the warm path.
     #[must_use]
     pub fn signature(&self) -> &crate::ir::validate::Signature {
         &self.signature
