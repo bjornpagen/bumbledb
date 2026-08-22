@@ -1,6 +1,5 @@
 use super::{Scenario, graph, joins, olap, points, rings, temporal};
 
-/// The registry, in report order.
 #[must_use]
 pub fn all() -> Vec<Scenario> {
     vec![
