@@ -11,8 +11,6 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::Environment;
 
-/// One monotone lattice of `(relation, field) → next` high-waters.
-/// Join is pointwise max; the empty map is the bottom.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FreshMarks {
     inner: BTreeMap<(RelationId, FieldId), u64>,
@@ -66,8 +64,6 @@ impl<'a> IntoIterator for &'a FreshMarks {
     }
 }
 
-/// Retry state of a `Q` burn: clean, or parked marks awaiting a durable write.
-/// Emptiness is not a map — it is this enum.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum FlushState {
     #[default]
@@ -114,9 +110,9 @@ fn lock_flush(state: &std::sync::Mutex<FlushState>) -> std::sync::MutexGuard<'_,
 }
 
 impl Environment {
-    /// Raises the in-process high-water for every dirty mark. Safe to call
+
     /// before a flush that may fail: the next `read_fresh_next` never
-    /// returns below these values in this process.
+
     pub(crate) fn note_escaped_fresh(
         &self,
         marks: impl IntoIterator<Item = (RelationId, FieldId, u64)>,
@@ -127,24 +123,18 @@ impl Environment {
         }
     }
 
-    /// The in-process floor for `(relation, field)`, or 0 if this process
-    /// has not issued from that sequence.
     pub(crate) fn in_process_fresh_next(&self, rel: RelationId, field: FieldId) -> u64 {
         lock_marks(&self.escaped_fresh).get(rel, field).unwrap_or(0)
     }
 
-    /// Parks marks whose durable `Q` write has not succeeded.
     pub(crate) fn park_fresh_flush(&self, marks: FreshMarks) {
         lock_flush(&self.pending_fresh_flush).park(marks);
     }
 
-    /// Takes the parked burn set (empty if every prior flush succeeded).
     pub(crate) fn take_pending_fresh_flush(&self) -> FreshMarks {
         lock_flush(&self.pending_fresh_flush).take()
     }
 
-    /// A clone of the parked burn set — the main commit merges these into
-    /// phase-4 `Q` puts without taking them until that commit is durable.
     pub(crate) fn peek_pending_fresh_flush(&self) -> FreshMarks {
         lock_flush(&self.pending_fresh_flush).peek()
     }
@@ -154,13 +144,11 @@ impl Environment {
         lock_flush(&self.pending_fresh_flush).clear();
     }
 
-    /// Test-only: the next `n` escaped-id flushes fail without touching disk.
     #[cfg(test)]
     pub(crate) fn fail_next_fresh_flushes(&self, n: u32) {
         self.fail_fresh_flush.store(n, Ordering::SeqCst);
     }
 
-    /// Test-only: consume one injected flush failure, if any remain.
     #[cfg(test)]
     pub(crate) fn consume_fresh_flush_failure(&self) -> bool {
         loop {
