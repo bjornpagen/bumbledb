@@ -15,7 +15,6 @@ use crate::storage::env::CatalogIdentity;
 use crate::storage::read;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-/// Generic owner of an admitted catalog plus scratch.
 pub(crate) struct InstanceCore<Src, S> {
     pub(crate) schema: Arc<Schema>,
     pub(crate) identity: CatalogIdentity,
@@ -316,7 +315,6 @@ impl<S> super::OwnedInstance<S> {
     }
 }
 
-/// Closed theory rows and stored catalog facts share one iterator type.
 enum OwnedFactScan<C, S> {
     Closed(C),
     Store(S),
