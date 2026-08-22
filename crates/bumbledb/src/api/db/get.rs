@@ -133,7 +133,6 @@ impl<S> WriteTx<'_, S> {
     /// otherwise. Before commit it answers exactly what a post-commit
 
     /// # Errors
-
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.mutation.contains(fact)
     }
@@ -145,7 +144,6 @@ impl<S> WriteTx<'_, S> {
     /// ```
 
     /// # Errors
-
     #[expect(
         clippy::needless_pass_by_value,
         reason = "a key value is the read's input, spelled `tx.get(id)`: fresh \
@@ -174,7 +172,6 @@ impl<S> WriteTx<'_, S> {
     }
 
     /// # Errors
-
     pub fn get_dyn(
         &mut self,
         relation: RelationId,
@@ -188,7 +185,6 @@ impl<S> WriteTx<'_, S> {
     }
 
     /// # Errors
-
     pub fn get_dyn_into(
         &mut self,
         relation: RelationId,
@@ -200,7 +196,6 @@ impl<S> WriteTx<'_, S> {
     }
 
     /// # Errors
-
     pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.mutation.contains_dyn(rel, values)
     }
