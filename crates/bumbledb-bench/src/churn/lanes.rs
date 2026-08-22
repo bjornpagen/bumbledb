@@ -5,7 +5,6 @@ use super::ops;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqliteLaneKind {
-
     Bare,
 
     Maint,
@@ -14,7 +13,6 @@ pub enum SqliteLaneKind {
 }
 
 impl SqliteLaneKind {
-
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -48,7 +46,6 @@ pub fn ours_label(mode: StoreMode) -> &'static str {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunSpec {
-
     pub name: &'static str,
 
     pub mix: ops::Mix,
