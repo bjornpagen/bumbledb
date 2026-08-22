@@ -1,9 +1,3 @@
-//! Judgment goldens: the engine's commit fixtures — the pointwise-key
-//! matrix, the source-side judgment, and the target-side judgment —
-//! re-expressed against the naive model, table-driven. Verdict
-//! and violator must match the hand-computed expectation; these cases
-//! double as the engine-agreement seed corpus.
-
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
@@ -57,9 +51,7 @@ struct Case {
     base: Facts,
     deletes: Facts,
     inserts: Facts,
-    /// The expected verdict — every fixture here is single-violation by
-    /// construction, so the rejection is the singleton set (the runner
-    /// wraps it); the multi-violation sets live in [`citation_set`].
+
     verdict: Result<(), Violation>,
 }
 
@@ -87,12 +79,6 @@ fn run(schema: &SchemaDescriptor, cases: Vec<Case>) {
         }
     }
 }
-
-// ---------- functionality — the pointwise-key matrix ----------
-//
-// The engine fixture: Target(id fresh) + Keyed(x, y; key x) +
-// Booking(room, during, tag; key (room, during)) + Claim(holder) <=
-// Target(id). Materialized order: Target's fresh auto-key first.
 
 const TARGET: RelationId = RelationId(0);
 const KEYED: RelationId = RelationId(1);
@@ -168,9 +154,6 @@ fn keyed(x: u64, y: i64) -> (RelationId, Vec<Value>) {
     (KEYED, vec![Value::U64(x), Value::I64(y)])
 }
 
-/// Each pointwise cell twice: both facts in one delta, and the contender
-/// against a committed incumbent — the model judges final states, so both
-/// forms reduce to the same brute-force test.
 fn matrix_cell(
     name_in: &'static str,
     name_cross: &'static str,
@@ -314,13 +297,6 @@ fn scalar_key_conflicts() {
         ],
     );
 }
-
-// ---------- containment, source side ----------
-//
-// The engine's judgment fixture: Parent == Child (lowered to TOTALITY and
-// ARM), Transfer(account) <= Account(id | active == true), Session <=
-// Shift (unselected coverage), Rest <= Shift(… | rested == true)
-// (selected coverage), Report(subject | urgent == true) <= Account(id).
 
 mod source_side {
     use super::{
@@ -630,11 +606,6 @@ mod source_side {
         );
     }
 
-    /// The merged-union rule, isolated: a target relation carrying NO key
-    /// at all holds overlapping segments [10,17) and [14,20), and the
-    /// model must still judge [10,20) covered — it collects, sorts, and
-    /// merges every matching segment rather than assuming the engine's
-    /// acceptance gate kept the target disjoint.
     #[test]
     fn overlapping_target_segments_cover_jointly() {
         let schema = SchemaDescriptor {
@@ -714,12 +685,6 @@ mod source_side {
     }
 }
 
-// ---------- containment, target side ----------
-//
-// The engine's target fixture: two scalar containments sharing one target
-// key, coverage over a pointwise key, the == pair on delete, and
-// ψ-qualified re-establishment in both forms.
-
 mod target_side {
     use super::{
         Case, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
@@ -749,7 +714,7 @@ mod target_side {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // one fixture: eleven relations, thirteen statements
+    )] 
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1079,13 +1044,6 @@ mod target_side {
     }
 }
 
-// ---------- the multi-violation citation set ----------
-//
-// One delta breaking SEVERAL statements at once (the ops fuzz target's
-// first finding, the crucible packet (git ecec1dc3) § conflict — resolved
-// by representation): a rejection IS the complete violation set, sorted
-// by materialized statement order, on both oracles. The model's
-// `violations` and `apply`'s rejection are one derivation.
 mod citation_set {
     use super::*;
 
@@ -1093,9 +1051,6 @@ mod citation_set {
     const P2: RelationId = RelationId(1);
     const C: RelationId = RelationId(2);
 
-    /// P1(id), P2(id), C(x, y); C(x) <= P1(id) is statement 0 and
-    /// C(y) <= P2(id) statement 1 (no fresh fields, so the declared
-    /// statements open the materialized order).
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1149,19 +1104,19 @@ mod citation_set {
             vec![target_required(0), target_required(1)],
             "both broken statements, statement order — regardless of delete order"
         );
-        // `apply`'s rejection IS the complete set: one derivation.
+
         assert_eq!(
             db.clone().apply(&both),
             Err(vec![target_required(0), target_required(1)])
         );
-        // A single-violation delta degenerates to the singleton set.
+
         let one = Delta {
             deletes: vec![(P2, vec![Value::U64(0)])],
             inserts: vec![],
         };
         assert_eq!(db.violations(&one), vec![target_required(1)]);
         assert_eq!(db.apply(&one), Err(vec![target_required(1)]));
-        // A committing delta has the empty set.
+
         let clean = Delta {
             deletes: vec![
                 (C, vec![Value::U64(0), Value::U64(0)]),
@@ -1173,18 +1128,14 @@ mod citation_set {
     }
 }
 
-// ---------- the extension form (capacity) ----------
-
 mod marks {
     use super::*;
 
     const HOLDER: RelationId = RelationId(0);
     const ACCOUNT: RelationId = RelationId(1);
-    /// Materialized: the `Holder` key (0), the capacity statement (1).
+
     const WINDOW: u16 = 1;
 
-    /// One expected capacity citation with its witnessed measure — the
-    /// C14 payload every case pins as data.
     fn capacity(statement: u16, measure: u128) -> Violation {
         Violation::Capacity {
             statement: StatementId(statement),
@@ -1192,8 +1143,6 @@ mod marks {
         }
     }
 
-    /// Holder(id, tag; key id); Account(holder, kind, num) with
-    /// `Holder(id) <={1..2} Account(holder | kind == 1)`.
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1297,14 +1246,6 @@ mod marks {
         );
     }
 
-    /// The capacity-boundary schema: Holder(id; key) with
-    /// `Holder(id) <={2} Account(holder | kind == 1)` (exactness) and
-    /// `Holder(id) <={0} Account(holder | kind == 9)` (the exclusion —
-    /// the `{0}` window's naive-parity coverage; the vacuous `0..*`
-    /// posture is unrepresentable, rejected at validation as
-    /// `CapacityVacuousWindow`).
-    /// Materialized: the `Holder` key (0), the `{2}` statement (1), the
-    /// `{0}` statement (2).
     fn exact_schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1360,14 +1301,10 @@ mod marks {
         }
     }
 
-    /// The `{n}` exactness window, the `{0}` exclusion, the
-    /// empty-parent vacuity, and the delete-then-reinsert seams —
-    /// the targeted subfamilies pinning
     /// `lean/Bumbledb/Capacity.lean: CapacityLaw` at its
-    /// boundaries and the delta-restriction seam
+
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-    /// delta_restricted_commit_sound` — a touched group is re-judged
-    /// even when the delta nets to nothing).
+
     #[test]
     fn capacity_exactness_exclusion_and_reinsert_seams() {
         run(
@@ -1434,13 +1371,6 @@ mod marks {
     }
 }
 
-// ---------- the weighted capacity subfamilies ----------
-//
-// The § 6 Count/Sum split pinned as DATA (docs/architecture/
-// 30-dependencies.md § capacity statement): zero-weight rows are the
-// semantic point — `Sum` laws are not "count tests plus a multiplier".
-// Every conviction pins its witnessed measure (C14).
-
 mod capacity_measures {
     use super::*;
 
@@ -1454,10 +1384,6 @@ mod capacity_measures {
         }
     }
 
-    /// Pool(id, supply; key id) with the power-budget law
-    /// `Pool(id) <=[watts]{lo..supply} Device(pool)` — the weighted
-    /// fold under a DEPENDENT ceiling read from the parent's own row.
-    /// Materialized: the `Pool` key (0), the capacity statement (1).
     fn budget_schema(lo: u64) -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1499,10 +1425,6 @@ mod capacity_measures {
         (DEVICE, vec![Value::U64(pool), Value::U64(watts)])
     }
 
-    /// The weighted fold against the dependent ceiling: the total is the
-    /// SUM of the weight column, resolved per parent row — pass at the
-    /// exact budget, convict one watt over with the full-walk total as
-    /// the witnessed measure.
     #[test]
     fn sum_measures_against_the_dependent_bound() {
         run(
@@ -1540,10 +1462,6 @@ mod capacity_measures {
         );
     }
 
-    /// The § 6 lower-bound footgun as data: `Sum(w) in {1..*}`-shaped
-    /// intent is a POSITIVE-TOTAL law, not an existence claim — a
-    /// zero-weight row exists and the group still convicts at measure
-    /// 0, where the Count instance would have counted it.
     #[test]
     fn a_zero_weight_row_does_not_satisfy_a_sum_floor() {
         run(
@@ -1567,11 +1485,6 @@ mod capacity_measures {
         );
     }
 
-    /// Room(id, span; key id) under the calendar law
-    /// `Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)`
-    /// — the interval measure as weight AND as dependent ceiling
-    /// (the R5 machinery spent twice).
-    /// Materialized: the `Room` key (0), the capacity statement (1).
     fn calendar_schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1626,11 +1539,6 @@ mod capacity_measures {
         )
     }
 
-    /// Total booked time per room within the room's own span measure:
-    /// the Duration weight sums `end − start` per booking, the ceiling
-    /// is the span's measure — overlap is NOT the law (two bookings of
-    /// the same hour spend two hours of budget; coverage laws are the
-    /// containment's).
     #[test]
     fn duration_weights_measure_total_booked_time() {
         run(
