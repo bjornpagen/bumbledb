@@ -1,7 +1,6 @@
 //! The wire-tag tables: one declarative table per mirrored core enum.
 //! A new core variant breaks compile here; payload marshaling stays in
 //! `marshal.rs`.
-
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, LiteralSetSpec, LiteralSpec, StatementSpec, WeightSpec,
 };
