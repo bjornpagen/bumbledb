@@ -1,25 +1,3 @@
-/**
- * The cookbook DOCUMENT's compile pin — the TS twin of the Rust cookbook's
- * `doc_blocks_match_the_compiled_copies` sync test, in this host's idiom
- * (no macro exists to stringify compiling tokens, so the pin runs the
- * other direction: the document's own code is extracted and compiled).
- * Every ```ts fence of `ts/COOKBOOK.md` is sliced out MECHANICALLY at test
- * time — never a hand-maintained copy — grouped by its `##` section (a
- * recipe's fences share one scope: recipe 24's host loop reads the query
- * its first fence declared), prefixed with the document's own preamble
- * imports fence ("everything below imports from the one package entry"),
- * and type-checked against `src/index.ts` at HEAD with the package's own
- * `tsc`. Unused-declaration checking is OFF for these throwaway projects —
- * a recipe declares values for the READER (queries it never executes), so
- * unused-ness is the cookbook's nature, not drift; every other strictness
- * flag is the package tsconfig's own. An edit to COOKBOOK.md whose code
- * stops compiling against the real surface fails `node --test`; so does a
- * cookbook whose recipe roster or fences vanish. The runtime half of the
- * cookbook's claim — admission on a real store, cross-host fingerprints,
- * every query prepared — is `test/cookbook.test.ts`'s, over the compiled
- * copies.
- */
-
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import * as fs from "node:fs"
@@ -30,14 +8,8 @@ import { test } from "node:test"
 const packageRoot = path.join(import.meta.dirname, "..")
 const cookbookPath = path.join(packageRoot, "COOKBOOK.md")
 
-/** The cookbook's recipe count — the roster the Rust twin also pins. */
 const RECIPE_COUNT = 32
 
-/**
- * Every ```ts fence body of a markdown chunk, in document order — the
- * opener must be exactly ```ts on its own line, the closer exactly ``` on
- * its own line (the readme pin's discipline).
- */
 function tsFences(markdown: string): string[] {
 	const fences: string[] = []
 	const pattern = /^```ts\n([\s\S]*?)^```$/gm
@@ -49,7 +21,6 @@ function tsFences(markdown: string): string[] {
 	return fences
 }
 
-/** One `##` section of the document: its heading line and its body up to the next heading. */
 interface Section {
 	readonly heading: string
 	readonly body: string
@@ -80,7 +51,6 @@ test("every ts fence in COOKBOOK.md type-checks against src/index.ts at HEAD, se
 	const prelude = imports[0]
 	assert.ok(prelude !== undefined, "the imports fence has a body")
 
-	// The recipe roster: 1..29 in order, every recipe carrying at least one fence.
 	const recipes = parts.filter(function isRecipe(section) {
 		return /^## \d+\. /.test(section.heading)
 	})
@@ -109,10 +79,7 @@ test("every ts fence in COOKBOOK.md type-checks against src/index.ts at HEAD, se
 			files.push(file)
 		})
 		assert.ok(files.length >= RECIPE_COUNT, "every recipe produced a section file")
-		// The package's own tsconfig, extended verbatim, with the readme pin's
-		// two additions (the bare specifier resolves to src at HEAD; type roots
-		// stay the package's) and ONE deliberate relaxation: unused-declaration
-		// checking off — a recipe declares values for the reader.
+
 		const tsconfig = {
 			extends: path.join(packageRoot, "tsconfig.json"),
 			compilerOptions: {
