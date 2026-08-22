@@ -4,7 +4,6 @@
 //! struct straight off the descriptor, no serde, no derive machinery
 //! (the dependency law: a downstream binding serializes it however it
 //! likes; the engine never learns the wire format).
-
 use super::{FieldId, RelationId, SchemaDescriptor, StatementId, StatementKind, ValueType};
 use bumbledb_theory::Value;
 
