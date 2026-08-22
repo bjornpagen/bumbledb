@@ -2,12 +2,7 @@ use crate::exec::run::{LeafBatch, LeafSource};
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
-    /// The per-row batch arm: outer slots prefilled once, leaf key slots
-    /// overwritten per row, each full binding folded through the scratch
-    /// (dedup, varying-group, and row-fold —
-    /// regimes). `key_slots` is word-level (an interval variable's pair
-    /// appears as two entries), so the scratch fill is layout-correct by
-    /// construction.
+
     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
@@ -20,43 +15,19 @@ impl AggregateSink {
         }
     }
 
-    /// The constant-group fast path: one group probe
-    /// per batch (memoized across consecutive batches of the same run),
-    /// accumulators staged out of the group row, per-op dispatch outside
-    /// the row loop, and the row loops themselves shaped as the
-    /// kernelized gather folds.
-    /// The dedup-regime batch arm: the seen-set pass
-    /// runs per row (semantically required — prepare could not prove the
-    /// key stream duplicate-free), collecting first-seen entries; those then
-    /// gather-fold through the same constant-group core as the elided
-    /// path, group probe hoisted and all.
     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
-        // The binding fills as ever: outer slots constant, prefilled once
-        // (cached shape); key slots overwritten per row. The dedup key is
-        // the full binding — or its head projection under the multi-rule
-        // union regime (`dedup_key`).
-        // Direct per-row insert — NO hash-ahead pipeline (the
-        // pipeline measured a strict loss in this
-        // exact shape, including on mixed hit/miss streams, once the
-        // window probe landed).
+
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
         }
-        // COUNT-shaped heads — no fold input read from the batch keys
-        // (the nullary Count and outer-constant inputs) — need only HOW
-        // MANY bindings were first-seen: the survivor list is dead
-        // weight at one push per fresh binding × millions (the r6
-        // seen-set lane's per-insert constant). The seen-set insert IS
-        // the loop; the fold stays arithmetic (`value × count`).
+
         let key_sourced = self.finds.iter().any(|find| match find {
             SinkSpec::Agg(AggSpec::Fold { slot, .. }) => {
                 matches!(batch.source_of(*slot), LeafSource::Key(_))
             }
             _ => false,
         });
-        // Alias-hoisted: `binding_scratch` reborrowed
-        // once — the survivor pushes and seen-set writes can no longer
-        // alias its header.
+
         let binding_scratch = &mut self.binding_scratch[..];
         if !key_sourced {
             let mut fresh = 0u64;
@@ -97,17 +68,12 @@ impl AggregateSink {
         self.fold_constant_group(batch, survivors.len() as u64, survivors);
     }
 
-    /// The constant-group fold core. `survivors` backs the gather
-    /// kernels only — it is empty exactly when the caller proved no
-    /// fold input reads the batch keys (the count-only dedup arm), so
     /// every `Key` arm below asserts it non-empty before gathering.
     fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             batch.bindings.get(slot)
         });
-        // Once per batch (the group-run memo that
-        // skipped this probe measured < 2% under the const-arity map
-        // and was deleted — the probe IS the fast path now).
+
         let group_idx = self.probe_group();
 
         let n_aggs = match &self.group_state {
@@ -204,11 +170,6 @@ impl AggregateSink {
     }
 }
 
-/// The batch gather folds, kerneled: dense survivor
-/// runs (ascending with no gaps — the common all-survived batch) take
-/// the contiguous strided kernels with zero index loads; everything
-/// else takes the `_idx` gather kernels. All take non-empty survivor
-/// lists (the executor skips empty batches).
 fn dense_run(survivors: &[u32]) -> Option<u32> {
     let (first, last) = (survivors[0], survivors[survivors.len() - 1]);
     (last as usize - first as usize + 1 == survivors.len()).then_some(first)
