@@ -6,9 +6,6 @@ use crate::querygen::dress_posting::dress_posting;
 use crate::querygen::target::{self, Domains, ids};
 use crate::querygen::{Builder, DRESS_PCT, interval_data};
 
-/// Any of the six word-comparison operators, uniformly — applied ONLY
-/// to the two integer types by its callers (the order-op legality
-/// cells).
 pub(super) fn any_op(rng: &mut Rng) -> CmpOp {
     match rng.range(6) {
         0 => CmpOp::Eq,
@@ -28,8 +25,6 @@ pub(super) fn eq_ne(rng: &mut Rng) -> CmpOp {
     }
 }
 
-/// An i64 predicate on the field (any operator): literal, param, or —
-/// under `Eq` — a param set.
 pub(super) fn i64_dress(
     b: &mut Builder,
     rng: &mut Rng,
@@ -59,9 +54,6 @@ pub(super) fn i64_dress(
     });
 }
 
-/// A u64 predicate on a dense-id field (any operator): the literal or
-/// param draws in-domain so ordered comparisons select real slices;
-/// under `Eq`, sometimes a param set.
 pub(super) fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, domain: u64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
@@ -81,9 +73,6 @@ pub(super) fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: Fiel
     });
 }
 
-/// An `Eq`/`Ne` predicate against a closed-vocabulary row id (a plain
-/// u64 field contained in a closed relation): literal, param, or —
-/// under `Eq` — a param set.
 fn vocab_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, rows: u64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
@@ -103,8 +92,6 @@ fn vocab_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, rows: 
     });
 }
 
-/// An `Eq`/`Ne` string predicate: in-vocabulary hit, out-of-vocabulary
-/// miss, param, or — under `Eq` — a param set.
 pub(super) fn string_cmp(
     b: &mut Builder,
     rng: &mut Rng,
@@ -137,17 +124,11 @@ pub(super) fn string_cmp(
     });
 }
 
-/// The i64 window `Posting.at` (and `JournalEntry.created_at`) draws
-/// from, per scale.
 pub(super) fn at_window(domains: &Domains) -> (i64, i64) {
     let span = i64::try_from(domains.postings).expect("fits") * target::AT_STEP;
     (target::AT_BASE, target::AT_BASE + span)
 }
 
-/// An interval literal for value-equality dressing, drawn off the
-/// boundary-shape ladder (equal literals hit; adjacent/nested/ray
-/// literals are exact-construction misses), rung-tagged for the
-/// coverage contract.
 fn window_literal_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(64), rng);
     b.saw_rung(drawn);
@@ -160,14 +141,10 @@ fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     Value::IntervalI64(bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"))
 }
 
-/// Filter dressing ([`DRESS_PCT`]% of queries, 1–3 predicates), per the
-/// dressed atom's relation: integer range ops, string/bytes hits and
-/// misses, vocabulary and bool equalities, interval-value `Eq`/`Ne` against
-/// in-data literals, and same-typed var-vs-var.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one arm per dressed relation, in id order
+)] 
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;
@@ -204,9 +181,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             ids::INSTRUMENT => string_cmp(b, rng, atom, ids::INSTRUMENT, ids::instrument::SYMBOL),
             ids::TRANSFER => {
                 if rng.chance(1, 3) {
-                    // Interval value equality: Eq/Ne against an in-data
-                    // window literal — the (Eq/Ne, interval) cells. A
-                    // membership *point* var bound here is element-typed
+
                     // and must not be compared against interval values.
                     let Some(var) = b.var_at(atom, ids::transfer::WINDOW) else {
                         continue;
@@ -221,12 +196,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         rhs,
                     });
                 } else if rng.chance(1, 2) {
-                    // bytes<32> Eq/Ne on extref: the hit literal is the
-                    // *actual* extref of a seeded row (recomputed — the
-                    // corpus is a pure function of the config); the miss
-                    // is adversarial — a single-byte delta of a real
-                    // extref (the corpus pins byte 0 to zero, so the
-                    // flipped digest exists nowhere).
+
                     let Some(var) = b.var_at(atom, ids::transfer::EXTREF) else {
                         continue;
                     };
@@ -255,10 +225,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         rhs,
                     });
                 } else {
-                    // A pad-boundary digest tag (widths 7/8/9/16/63/64):
-                    // Eq/Ne against a vocabulary hit, an adversarial
-                    // single-byte-delta miss, a param, or — under Eq —
-                    // a param set of digests.
+
                     let which = usize::try_from(rng.range(target::DIGEST_WIDTHS.len() as u64))
                         .expect("small");
                     let width = target::DIGEST_WIDTHS[which];
@@ -300,9 +267,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                 }
             }
             ids::MANDATE => {
-                // Interval value equality on the I64 element lane —
-                // skipped when the bound term is a membership point
-                // (element-typed, not an interval value).
+
                 let Some(var) = b.var_at(atom, ids::mandate::ACTIVE) else {
                     continue;
                 };
