@@ -1,7 +1,7 @@
 import Bumbledb.Dependencies
 
 /-!
-# Query syntax — the pure-data IR (Level 0, PRD 04)
+# Query syntax — the pure-data IR (Level 0, 
 
 A faithful abstraction of `crates/bumbledb/src/ir.rs` (the IR, not the
 notation): terms, atoms with named-field bindings (absence of a field
@@ -13,64 +13,64 @@ main. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* **Finds are projected variables.** `Rule.finds : List VarId`;
-  aggregate and measure find positions are PRD 05's folds over the
-  binding sets PRD 04 denotes, so the head degenerates to projected
-  variables (every `HeadTerm` is `Var` at this level; the
-  var-free head-shape row arrives with the aggregate ops). Interior
-  and rec heads are projection-shaped BY CONSTRUCTION here; the
-  engine roster that refuses `Aggregate` / `Measure` finds on those
-  heads discharges a class Lean cannot write.
+* **Finds are projected variables.** `Rule.finds: List VarId`;
+ aggregate and measure find positions are folds over the
+ binding sets denotes, so the head degenerates to projected
+ variables (every `HeadTerm` is `Var` at this level; the
+ var-free head-shape row arrives with the aggregate ops). Interior
+ and rec heads are projection-shaped BY CONSTRUCTION here; the
+ engine roster that refuses `Aggregate` / `Measure` finds on those
+ heads discharges a class Lean cannot write.
 * **The Allen mask is the admitted relation LIST.** `AllenMask` is a
-  `List AllenRel` read as a set (membership); the engine's bitmask
-  (`crate::allen::AllenMask`) is its encoding. The vacuity rules
-  (∅ and full rejected) are validator shape checks, unspent here.
+ `List AllenRel` read as a set (membership); the engine's bitmask
+ (`crate::allen::AllenMask`) is its encoding. The vacuity rules
+ (∅ and full rejected) are validator shape checks, unspent here.
 * **`WellTyped` keeps the SHAPE discipline only** — the measure and
-  param-set placement rules (`DurationInBinding`,
-  `DurationComparisonOperator`, `DurationBothSides`,
-  `ParamSetComparison`). The positional TYPE rules (slot anchoring,
-  bivalent resolution, the order-operand screen) are validator
-  mechanism (`ir/validate/context.rs`); the denotation stays total
-  without a typing premise — an ill-placed term selects nothing, and
-  the validator's typed pass makes every ill-typed comparison
-  unreachable on accepted rules (the honest reading is PRD 04's
-  module doc: `ne` denotes plain disequality, not the empty arm).
+ param-set placement rules (`DurationInBinding`,
+ `DurationComparisonOperator`, `DurationBothSides`,
+ `ParamSetComparison`). The positional TYPE rules (slot anchoring,
+ bivalent resolution, the order-operand screen) are validator
+ mechanism (`ir/validate/context.rs`); the denotation stays total
+ without a typing premise — an ill-placed term selects nothing, and
+ the validator's typed pass makes every ill-typed comparison
+ unreachable on accepted rules (the honest reading is 
+ module doc: `ne` denotes plain disequality, not the empty arm).
 * **The membership BINDING reading is not a syntax node.** "Membership
-  is a typing rule, not a node" (`ir.rs::Atom::bindings`): the matching
-  equation's atom bindings select VALUES (PRD 04's decided shape), and
-  point membership reaches this level as the `PointIn` comparison.
-  This is no longer narrative: `Bumbledb.Query.SurfaceMatches`
-  (`Query/Membership.lean`) judges the written bivalent binding on the
-  types `ir/validate/context.rs::resolve_bivalents` resolves, and
-  `membership_lowering_preserves` PROVES the lowering to this level's
-  form answer-preserving — the arbiter the engine's `ir/normalize/
-  normalize.rs::lower_atom` and the naive model are measured against.
-  Membership stays EDB: theorems match `a.source = .edb R`. Interior
-  membership is engine-only.
+ is a typing rule, not a node" (`ir.rs::Atom::bindings`): the matching
+ equation's atom bindings select VALUES ( decided shape), and
+ point membership reaches this level as the `PointIn` comparison.
+ This is narrative: `Bumbledb.Query.SurfaceMatches`
+ (`Query/Membership.lean`) judges the written bivalent binding on the
+ types `ir/validate/context.rs::resolve_bivalents` resolves, and
+ `membership_lowering_preserves` PROVES the lowering to this level's
+ form answer-preserving — the arbiter the engine's `ir/normalize/
+ normalize.rs::lower_atom` and the naive model are measured against.
+ Membership stays EDB: theorems match `a.source =.edb R`. Interior
+ membership is engine-only.
 * Boundary caps (`MAX_RULES`, `MAX_CONDITION_DEPTH`) are hostile-input
-  mechanism, not semantics — unmodeled. **There is no interior-count
-  cap to model.** `InteriorId` is `Nat` here; the engine's `u32` width
-  is representation, not denotation.
+ mechanism, not semantics — unmodeled. **There is no interior-count
+ cap to model.** `InteriorId` is `Nat` here; the engine's `u32` width
+ is representation, not denotation.
 * **Acceptance is strictly narrower than `Safe ∧ WellTyped` — the
-  roster.** The engine rejects queries this model denotes exactly:
-  the empty-edge refusals (`EmptyRuleSet` for empty **main**,
-  `EmptyInterior`, `EmptyFinds`, `NoPositiveAtoms`, the all-vanished
-  `Or([])` query, `DuplicateFindTerm`), the write-the-query-you-mean
-  refusals (`SelfComparison`, `ConstantComparison`), the Allen ∅/full
-  vacuity rejections, the rec roster (`EmptyRecursiveBase`,
-  `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`,
-  `NonlinearRecArm`, `NegationInRec`), and the caps above. Benign in
-  every case — never unsound: each theorem quantifies over arbitrary
-  syntax or assumes only `Safe`/`WellTyped`, so a
-  rejected-but-denotable query simply never reaches execution.
+ roster.** The engine rejects queries this model denotes exactly:
+ the empty-edge refusals (`EmptyRuleSet` for empty **main**,
+ `EmptyInterior`, `EmptyFinds`, `NoPositiveAtoms`, the all-vanished
+ `Or([])` query, `DuplicateFindTerm`), the write-the-query-you-mean
+ refusals (`SelfComparison`, `ConstantComparison`), the Allen ∅/full
+ vacuity rejections, the rec roster (`EmptyRecursiveBase`,
+ `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`,
+ `NonlinearRecArm`, `NegationInRec`), and the caps above. Benign in
+ every case — never unsound: each theorem quantifies over arbitrary
+ syntax or assumes only `Safe`/`WellTyped`, so a
+ rejected-but-denotable query simply never reaches execution.
 * **The unknown-interior gap, recorded LOUDLY, with its screen.** A
-  rule reading `interior k` with `k` outside the interiors (and a
-  `.reach` rec) reads the EMPTY fact set: a positive phantom read
-  kills its rule, but a NEGATED phantom read is vacuously satisfied.
-  The engine's refusal is `ValidationError::UnknownInterior`. Lean
-  keeps phantom-empty — the `Exec/Reach.lean` agreement theorems are
-  exact equalities with or without a screen, so the premise belongs
-  to acceptance readings, not to the agreement.
+ rule reading `interior k` with `k` outside the interiors (and a
+ `.reach` rec) reads the EMPTY fact set: a positive phantom read
+ kills its rule, but a NEGATED phantom read is vacuously satisfied.
+ The engine's refusal is `ValidationError::UnknownInterior`. Lean
+ keeps phantom-empty — the `Exec/Reach.lean` agreement theorems are
+ exact equalities with or without a screen, so the premise belongs
+ to acceptance readings, not to the agreement.
 
 ## The creation-quarantine gravestones (law text; the full record is
 `Txn/Fresh.lean`'s module doc)
@@ -83,7 +83,7 @@ the one arithmetic, its positions boundary-only (`Rule.WellTyped`).
 Interior and rec heads are `List VarId` too, so recursion's safety
 roster (`MeasureInInterior` and kin) is this same creation-quarantine
 law restated for the reach operator, not a new rule
-(`docs/architecture/20-query-ir.md` § the creation quarantine).
+ § the creation quarantine).
 
 ## Interiors and one linear rec (this cut's IR)
 
@@ -95,26 +95,26 @@ cannot mention self or negation; a step arm carries the unique
 positive self-atom as `selfBindings`. Recorded shapes:
 
 * **`InteriorId` never puns with `RelId`.** Statements quantify over
-  stored relations permanently (`30-dependencies.md`, the
-  stored-relations decision): no statement form carries an
-  `InteriorId` position, so a statement about a derived table is
-  UNWRITABLE, not rejected. Do not define `Atom.relation : RelId` as
-  a total accessor.
+ stored relations permanently (`30-dependencies.md`, the
+ stored-relations decision): no statement form carries an
+ `InteriorId` position, so a statement about a derived table is
+ UNWRITABLE, not rejected. Do not define `Atom.relation: RelId` as
+ a total accessor.
 * **Fold-input edges are unrepresentable at this level.** `Rule`
-  heads are projected variables (`finds : List VarId`), so interiors
-  and the rec are projection-shaped BY CONSTRUCTION. Aggregation is
-  the `Query/Aggregates.lean` composition over **main**, which reads
-  a finished environment — strictly after interiors/rec by
-  construction of `evalQuery`.
-* **One atom type.** `Atom.source : AtomSource` (`edb | interior`).
-  An `interior` atom's bindings address HEAD POSITIONS positionally —
-  `FieldId i` is the target derived table's column `i`. Numbering:
-  interior `i` has `InteriorId ⟨i⟩`; a `.reach` rec has
-  `InteriorId ⟨interiors.length⟩`. The `reach` constructor is the one
-  site that knows that id.
+ heads are projected variables (`finds: List VarId`), so interiors
+ and the rec are projection-shaped BY CONSTRUCTION. Aggregation is
+ the `Query/Aggregates.lean` composition over **main**, which reads
+ a finished environment — strictly after interiors/rec by
+ construction of `evalQuery`.
+* **One atom type.** `Atom.source: AtomSource` (`edb | interior`).
+ An `interior` atom's bindings address HEAD POSITIONS positionally —
+ `FieldId i` is the target derived table's column `i`. Numbering:
+ interior `i` has `InteriorId ⟨i⟩`; a `.reach` rec has
+ `InteriorId ⟨interiors.length⟩`. The `reach` constructor is the one
+ site that knows that id.
 * **`Query` is a two-arm sum.** Constructor names `cq`/`reach` — a
-  field or constructor named `rec` collides with Lean's recursor
-  (`T.rec`). Accessors `Query.interiors` / `Query.rules` are total by match. There is no `Query.rec` accessor.
+ field or constructor named `rec` collides with Lean's recursor
+ (`T.rec`). Accessors `Query.interiors` / `Query.rules` are total by match. There is no `Query.rec` accessor.
 -/
 
 namespace Bumbledb.Query
@@ -146,7 +146,7 @@ deriving DecidableEq
 /-! ## The Allen mask position -/
 
 /-- The thirteen Allen interval relations — the classification's
-codomain. Abstract at this level: PRD 05 refines `classify`; here the
+codomain. Abstract at this level: refines `classify`; here the
 mask position only needs the relations as a decidable-equality sum. -/
 inductive AllenRel where
   | before | meets | overlaps | finishedBy | contains | starts
@@ -252,8 +252,8 @@ are query-global (`crate::ir::Rule`). `negated` are anti-join atoms:
 a binding satisfies one iff NO fact of its source matches — plain
 anti-join over sets, no null trick, no three-valued logic; negation is
 a POSITION in the rule, not a kind of atom, so the list reuses `Atom`
-unchanged. `conditions` are conjoined. `finds : List VarId` — the
-recorded narrowing: aggregate/measure finds are PRD 05's. -/
+unchanged. `conditions` are conjoined. `finds: List VarId` — the
+recorded narrowing: aggregate/measure finds are -/
 structure Rule where
   finds : List VarId
   atoms : List Atom
@@ -334,7 +334,7 @@ one linear rec plus main. **Denotation of a Query is `evalQuery`**
 (`Bumbledb.Exec.Reach`); the union of a rule list is `rulesAnswers`.
 Set semantics means there is exactly one union per rule-list — no bag
 distinction exists or is representable. The main head is projected
-variables at this level (recorded narrowing; PRD 05 restores the shape
+variables at this level (recorded narrowing; restores the shape
 row). Two arms; interiors are a
 possibly-empty prefix in both. Constructor `rec` is unavailable
 (recursor collision). -/
@@ -457,7 +457,7 @@ not a bindable value), and every comparison well-shaped. The
 positional TYPE rules are validator mechanism the denotation never
 needs: it is total on ill-typed pairs, and the validator makes those
 pairs unreachable on accepted rules — the recorded narrowing in the
-module doc (and PRD 04's honest `ne` note).
+module doc (and honest `ne` note).
 Bridge: `ir/validate/context.rs::check_atoms` / `comparison_shape`. -/
 def Rule.WellTyped (r : Rule) : Prop :=
   (∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
