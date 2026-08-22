@@ -25,7 +25,6 @@ use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 thread_local! {
 
     /// 2026-07-20 hard-delete ruling,
-
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
