@@ -1,7 +1,3 @@
-//! The schema subsystem's one fixture style (`pub(crate)`: the render and
-//! fingerprint test modules import these helpers rather than growing their
-//! own).
-
 use super::*;
 
 mod member_set;
@@ -25,7 +21,6 @@ pub(crate) fn fresh_field(name: &str) -> FieldDescriptor {
     }
 }
 
-/// One ground axiom: `handle(values...)`.
 pub(crate) fn row(handle: &str, values: Vec<Value>) -> Row {
     Row {
         handle: handle.into(),
@@ -33,7 +28,6 @@ pub(crate) fn row(handle: &str, values: Vec<Value>) -> Row {
     }
 }
 
-/// A closed relation: declared intrinsic columns plus its extension.
 pub(crate) fn closed(
     name: &str,
     fields: Vec<FieldDescriptor>,
@@ -46,7 +40,6 @@ pub(crate) fn closed(
     }
 }
 
-/// An unselected side: `R(X)`.
 pub(crate) fn side(relation: RelationId, projection: &[FieldId]) -> Side {
     Side {
         relation,
@@ -55,7 +48,6 @@ pub(crate) fn side(relation: RelationId, projection: &[FieldId]) -> Side {
     }
 }
 
-/// A selected side: `R(X | σ)`.
 pub(crate) fn side_where(
     relation: RelationId,
     projection: &[FieldId],
@@ -71,7 +63,6 @@ pub(crate) fn side_where(
     }
 }
 
-/// `R(X) -> R`.
 pub(crate) fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescriptor {
     StatementDescriptor::Functionality {
         relation,
@@ -79,12 +70,10 @@ pub(crate) fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescr
     }
 }
 
-/// `source <= target`.
 pub(crate) fn containment(source: Side, target: Side) -> StatementDescriptor {
     StatementDescriptor::Containment { source, target }
 }
 
-/// A side whose σ carries whole literal sets — the disjunctive form.
 pub(crate) fn side_where_sets(
     relation: RelationId,
     projection: &[FieldId],
@@ -97,9 +86,6 @@ pub(crate) fn side_where_sets(
     }
 }
 
-/// `target <={lo..hi} source` — the unit-weight, literal-bound capacity
-/// statement (the count instance; the argument order keeps the historic
-/// source-first fixture call sites one-line diffs).
 pub(crate) fn capacity(
     source: Side,
     lo: u64,
@@ -115,8 +101,6 @@ pub(crate) fn capacity(
     }
 }
 
-/// `target <=[weight]{lo..hi} source` — the full capacity constructor,
-/// operator order (C2).
 pub(crate) fn capacity_weighted(
     target: Side,
     weight: Weight,
@@ -133,8 +117,6 @@ pub(crate) fn capacity_weighted(
     }
 }
 
-/// Holder(id fresh, name string) + Account(id fresh, holder u64, status u64),
-/// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
