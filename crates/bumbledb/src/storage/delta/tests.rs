@@ -15,7 +15,6 @@ fn one() -> NonZeroU64 {
     NonZeroU64::new(1).unwrap()
 }
 
-/// R(id fresh, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -77,9 +76,7 @@ fn insert_then_delete_of_absent_fact_cancels_to_an_empty_delta() {
         delta.insert(&view, R, &f).expect("insert"),
         DeltaEffect::Recorded
     );
-    // The delete cancels the pending Insert: the net effect against
-    // committed state is nothing, so nothing is recorded
-    // (docs/architecture/50-storage.md net dispositions).
+
     assert_eq!(
         delta.delete(&view, R, &f).expect("delete"),
         DeltaEffect::Cancelled
@@ -109,9 +106,7 @@ fn delete_then_insert_of_a_committed_fact_cancels_to_an_empty_delta() {
         delta.delete(&view, R, &f).expect("delete"),
         DeltaEffect::Recorded
     );
-    // The re-insert cancels the pending Delete — a no-op insert is
-    // unrepresentable, never recorded and never judged
-    // (docs/architecture/50-storage.md net dispositions).
+
     assert_eq!(
         delta.insert(&view, R, &f).expect("insert"),
         DeltaEffect::Cancelled
@@ -146,8 +141,7 @@ fn long_alternating_sequences_net_against_committed_state() {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let f = fact(&schema, 1, 100);
-    // Each insert/delete pair on an absent fact cancels: the delta stays
-    // net-empty however long the sequence runs.
+
     for _ in 0..7 {
         assert_eq!(
             delta.insert(&view, R, &f).expect("insert"),
@@ -159,7 +153,7 @@ fn long_alternating_sequences_net_against_committed_state() {
         );
         assert_eq!(delta.disposition(R, &f), None);
     }
-    // An unpaired trailing op records its genuine net effect.
+
     assert_eq!(
         delta.insert(&view, R, &f).expect("insert"),
         DeltaEffect::Recorded
@@ -178,8 +172,6 @@ fn reserve_is_strictly_increasing_and_reads_q_once() {
     assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 1);
     drop(view);
 
-    // Bump the committed Q value behind the delta's back: the cached
-    // in-memory next must win — Q is read once per (relation, field).
     {
         let mut wtxn = env.write_txn().expect("txn");
         let key = keys::fresh_key(R, ID);
@@ -191,7 +183,6 @@ fn reserve_is_strictly_increasing_and_reads_q_once() {
     let view = env.read_txn().expect("txn");
     assert_eq!(delta.reserve(&view, R, ID, one()).expect("reserve"), 2);
 
-    // A fresh delta sees the committed value.
     let mut fresh = WriteDelta::new(&schema);
     assert_eq!(fresh.reserve(&view, R, ID, one()).expect("reserve"), 100);
 }
@@ -262,12 +253,10 @@ fn resolve_never_mints_and_sees_both_id_sources() {
     let view = env.read_txn().expect("txn");
     let delta = WriteDelta::new(&schema);
 
-    // A double miss proves the value unknown — and mints nothing.
     assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
     assert_eq!(delta.dict_next(), None, "resolve minted a provisional id");
     assert_eq!(delta.pending_interns().count(), 0);
 
-    // A pending hit returns the provisional id (cancellation works).
     let mut delta = delta;
     let pending = delta.intern_str(&view, "novel").expect("intern");
     assert_eq!(
@@ -275,9 +264,6 @@ fn resolve_never_mints_and_sees_both_id_sources() {
         Some(pending)
     );
 
-    // A committed hit returns the committed id — seeded through the
-    // production writer (a delta's pending mint flushed exactly as the
-    // commit's counter flush does; no direct-write path exists).
     drop(view);
     {
         let view = env.read_txn().expect("txn");
@@ -303,11 +289,6 @@ fn resolve_never_mints_and_sees_both_id_sources() {
     assert_eq!(fresh.dict_next(), None);
 }
 
-/// Seeds one committed dictionary entry through the PRODUCTION writer —
-/// the delta's provisional mint flushed by `dict::put_pending` plus one
-/// advanced next-id, exactly the commit's phase-4 discipline
-/// (`storage/commit/write.rs::flush_counters`); the dict suite's seeding
-/// idiom (`storage/dict.rs`).
 fn seed_committed(env: &Environment, schema: &Schema, value: &str) -> InternId {
     let view = env.read_txn().expect("txn");
     let mut seeder = WriteDelta::new(schema);
@@ -325,11 +306,7 @@ fn seed_committed(env: &Environment, schema: &Schema, value: &str) -> InternId {
 
 #[test]
 fn a_committed_string_interned_twice_probes_the_dict_once() {
-    // D7 (`proposals/one-representation/30-string-ownership.md`): the
-    // committed-hit memo. The first occurrence pays the one dict probe
-    // and memoizes the hit; every repeat — intern or resolve — is
-    // answered in memory. Ids are the committed id byte-for-byte, and a
-    // committed hit still mints nothing.
+
     let dir = TempDir::new("delta-memo-committed");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -347,10 +324,7 @@ fn a_committed_string_interned_twice_probes_the_dict_once() {
 
 #[test]
 fn a_pending_string_answers_before_the_memo() {
-    // Pending-first order unchanged: a novel string's first intern pays
-    // exactly the mint-licensing committed probe, and its repeats are
-    // answered by the pending map — the memo never sees the string, so
-    // its provisional id can never shadow or be shadowed.
+
     let dir = TempDir::new("delta-memo-pending-first");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -363,10 +337,7 @@ fn a_pending_string_answers_before_the_memo() {
 
 #[test]
 fn committed_misses_are_never_memoized() {
-    // Hits only (the conservative call — resolve's comment prices the
-    // alternative): the memo caches answers, not absences, so a
-    // non-minting resolve of a never-interned string stays a live dict
-    // question on every ask.
+
     let dir = TempDir::new("delta-memo-miss");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -379,8 +350,7 @@ fn committed_misses_are_never_memoized() {
 
 #[test]
 fn a_dropped_deltas_memo_leaves_no_trace() {
-    // The memo is transaction-local transport: nothing shared, nothing
-    // persisted — a later delta starts cold and re-pays the one probe.
+
     let dir = TempDir::new("delta-memo-drop");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -400,7 +370,7 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
     let dir = TempDir::new("delta-dirty-marks");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Committed base: Q = 6.
+
     {
         let mut wtxn = env.write_txn().expect("txn");
         let key = keys::fresh_key(R, ID);
@@ -411,8 +381,6 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
     }
     let view = env.read_txn().expect("txn");
 
-    // An explicit value below the base reads the mark but advances
-    // nothing: clean.
     let mut clean = WriteDelta::new(&schema);
     clean
         .insert(&view, R, &fact(&schema, 3, 1))
@@ -420,7 +388,6 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
     assert_eq!(clean.fresh_marks().count(), 1, "the mark was read");
     assert_eq!(clean.dirty_fresh_marks().count(), 0, "but never advanced");
 
-    // An allocation advances past the base: dirty.
     let mut dirty = WriteDelta::new(&schema);
     assert_eq!(dirty.reserve(&view, R, ID, one()).expect("reserve"), 6);
     assert_eq!(
@@ -431,7 +398,7 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
 
 #[test]
 fn determinant_map_mirrors_the_fact_dispositions() {
-    // The fresh auto-key on `id` is the first typed key witness.
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-map");
     let schema = schema();
@@ -441,12 +408,8 @@ fn determinant_map_mirrors_the_fact_dispositions() {
     let f = fact(&schema, 7, 700);
     let determinant = encode_u64(7);
 
-    // Untouched tuple: no overlay — the committed state answers.
     assert_eq!(delta.determinant_overlay(KEY, &determinant), None);
 
-    // Insert records the establishing fact; the canceling delete restores
-    // the tuple's pre-insert overlay — nothing touched it, so the overlay
-    // vanishes and the committed state answers (here: absent).
     delta.insert(&view, R, &f).expect("insert");
     assert_eq!(
         delta.determinant_overlay(KEY, &determinant),
@@ -455,8 +418,6 @@ fn determinant_map_mirrors_the_fact_dispositions() {
     delta.delete(&view, R, &f).expect("delete");
     assert_eq!(delta.determinant_overlay(KEY, &determinant), None);
 
-    // Insert again under the same key with a changed non-key field:
-    // the tuple is re-established by the *new* fact (the upsert shape).
     let g = fact(&schema, 7, 999);
     delta.insert(&view, R, &g).expect("insert");
     assert_eq!(
@@ -464,8 +425,6 @@ fn determinant_map_mirrors_the_fact_dispositions() {
         Some(DeterminantOverlay::Present(g.as_slice()))
     );
 
-    // A no-op operation records nothing: deleting an absent fact must
-    // not shadow another fact's live key tuple.
     let mut idle = WriteDelta::new(&schema);
     assert_eq!(
         idle.delete(&view, R, &fact(&schema, 9, 900))
@@ -477,8 +436,7 @@ fn determinant_map_mirrors_the_fact_dispositions() {
 
 #[test]
 fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
-    // `delete(old); insert(new)` is blessed in either order — a point
-    // read of the shared key tuple must see `new` whichever ran last.
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-order");
     let schema = schema();
@@ -514,11 +472,7 @@ fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
 
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
-    // Regression: committed {7,700}; a pending insert of a same-key fact
-    // is cancelled by its compensating delete — net nothing. The tuple's
-    // overlay must vanish so the committed owner answers; recording
-    // `Absent` would deny a live committed row to every point read in the
-    // transaction (the blocker repro shape).
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-committed-owner");
     let schema = schema();
@@ -554,11 +508,7 @@ fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
 
 #[test]
 fn a_cancelled_insert_restores_an_earlier_pending_owner() {
-    // Two pending inserts share the key tuple: the fact map holds both
-    // (commit-doomed as a pair — `duplicate_fresh_id_in_one_delta_aborts_with_the_auto_key`),
-    // the overlay last-wins. Cancel of the later insert restores the
-    // earlier from the replaced stack — point reads during the tx would
-    // otherwise miss a fact still in the map.
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-pending-owner");
     let schema = schema();
@@ -583,7 +533,7 @@ fn a_cancelled_insert_restores_an_earlier_pending_owner() {
 
 #[test]
 fn cancelling_a_replaced_insert_does_not_restore_it() {
-    // insert A, insert B, delete A: A leaves the fact map and the
+
     // replaced stack. Overlay stays B; cancelling B must not resurrect A.
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-replaced-insert");
@@ -618,8 +568,7 @@ fn cancelling_a_replaced_insert_does_not_restore_it() {
 
 #[test]
 fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
-    // delete(old); insert(new); delete(new): the cancel must restore the
-    // pending delete's absence, not erase it — the final state drops old.
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-keeps-absence");
     let schema = schema();
@@ -649,12 +598,7 @@ fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
 
 #[test]
 fn determinant_overwrites_never_reclone_the_scratch() {
-    // The scratch's no-per-key-statement allocation contract, pinned:
-    // the determinant map clones the scratch exactly once per distinct
-    // resident tuple; every later disposition that moves a RESIDENT
-    // entry — the upsert shape's overwrite and cancel-restore — takes
-    // the no-clone path. (A cancellation with no prior disposition
-    // removes the entry instead; the cancel trio above pins that law.)
+
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-clone");
     let schema = schema();
@@ -671,12 +615,11 @@ fn determinant_overwrites_never_reclone_the_scratch() {
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    let new = fact(&schema, 7, 999); // same key tuple, changed non-key field
+    let new = fact(&schema, 7, 999); 
 
     delta.delete(&view, R, &old).expect("delete");
     assert_eq!(delta.determinant_scratch_clones, 1, "first record clones");
 
-    // The tuple stays resident across the upsert shape — dispositions
     // move in place, clones do not.
     delta.insert(&view, R, &new).expect("insert");
     delta.delete(&view, R, &new).expect("delete");
@@ -690,7 +633,6 @@ fn determinant_overwrites_never_reclone_the_scratch() {
         "correctness unchanged: the pending delete stands"
     );
 
-    // A distinct tuple is a genuine first record: one more clone.
     delta
         .insert(&view, R, &fact(&schema, 8, 800))
         .expect("insert");
@@ -743,8 +685,6 @@ fn drop_leaves_lmdb_untouched() {
 const A: RelationId = RelationId(0);
 const B: RelationId = RelationId(1);
 
-/// A(v u64) + B(v u64) — two ordinary relations for the per-relation
-/// delete classification.
 fn two_relation_schema() -> Schema {
     let rel = |name: &str| RelationDescriptor {
         extension: None,
@@ -773,10 +713,6 @@ fn u64_fact(schema: &Schema, rel: RelationId, v: u64) -> Vec<u8> {
     bytes
 }
 
-/// The image cache's dirty classification is the delta's net delete set
-/// projected to relations: deduplicated, ascending, and exactly the
-/// relations a fact is removed from — the discriminator the copy-on-append
-/// path stands on (docs/architecture/50-storage.md § the image cache).
 #[test]
 fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
     let dir = TempDir::new("delta-dirty");
@@ -800,7 +736,6 @@ fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
     }
     let view = env.read_txn().expect("txn");
 
-    // Insert-only: nothing is dirty, whatever the volume.
     let mut delta = WriteDelta::new(&schema);
     for v in 10..20 {
         delta
@@ -809,8 +744,6 @@ fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
     }
     assert_eq!(delta.dirty_relations(), vec![]);
 
-    // Multiple deletes in one relation dedup to one entry; both
-    // relations deleted-from report ascending; inserts never dirty.
     let mut delta = WriteDelta::new(&schema);
     delta
         .insert(&view, A, &u64_fact(&schema, A, 10))
@@ -827,11 +760,10 @@ fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
     assert_eq!(delta.dirty_relations(), vec![A, B]);
 }
 
-/// Cancellation is exact: a delete-then-reinsert of the same committed
-/// fact nets to no entry, so its relation is NOT dirty — no false
-/// positives from cancelled pairs (the delta's net-disposition
-/// invariant), and the untouched relation's image survives as an append
-/// base.
+/// Cancellation is exact: a delete-then-reinsert of the same committed fact
+/// nets to no entry, so its relation is NOT dirty — no false positives from
+/// cancelled pairs (the delta's net-disposition invariant), and the untouched
+/// relation's image survives as an append base.
 #[test]
 fn a_cancelled_delete_reinsert_pair_dirties_nothing() {
     let dir = TempDir::new("delta-dirty-cancel");
