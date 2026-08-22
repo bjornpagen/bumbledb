@@ -99,7 +99,6 @@ fn zero_arity_keys_share_one_group() {
 
 #[test]
 fn differential_against_the_reference_model() {
-
     let ops_per_round: u64 = if cfg!(miri) { 256 } else { 2_000 };
     let mut rng = 0x2468_ACE0_1357_9BDFu64;
     let mut next = move || {
@@ -118,12 +117,11 @@ fn differential_against_the_reference_model() {
             let mut model: HashMap<Vec<u64>, u64> = HashMap::new();
             let mut order: Vec<Vec<u64>> = Vec::new();
             for op in 0..ops_per_round {
-
                 let key: Vec<u64> = (0..arity)
                     .map(|_| match next() % 8 {
                         0 => 0,
                         1 => u64::MAX,
-                        2 => next() << 32, 
+                        2 => next() << 32,
                         _ => next() % 64,
                     })
                     .collect();
@@ -192,7 +190,6 @@ fn the_ctrl_mirror_tracks_the_head() {
 fn generational_clear_never_ghosts_and_reclaims_warm_slots() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 512);
     for round in 0..600u64 {
-
         let base = (round % 2) * 1_000_000;
         for i in 0..300u64 {
             assert!(map.insert(&[base + i, i]), "round {round}: first sight");
@@ -227,7 +224,7 @@ fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
     loop {
         map.clear();
         if map.stale == 0 {
-            break; 
+            break;
         }
         for i in 0..40u64 {
             map.insert(&[universe * 1_000 + i]);
