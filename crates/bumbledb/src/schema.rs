@@ -93,7 +93,6 @@ impl<S> PartialEq for FreshField<S> {
 impl<S> Eq for FreshField<S> {}
 
 impl<S> FreshField<S> {
-
     pub(crate) fn new(relation: RelationId, field: FieldId) -> Self {
         Self {
             relation,
@@ -120,11 +119,9 @@ impl<S> FreshField<S> {
 /// impl), so a fact of schema A cannot reach a database of schema B —
 /// the mismatch is a compile error, not a lucky width check.
 pub trait Theory: Sized {
-
     fn descriptor(self) -> SchemaDescriptor;
 
     fn manifest(self) -> Manifest {
-
         ManifestDescriptor::manifest(&self.descriptor())
     }
 }
@@ -136,7 +133,6 @@ impl Theory for SchemaDescriptor {
 }
 
 impl Schema {
-
     #[expect(
         clippy::unused_self,
         reason = "the schema is the witness's minting authority — readers go through it"
@@ -150,7 +146,6 @@ impl Schema {
 pub(crate) struct DisjointDeterminantProof(());
 
 impl DisjointDeterminantProof {
-
     pub(crate) const fn authorize_coverage(self) {
         let Self(()) = self;
     }
@@ -158,7 +153,6 @@ impl DisjointDeterminantProof {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Enforcement {
-
     ScalarProbe {
         target_key: KeyId,
         key_projection: Box<[FieldId]>,
@@ -172,11 +166,12 @@ pub(crate) enum Enforcement {
         target_tail: ValueType,
     },
 
-    Closed { members: MemberSet },
+    Closed {
+        members: MemberSet,
+    },
 }
 
 impl Enforcement {
-
     pub(crate) const fn target_key(&self) -> Option<KeyId> {
         match self {
             Self::ScalarProbe { target_key, .. } | Self::IntervalCoverage { target_key, .. } => {
@@ -197,17 +192,17 @@ impl Enforcement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CapacityEnforcement {
-
     ScalarProbe {
         target_key: KeyId,
         key_projection: Box<[FieldId]>,
     },
 
-    Closed { members: MemberSet },
+    Closed {
+        members: MemberSet,
+    },
 }
 
 impl CapacityEnforcement {
-
     pub(crate) fn key_projection(&self) -> Option<&[FieldId]> {
         match self {
             Self::ScalarProbe { key_projection, .. } => Some(key_projection),
@@ -218,7 +213,6 @@ impl CapacityEnforcement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Survivors {
-
     ReverseEdges,
 
     /// unrepresentable (refused at validation).
@@ -229,14 +223,12 @@ pub(crate) enum Survivors {
 /// [`StatementId`] is the materialized-order ordinal, not this pairing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pairing {
-
     OneWay,
 
     Mirror(ContainmentId),
 }
 
 impl Pairing {
-
     #[must_use]
     pub const fn partner(self) -> Option<ContainmentId> {
         match self {
@@ -281,8 +273,10 @@ impl MemberSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EncodableCheck {
-
-    Encoded { field: FieldId, bytes: Box<[u8]> },
+    Encoded {
+        field: FieldId,
+        bytes: Box<[u8]>,
+    },
 
     EncodedSet {
         field: FieldId,
@@ -310,15 +304,20 @@ impl EncodableCheck {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CompiledCheck {
-
-    Encoded { field: FieldId, bytes: Box<[u8]> },
+    Encoded {
+        field: FieldId,
+        bytes: Box<[u8]>,
+    },
 
     EncodedSet {
         field: FieldId,
         alternatives: Box<[Box<[u8]>]>,
     },
 
-    Interned { field: FieldId, text: Box<str> },
+    Interned {
+        field: FieldId,
+        text: Box<str>,
+    },
 
     InternedSet {
         field: FieldId,
@@ -367,8 +366,9 @@ pub(crate) struct CompiledSides {
 #[allow(private_interfaces)]
 #[derive(Debug, Clone)]
 pub enum KeyForm {
-
-    FreshRow { field: FieldId },
+    FreshRow {
+        field: FieldId,
+    },
 
     Scalar,
 
@@ -381,7 +381,6 @@ pub enum KeyForm {
 /// One sealed key statement: `R(X) -> R` with its form.
 #[derive(Debug, Clone)]
 pub struct KeyStatement {
-
     pub id: StatementId,
     pub relation: RelationId,
     pub projection: Box<[FieldId]>,
@@ -389,7 +388,6 @@ pub struct KeyStatement {
 }
 
 impl KeyStatement {
-
     #[must_use]
     pub fn form(&self) -> &KeyForm {
         &self.form
@@ -402,7 +400,6 @@ impl KeyStatement {
 }
 
 impl KeyForm {
-
     #[must_use]
     pub const fn as_fresh_row(&self) -> Option<FieldId> {
         match *self {
@@ -429,7 +426,6 @@ impl KeyForm {
 /// selections, and optional `==` partner.
 #[derive(Debug, Clone)]
 pub struct ContainmentStatement {
-
     pub id: StatementId,
     pub source: Side,
     pub target: Side,
@@ -443,7 +439,6 @@ pub struct ContainmentStatement {
 }
 
 impl ContainmentStatement {
-
     #[must_use]
     pub fn mirror_id(&self, schema: &Schema) -> Option<StatementId> {
         self.pairing.partner().map(|id| schema.containment(id).id)
@@ -461,7 +456,6 @@ pub enum SealedWeight {
 }
 
 impl SealedWeight {
-
     #[must_use]
     pub const fn to_weight(self) -> Weight {
         match self {
@@ -484,7 +478,6 @@ pub enum SealedBound {
 }
 
 impl SealedBound {
-
     #[must_use]
     pub const fn to_bound(self) -> Option<Bound> {
         match self {
@@ -516,7 +509,6 @@ pub(crate) enum BoundCeiling {
 /// `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the promised
 #[derive(Debug, Clone)]
 pub struct CapacityStatement {
-
     pub id: StatementId,
     pub target: Side,
 
@@ -563,7 +555,6 @@ pub enum StatementView<'schema> {
 }
 
 impl StatementView<'_> {
-
     #[must_use]
     pub const fn id(self) -> StatementId {
         match self {
@@ -589,14 +580,12 @@ pub struct SealedRow {
 /// live in the arms. Closed cannot be written.
 #[derive(Debug, Clone)]
 pub enum RelationBody {
-
     Ordinary { fresh: Option<KeyId> },
 
     Closed { extension: Box<[SealedRow]> },
 }
 
 impl RelationBody {
-
     #[must_use]
     pub fn closed_rows(&self) -> Option<&[SealedRow]> {
         match self {
@@ -827,7 +816,6 @@ pub(crate) enum CompleteObligation<'schema> {
 }
 
 impl CompleteObligation<'_> {
-
     #[must_use]
     #[cfg_attr(
         not(test),
