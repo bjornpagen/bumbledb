@@ -1,50 +1,16 @@
 //! Query rendering back to the rule notation — the statement renderer's
 //! sibling (`crate::schema::render`), on the read side of the data
 //! surface: **when the write-side query surface is data, the renderer is
-//! the pretty syntax** (`docs/architecture/20-query-ir.md` § the data
-//! surface). One rendered block per rule, set-builder shaped:
-//!
+//! the pretty syntax**. One rendered block per rule, set-builder shaped:
 //! ```text
 //! (v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
 //! ```
-//!
 //! The grammar is the schema grammar's own query side, promoted
-//! (`docs/architecture/20-query-ir.md` owns the normative block; this module emits it):
+//! :
 //! atoms as `Relation(field: var)`, in-atom selections `field == literal`
 //! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
 //! membership as `in`, `Allen(term, MASK, term)` with masks as named
 //! basics joined by `|` (set union) or the workload composites, `;`
-//! terminating each rule exactly as it terminates statements.
-//!
-//! Deterministic and **total on plain data** — its consumers are
-//! diagnostics (roster errors print the offending query, so malformed
-//! shapes must render, not panic) and the introspection/stats surface:
-//!
-//! - variables render as `v{id}` and params as `?{id}` (the IR carries
-//!   dense ids only; names are a debugging sidecar the engine never
-//!   stores);
-//! - unresolvable ids render as `relation#N` / `field#N` placeholders
-//!   (the statement renderer's convention — the bad id can be the very
-//!   thing validation rejected);
-//! - a literal word bound at a **closed-reference position** (a field
-//!   whose declared containment targets a closed relation's id, or the
-//!   closed relation's own id field) prints its **handle** (`kind ==
-//!   DirectPass`) — the vocabulary's name, resolved through the sealed
-//!   extension; an out-of-range word prints visibly wrong as
-//!   `Kind(7?)` (the relation's name — the engine never learns host
-//!   newtype names), because rendering hides nothing. Comparison terms
-//!   carry no field position, so a literal there renders by value;
-//!   the notation's selection form is the handle's home;
-//! - the remaining folds render as `Sum`/`Min`/`Max`/`Count`/`Pack`;
-//! - a nested condition tree renders in the notation's own `and(..)` /
-//!   `or(..)` forms — grammar, not merely diagnostics (ruled 2026-07-23,
-//!   R9): `query!` parses them back, so the render→parse round trip
-//!   closes over the full input grammar. Depth past
-//!   [`crate::ir::MAX_CONDITION_DEPTH`] elides to `...` — the hostile
-//!   nesting validation rejects must still render.
-//!
-//! Rendering allocates; it runs only in diagnostic contexts (roster
-//! errors, introspection, arbitration bundles), never on a warm path.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -56,15 +22,9 @@ use crate::schema::{Enforcement, Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 
-/// The closed-reference position table, built once at renderer
-/// construction: `(relation, field)` → the closed relation whose row ids
-/// the field's words are. A schema walk over declared containments whose
-/// target is a closed relation's id and whose source projection is that
-/// single field — the same inference the grounding's complement fold runs
-/// (`plan/ground/evaluate.rs::containment_into_id`) — plus each closed
-/// relation's own id field, which maps to itself. Shared with validation:
-/// the closed-reference order refusal (ruled 2026-07-23, R4) resolves
-/// its positions through this one table, never a second walk.
+/// Shared with validation: the closed-reference order refusal (ruled
+/// 2026-07-23, R4) resolves its positions through this one table, never a
+/// second walk.
 pub(crate) struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 
 impl ClosedRefs {
@@ -95,20 +55,12 @@ impl ClosedRefs {
         Self(map)
     }
 
-    /// The closed relation a `(relation, field)` position references,
     /// if any — the R4 refusal's resolution question, and the dense
-    /// group domain's source (finding 049: the sealed extension's row
-    /// count is the radix).
+
     pub(crate) fn target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
         self.0.get(&(relation, field)).copied()
     }
 
-    /// The handle spelling for a literal at `(relation, field)`: `Some`
-    /// iff the position is a closed reference and the value is a word —
-    /// the handle for an in-range row id, the visibly-wrong `Kind(7?)`
-    /// for an out-of-range one (rendering hides nothing). `None` means
-    /// the position is no closed reference (or the value no word) and the
-    /// literal renders plainly.
     fn handle(
         &self,
         schema: &Schema,
@@ -203,7 +155,6 @@ fn render_main(out: &mut String, schema: &Schema, refs: &ClosedRefs, rules: &[Ru
     }
 }
 
-/// One rule as `(head) | body;`.
 fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push('(');
     for (index, term) in rule.finds.iter().enumerate() {
@@ -230,9 +181,6 @@ fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule
     out.push(';');
 }
 
-/// One head position of a rule. `Count` is nullary; a malformed
-/// `Count(v)` renders its variable anyway (totality over the shapes the
-/// roster rejects).
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
@@ -248,7 +196,6 @@ fn find_term(out: &mut String, term: &FindTerm) {
     }
 }
 
-/// One aggregate head term: `Sum(v0)`, `Count`, `Pack(v1)`.
 fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId) {
     let name = match op {
         crate::ir::FoldOp::Sum => "Sum",
@@ -261,18 +208,6 @@ fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId) {
     out.push(')');
 }
 
-/// One atom: `Relation(field: v0, field == literal, field in ?1)`, with
-/// `!` prefixed for a negated occurrence. Binding forms: a variable binds
-/// as `field: vN` (the join spelling); a literal or scalar param is an
-/// in-atom selection `field == term` (the schema grammar's selections
-/// with params admitted — on an interval field an element-typed term
-/// reads as membership under the same bivalent typing rule the IR
-/// binding carries); a param set is membership, `field in ?N`. A literal
-/// word at a closed-reference position prints its handle (module doc).
-/// A derived-table atom whose bindings are dense, in-order, and
-/// variable-only renders in the ordered bare form (`interior 0(v1, v2)`) — the
-/// notation's one dense spelling; sparse positions and selections keep
-/// the indexed `i:`/selection spellings.
 fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> String {
     let mut out = String::new();
     if negated {
@@ -327,12 +262,6 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
     out
 }
 
-/// One condition tree: a leaf is a comparison item; `And`/`Or` render
-/// in the notation's own functional forms (grammar — ruled 2026-07-23,
-/// R9). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
-/// the renderer recurses by depth and must stay total on the hostile
-/// nesting validation rejects, so anything past the boundary check's own
-/// cap elides to `...` instead of exhausting the stack.
 fn tree_item(tree: &ConditionTree) -> String {
     tree_item_within(tree, crate::ir::MAX_CONDITION_DEPTH)
 }
@@ -356,8 +285,6 @@ fn functional(name: &str, children: &[ConditionTree], budget: usize) -> String {
     format!("{name}({})", inner.join(", "))
 }
 
-/// One comparison item: `Allen(a, MASK, b)`, membership `point in
-/// interval` (the `PointIn` predicate's notation), or infix `lhs op rhs`.
 fn comparison(cmp: &Comparison) -> String {
     let mut out = String::new();
     match cmp.op {
@@ -370,8 +297,7 @@ fn comparison(cmp: &Comparison) -> String {
             term(&mut out, &cmp.rhs);
             out.push(')');
         }
-        // `PointIn(interval, point)` is point membership as a predicate:
-        // the notation reads point-first.
+
         CmpOp::PointIn => {
             term(&mut out, &cmp.rhs);
             out.push_str(" in ");
@@ -397,9 +323,6 @@ fn comparison(cmp: &Comparison) -> String {
     out
 }
 
-/// One comparison term. Literals render by value — a comparison carries
-/// no field position, so no closed-reference resolution applies here
-/// (module doc: the selection form is the handle's home).
 fn term(out: &mut String, term: &Term) {
     match term {
         Term::Var(var) => var_name(out, *var),
@@ -408,18 +331,10 @@ fn term(out: &mut String, term: &Term) {
     }
 }
 
-/// The mask position: a named mask expression.
 fn mask_term(out: &mut String, mask: AllenMask) {
     mask_names(out, mask);
 }
 
-/// A literal mask as named values of the algebra: an exact workload
-/// composite by its name, else the singleton basics joined by `|` (the
-/// mask-level bar is set union over the 13). The vacuous masks — typed
-/// rejections, but diagnostics picture them — render as `EMPTY`/`FULL`.
-/// Crate-visible for the statically-empty verdict pictures
-/// (`ir/normalize/fold.rs`) — one mask notation on every diagnostic
-/// surface.
 pub(crate) fn mask_names(out: &mut String, mask: AllenMask) {
     const COMPOSITES: [(&str, AllenMask); 4] = [
         ("INTERSECTS", AllenMask::INTERSECTS),
@@ -466,13 +381,6 @@ pub(crate) fn mask_names(out: &mut String, mask: AllenMask) {
     }
 }
 
-/// One literal, in the statement renderer's value formats (one notation,
-/// schema to query): intervals as `start..end`, strings and byte strings
-/// escaped. Field-blind by design — closed-reference resolution happens
-/// at the positions that carry a field ([`ClosedRefs::handle`]).
-/// Crate-visible for the statically-empty verdict pictures
-/// (`ir/normalize/fold.rs`) — one value notation on every diagnostic
-/// surface.
 pub(crate) fn literal(out: &mut String, value: &Value) {
     match value {
         Value::Bool(v) => {
