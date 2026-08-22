@@ -4,7 +4,6 @@
 //! .
 //! Rendering allocates; it runs only in `Display`/diagnostic contexts
 //! (`crate::error`), never on a write or query path.
-
 use std::collections::BTreeMap;
 use std::fmt;
 
