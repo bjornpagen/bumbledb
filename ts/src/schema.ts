@@ -322,6 +322,14 @@ function verifyTargetKeyFace(
 	const roster = [...(implied.get(face.owner.name) ?? []), ...(declared.get(face.owner.name) ?? [])]
 	const want = new Set(face.projection)
 	const matched = roster.some(function sameFieldSet(key) {
+		// Raw length equality on BOTH sides first — the belt against
+		// multiset drift: `new Set` collapses a duplicate spelling, so a
+		// collapsed key or projection could set-match a shorter partner the
+		// engine's FieldSet refuses (duplicates are refused at the key()
+		// mint too; this comparison trusts neither wall alone).
+		if (key.length !== face.projection.length || want.size !== face.projection.length) {
+			return false
+		}
 		const keySet = new Set(key)
 		if (keySet.size !== want.size) {
 			return false

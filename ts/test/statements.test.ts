@@ -369,6 +369,18 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		}, /relation Holder\.name: the literal set spells "a" twice — write it once/)
 	})
 
+	test("a duplicate field in a key() projection refuses at the mint — the engine's FieldSet duplicate, canonical voice", function probeDuplicateKeyProjection() {
+		const { Holder } = buildLedger()
+		// key(R, ["a", "a"]) collapses under `new Set` to the one-field set —
+		// without the mint refusal it could set-match a 1-field target
+		// projection the engine refuses (FieldSet errs on duplicates), a
+		// parity window between the two boundaries. The duplicate spelling
+		// is the once-spelled projection respelled: canonical utterance.
+		assert.throws(function duplicateProjection() {
+			key(Holder, ["name", "name"])
+		}, /key\(Holder, \.\.\.\): the projection spells name twice — write it once \(the canonical-utterance law: one meaning, one spelling\)/)
+	})
+
 	test("a plain u64 face never pairs a closed [id] face — closedness rides the descriptor (both tiers)", function probeRosterWall() {
 		const { Sev, Limit } = buildSeverity()
 		// The alias spelling — a bare u64 column into the vocabulary's [id] —

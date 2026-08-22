@@ -24,7 +24,7 @@ import { on } from "#face.ts"
 import { i64, interval, str, u64 } from "#fields.ts"
 import type { LawfulStatements, TargetKeyWall } from "#law.ts"
 import { lower } from "#lower.ts"
-import { relation } from "#relation.ts"
+import { type AnyRelation, relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import type { FieldSpec, SchemaSpec, SideSpec, StatementSpec, ValueTypeSpec } from "#spec.ts"
 import { capacity, contained, key, mirrors, type Statement } from "#statements.ts"
@@ -137,6 +137,27 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		}, /^schema Rubric: Task\(level\) <= Sev\(level\): closed target Sev is addressed by its synthetic id only — projection \(level\) must be exactly \(id\) \(rewrite the target side as on\(Sev, "id"\)\)$/)
 	})
 
+	test("row 8 sub-case: a declared payload key equal to the projection changes nothing — closedness judges first", function closedPayloadKeyed() {
+		const Sev = closed("Sev", { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
+		const Task = relation("Task", { level: u64 })
+		// The SDK's mint refuses ANY explicit key on a closed relation, so a
+		// "declared payload key on the closed target" can never enter a
+		// schema value here — closedness stands in front of the key roster
+		// by construction (the engine architects the same order: its closed
+		// arm refuses BEFORE the key search, so a declared payload key
+		// carrying exactly the refused field set changes nothing —
+		// validate.rs, resolve_target_key). The engine half of this sub-case
+		// drives the declared-fd spec through dbCreate below.
+		assert.throws(function mintClosedKey() {
+			// @ts-expect-error — key() takes an ordinary relation; a closed value lacks the relation shape
+			key(Sev, ["level"])
+		}, /closedness already materializes Sev\(id\) -> Sev/)
+		assert.throws(function payloadTarget() {
+			// @ts-expect-error — the TargetKeyWall verdict: a closed target is addressed by its synthetic id only
+			schema("RubricKeyed", { Sev, Task }, [contained(on(Task, "level"), on(Sev, "level"))])
+		}, /closed target Sev is addressed by its synthetic id only/)
+	})
+
 	test("row 9: mirrors with both faces keyed — admitted", function mirrorsBothKeyed() {
 		const A = relation("A", { id: u64.fresh })
 		const B = relation("B", { ref: u64 })
@@ -197,6 +218,24 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		assert.throws(function valueTierAuthoritative() {
 			schema("Report", { Source: ReportSource, Target: ReportTarget }, widened)
 		}, /target projection \(value\) matches no declared key of Target/)
+	})
+
+	test("a widened key OWNER degrades the whole type-tier wall — never a false wall on literal faces", function widenedKeyOwner() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		// The key's owner is spelled through a widened AnyRelation binding,
+		// so the declared-key roster is UNKNOWABLE at the type tier — a
+		// partial roster would refuse this containment's literal faces while
+		// the value tier (which reads data.owner.name off the VALUE, still
+		// "Target") admits it. The degradation law: the whole TargetKeyWall
+		// goes silent, exactly as a widened face already does — so this call
+		// COMPILES (no expect-error) and the value tier admits.
+		const widenedOwner: AnyRelation = Target
+		const admitted = schema("WidenedKeyOwner", { Source, Target }, [
+			key(widenedOwner, ["scope", "value"]),
+			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
+		])
+		assert.equal(lower(admitted).statements.length, 2)
 	})
 })
 
@@ -388,6 +427,36 @@ describe("the target-key wall at the engine — parity through native.dbCreate",
 				statements: [containmentOf(sideOf("Task", ["level"]), sideOf("Sev", ["level"]))]
 			},
 			"statement 1: closed target relation Sev (0) is addressed by its synthetic id only — " +
+				"projection {level (1)} must be exactly {id (0)} (rewrite the target side as `R(id)`)"
+		)
+	})
+
+	test("row 8 sub-case at the engine: a DECLARED payload key whose field set equals the projection — still ClosedTargetNotHandle", async function closedPayloadKeyed() {
+		// The engine architects this exact case (validate.rs,
+		// resolve_target_key's closed arm): a declared payload key may carry
+		// exactly the refused field set, and the rule is CLOSEDNESS, not key
+		// absence — the fd on the sealed extension is itself legal (judged
+		// against the axioms once; levels 1 and 5 collide nowhere), so the
+		// refusal below can only be the closed target's own.
+		await engineRefuses(
+			{
+				relations: [
+					{
+						name: "Sev",
+						fields: [fieldOf("level", { kind: "u64" })],
+						closed: {
+							newtype: "Sev.id",
+							rows: [
+								{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
+								{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
+							]
+						}
+					},
+					ordinary("Task", [fieldOf("level", { kind: "u64" })])
+				],
+				statements: [fdOf("Sev", ["level"]), containmentOf(sideOf("Task", ["level"]), sideOf("Sev", ["level"]))]
+			},
+			"statement 2: closed target relation Sev (0) is addressed by its synthetic id only — " +
 				"projection {level (1)} must be exactly {id (0)} (rewrite the target side as `R(id)`)"
 		)
 	})

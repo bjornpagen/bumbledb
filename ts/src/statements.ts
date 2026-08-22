@@ -220,7 +220,12 @@ function assertRosterAgreement(source: FaceData, target: FaceData, statement: St
  * checked against `R`'s field block in the type, and the tuple is carried
  * in the returned value's type ({@link KeyStatement}) — keyed point reads
  * through THIS statement are typed field-for-field, descriptors resolvable
- * through the owner's schema type.
+ * through the owner's schema type. A DUPLICATE field in the projection is
+ * refused here, at the mint (the engine's `FieldSet` refuses the same
+ * duplicate at `Db.create`; canonical utterance says the twice-spelled
+ * field is the once-spelled projection respelled) — without this wall a
+ * `new Set`-collapsed duplicate could set-match a shorter target
+ * projection the engine refuses.
  */
 function key<
 	R extends AnyRelation,
@@ -230,6 +235,15 @@ function key<
 		throw errors.new(
 			`key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
 		)
+	}
+	const seen = new Set<string>()
+	for (const fieldName of fields) {
+		if (seen.has(fieldName)) {
+			throw errors.new(
+				`key(${relation.name}, ...): the projection spells ${fieldName} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+			)
+		}
+		seen.add(fieldName)
 	}
 	const data: KeyData<R, Projection> = Object.freeze({
 		kind: "key",

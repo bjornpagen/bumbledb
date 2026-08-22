@@ -374,6 +374,9 @@ describe("the Db runtime against a real store", function suite() {
 		assert.throws(function scanAfterScope() {
 			leaked.scan(Holder)
 		}, /invalidated/)
+		assert.throws(function countAfterScope() {
+			leaked.count(Holder)
+		}, /invalidated/)
 		assert.throws(function getAfterScope() {
 			leaked.get(Holder, { id: must(ids.ada) })
 		}, /invalidated/)

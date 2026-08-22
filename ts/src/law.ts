@@ -274,9 +274,11 @@ type KeyEntry = readonly [string, string]
  * Every declared `key()` of a statements tuple as {@link KeyEntry} rows —
  * the declared half of the target-key roster (the implied half is read off
  * each target face's own relation value: fresh marks, closed ids). A
- * widened key owner contributes nothing; a widened key PROJECTION rides
- * through as `string` and {@link DeclaredKeyMatch} treats it as
- * unjudgeable — degrade silent, never a false wall.
+ * widened key OWNER degrades the WHOLE wall to silent before this roster
+ * is ever consulted ({@link HasWidenedKeyOwner}) — the skip arm here is
+ * the same judgment stated locally, kept as belt. A widened key
+ * PROJECTION rides through as `string` and {@link DeclaredKeyMatch}
+ * treats it as unjudgeable — degrade silent, never a false wall.
  */
 type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly KeyEntry[] = []> = Stmts extends readonly [
 	infer H extends Statement,
@@ -292,6 +294,31 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 			: DeclaredKeysOf<T, readonly [...Acc, readonly [O["name"], P[number]]]>
 		: DeclaredKeysOf<T, Acc>
 	: Acc
+
+/**
+ * Whether any declared `key()`'s OWNER is spelled through a widened
+ * binding (a bare `AnyRelation` — the name is no longer literal). ONE
+ * widened key owner makes the whole declared-key roster UNKNOWABLE: the
+ * wall would judge literal containment faces against a roster missing a
+ * key the value tier can see, and refuse what the engine admits — a
+ * false wall, the tier's one forbidden verdict (the degradation law:
+ * best effort degrades to silent, never to a wrong judgment). So the
+ * whole {@link TargetKeyWall} degrades, exactly as a widened FACE
+ * already silences its own judgment; the value tier stays authoritative.
+ */
+type HasWidenedKeyOwner<Stmts extends readonly Statement[]> = Stmts extends readonly [
+	infer H extends Statement,
+	...infer T extends readonly Statement[]
+]
+	? H["data"] extends {
+			readonly kind: "key"
+			readonly owner: infer O extends AnyRelation
+		}
+		? string extends O["name"]
+			? true
+			: HasWidenedKeyOwner<T>
+		: HasWidenedKeyOwner<T>
+	: false
 
 /**
  * The named, self-locating compile verdict of the target-key wall: the
@@ -390,15 +417,17 @@ type TargetKeyScan<Stmts extends readonly Statement[], Keys extends readonly Key
  * list is lawful, to the named {@link ClassWall} on a two-generator class,
  * and to the named {@link TargetKeyWall} on a containment target that
  * resolves no key (60-containment-parity, type tier). Both walls degrade
- * to silent on a widened `Statement[]`; their runtime twins are
- * authoritative.
+ * to silent on a widened `Statement[]`, and the target-key wall ALSO
+ * degrades whole on any widened key OWNER in the tuple
+ * ({@link HasWidenedKeyOwner} — a partial roster would fire false walls
+ * on literal faces); their runtime twins are authoritative.
  */
 type LawfulStatements<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = WallScan<
 	BuildComps<PairsOf<Stmts>>,
 	GeneratorsOf<Rels>,
 	PairsOf<Stmts>
 > &
-	TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>>
+	(HasWidenedKeyOwner<Stmts> extends true ? unknown : TargetKeyScan<Stmts, DeclaredKeysOf<Stmts>>)
 
 /**
  * One coordinate's class per the three laws, at the TYPE tier: its
