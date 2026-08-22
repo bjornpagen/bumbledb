@@ -85,7 +85,6 @@ fn head_arity_mismatch_names_the_rule() {
 
 #[test]
 fn head_aggregate_mismatch_names_the_position() {
-
     let counting = Rule {
         finds: vec![FindTerm::Count],
         atoms: vec![atom(POSTING, vec![(1, Term::Var(VarId(0)))])],
@@ -132,7 +131,6 @@ fn head_aggregate_op_kind_mismatch_is_the_same_error() {
 
 #[test]
 fn head_type_mismatch_names_rule_and_position() {
-
     let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var],
@@ -150,7 +148,6 @@ fn head_type_mismatch_names_rule_and_position() {
 
 #[test]
 fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
-
     let second = Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![atom(
@@ -180,7 +177,6 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
 
 #[test]
 fn params_are_query_global_and_unify_across_rules() {
-
     let with_param = |field: u16, var: u16| Rule {
         finds: vec![FindTerm::Var(VarId(var))],
         atoms: vec![atom(
@@ -212,7 +208,6 @@ fn params_are_query_global_and_unify_across_rules() {
 
 #[test]
 fn param_density_is_judged_across_the_whole_program() {
-
     let with_param = |param: u16| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
@@ -243,7 +238,6 @@ fn param_density_is_judged_across_the_whole_program() {
 
 #[test]
 fn the_single_rule_program_is_the_degenerate_case() {
-
     let rule = account_rule(0);
     let explicit = Query {
         interiors: vec![],
