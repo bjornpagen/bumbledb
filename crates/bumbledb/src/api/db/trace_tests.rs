@@ -28,7 +28,6 @@ fn names(events: &[obs::TraceEvent]) -> Vec<obs::TracePoint> {
     events.iter().map(|e| e.point()).collect()
 }
 
-/// The write-path capture contract.
 #[test]
 fn write_path_traces_phases_with_counts() {
     let dir = TempDir::new("db-trace-write");
@@ -42,8 +41,6 @@ fn write_path_traces_phases_with_counts() {
     .expect("seed")
     .expect("accepted");
 
-    // Three inserts + one delete: the six phase spans, in order, with
-    // the counts from the delta's own entries.
     obs::start_capture();
     db.write(|tx| {
         for v in 0..3 {
@@ -92,10 +89,9 @@ fn write_path_traces_phases_with_counts() {
         "committed flag"
     );
 
-    // A net-no-op write: commit_noop, no phase spans.
     obs::start_capture();
     db.write(|tx| {
-        tx.insert_dyn(R, [&[Value::U64(0)]])?; // already present
+        tx.insert_dyn(R, [&[Value::U64(0)]])?; 
         Ok(())
     })
     .expect("noop write")
@@ -110,10 +106,6 @@ fn write_path_traces_phases_with_counts() {
     assert!(!noop_names.contains(&obs::names::APPLY_DELETES));
 }
 
-/// A redundant insert is never judged (PRD 05, the net-disposition
-/// delta): the delta records nothing for a committed fact, so the
-/// source-side judgment runs zero probes on its behalf — the trace's
-/// `JUDGMENT_SOURCE` arg is the probe count.
 #[test]
 fn a_redundant_insert_costs_zero_source_side_probes() {
     const TARGET: RelationId = RelationId(0);
@@ -173,9 +165,6 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     .expect("seed")
     .expect("accepted");
 
-    // The redundant insert beside an unrelated genuine change (which
-    // keeps the delta nonempty; Extra has no outgoing statements): the
-    // source-side judgment probes nothing.
     obs::start_capture();
     db.write(|tx| {
         tx.insert_dyn(CLAIM, [&[Value::U64(5)]])?;
@@ -191,7 +180,6 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
         .expect("judgment span");
     assert_eq!(source.a0(), 0, "zero probes for the redundant insert");
 
-    // Contrast: a genuinely added source costs exactly its one probe.
     obs::start_capture();
     db.write(|tx| {
         tx.insert_dyn(TARGET, [&[Value::U64(6)]])?;
@@ -208,9 +196,6 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     assert_eq!(source.a0(), 1, "one probe for the genuine insert");
 }
 
-/// A fresh-only no-op commit does not move
-/// the generation, so a prepared query's next execution memo-hits —
-/// the counters-only flush invalidated nothing.
 #[test]
 fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     let fresh_schema = SchemaDescriptor {
@@ -237,7 +222,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         .expect("create")
         .expect("accepted");
     let rel = RelationId(0);
-    // Resolve once, mint per row: the witness is the untyped mint handle.
+
     let id_field = db.fresh_field(rel, FieldId(0)).expect("fresh field");
     db.write(|tx| {
         let id = tx.reserve_at(id_field, 1)?.start().expect("nonempty");
@@ -248,7 +233,6 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     .expect("accepted");
     assert_eq!(db.generation().expect("generation").value(), 1);
 
-    // Q(id, v) :- S(id, v) — a full-scan free join that builds views.
     let query = crate::ir::Query::single(crate::ir::Rule {
         finds: vec![
             crate::ir::FindTerm::Var(crate::ir::VarId(0)),
@@ -271,7 +255,6 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     })
     .expect("first execute builds");
 
-    // The no-op commit: an escaped reserve, no facts.
     let escaped = db
         .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
         .expect("bare reserve")
@@ -284,7 +267,6 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         "a counters-only commit is not a state change"
     );
 
-    // The next execution memo-hits: nothing was evicted or rebuilt.
     obs::start_capture();
     db.read(|snap| {
         snap.execute_collect(&mut prepared, &[] as &[crate::BindValue])
@@ -297,7 +279,6 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     assert!(!ns.contains(&obs::names::VIEW_BUILD), "{ns:?}");
     assert!(!ns.contains(&obs::names::IMAGE_BUILD), "{ns:?}");
 
-    // And the escaped id persisted: the next reserve continues.
     let next = db
         .write(|tx| Ok(tx.reserve_at(id_field, 1)?.start().expect("nonempty")))
         .expect("reserve")
@@ -334,12 +315,10 @@ fn a_collection_insert_is_one_write() {
     );
 }
 
-/// `compact`'s durability chain runs to its end. Power-loss semantics
-/// cannot be pinned in-process; what CAN be is that the parent-dirent
-/// sync path executes — `COMPACT_DURABLE` records only after the copied
-/// file, the `dest` dirent contents, and `dest`'s own entry in its
-/// parent directory have all been fsynced, so the event's presence is
-/// the pin.
+/// Power-loss semantics cannot be pinned in-process; what CAN be is that the
+/// parent-dirent sync path executes — `COMPACT_DURABLE` records only after the
+/// copied file, the `dest` dirent contents, and `dest`'s own entry in its
+/// parent directory have all been fsynced, so the event's presence is the pin.
 #[test]
 fn compact_records_its_completed_durability_chain() {
     let dir = TempDir::new("db-trace-compact");
@@ -364,11 +343,10 @@ fn compact_records_its_completed_durability_chain() {
     assert_eq!(durable.a0(), 2, "dest dirent + parent dirent, both synced");
 }
 
-/// `Db::create`'s birth dirent chain (finding 022) — compact's pin,
-/// applied to the other site of the one mechanism: `CREATE_DURABLE`
-/// records only after the store directory and its parent have both been
-/// fsynced behind the initialize commit, so the event's presence pins
-/// that the create-path syncs executed.
+/// `Db::create`'s birth dirent chain (finding 022) — compact's pin, applied to
+/// the other site of the one mechanism: `CREATE_DURABLE` records only after the
+/// store directory and its parent have both been fsynced behind the initialize
+/// commit, so the event's presence pins that the create-path syncs executed.
 #[test]
 fn create_records_its_completed_durability_chain() {
     let dir = TempDir::new("db-trace-create");
@@ -384,12 +362,6 @@ fn create_records_its_completed_durability_chain() {
     assert_eq!(durable.a0(), 2, "store dirent + parent dirent, both synced");
 }
 
-/// Exactly one burn per termination (`EscapedIdBurn`): an `Err`-aborted
-/// and a PANICKED write each advance the escaped `Q` marks through
-/// exactly one counters-only commit — never zero (the mint continues
-/// past every escaped id), never two (one `COUNTERS_FLUSH` span, one
-/// `LMDB_COMMIT` span: the guard owns the whole closure region, and
-/// `commit()` was never reached to flush a second time).
 #[test]
 fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     let fresh_schema = SchemaDescriptor {
@@ -431,7 +403,6 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         )
     };
 
-    // The Err abort: the guard's one counters-only commit.
     obs::start_capture();
     let aborted = db.write(|tx| {
         tx.reserve_at(id_field, 1)?.start().expect("nonempty");
@@ -469,7 +440,6 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         "the panicked write burns exactly once"
     );
 
-    // Never zero: both aborts' ids are gone; the mint continues past.
     db.write(|tx| {
         assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 2);
         Ok(())
@@ -478,10 +448,6 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     .expect("accepted");
 }
 
-/// Lane I2 — the integrity sweep, formerly wholly dark. `verify_store`
-/// records one outer span containing one span per namespace pass, in the
-/// canonical order; a clean store raises no findings, so every pass span
-/// and the outer span charge zero.
 #[test]
 fn verify_store_traces_every_namespace_pass_in_order() {
     let dir = TempDir::new("db-trace-verify");
@@ -500,7 +466,6 @@ fn verify_store_traces_every_namespace_pass_in_order() {
     let events = obs::finish_capture();
     assert!(report.findings().is_empty(), "a clean store");
 
-    // The pass spans, in the canonical sweep order, each inside the outer.
     let pass_order: Vec<obs::TracePoint> = events
         .iter()
         .filter(|e| {
@@ -578,9 +543,6 @@ fn an_aborting_write_records_no_lmdb_commit() {
     );
 }
 
-/// The snapshot point-read surface is lit (the formerly wholly dark
-/// keyed-get lane): one `point_read` span per get, hit/miss riding a0
-/// — the owned and pooled entries alike.
 #[test]
 fn point_reads_trace_hits_and_misses() {
     let dir = TempDir::new("db-trace-point-read");
