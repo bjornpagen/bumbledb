@@ -1,6 +1,5 @@
 //! Complete statement-phase roster: every instance-dependent containment
 //! and capacity, judged through the shared [`Checker`].
-
 use crate::encoding::{encode_u64, field_word_bytes};
 use crate::error::{Check, Direction, Result, Violation};
 use crate::schema::{
