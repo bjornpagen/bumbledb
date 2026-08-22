@@ -6,7 +6,6 @@ use crate::storage::env::ReadTxn;
 
 impl<S> PreparedQuery<S> {
     /// # Errors
-
     pub(crate) fn introspect(
         &mut self,
         txn: &ReadTxn<'_>,
