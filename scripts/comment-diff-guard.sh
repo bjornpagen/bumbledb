@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Comment-diff guard (proposals/purge/comment-gates.md hunk law):
-# every touched file's non-comment token stream must be byte-equal
-# across the compared revisions. Language-aware strip (string-literal
-# awareness) for Rust / TypeScript / Lean / shell / TOML. A file that
-# fails is reverted whole, not patched.
-#
-# Usage:
-#   scripts/comment-diff-guard.sh <git-range>     # e.g. abc..HEAD
-#   scripts/comment-diff-guard.sh --selftest
-#   scripts/comment-diff-guard.sh --extract-comments <file>
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,7 +20,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 def lang_of(path: str) -> str | None:
     name = Path(path).name
     if name == "Cargo.toml" or name.endswith(".toml"):
@@ -48,10 +37,8 @@ def lang_of(path: str) -> str | None:
         ".bash": "hash",
     }.get(suffix)
 
-
 def _is_ident(ch: str) -> bool:
     return ch.isalnum() or ch == "_"
-
 
 def strip_or_extract(text: str, lang: str, extract: bool) -> str:
     if lang == "rust":
@@ -64,16 +51,13 @@ def strip_or_extract(text: str, lang: str, extract: bool) -> str:
         return _hash(text, extract=extract)
     raise SystemExit(f"comment-diff-guard: unknown lang {lang}")
 
-
 def _emit_code(out: list[str], comments: list[str], ch: str, extract: bool) -> None:
     if not extract:
         out.append(ch)
 
-
 def _emit_comment(comments: list[str], buf: list[str], line: int, extract: bool) -> None:
     if extract:
         comments.append(f"{line}:{''.join(buf)}")
-
 
 def _c_family(text: str, ts: bool, extract: bool) -> str:
     n = len(text)
@@ -81,7 +65,7 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
     line = 1
     out: list[str] = []
     comments: list[str] = []
-    # states: code, line, block, dstr, squote, tstr
+
     state = "code"
     tstr_depth = 0
     raw_hashes = -1  # rust raw string: number of # after r
@@ -185,7 +169,7 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
             continue
 
         if state == "raw":
-            # rust raw string: close is " then raw_hashes times #
+
             _emit_code(out, comments, ch, extract)
             if ch == '"':
                 ok = True
@@ -205,7 +189,6 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
             i += 1
             continue
 
-        # ---- code ----
         if ch == "\n":
             _emit_code(out, comments, ch, extract)
             line += 1
@@ -214,9 +197,8 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
                 pass
             continue
 
-        # rust raw string / byte-raw: r#"..."# , br#"..."#
         if not ts and ch in "rb" and (ch != "b" or nxt in "r\""):
-            # possible raw or byte string; only treat as raw if r#*" or br#*"
+
             j = i
             if text[j] == "b":
                 j += 1
@@ -261,13 +243,11 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
             i += 1
             continue
 
-        # rust lifetime or char: 'a  vs  'x'
         if not ts and ch == "'":
             _emit_code(out, comments, ch, extract)
             i += 1
             if i < n and _is_ident(text[i]):
-                # lifetime 'foo or char 'x' — consume ident; if next is '
-                # it is a char literal closer
+
                 while i < n and _is_ident(text[i]):
                     _emit_code(out, comments, text[i], extract)
                     i += 1
@@ -275,7 +255,7 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
                     _emit_code(out, comments, text[i], extract)
                     i += 1
             elif i < n and text[i] == "\\":
-                # '\n'
+
                 _emit_code(out, comments, text[i], extract)
                 i += 1
                 if i < n:
@@ -286,7 +266,6 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
                     i += 1
             continue
 
-        # template interpolation closer
         if ts and ch == "}" and tstr_depth:
             _emit_code(out, comments, ch, extract)
             tstr_depth -= 1
@@ -303,7 +282,6 @@ def _c_family(text: str, ts: bool, extract: bool) -> str:
     if extract:
         return "\n".join(comments)
     return _normalize_code("".join(out))
-
 
 def _lean(text: str, extract: bool) -> str:
     n = len(text)
@@ -377,7 +355,7 @@ def _lean(text: str, extract: bool) -> str:
                 line += 1
             i += 1
             continue
-        # code
+
         if ch == "-" and nxt == "-":
             state = "line"
             comment_buf = []
@@ -412,7 +390,6 @@ def _lean(text: str, extract: bool) -> str:
     if extract:
         return "\n".join(comments)
     return _normalize_code("".join(out))
-
 
 def _hash(text: str, extract: bool) -> str:
     n = len(text)
@@ -473,9 +450,9 @@ def _hash(text: str, extract: bool) -> str:
                 at_bol = True
             i += 1
             continue
-        # code
+
         if ch == "#" and (at_bol or (i > 0 and text[i - 1] in " \t")):
-            # $# and ${# are not comments
+
             prev = text[i - 1] if i else ""
             if prev == "$":
                 if not extract:
@@ -521,14 +498,12 @@ def _hash(text: str, extract: bool) -> str:
         return "\n".join(comments)
     return _normalize_code("".join(out))
 
-
 def _normalize_code(text: str) -> str:
     lines = [ln.rstrip() for ln in text.splitlines()]
     kept = [ln for ln in lines if ln != ""]
     if not kept:
         return ""
     return "\n".join(kept) + "\n"
-
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -539,7 +514,6 @@ def main() -> None:
     text = sys.stdin.read() if src == "-" else Path(src).read_text(encoding="utf-8")
     extract = mode == "--extract"
     sys.stdout.write(strip_or_extract(text, lang, extract))
-
 
 if __name__ == "__main__":
     main()
@@ -582,7 +556,6 @@ selftest() {
     fi
   done
 
-  # Negative: a code-token change must be detected.
   local neg="$root/rust.changed.rs"
   if [ ! -f "$neg" ]; then
     echo "comment-diff-guard: FAIL — missing negative fixture $neg" >&2
