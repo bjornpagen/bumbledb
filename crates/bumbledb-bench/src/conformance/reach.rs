@@ -1,28 +1,6 @@
-//! The conformance lane's REACH arm (the shipping law,
-//! `docs/architecture/60-validation.md` § the two oracles):
-//! `evalQueryList` — interiors then rec lfp then main,
 //! `lean/Bumbledb/Exec/Reach.lean` — judges the same Query cases the
-//! naive eval and the `SQLite` recursive lane already agree on.
-//!
-//! One `reach-*.json` case per document (format:
-//! `lean/conformance/README.md` § reach cases): the shared
-//! theory/instance blocks, the tagged Query (`cq` or `reach`; atoms
-//! `edb` / `interior`), and the agreed answers.
-//!
-//! ## Scope fences (counted in [`ReachReport`], never silent)
-//!
-//! * **Folds excluded**: Lean reach rules are projection-shaped
-//!   (`finds : List VarId`). Fold-over-rec coverage is the naive
-//!   lane's alone.
-//! * **`SQLite` parity asserted where the translator admits**
-//!   ([`crate::translate::sqlite_expressible`]): an expressible
-//!   case is written only after naive and `SQLite` agree (a
-//!   disagreement panics — a trophy). Interval-typed derived columns
-//!   are the remaining translator limit; the generator's rec corpus
-//!   is scalar-shaped.
-//! * The query lane's slow/wide budgets apply unchanged.
-//!
-//! The corpus queries read the org tree only (`Org`, `OrgParent`).
+//! `lean/conformance/README.md` § reach cases): the shared case is written only
+//! after naive and `SQLite` agree (a
 
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -37,33 +15,28 @@ use crate::translate::{Inexpressible, LaneCase, sqlite_expressible, translate};
 
 use super::{MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_fact, strings_block, world_blocks};
 
-/// The seeded reach-case target (hand cases ride on top).
 pub const REACH_SEEDED_CASES: usize = 20;
 
-/// Per-case seed base for the recursive arm — disjoint from the query
-/// lane's, recorded in each case's provenance for the replay.
 pub const REACH_CASE_SEED_BASE: u64 = 0x0014_0000;
 
-/// The recursive arm's coverage report — every exclusion named and
-/// counted (the no-silent-caps rule).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ReachReport {
-    /// Candidate queries attempted.
+
     pub attempted: u64,
-    /// Cases written to the corpus.
+
     pub written: u64,
-    /// Written cases the `SQLite` lane also attested.
+
     pub sqlite_attested: u64,
-    /// A fold-bearing query — outside Lean's projection shape.
+
     pub excluded_fold: u64,
-    /// Naive wall time over the query lane's budget.
+
     pub excluded_slow: u64,
-    /// Answer set over the query lane's row cap.
+
     pub excluded_wide: u64,
 }
 
 impl ReachReport {
-    /// The coverage line the builder and comparator log.
+
     #[must_use]
     pub fn coverage_line(&self) -> String {
         format!(
@@ -79,8 +52,6 @@ impl ReachReport {
     }
 }
 
-/// The stored relations a query mentions (`Edb` atoms, positive and
-/// negated).
 fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
     for rule in crate::walk::rules(query) {
@@ -93,8 +64,6 @@ fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
     set
 }
 
-/// Whether any rule carries a fold — outside the Lean reach cut's
-/// projection shape (module doc).
 fn carries_fold(query: &Query) -> bool {
     crate::walk::rules(query).any(|rule| {
         rule.finds.iter().any(|find| {
@@ -106,7 +75,6 @@ fn carries_fold(query: &Query) -> bool {
     })
 }
 
-/// Serializes one full reach-case document.
 fn render_reach_case(
     world: &World,
     name: &str,
@@ -143,15 +111,7 @@ fn render_reach_case(
     ))
 }
 
-/// One candidate query through the pipeline: naive (timed, budgeted),
-/// the `SQLite` twin where the translator admits (agreement asserted —
-/// a disagreement is a TROPHY and panics), then the serialized
-/// document or the counted exclusion.
-///
 /// # Panics
-///
-/// On a naive-vs-`SQLite` disagreement, or a query mentioning
-/// relations outside the org tree (the corpus fence, module doc).
 fn one_reach_case(
     world: &World,
     name: &str,
@@ -246,8 +206,6 @@ struct HandReach {
     query: Query,
 }
 
-/// The hand roster: the ancestor closure whole, and negation of the
-/// finished rec in main. Mutual is unwritable this cut.
 fn hand_queries() -> Vec<HandReach> {
     use bumbledb::{Atom, FieldId, HeadTerm, VarId};
     let v = |id: u16| Term::Var(VarId(id));
@@ -318,13 +276,7 @@ fn hand_queries() -> Vec<HandReach> {
     ]
 }
 
-/// The recursive corpus, deterministically: the hand queries, then
-/// seeded generator queries (replayed from `Rng::new(case_seed)`,
-/// recorded in provenance) until [`REACH_SEEDED_CASES`] are written.
-///
 /// # Panics
-///
-/// On a naive-vs-`SQLite` trophy ([`one_reach_case`]).
 #[must_use]
 pub fn generate_reach_corpus(world: &World) -> (ReachReport, Vec<(String, String)>) {
     let mut report = ReachReport::default();
@@ -358,12 +310,7 @@ pub fn generate_reach_corpus(world: &World) -> (ReachReport, Vec<(String, String
     (report, cases)
 }
 
-/// Regenerates the `reach-*.json` cases in place, leaving the query
-/// and judgment cases untouched.
-///
 /// # Panics
-///
-/// On filesystem failures, or a naive-vs-`SQLite` trophy.
 #[must_use = "the coverage report is the recorded number"]
 pub fn write_reach_corpus(dir: &std::path::Path) -> ReachReport {
     let world = super::build_world(super::WORLD_SEEDS[0]);
@@ -386,9 +333,6 @@ pub fn write_reach_corpus(dir: &std::path::Path) -> ReachReport {
     report
 }
 
-/// One reach case's fresh document from its recorded provenance —
-/// the replay half ([`super::replay_checked_in_corpus`] dispatches
-/// `reach-*` files here).
 pub(super) fn replay_reach_case(
     worlds: &mut std::collections::BTreeMap<u64, World>,
     name: &str,
