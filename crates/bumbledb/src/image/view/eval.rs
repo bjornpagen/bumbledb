@@ -3,7 +3,6 @@
 //! bytes, or binding slots — and call [`holds`]. Measure-of-ray is
 //! `None`; every other outcome is `Some`. There is no second walk.
 //! Static dispatch, never `dyn`.
-
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::WordCmp;
 use crate::obs;
