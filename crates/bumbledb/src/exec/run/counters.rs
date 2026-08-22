@@ -7,7 +7,6 @@ use super::{JoinPhase, PHASE_NODE_CAP, PhaseTimers};
 
 #[cfg(feature = "trace")]
 impl JoinPhase {
-
     pub const COUNT: usize = Self::Gather as usize + 1;
 
     #[must_use]
@@ -106,7 +105,7 @@ mod tests {
     fn overflow_bucket_merges_nested_windows() {
         let mut timers = PhaseTimers::new();
         timers.phase_start(PHASE_NODE_CAP, JoinPhase::Descend);
-        timers.phase_start(PHASE_NODE_CAP + 1, JoinPhase::Descend); 
+        timers.phase_start(PHASE_NODE_CAP + 1, JoinPhase::Descend);
         timers.phase_end(PHASE_NODE_CAP + 1, JoinPhase::Descend);
         timers.phase_end(PHASE_NODE_CAP, JoinPhase::Descend);
         let (ticks, calls) = timers.acc[PHASE_NODE_CAP][JoinPhase::Descend.index()];
