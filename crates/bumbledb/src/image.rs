@@ -27,7 +27,6 @@ const LINE: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 enum Column {
-
     Words { start: usize },
 
     Bytes { start: usize },
@@ -43,7 +42,6 @@ enum Column {
 /// field is ONE word column, exactly like every other 8-byte scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnWidth {
-
     Byte,
 
     Word,
@@ -54,7 +52,6 @@ pub enum ColumnWidth {
 }
 
 impl ColumnWidth {
-
     #[must_use]
     pub const fn column_count(self) -> u16 {
         match self {
@@ -71,7 +68,6 @@ impl ColumnWidth {
 /// never on raw field indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnSpan {
-
     pub first_column: u16,
     pub width: ColumnWidth,
 }
@@ -129,7 +125,6 @@ pub struct RelationImage {
     row_count: usize,
 
     /// paid by every cold prepare and again by every re-prepare after a
-
     distincts: Box<[distinct::DistinctState]>,
 
     spans: Box<[ColumnSpan]>,
@@ -141,7 +136,6 @@ pub struct RelationImage {
 }
 
 impl RelationImage {
-
     #[must_use]
     pub fn byte_size(&self) -> usize {
         self.words.capacity() * std::mem::size_of::<u64>() + self.bytes.capacity()
@@ -196,7 +190,6 @@ impl RelationImage {
 }
 
 struct StridePadder {
-
     tolerance: usize,
 
     prev_start_by_width: [Option<usize>; 2],
