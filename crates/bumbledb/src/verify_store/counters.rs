@@ -4,7 +4,6 @@
 //! exceed every observed row id. A tallied relation with no stored counter
 //! reads as zero (the commit path initializes lazily): rows on disk
 //! convict the absent entry.
-
 use std::collections::BTreeSet;
 
 use crate::error::{CorruptionError, Result};
