@@ -1,15 +1,7 @@
-//! A total order over decoded value vectors. `bumbledb::Value` carries no
-//! `Ord` (the engine orders encoded words, never decoded values), so the
-//! model wraps its rows in [`Tuple`] and spells the order out — variant
-//! rank first, then contents. Any total order works; it only has to be a
-//! total order so `BTreeSet` can hold facts and answers.
-
 use std::cmp::Ordering;
 
 use bumbledb::Value;
 
-/// One decoded fact or answer: a value per field (or per variable),
-/// ordered lexicographically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tuple(pub Vec<Value>);
 
@@ -60,13 +52,7 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-/// An interval value's endpoints, widened to `i128` so U64 and I64
-/// elements share one obviously-correct arithmetic domain.
-///
 /// # Panics
-///
-/// On a non-interval value — validated schemas put intervals where the
-/// model expects them.
 pub(crate) fn endpoints(value: &Value) -> (i128, i128) {
     match value {
         Value::IntervalU64(interval) => (i128::from(interval.start()), i128::from(interval.end())),
@@ -75,8 +61,6 @@ pub(crate) fn endpoints(value: &Value) -> (i128, i128) {
     }
 }
 
-/// A scalar integer widened to `i128`; `None` for every other variant
-/// (the membership rule asks "is this term element-typed").
 pub(crate) fn point(value: &Value) -> Option<i128> {
     match value {
         Value::U64(v) => Some(i128::from(*v)),
@@ -85,12 +69,10 @@ pub(crate) fn point(value: &Value) -> Option<i128> {
     }
 }
 
-/// Half-open overlap: `a.start < b.end && b.start < a.end`.
 pub(crate) fn overlaps(a: (i128, i128), b: (i128, i128)) -> bool {
     a.0 < b.1 && b.0 < a.1
 }
 
-/// Point membership: `start <= t < end`.
 pub(crate) fn point_in(interval: (i128, i128), point: i128) -> bool {
     interval.0 <= point && point < interval.1
 }
