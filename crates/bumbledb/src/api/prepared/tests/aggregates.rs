@@ -1,11 +1,9 @@
-//! PRD 18 criteria at the API boundary: fold aggregates end to end
 //! (validate → plan → execute → result buffer), including interval finds.
 
 use super::*;
 use crate::ir::FoldOp;
 use bumbledb_theory::schema::IntervalElement;
 
-/// Payroll(id fresh u64, emp u64, during Interval<I64>).
 fn interval_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -61,9 +59,6 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// The interval find round-trip: a projected interval variable
-/// materializes as `Value::IntervalI64` rows equal to the stored
-/// facts', and the signature reports the interval type.
 #[test]
 fn interval_find_round_trips_through_answers() {
     let dir = TempDir::new("prepared-interval-roundtrip");
@@ -78,7 +73,6 @@ fn interval_find_round_trips_through_answers() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(emp, during) :- Payroll(emp, during).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -126,11 +120,6 @@ fn interval_find_round_trips_through_answers() {
     assert_eq!(answers, expected, "stored bounds round-trip exactly");
 }
 
-/// The dense group table (finding 049), end to end: grouping by a
-/// closed reference — `Reading.kind` contains into the closed `Kind`,
-/// whose row ids are declaration indices `0..4` — builds the
-/// mixed-radix table instead of the hash map, and the answers are the
-/// per-kind folds.
 #[test]
 fn a_closed_group_key_takes_the_dense_table() {
     let dir = TempDir::new("agg-dense-groups");
@@ -140,7 +129,6 @@ fn a_closed_group_key_takes_the_dense_table() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(kind, Sum(value), Count) :- Reading(kind, value).
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -188,8 +176,6 @@ fn a_closed_group_key_takes_the_dense_table() {
         "per-kind folds over the dense ordinals"
     );
 
-    // The open-domain twin: grouping by the fresh id proves nothing —
-    // the map stays.
     let open = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -215,16 +201,6 @@ fn a_closed_group_key_takes_the_dense_table() {
     assert!(!sink.dense_group_table(), "open domains keep the map");
 }
 
-/// The production `fold_split` → `gj_split` composition (`build.rs`:
-/// an aggregate head's group key drives the fold-aware level split,
-/// THEN the GJ lowering splits the cyclic body's multi-variable
-/// levels), previously exercised by zero tests — the plan differential
-/// omits `fold_split`. A grouped count over the triangle runs both
-/// transforms on one plan: the group variable `z` sits DEEP in the
-/// natural elimination order (so the fold split has real reordering
-/// work), the body is cyclic (so the GJ split has real splitting
-/// work), and validation's by-construction expect plus the exact
-/// grouped counts pin the composed plan end to end.
 #[test]
 fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
     let dir = TempDir::new("prepared-fold-gj-composition");
@@ -268,7 +244,6 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
     let cache = ImageCache::new(&edge_schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(z, Count) :- Edge(x, y), Edge(y, z), Edge(x, z).
     let edge = |a: u16, b: u16| Atom {
         source: crate::ir::AtomSource::Edb(RelationId(0)),
         bindings: vec![
@@ -293,7 +268,6 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
         })
         .collect();
     answers.sort_unstable();
-    // The triangles are (x,y,z) ∈ {(1,2,3), (2,1,3), (2,3,1 }: apex 3
-    // closes twice, apex 1 once.
+
     assert_eq!(answers, vec![(1, 1), (3, 2)]);
 }
