@@ -8,8 +8,8 @@ use std::ops::Range;
 /// Facts consumed vs facts that changed the in-memory final-state view
 /// at call time. The length-1 report is `{ submitted: 1, changed: 0|1 }`.
 /// `changed` counts recorded and cancelled net dispositions; intern-skips
-/// and already-matching state do not increment. The engine constructs
 /// reports through [`MutationReport::from_counts`]; `changed <= submitted`
+/// and already-matching state do not increment. The engine constructs
 /// is the invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MutationReport {
@@ -18,25 +18,22 @@ pub struct MutationReport {
 }
 
 impl MutationReport {
-    /// The empty collection: no engine request.
+
     pub const EMPTY: Self = Self {
         submitted: 0,
         changed: 0,
     };
 
-    /// Engine constructor. `changed <= submitted`.
     pub(super) const fn from_counts(submitted: u64, changed: u64) -> Self {
         debug_assert!(changed <= submitted);
         Self { submitted, changed }
     }
 
-    /// Facts presented to the collection.
     #[must_use]
     pub const fn submitted(self) -> u64 {
         self.submitted
     }
 
-    /// Facts that changed the in-memory final-state view at call time.
     #[must_use]
     pub const fn changed(self) -> u64 {
         self.changed
@@ -49,9 +46,6 @@ impl Default for MutationReport {
     }
 }
 
-/// Incrementable id word: a [`Fresh`] newtype or a raw `u64` from
-/// [`super::WriteTx::reserve_at`]. One accessor impl covers both so
-/// `impl FreshRange<u64>` does not collide with `impl<T: Fresh>`.
 trait FreshWord: Copy {
     fn from_word(raw: u64) -> Self;
     fn to_word(self) -> u64;
@@ -76,20 +70,19 @@ impl<T: Fresh> FreshWord for T {
 }
 
 /// Fresh ids from one [`super::WriteTx::reserve`] / `reserve_at`.
-///
 /// Empty is absence of a range — `reserve(0)` does not read or advance
 /// the sequence — not a degenerate `[0, 0)` interval of minted ids.
 /// The exclusive bound is a count, never a minted `T`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreshRange<T> {
-    /// `reserve(0)`: no ids, no sequence traffic.
+
     Empty,
-    /// `count` consecutive ids beginning at `start`.
+
     NonEmpty { start: T, count: NonZeroU64 },
 }
 
 impl<T> FreshRange<T> {
-    /// Inclusive start, if any ids were minted. Empty does not mention 0.
+
     #[must_use]
     pub fn start(self) -> Option<T> {
         match self {
@@ -98,7 +91,6 @@ impl<T> FreshRange<T> {
         }
     }
 
-    /// Count of minted ids.
     #[must_use]
     pub const fn len(&self) -> u64 {
         match self {
@@ -107,7 +99,6 @@ impl<T> FreshRange<T> {
         }
     }
 
-    /// Whether the range is empty.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)
@@ -133,9 +124,6 @@ impl<T: FreshWord> FreshRange<T> {
             .expect("FreshRange::minted is the one overflow check")
     }
 
-    /// Exclusive bound as a raw word — not a minted id. Empty has none;
-    /// C/TS map that absence to `{start: 0, end_exclusive: 0}` at the
-    /// boundary.
     #[must_use]
     pub fn end_exclusive_raw(self) -> Option<u64> {
         match self {
@@ -144,7 +132,6 @@ impl<T: FreshWord> FreshRange<T> {
         }
     }
 
-    /// The raw ids `[start, start+count)`, if any.
     #[must_use]
     pub fn ids(self) -> Option<Range<u64>> {
         match self {
@@ -156,7 +143,6 @@ impl<T: FreshWord> FreshRange<T> {
         }
     }
 
-    /// The id at `index`, or `None` if `index >= len` (including empty).
     #[must_use]
     pub fn get(self, index: u64) -> Option<T> {
         let Self::NonEmpty { start, count } = self else {
@@ -165,7 +151,6 @@ impl<T: FreshWord> FreshRange<T> {
         (index < count.get()).then(|| T::from_word(start.to_word() + index))
     }
 
-    /// Iterate the minted ids in order. Empty yields nothing.
     pub fn iter(self) -> FreshRangeIter<T> {
         match self {
             Self::Empty => FreshRangeIter {
