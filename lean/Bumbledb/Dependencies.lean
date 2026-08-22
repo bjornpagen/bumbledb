@@ -1,7 +1,7 @@
 import Bumbledb.Capacity
 
 /-!
-# Dependencies — the dependency theory (Level 0, PRD 03)
+# Dependencies — the dependency theory (Level 0, 
 
 The heart of the covenant: views, functionality (scalar and
 pointwise), containment, coverage, keyed equality, exact partition,
@@ -42,47 +42,47 @@ acceptance is the model's recorded fact, not an oversight.
 ## Notes on the non-theorems (countermodels and refused converses)
 
 * **Bare `==` is not unique correspondence** — the two-row target
-  countermodel `Countermodels.bare_eq_not_unique`.
+ countermodel `Countermodels.bare_eq_not_unique`.
 * **A key proves uniqueness, never existence** —
-  `functionality_of_empty`: every key holds of the empty fact set.
-  Nothing in a functionality statement manufactures a fact; existence
-  comes only from a containment's source side.
+ `functionality_of_empty`: every key holds of the empty fact set.
+ Nothing in a functionality statement manufactures a fact; existence
+ comes only from a containment's source side.
 * **Coverage is one-way** — target overhang is legal
-  (`Countermodels.one_way_overhang`, the [0,10)/[0,20) overshoot).
+ (`Countermodels.one_way_overhang`, the [0,10)/[0,20) overshoot).
 * **`selection_monotonicity`'s converses are invalid**: weakening the
-  SOURCE selection admits new source facts with no witness, and
-  strengthening the TARGET selection can evict the witnesses — both
-  directions fail on a one-fact model whose witness sits exactly on
-  the boundary binding.
+ SOURCE selection admits new source facts with no witness, and
+ strengthening the TARGET selection can evict the witnesses — both
+ directions fail on a one-fact model whose witness sits exactly on
+ the boundary binding.
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * `Statement.judgment` reads interval shape from the field SET
-  (`Header.intervalSplit` — the FieldSet doctrine): exactly one
-  interval-typed field **in last position** is the pointwise reading
-  (`Header.functionalityAdmitted`). The engine refuses a non-final
-  interval FD (`FunctionalityIntervalNotLast`) and two-or-more
-  interval fields (`FunctionalityMultipleIntervals`); those shapes
-  judge as `False` here, not as pointwise or scalar Functionality.
+ (`Header.intervalSplit` — the FieldSet doctrine): exactly one
+ interval-typed field **in last position** is the pointwise reading
+ (`Header.functionalityAdmitted`). The engine refuses a non-final
+ interval FD (`FunctionalityIntervalNotLast`) and two-or-more
+ interval fields (`FunctionalityMultipleIntervals`); those shapes
+ judge as `False` here, not as pointwise or scalar Functionality.
 * The pointwise judgments quantify over the tagged `Point` sum
-  (`Schema.lean`), so no typing premise appears; accepted statements
-  stay within one tag by positional typing — which at interval
-  positions is ELEMENT-DOMAIN typing (Q1): the tag carries no width,
-  so a fixed-width projection position against a general one of the
-  same element meets in one tag and every judgment below holds
-  unchanged (`Value.points_one_tag_u64`/`_i64` — the spec catching
-  up to its own denotation). Scalar positions keep exact structural
-  equality (`schema/validate.rs::positional_types_match`).
+ (`Schema.lean`), so no typing premise appears; accepted statements
+ stay within one tag by positional typing — which at interval
+ positions is ELEMENT-DOMAIN typing (Q1): the tag carries no width,
+ so a fixed-width projection position against a general one of the
+ same element meets in one tag and every judgment below holds
+ unchanged (`Value.points_one_tag_u64`/`_i64` — the spec catching
+ up to its own denotation). Scalar positions keep exact structural
+ equality (`schema/validate.rs::positional_types_match`).
 * Finiteness is never demanded: the ten items are subset and
-  injectivity algebra, valid over arbitrary fact sets; the named token
-  (`Set.Finite`) stays unspent in this module.
+ injectivity algebra, valid over arbitrary fact sets; the named token
+ (`Set.Finite`) stays unspent in this module.
 * **Closed-target key resolution matches the engine gate.**
-  `TargetKeyAccepted` requires the synthetic `[FieldId(0)]` handle
-  when the target is closed (`ClosedTargetNotHandle`) — not any
-  declared payload key. Interval-typed projections on a containment
-  with a closed side are `False` (`ClosedContainmentInterval`,
-  `Theory.closedContainmentInterval`) — a v0 refusal restated as
-  the judgment, not Coverage.
+ `TargetKeyAccepted` requires the synthetic `[FieldId(0)]` handle
+ when the target is closed (`ClosedTargetNotHandle`) — not any
+ declared payload key. Interval-typed projections on a containment
+ with a closed side are `False` (`ClosedContainmentInterval`,
+ `Theory.closedContainmentInterval`) — a v0 refusal restated as
+ the judgment, not Coverage.
 -/
 
 namespace Bumbledb
@@ -282,7 +282,7 @@ def Statement.judgment (T : Theory) (I : Instance) :
 declared statement's judgment holds of the final state. This is the
 final-state judgment's SPEC — dependencies are properties of
 COMMITTED databases, checked once at commit against the transaction's
-final state; Txn (PRD 09) consumes this.
+final state; Txn ( consumes this.
 Bridge: `storage/commit/judgment.rs::judge` (delta-restricted, sound
 because an untouched binding keeps its pre-state verdict — the
 restriction theorems, `Txn/DeltaRestriction.lean`) and
