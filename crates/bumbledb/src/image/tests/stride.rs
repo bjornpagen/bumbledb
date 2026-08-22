@@ -88,7 +88,6 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
 
 #[test]
 fn big_column_strides_avoid_the_tracker_band() {
-
     let fields: Vec<FieldDescriptor> = (0..4)
         .map(|i| FieldDescriptor {
             name: format!("c{i}").into(),
