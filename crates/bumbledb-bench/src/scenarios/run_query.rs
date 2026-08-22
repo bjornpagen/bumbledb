@@ -13,9 +13,6 @@ use crate::harness::{self, Modes, Protocol, Rotation};
 use crate::sqlite_run::{CapOutcome, PreparedFamily, sample_capped};
 use crate::translate::{Translated, translate};
 
-/// The gated engine executor — one arm per [`Surface`]: what the gate
-/// proved agreement for is exactly what the timing half executes, no
-/// re-derivation in between.
 #[expect(
     clippy::large_enum_variant,
     reason = "one Engine exists per gated query — boxing the prepared \
@@ -23,10 +20,9 @@ use crate::translate::{Translated, translate};
               bytes nothing is short of"
 )]
 enum Engine {
-    /// A prepared query, reused across every warmup and sample.
+
     Prepared(bumbledb::PreparedQuery<SchemaDescriptor>),
-    /// The keyed-get point read: `ReadInstance::get_dyn` through the resolved
-    /// key statement — no query, no plan, no prepared object to hold.
+
     KeyedGet {
         relation: RelationId,
         statement: StatementId,
@@ -34,10 +30,7 @@ enum Engine {
 }
 
 impl Engine {
-    /// The engine side of one param set, decoded to canonical answers —
-    /// the gate's one execution fold over either surface (a keyed get
-    /// answers a 0-or-1-row multiset: the full fact in declaration
-    /// order).
+
     fn answers(
         &mut self,
         stores: &Stores,
@@ -68,21 +61,16 @@ impl Engine {
 }
 
 /// The gated pre-timing state: everything [`gate`] proved agreement for,
-/// carried into the timing half — the gate/time split makes
-/// "oracle-gated before ever timed" a call-order fact.
+/// carried into the timing half — the gate/time split makes "oracle-gated
+/// before ever timed" a call-order fact.
 pub(super) struct Gated {
     engine: Engine,
     types: Vec<ValueType>,
-    /// The `SQLite` lane list from [`Twin`]: `(lane name, SQL)`.
+
     lanes: Vec<(&'static str, Translated)>,
     sets: Vec<Vec<Value>>,
 }
 
-/// Gates one query: prepares the engine side (per its [`Surface`]),
-/// builds the lane list from [`Twin`], and for EVERY param set × EVERY
-/// lane compares the result multisets (`compare::multisets`) — a
-/// disagreement is an error naming the query, lane, and set, and nothing
-/// gets timed. The gate is NEVER capped: correctness is sacred.
 pub(super) fn gate(
     stores: &Stores,
     scenario: &Scenario,
@@ -129,9 +117,7 @@ pub(super) fn gate(
                 .iter()
                 .map(|field| field.value_type)
                 .collect();
-            // A keyed get's canonical rendering IS SQLite's best shot —
-            // the prepared point SELECT through the UNIQUE index — so no
-            // tuned/hand lane exists to declare (asserted by test).
+
             let Twin::Canonical = sq.twin else {
                 return Err(format!(
                     "{}/{}: a keyed-get twin is canonical-only",
@@ -154,7 +140,7 @@ pub(super) fn gate(
     };
 
     // The oracle gate: agreement on every param set × lane before any
-    // timing, uncapped always.
+
     for (idx, params) in sets.iter().enumerate() {
         let ours = engine
             .answers(stores, &types, params)
@@ -193,12 +179,12 @@ pub(super) fn gate(
     })
 }
 
-/// Gates then times one query: the engine side under the ledger
-/// protocol, then every `SQLite` lane — uncapped lanes exactly as
-/// before; capped lanes pre-flight one untimed sample per param set and
-/// report [`LaneOutcome::ExceededCap`] the moment any sample trips (no
-/// censored percentiles can exist). The optional alloc and trace passes
-/// ([`QueryModes`]) run after timing, each a separate scoped window.
+/// Gates then times one query: the engine side under the ledger protocol, then
+/// every `SQLite` lane — uncapped lanes exactly as before; capped lanes
+/// pre-flight one untimed sample per param set and report
+/// [`LaneOutcome::ExceededCap`] the moment any sample trips (no censored
+/// percentiles can exist). The optional alloc and trace passes ([`QueryModes`])
+/// run after timing, each a separate scoped window.
 #[expect(
     clippy::too_many_lines,
     reason = "one query's full protocol: gate, time, the optional alloc/trace passes, the lanes"
@@ -238,16 +224,13 @@ pub(super) fn run_query(
             let fact = db
                 .read(|snap| snap.get_dyn(*relation, *statement, rotation.next_set()))
                 .map_err(|e| format!("get_dyn: {e:?}"))?;
-            // The decoded fact is the work — black-boxed so the owned
-            // values are never dead code; count mirrors the row contract.
+
             Ok(std::hint::black_box(fact).map_or(0, |_| 1))
         })?,
     };
 
-    // The alloc pass — a SEPARATE mode from --trace (mutually exclusive,
-    // the obs doctrine; enforced at parse): one per-query engine-side
     // alloc window over the same protocol, so `scenarios --alloc` scopes
-    // allocations per query exactly as the ledger `bench --alloc` does.
+
     let alloc = if modes.alloc {
         let mut rotation = Rotation::new(sets.clone());
         let alloc_modes = Modes {
@@ -291,7 +274,7 @@ pub(super) fn run_query(
         let outcome = match sq.cap {
             None => {
                 // Uncapped: exactly the pre-cap protocol, no handler ever
-                // installed.
+
                 let mut rotation = Rotation::new(sets.clone());
                 let theirs = harness::measure(proto, || {
                     crate::sqlite_run::sample(&mut family, rotation.next_set())
@@ -302,8 +285,7 @@ pub(super) fn run_query(
                 }
             }
             Some(cap) => {
-                // Pre-flight: one untimed capped sample per param set —
-                // a lane that cannot finish never enters a timed window.
+
                 let mut preflight_tripped = false;
                 for params in &sets {
                     if sample_capped(&mut family, &stores.conn, cap, params)? == CapOutcome::Tripped
@@ -342,8 +324,6 @@ pub(super) fn run_query(
         lane_reports.push(LaneReport { lane, outcome });
     }
 
-    // The trace pass: per-query warm+cold artifacts under <out>/trace/,
-    // plus the warm flame table the report embeds (like read_family).
     let flame = match &modes.trace_root {
         Some(root) => Some(super::trace::capture_query(
             stores, scenario, sq, seed, root,
