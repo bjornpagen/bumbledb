@@ -1,36 +1,16 @@
-# The napi bridge crate for @bjornpagen/bumbledb. Built exclusively by the
-# package's scripts/build.ts (plain `cargo build --release`, no napi CLI, no
-# build.rs — napi v3's default `dyn-symbols` feature resolves Node-API symbols
-# at load time, so the cdylib links with no platform link-arg ceremony).
 [package]
 name = "bumbledb-node"
-# One spelling of the release version (finding 139): `engine_version()`
-# bakes CARGO_PKG_VERSION into the shipped binary. Lockstep with the npm
-# manifests, the engine crate, and `bumbledb-c` — `scripts/build.ts`
-# asserts the match.
+
 version = "0.16.0"
 edition = "2024"
 publish = false
 
-# This crate is a standalone leaf, never a member of any enclosing cargo
-# workspace. It now lives INSIDE the bumbledb repo (at ts/crate), so the root
-# Cargo.toml [workspace] excludes ts/crate to keep the engine workspace
-# heed+blake3-pure; the empty workspace table below is the belt-and-suspenders
-# pin that also stops any future enclosing workspace from auto-adopting it.
 [workspace]
 
 [lib]
 crate-type = ["cdylib"]
 
-# The FFI lint regime (cleanup-0.5.0 ruling 12): the bridge joins the
-# engine's unsafe wall. `unsafe_code = "deny"` is the same workspace law the
-# engine crates inherit — every unsafe site here is a sanctioned carve-out,
-# `#[expect(unsafe_code, reason = "…")]` with a real per-site reason and a
 # SAFETY comment on the block. `unsafe_op_in_unsafe_fn` keeps the napi trait
-# impls honest: an `unsafe fn` body gets no ambient license — each unsafe
-# operation names its own block. The clippy set is the engine's
-# (workspace.lints.clippy at the repo root), spelled here because a
-# workspace-excluded leaf inherits nothing.
 [lints.rust]
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
@@ -38,35 +18,22 @@ unsafe_op_in_unsafe_fn = "deny"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# nightly-2026-08-15: same workspace allow; this leaf inherits nothing.
+
 assert_is_empty = "allow"
-# The one crate-level carve-out: every export returns napi::Result and the
-# error taxonomy has ONE owner — the lib.rs module doc (domain outcomes are
-# data; programming and shape errors throw) — restated where a surface
-# deviates, never per function. 27 `# Errors` headings would be 27 copies
-# of that one datum.
+
 missing_errors_doc = "allow"
 
 [dependencies]
-# Path dependency on the in-repo engine crate: ts/crate/../../crates/bumbledb.
-# ORDERING LAW: version discipline here is PRD sequencing, not a version pin —
-# the engine is consumed at whatever the working tree holds, and any engine
-# change lands BEFORE the SDK/bridge change that consumes it
-# (docs/graph-builder-rebirth/00-README.md, frozen ruling 10).
+
 bumbledb = { path = "../../crates/bumbledb" }
 napi = { version = "3", default-features = true, features = ["napi8"] }
 napi-derive = "3"
 
-# Same portable release as the engine workspace: fat LTO + one codegen
-# unit so `pnpm run build` ships the optimized addon. No
-# target-cpu=native (any Apple Silicon). panic=unwind: napi and the
-# engine both catch panics at FFI.
 [profile.release]
 lto = "fat"
 codegen-units = 1
 opt-level = 3
 
 [dev-dependencies]
-# The tags.json golden test parses the committed fixture structurally (the
-# TS repo's formatter owns the bytes); dev-only, never in the cdylib.
+
 serde_json = "1"
