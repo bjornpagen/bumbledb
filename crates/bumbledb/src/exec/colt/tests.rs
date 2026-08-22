@@ -13,7 +13,6 @@ use bumbledb_theory::schema::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// R(k u64, v u64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -40,7 +39,6 @@ fn schema() -> Schema {
 
 const R: RelationId = RelationId(0);
 
-/// Builds an image over committed (k, v) pairs.
 fn view_of(
     dir: &TempDir,
     schema: &Schema,
@@ -68,7 +66,6 @@ fn all(image: &Arc<crate::image::RelationImage>) -> View {
     apply(image, &[], &[], Vec::new())
 }
 
-/// Scalar selection levels over the given single columns.
 fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {
     columns
         .iter()
@@ -78,14 +75,12 @@ fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {
         .collect()
 }
 
-/// One set-bound selection level over a single column.
 fn set_level(column: usize) -> Vec<SelectionLevel> {
     vec![SelectionLevel::Set {
         columns: vec![column],
     }]
 }
 
-/// Drains every entry at a cursor/level into (key words, child) pairs.
 fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor)> {
     let arity = colt.arity(level);
     let mut keys = vec![0u64; 8 * arity.max(1)];
