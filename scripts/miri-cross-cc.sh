@@ -1,3 +1,4 @@
+#!/bin/sh
 args=""
 skip=0
 stripped=0
