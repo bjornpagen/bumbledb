@@ -59,7 +59,6 @@ pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
         let slot = &mut anchors[usize::from(param.0)];
         let scalar = !is_interval(relation, field);
         match slot {
-
             Some(ParamAnchor::Field(anchor)) if anchor.scalar_anchored => {}
             Some(ParamAnchor::Field(_)) if !scalar => {}
             _ => {
@@ -119,7 +118,6 @@ pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
 
 pub(super) fn u64_domain(rel: RelationId, field: FieldId, domains: &Domains) -> u64 {
     match (rel, field) {
-
         (ids::ACCOUNT, ids::account::CURRENCY)
         | (ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE)
         | (ids::POSTING_TAG, ids::posting_tag::TAG)
