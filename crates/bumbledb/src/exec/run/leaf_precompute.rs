@@ -16,11 +16,7 @@ impl LeafPrecompute {
                 .expect("plans bind every variable")
                 .1
         };
-        // A leaf carrying anti-probes, membership probes, word or Allen
-        // residuals, interval-width residuals, or an interval-width cover
-        // variable declines the fast paths: they run on the generic batch
-        // machinery, where those passes sit (conservative by construction
-        // — correctness never depends on a fast path firing).
+
         let single = plan.nodes()[last].subatoms.len() == 1
             && plan.nodes()[last].anti_probes.is_empty()
             && plan.nodes()[last].point_probes.is_empty()
