@@ -33,7 +33,6 @@ pub use bumbledb_theory::schema::ValueType;
 pub struct InternId(u64);
 
 impl InternId {
-
     pub const SENTINEL: Self = Self(u64::MAX);
 
     #[must_use]
@@ -76,7 +75,6 @@ pub struct FixedBytesValue {
 }
 
 impl FixedBytesValue {
-
     /// # Panics
 
     /// On a programmer-invariant violation: a width outside
@@ -123,7 +121,6 @@ pub enum ValueRef {
 }
 
 impl ValueRef {
-
     /// # Panics
 
     #[must_use]
@@ -148,13 +145,11 @@ const I64_SIGN_BIT: u64 = 1 << 63;
 /// .
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactLayout {
-
     fields: Box<[(usize, ValueType)]>,
     fact_width: usize,
 }
 
 impl FactLayout {
-
     #[must_use]
     pub const fn fact_width(&self) -> usize {
         self.fact_width
@@ -208,7 +203,6 @@ pub(crate) struct FactView<'bytes, 'layout> {
 }
 
 impl<'bytes, 'layout> FactView<'bytes, 'layout> {
-
     #[must_use]
     pub(crate) const fn bytes(self) -> &'bytes [u8] {
         self.bytes
