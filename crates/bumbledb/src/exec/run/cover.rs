@@ -1,5 +1,4 @@
 //! The magnitude-first cover rule.
-
 use super::KeyCount;
 
 pub(super) fn better_cover(candidate: KeyCount, incumbent: KeyCount) -> bool {
