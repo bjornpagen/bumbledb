@@ -31,11 +31,16 @@ store pays all four. Both lanes are measured separately in 10
 ## Target representation
 
 - **One arena.** The accepted collection owns one string arena (one
-  growable UTF-8 buffer); cells reference `(offset, len)` spans. Copy 1
-  lands directly in the arena; copies 2 disappear with `Value::String`
-  boxing on the collection lane. Well-formedness stays where it is judged
-  today — the JS marshal seam (`cellOf`'s `isWellFormed` refusal), the one
-  seam every write crosses.
+  growable UTF-8 buffer); cells reference `(offset, len)` spans. Copy 2's
+  `Box<str>` (`Value::String` boxing on the collection lane) disappears.
+  Copies per occurrence AS BUILT: **2** — the safe NAPI surface has no
+  read-into-buffer, so a string cell crosses with ONE transient NAPI
+  `String` (`Unknown::cast::<String>`), then one copy into the arena
+  (`push_str`). The sys-level single copy —
+  `napi_get_value_string_utf8` written directly into the arena — is the
+  NAMED FOLLOW-UP, not a claim this build makes. Well-formedness stays
+  where it is judged today — the JS marshal seam (`cellOf`'s
+  `isWellFormed` refusal), the one seam every write crosses.
 - **One probe per distinct string per transaction.** `WriteDelta` gains a
   committed-hit memo beside `PendingInterns`:
   `HashMap<[u8; 32], InternId>` keyed by the blake3 of the string bytes.
@@ -85,8 +90,12 @@ by measurement and pinned in this file by amendment).
 
 ## Acceptance (this doc's share)
 
-- Allocation census (10): string-cell copies per occurrence = 1;
-  dictionary LMDB gets per distinct committed string per transaction = 1.
+- Allocation census (10): string-cell copies per occurrence = 2 (one
+  transient NAPI `String`, one arena copy — down from 3; the safe NAPI
+  surface has no read-into-buffer, so the sys-level
+  `napi_get_value_string_utf8`-into-arena single copy is recorded as the
+  named follow-up, never silently claimed); dictionary LMDB gets per
+  distinct committed string per transaction = 1.
 - A pinned engine test: interning a committed string twice in one
   transaction issues one catalog probe (observable via `INTERN_PROBE`'s
   probes/hits args); ids returned are identical to today's byte-for-byte.

@@ -226,9 +226,14 @@ both upstream reports closed with numbers, digests verified identical.
       500k: 284.5 / 545.4 / 719.0 / 939.3 / 1219.5 / 116.8 ms; alloc
       census recorded in the lane report (peak live 121.7 MiB at 200k).
 - [x] Lane 0/3: D3+D4 landed (commit 917e0490); success-path marshal
-      allocs per cell = 0 (window: grep-proven zero success-path
-      `format!` in the fact lanes; error text byte-identical; the
-      sealed roster is `Sealed`-resident, built once in `seal()`).
+      allocs per cell = 0 holds for the `format!` CONTEXTS (grep-proven
+      zero success-path `format!` in the fact lanes; error text
+      byte-identical) and for bytes cells; STRING cells carry one
+      transient NAPI `String` per occurrence — the safe NAPI surface has
+      no read-into-buffer, so the arena landing is the second copy (30's
+      2-copy reality; the sys-level `napi_get_value_string_utf8`-into-
+      arena single copy is the named follow-up); the sealed roster is
+      `Sealed`-resident, built once in `seal()`.
 - [x] Lane 1: `AcceptedCollection` sealed-proof constructor (090b5735);
       D5 completed to zero survivors in f793a1be (`encode_dyn.rs`
       deleted whole; `intern_value_row` is the one single-row judgment);
@@ -277,6 +282,19 @@ both upstream reports closed with numbers, digests verified identical.
       the_three_write_lanes_produce_identical_stores; the byte-identity
       of the three canonical digests is confirmed by the owner's
       `verify:learning-commons` run after applying the patch.
+- [x] Post-audit fixes (2026-08-21, landed after the receipts above):
+      FIX 1 — the collection crossing carries the EXPLICIT row count
+      (`rows`), verified `cells.len() == rows × arity` for every arity,
+      so nullary rows are representable (rows = N, cells empty; the old
+      `cells.len() / arity` derivation silently dropped them; TS pin:
+      builder-verbs "nullary rows are representable on the crossing");
+      FIX 2 — `AcceptedCollection` carries the roster ECHO (the
+      arity-long `ValueType` row it was judged against) and
+      `apply_accepted` proves the echo IS the target roster (pin:
+      `an_accepted_collection_of_foreign_types_is_refused_at_apply`);
+      FIX 3 — the arena span bound is the typed
+      `FactShapeError::PayloadBound` refusal, never a panic on the
+      import path.
 - [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md):
       persistence/verifier/RSS numbers come from the owner's Primer run
       post-adoption (the full bench was waived — "no rebench"); count
