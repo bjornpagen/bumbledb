@@ -5,7 +5,6 @@
 //! **Zero-cost when off**: under default features every
 //! Recording allocates (the capture buffer grows): sanctioned only
 //! no `Drop`; instrumented call sites are written once, `#[cfg]`-free.
-
 mod point;
 
 pub use point::{TraceArgs, TracePoint, names};
@@ -138,7 +137,6 @@ mod imp {
     }
 
     /// first stamp the anchor would otherwise be read after the stamp
-
     pub(super) fn now_ticks() -> u64 {
         let anchor = anchor_ticks();
         fastclock::ticks().wrapping_sub(anchor)
