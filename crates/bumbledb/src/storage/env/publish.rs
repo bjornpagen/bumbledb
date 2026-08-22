@@ -20,7 +20,6 @@ use super::{Environment, GenerationId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PublishStep {
-
     CreateStaging,
     /// One LMDB write txn: `_data`, `_dict`, fresh `_meta`.
     WriteCatalog,
@@ -86,7 +85,6 @@ impl<'a> PublishCatalog<'a> {
 }
 
 impl Environment {
-
     /// after rename is [`Error::PublishedButUnsynced`].
     pub(crate) fn publish(path: &Path, catalog: &PublishCatalog<'_>) -> Result<Self> {
         match publish_inner(path, catalog, OpenLane::Write, None, false)? {
@@ -153,7 +151,6 @@ fn publish_inner(
                 drop(raw.take());
             }
             PublishStep::SyncStagingFiles => {
-
                 let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 sync_staging_files(staging.as_ref().expect("staging lives until Rename"))?;
             }
@@ -161,7 +158,6 @@ fn publish_inner(
                 std::fs::rename(staging.as_ref().expect("staging lives until Rename"), dest)?;
             }
             PublishStep::SyncParent => {
-
                 // destination dirent-chain fsync after the rename.
                 let _s = crate::obs::span(crate::obs::names::PUBLISH_SYNC);
                 if fail_parent_sync {
