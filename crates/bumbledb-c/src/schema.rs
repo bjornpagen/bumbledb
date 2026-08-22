@@ -2,7 +2,6 @@
 //! mirroring `bumbledb::SchemaSpec` field for field, copied IMMEDIATELY
 //! into the Rust-owned spec — no borrowed caller memory survives
 //! `bdb_db_create` / `bdb_db_open`.
-
 use bumbledb::SchemaSpec;
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
