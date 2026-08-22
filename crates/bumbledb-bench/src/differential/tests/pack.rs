@@ -1,15 +1,3 @@
-//! `Pack`'s differential criteria (20-query-ir § aggregation): the
-//! coalescing fold, engine vs the naive model — which packs **from the
-//! point-set definition** (union of point sets → maximal segments,
-//! sort-and-merge over logical endpoints), independent of the engine's
-//! word sweep. Randomized claim sets per group — overlapping, adjacent,
-//! nested, duplicate, ray-bearing — over both element types; the
-//! calendar golden (per-person busy in, coalesced busy out,
-//! hand-checked with adjacency and a triple overlap); and the
-//! multi-rule union fold. `SQLite` cannot express `Pack`
-//! (`translate::Inexpressible::PackAggregate`), so the differential here
-//! is naive-only by decision.
-
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
 
@@ -17,9 +5,6 @@ use crate::differential::{Op, run};
 use crate::fixture::{TempDir, field};
 use crate::naive::{Delta, NaiveDb, Tuple};
 
-/// Busy(id u64, person u64, slot interval<u64>);
-/// Shift(id u64, person u64, slot interval<i64>). No statements: every
-/// write commits (ids are plain — the generator numbers them itself).
 fn schema() -> SchemaDescriptor {
     let slot = |element: IntervalElement| ValueType::Interval { element };
     SchemaDescriptor {
@@ -50,7 +35,6 @@ fn schema() -> SchemaDescriptor {
 const BUSY: RelationId = RelationId(0);
 const SHIFT: RelationId = RelationId(1);
 
-/// Q(person, Pack(slot)) over one relation.
 fn pack_query(relation: RelationId) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
@@ -66,8 +50,6 @@ fn pack_query(relation: RelationId) -> Query {
     })
 }
 
-/// A deterministic LCG (Knuth's MMIX line, the sweep tests' twin) so the
-/// randomized corpus is reproducible; draws discard the weak low half.
 struct Lcg(u64);
 
 impl Lcg {
@@ -80,12 +62,6 @@ impl Lcg {
     }
 }
 
-/// One random corpus: per person, a claim mix forcing the boundary
-/// cases — overlaps and containments from the dense start domain,
-/// every third claim on its predecessor's adjacency boundary or one
-/// point past it (the minimal gap), every fourth a duplicate of the
-/// last, every fifth a ray. Both element types (the i64 lane shifts
-/// starts negative).
 fn random_corpus(rng: &mut Lcg) -> Delta {
     let mut inserts = Vec::new();
     let mut id = 0u64;
@@ -96,11 +72,11 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
             let claim = match (ordinal % 5, last) {
                 (4, _) => {
                     let start = rng.next() % 24;
-                    (start, u64::MAX) // the ray [start, ∞)
+                    (start, u64::MAX) 
                 }
-                (3, Some(previous)) => previous, // duplicate claim
+                (3, Some(previous)) => previous, 
                 (n, Some((_, end))) if n % 3 == 2 && end <= 24 => {
-                    let start = end + rng.next() % 2; // adjacent, or gap 1
+                    let start = end + rng.next() % 2; 
                     (start, start + 1 + rng.next() % 4)
                 }
                 _ => {
@@ -120,8 +96,7 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
                     ),
                 ],
             ));
-            // The i64 lane: the same shape shifted below zero (rays
-            // become i64 rays).
+
             let shift = |word: u64| {
                 if word == u64::MAX {
                     i64::MAX
@@ -177,10 +152,6 @@ fn randomized_claim_sets_agree_with_the_naive_model() {
     }
 }
 
-/// The calendar golden: per-person busy claims in, coalesced busy out —
-/// hand-checked. Person 1 carries the adjacency chain and a **triple
-/// overlap** (9–12, 10–14, 11–13 → one segment [9, 14)); person 2 the
-/// duplicate and the gap; person 3 a lone ray.
 #[test]
 fn the_calendar_golden_coalesces_by_hand() {
     let descriptor = schema();
@@ -205,20 +176,19 @@ fn the_calendar_golden_coalesces_by_hand() {
     let corpus = Delta {
         deletes: vec![],
         inserts: vec![
-            // Person 1: 8–9 meets 9–10 (adjacency), then the triple
-            // overlap 9–12 / 10–14 / 11–13 — all one busy block [8, 14).
+
             busy(0, 1, 8, 9),
             busy(1, 1, 9, 10),
             busy(2, 1, 9, 12),
             busy(3, 1, 10, 14),
             busy(4, 1, 11, 13),
             busy(5, 1, 16, 17), // after the gap
-            // Person 2: a duplicate meeting and a contained one.
+
             busy(6, 2, 9, 11),
             busy(7, 2, 9, 11),
             busy(8, 2, 10, 11),
             busy(9, 2, 13, 15),
-            // Person 3: on call from 20 on — the packed ray is a ray.
+
             busy(10, 3, 20, u64::MAX),
             busy(11, 3, 22, 23),
         ],
@@ -238,7 +208,6 @@ fn the_calendar_golden_coalesces_by_hand() {
     .unwrap_or_else(|divergence| panic!("engine and model disagree: {divergence:#?}"));
     assert_eq!((summary.commits, summary.queries), (1, 1));
 
-    // `run` proved engine == model; pin the hand-checked rows themselves.
     let coalesced = |person: u64, start: u64, end: u64| {
         Tuple(vec![
             Value::U64(person),
@@ -262,9 +231,6 @@ fn the_calendar_golden_coalesces_by_hand() {
     );
 }
 
-/// The multi-rule union fold: Busy(person, slot) ∪ Shift'(person, slot)
-/// over one u64 head — a claim derived by both rules folds once, and
-/// the coalesce runs over the union (the spanning seen-set semantics).
 #[test]
 fn multi_rule_pack_folds_the_union_differentially() {
     let descriptor = schema();
@@ -274,8 +240,6 @@ fn multi_rule_pack_folds_the_union_differentially() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
-    // Two u64-slot rules over the SAME relation, split by id parity with
-    // an overlap (id 2 satisfies both): union without double-fold.
     let rule = |op: bumbledb::CmpOp, bound: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms: vec![Atom {
