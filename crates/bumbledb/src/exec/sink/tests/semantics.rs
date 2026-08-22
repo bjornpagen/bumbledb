@@ -128,7 +128,6 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
 
 #[test]
 fn sum_is_order_independent_near_the_boundary() {
-
     let sum_find = FindSpec::Agg(AggSpec::Fold {
         op: FoldOp::Sum,
         slot: 0,
