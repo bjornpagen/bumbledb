@@ -52,7 +52,6 @@ pub fn schema() -> &'static bumbledb::Schema {
 /// fresh minting after load therefore starts at `docs + delete_pool` on
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrudSizes {
-
     pub docs: u64,
 
     pub counters: u64,
@@ -61,7 +60,6 @@ pub struct CrudSizes {
 }
 
 impl CrudSizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
