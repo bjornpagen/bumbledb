@@ -16,11 +16,8 @@ use super::run_join::run_join;
 
 impl<S> PreparedQuery<S> {
     /// # Errors
-
     /// # Panics
-
     /// Only on programmer-invariant violations (plan/executor pairing,
-
     pub(crate) fn execute<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -88,7 +85,6 @@ impl<S> PreparedQuery<S> {
     }
 
     /// Drain the sink into `out` after the shared rule loop. Empty
-
     pub(super) fn finish_sink<C: CatalogRead>(
         &mut self,
         catalog: &C,
@@ -318,7 +314,6 @@ impl<S> PreparedQuery<S> {
     }
 
     /// # Errors
-
     pub(crate) fn execute_collect<'p, P: super::BindArgs<'p>>(
         &mut self,
         txn: &ReadTxn<'_>,
