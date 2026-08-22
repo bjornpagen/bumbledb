@@ -1,25 +1,10 @@
-//! The commit plan (`docs/architecture/50-storage.md` § Write path): every
+//! The commit plan: every
 //! derivable key byte and check set of one commit, computed as a **pure
-//! function of (delta, schema)** before a single LMDB page is touched —
 //! representation over control flow applied to the write path. Per fact:
 //! its determinant bytes per key statement (pointwise keys marked for the
 //! ordered-neighbor probe) and its reverse-edge key bytes per containment
-//! whose source selection it satisfies — the same permuted bytes serve the
 //! `R` put/delete and the insert's source probe. Aggregated: the
-//! per-statement disestablished-determinant check sets (deleted − inserted,
-//! with ψ-qualified re-establishment inputs marked for the judgment
-//! phase). Selection literals arrive pre-encoded ([`Selections`]) and the
-//! plan owns them for the rest of the commit.
-//!
-//! The honest boundary, stated up front: delete row ids are **not**
-//! derivable (they need the `M` lookup), fresh-less insert row ids mint
-//! from the high-water, and judgment probe *results* need final-state
-//! reads. On a **fresh-keyed** relation the insert row id IS derivable —
-//! the first fresh field's value is the `F` row id (the one id
-//! allocator, `docs/architecture/50-storage.md` § key layout; R16) — so
-//! the plan carries it on [`InsertOp`]). The plan owns key
-//! material and check sets; the applier keeps the remaining id plumbing
-//! and the desync probes; the judgment keeps the final-state probes.
+//! function of (delta, schema)** before a single LMDB page is touched —
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,45 +19,29 @@ use bumbledb_theory::schema::{RelationId, StatementId};
 use super::judgment::{SelectionCheck, Selections, capacity_child_image, child_weight, satisfies};
 use crate::error::{Check, Direction, Result, Violation};
 
-/// One commit's derivable bookkeeping, borrowed from the delta's arena.
 pub(crate) struct CommitPlan<'d> {
-    /// Selection literals pre-encoded once for this commit (the plan
-    /// derivation gates the reverse edges with them; the judgment phase
-    /// reuses them for its source and target checks). Carry the schema
-    /// they were encoded from.
+
     pub(crate) selections: Selections<'d>,
-    /// Phase-1 ops, in the delta's deterministic `(relation, fact_hash)`
-    /// order.
+
     pub(crate) deletes: Box<[DeleteOp<'d>]>,
-    /// Phase-2 ops, same order.
+
     pub(crate) inserts: Box<[InsertOp<'d>]>,
-    /// The insert set re-sorted by `(relation, fact bytes)` — the
-    /// target-side judgment's survivor-partition membership test
-    /// ([`Self::inserts_fact`]). Its own index because the ops sit in
-    /// `(relation, fact_hash)` order, which is NOT byte order.
+
     inserted: Box<[(RelationId, &'d [u8])]>,
-    /// Phase-3 target-side check set: one entry per key tuple this commit
-    /// disestablishes for at least one dependent statement.
+
     pub(crate) target_checks: Box<[DeterminantCheck]>,
-    /// Phase-3 capacity check set: the TOUCHED PARENTS
+
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one
-    /// entry per (capacity statement, parent key tuple) this delta may
-    /// have moved, deduplicated, in scan order.
+
     pub(crate) capacity_checks: Box<[CapacityCheck]>,
 }
 
 impl CommitPlan<'_> {
-    /// The delta-restricted statement-phase roster. Sound only because
-    /// the base already satisfies the theory — never complete initial
-    /// admission.
+
     pub(crate) fn incremental_obligations(&self) -> IncrementalObligations<'_, '_> {
         IncrementalObligations { plan: self }
     }
 
-    /// Whether this commit inserts `fact` into `relation` — canonical
-    /// bytes, identity = bytes (`10-data-model.md`). Binary search over
-    /// the byte-sorted insert index: no per-judgment set is built, and
-    /// the plan stays immutable for `commit_bounded`'s re-runs.
     pub(crate) fn inserts_fact(&self, relation: RelationId, fact: &[u8]) -> bool {
         self.inserted
             .binary_search_by(|&(rel, bytes)| (rel, bytes).cmp(&(relation, fact)))
@@ -80,11 +49,6 @@ impl CommitPlan<'_> {
     }
 }
 
-/// Delta-restricted obligations the incremental checker may inspect.
-/// Extracted from the commit plan — inserted sources, disestablished
-/// target determinants, touched capacity parents. An empty plan
-/// enumerates nothing; a raw empty base cannot use this as complete
-/// admission.
 pub(crate) struct IncrementalObligations<'p, 'd> {
     plan: &'p CommitPlan<'d>,
 }
@@ -127,18 +91,13 @@ impl<'p, 'd> IncrementalObligations<'p, 'd> {
     }
 }
 
-/// One touched parent of one capacity statement — the judgment phase
-/// probes the parent's ψ-selected holder, resolves its dependent bound,
-/// and walks its child group's measure.
 pub(crate) struct CapacityCheck {
-    /// The validation-minted capacity witness.
+
     pub(crate) capacity: CapacityId,
-    /// The parent key tuple, in target-key determinant order.
+
     pub(crate) parent: DeterminantImage,
 }
 
-/// Shared header of one fact's apply op — the fields both dispositions
-/// carry. Per-arm material lives on [`DeleteOp`] / [`InsertOp`].
 pub(crate) struct FactCore<'d> {
     pub(crate) relation: RelationId,
     pub(crate) fact: &'d [u8],
@@ -146,15 +105,11 @@ pub(crate) struct FactCore<'d> {
     pub(crate) determinants: Box<[DeterminantOp]>,
 }
 
-/// Phase-1 op: delete cannot carry memberships, a fresh-row derivation,
-/// or a capacity weight. `R` writes are key-only.
 pub(crate) struct DeleteOp<'d> {
     pub(crate) core: FactCore<'d>,
     pub(crate) r_keys: Box<[RKeyOp]>,
 }
 
-/// Phase-2 op: insert carries the fresh-row derivation, closed-target
-/// memberships, and weighted `R` writes (containments take [`MarkWeight::Unit`]).
 pub(crate) struct InsertOp<'d> {
     pub(crate) core: FactCore<'d>,
     pub(crate) fresh_row: Option<FreshRowOp>,
@@ -222,16 +177,12 @@ impl<'d> InsertOp<'d> {
     }
 }
 
-/// Which statement an [`RKeyOp`] writes. Typed so the source-probe walk
-/// never re-resolves a capacity edge as a containment.
 #[derive(Clone, Copy)]
 pub(crate) enum RKeyKind {
     Containment(ContainmentId),
     Capacity(CapacityId),
 }
 
-/// One key-symmetric `R` write. Delete is key-only (`W = ()`); insert
-/// carries [`MarkWeight`] (containments take [`MarkWeight::Unit`]).
 pub(crate) struct RKeyOp<W = ()> {
     pub(crate) kind: RKeyKind,
     pub(crate) key_bytes: DeterminantImage,
@@ -261,37 +212,27 @@ impl<W> RKeyOp<W> {
     }
 }
 
-/// Insert-side capacity `R` value slot: unit writes empty bytes; weighted
-/// writes a finite LE u64. Disk stays empty vs 8-byte (since format 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MarkWeight {
     Unit,
     Weighted(u64),
 }
 
-/// The fresh-row derivation of one fact op (R16): the row id sliced from
-/// the fact's first fresh field, and the auto-key statement the `F`
-/// put-conflict convicts.
 #[derive(Clone, Copy)]
 pub(crate) struct FreshRowOp {
-    /// The fresh auto-key's fingerprint-pinned identity.
+
     pub(crate) statement: StatementId,
-    /// The first fresh field's value — the `F` row id.
+
     pub(crate) row_id: u64,
 }
 
-/// One key statement's determinant material for one fact.
 pub(crate) enum DeterminantOp {
-    /// Scalar key: exact `U` put is the functionality judgment.
+
     Scalar {
         statement: StatementId,
         determinant: DeterminantImage,
     },
-    /// Interval-carrying key: the exact `U` put cannot detect overlap, so
-    /// the insert additionally runs the ordered-neighbor probe — the
-    /// tail descriptor says how the determinant's trailing interval
-    /// reads (16-byte `start ‖ end`, or the 8-byte fixed start whose end
-    /// is the type's width).
+
     Pointwise {
         statement: StatementId,
         determinant: DeterminantImage,
@@ -313,82 +254,54 @@ impl DeterminantOp {
     }
 }
 
-/// One closed-target containment of one fact: the membership judgment
-/// finished at plan time — the member set is schema-only, zero reads.
 pub(crate) struct MembershipOp {
     pub(crate) check: Check,
 }
 
-/// One disestablished key tuple and the dependent statements that must
-/// re-check it (`deleted − inserted`, per statement).
 pub(crate) struct DeterminantCheck {
-    /// The key (`Functionality`) statement whose tuple left.
+
     pub(crate) key: KeyId,
-    /// The tuple's determinant bytes (interval keys carry the 16-byte tail).
+
     pub(crate) determinant: DeterminantImage,
-    /// The dependent containments still owed a check, in materialized
-    /// order — a dependent whose empty-ψ tuple re-lands in phase 2 is
-    /// already dropped here.
+
     pub(crate) dependents: Box<[DependentCheck]>,
 }
 
-/// One dependent statement's entry in a [`DeterminantCheck`].
 pub(crate) struct DependentCheck {
-    /// The validation-minted containment witness.
+
     pub(crate) containment: ContainmentId,
-    /// Whether the check is unconditional, or owed only if the
-    /// re-establishing fact fails ψ. The proposal's
-    /// `IfEstablisherFails(&SelectionCheck)` borrow is unrepresentable
-    /// here: [`CommitPlan::selections`] owns the payload, and a stored
-    /// reference would make the plan self-referential. The tag names
-    /// the debt; judgment reads the check off selections.
+
     pub(crate) owed: Owed,
 }
 
-/// Whether a re-established determinant still owes its dependent a check.
 pub(crate) enum Owed {
     Unconditional,
     IfEstablisherFails,
 }
 
-/// Derives one commit's plan — pure over `(delta, schema, selections)`:
-/// no LMDB, no transactions, only byte slicing through the canonical key
-/// derivations and set arithmetic over the delta's net dispositions.
-///
 /// # Errors
-///
 /// The one fallible slice is the weighted edge's weight derivation
-/// ([`MarkWeight`] on an insert [`RKeyOp`]), INSERT ops only: a
-/// ray-valued Duration weight has no finite u64 for the value slot, so
-/// it refuses typed at plan time (C20, ruled 2026-08-03: the write-time
-/// refusal is doctrine — see the judgment constraint comment). Delete
-/// ops never derive — their removal is key-only.
+/// ([`MarkWeight`] on an insert [`RKeyOp`]), INSERT ops only: a ray-valued
+/// Duration weight has no finite u64 for the value slot, so it refuses typed at
+/// plan time (C20, ruled 2026-08-03: the write-time refusal is doctrine — see
+/// the judgment constraint comment).
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     selections: Selections<'_>,
 ) -> Result<CommitPlan<'d>> {
     let selections = selections.bind(delta.schema());
     let schema = selections.schema();
-    // Determinant tuples of key statements some containment depends on — the
-    // inputs of the target-side check set (`deleted − inserted`).
+
     let mut deleted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
     let mut inserted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
-    // The touched notion of the capacity form
+
     // (`lean/Bumbledb/Txn/DeltaRestriction.lean`): every parent key tuple
-    // any delta child fact projects to plus the delta's ψ-selected
-    // parents (`touchedParents`) — a set by construction, deduplicated
-    // here.
+
     let mut touched_parents: BTreeMap<CapacityId, BTreeSet<DeterminantImage>> = BTreeMap::new();
     let mut image = DeterminantImage::scratch();
     let mut delete_scratch = DeleteScratch::default();
     let mut insert_scratch = InsertScratch::default();
-    // The ONE exact sort per disposition: the delta's hash table has no
-    // iteration order, so the deterministic `(relation, fact_hash)`
-    // commit order the 50-storage doc requires is restored here — the
-    // sort-license precedent is the T8 probe sort (`judgment.rs`,
-    // `check_source`). The key is a total order (hash equality is fact
-    // equality), so the op order is deterministic whatever the sort
-    // algorithm does with equal keys — there are none.
+
     let mut delete_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.deletes().collect();
     delete_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
         (a_rel, a_hash).cmp(&(b_rel, b_hash))
@@ -453,23 +366,17 @@ pub(crate) fn plan_commit<'d>(
     })
 }
 
-/// Delete-phase scratch: only key-only `R` writes. An insert membership
-/// or weighted edge cannot land here.
 #[derive(Default)]
 struct DeleteScratch {
     r_keys: Vec<RKeyOp>,
 }
 
-/// Insert-phase scratch: weighted `R` writes and closed-target
-/// memberships. A delete-only capacity key cannot land here.
 #[derive(Default)]
 struct InsertScratch {
     r_keys: Vec<RKeyOp<MarkWeight>>,
     memberships: Vec<MembershipOp>,
 }
 
-/// Derives one delete op: determinant bytes per key statement, reverse-edge
-/// key bytes per satisfied containment, key-only capacity `R` material.
 #[expect(
     clippy::too_many_arguments,
     reason = "the one per-delete derivation chokepoint; every input is load-bearing"
@@ -528,8 +435,6 @@ fn delete_op<'d>(
     }
 }
 
-/// Derives one insert op: determinants, fresh-row id, reverse edges,
-/// closed-target memberships, and weighted capacity `R` material.
 #[expect(
     clippy::too_many_arguments,
     reason = "the one per-insert derivation chokepoint; every input is load-bearing"
@@ -650,8 +555,6 @@ fn derive_determinants(
     (determinants.into_boxed_slice(), fresh_row)
 }
 
-/// One delete's capacity-form derivations: key-only `R` material plus
-/// the fact's contributions to the TOUCHED notion.
 fn mark_delete(
     schema: &Schema,
     selections: &Selections<'_>,
@@ -680,8 +583,6 @@ fn mark_delete(
     touch_capacity_targets(schema, selections, relation, fact, touched_parents, image);
 }
 
-/// One insert's capacity-form derivations: weighted `R` edges plus the
-/// fact's contributions to the TOUCHED notion.
 fn mark_insert(
     schema: &Schema,
     selections: &Selections<'_>,
@@ -742,24 +643,13 @@ fn touch_capacity_targets(
     }
 }
 
-/// The target-side check set: every deleted determinant tuple, expanded per
-/// dependent statement with **ψ-qualified re-establishment**
-/// (`docs/architecture/50-storage.md` § commit step 3). A tuple whose
-/// exact bytes re-land in phase 2 is re-established for an empty-ψ
-/// dependent (the plain set difference — dropped here), stays owed for a
-/// `Never`-ψ dependent (no establishing fact can satisfy ψ), and is
-/// *conditionally* owed for a ψ-carrying dependent — marked for the
-/// judgment phase, which alone can read the establishing fact.
 fn target_checks(
     schema: &Schema,
     selections: &Selections<'_>,
     deleted_determinants: BTreeSet<(KeyId, DeterminantImage)>,
     inserted_determinants: &BTreeSet<(KeyId, DeterminantImage)>,
 ) -> Box<[DeterminantCheck]> {
-    // Exact-capacity staging: the outer Vec never grows (every deleted
-    // tuple is a candidate; `into_boxed_slice` shrinks at most once,
-    // when a tuple drops whole), and the dependents scratch grows to the
-    // widest dependent list once, draining into each check's exact box.
+
     let mut checks = Vec::with_capacity(deleted_determinants.len());
     let mut dependents: Vec<DependentCheck> = Vec::new();
     for entry in deleted_determinants {
