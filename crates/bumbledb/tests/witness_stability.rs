@@ -2,7 +2,6 @@
 //! verdicts by that list (`lean/Main.lean:: RVerdict`, list `BEq`).
 //! today, the whole rejection value — is invariant under everything a
 //! semantics before any probe runs.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Direction, Theory, Violation, Violations};
 
