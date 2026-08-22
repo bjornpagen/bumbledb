@@ -54,7 +54,6 @@ fn check_interval_field_literal(
 ) -> Result<(), ValidationError> {
     let element = interval.interval_element().expect("interval-field binding");
     match (value, element) {
-
         (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
             if at_domain_ceiling(value) {
                 Err(ValidationError::PointLiteralAtCeiling {
@@ -83,15 +82,18 @@ fn check_interval_field_literal(
 
 #[derive(Clone, Copy)]
 enum OpClass {
-
-    Equality { negated: bool },
+    Equality {
+        negated: bool,
+    },
 
     Order {
         op: crate::ir::OrderCmp,
         mirror: crate::ir::OrderCmp,
     },
 
-    Allen { mask: AllenMask },
+    Allen {
+        mask: AllenMask,
+    },
 
     PointIn,
 }
@@ -124,7 +126,6 @@ impl OpClass {
 }
 
 enum Shaped<'rule> {
-
     EqVarVar {
         negated: bool,
         lhs: VarId,
@@ -138,7 +139,10 @@ enum Shaped<'rule> {
         constant: ConstSide<'rule>,
     },
 
-    EqVarSet { var: VarId, set: ParamId },
+    EqVarSet {
+        var: VarId,
+        set: ParamId,
+    },
 
     OrdVarVar {
         op: crate::ir::OrderCmp,
@@ -166,7 +170,10 @@ enum Shaped<'rule> {
         constant: ConstSide<'rule>,
     },
 
-    PointInVarVar { lhs: VarId, rhs: VarId },
+    PointInVarVar {
+        lhs: VarId,
+        rhs: VarId,
+    },
 
     PointInVarConst {
         var: VarId,
@@ -397,7 +404,6 @@ impl Context {
         interiors: &super::InteriorSignatures<'_>,
         rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
-
         let closed_refs = crate::ir::render::ClosedRefs::build(schema);
         let occurrences = rule
             .atoms
@@ -587,7 +593,6 @@ impl Context {
             }
         }
         match (lhs, rhs) {
-
             (Term::Var(l), Term::Var(r)) if l == r => {
                 Err(ValidationError::SelfComparison { index })
             }
@@ -766,14 +771,13 @@ impl Context {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn classify(
         &mut self,
         index: usize,
         shape: &Shaped<'_>,
     ) -> Result<ClassifiedComparison, ValidationError> {
         match shape {
-
             Shaped::EqVarVar { negated, lhs, rhs } => {
                 let lhs_type = *self.resolved_var_type(*lhs);
                 if *self.resolved_var_type(*rhs) != lhs_type {
@@ -929,7 +933,6 @@ impl Context {
                 };
                 match constant {
                     ConstSide::Param(param) => {
-
                         self.interval_position_params.insert(*param);
                         self.anchor_param_mono(*param, &element_type(element))?;
                         Ok(ClassifiedComparison::PointInVarPoint {
@@ -940,7 +943,6 @@ impl Context {
                     ConstSide::Literal(value) => match (value, element) {
                         (Value::U64(_), IntervalElement::U64)
                         | (Value::I64(_), IntervalElement::I64) => {
-
                             if at_domain_ceiling(value) {
                                 return Err(ValidationError::ComparisonPointLiteralAtCeiling {
                                     index,
@@ -957,7 +959,6 @@ impl Context {
             }
             Shaped::PointInConstVar { constant, var } => match constant {
                 ConstSide::Param(param) => {
-
                     let element = match self.resolved_var_type(*var) {
                         ValueType::U64 => IntervalElement::U64,
                         ValueType::I64 => IntervalElement::I64,
@@ -1017,7 +1018,7 @@ impl Context {
     #[expect(
         clippy::unused_self,
         reason = "the receiver keeps this checker API shape-parallel"
-    )] 
+    )]
     fn check_literal_against(
         &self,
         index: usize,
