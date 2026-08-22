@@ -6,18 +6,11 @@ use crate::corpus_gen::{
 };
 use crate::schema::ids;
 
-/// The `SQLite` mapping axiom (docs/architecture/60-validation.md): every
-/// `u64` stays below 2⁶³ so INTEGER columns compare correctly.
 fn checked_id(id: u64) -> u64 {
     assert!(id < 1 << 63, "the SQLite mapping axiom: u64 < 2^63");
     id
 }
 
-/// One posting's tag pair: the two **distinct** tags posting `2p` carries
-/// (rows `2p` and `2p + 1`; odd postings carry none — the negation
-/// family's untagged half exists by construction). The first tag is
-/// skewed: [`HOT_TAG_PCT`]% draw `Fee` (ordinal 0) — the skew family's
-/// hot parameter.
 fn tag_pair(seed: u64, pair: u64) -> (u64, u64) {
     let mut rng = Rng::new(mix(seed, ids::POSTING_TAG, pair));
     let first = if rng.chance(HOT_TAG_PCT, 100) {
@@ -29,14 +22,8 @@ fn tag_pair(seed: u64, pair: u64) -> (u64, u64) {
     (first, second)
 }
 
-/// One relation's row, by index — the pure function everything streams
-/// from.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations: an unknown relation id, or
-/// derived values exceeding their documented ranges (the size table and
-/// the `SQLite` mapping axiom bound everything).
 #[must_use]
 pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(cfg.seed, rel, i));
@@ -96,8 +83,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             Value::String(format!("org-{i:02}").into()),
         ],
         ids::ORG_PARENT => {
-            // A binary forest over the org ids: child c's parent is c/2 —
-            // every child and parent exists, no self-edges, no cycles.
+
             let child = i + 1;
             vec![Value::U64(child), Value::U64(child / 2)]
         }
@@ -118,8 +104,6 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
     }
 }
 
-/// One relation's full row stream — O(1) memory, deterministically
-/// restartable (regenerate, never store).
 pub fn relation_rows(cfg: GenConfig, rel: RelationId) -> impl Iterator<Item = Vec<Value>> + Clone {
     let sizes = Sizes::of(cfg.scale);
     (0..sizes.rows(rel)).map(move |i| row(&cfg, &sizes, rel, i))
