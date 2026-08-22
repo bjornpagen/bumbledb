@@ -1,6 +1,5 @@
 //! The decode side: canonical per-type decoders, field slicing, and the
 //! corruption-checked field decoder.
-
 #[cfg(test)]
 use super::FixedBytesValue;
 use super::{FactView, I64_SIGN_BIT, InternId, IntervalElement, ValueRef, ValueType};
