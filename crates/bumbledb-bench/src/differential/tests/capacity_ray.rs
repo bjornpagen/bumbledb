@@ -1,5 +1,4 @@
 //! The capacity ray refusal's differential verdict (C10; the C17 slot
-
 use bumbledb::schema::{
     Bound, FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
     StatementDescriptor, ValueType, Weight,
