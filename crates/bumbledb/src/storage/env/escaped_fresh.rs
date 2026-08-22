@@ -110,7 +110,6 @@ fn lock_flush(state: &std::sync::Mutex<FlushState>) -> std::sync::MutexGuard<'_,
 }
 
 impl Environment {
-
     /// before a flush that may fail: the next `read_fresh_next` never
 
     pub(crate) fn note_escaped_fresh(
