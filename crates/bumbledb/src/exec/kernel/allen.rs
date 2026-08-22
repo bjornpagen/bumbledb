@@ -1,52 +1,9 @@
-//! The configuration kernel (docs/architecture/40-execution.md, § the
-//! sanctioned kernel shapes): `Allen(mask)` over a batch of interval
+//! The configuration kernel: `Allen(mask)` over a batch of interval
 //! pairs — branch-free, **flag-free**, table-driven; homogeneous
 //! coordinates for time. One kernel pair serves every interval-pair
 //! predicate that exists or ever will (8192 masks, one arithmetic): per
 //! pair, 8 predicate lanes (`cmhi`/`cmeq` over the four endpoint words)
 //! pack into a 6-bit signature; a 64-byte nibble table held in q
-//! registers maps signature → 4-bit basic code via `tbl` — the Allen
-//! decision tree as in-register data: zero memory traffic, zero
-//! branches, zero flags; membership is `(1 << code) & mask` with the
-//! mask broadcast in a vector register for the whole batch. Uniform
-//! cost for all 8192 masks — no per-mask codegen, no 13-way dispatch,
-//! no indirect branch; mask-as-param is free by uniformity.
-//!
-//! The i64 sign-flip encoding makes every stored endpoint word
-//! unsigned-order-faithful (docs/architecture/50-storage.md), so the
-//! one unsigned kernel serves both element types, rays included: a
-//! ray's `end == MAX` is just the largest word (the point-domain law).
-//!
-//! **The flag-free law is load-bearing, not style**
-//! (`m2max.core.flag-port-asymmetry`, `m2max.core.flag-strand-mlp`): a
-//! scalar `cmp`/`csel` classify carries 4–5 flag µops per pair — capped
-//! at ~2.8 flag-µops/cycle on the 3-port triad dense, and **halving
-//! sustainable miss lanes (~28 → ~14) when the pairs are gathered** at
-//! DRAM tier. The NEON route keeps dependents on the vector schedulers
-//! and preserves the lanes — `m2max.simd.minmax-universal`'s mechanism
-//! (2.65×, port-arithmetic-predicted) applied to Allen. Zero scalar
-//! flag µops exist in the kernel symbols, enforced structurally by
-//! `scripts/check-asm.sh` on the release disassembly (`cmp`/`csel`/
-//! `adds`/`ccmp` forbidden — the gate is the machine code, because LLVM
-//! substitutes).
-//!
-//! **`tbl` vs the 256×u16 one-hot table is a sweep, not a doctrine**:
-//! the measured alternative (512 B, permanently L1-hot, one pipelined
-//! load per pair) trades `tbl` arithmetic for load-port pressure —
-//! prefer `tbl` in filter position (load ports busy streaming columns),
-//! the table load in residual position (gather context, load ports
-//! idle). Shipped: `tbl` in both positions; the sweep waits for the
-//! calendar family's numbers.
-//!
-//! NOTE (falsifier-shaped performance pins — recorded until the calendar family
-//! earns numbers; no benchmark has run):
-//! - *dense-uniform-within-2×-of-hand-`INTERSECTS` at L1*: the uniform
-//!   kernel stays within 2× of a hand-written two-compare `INTERSECTS`
-//!   loop over L1-resident columns, else the signature packing is fat;
-//! - *gathered-within-15%-of-xor-gather-floor at DRAM*: a gathered
-//!   Allen residual stays within 15% of the flag-free xor-gather floor,
-//!   else a flag µop leaked into the miss shadow — read the
-//!   disassembly.
 
 use bumbledb_theory::allen::AllenMask;
 
@@ -55,20 +12,12 @@ use super::neon;
 #[cfg(not(target_arch = "aarch64"))]
 use super::reference;
 
-/// The NEON code kernel's window width in pairs (8 = one `tbl` of 8
-/// narrowed signatures); shorter batches take the scalar classify.
 #[cfg(target_arch = "aarch64")]
 const CODE_LANES: usize = 8;
 
-/// The NEON membership kernel's window width in codes (one q register);
-/// shorter batches take the scalar bit test (itself flag-free: one
-/// shift, one and).
 #[cfg(target_arch = "aarch64")]
 const FILTER_LANES: usize = 16;
 
-/// One pair's configuration code — [`crate::allen::classify_bounds`]'s
-/// decision tree, the scalar fallback below the NEON window width (the
-/// [`super::reference`] module is absent in aarch64 non-test builds).
 #[cfg(target_arch = "aarch64")]
 fn classify_code(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u8 {
     crate::allen::classify_bounds(&a_start, &a_end, &b_start, &b_end) as u8
@@ -82,18 +31,6 @@ fn classify_code(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u8 {
 /// growth past the previous batch's count zero-fills — every byte of
 /// the retained prefix is overwritten by the classify below (the full
 /// per-batch refill was pure `_platform_memset` on the profile).
-///
-/// NOTE (bind-time mask simplification — a recorded lever, not
-/// shipped): the workload composites collapse (`INTERSECTS` =
-/// `a.s < b.e ∧ b.s < a.e` — two compares; `DISJOINT` its complement;
-/// `COVERS` three), and on L2-resident retire-bound filters
-/// (`m2max.mem.l2-resident-retire-bound`) a two-compare kernel beats
-/// the uniform one on µop count alone. The structure, if earned, is
-/// bind-time monomorphized selection (the sink-dispatch precedent — no
-/// hot-loop indirection). *Trigger:* the calendar family showing
-/// the filter phase owning enough of a family budget to buy it — pin
-/// the fraction before building the lever
-/// (`m2max.probe.pass-overhead`'s lesson).
 pub fn allen_code_batch(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -103,7 +40,7 @@ pub fn allen_code_batch(
 ) {
     let n = a_starts.len();
     // Release-strength: the NEON core reads 8-word windows through raw
-    // pointers from all four streams, so the equality is the memory-
+
     // safety invariant — asserted here, outside the flag-free gated
     // symbols, like every sibling unsafe kernel's extent guard.
     assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
@@ -113,7 +50,6 @@ pub fn allen_code_batch(
     codes_into(a_starts, a_ends, b_starts, b_ends, codes);
 }
 
-/// [`allen_code_batch`] with a constant right operand — the leaf
 /// residual's parent-constant side (`run_node`'s Allen pass: a
 /// `Source::Slot` side reads the outer bindings, constant for the
 /// whole call): the constant's two words broadcast into the b-side
@@ -128,7 +64,7 @@ pub fn allen_code_batch_const(
 ) {
     let n = a_starts.len();
     // Release-strength, as `allen_code_batch`: the NEON windows read
-    // both streams unchecked.
+
     assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
     codes.resize(n, 0);
     codes_into_const(a_starts, a_ends, b_start, b_end, codes);
@@ -196,17 +132,8 @@ pub fn allen_filter_columns_const(
     });
 }
 
-/// The dense scans' chunk width (stack scratch; well past both NEON
-/// window widths so the overlap tails stay a per-chunk constant).
 const SCAN_CHUNK: usize = 256;
 
-/// The shared chunk walk of the two dense scans: `fill(base, len,
-/// codes)` computes the chunk's codes and returns the (batch-constant)
-/// mask; positions compact through the branchless cursor-write
-/// ([`super::filter::write_survivor_keeps`] — one hoisted position
-/// guard, unchecked cursor stores into reserved spare capacity, the
-/// `keep & 1` advance off the flag triad), one `set_len` over the
-/// written prefix at the end of the walk.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -231,7 +158,7 @@ fn filter_chunked(
         base += len;
     }
     // SAFETY: every slot in `[start, write)` was cursor-written by the
-    // keep-byte survivor writes above and `write <= start + n <=
+
     // capacity` (`u32` carries no drop obligation).
     unsafe { out.set_len(write) };
     crate::obs::event(
@@ -240,8 +167,6 @@ fn filter_chunked(
     );
 }
 
-/// [`allen_code_batch`]'s core over pre-sized slices (the dense scans'
-/// chunk form).
 fn codes_into(
     a_starts: &[u64],
     a_ends: &[u64],
@@ -263,7 +188,6 @@ fn codes_into(
     reference::allen_codes(a_starts, a_ends, b_starts, b_ends, codes);
 }
 
-/// [`codes_into`] with the constant right operand.
 fn codes_into_const(starts: &[u64], ends: &[u64], b_start: u64, b_end: u64, codes: &mut [u8]) {
     #[cfg(target_arch = "aarch64")]
     {
@@ -279,7 +203,6 @@ fn codes_into_const(starts: &[u64], ends: &[u64], b_start: u64, b_end: u64, code
     reference::allen_codes_const(starts, ends, b_start, b_end, codes);
 }
 
-/// [`allen_filter_batch`]'s core over pre-sized slices.
 fn keep_into(codes: &[u8], mask: AllenMask, keep: &mut [u8]) {
     #[cfg(target_arch = "aarch64")]
     {
