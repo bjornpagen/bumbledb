@@ -7,7 +7,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Basic {
-
     Before = 0,
 
     Meets = 1,
@@ -36,7 +35,6 @@ pub enum Basic {
 }
 
 impl Basic {
-
     #[must_use]
     pub const fn bit(self) -> u16 {
         1 << (self as u16)
@@ -44,7 +42,6 @@ impl Basic {
 
     #[must_use]
     pub const fn converse(self) -> Self {
-
         match self {
             Self::Before => Self::After,
             Self::Meets => Self::MetBy,
@@ -94,7 +91,6 @@ pub struct AllenMask(u16);
 const ALL_BITS: u16 = (1 << 13) - 1;
 
 impl AllenMask {
-
     pub const BEFORE: Self = Self(Basic::Before.bit());
     pub const MEETS: Self = Self(Basic::Meets.bit());
     pub const OVERLAPS: Self = Self(Basic::Overlaps.bit());
