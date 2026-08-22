@@ -47,7 +47,6 @@ fn insert_lands_exactly_the_expected_key_set() {
 
 #[test]
 fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
-
     let dir = TempDir::new("commit-desync");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -91,7 +90,6 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
 
 #[test]
 fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
-
     let dir = TempDir::new("commit-desync-interval-determinant");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -142,7 +140,6 @@ fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
 
 #[test]
 fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
-
     let dir = TempDir::new("commit-disposition-desync");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
