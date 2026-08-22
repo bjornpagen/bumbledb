@@ -1,17 +1,10 @@
-//! The one tracing mechanism (docs/architecture/60-validation.md):
+//! The one tracing mechanism:
 //! nanosecond spans and point events recorded into a thread-local buffer
 //! during explicit capture, drained by tooling — Chrome-trace export and
 //! flame summaries are this seam plus names.
-//!
-//! **Zero-cost when off** (docs/architecture/00-product.md: no always-on
-//! instrumentation in release paths): under default features every
-//! function here is an inline empty body and [`SpanGuard`] is a ZST with
-//! no `Drop`; instrumented call sites are written once, `#[cfg]`-free.
-//!
+//! **Zero-cost when off**: under default features every
 //! Recording allocates (the capture buffer grows): sanctioned only
-//! because capture is never enabled inside a measured allocation window —
-//! the gate never calls [`start_capture`], and the bench harness treats
-//! trace capture and allocation windows as mutually exclusive run modes.
+//! no `Drop`; instrumented call sites are written once, `#[cfg]`-free.
 
 mod point;
 
@@ -27,15 +20,12 @@ pub enum Category {
     Image,
     Cache,
     Harness,
-    /// Executor phase accumulators (docs/architecture/60-validation.md):
-    /// synthetic point events carrying `(total_ns, calls)` per
-    /// (node, phase), flushed once per traced execution — never real
-    /// spans, so flame containment math must exclude them.
+
     Phase,
 }
 
 impl Category {
-    /// The category's stable label (Chrome-trace `cat` field).
+
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -79,7 +69,6 @@ impl TraceEvent {
         }
     }
 
-    /// Chrome-trace name, derived from [`TracePoint::label`].
     #[must_use]
     pub const fn name(self) -> &'static str {
         self.point().label()
@@ -97,7 +86,6 @@ impl TraceEvent {
         }
     }
 
-    /// Span duration, or `0` at Chrome-trace export for a point event.
     #[must_use]
     pub const fn dur_ns(self) -> u64 {
         match self {
@@ -129,14 +117,9 @@ impl TraceEvent {
 /// the 24 MHz / 41.67 ns tick granularity is the real limit), and
 /// an unfenced closing stamp can read up to ~50 ns early (bounded by
 /// backend scheduler occupancy, not the ROB). Stamp policy:
-///
 /// - **Accumulated attribution** (`PhaseTimers`) uses raw [`ticks`] at
-///   both ends — measured inflation ≤ 2–3% at 10 ns phases; any fence
-///   costs more than it fixes (`isb` stamps measured +164%).
-/// - **Single-shot spans** close with [`ticks_ss`] (`CNTVCTSS_EL0`,
-///   `FEAT_ECV` — present on M2+): self-synchronized, slide-proof, 4.6 ns
-///   worst case — half the price of `isb` (9.4 ns), and the only honest
-///   way to time one sub-500 ns region.
+/// both ends — measured inflation ≤ 2–3% at 10 ns phases; any fence
+/// costs more than it fixes (`isb` stamps measured +164%).
 #[cfg(feature = "trace")]
 pub mod fastclock;
 
@@ -150,31 +133,18 @@ mod imp {
         static BUFFER: RefCell<Option<Vec<TraceEvent>>> = const { RefCell::new(None) };
     }
 
-    /// The process tick anchor: trace timestamps are ns since the first
-    /// stamp, from the same counter `PhaseTimers` accumulates — one
-    /// timeline, coherent across spans and phase events.
     fn anchor_ticks() -> u64 {
         static ANCHOR: OnceLock<u64> = OnceLock::new();
         *ANCHOR.get_or_init(fastclock::ticks)
     }
 
-    /// The opening stamp: raw anchor-relative ticks (0.30 ns; an
-    /// early-read slide on an opening stamp only lengthens the span,
-    /// bounded by ~50 ns). The anchor resolves FIRST — on the very
     /// first stamp the anchor would otherwise be read after the stamp
-    /// and sit ahead of it. Ticks, not ns: `ticks_to_ns`'s u128 divide
-    /// by the runtime `cntfrq` is a `__udivti3` libcall that would land
-    /// inside every enclosing span's measured window — events carry raw
-    /// ticks and convert once at drain, the `PhaseTimers` discipline.
+
     pub(super) fn now_ticks() -> u64 {
         let anchor = anchor_ticks();
         fastclock::ticks().wrapping_sub(anchor)
     }
 
-    /// The closing stamp: self-synchronized — a raw
-    /// closing stamp can read up to ~50 ns early, which is −83% on a
-    /// 28 ns span; `CNTVCTSS` cannot slide. Raw anchor-relative ticks,
-    /// as [`now_ticks`].
     pub(super) fn now_ticks_ss() -> u64 {
         let anchor = anchor_ticks();
         fastclock::ticks_ss().wrapping_sub(anchor)
@@ -186,10 +156,7 @@ mod imp {
 
     pub(super) fn start_capture() {
         BUFFER.with(|b| {
-            // Idempotent by representation: a nested (or unwound-over)
-            // start extends the live capture, never destroys it — the
-            // silent mid-run timeline reset was the one way this seam
-            // could lie by omission.
+
             b.borrow_mut()
                 .get_or_insert_with(|| Vec::with_capacity(4096));
         });
@@ -197,9 +164,7 @@ mod imp {
 
     pub(super) fn finish_capture() -> Vec<TraceEvent> {
         let mut events = BUFFER.with(|b| b.borrow_mut().take().unwrap_or_default());
-        // The one tick→ns conversion site, off every measured window:
-        // in-buffer events carry raw anchor-relative ticks in the two
-        // time fields until the capture ends.
+
         for event in &mut events {
             match event {
                 TraceEvent::Span {
@@ -236,30 +201,25 @@ mod imp {
     }
 
     impl SpanGuard {
-        /// Sets the payload (for values known only at scope end).
+
         pub fn set_args(&mut self, args: super::TraceArgs) {
             if let Some(live) = &mut self.live {
                 live.args = args;
             }
         }
 
-        /// A completed count payload. Distinct from leaving the default
-        /// [`TraceArgs::None`] (an aborted/unset span).
         pub fn set_count(&mut self, n: u64) {
             self.set_args(super::TraceArgs::Count(n));
         }
 
-        /// A two-quantity payload.
         pub fn set_pair(&mut self, a0: u64, a1: u64) {
             self.set_args(super::TraceArgs::Pair(a0, a1));
         }
 
-        /// An explicit boolean outcome.
         pub fn set_flag(&mut self, flag: bool) {
             self.set_args(super::TraceArgs::Flag(flag));
         }
 
-        /// Ends the span now (records the event). Equivalent to dropping,
         /// spelled for call sites that would otherwise `drop()` a guard
         /// that is a Drop-less ZST when the feature is off.
         pub fn end(self) {}
@@ -268,7 +228,7 @@ mod imp {
     impl Drop for SpanGuard {
         fn drop(&mut self) {
             if let Some(live) = self.live.take() {
-                // Tick-valued time fields until the drain converts.
+
                 record(TraceEvent::Span {
                     point: live.point,
                     start_ns: live.start_ticks,
@@ -334,7 +294,7 @@ pub fn span_args(point: TracePoint, args: TraceArgs) -> SpanGuard {
 #[cfg(feature = "trace")]
 pub fn event(point: TracePoint, args: TraceArgs) {
     if imp::capturing() {
-        // Tick-valued time fields until the drain converts.
+
         let now = imp::now_ticks();
         imp::record(TraceEvent::Point {
             point,
@@ -344,34 +304,25 @@ pub fn event(point: TracePoint, args: TraceArgs) {
     }
 }
 
-// ---------------------------------------------------------------------
-// Feature off: identical signatures, empty bodies, ZST guard — call
-// sites never write #[cfg].
-// ---------------------------------------------------------------------
-
 /// A live span (inert: the `trace` feature is off).
 #[cfg(not(feature = "trace"))]
 pub struct SpanGuard;
 
 #[cfg(not(feature = "trace"))]
 impl SpanGuard {
-    /// Sets the payload (no-op: the `trace` feature is off).
+
     #[inline]
     pub fn set_args(&mut self, _: TraceArgs) {}
 
-    /// A completed count payload (no-op: the `trace` feature is off).
     #[inline]
     pub fn set_count(&mut self, _: u64) {}
 
-    /// A two-quantity payload (no-op: the `trace` feature is off).
     #[inline]
     pub fn set_pair(&mut self, _: u64, _: u64) {}
 
-    /// An explicit boolean outcome (no-op: the `trace` feature is off).
     #[inline]
     pub fn set_flag(&mut self, _: bool) {}
 
-    /// Ends the span (no-op: the `trace` feature is off).
     #[inline]
     pub fn end(self) {}
 }
