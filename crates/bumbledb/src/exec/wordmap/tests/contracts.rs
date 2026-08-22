@@ -1,14 +1,5 @@
 use super::*;
 
-/// The hash-quality contract (measured):
-/// **false-tag rate — not probe length — is the sensitive quality
-/// metric** for tagged tables. A single-multiply fold hash passes
-/// probe-length vetting (avg 1.40) while collapsing the 7-bit tag to
-/// 19.4% false compares on strided keys (design point 1/128). This
-/// test gates WHATEVER hash the module ships, by property: across
-/// adversarial key families, the measured false-compare rate per
-/// probe must stay ≤ 2/128. The `#[should_panic]` companion proves
-/// the gate's teeth: a plausible cheaper hash fails it.
 #[test]
 fn false_tag_rate_stays_at_the_design_point_on_adversarial_keys() {
     for (name, rate) in adversarial_false_tag_rates(super::hash_words) {
@@ -20,11 +11,6 @@ fn false_tag_rate_stays_at_the_design_point_on_adversarial_keys() {
     }
 }
 
-/// The red case, visible in review: a single-multiply fold hash —
-/// 2× cheaper, passes probe-length vetting — collapses the tag on
-/// low-entropy keys. If a future "optimization" swaps the hash and
-/// this stops panicking, the swap broke the tag and the gate above
-/// will say so.
 #[test]
 #[should_panic(expected = "above 2/128")]
 fn a_single_multiply_hash_fails_the_false_tag_gate() {
@@ -43,11 +29,6 @@ fn a_single_multiply_hash_fails_the_false_tag_gate() {
     }
 }
 
-/// Measures the false-compare rate (tag matched, key mismatched, per
-/// probe) of `hash` across the adversarial key families, by walking
-/// a simulated 25%-loaded table exactly as the probe does. The walk
-/// is a model, not the shipped window probe: the metric is a hash
-/// property, independent of probe mechanics.
 fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f64)> {
     let families: Vec<(&'static str, Vec<Vec<u64>>)> = vec![
         ("sequential", (0..16_384u64).map(|i| vec![i]).collect()),
@@ -82,8 +63,7 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
         .into_iter()
         .map(|(name, keys)| {
             let arity = keys[0].len();
-            // A 25%-loaded model table: capacity = 4 × keys, linear
-            // probing, tag = top-7 bits — the shipped geometry.
+
             let capacity = (keys.len() * 4).next_power_of_two();
             let mask = capacity - 1;
             let mut slots: Vec<Option<usize>> = vec![None; capacity];
@@ -100,9 +80,7 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
                     idx = (idx + 1) & mask;
                 }
             }
-            // Probe every key (hits) plus an equal count of misses
-            // drawn from the same family shape, counting steps where
-            // the tag matched but the key did not.
+
             let mut probes = 0usize;
             let mut false_compares = 0usize;
             let mut probe = |key: &[u64]| {
@@ -129,7 +107,7 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
                 probe(key);
             }
             for i in 0..keys.len() as u64 {
-                // Same shape, disjoint values (offset far past the family).
+
                 let miss: Vec<u64> = keys[usize::try_from(i).expect("small") % keys.len()]
                     .iter()
                     .map(|w| w.wrapping_add(0x0100_0000_0000_0000))
@@ -147,15 +125,6 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
         .collect()
 }
 
-/// The index-end contract, the false-tag gate's complement: home
-/// buckets derive from the LOW hash bits (the colt bucket map and the
-/// window probe alike), while a tail-padded `bytes<N>` code word
-/// carries all its entropy in the TOP bytes (encoding.rs zero-pads at
-/// the tail, `fact_word.rs` reads big-endian). This gates WHATEVER
-/// hash the module ships, by property: across the short-code
-/// families, distinct home buckets must reach at least half the
-/// table — the collapse mode is one home for the whole family, so
-/// the margin is enormous in both directions.
 #[test]
 fn tail_padded_code_families_spread_across_home_buckets() {
     for (name, buckets, homes) in tail_padded_home_spreads(super::hash_words) {
@@ -167,12 +136,6 @@ fn tail_padded_code_families_spread_across_home_buckets() {
     }
 }
 
-/// The red case: the bare fold — no final avalanche — leaves the low
-/// index bits of high-entropy-only keys frozen (multiplication
-/// propagates upward, the round's `>> 29` reaches down 29 bits), and
-/// every 2-byte code lands in ONE home bucket. If a future
-/// "simplification" drops the finalizer and this stops panicking,
-/// the gate above will say so.
 #[test]
 #[should_panic(expected = "distinct homes")]
 fn the_unfinalized_fold_fails_the_home_spread_gate() {
@@ -193,13 +156,6 @@ fn the_unfinalized_fold_fails_the_home_spread_gate() {
     }
 }
 
-/// Distinct low-bit home buckets of `hash` over 8,192-key short-code
-/// families at colt-realistic table sizes: `bytes<2>`/`bytes<3>`/
-/// `bytes<4>` canonical encodings vary bits 48–63 / 40–63 / 32–63 of
-/// one big-endian tail-padded word. Key counts saturate every table
-/// (8192 ≥ 2× buckets), so a healthy hash reaches well past half the
-/// buckets while the frozen-low-bit collapse caps at `buckets >> 3`
-/// or worse.
 fn tail_padded_home_spreads(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, usize, usize)> {
     [
         ("bytes<2>", 48, 512),
@@ -218,10 +174,6 @@ fn tail_padded_home_spreads(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, usize
     .collect()
 }
 
-/// The const-arity contract: `hash_core::<K>` is
-/// hash-IDENTICAL to `hash_words` — same seed, fold order, constants
-/// — so the monomorph and dyn arms land keys in the same slots and
-/// the false-tag gate covers both.
 #[test]
 fn hash_core_is_identical_to_hash_words() {
     fn check<const K: usize>(next: &mut impl FnMut() -> u64) {
@@ -245,8 +197,6 @@ fn hash_core_is_identical_to_hash_words() {
     check::<8>(&mut next);
 }
 
-/// Probe-step evidence: average probe steps
-/// at the shipped max load stay near 1 (gate: ≤ 1.2).
 #[test]
 fn probe_steps_stay_near_one_at_max_load() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 32_768);
@@ -262,9 +212,7 @@ fn probe_steps_stay_near_one_at_max_load() {
         map.len() * LOAD_DEN <= map.values.len(),
         "the sweep runs at the shipped max load"
     );
-    // Measure probes for hits over every key (slot-step model:
-    // window loads amortize these steps 8-at-a-time, but the walk
-    // length is the portable quality metric).
+
     let keys: Vec<Vec<u64>> = map.iter().map(|(k, ())| k.to_vec()).collect();
     let mask = map.values.len() - 1;
     let mut steps = 0usize;
@@ -286,7 +234,7 @@ fn probe_steps_stay_near_one_at_max_load() {
     #[expect(
         clippy::cast_precision_loss,
         reason = "reporting accepts lossy integer-to-float conversion"
-    )] // both far below 2^52
+    )] 
     let avg = steps as f64 / keys.len() as f64;
     println!("avg probe steps at the shipped max load: {avg:.3}");
     assert!(avg <= 1.2, "near-one probe steps at 25% load, got {avg}");
