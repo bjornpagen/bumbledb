@@ -1,9 +1,7 @@
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
-
     pub(super) fn fold_scratch_row(&mut self) {
-
         if !self
             .dedup
             .consider(&self.binding_scratch, &mut self.union_scratch)
