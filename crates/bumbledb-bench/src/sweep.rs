@@ -30,14 +30,12 @@ const ID_BASE: u64 = 1 << 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOrder {
-
     Delta,
 
     KeySorted,
 }
 
 impl ProbeOrder {
-
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -114,7 +112,6 @@ fn draw_parents(k: u64, pool: u64, rng: &mut Rng) -> Vec<u64> {
 /// shape, or an engine error, stringified.
 /// # Panics
 pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
-
     const MISSING_BASE: u64 = 1 << 48;
     let probe: Vec<(u64, u64)> = (0..8)
         .map(|i| (ID_BASE - 64 + i, MISSING_BASE + i))
