@@ -52,10 +52,10 @@ describe("keyed get: typed point reads through a declared key statement", async 
 
 	test("the 2-arg get refuses a declared-key object — the primary form stays primary-only", function refusal() {
 		/**
- * KeyFact<Program> demands exactly { id } (fresh present), so the
- * declared-key object is refused at compile time; the runtime
- * projection check throws the same refusal.
- */
+		 * KeyFact<Program> demands exactly { id } (fresh present), so the
+		 * declared-key object is refused at compile time; the runtime
+		 * projection check throws the same refusal.
+		 */
 		assert.throws(
 			function getByDeclaredKey() {
 				// @ts-expect-error — KeyFact demands exactly the fresh field; the declared key needs the 3-arg form
@@ -67,7 +67,6 @@ describe("keyed get: typed point reads through a declared key statement", async 
 	})
 
 	test("the key-statement-selected get point-reads through the declared key, typed", function keyedGet() {
-
 		const row = db.read((i) => i.get(Program, programGrpKey, { grp }))
 		assert.ok(row, "the declared key answers the typed point read")
 		assert.equal(row.id, program)
@@ -80,9 +79,9 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			"the scoped spelling agrees (the symmetry rule)"
 		)
 		/**
- * A statement of another schema (or a non-key statement) is a typed
- * refusal, and a foreign-relation key never crosses relations.
- */
+		 * A statement of another schema (or a non-key statement) is a typed
+		 * refusal, and a foreign-relation key never crosses relations.
+		 */
 		const foreignKey = key(Program, ["title"])
 		assert.throws(function foreignStatement() {
 			db.read((i) => i.get(Program, foreignKey, { title: "linear equations" }))
@@ -95,11 +94,11 @@ describe("keyed get: typed point reads through a declared key statement", async 
 
 	test("the key object is typed by the statement's projection — a wrong field name is refused", function wrongProjection() {
 		/**
- * DeclaredKeyFact<Program, ["grp"]> types the determinant columns
- * from the key-FD statement itself, so a key object spelling a
- * non-determinant field fails to compile; the runtime projection
- * check throws the matching refusal.
- */
+		 * DeclaredKeyFact<Program, ["grp"]> types the determinant columns
+		 * from the key-FD statement itself, so a key object spelling a
+		 * non-determinant field fails to compile; the runtime projection
+		 * check throws the matching refusal.
+		 */
 		assert.throws(function wrongField() {
 			// @ts-expect-error — programGrpKey's projection is (grp); `title` is not a determinant column of the statement
 			db.read((i) => i.get(Program, programGrpKey, { title: "x" }))
@@ -165,7 +164,6 @@ describe("keyed get: typed point reads through a declared key statement", async 
 	})
 
 	test("the engine point-reads through the declared key statement underneath", async function engineSide() {
-
 		const spec = lower(Theory)
 		const created = await native.dbCreate(path.join(tmpRoot, "native"), spec)
 		assert.equal(created.tag, "accepted", "native create succeeds")
@@ -216,7 +214,6 @@ describe("keyed get: typed point reads through a declared key statement", async 
 })
 
 describe("keyed get: the statement-vs-key dispatch is a brand, never a shape probe (134)", async function brandSuite() {
-
 	const Cfg = relation("Cfg", { data: interval(u64), value: u64 })
 	const BrandTheory = schema("KeyedGetBrand", { Cfg }, [key(Cfg, ["data"])])
 	const db = accepted(await Db.create(path.join(tmpRoot, "brand-store"), BrandTheory))
