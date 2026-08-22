@@ -1,5 +1,4 @@
 //! One cross-parent probe pass.
-
 use super::anti_probe::anti_probe_pass;
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PREFETCH_WIDTH_FLOOR,
