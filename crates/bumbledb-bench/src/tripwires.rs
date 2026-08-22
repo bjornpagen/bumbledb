@@ -1,12 +1,3 @@
-//! The performance tripwires (docs/architecture/60-validation.md): the
-//! perf suite's fixes, encoded as structural regression tests over the
-//! pinned S corpus — trace-event counts, plan-shape observables, and
-//! counter work bounds, never wall clock. If a repaired finding silently
-//! returns, one of these fails by name.
-//!
-//! This module is test-only enforcement; it compiles no production
-//! code.
-
 #[cfg(test)]
 mod tests {
     use crate::families;
@@ -35,11 +26,6 @@ mod tests {
         (dir, db)
     }
 
-    /// The selection machinery engages for the param-set family
-    /// (docs/architecture/40-execution.md § selection levels — param
-    /// sets ride the selection trie): warm executions emit
-    /// `select_probe` events, and the membership families never emit a
-    /// `key_probe`.
     #[cfg(feature = "obs")]
     #[test]
     fn selection_levels_engage_for_the_param_set_family() {
@@ -82,13 +68,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The aggregate families' fold regimes, pinned: balance binds the
-    /// posting fresh — distinct bindings proven, the seen-set elided.
-    /// stats binds no key coverage **by design** (collapsing duplicate
-    /// (currency, amount, at, account) bindings is the family's set
-    /// semantics), so its dedup pass is semantically required. A planner
-    /// change that flips either regime is a semantics bug, not a tuning
-    /// change.
     #[test]
     fn aggregate_family_fold_regimes_are_pinned() {
         let dir = std::env::temp_dir().join("bumbledb-tripwires-elide");
@@ -113,9 +92,7 @@ mod tests {
     }
 
     /// Finding 1 (the access path), forever: after one full param
-    /// rotation, **no read family ever rebuilds a view again within a
-    /// generation** — selections probe, residual bindings ride the LRU,
-    /// and the key-probe family never touches views at all.
+
     #[cfg(feature = "obs")]
     #[test]
     fn no_read_family_rescans_after_one_rotation() {
@@ -126,13 +103,13 @@ mod tests {
             let query = (family.query)();
             let mut prepared = db.prepare(&query).expect("prepare");
             let sets = (family.params)(&CFG);
-            // One full warm rotation: every binding built once.
+
             for params in &sets {
                 let args = param_args(params);
                 db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
-            // Two further rotations: zero view builds, ever.
+
             for cycle in 0..2 {
                 for (set_idx, params) in sets.iter().enumerate() {
                     let args = param_args(params);
@@ -156,12 +133,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Finding 2 (per-row intern resolution), forever — strengthened by
-    /// the campaign's persistent arena tier (`96c3ee2b`): a distinct
-    /// string costs one dictionary descent per PREPARED LIFETIME, not
-    /// per execute. `containment_walk`'s single holder name descends
-    /// once on the prepared query's first touch and never again — a
-    /// warm re-execute is descent-free.
     #[cfg(feature = "obs")]
     #[test]
     fn finalize_resolution_stays_collapsed() {
