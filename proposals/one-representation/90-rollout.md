@@ -333,6 +333,27 @@ both upstream reports closed with numbers, digests verified identical.
       counts payload-witnessed empty slices into the one fieldless
       constructor, so the precondition holds by construction) in
       0801b97f.
+- [x] Fix round 4 (2026-08-21, the final fix lane over the
+      one-representation 0.16.0 build): `DecidableRoster` inverted to a
+      strict WHITELIST of provably-judgeable shapes — representation
+      over control flow, total by construction: the type tier judges
+      only a single non-union FIXED-LENGTH tuple (`[number] extends
+      [Stmts["length"]]` detects a rest tail) of single concrete
+      statements whose key data carries a literal owner and a single
+      non-union fixed-length literal projection (`IsMulti` and the
+      bracketed checks pushed into `LiteralProjection`, so no
+      naked-parameter conditional survives on the roster path). Two
+      executed false-wall spellings closed and pinned compiling in
+      containment-parity: a projection UNION inside one key element
+      (`key(R, flag ? [...] as const : [...] as const)` — the
+      distributed per-arm read rostered the MERGED field set, matching
+      no runtime key) and a REST-TAIL tuple (`readonly [typeof stmt,
+      ...Statement[]]` — the head judged against a roster blind to
+      every key in the tail); the intersection-of-tuples spelling
+      pinned silent. One recorded limit, pre-existing and not fixed: a
+      generic type parameter CONSTRAINED to a union of tuples hangs tsc
+      in the deferred-scan machinery — a degenerate spelling no shipped
+      surface writes, named in the law.ts contract prose. In 36bec288.
 - [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md):
       persistence/verifier/RSS numbers come from the owner's Primer run
       post-adoption (the full bench was waived — "no rebench"); count
