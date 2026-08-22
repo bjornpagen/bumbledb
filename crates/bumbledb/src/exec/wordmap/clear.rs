@@ -1,7 +1,6 @@
 use super::WordMap;
 
 impl<V: Copy> WordMap<V> {
-
     pub fn clear(&mut self) {
         self.stale += self.len;
         self.dense.clear();
@@ -31,7 +30,6 @@ impl<V: Copy> WordMap<V> {
                 (
                     &self.keys[idx * self.arity..(idx + 1) * self.arity],
                     // SAFETY: dense lists only occupied slots; occupied slots
-
                     unsafe { self.values[idx].assume_init_ref() },
                 )
             })
