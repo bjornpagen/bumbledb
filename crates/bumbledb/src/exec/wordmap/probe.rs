@@ -1,7 +1,6 @@
 use super::{WINDOW, WordMap, ctrl_tag, eq_byte_mask, zero_byte_mask};
 
 impl<V: Copy> WordMap<V> {
-
     #[inline(always)]
     fn key_at_matches(&self, slot: usize, key: &[u64]) -> bool {
         let stored = &self.keys[slot * self.arity..slot * self.arity + key.len()];
@@ -39,7 +38,6 @@ impl<V: Copy> WordMap<V> {
         let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
-
             // invariant the slice type cannot carry, because windows
 
             let window = u64::from_le_bytes(
