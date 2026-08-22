@@ -4,7 +4,6 @@
 //! vectors, and integers) describes its theory here and lowers it to the
 //! produce indistinguishable descriptors, so the same theory built either
 //! way carries the same fingerprint.
-
 use std::collections::BTreeMap;
 
 use super::{
