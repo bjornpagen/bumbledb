@@ -169,7 +169,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
                 .iter()
                 .any(|a| t.var_atoms[rhs].contains(a))
             {
-                continue; 
+                continue;
             }
             for var in [lhs, rhs] {
                 if t.var_types.get(var).is_some_and(|ty| ty.is_interval()) {
@@ -390,7 +390,6 @@ impl Coverage {
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
                     Term::Var(var) => {
-
                         if element_of(&field_type(atom, *field)).is_some()
                             && t.var_types.get(var).is_some_and(|ty| !ty.is_interval())
                         {
