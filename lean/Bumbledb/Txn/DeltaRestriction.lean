@@ -5,7 +5,7 @@ import Bumbledb.Txn
 
 The commit pipeline judges every statement RESTRICTED to
 delta-touched bindings against the final state
-(`docs/architecture/30-dependencies.md` § enforcement). Until now
+ § enforcement). Until now
 that soundness was one prose sentence — "sound because an untouched
 binding cannot change a judgment's truth". This module is that
 sentence as mathematics: per statement form, a TOUCHED notion (data),
@@ -19,31 +19,31 @@ soundness, whole.
 ## The touched notions, per form (item 1 — data)
 
 * **Scalar FD** — determinant tuples some delta fact of the relation
-  projects to (`Delta.projected`, read at the determinant list).
-  Bridge: `storage/commit/applier.rs::Applier` probes exactly the
-  inserted determinant images.
+ projects to (`Delta.projected`, read at the determinant list).
+ Bridge: `storage/commit/applier.rs::Applier` probes exactly the
+ inserted determinant images.
 * **Pointwise FD** — the scalar-prefix groups of the delta facts
-  (`Delta.projected` at the scalar prefix); the neighbor probe runs
-  within the touched group. Bridge: `Applier::probe_neighbors`.
+ (`Delta.projected` at the scalar prefix); the neighbor probe runs
+ within the touched group. Bridge: `Applier::probe_neighbors`.
 * **Scalar IND, source side** — the ADDED source facts inside φ (the
-  net insert set is the delta's `adds` by representation — the
-  coalesced pair). Bridge: `storage/commit/judgment.rs::check_source`.
+ net insert set is the delta's `adds` by representation — the
+ coalesced pair). Bridge: `storage/commit/judgment.rs::check_source`.
 * **Scalar IND, target side** — the removed target key tuples NOT
-  re-established (`removedTargetKeys`): a ψ-satisfying holder was
-  removed and no ψ-satisfying holder stands in the final state.
-  Re-establishment is ψ-QUALIFIED per statement — a re-landed tuple
-  whose establishing fact fails ψ does not re-establish — mirroring
-  `storage/commit/judgment.rs::check_target`'s discipline (the plan's
-  plain set difference drops the empty-ψ re-land; one `F` get per
-  re-landed tuple answers the ψ-carrying dependents).
+ re-established (`removedTargetKeys`): a ψ-satisfying holder was
+ removed and no ψ-satisfying holder stands in the final state.
+ Re-establishment is ψ-QUALIFIED per statement — a re-landed tuple
+ whose establishing fact fails ψ does not re-establish — mirroring
+ `storage/commit/judgment.rs::check_target`'s discipline (the plan's
+ plain set difference drops the empty-ψ re-land; one `F` get per
+ re-landed tuple answers the ψ-carrying dependents).
 * **Coverage** — the touched WINDOW per scalar group
-  (`touchedWindow`): every point a delta fact of either side
-  contributes to the group. Bridge: `check_target`'s affected-source
-  coverage walk re-runs only across disestablished segments;
-  `Checker::check_coverage` walks only the demanded source interval.
+ (`touchedWindow`): every point a delta fact of either side
+ contributes to the group. Bridge: `check_target`'s affected-source
+ coverage walk re-runs only across disestablished segments;
+ `Checker::check_coverage` walks only the demanded source interval.
 * **Capacity statement** — the touched parent keys
-  (`touchedParents`): every parent key tuple any delta source fact
-  projects to, plus the delta's ψ-selected parents themselves.
+ (`touchedParents`): every parent key tuple any delta source fact
+ projects to, plus the delta's ψ-selected parents themselves.
 
 ## The load-bearing premise (item 4)
 
@@ -55,7 +55,7 @@ the lifecycle the premise is free (`State.models`; every committed
 state was judged whole at its own commit), and OUTSIDE it the
 division of authority is `Db::verify_store`'s: the sweeper re-runs
 both judgment forms globally, catching exactly the class no
-incremental check can see (`docs/architecture/60-validation.md` § the
+incremental check can see § the
 store sweeper). The checks here quantify over RAW instances, not
 `State`, precisely so the countermodel can exhibit the missing
 premise.
@@ -75,35 +75,35 @@ set against the final state.
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Touched notions are SETS.** The engine's plan is deduplicated
-  lists in scan order — iteration order and dedup are representation
-  mechanism, exactly the `violationSet` narrowing (`Txn.lean`).
+ lists in scan order — iteration order and dedup are representation
+ mechanism, exactly the `violationSet` narrowing (`Txn.lean`).
 * **`touchedParents` ignores φ on its source half.** Every delta
-  source fact touches its parent key tuple, φ-satisfying or not — a
-  SUPERSET of the minimal touched set (a non-φ fact never changes a
-  child group). Wider touched only re-checks more groups; minimality
-  is checker mechanism.
+ source fact touches its parent key tuple, φ-satisfying or not — a
+ SUPERSET of the minimal touched set (a non-φ fact never changes a
+ child group). Wider touched only re-checks more groups; minimality
+ is checker mechanism.
 * **`Delta.projected` includes removes the FD forms never spend.**
-  The scalar and pointwise FD restriction proofs refute only the
-  adds clause (`untouched_fact_pre` — an added fact touches its own
-  tuple; a removed fact leaves only pre-state facts behind, already
-  keyed by the premise), and the Applier probes inserted determinant
-  images only — the removes clause is a strict superset on those two
-  forms, kept for the one shape of the definition. Same license as
-  `touchedParents`: wider touched only re-checks more.
+ The scalar and pointwise FD restriction proofs refute only the
+ adds clause (`untouched_fact_pre` — an added fact touches its own
+ tuple; a removed fact leaves only pre-state facts behind, already
+ keyed by the premise), and the Applier probes inserted determinant
+ images only — the removes clause is a strict superset on those two
+ forms, kept for the one shape of the definition. Same license as
+ `touchedParents`: wider touched only re-checks more.
 * **`touchedWindow` is a strict superset on two of its four
-  clauses.** The backward proof spends only source-ADDS (an added
-  demand) and target-REMOVES (`coverage_untouched_point` — withdrawn
-  supply); removed-source points (a withdrawn demand) and
-  added-target points (new supply) cannot break coverage, and the
-  engine consults neither (`check_source` + the disestablished
-  segments). Kept for the one shape of the definition; wider touched
-  only re-checks more — minimality is checker mechanism.
+ clauses.** The backward proof spends only source-ADDS (an added
+ demand) and target-REMOVES (`coverage_untouched_point` — withdrawn
+ supply); removed-source points (a withdrawn demand) and
+ added-target points (new supply) cannot break coverage, and the
+ engine consults neither (`check_source` + the disestablished
+ segments). Kept for the one shape of the definition; wider touched
+ only re-checks more — minimality is checker mechanism.
 * **The IND source arm carries a final-state membership hypothesis.**
-  An added fact of a CLOSED relation never reaches the denotation
-  (`den_closed_constant`), so the arm judges added facts that stand
-  in the final state; the engine refuses closed writes at the surface
-  (`ClosedRelationWrite` — the `Txn.lean` narrowing), making the
-  hypothesis vacuous on every write the surface admits.
+ An added fact of a CLOSED relation never reaches the denotation
+ (`den_closed_constant`), so the arm judges added facts that stand
+ in the final state; the engine refuses closed writes at the surface
+ (`ClosedRelationWrite` — the `Txn.lean` narrowing), making the
+ hypothesis vacuous on every write the surface admits.
 -/
 
 namespace Bumbledb
@@ -607,7 +607,7 @@ theorem delta_restriction_exact {T : Theory} (s : State T)
 whole (item 3).** Pre-state models the theory (the `State`'s
 commitment) and every statement's delta-restricted check passes: the
 final state models the theory. This is the one prose sentence of
-`docs/architecture/30-dependencies.md` § enforcement as mathematics —
+ § enforcement as mathematics —
 the incremental judgment convicts exactly what the full judgment
 convicts, so running only the restricted checks at commit loses
 nothing. Bridge: `storage/commit/judgment.rs::judge` +
@@ -623,7 +623,7 @@ re-establishment tests exact re-landed determinant bytes while
 coincide because the key phase has already made the target bucket a
 subsingleton (keys convict before any statement probe runs,
 `Txn.lean`'s phase order). `Db::verify_store` owns the
-missing-premise class (`docs/architecture/60-validation.md` § the
+missing-premise class § the
 store sweeper; `Countermodels.incremental_verdict_needs_holds`). -/
 theorem delta_restricted_commit_sound {T : Theory} (s : State T)
     (d : Delta)
