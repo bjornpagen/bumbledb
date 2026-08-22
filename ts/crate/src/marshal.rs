@@ -1,28 +1,4 @@
 //! JS ⇄ engine-data marshaling — the whole vocabulary the bridge speaks.
-//!
-//! Direction and shape law:
-//!
-//! - **Fact cells are natural JS values, schema-directed**: `boolean ⇄ bool`,
-//!   `bigint ⇄ u64/i64` (range-checked, the error names relation and field),
-//!   `string ⇄ str`, `Uint8Array ⇄ bytes<N>` (width-checked), a
-//!   `{start, end}` bigint pair ⇄ interval. The expected type always comes
-//!   from the resident sealed roster — marshaling never guesses.
-//! - **Collections cross as ONE flat row-major cells array plus the
-//!   explicit row count** (`proposals/one-representation/20`): the JS
-//!   side states `rows` (it alone knows N for a fieldless roster — a
-//!   derived `cells.len() / arity` cannot represent nullary rows), the
-//!   bridge verifies `cells.len() == rows × arity` against the resident
-//!   roster, and one [`AcceptedCollection`] is built in one pass. The
-//!   single-fact point lanes (`contains`/`get`) keep their one-row
-//!   `Vec<Value>` form.
-//! - **IR, spec, and query params are tagged plain objects mirroring the
-//!   engine's own data types 1:1** (`bumbledb::ir`, `bumbledb::SchemaSpec`):
-//!   there is no anchoring schema position to direct an arbitrary literal, so
-//!   the tag carries the type, exactly as the Rust enum does.
-//! - **Values crossing outward are natural JS values** (`ValueOut`): answer
-//!   rows, scans, point reads, decoded violation facts, manifest extension
-//!   values. u64/i64 always cross as `bigint` — never `number`.
-//!
 //! Nothing here validates semantics: unresolvable names, banned spellings,
 //! shape mismatches beyond marshaling, and every dependency judgment belong
 //! to the engine's own typed boundaries.
@@ -48,20 +24,14 @@ use napi::{Unknown, ValueType as JsType, sys};
 
 use crate::tags;
 
-/// A thrown bridge error: marshaling and shape violations throw across the
-/// boundary (domain outcomes never do — they return as data).
 pub(crate) fn err(message: String) -> napi::Error {
     napi::Error::from_reason(message)
 }
 
-/// Engine `Display` for data-path messages (open refusals). Throws
-/// use [`throw_engine`]: kind is a field, not a prefix on this string.
 pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
     error.to_string()
 }
 
-/// Forced `{ kind, message }` throw. Kind is the exhaustive
-/// `ErrorFamily` table; the host must not re-parse `Display`.
 pub(crate) fn throw_engine(env: Env, error: &bumbledb::Error) -> napi::Error {
     throw_kind_message(
         env,
@@ -87,7 +57,6 @@ fn throw_object(env: Env, kind: &'static str, message: &str) -> napi::Result<()>
     env.throw(error)
 }
 
-/// A JS value-type name for shape-error messages.
 fn js_type_name(ty: JsType) -> &'static str {
     match ty {
         JsType::Undefined => "undefined",
@@ -104,17 +73,11 @@ fn js_type_name(ty: JsType) -> &'static str {
     }
 }
 
-/// A required object property, with the missing-key error naming its
-/// context. `ctx` is any `Display` so hot-lane callers hand a LAZY
-/// renderer (`format_args!`/[`CellCtx`]) — the context string is built on
-/// the error arm only (D3, `proposals/one-representation/70`), and the
-/// rendered text is byte-identical to the eager `&str` it replaced.
 fn req<T: FromNapiValue>(obj: &Object, key: &str, ctx: impl std::fmt::Display) -> napi::Result<T> {
     obj.get::<T>(key)?
         .ok_or_else(|| err(format!("bumbledb marshal: missing `{key}` in {ctx}")))
 }
 
-/// A required array element; `ctx` is lazy exactly as [`req`]'s.
 fn req_at<T: FromNapiValue>(
     arr: &Array,
     index: u32,
@@ -127,8 +90,6 @@ fn req_at<T: FromNapiValue>(
     })
 }
 
-/// A `bigint` as `u64`, lossless or a typed error naming its position
-/// (`ctx` lazy as [`req`]'s).
 pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<u64> {
     let (sign, word, lossless) = value.get_u64();
     if sign || !lossless {
@@ -139,8 +100,6 @@ pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Resul
     Ok(word)
 }
 
-/// A `bigint` as `i64`, lossless or a typed error naming its position
-/// (`ctx` lazy as [`req`]'s).
 pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<i64> {
     let (word, lossless) = value.get_i64();
     if !lossless {
@@ -151,7 +110,6 @@ pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Resul
     Ok(word)
 }
 
-/// A JS number as a dense id ordinal, refusing fractions and overflow.
 fn ordinal(value: f64, ctx: &str) -> napi::Result<u32> {
     if !(value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= f64::from(u32::MAX))
     {
@@ -172,11 +130,6 @@ fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
         .map_err(|_| err(format!("bumbledb marshal: {ctx}: id {value} exceeds u16")))
 }
 
-/// A half-open `Interval<u64>` from a `{start, end}` bigint pair; an empty
-/// interval (`start >= end`) is a shape error — the engine value is
-/// nonempty by construction (`bumbledb::Interval`). `ctx` is lazy as
-/// [`req`]'s (`Copy` because both bound reads and the emptiness refusal
-/// name the same position).
 fn interval_u64_in(
     obj: &Object,
     ctx: impl std::fmt::Display + Copy,
@@ -190,7 +143,6 @@ fn interval_u64_in(
     })
 }
 
-/// The `i64` element lane of [`interval_u64_in`].
 fn interval_i64_in(
     obj: &Object,
     ctx: impl std::fmt::Display + Copy,
@@ -204,8 +156,6 @@ fn interval_i64_in(
     })
 }
 
-/// The element-tag dispatch over the two interval lanes, as an owned
-/// [`Value`] (the tagged spec/IR/param lanes and the point-read rows).
 fn interval_in(
     obj: &Object,
     element: IntervalElement,
@@ -217,11 +167,6 @@ fn interval_in(
     }
 }
 
-/// The fact-lane cell position, rendered ONLY when an error names it —
-/// D3 (`proposals/one-representation/70`): the old eager
-/// `format!("relation `{r}` field `{f}`")` bought one heap string per
-/// SUCCESS cell (~25–30 M alloc/free pairs per Primer run, never read);
-/// this `Copy` pair renders the byte-identical text on the error arm.
 #[derive(Clone, Copy)]
 struct CellCtx<'a> {
     relation: &'a str,
@@ -234,9 +179,6 @@ impl std::fmt::Display for CellCtx<'_> {
     }
 }
 
-/// THE cell type-mismatch refusal — one spelling for both fact lanes
-/// ([`schema_value`]'s owned rows and [`push_cell`]'s collection feed),
-/// so the texts cannot fork.
 fn cell_mismatch(ctx: CellCtx<'_>, want: &str, got: JsType) -> napi::Error {
     err(format!(
         "bumbledb marshal: {ctx}: expected {want}, got {}",
@@ -244,16 +186,12 @@ fn cell_mismatch(ctx: CellCtx<'_>, want: &str, got: JsType) -> napi::Error {
     ))
 }
 
-/// THE `bytes<N>` width refusal, shared exactly as [`cell_mismatch`] is.
 fn bytes_width_mismatch(ctx: CellCtx<'_>, len: u16, witnessed: usize) -> napi::Error {
     err(format!(
         "bumbledb marshal: {ctx}: expected bytes<{len}>, got {witnessed} bytes"
     ))
 }
 
-/// One natural JS value marshaled against the schema-declared type of its
-/// field — the fact-row lane's one conversion. Error contexts are built
-/// on the error arm only (D3): a succeeding cell allocates nothing here.
 #[expect(
     unsafe_code,
     reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
@@ -322,21 +260,11 @@ fn schema_value(
     }
 }
 
-/// One relation's RESIDENT sealed roster — D4
-/// (`proposals/one-representation/70`): the per-handle materialization of
-/// THE one owner of the synthetic-id law
-/// (`RelationDescriptor::sealed_fields`: a closed relation's synthetic
-/// (`id`, u64) handle field first, declared fields after), computed once
-/// at handle construction and borrowed by every fact-lane call — the old
-/// per-call `Vec<(Box<str>, ValueType)>` re-derivation of an immutable
-/// roster is deleted, not cached.
 pub(crate) struct SealedRoster {
     pub(crate) name: Box<str>,
     pub(crate) fields: Vec<FieldDescriptor>,
 }
 
-/// Every relation's resident roster, index = `RelationId` ordinal (the
-/// declaration-order law). Called once per `Sealed` construction.
 pub(crate) fn sealed_rosters(descriptor: &SchemaDescriptor) -> Vec<SealedRoster> {
     descriptor
         .relations
@@ -362,7 +290,6 @@ pub(crate) fn sealed_rosters(descriptor: &SchemaDescriptor) -> Vec<SealedRoster>
         .collect()
 }
 
-/// The resident roster of one relation id, or the unknown-relation refusal.
 fn roster(rosters: &[SealedRoster], relation: RelationId) -> napi::Result<&SealedRoster> {
     rosters.get(relation.0 as usize).ok_or_else(|| {
         err(format!(
@@ -372,8 +299,6 @@ fn roster(rosters: &[SealedRoster], relation: RelationId) -> napi::Result<&Seale
     })
 }
 
-/// One dynamic fact row: natural JS values in sealed field order,
-/// schema-directed, arity-checked.
 pub(crate) fn fact_row(
     rosters: &[SealedRoster],
     relation: u32,
@@ -384,28 +309,6 @@ pub(crate) fn fact_row(
     Ok((rel, one_fact_row(&roster.name, &roster.fields, values)?))
 }
 
-/// One shape-proved collection from ONE flat row-major cells array —
-/// THE collection crossing (`proposals/one-representation/20`): the JS
-/// side counts the rows while projecting (it is the ONE side that knows N
-/// when the roster is fieldless) and the crossing carries that count
-/// explicitly; this pass verifies `cells.len() == rows × arity` EXACTLY
-/// against the resident sealed roster for EVERY arity. The old
-/// `cells.len() / arity` derivation is dead: it could not represent N
-/// nullary rows (N × 0 cells decoded as rows = 0, silently dropping the
-/// write — nullary relations are LEGAL, `schema/tests/valid.rs`), and
-/// arity-0 rows are representable here (`rows = N`, cells empty) AND
-/// O(1): a fieldless collection IS its row count (set semantics), so the
-/// builder's arity-0 seal takes the count directly — a stated count is
-/// data and never buys per-row work the payload did not marshal. A
-/// stated count disagreeing with the cells is refused in the row lane's
-/// exact error shape, naming the relation. Every cell feeds the engine's
-/// one positional judgment ([`CollectionBuilder`]'s typed pushes) in a
-/// single pass — no per-row container exists anywhere between the
-/// caller's array and the sealed proof `insert_accepted`/`load_accepted`/
-/// `delete_accepted` consume. Empty (`rows == 0`, no cells) is lawful,
-/// constructs without touching the roster (mirroring the retired
-/// `fact_rows` short-circuit), and still reaches the engine, which
-/// answers `MutationReport::EMPTY`.
 pub(crate) fn accepted_collection(
     env: Env,
     rosters: &[SealedRoster],
@@ -459,14 +362,6 @@ pub(crate) fn accepted_collection(
     Ok(collection)
 }
 
-/// One flat-lane cell: the JS shape judged against its positional field's
-/// declared type with [`schema_value`]'s exact refusals ([`cell_mismatch`]
-/// / [`bytes_width_mismatch`] are the shared spellings), then fed through
-/// the typed pushes — strings and `bytes<N>` land in the collection's
-/// arenas without buying a `Box`ed [`Value`] (D8,
-/// `proposals/one-representation/70`). The builder's own judgments (the
-/// fixed-interval width/ray family the bridge never judged) throw as the
-/// engine errors they always were on the `insert_dyn` lane.
 #[expect(
     unsafe_code,
     reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
@@ -557,8 +452,6 @@ fn one_fact_row(
     Ok(row)
 }
 
-/// One point-read key row: natural JS values in the key statement's
-/// projection order, schema-directed through the projected fields' types.
 pub(crate) fn key_row(
     rosters: &[SealedRoster],
     statements: &[StatementDescriptor],
@@ -614,8 +507,6 @@ pub(crate) fn key_row(
     Ok((rel, statement_id, row))
 }
 
-/// One TAGGED value — the 1:1 mirror of `bumbledb::Value` (the spec/IR/param
-/// lane, where no schema position directs the type).
 pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
     let kind: String = req(obj, "kind", "value")?;
     match kind.as_str() {
@@ -644,15 +535,11 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
     }
 }
 
-/// One positional execution argument, owned: the tagged mirror of
-/// `bumbledb::ParamArg` (`{ kind: "set", values }` is the set arm; every
-/// scalar kind is a `Value` tag).
 pub(crate) enum OwnedParam {
     Scalar(Value),
     Set(Vec<Value>),
 }
 
-/// The execute-call params array.
 pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
     let mut params = Vec::with_capacity(arr.len() as usize);
     for index in 0..arr.len() {
@@ -673,7 +560,6 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
     Ok(params)
 }
 
-/// The structural value-type mirror (`ValueTypeSpec` in `#spec.ts`).
 fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
     let kind: String = req(obj, "kind", "value type")?;
     match kind.as_str() {
@@ -768,11 +654,6 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
     })
 }
 
-/// One capacity bound: `{ kind: "lit", value }` a non-negative literal
-/// (`BigInt`), `{ kind: "field", field }` a TARGET-row field by name (the
-/// dependent bound), `{ kind: "durationField", field }` a TARGET
-/// interval's measure. A bare `BigInt` accepted as an implicit lit is
-/// forbidden — the old positional shape is dead wire.
 fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
     let kind: String = req(obj, "kind", "capacity bound")?;
     match kind.as_str() {
@@ -815,9 +696,6 @@ fn capacity_window_in(obj: &Object) -> napi::Result<CapacityWindowSpec> {
     }
 }
 
-/// The capacity weight — a REQUIRED key on the statement (C4: the wire
-/// always carries it; `{ kind: "unit" }` is the count instance's one
-/// spelling, never an omission).
 fn weight_in(obj: &Object) -> napi::Result<WeightSpec> {
     let kind: String = req(obj, "kind", "weight")?;
     match kind.as_str() {
@@ -865,7 +743,6 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
     }
 }
 
-/// The whole `SchemaSpec`, mirroring `#spec.ts` key for key.
 pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
     let relations: Array = req(obj, "relations", "schema spec")?;
     let mut relation_specs = Vec::with_capacity(relations.len() as usize);
@@ -1091,11 +968,6 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
     })
 }
 
-/// One condition tree, marshaled with an explicit depth ceiling of
-/// `bumbledb::MAX_CONDITION_DEPTH` — the engine's own validated bound
-/// (`bumbledb::ir`): the roster rejects deeper trees anyway, and refusing at
-/// marshal keeps this recursion stack-safe on hostile input for the same
-/// reason the engine measures depth iteratively before its recursive walks.
 fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
     if depth > bumbledb::MAX_CONDITION_DEPTH {
         return Err(err(format!(
@@ -1117,9 +989,6 @@ fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
     }
 }
 
-/// The children of one `and`/`or` node — the shared walk of the two
-/// connective arms (each arm names its own constructor; no in-arm tag
-/// re-test exists).
 fn condition_children(obj: &Object, depth: usize) -> napi::Result<Vec<ConditionTree>> {
     let children: Array = req(obj, "children", "condition")?;
     let mut trees = Vec::with_capacity(children.len() as usize);
@@ -1290,10 +1159,6 @@ fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     Ok(interiors)
 }
 
-/// The whole query IR: tagged Q1 (`cq` | `reach`). Relations, fields,
-/// and interiors by numeric id — the TS layer resolves names through
-/// the manifest and sends ids; the bridge never sees names here. CQ
-/// does not carry rec; Reach requires `rec` as an object.
 pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
     let kind: String = req(obj, "kind", "query")?;
     let interiors = interiors_in(obj)?;
@@ -1323,12 +1188,6 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
     }
 }
 
-/// One engine value crossing OUT as a natural JS value: `bool → boolean`,
-/// `u64/i64 → bigint`, `str → string`, `bytes<N> → Uint8Array`,
-/// `interval → { start, end }` bigint pair. The Allen-mask arm is total but
-/// unreachable from any row surface (masks are bind-time-only values); it
-/// crosses as its bits so the conversion stays a bijection on everything the
-/// engine can actually hand back.
 pub enum ValueOut {
     Bool(bool),
     U64(u64),
@@ -1400,19 +1259,12 @@ impl ToNapiValue for ValueOut {
     }
 }
 
-/// Owned rows to their outward form, cells moved.
 pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> Vec<Vec<ValueOut>> {
     rows.into_iter()
         .map(|row| row.into_iter().map(ValueOut::from_value).collect())
         .collect()
 }
 
-/// An executed [`Answers`] carrier to its outward form — the flat buffer
-/// crossed the reply channel whole (the engine's own one-allocation
-/// carrier; rebuilding it as per-row `Vec<Value>` on the worker was a full
-/// intermediate copy), so each cell decodes straight to its JS-bound value
-/// here. Infallible: answer strings are UTF-8-validated at materialization
-/// (`bumbledb::Answers`).
 pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
     (0..answers.len())
         .map(|row| {
@@ -1437,7 +1289,6 @@ pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
         .collect()
 }
 
-/// The statement form tag, through THE one table (`tags::statement_kind`).
 fn statement_kind_out(kind: StatementKind) -> &'static str {
     tags::statement_kind::tag(&kind)
 }
@@ -1472,7 +1323,6 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
     unsafe { Object::to_napi_value(env, obj) }
 }
 
-/// The manifest as one plain JS object — PRD-02's name→id tables verbatim.
 pub struct ManifestWire(pub(crate) Manifest);
 
 impl ToNapiValue for ManifestWire {
@@ -1540,12 +1390,6 @@ impl ToNapiValue for ManifestWire {
     }
 }
 
-/// One rendered violation as wire data — PRD-02's rejection rendering,
-/// carried whole: statement id, form tag, canonical spelling, the
-/// direction/measure payloads where the form has them (the capacity
-/// measure is the witnessed group total, u128 whole — C3: it crosses as
-/// `BigInt`, truncation unrepresentable), and the offending facts as named
-/// decoded values.
 pub struct ViolationWire {
     pub(crate) statement: u16,
     pub(crate) kind: StatementKind,
