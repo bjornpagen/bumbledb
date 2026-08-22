@@ -5,39 +5,9 @@ use crate::exec::sink::ProjectionSink;
 use crate::ir::validate::SignatureColumn;
 use crate::storage::catalog::CatalogRead;
 
-/// Drains the sink into the result buffer, decoding words by result type
-/// (each distinct intern resolved once, docs/architecture/40-execution.md).
-/// The aggregate sink finalizes mutably (`Pack`'s claim lists sort in
-/// place); the answer reservation is a hint — Pack emits one answer per
-/// (group, maximal segment), so groups is a floor there, not the count.
-///
-/// Sink answers are **word tuples** (the `SlotWidth` layout): each find
-/// contributes its width — an interval find spans two words that
-/// materialize as ONE interval cell — so every fill walks a word cursor
-/// per find, never a bare column index.
-///
-/// The projection drain fills **column-major**: the type dispatch runs
-/// once per column per finalize, not per cell (the `SignatureColumn`
-/// roster is sealed at validation — the per-column writer is the match
-/// arm, and each arm's row loop is monomorphic). Cells stay row-major
-/// (`answer * arity + column`) — only the fill order is columnar, so
-/// each column writes strided cell slots. The aggregate drain streams
-/// rows through `finalize_into` (Pack sorts in place; groups are few)
-/// and keeps the row-major path with ONE dispatch per cell.
-///
-/// GRAVESTONE (cleanup-0.5.0 ruling 7, the Measure phase, 2026-07-19,
-/// git history): an all-words fast path — a second
-/// `AnswerHeap::Words` route that skipped the memo/byte-heap plumbing
-/// when no column was string/bytes — was measure-or-merge twinned and
-/// REFUTED: resolved/words 0.996–1.005 on both sinks (projection
-/// 20,000-answer fill, aggregate 997-group drain; warm DRAM,
-/// interleaved min-of-7) against the 1.09 pre-stated bar. The word
-/// columns' arms below ARE the word path — the dispatch is per column
-/// (projection) or per cell (aggregate) either way, so the duplicate
-/// route bought nothing. The `AnswerHeap` seal died with it. Reverses
-/// if: a profiled finalize shows the String/FixedBytes match arms'
-/// mere presence taxing an all-words fill ≥ the house bar — re-twin
-/// before believing it.
+/// Reverses if: a profiled finalize shows the String/FixedBytes match arms'
+/// mere presence taxing an all-words fill ≥ the house bar — re-twin before
+/// believing it.
 pub(super) fn finalize<C: CatalogRead>(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
@@ -53,9 +23,7 @@ pub(super) fn finalize<C: CatalogRead>(
             let result = fill_resolved_answers(out, catalog, memo, columns, sink);
             if result.is_err() {
                 // The columnar fill pre-sizes its rows: drop the
-                // placeholder cells so no half-written row survives an
-                // error (the byte heap keeps orphan bytes, harmlessly —
-                // nothing references past a written cell's range).
+
                 out.cells.truncate(base);
             }
             result
@@ -69,13 +37,6 @@ pub(super) fn finalize<C: CatalogRead>(
     }
 }
 
-/// The resolving columnar fill: String goes through the intern memo
-/// per cell (that probe IS the resolution semantics — and the columnar
-/// order maximizes the run memo's coherence), a `bytes<N>` column
-/// re-assembles its padded slot words per answer (inline — no
-/// dictionary); everything else fills fixed-width. Byte-heap columns
-/// index their strided slot instead of holding the cells borrow — the
-/// heap append and the memo both need `out` whole.
 fn fill_resolved_answers<C: CatalogRead>(
     out: &mut Answers,
     catalog: &C,
@@ -110,9 +71,6 @@ fn fill_resolved_answers<C: CatalogRead>(
     Ok(())
 }
 
-/// One word-backed column's strided fill — the hoisted dispatch: ONE
-/// match, then a monomorphic row loop per arm. Returns the column's
-/// word width.
 fn fill_fixed_column(
     cells: &mut [Cell],
     arity: usize,
@@ -154,10 +112,6 @@ fn fill_fixed_column(
     1
 }
 
-/// One word answer's cells: String goes through the
-/// intern memo, a `bytes<N>` find re-assembles its padded slot words
-/// (inline — no dictionary); everything else decodes inline. ONE
-/// dispatch per cell.
 fn push_resolved_answer<C: CatalogRead>(
     out: &mut Answers,
     catalog: &C,
