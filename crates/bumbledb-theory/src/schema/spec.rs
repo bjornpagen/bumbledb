@@ -45,7 +45,6 @@ pub struct RelationSpec {
 /// as the macro's mandatory `as NewType` makes them unspellable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosedSpec {
-
     pub newtype: Box<str>,
 
     pub rows: Vec<RowSpec>,
@@ -118,7 +117,6 @@ pub struct SideSpec {
 /// pinned-column composition idiom (ruled 2026-07-24, ruling 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeightSpec {
-
     Unit,
 
     Field(Box<str>),
@@ -135,7 +133,6 @@ pub enum WeightSpec {
 /// [`SpecIssue::CapacityDependentFloor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundSpec {
-
     Lit(u64),
 
     Field(Box<str>),
@@ -153,7 +150,6 @@ pub enum BoundSpec {
 /// per-aggregate ban table the macro enforces at expansion (a ban is
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapacityWindowSpec {
-
     Exact(BoundSpec),
 
     Range { lo: BoundSpec, hi: BoundSpec },
@@ -167,7 +163,6 @@ pub enum CapacityWindowSpec {
 /// adjacent containment descriptors (`source <= target` first).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementSpec {
-
     Fd {
         relation: Box<str>,
         projection: Vec<Box<str>>,
@@ -203,7 +198,6 @@ pub enum StatementSide {
 /// never the whole invocation. `Ord` because it is a map key there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LiteralAt {
-
     Selection {
         statement: usize,
         side: StatementSide,
@@ -230,7 +224,6 @@ pub struct FaceNewtype {
 }
 
 impl FaceNewtype {
-
     #[must_use]
     pub fn cite(&self) -> String {
         match &self.newtype {
@@ -250,7 +243,6 @@ impl FaceNewtype {
 /// — an
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecIssue {
-
     UnknownRelation {
         statement: usize,
         relation: Box<str>,
@@ -263,7 +255,6 @@ pub enum SpecIssue {
     },
 
     NotAHandleField {
-
         at: LiteralAt,
         relation: Box<str>,
         field: Box<str>,
@@ -271,16 +262,13 @@ pub enum SpecIssue {
     },
 
     UnknownHandle {
-
         at: LiteralAt,
         closed: Box<str>,
         handle: Box<str>,
     },
 
     /// [`FieldId`] past it can be minted, so the cap runs before any
-
     RelationTooManyFields {
-
         relation: usize,
         name: Box<str>,
 
@@ -288,7 +276,6 @@ pub enum SpecIssue {
     },
 
     RowArityExcess {
-
         relation: usize,
         row: usize,
         name: Box<str>,
@@ -305,29 +292,47 @@ pub enum SpecIssue {
         second: Box<str>,
     },
 
-    CapacityInverted { statement: usize, lo: u64, hi: u64 },
+    CapacityInverted {
+        statement: usize,
+        lo: u64,
+        hi: u64,
+    },
 
-    CapacityExactRespelled { statement: usize, count: u64 },
+    CapacityExactRespelled {
+        statement: usize,
+        count: u64,
+    },
 
-    CapacityExclusionRespelled { statement: usize },
+    CapacityExclusionRespelled {
+        statement: usize,
+    },
 
     /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
-    CapacityVacuous { statement: usize },
+    CapacityVacuous {
+        statement: usize,
+    },
 
     /// 2026-07-24): `<=[w]{1..*}` — "positive total" — is a different,
-
-    CapacityContainmentRespelled { statement: usize },
+    CapacityContainmentRespelled {
+        statement: usize,
+    },
 
     /// are hi-slot only (ruled 2026-07-24, C6): a dependent floor has no
-
-    CapacityDependentFloor { statement: usize },
+    CapacityDependentFloor {
+        statement: usize,
+    },
 
     /// vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
-
-    WeightPathRefused { statement: usize, path: Box<str> },
+    WeightPathRefused {
+        statement: usize,
+        path: Box<str>,
+    },
 
     /// spelling, one refusal, every authoring wall.
-    BoundPathRefused { statement: usize, path: Box<str> },
+    BoundPathRefused {
+        statement: usize,
+        path: Box<str>,
+    },
 
     DegenerateLiteralSet {
         statement: usize,
@@ -499,7 +504,6 @@ impl std::fmt::Display for SpecIssue {
 pub struct SchemaSpecError(Box<[SpecIssue]>);
 
 impl SchemaSpecError {
-
     #[must_use]
     pub fn issues(&self) -> &[SpecIssue] {
         &self.0
@@ -532,7 +536,6 @@ struct SealedSlot<'spec> {
 }
 
 impl<'spec> Resolver<'spec> {
-
     fn relation(&mut self, statement: usize, name: &str) -> Option<usize> {
         let found = self.spec.relations.iter().position(|r| &*r.name == name);
         if found.is_none() {
@@ -831,7 +834,6 @@ impl<'spec> Resolver<'spec> {
 }
 
 impl SchemaSpec {
-
     /// # Errors
 
     /// # Panics
@@ -862,7 +864,6 @@ impl SchemaSpec {
             }
         }
         for (idx, relation) in self.relations.iter().enumerate() {
-
             let Some(closed) = &relation.closed else {
                 continue;
             };
@@ -902,7 +903,6 @@ impl SchemaSpec {
                         .iter()
                         .enumerate()
                         .map(|(row_idx, row)| {
-
                             if row.values.len() > relation.fields.len() {
                                 resolver.issues.push(SpecIssue::RowArityExcess {
                                     relation: rel_idx,
