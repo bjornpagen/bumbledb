@@ -556,7 +556,6 @@ struct ParamTables {
 }
 
 impl ParamTables {
-
     fn unify(&mut self, ctx: Context) -> Result<(), ValidationError> {
         for param in &ctx.interval_position_params {
             if matches!(
