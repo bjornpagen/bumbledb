@@ -6,7 +6,6 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 use super::{Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-
     /// # Errors
 
     pub fn contains(&self, view: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result<bool> {
