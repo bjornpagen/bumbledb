@@ -9,9 +9,7 @@ use super::check_width::check_width;
 
 /// `F` get: the canonical bytes of the fact at `row_id`, borrowed from the
 /// LMDB page, width-proved against the relation layout.
-///
 /// # Errors
-///
 /// `Corruption(MissingFact)` when the row is absent — a row id obtained
 /// from `M`/`U` in the same snapshot must resolve; `Corruption
 /// (WrongFactWidth)` when the stored value does not match the schema's
@@ -38,9 +36,7 @@ pub fn fetch<'txn, 's>(
 /// ([`super::begin_determinant_key`] + determinant bytes): `U` probe →
 /// `F` fetch — one body behind `ReadInstance::{get, get_dyn}` and
 /// `WriteTx`'s committed arm.
-///
 /// # Errors
-///
 /// As [`fetch`], plus `Corruption` on a malformed `U` row-id value.
 pub fn fact_for_key<'txn, 's>(
     txn: &'txn ReadTxn<'_>,
@@ -54,16 +50,12 @@ pub fn fact_for_key<'txn, 's>(
     }
 }
 
-/// `F` get by row id, missing honestly — the fresh-row point probe (the
-/// one id allocator, `docs/architecture/50-storage.md` § key layout;
-/// ruled 2026-07-23, R16): a fresh-keyed determinant IS the row id, the
+/// `F` get by row id, missing honestly — the fresh-row point probe: a fresh-keyed determinant IS the row id, the
 /// auto-key maintains no `U` tree, so the probe reads `F` directly —
 /// one B-tree descent. Absence is a miss, never corruption: no index
 /// entry witnessed the row (contrast [`fetch`], whose row id came from
 /// `M`/`U` in the same snapshot).
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure; `Corruption(WrongFactWidth)` on a stored
 /// fact not matching the schema's width.
 pub fn fact_at<'txn, 's>(
