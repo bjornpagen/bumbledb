@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use bumbledb::{Admission, Committed, Result, Violations};
 
-#[allow(dead_code)] 
+#[allow(dead_code)]
 #[track_caller]
 pub fn expect_rejected<T: std::fmt::Debug>(result: Result<Admission<T>>) -> Violations {
     match result {
@@ -12,7 +12,7 @@ pub fn expect_rejected<T: std::fmt::Debug>(result: Result<Admission<T>>) -> Viol
     }
 }
 
-#[allow(dead_code)] 
+#[allow(dead_code)]
 #[track_caller]
 pub fn expect_admitted<T: std::fmt::Debug>(result: Result<Admission<Committed<T>>>) -> T {
     result.expect("write").unwrap().value
@@ -21,7 +21,6 @@ pub fn expect_admitted<T: std::fmt::Debug>(result: Result<Admission<Committed<T>
 pub struct TempDir(PathBuf);
 
 impl TempDir {
-
     pub fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!("bumbledb-it-{tag}"));
         let _ = std::fs::remove_dir_all(&path);
