@@ -27,14 +27,12 @@ pub const INSERT_SALT: u64 = 0xC24D_0005;
 /// each generator privately assumed the pristine
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CounterModel {
-
     counters: u64,
 
     vals: HashMap<u64, i64>,
 }
 
 impl CounterModel {
-
     #[must_use]
     pub fn at_load(sizes: CrudSizes) -> Self {
         Self {
