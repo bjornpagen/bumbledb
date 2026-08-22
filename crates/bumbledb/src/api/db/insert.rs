@@ -2,7 +2,6 @@ use super::{Fact, MutationReport, WriteTx};
 use crate::error::Result;
 
 impl<S> WriteTx<'_, S> {
-
     /// # Errors
 
     /// after a prefix entered the delta.
