@@ -1,5 +1,4 @@
 //! One predicate walk over an operand-provider capability.
-//!
 //! Callers construct an [`Operands`] provider — image columns, fact
 //! bytes, or binding slots — and call [`holds`]. Measure-of-ray is
 //! `None`; every other outcome is `Some`. There is no second walk.
@@ -105,7 +104,6 @@ impl OperandAddr {
         }
     }
 
-    /// One word of a variable: `offset` is [`IntervalWord::offset`].
     #[must_use]
     pub fn var_word(var: crate::ir::VarId, offset: usize) -> Self {
         Self {
@@ -116,8 +114,6 @@ impl OperandAddr {
     }
 }
 
-/// One loaded operand. The walk matches on this; providers mint it
-/// from [`Operands::word`] / [`Operands::pair`] / [`Operands::block`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Loaded {
     Word(u64),
@@ -126,8 +122,6 @@ pub(crate) enum Loaded {
     Block { words: [u64; 8], count: u8 },
 }
 
-/// Operand-provider capability: where a predicate's words come from.
-/// Monomorphized per source, like [`crate::exec::run::Sink`].
 pub(crate) trait Operands {
     type Error;
 
@@ -136,20 +130,14 @@ pub(crate) trait Operands {
     #[allow(dead_code, reason = "bytes<N> currently loads via `loaded`")]
     fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8), Self::Error>;
 
-    /// Shape-aware load: [`FilterPredicate::FieldsCompare`] needs it because both sides'
-    /// column kinds are the provider's, not the predicate's.
     fn loaded(&self, at: OperandAddr) -> Result<Loaded, Self::Error>;
 
-    /// Resolve a still-pending string intern. Image rows never see one
-    /// (bind latches first); fact rows look the dictionary up, a miss
-    /// the never-minted sentinel.
     fn intern(&self, bytes: &[u8]) -> Result<u64, Self::Error> {
         let _ = bytes;
         unreachable!("validated: PendingIntern is latched before this provider")
     }
 }
 
-/// Image columns at one position.
 pub(crate) struct ImageRow<'a> {
     pub image: &'a RelationImage,
     pub position: usize,
@@ -191,10 +179,6 @@ impl Operands for ImageRow<'_> {
     }
 }
 
-/// Binding-slot words: `addr.slot()` is the first slot of the operand.
-/// A pair reads two consecutive slots; a block reads `width` slots.
-/// `word` is a slot reader so the ray probe can keep its `Fn(usize) -> u64`
-/// callback without copying the binding row.
 pub(crate) struct SlotOps<'a, F: Fn(usize) -> u64 + ?Sized> {
     pub word: &'a F,
 }
@@ -231,7 +215,7 @@ impl<F: Fn(usize) -> u64 + ?Sized> Operands for SlotOps<'_, F> {
     }
 
     fn intern(&self, _bytes: &[u8]) -> Result<u64, Self::Error> {
-        // Missed intern: the never-minted sentinel, same as bind.
+
         Ok(crate::storage::dict::SENTINEL_ID)
     }
 }
@@ -246,7 +230,6 @@ fn slot_block(word: &(impl Fn(usize) -> u64 + ?Sized), at: OperandAddr) -> ([u64
     (words, count)
 }
 
-/// Resolves a filter constant through the bind-time param slice.
 pub(crate) fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
     match value {
         Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],
@@ -254,7 +237,6 @@ pub(crate) fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
     }
 }
 
-/// One constant's encoded interval words.
 pub(crate) fn const_interval(value: &IntervalConst, params: &[Const]) -> (u64, u64) {
     match value {
         IntervalConst::Interval { start, end } => (*start, *end),
@@ -265,12 +247,10 @@ pub(crate) fn const_interval(value: &IntervalConst, params: &[Const]) -> (u64, u
     }
 }
 
-/// Point membership under the half-open interval: `start ≤ p AND p < end`.
 pub(crate) const fn point_in(start: u64, end: u64, point: u64) -> bool {
     start <= point && point < end
 }
 
-/// The resolved mask of an `Allen` shape.
 pub(crate) fn mask_of(mask: MaskConst, _params: &[Const]) -> bumbledb_theory::allen::AllenMask {
     mask
 }
@@ -312,11 +292,6 @@ fn span_in_set(words: &[u64], count: u8, set: &[u64]) -> bool {
     false
 }
 
-/// Whether this predicate is prepare-evaluable (no bind-time params,
-/// no measure). The grounding-evaluator's condition-2 parser — lives
-/// beside the walk so a new kind is one module. The operator/constant
-/// pairing matches the old `parse_resolvable` boundary: set inequality
-/// and order against non-word constants refuse.
 #[must_use]
 pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
     let ordinary = |op: WordCmp| {
@@ -346,9 +321,6 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
     }
 }
 
-/// One predicate over one operand source. Measure-of-ray is `None`;
-/// every other outcome is `Some`. Callers construct the provider;
-/// this is the only entry.
 pub(crate) fn holds<O: Operands>(
     predicate: &FilterPredicate,
     ops: &O,
@@ -429,7 +401,7 @@ fn compare_loaded<O: Operands>(
         (Loaded::Word(word), Const::WordSet(set)) => set.binary_search(&word).is_ok(),
         (Loaded::Byte(byte), Const::WordSet(set)) => set.binary_search(&u64::from(byte)).is_ok(),
         (Loaded::Block { words, count }, Const::WordSet(set)) => span_in_set(&words, count, set),
-        // Fact providers widen bool/enum bytes to words; image keeps Byte.
+
         (Loaded::Word(word), Const::Byte(c)) => op.compare(&word, &u64::from(*c)),
         (Loaded::Word(word), Const::PendingIntern { bytes }) => {
             op.compare(&word, &ops.intern(bytes)?)
@@ -500,7 +472,6 @@ fn interval_at(image: &RelationImage, field: FieldId, position: usize) -> (u64, 
     }
 }
 
-/// Conjunction over an image row. Infallible: image decode already ran.
 #[must_use]
 pub(crate) fn row_holds(
     image: &RelationImage,
@@ -516,7 +487,6 @@ pub(crate) fn row_holds(
     })
 }
 
-/// An interval field's two word-column slices.
 fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64]) {
     let span = image.span(field.field());
     debug_assert_eq!(span.width, ColumnWidth::WordPair);
@@ -981,7 +951,6 @@ fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
     let _ = write!(out, "{filter:?}");
 }
 
-/// One row id at a closed relation's own id position, as its handle.
 pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
     let row = relation
         .body()
@@ -1170,8 +1139,6 @@ mod gate {
         found
     }
 
-    /// Grep gate (audit/15): exhaustive `FilterPredicate` matches live
-    /// in the evaluator and the selectivity reader only.
     #[test]
     fn exhaustive_filter_predicate_matches_live_in_two_modules() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
