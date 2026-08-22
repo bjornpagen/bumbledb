@@ -1,16 +1,3 @@
-//! The benchmark's ledger schema — a statement-for-statement
-//! transcription of the primary-benchmark block in
-//! `docs/architecture/60-validation.md`, post-funeral: nine ordinary
-//! relations, three closed relations (the vocabularies `Currency`,
-//! `Source`, `Tag` — ground axioms, not a type), the nine doc
-//! containments plus the three vocabulary containments, and the
-//! pointwise key `Mandate(account, active) -> Mandate` (one mandate per
-//! account per instant).
-//!
-//! Changing this schema is a deliberate act: it re-baselines every stored
-//! corpus digest and every published report (the golden fingerprint test
-//! is the tripwire).
-
 use bumbledb::schema::ValidateDescriptor as _;
 bumbledb::schema! {
     pub Ledger;
@@ -78,14 +65,7 @@ bumbledb::schema! {
     Mandate(account, active) -> Mandate;
 }
 
-/// The validated ledger schema, memoized for the inspection surfaces
-/// (DDL rendering, id lookups, query translation); the engine itself
-/// takes [`Ledger`] — `Db::create(dir, Ledger)` — and validates there.
-///
 /// # Panics
-///
-/// Never in practice: the ledger declaration passes the acceptance gate
-/// (asserted on first use).
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -97,8 +77,6 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// Relation and field ids by name — no magic numbers in family
-/// definitions or the generator (declaration order is the id order).
 pub mod ids {
     use bumbledb::{FieldId, RelationId};
 
@@ -115,10 +93,8 @@ pub mod ids {
     pub const SOURCE: RelationId = RelationId(10);
     pub const TAG: RelationId = RelationId(11);
 
-    /// The number of **writable** relations — loaders iterate
-    /// `0..RELATIONS`. The closed relations (`Currency`/`Source`/`Tag`,
     /// ids 9..12) sit after every ordinary relation by declaration:
-    /// they are unwritable ground axioms, so no loader touches them.
+
     pub const RELATIONS: u32 = 9;
 
     pub mod holder {
@@ -180,9 +156,6 @@ mod tests {
     use super::*;
     use bumbledb::schema::ValueType;
 
-    /// The pre-funeral enum theory's fingerprint — the enum→closed
-    /// rewrite of the same vocabulary is a DIFFERENT theory, no store
-    /// compatibility, no migration.
     const PRE_FUNERAL_FINGERPRINT: &str =
         "c64e3142a655bc9c60d0f0488540aa559210c650dd5ceb3e06761c7f3088cee8";
 
@@ -195,13 +168,6 @@ mod tests {
         })
     }
 
-    /// The golden fingerprint: changing the schema re-baselines every
-    /// corpus digest and report — this test makes that a deliberate act,
-    /// never an accident. Update the constant ONLY alongside a conscious
-    /// schema change. Last moved by the capacity cutover: the canonical
-    /// schema encoding is `v5` (the label bumped for the capacity
-    /// statement form, moving every fingerprint — count-only schemas
-    /// like this one included; the ledger's statements are unchanged).
     #[test]
     fn the_fingerprint_is_pinned() {
         assert_eq!(
@@ -211,9 +177,6 @@ mod tests {
         );
     }
 
-    /// The funeral MOVED the fingerprint: an enum→closed rewrite of the
-    /// same vocabulary is a different theory — a store written under the
-    /// enum ledger does not open under this one, and nothing migrates.
     #[test]
     fn the_funeral_moved_the_fingerprint() {
         assert_ne!(
@@ -223,10 +186,6 @@ mod tests {
         );
     }
 
-    /// The statement roster: six fresh auto-keys first (declaration
-    /// order), then the three closed auto-keys (Currency/Source/Tag),
-    /// then the twelve containments in source order, then the pointwise
-    /// key.
     #[test]
     fn the_statement_roster_matches_the_doc() {
         let schema = schema();
