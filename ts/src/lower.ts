@@ -180,4 +180,4 @@ function lower(theory: AnySchema): SchemaSpec {
 	return { relations, statements: theory.statements.map(lowerStatement) }
 }
 
-export { lower, lowerClosed, lowerRelation }
+export { lower }

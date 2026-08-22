@@ -118,7 +118,7 @@ export type {
 } from "#fields.ts"
 export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
-export { lower, lowerClosed, lowerRelation } from "#lower.ts"
+export { lower } from "#lower.ts"
 export type { KeyFact } from "#marshal.ts"
 export type { FactValue, ParsedQuery, QueryIr, StatementKindTag } from "#native.ts"
 
@@ -154,7 +154,6 @@ export type {
 	TermOps
 } from "#query/lower.ts"
 export { lowerQuery, query } from "#query/lower.ts"
-export { parseQueryIr } from "#query/parse-ir.ts"
 export type {
 	ClassedField,
 	Duration,
@@ -200,7 +199,6 @@ export type {
 	ValueTypeSpec,
 	WeightSpec
 } from "#spec.ts"
-export { renderCapacityBound, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight } from "#spec.ts"
 export type {
 	CapacityData,
 	CapacityStatement,
