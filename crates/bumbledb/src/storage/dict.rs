@@ -1,19 +1,13 @@
-//! The interning dictionary (docs/architecture/50-storage.md): the
+//! The interning dictionary: the
 //! compression representation for repeated text — **str-only**. Digest-
-//! shaped values (`bytes<N>`) live inline in facts and never touch it
-//! (`docs/architecture/10-data-model.md`, *intern what repeats; inline
-//! what identifies*), so the key hash carries no type tag: with one
+//! shaped values (`bytes<N>`) live inline in facts and never touch it, so the key hash carries no type tag: with one
 //! interned type there is nothing to segregate.
-//!
 //! Facts carry 8-byte intern ids; the `_dict` database holds both maps:
-//!
 //! ```text
 //! 0x00 | blake3(raw_bytes)   -> id (u64 BE)   forward
 //! 0x01 | id (u64 BE)         -> raw_bytes     reverse
 //! ```
-//!
 //! Ids are monotonic, never reused, append-only; interning happens only
-//! inside write transactions. There is no GC — deleted facts leak their
 //! interned values (accepted design: the leak is scoped to repeated text,
 //! the population interning compresses).
 
@@ -22,7 +16,6 @@ use crate::error::{CorruptionError, Error, Result};
 use crate::storage::catalog::{LmdbReadCatalog, LmdbWriteCatalog};
 use crate::storage::env::{ReadTxn, WriteTxn};
 
-/// `_dict` key prefixes.
 pub(crate) const FORWARD: u8 = 0x00;
 pub(crate) const REVERSE: u8 = 0x01;
 
@@ -30,10 +23,6 @@ pub(crate) fn forward_key(raw: &[u8]) -> [u8; 33] {
     forward_key_from_hash(blake3::hash(raw).as_bytes())
 }
 
-/// [`forward_key`] with the blake3 already in hand — the hashing split
-/// out so a caller that computed the hash for its own key (the delta's
-/// committed-hit memo, `storage/delta/intern.rs`) pays exactly one
-/// blake3 per occurrence instead of re-hashing here on the memo miss.
 pub(crate) fn forward_key_from_hash(hash: &[u8; 32]) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = FORWARD;
@@ -55,40 +44,22 @@ pub(crate) fn intern_id_from_stored(bytes: &[u8]) -> Result<InternId> {
     Ok(InternId::from_raw(u64::from_be_bytes(id)))
 }
 
-/// The never-minted intern id, owned by [`InternId::SENTINEL`]. Word-comparison
-/// paths (bind, filters) still want the raw `u64`. An `Eq` filter against
-/// the sentinel matches nothing; an `Ne` filter matches everything —
-/// per-operator miss semantics fall out of ordinary word comparison
-/// (`docs/architecture/20-query-ir.md`).
 pub(crate) const SENTINEL_ID: u64 = InternId::SENTINEL.raw();
 
 /// Read-only lookup of a string's id. `None` means the value was never
 /// interned — on the query path that means "cannot match any fact": an
 /// empty result, never an insert, never an error.
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure, `Corruption` on a malformed stored id.
 #[cfg(test)]
 pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<InternId>> {
     lookup(txn, value.as_bytes())
 }
 
-/// The storage-front forward probe: blake3 here, then [`lookup_by_hash`].
-/// Readers: the string front above; the sweeper's committed-only
-/// selection encoding; [`LmdbReadCatalog::dict_lookup`], the polymorphic
-/// catalog surface's raw-bytes spelling. (The delta's intern path hashes
-/// for its committed-hit memo first and enters at [`lookup_by_hash`]
-/// directly.)
 pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<InternId>> {
     lookup_by_hash(txn, blake3::hash(raw).as_bytes())
 }
 
-/// THE forward get: one LMDB get plus one stored-id decode, with the
-/// blake3 already in hand — the committed-probe arm of
-/// `WriteDelta::resolve`, whose memo key IS the forward hash, so the one
-/// hash the memo computed pays for the LMDB get too; every raw-bytes
-/// caller enters through [`lookup`].
 pub(crate) fn lookup_by_hash(txn: &ReadTxn<'_>, hash: &[u8; 32]) -> Result<Option<InternId>> {
     match txn
         .env()
@@ -100,16 +71,13 @@ pub(crate) fn lookup_by_hash(txn: &ReadTxn<'_>, hash: &[u8; 32]) -> Result<Optio
     }
 }
 
-/// Thin delegate of [`LmdbWriteCatalog::dict_put_pending`].
 pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: InternId) -> Result<()> {
     LmdbWriteCatalog::new(txn).dict_put_pending(raw, id)
 }
 
 /// Thin delegate of [`LmdbReadCatalog::dict_resolve`]: raw bytes borrowed
 /// from the LMDB page for the transaction's lifetime.
-///
 /// # Errors
-///
 /// `Corruption(DanglingInternId)` when the id has no reverse entry — a fact
 /// referencing it is corrupt; never a skip.
 pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: InternId) -> Result<&'txn [u8]> {
@@ -139,12 +107,6 @@ mod tests {
         Environment::create(dir.path(), &empty_schema()).expect("create")
     }
 
-    /// Seeds committed dictionary entries through the PRODUCTION writer —
-    /// the delta's provisional mint flushed by [`put_pending`] plus one
-    /// advanced next-id, exactly the commit's phase-4 discipline
-    /// (`storage/commit/write.rs::flush_counters`). No second mint
-    /// implementation exists to drift (finding 096; the retired
-    /// direct-write `intern_str` was the one this suite pinned).
     fn seed(env: &Environment, schema: &Schema, values: &[&str]) -> Vec<InternId> {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
@@ -170,7 +132,7 @@ mod tests {
         let dir = TempDir::new("dict-idempotent");
         let schema = empty_schema();
         let env = env(&dir);
-        // Within one delta: the pending map dedups.
+
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
         let first = delta.intern_str(&view, "hello").expect("intern");
@@ -208,9 +170,7 @@ mod tests {
 
     #[test]
     fn reverse_entries_carry_raw_bytes_with_no_tag() {
-        // The contraction's shape pin: with the dictionary str-only, the
-        // reverse value IS the raw bytes — no tag byte survives anywhere
-        // in the codec (docs/architecture/50-storage.md).
+
         let dir = TempDir::new("dict-untagged");
         let schema = empty_schema();
         let env = env(&dir);
@@ -251,10 +211,9 @@ mod tests {
 
     #[test]
     fn a_dropped_delta_leaves_no_dictionary_entries() {
-        // The production abort path: the delta drops, its pending interns
+
         // with it — LMDB never saw them, and the counter never advanced,
-        // so the next transaction re-issues the provisional id (intern
-        // ids never escape; recycling an unflushed one is invisible).
+
         let dir = TempDir::new("dict-abort");
         let schema = empty_schema();
         let env = env(&dir);
