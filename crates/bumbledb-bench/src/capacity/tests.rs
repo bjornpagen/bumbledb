@@ -45,8 +45,6 @@ fn booking(id: u64, room: u64, start: u64, end: u64) -> (bumbledb::RelationId, V
     )
 }
 
-/// Seed one twin's unit mass as differential write ops (32-fact chunks,
-/// the windowed precedent).
 fn seed_ops(
     mass: Mass,
     rows: fn(Mass, bumbledb::RelationId) -> Box<dyn Iterator<Item = Vec<Value>>>,
@@ -74,11 +72,6 @@ fn write(
     Op::Write(Delta { deletes, inserts })
 }
 
-/// The three twin theories validate; the power pair differs exactly in
-/// the declared statements, and both weighted laws carry the ruled
-/// shapes — weight column, dependent ceiling, `Duration` pair —
-/// asserted against the capacity arena with `Bound` terms (never a
-/// unit downgrade passing silently).
 #[test]
 fn the_twin_theories_validate_and_pin_the_weighted_shapes() {
     let budgeted = power::PowerWorld
@@ -121,48 +114,38 @@ fn the_twin_theories_validate_and_pin_the_weighted_shapes() {
     );
 }
 
-/// The power-budget delta stream — the oracle gate's shared fixture:
-/// the legal sample, the over-budget burst, the zero-weight commits
-/// (the § 6 Sum-vs-Count split live), the dependent-bound lowering
-/// (a bound change alone re-judges the group), the exact budget, and
-/// one watt over it.
 fn power_stream(mass: Mass) -> Vec<Op> {
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, power_rows);
     ops.extend([
-        // A legal sample under a seeded pool.
+
         write(vec![], vec![device(base, 1, 1)]),
-        // A fresh tightly-budgeted pool.
+
         write(vec![], vec![pool(100, 5)]),
-        // The over-budget burst: 3 + 3 > 5 — MUST abort on every
-        // oracle, witnessed measure 6 (the full walk, C14).
+
         write(
             vec![],
             vec![device(base + 1, 100, 3), device(base + 2, 100, 3)],
         ),
-        // Half the budget commits.
+
         write(vec![], vec![device(base + 3, 100, 3)]),
-        // Zero-weight devices spend nothing (Sum, not Count).
+
         write(
             vec![],
             vec![device(base + 4, 100, 0), device(base + 5, 100, 0)],
         ),
-        // Lowering the supply on the parent's own row re-judges the
-        // group: 3 > 2 — the bound change ALONE convicts.
+
         write(vec![pool(100, 5)], vec![pool(100, 2)]),
-        // Raising it releases.
+
         write(vec![pool(100, 5)], vec![pool(100, 10)]),
-        // The exact budget: 3 + 7 = 10 commits.
+
         write(vec![], vec![device(base + 6, 100, 7)]),
-        // One watt over convicts, measure 11.
+
         write(vec![], vec![device(base + 7, 100, 1)]),
     ]);
     ops
 }
 
-/// Naive parity for the weighted judge — the semantic oracle gate the
-/// timed rows sit behind: verdicts, citations, and witnessed measures
-/// (C14) compared whole through the differential runner.
 #[test]
 fn the_power_budget_verdicts_agree_with_the_naive_model() {
     let dir = scratch("power-naive");
@@ -181,8 +164,6 @@ fn the_power_budget_verdicts_agree_with_the_naive_model() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Naive parity for the calendar lane (C15: the fresh twin world) —
-/// the `Duration` weight and the `Duration` ceiling on both oracles.
 #[test]
 fn the_calendar_verdicts_agree_with_the_naive_model() {
     let dir = scratch("calendar-naive");
@@ -194,16 +175,15 @@ fn the_calendar_verdicts_agree_with_the_naive_model() {
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, calendar_rows);
     ops.extend([
-        // A legal sample high in a seeded room's span.
+
         write(vec![], vec![booking(base, 1, 500_000, 500_001)]),
-        // A ten-unit room.
+
         write(vec![], vec![room(100, 0, 10)]),
-        // Six of ten commit.
+
         write(vec![], vec![booking(base + 1, 100, 0, 6)]),
-        // Six more blow the measure: 12 > 10 — witnessed whole.
+
         write(vec![], vec![booking(base + 2, 100, 6, 12)]),
-        // The exact measure commits: 6 + 4 = 10. Overlap is NOT the
-        // law — the booked TIME is the budget.
+
         write(vec![], vec![booking(base + 3, 100, 0, 4)]),
     ]);
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
@@ -212,10 +192,9 @@ fn the_calendar_verdicts_agree_with_the_naive_model() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// One power-stream delta against the `SQLite` twin: deletes then
-/// inserts inside one IMMEDIATE transaction (the engine's own delta
-/// order), any refusal rolling the whole delta back — accept/abort is
-/// the compared verdict.
+/// One power-stream delta against the `SQLite` twin: deletes then inserts
+/// inside one IMMEDIATE transaction (the engine's own delta order), any refusal
+/// rolling the whole delta back — accept/abort is the compared verdict.
 fn sqlite_verdict(conn: &rusqlite::Connection, delta: &Delta) -> bool {
     conn.execute_batch("BEGIN IMMEDIATE").expect("begin");
     let mut ok = true;
@@ -269,13 +248,12 @@ fn sqlite_verdict(conn: &rusqlite::Connection, delta: &Delta) -> bool {
     ok
 }
 
-/// The SUM-trigger twin renders the SAME accept/abort verdicts as the
-/// engine over the whole power stream — the one place `SQLite` speaks
-/// a weighted capacity law (enforcement, the lawful pattern; the
-/// polarity table decides the trigger set: BEFORE INSERT on the
-/// weighed side AND on the bound-carrying side, deletes trigger-free
-/// because a non-negative ceiling is insert-violable only). Verdict
-/// parity only — nothing here is timed.
+/// The SUM-trigger twin renders the SAME accept/abort verdicts as the engine
+/// over the whole power stream — the one place `SQLite` speaks a weighted
+/// capacity law (enforcement, the lawful pattern; the polarity table decides
+/// the trigger set: BEFORE INSERT on the weighed side AND on the bound-carrying
+/// side, deletes trigger-free because a non-negative ceiling is insert-violable
+/// only).
 #[test]
 fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     let dir = scratch("power-sqlite");
@@ -288,9 +266,7 @@ fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     for statement in super::sqlite::DDL {
         conn.execute_batch(statement).expect("twin ddl");
     }
-    // The engine judges final states; the twin's FK is immediate, so
-    // the bound-lowering delete+reinsert defers FK checks to COMMIT —
-    // the lawful lane's recorded asymmetry, resolved per-transaction.
+
     let mut aborts = 0u64;
     for op in power_stream(mass) {
         let Op::Write(delta) = op else {
@@ -313,9 +289,6 @@ fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The three timed rows run their full protocols on seeded twins and
-/// every measured commit is legal (the runners measure the judge —
-/// bound read plus weighted walk — never refusals).
 #[test]
 fn the_capacity_rows_run_their_protocols() {
     let dir = scratch("rows");
@@ -351,12 +324,6 @@ fn the_capacity_rows_run_their_protocols() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The traced capacity path (`bench --trace`): the weighted-capacity
-/// judgment lane lands its traced solo sample as a parseable
-/// Chrome+folded pair beside the read-family traces, the judgment and
-/// commit spans reach the artifact, and the flame embed rides the same
-/// report list the read families fill. Ephemeral twin, one selected
-/// family: a smoke test, not a measurement.
 #[cfg(feature = "obs")]
 #[test]
 fn traced_capacity_lands_the_judgment_spans() {
