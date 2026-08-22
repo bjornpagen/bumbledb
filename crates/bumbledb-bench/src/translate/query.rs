@@ -188,9 +188,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
     for (position, find) in finds.iter().enumerate() {
         match find {
             FindTerm::Var(_) => {
-
                 let names = if matches!(find, FindTerm::Var(_)) {
-
                     head_group_names(arms, position)
                 } else {
                     vec![format!("h{position}")]
@@ -205,14 +203,12 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
             FindTerm::Pack { .. } => {
-
                 // routes Pack heads to the naive lane before translation.
                 return Err("Pack is naive-only (no SQL coalesce)".to_owned());
             }
         }
     }
     let tail = if group.is_empty() {
-
         " HAVING COUNT(*) > 0".to_owned()
     } else {
         format!(" GROUP BY {}", group.join(", "))
@@ -290,7 +286,6 @@ fn fold_sql(
         }
     }
     let tail = if group.is_empty() {
-
         " HAVING COUNT(*) > 0".to_owned()
     } else {
         format!(" GROUP BY {}", group.join(", "))
