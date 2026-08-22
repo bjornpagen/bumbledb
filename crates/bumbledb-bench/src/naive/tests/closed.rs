@@ -1,10 +1,3 @@
-//! Closed-relation goldens: the engine's compiled-subset commit fixture
-//! (Severity/Alert/Escalation/Handler — `storage/commit/tests/closed.rs`)
-//! re-expressed against the naive model, plus the definitional
-//! membership check: the ψ-subset judged against hand-computed rows
-//! using nothing but the shared `Value` type — σ applied to the
-//! extension by value comparison, from the definition.
-
 use bumbledb::schema::{
     FieldId, RelationDescriptor, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
@@ -18,16 +11,10 @@ const ALERT: RelationId = RelationId(1);
 const ESCALATION: RelationId = RelationId(2);
 const HANDLER: RelationId = RelationId(3);
 
-/// Materialized order: Severity's closed auto-key (0), the declared
-/// Handler key (1), then the declared containments.
 const ALERT_SEVERITY: StatementId = StatementId(2);
 const ESCALATION_SEVERITY: StatementId = StatementId(3);
 const SEVERITY_HANDLED: StatementId = StatementId(4);
 
-/// Severity closed {pages: bool} = Low(false) | Med(true) | High(true);
-/// Alert(severity) <= Severity(id); Escalation(severity) <= Severity(id
-/// | pages == true); Severity(id) <= Handler(severity) — the engine's
-/// commit fixture, verbatim.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -112,10 +99,6 @@ fn all_handlers() -> Delta {
     }
 }
 
-/// The model seeds the closed relation from the extension at
-/// construction: the sealed field space (`[id, pages]`), row id =
-/// declaration index — and the seeded rows answer queries as ordinary
-/// facts.
 #[test]
 fn the_extension_seeds_at_construction() {
     let db = NaiveDb::new(&schema());
@@ -132,9 +115,9 @@ fn the_extension_seeds_at_construction() {
     assert_eq!(db.generation(), 0, "seeding is not a commit");
 }
 
-/// Writes naming a closed relation are refused with the engine's typed
-/// verdict, before anything applies — deletes first, then inserts,
-/// exactly the replay order.
+/// Writes naming a closed relation are refused with the engine's typed verdict,
+/// before anything applies — deletes first, then inserts, exactly the replay
+/// order.
 #[test]
 fn closed_writes_are_refused_typed() {
     let mut db = NaiveDb::new(&schema());
@@ -146,7 +129,7 @@ fn closed_writes_are_refused_typed() {
             inserts: vec![],
         },
         // A mixed delta: the closed delete is refused even though the
-        // ordinary insert alone would abort on its own statement.
+
         Delta {
             deletes: vec![(SEVERITY, vec![Value::U64(0), Value::Bool(false)])],
             inserts: vec![(ALERT, vec![Value::U64(300)])],
@@ -160,16 +143,9 @@ fn closed_writes_are_refused_typed() {
     }
 }
 
-/// The definitional membership check, hand-computed: σψ over the
-/// extension rows selects `{Med, High}` (ids 1 and 2) — an in-range id
-/// outside ψ (`Low`), an in-word dangling id (3..256), and an id beyond
-/// the roster cap are all the same source-unsatisfied violation, while
-/// the plain (unselected) reference admits every extension row and
-/// nothing else. Nothing here but the shared `Value` sum.
 #[test]
 fn the_psi_subset_judges_from_the_extension() {
-    // Hand-compute ψ over the extension: keep rows whose `pages`
-    // column (sealed position 1) equals the literal true.
+
     let descriptor = schema();
     let extension = descriptor.relations[0].extension.as_ref().expect("closed");
     let psi_rows: Vec<u64> = extension
@@ -196,8 +172,7 @@ fn the_psi_subset_judges_from_the_extension() {
             );
         }
     }
-    // Beyond the 256-row roster cap: membership is simply false — the
-    // same violation as any dangling reference, no special error.
+
     let mut db = NaiveDb::new(&descriptor);
     assert_eq!(
         db.apply(&insert(ESCALATION, vec![Value::U64(300)])),
@@ -206,7 +181,7 @@ fn the_psi_subset_judges_from_the_extension() {
             direction: Direction::SourceUnsatisfied,
         }]),
     );
-    // The plain reference admits exactly the extension's ids.
+
     for (id, expected) in [(2u64, true), (3u64, false)] {
         let mut db = NaiveDb::new(&descriptor);
         let verdict = db.apply(&insert(ALERT, vec![Value::U64(id)]));
@@ -227,18 +202,12 @@ fn the_psi_subset_judges_from_the_extension() {
     }
 }
 
-/// Domain quantification from the definition: the closed source's
-/// A-side tuples are φ over the extension, judged against the mutable
-/// target — deleting the last handler for a covered severity aborts
-/// target-side; a same-delta replacement re-establishes the tuple and
-/// commits.
 #[test]
 fn domain_quantification_judges_target_side() {
     let mut db = NaiveDb::new(&schema());
     db.apply(&all_handlers()).expect("the handlers land");
     let before = db.clone();
 
-    // Deleting the last handler for severity 2 strands the High axiom.
     assert_eq!(
         db.apply(&Delta {
             deletes: vec![(HANDLER, vec![Value::U64(2), Value::U64(10)])],
@@ -251,7 +220,6 @@ fn domain_quantification_judges_target_side() {
     );
     assert_eq!(db, before, "the abort must not apply");
 
-    // A replacement in the same delta re-establishes the key tuple.
     db.apply(&Delta {
         deletes: vec![(HANDLER, vec![Value::U64(2), Value::U64(10)])],
         inserts: vec![(HANDLER, vec![Value::U64(2), Value::U64(99)])],
@@ -259,9 +227,6 @@ fn domain_quantification_judges_target_side() {
     .expect("the severity-2 tuple re-lands in the same delta");
 }
 
-/// Complete admission sees the closed source with no incremental
-/// premise: an empty candidate rejects Severity→Handler, and landing
-/// every handler empties the roster.
 #[test]
 fn complete_admission_rejects_unhandled_closed_source() {
     let mut db = NaiveDb::new(&schema());
