@@ -15,9 +15,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// The displaced schema validates and the registry is coherent: unique
-/// names, each shape carrying a resident control (mass 0) and a
-/// displaced ladder.
 #[test]
 fn the_schema_validates_and_the_registry_is_coherent() {
     let schema = super::DisplacedWorld
@@ -40,16 +37,10 @@ fn the_schema_validates_and_the_registry_is_coherent() {
     }
 }
 
-/// The ≥ 32 MiB claim, computed from the engine's own layout rules over
-/// the TRACED force shape (2^20 spoke positions, 453,241 distinct hub
-/// keys — the obs test below pins those numbers against the engine
-/// itself; this one pins the arithmetic they imply). If the engine's
-/// COLT sizing or image encoding changes, this pins the drift.
 #[test]
 fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
     let sizes = DispSizes::of(Scale::S);
-    // The pinned distinct count is the generator's arithmetic, not a
-    // free constant: 2^20 uniform draws over the 2^19 hub key space.
+
     assert_eq!(FORCED_MAP_POSITIONS, sizes.spokes);
     let mut seen = vec![false; usize::try_from(sizes.hubs).expect("64-bit usize")];
     for i in 0..sizes.spokes {
@@ -59,31 +50,22 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
     let distinct = u64::try_from(seen.iter().filter(|s| **s).count()).expect("fits u64");
     assert_eq!(distinct, FORCED_MAP_DISTINCT, "1 - e^-2 of 2^19, exactly");
     // The forced spoke map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB
-    // bucket words = 34 MiB, past one P-cluster's 32 MiB L2.
+
     let map = forced_spoke_map_bytes(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT);
     assert_eq!(map, (1 << 18) * 8 + (1 << 18) * 16 * 8, "2^18 buckets");
     assert!(map >= 32 << 20, "the forced map is the >= 32 MiB claim");
-    // The steady-state per-pass touched mass: the map, the iterated hub
-    // image, and the gathered spoke val column.
+
     let touched = map + sizes.hub_image_bytes() + sizes.spokes * 8;
     assert!(touched >= 48 << 20, "≈ 50 MiB per steady-state probe pass");
-    // The stream shape's touched mass: two spoke columns = 16 MiB.
+
     assert_eq!(sizes.spokes * 2 * 8, 16 << 20);
-    // Every timed scale shares the shape (the closure precedent).
+
     assert_eq!(DispSizes::of(Scale::M), sizes);
     assert_eq!(DispSizes::of(Scale::L), sizes);
 }
 
-/// The regime label observed on the ENGINE, not derived beside it (the
-/// arithmetic test above cannot catch plan drift — this one can): at
-/// the real bench shape, the first probe execute forces exactly two
-/// COLT maps — the fold split's HUB group-prefix level (all 2^19 hub
-/// positions keyed by tag, the group count distinct) and the probed
-/// SPOKE map ingesting all 2^20 positions keyed by hub value with the
-/// pinned distinct count — the executor iterates the hub side through
-/// its tag prefix and probes the ≈ 34 MiB spoke map. And each force is
-/// once per prepare: the second execute memo-hits, forcing nothing and
-/// rebuilding no image, so every timed pass after warmup 1 is the
+/// And each force is once per prepare: the second execute memo-hits, forcing
+/// nothing and rebuilding no image, so every timed pass after warmup 1 is the
 /// steady-state shape the module doc claims.
 #[cfg(feature = "obs")]
 #[test]
@@ -96,7 +78,7 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         scale: Scale::S,
     };
     let sizes = DispSizes::of(cfg.scale);
-    // Engine store only — the mirror is parity's business, not this pin's.
+
     let db = StoreMode::Durable
         .create(&dir.join("db"), super::DisplacedWorld)
         .expect("create");
@@ -153,9 +135,6 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `SQLite` parity at the shrunk scale (the windowed family's unit-mass
-/// precedent): both shapes row-identical across engines on the `Tiny`
-/// world, through the exact verify path the timed lane runs.
 #[test]
 fn the_tiny_world_verifies_on_both_engines() {
     let dir = scratch("parity");
@@ -171,9 +150,6 @@ fn the_tiny_world_verifies_on_both_engines() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The probe fold groups by tag and the stream fold is a single row —
-/// the work counts the timed lane black-boxes are the real answer
-/// masses.
 #[test]
 fn the_folds_produce_their_group_masses() {
     let dir = scratch("masses");
@@ -196,10 +172,9 @@ fn the_folds_produce_their_group_masses() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The interleave harness runs the between-pass closure before every
-/// warmup and every timed sample, and the foreign stream touches the
-/// claimed mass through the same code path at mass 0 (a no-op) and
-/// mass 1.
+/// The interleave harness runs the between-pass closure before every warmup and
+/// every timed sample, and the foreign stream touches the claimed mass through
+/// the same code path at mass 0 (a no-op) and mass 1.
 #[test]
 fn the_interleaved_harness_runs_between_every_pass() {
     let proto = Protocol {
@@ -224,7 +199,7 @@ fn the_interleaved_harness_runs_between_every_pass() {
     assert_eq!(m.work, u64::from(proto.samples));
 
     let mut resident = ForeignStream::new(0);
-    resident.stream(); // the mass-0 control is a no-op, same path
+    resident.stream(); 
     let mut foreign = ForeignStream::new(1);
     assert_eq!(foreign.buf.len(), 1 << 20);
     foreign.stream();
