@@ -3,7 +3,6 @@
 //! on [`bdb_violations`], the owning handle of an admission rejected arm.
 //! The kind table is the FOURTH spelling of the engine taxonomy (Rust
 //! enum, TypeScript union, tags.json, this C header).
-
 use bumbledb::{
     Direction, Error, ErrorFamily, SchemaDescriptor, StatementKind, Violations, render_rejection,
 };
