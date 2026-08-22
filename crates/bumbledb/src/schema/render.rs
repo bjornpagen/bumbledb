@@ -1,9 +1,7 @@
 //! Statement rendering back to the `schema!` algebra notation
-//! (`docs/architecture/70-api.md` § grammar). Statements are anonymous —
+//! . Statements are anonymous —
 //! their identity is their materialized-order id — and errors cite the
-//! statement rendered back in this notation
-//! (`docs/architecture/30-dependencies.md`).
-//!
+//! .
 //! Rendering allocates; it runs only in `Display`/diagnostic contexts
 //! (`crate::error`), never on a write or query path.
 
@@ -23,7 +21,7 @@ use crate::error::{Direction, Violation, Violations};
 /// spelling (the renderer is a bijection on legal statements, so the
 /// spelling pastes back), the direction/count payloads where the form
 /// carries them, and the offending facts as named decoded values
-/// (`docs/architecture/30-dependencies.md` § rendering the rejection).
+/// .
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderedViolation {
     Functionality {
@@ -111,18 +109,12 @@ pub struct RenderedFact {
 /// bindings-consumable form of a rejected [`crate::error::Admission`]:
 /// per citation, the statement id, kind tag, canonical spelling, and the
 /// offending facts as `(relation name, [(field name, value)])` rows,
-/// read off the decoded cited facts the commit boundary attached
 /// ([`Violations::cited_facts`]). Pure over the descriptor: a foreign
 /// host renders with its cached [`crate::Theory`] descriptor and no
 /// database handle.
-///
 /// Total on plain data: unknown ids render as `relation#N` / `field#N`
-/// placeholders, the declared renderer's own convention.
-///
 /// # Panics
-///
 /// When a cited fact's field ordinal exceeds the id space (`u16`) —
-/// impossible for facts decoded from a schema the declaration boundary
 /// admitted ([`crate::error::SchemaError::RelationTooManyColumns`] is
 /// the typed rejection for such counts).
 #[must_use]
@@ -131,10 +123,7 @@ pub fn render_rejection(
     violations: &Violations,
 ) -> Vec<RenderedViolation> {
     let names = DeclaredNames(descriptor);
-    // Materialized once, mirrors once — every violation's spelling reads
-    // the same list (the per-violation re-materialization died with the
-    // manifest's). The sealed schema is the one path from a typed
-    // spine slot to the materialized ordinal.
+
     let schema = descriptor
         .clone()
         .validate()
@@ -203,16 +192,7 @@ pub fn render_rejection(
 /// `==` once, in the pair's written orientation (both ids render the same
 /// string), and a capacity statement B-family, target-left, in its one
 /// canonical spelling (`Parent(id) <={1..3} Task(parent)`;
-/// `Pool(id) <=[watts]{0..supply} Device(pool)` — the weight bracket
-/// prints between `<=` and the window, nothing for the unit instance,
-/// and bounds print their target-field idents; literal `lo = hi` prints
-/// `{n}`). Selection literals render through one value formatter;
-/// intervals render as `start..end`. The rendered string re-parses under
-/// the `schema!` grammar — the renderer is a bijection on legal
-/// statements.
-///
 /// # Panics
-///
 /// On an out-of-range id — statement ids are validated, internal data.
 #[must_use]
 pub fn render(schema: &Schema, id: StatementId) -> String {
@@ -250,11 +230,7 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 /// statement may fail to resolve (that can be the error) render as
 /// `relation#N`/`field#N` placeholders. The one-statement convenience:
 /// materializes and pairs, then delegates to [`render_materialized`] —
-/// batch renderers (the manifest, [`render_rejection`]) hold the list
-/// already and call the threaded form directly.
-///
 /// # Panics
-///
 /// On an out-of-range id — schema errors carry ids produced by validating
 /// this same descriptor.
 #[must_use]
@@ -264,14 +240,7 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
     render_materialized(descriptor, &materialized, &mirrors, id)
 }
 
-/// The declared renderer over an already-materialized statement list and
-/// its pre-computed `==` link table — the batch form: one materialization
-/// and one pairing pass serve every statement of a manifest or rejection
-/// render, where per-statement re-derivation was quadratic in clones.
-///
 /// # Panics
-///
-/// On an out-of-range id — callers hold the list the id indexes.
 pub(super) fn render_materialized(
     descriptor: &SchemaDescriptor,
     materialized: &[StatementDescriptor],
@@ -291,9 +260,7 @@ pub(super) fn render_materialized(
             RenderedStatement::Containment {
                 source,
                 target,
-                // A rejected declaration seals no `mirror` field to read,
-                // so the pairing comes from sealing's one identity
-                // ([`super::validate::mirror_links`]), pre-computed.
+
                 mirror: mirrors.get(&id).copied(),
             }
         }
@@ -319,28 +286,15 @@ pub(super) fn render_materialized(
     .to_string()
 }
 
-/// Name resolution over whichever schema form the caller holds. `None`
-/// falls back to an id placeholder — the declared path renders statements
-/// whose ids may be the very thing validation rejected.
 trait Names {
     fn relation_name(&self, relation: RelationId) -> Option<&str>;
     fn field(&self, relation: RelationId, field: FieldId) -> Option<&FieldDescriptor>;
-    /// `(relation, field)` as a closed-reference position: the closed
-    /// relation whose row ids the field's words are — a walk over the
-    /// declared containments whose target is a closed relation's id and
-    /// whose source projection is that single field (`ir/render`'s own
-    /// inference), plus each closed relation's id field mapping to
-    /// itself. The macro admits bare handles by the field's *newtype*,
-    /// which the engine never learns; the declared containment is the
-    /// engine-visible fact this walk reads.
+
     fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId>;
-    /// Row `id` of closed relation `closed`, as its handle; `None` = out
-    /// of range (the caller prints the visibly-wrong fallback).
+
     fn handle(&self, closed: RelationId, id: u64) -> Option<String>;
 }
 
-/// The shared containment walk behind both [`Names::closed_target`]
-/// impls, over whichever statement list the schema form carries.
 fn closed_target_of<'a>(
     statements: impl Iterator<Item = (&'a Side, &'a Side)>,
     is_closed: impl Fn(RelationId) -> bool,
@@ -400,9 +354,6 @@ impl Names for SealedNames<'_> {
 
 struct DeclaredNames<'a>(&'a SchemaDescriptor);
 
-/// The synthetic (`id`, U64) field a closed relation's sealed list opens
-/// with — the declared-side renderer resolves the same ids the sealed
-/// schema answers to.
 static SYNTHETIC_ID: std::sync::LazyLock<FieldDescriptor> =
     std::sync::LazyLock::new(|| FieldDescriptor {
         name: "id".into(),
@@ -417,8 +368,7 @@ impl Names for DeclaredNames<'_> {
 
     fn field(&self, relation: RelationId, field: FieldId) -> Option<&FieldDescriptor> {
         let relation = self.0.relations.get(relation.0 as usize)?;
-        // Statement field ids address the sealed numbering: on a closed
-        // relation, 0 is the synthetic id and declared fields sit at +1.
+
         if relation.extension.is_some() {
             return match usize::from(field.0).checked_sub(1) {
                 None => Some(&SYNTHETIC_ID),
@@ -463,7 +413,6 @@ impl Names for DeclaredNames<'_> {
     }
 }
 
-/// The lazy renderer behind both entry points.
 struct Rendered<'a, N: Names + ?Sized> {
     names: &'a N,
     statement: RenderedStatement<'a>,
@@ -478,7 +427,7 @@ enum RenderedStatement<'a> {
     Containment {
         source: &'a Side,
         target: &'a Side,
-        /// The `==` partner, if any — the sealed fact, never re-detected.
+
         mirror: Option<StatementId>,
     },
     Capacity {
@@ -506,10 +455,7 @@ impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
                 target,
                 mirror,
             } => match mirror {
-                // A mirrored pair renders `==` once, canonically in the
-                // lower id's written orientation — both partners produce
-                // the same string, so the higher id flips its sides
-                // (which *are* the partner's sides, swapped).
+
                 Some(partner) if partner < self.id => {
                     side(f, self.names, target)?;
                     write!(f, " == ")?;
@@ -526,19 +472,7 @@ impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
                     side(f, self.names, target)
                 }
             },
-            // B-family, target-left, CANONICAL spellings only (the
-            // canonical-utterance law, `docs/architecture/70-api.md`):
-            // the weight bracket between `<=` and the brace (nothing for
-            // the unit instance — the count utterance falls out, no
-            // second printer), literal `lo = hi` is the `{n}` exact
-            // spelling (`{0}` the exclusion; exact prints on STRUCTURAL
-            // equality — a dependent ceiling always prints the range),
-            // no ceiling is `{lo..*}`, else `{lo..hi}` with dependent
-            // bounds printing their target-field idents. Validation
-            // rejects the banned bound shapes (`{0..*}`, unit `{1..*}`,
-            // inverted), so a sealed statement never renders one; a
-            // rejected declaration renders its banned bounds as written
-            // — the diagnostic must show the offense.
+
             RenderedStatement::Capacity {
                 target,
                 weight,
@@ -577,10 +511,6 @@ impl<N: Names + ?Sized> fmt::Display for Rendered<'_, N> {
     }
 }
 
-/// One capacity bound in macro notation: a literal integer, a
-/// target-row field ident, or `Duration(field)` — the bound formatter
-/// behind the capacity window (idents resolve through the same
-/// [`Names`] the sides use; unknown ids take the `field#N` fallback).
 fn bound<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
     names: &N,
@@ -625,9 +555,6 @@ fn side<N: Names + ?Sized>(f: &mut fmt::Formatter<'_>, names: &N, side: &Side) -
     side_parts(f, names, side.relation, &side.projection, &side.selection)
 }
 
-/// `Name(p1, p2 | s1 == lit1, s2 == {lit2, lit3})` — the one side shape;
-/// the selection block only when σ is nonempty; a disjunctive binding
-/// renders its literal set in braces.
 fn side_parts<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
     names: &N,
@@ -669,11 +596,6 @@ fn side_parts<N: Names + ?Sized>(
     write!(f, ")")
 }
 
-/// One selection literal at its field position. A word at a
-/// closed-reference position prints its handle (the macro's own
-/// bare-handle spelling back out); an out-of-range word prints visibly
-/// wrong as `Kind(7?)` — the `ir/render` convention, one fallback
-/// everywhere.
 fn selection_literal<N: Names + ?Sized>(
     f: &mut fmt::Formatter<'_>,
     names: &N,
@@ -694,10 +616,6 @@ fn selection_literal<N: Names + ?Sized>(
     }
 }
 
-/// The one selection-literal formatter: intervals render as their macro
-/// form `start..end`, strings and bytes as escaped literals. Field-blind
-/// — closed-reference words resolve to handles at the selection loop,
-/// where the position is known.
 fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
     match value {
         Value::Bool(v) => write!(f, "{v}"),
