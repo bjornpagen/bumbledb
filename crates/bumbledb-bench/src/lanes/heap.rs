@@ -1,9 +1,3 @@
-//! The heap-arm ladder: frozen-vs-LMDB point reads and admission
-//! throughput — REPORT-class ([`crate::lanes`] carries the charter).
-//!
-//! Both arms use the ledger generator stream (the same bytes
-//! `corpus::load_bumbledb` writes).
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -19,10 +13,8 @@ use crate::json;
 use crate::report::Provenance;
 use crate::schema::{Account, AccountId, Ledger, ids};
 
-/// Default posting-count prefixes for the admission ladder.
 pub const DEFAULT_PREFIXES: [u64; 4] = [256, 1_024, 4_096, 16_384];
 
-/// The whole heap report, plain data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeapReport {
     pub provenance: Provenance,
@@ -36,7 +28,6 @@ pub struct HeapReport {
     pub join_rows: u64,
 }
 
-/// One warm point-read family, heap vs LMDB.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PointRow {
     pub name: String,
@@ -44,7 +35,6 @@ pub struct PointRow {
     pub lmdb: Stats,
 }
 
-/// One admission prefix.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdmitRow {
     pub facts: u64,
@@ -57,7 +47,6 @@ fn push_stats(out: &mut String, stats: &Stats) {
     super::push_stats(out, stats);
 }
 
-/// The machine-consumable heap artifact.
 #[must_use]
 pub fn to_json(report: &HeapReport) -> String {
     let mut out = String::new();
@@ -146,7 +135,6 @@ fn to_markdown(report: &HeapReport) -> String {
     out
 }
 
-/// ns/fact of the largest prefix over the smallest; >2× is named.
 fn superlinear_term(rows: &[AdmitRow]) -> Option<String> {
     let first = rows.first()?;
     let last = rows.last()?;
@@ -218,15 +206,8 @@ fn join_query() -> Query {
     })
 }
 
-/// Runs the heap-arm lanes.
-///
 /// # Errors
-///
-/// Setup or admit failure.
-///
 /// # Panics
-///
-/// If a duration in nanoseconds does not fit in `u64`.
 #[allow(
     clippy::too_many_lines,
     reason = "one run body owns the heap-arm report; splitting would hide the lane order"
