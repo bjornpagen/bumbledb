@@ -5,7 +5,6 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 
 impl<S> Db<S> {
     /// # Errors
-
     pub fn fresh_field(
         &self,
         relation: RelationId,
