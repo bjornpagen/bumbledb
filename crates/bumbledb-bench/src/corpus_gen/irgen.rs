@@ -1,5 +1,4 @@
 //! The dangling relation/field ids, head/rule misalignment, unsafe negation,
-
 use bumbledb::{
     AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
     Interior, InteriorId, NonEmpty, ParamId, ProjectionRule, Query, Rec, RecRule, RecStep,
