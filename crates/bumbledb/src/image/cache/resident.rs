@@ -3,10 +3,7 @@
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
-    /// Resident images and their total slab bytes, right now (feature
-    /// `trace`; computed under each ordinary slot's lock). Synthesized
-    /// closed-relation images count once each from first touch — they
-    /// live in [`RelationSlot::Closed`] and never leave.
+
     #[must_use]
     pub fn resident(&self) -> (u64, u64) {
         let mut images = 0;
