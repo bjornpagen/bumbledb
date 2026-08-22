@@ -1,14 +1,8 @@
-//! PRD 17: param sets end to end — the `IN` family over selection
-//! levels, set-carrying membership, and negated set bindings
-//! (docs/architecture/20-query-ir.md § param sets; 40-execution
-//! § selection levels).
-
 use super::*;
 use crate::api::prepared::ParamArg;
 use crate::error::AtomIndex;
 use crate::ir::ParamId;
 
-/// Q(id, amount) :- Posting(id, account = ?set0, amount).
 fn by_account_set_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -25,7 +19,6 @@ fn by_account_set_query() -> Query {
     })
 }
 
-/// Q(id, amount) :- Posting(id, account = ?0, amount) — the scalar twin.
 fn by_account_scalar_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -58,16 +51,12 @@ fn id_amount_answers(buffer: &Answers) -> Vec<(u64, i64)> {
     answers
 }
 
-/// The `IN` family criterion: over set sizes {0, 1, 2, 200}, the
-/// set-bound execution equals the union of per-element scalar-param
-/// executions — asserted against that construction — and duplicate
-/// elements collapse (sets are sets).
 #[test]
 fn in_family_equals_the_union_of_per_element_executions() {
     let dir = TempDir::new("prepared-in-family");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // 600 rows over 250 accounts: several accounts carry multiple rows.
+
     let rows: Vec<(u64, u64, String, i64)> = (0..600u64)
         .map(|i| {
             let amount = i64::try_from(i).expect("small") * 3 - 100;
@@ -87,16 +76,14 @@ fn in_family_equals_the_union_of_per_element_executions() {
         prepare(&txn, &cache, &schema, &by_account_scalar_query()).expect("prepare");
 
     for size in [0usize, 1, 2, 200] {
-        // Accounts stride 7 so misses (>= 250) land in the larger sets:
-        // out-of-domain elements must contribute nothing.
+
         let elements: Vec<Value> = (0..size)
             .map(|k| Value::U64(u64::try_from(k).expect("small") * 7))
             .collect();
         let got = set_query
             .execute_collect(&txn, &cache, &[ParamArg::Set(&elements)])
             .expect("set execution");
-        // The defining construction: the union of per-element scalar
-        // executions (results are sets, so union = sorted dedup).
+
         let mut union: Vec<(u64, i64)> = Vec::new();
         for element in &elements {
             let Value::U64(account) = element else {
@@ -115,7 +102,6 @@ fn in_family_equals_the_union_of_per_element_executions() {
         }
     }
 
-    // Duplicates in the bound slice collapse: sets are sets.
     let dup = [Value::U64(7), Value::U64(7), Value::U64(7)];
     let once = [Value::U64(7)];
     let got_dup = set_query
@@ -126,19 +112,12 @@ fn in_family_equals_the_union_of_per_element_executions() {
         .expect("execute");
     assert_eq!(id_amount_answers(&got_dup), id_amount_answers(&got_once));
 
-    // A scalar value where the set is expected is a precise bind-time
-    // error (a ParamId is scalar or set, never both).
     let err = set_query
         .execute_collect(&txn, &cache, &[BindValue::U64(7)])
         .unwrap_err();
     assert!(matches!(err, Error::ParamSetExpected { param } if param.0 == 0));
 }
 
-/// R13 execute-symmetry for the counted entries: whatever `execute`
-/// binds, `profile` and `introspect` bind — a set-bound query profiles
-/// through the same mixed [`ParamArg`] entry, its answers value-identical
-/// to execution (ANALYZE semantics: the profile IS an execution). The
-/// scalar-only profile spelling died with this symmetry.
 #[test]
 fn profile_binds_param_sets_exactly_as_execute_args() {
     let dir = TempDir::new("prepared-profile-sets");
@@ -172,8 +151,6 @@ fn profile_binds_param_sets_exactly_as_execute_args() {
     assert!(!report.is_empty(), "the report renders");
 }
 
-/// Out-of-vocabulary string elements resolve to per-element miss
-/// sentinels and contribute nothing; an all-miss set is the empty set.
 #[test]
 fn out_of_vocabulary_string_elements_contribute_nothing() {
     let dir = TempDir::new("prepared-in-strings");
@@ -191,7 +168,6 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(amount) :- Posting(memo = ?set0, amount).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -226,7 +202,6 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
     assert!(empty.is_empty(), "an all-miss set matches nothing");
 }
 
-/// Payroll(emp u64, during Interval<u64>) + Event(emp u64, at u64).
 fn interval_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -323,10 +298,6 @@ fn u64_pairs(buffer: &Answers) -> Vec<(u64, u64)> {
     answers
 }
 
-/// The membership point-var join, whole pipeline: IR membership binding
-/// → var-sourced `PointIn` → placed membership probe → the
-/// point-membership scan. Both boundaries asserted through the public
-/// result: `at == start` survives, `at == end` does not.
 #[test]
 fn membership_point_var_join_end_to_end() {
     let dir = TempDir::new("prepared-membership");
@@ -336,7 +307,6 @@ fn membership_point_var_join_end_to_end() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(emp, at) :- Payroll(emp, during ∋ at), Event(emp, at).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -344,7 +314,7 @@ fn membership_point_var_join_end_to_end() {
                 source: crate::ir::AtomSource::Edb(PAYROLL),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (FieldId(1), Term::Var(VarId(1))), // membership: at ∈ during
+                    (FieldId(1), Term::Var(VarId(1))), 
                 ],
             },
             Atom {
@@ -369,9 +339,6 @@ fn membership_point_var_join_end_to_end() {
     );
 }
 
-/// A set-bound membership (`during ∋ ?set0`): any element in the
-/// interval satisfies the binding — `AnyPointIn`, the kernel-backed
-/// two-column composition, boundaries included.
 #[test]
 fn set_membership_matches_any_element() {
     let dir = TempDir::new("prepared-any-point");
@@ -381,7 +348,6 @@ fn set_membership_matches_any_element() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(emp) :- Payroll(emp, during ∋ ?set0).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -421,8 +387,6 @@ fn set_membership_matches_any_element() {
     assert_eq!(run(&mut prepared, &[]), Vec::<u64>::new(), "empty set");
 }
 
-/// Commits one ray fact `Payroll(1, [10, ∞))` and returns the open
-/// environment — the point-domain-law fixture.
 fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
@@ -444,7 +408,6 @@ fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
     env
 }
 
-/// Q(emp) :- Payroll(emp, during ∋ point-literal).
 fn membership_literal_query(point: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -460,10 +423,6 @@ fn membership_literal_query(point: u64) -> Query {
     })
 }
 
-/// The point-domain law, both halves (`docs/architecture/10-data-model.md`):
-/// `MAX−1` is the last point — membership in the ray `[10, ∞)` is true —
-/// and a point literal of `MAX` is rejected at prepare with the typed
-/// error, never a silently-unmatchable query.
 #[test]
 fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
     let dir = TempDir::new("prepared-ray-membership");
@@ -499,9 +458,6 @@ fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
     );
 }
 
-/// The bind-time half of the point-domain law: a point-position param
-/// (element-typed at an interval position) bound to the domain ceiling
-/// is the typed bind error, for scalars and per set element alike.
 #[test]
 fn point_param_at_the_ceiling_is_a_bind_error() {
     let dir = TempDir::new("prepared-ray-point-param");
@@ -510,9 +466,6 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(emp) :- Payroll(emp, during ∋ ?0), Event(emp, at = ?0): the
-    // scalar-field anchor types ?0 at the element, so the Payroll
-    // binding is membership and ?0 is a point param.
     let scalar_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -543,8 +496,6 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
         "got {err:?}"
     );
 
-    // Q(emp) :- Payroll(emp, during ∋ ?set0): a point set — the same
-    // rejection per element, and the last point still matches.
     let set_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -573,7 +524,6 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     assert_eq!(got.len(), 1, "MAX-1 is a point of [10, \u{221e})");
 }
 
-/// Posting(account u64, amount i64) + Block(account u64, kind u64).
 fn block_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -616,12 +566,6 @@ fn block_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Anti-probes with set-carrying negated bindings: a binding is rejected
-/// iff the negated occurrence matches under **any** element — the
-/// existential reading of `docs/architecture/20-query-ir.md` § param
-/// sets ("the term denotes *any element* — a binding position matches
-/// iff the field value is **in** the set"), applied inside the negation.
-/// The empty set matches under no element, so nothing is rejected.
 #[test]
 fn negated_set_bindings_reject_under_any_element() {
     let dir = TempDir::new("prepared-anti-set");
@@ -658,7 +602,6 @@ fn negated_set_bindings_reject_under_any_element() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(amount) :- Posting(account, amount), not Block(account, kind = ?set0).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -685,16 +628,14 @@ fn negated_set_bindings_reject_under_any_element() {
             .expect("execute");
         amounts_of(&got)
     };
-    // (7, kind 1) matches {1, 2} through element 1: account 7 rejected.
+
     assert_eq!(run(&mut prepared, &[1, 2]), vec![80, 90]);
-    // (8, kind 5) matches {5}: account 8 rejected.
+
     assert_eq!(run(&mut prepared, &[5]), vec![70, 90]);
-    // Both blocked accounts match under some element.
+
     assert_eq!(run(&mut prepared, &[1, 5]), vec![90]);
-    // No element matches anything: nothing rejected.
+
     assert_eq!(run(&mut prepared, &[3, 4]), vec![70, 80, 90]);
-    // The empty set matches under NO element — never a rejection (and
-    // never the positive-side short-circuit, which would be unsound
-    // under negation).
+
     assert_eq!(run(&mut prepared, &[]), vec![70, 80, 90]);
 }
