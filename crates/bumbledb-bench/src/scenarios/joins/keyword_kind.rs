@@ -7,8 +7,6 @@ use super::term::{param, var};
 use super::{HOT_KEYWORDS, KEYWORDS, ids, mix};
 use crate::corpus_gen::Rng;
 
-/// j3 — keyword × kind: two interned-string/enum-selective dimensions
-/// pinching a 3-way join from both sides.
 pub(super) fn keyword_kind() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
