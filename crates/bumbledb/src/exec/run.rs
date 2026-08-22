@@ -4,7 +4,6 @@
 //! .
 //! path. Middle nodes pump: pending binding rows + carried cursor sets
 //! flow node to node, each node expanding pending entries into shared
-
 use std::num::NonZeroUsize;
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
