@@ -1,8 +1,3 @@
-//! `bytes<N>` image columns: ⌈N/8⌉ parallel word columns (the interval
-//! two-column precedent, generalized), padded-word round-trip at a pad
-//! boundary, and the pad-corruption arm — a nonzero trailing pad byte is
-//! typed corruption at build, never a skip.
-
 use crate::encoding::{ValueRef, encode_fact};
 use crate::error::{CorruptionError, Error};
 use crate::image::{ColumnWidth, build};
@@ -18,7 +13,6 @@ use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
 };
 
-/// D(id u64, head bytes<9>, hash bytes<32>).
 fn schema() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -43,8 +37,6 @@ fn schema() -> Schema {
 
 const D: RelationId = RelationId(0);
 
-/// Adversarial digests: shared zero prefix, the row id at the tail —
-/// row 0's hash is the all-zeros digest.
 fn fact(schema: &Schema, id: u64) -> Vec<u8> {
     let mut head = [0u8; 9];
     head[8] = u8::try_from(id % 251).expect("byte");
@@ -83,7 +75,6 @@ fn fixed_bytes_fields_decode_into_padded_word_columns() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn.catalog(), &schema, D).expect("build");
 
-    // Spans: bytes<9> = 2 word columns, bytes<32> = 4 — column indices
     // shift accordingly (the field→column map, never raw field indices).
     let head = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(head.width, ColumnWidth::Words { count: 2 });
@@ -91,10 +82,6 @@ fn fixed_bytes_fields_decode_into_padded_word_columns() {
     assert_eq!(hash.first_column, 3);
     assert_eq!(hash.width, ColumnWidth::Words { count: 4 });
 
-    // Round-trip at the pad boundary: the head's second word carries the
-    // ninth byte then zero pad; the hash's tail word is the source id and
-    // its lead words are the shared zero prefix. Scan order is row-id
-    // order, not insert order, so rows correlate through the id column.
     let ids = image.column_words(0);
     let head_tail = image.column_words(usize::from(head.first_column) + 1);
     let hash_lead = image.column_words(usize::from(hash.first_column));
@@ -124,8 +111,7 @@ fn a_nonzero_pad_byte_aborts_the_build_typed() {
             .expect("nonempty")
     };
     {
-        // Corrupt the bytes<9> field's trailing pad (field offset 8,
-        // value bytes 8..17, pad 17..24): the pad is encoding, not data.
+
         let mut corrupt = fact(&schema, 9);
         corrupt[20] = 0x5A;
         let mut wtxn = env.write_txn().expect("txn");
