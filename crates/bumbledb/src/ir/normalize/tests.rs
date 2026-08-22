@@ -19,9 +19,6 @@ use bumbledb_theory::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
-/// R(id u64 fresh, a i64, b i64) + S(x u64, y i64)
-/// + P(emp u64, during interval<i64>, review interval<i64>, at i64)
-/// + E(emp u64, at i64).
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -78,19 +75,17 @@ const S: RelationId = RelationId(1);
 const P: RelationId = RelationId(2);
 const E: RelationId = RelationId(3);
 
-/// P's fields by position.
 const P_EMP: FieldId = FieldId(0);
 const P_DURING: FieldId = FieldId(1);
 const P_REVIEW: FieldId = FieldId(2);
 const P_AT: FieldId = FieldId(3);
-/// E's fields by position.
+
 const E_AT: FieldId = FieldId(1);
 
 fn var(id: u16) -> Term {
     Term::Var(VarId(id))
 }
 
-/// The biased I64 column word.
 fn w(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
@@ -114,7 +109,7 @@ fn query(atoms: Vec<Atom>, negated: Vec<Atom>, conditions: Vec<Comparison>) -> Q
 
 #[test]
 fn repeated_variable_lowers_and_executes_through_the_evaluator() {
-    // R(a = v, b = v): one var position, one same-fact equality filter.
+
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -137,7 +132,6 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     assert!(norm.anti_probes.is_empty());
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
 
-    // ...and the lowered filter executes on a real image.
     let dir = TempDir::new("normalize-execute");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -157,7 +151,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     let txn = env.read_txn().expect("txn");
     let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
     let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
-    // Exactly the a == b rows survive.
+
     let ids: Vec<u64> = filtered
         .positions()
         .map(|p| {
@@ -206,8 +200,7 @@ fn literal_and_param_bindings_lower_to_eq_filters() {
 
 #[test]
 fn string_literals_stay_raw_as_pending_interns() {
-    // The fixture lacks a string field, so check lower_literal directly
-    // (the unit under test).
+
     assert_eq!(
         lower_literal(&Value::String(Box::from("acme"))),
         Const::PendingIntern {
@@ -218,8 +211,7 @@ fn string_literals_stay_raw_as_pending_interns() {
 
 #[test]
 fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
-    // bytes<N> is self-encoding: N ≤ 8 is one padded BE word, N > 8 its
-    // ⌈N/8⌉ words — never a PendingIntern (zero dictionary traffic).
+
     assert_eq!(
         lower_literal(&Value::FixedBytes(Box::from(&[7u8][..]))),
         Const::Word(0x0700_0000_0000_0000)
@@ -233,7 +225,7 @@ fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
     let (digest_words, _) = digest.as_chunks::<8>();
     assert_eq!(words[0], u64::from_be_bytes(digest_words[0]));
     assert_eq!(words[3], u64::from_be_bytes(digest_words[3]));
-    // A pad-boundary width: 9 bytes = 2 words, tail zero-padded.
+
     let nine: Vec<u8> = (1u8..=9).collect();
     assert_eq!(
         lower_literal(&Value::FixedBytes(nine.into())),
@@ -245,7 +237,7 @@ fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
 
 #[test]
 fn interval_literals_lower_to_encoded_word_pairs() {
-    // Each half is encoded exactly like the scalar of its element type.
+
     assert_eq!(
         lower_literal(&Value::IntervalU64(
             bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval")
@@ -261,13 +253,13 @@ fn interval_literals_lower_to_encoded_word_pairs() {
             end: w(9),
         }
     );
-    // The bias preserves order across the sign boundary in word space.
+
     assert!(w(-5) < w(9));
 }
 
 #[test]
 fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
-    // A self-join: R(id=v0, a=1) x R(id=v1, a=2).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -300,8 +292,7 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
 
 #[test]
 fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
-    // 100 <= R.a (constant on the left: flips to a >= 100); R.a < S.y
-    // stays a residual.
+
     let query = query(
         vec![
             Atom {
@@ -332,7 +323,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
         norm.occurrences[0].filters,
         vec![FilterPredicate::Compare {
             field: FieldId(1).into(),
-            op: WordCmp::Ge, // flipped
+            op: WordCmp::Ge, 
             value: Const::Word(w(100)),
         }]
     );
@@ -350,8 +341,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
 
 #[test]
 fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
-    // A tiny deterministic generator: every subset/multiset of var
-    // bindings over R's three fields, with var ids drawn from {0,1}.
+
     let schema = schema();
     let mut checked = 0;
     for mask in 0..3u16.pow(3) {
@@ -369,7 +359,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
         if bindings.is_empty() {
             continue;
         }
-        // Var 0 must be findable; ensure it is bound.
+
         if !bindings.iter().any(|(_, t)| *t == var(0)) {
             continue;
         }
@@ -381,8 +371,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
             vec![],
             vec![],
         );
-        // Field types differ (U64 vs I64): only same-typed repeats
-        // validate; skip type-conflicting combinations.
+
         let Ok(witness) = validate(&schema, &query) else {
             continue;
         };
@@ -422,9 +411,7 @@ fn zero_binding_atom_becomes_an_empty_occurrence() {
 
 #[test]
 fn same_atom_var_var_comparison_lowers_to_a_filter() {
-    // R(a = x, b = y), x < y — one atom, both sides: a per-atom
-    // FieldsCompare filter, never a residual (residuals are cross-atom
-    // only, docs/architecture/20-query-ir.md).
+
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -452,12 +439,9 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
     );
 }
 
-// --- lowering goldens (PRD 13) --------------------------------------------
-
 #[test]
 fn constant_point_membership_lowers_to_point_in() {
-    // Golden (a): P(emp = v0, during ∋ 5) — a literal point in the
-    // interval field lowers to a per-atom PointIn range filter.
+
     let literal = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -476,8 +460,6 @@ fn constant_point_membership_lowers_to_point_in() {
         }]
     );
 
-    // A scalar param point (anchored I64 by E.at) lowers the same way,
-    // resolved at bind.
     let param = query(
         vec![
             Atom {
@@ -504,9 +486,7 @@ fn constant_point_membership_lowers_to_point_in() {
 
 #[test]
 fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
-    // Golden (b): P(during = x, review = y), Allen(x, y, INTERSECTS) —
-    // the mask rides the same-atom shape as one filter kind, never a
-    // residual.
+
     let allen = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -535,12 +515,10 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
             mask: AllenMask::INTERSECTS,
         }]
     );
-    // Interval variables occupy two slots each.
+
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
     assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::TWO);
 
-    // Interval Eq canonicalizes to the EQUALS mask (Ne to its
-    // complement): exactly one interval-pair form leaves normalization.
     let eq = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -582,7 +560,6 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         }]
     );
 
-    // PointIn's surviving point form: same-atom membership predicate.
     let point_in = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -608,10 +585,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
 
 #[test]
 fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
-    // Golden (c): R(id = v0), ¬S(x = v0, y = -7) — the negated atom is an
-    // occurrence with the Negated role in the one table; its literal
-    // binding is its own filter list (evaluated inside the probe); the
-    // descriptor carries the occurrence and its variable set.
+
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(R),
@@ -653,9 +627,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
 
 #[test]
 fn cross_atom_allen_becomes_the_mask_residual() {
-    // Golden (d): P(during = x), P(during = y), Allen(x, y, m) — the
-    // residual carries the mask whole (four endpoint slots + mask);
-    // nothing decomposes.
+
     let allen = query(
         vec![
             Atom {
@@ -686,7 +658,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
             mask: AllenMask::INTERSECTS,
         }]
     );
-    // Cross-atom interval Eq canonicalizes into the same residual kind.
+
     let eq = query(
         vec![
             Atom {
@@ -718,8 +690,6 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
     assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::TWO);
 
-    // Cross-atom PointIn over a point variable: x.start ≤ t AND t < x.end
-    // — the point variable's single word is its Start word.
     let point_in = query(
         vec![
             Atom {
@@ -759,10 +729,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
 
 #[test]
 fn scalar_param_set_binding_is_the_selection_set_marker() {
-    // Golden (e): S(x = v0, y ∈ ?set0) — an Eq compare against the set
-    // marker, which the plan's selection split routes into
-    // `PlanOccurrence::selections` (the word-set resolution is bind-time;
-    // executor side is PRD 17).
+
     let scalar = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(S),
@@ -783,7 +750,6 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
         }]
     );
 
-    // On an interval field the set holds points: AnyPointIn.
     let point_set = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -801,12 +767,9 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
     );
 }
 
-// --- membership-variable bindings ------------------------------------------
-
 #[test]
 fn same_atom_membership_variable_lowers_to_the_field_composition() {
-    // P(during ∋ t, at = t): the point variable is scalar-bound in the
-    // same atom, so the membership is a same-fact field composition —
+
     // binding order must not matter (the membership binding comes first).
     let query = query(
         vec![Atom {
@@ -829,11 +792,7 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
 
 #[test]
 fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
-    // P(emp = e, during ∋ t), E(at = t): the point variable is bound by
-    // the other occurrence — the membership stays a per-atom filter whose
-    // point resolves from the variable's binding once bound (the
-    // point-membership scan, docs/architecture/40-execution.md); the
-    // membership position binds no variable of P.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -856,12 +815,9 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     assert_eq!(norm.occurrences[1].vars, vec![(E_AT, VarId(0))]);
 }
 
-// --- constant-side interval comparisons -------------------------------------
-
 #[test]
 fn interval_param_equality_binding_stays_an_eq_compare() {
-    // P(during = ?0) with no element anchor: the bivalent param resolves
-    // to the interval reading — value equality, a bind-resolved selection.
+
     let query = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -880,11 +836,6 @@ fn interval_param_equality_binding_stays_an_eq_compare() {
     );
 }
 
-// --- the single-occurrence-residual assertion --------------------------------
-
-/// Nothing single-occurrence survives to the residual list — across every
-/// residual kind (docs/architecture/20-query-ir.md, § normalization
-/// step 5).
 fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
     let pairs = norm
         .residuals
@@ -916,18 +867,9 @@ fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
     }
 }
 
-// --- the classified-comparison placement sweep (PRD 08 pin) -----------------
-//
-// One case per legal comparison shape validation accepts × a representative
-// rule shape (same-atom and cross-atom where the placement differs, both
-// written operand orders where mirroring applies). Pinned GREEN against the
-// re-deriving placer before the classification seal landed; the assertion
-// values are behavior, not implementation.
-
 #[test]
 fn sweep_scalar_var_var_placements() {
-    // Same-atom: a field composition; cross-atom: a whole-value residual —
-    // for the order and (scalar) equality forms alike.
+
     for op in [CmpOp::Lt, CmpOp::Ge, CmpOp::Eq, CmpOp::Ne] {
         let same = query(
             vec![Atom {
@@ -991,9 +933,7 @@ fn sweep_scalar_var_var_placements() {
 
 #[test]
 fn sweep_scalar_var_const_placements() {
-    // Literal and param constants, written variable-first and
-    // constant-first: the filter's operator is sealed variable-on-left
-    // (a constant-first order comparison mirrors; Eq/Ne are symmetric).
+
     let r_atom = || Atom {
         source: crate::ir::AtomSource::Edb(R),
         bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
@@ -1034,8 +974,7 @@ fn sweep_scalar_var_const_placements() {
 
 #[test]
 fn sweep_param_set_comparison_placements() {
-    // The set marker under Eq (its one legal operator), both written
-    // orders: the selection-level Eq compare against the set.
+
     for const_first in [false, true] {
         let set = Term::ParamSet(ParamId(0));
         let (lhs, rhs) = if const_first {
@@ -1069,9 +1008,7 @@ fn sweep_param_set_comparison_placements() {
 
 #[test]
 fn sweep_contains_param_placements() {
-    // The param sides of both containment directions (literal sides are
-    // pinned by the const-shape golden): a param point in an interval
-    // variable, and a scalar variable within a param interval.
+
     let point_param = query(
         vec![Atom {
             source: crate::ir::AtomSource::Edb(P),
@@ -1115,9 +1052,7 @@ fn sweep_contains_param_placements() {
 
 #[test]
 fn residuals_are_never_single_occurrence_across_the_new_kinds() {
-    // Targeted cases over the full comparison vocabulary: same-atom pairs
-    // must lower to filters, cross-atom pairs to residuals — and every
-    // residual must span occurrences.
+
     let two_intervals_one_atom = |op| {
         query(
             vec![
@@ -1157,9 +1092,7 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
     ] {
         let norm = normalized(&two_intervals_one_atom(op));
         assert_residuals_cross_atom(&norm);
-        // The same-atom pair became a filter; the cross-atom pair a
-        // residual (Allen masks for every interval-pair form — Eq/Ne
-        // canonicalize into them).
+
         assert_eq!(norm.occurrences[0].filters.len(), 1, "{op:?}");
         assert_eq!(
             norm.allen_residuals.len(),
@@ -1168,9 +1101,6 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
         );
     }
 
-    // Scalar comparisons and membership across atoms, with a negated atom
-    // in the mix: negated occurrences never absorb comparisons and never
-    // host residual variables.
     let mixed = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -1195,8 +1125,7 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
     });
     let norm = normalized(&mixed);
     assert_residuals_cross_atom(&norm);
-    // The pair co-occurs only in the *negated* atom — it must residualize
-    // anyway (plan validity quantifies over positive occurrences).
+
     assert_eq!(norm.residuals.len(), 1);
     assert!(
         norm.occurrences[2].filters.is_empty(),
