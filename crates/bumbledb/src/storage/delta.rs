@@ -41,7 +41,6 @@ pub enum Disposition {
 /// outcome — cancel *removes* an entry, record *adds* one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeltaEffect {
-
     NoOp,
 
     Recorded,
@@ -50,7 +49,6 @@ pub enum DeltaEffect {
 }
 
 impl DeltaEffect {
-
     #[must_use]
     pub const fn changed(self) -> bool {
         !matches!(self, Self::NoOp)
@@ -111,7 +109,6 @@ impl std::hash::Hasher for FactKeyHasher {
 
 #[derive(Debug, Clone, Copy)]
 struct FreshMark {
-
     base: u64,
 
     next: u64,
@@ -139,7 +136,6 @@ pub struct WriteDelta<'s> {
 
     /// transaction's mints — so before it, a COMMITTED string paid
     /// blake3 + one LMDB get on every occurrence. Sound because the
-
     committed_memo: CommittedMemo,
 }
 
@@ -203,7 +199,6 @@ impl CommittedMemo {
 }
 
 impl WriteDelta<'_> {
-
     pub(crate) fn schema(&self) -> &Schema {
         self.schema
     }
