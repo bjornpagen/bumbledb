@@ -1,16 +1,3 @@
-//! The comparison runner: one op stream replayed against the engine and
-//! the naive model, asserting per write the same verdict and the same
-//! COMPLETE violation set — strict equality, order included; both sides
-//! derive the sealed sorted citation list, so a multi-violation delta
-//! compares whole — and per query set-equal results
-//! (`docs/architecture/60-validation.md` § the two oracles). The verify
-//! command's naive lane (`verify::run_naive`) feeds [`run`] the corpus
-//! op streams.
-//!
-//! This module lives beside `naive`, never inside it: the runner drives
-//! the engine (`Db`), and the naive model's independence forbids
-//! anything under `naive/` from importing engine machinery.
-
 use std::collections::BTreeSet;
 
 #[cfg(test)]
@@ -28,9 +15,6 @@ use crate::naive::{Delta, NaiveDb, Tuple, Violation};
 #[cfg(test)]
 mod tests;
 
-/// One operation of a differential stream — recursion is a first-class
-/// op, not a bespoke side loop (ruled 2026-07-23, R22/159): the runner's
-/// representation can spell every case the lattice compares.
 #[expect(
     clippy::large_enum_variant,
     reason = "Query is the public IR shape; boxing would split the differential Op"
@@ -44,9 +28,6 @@ pub enum Op {
     },
 }
 
-/// One write's outcome, on either side: committed, or aborted with the
-/// COMPLETE violation set (sorted, deduplicated — the same total object
-/// on both sides, compared whole).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Committed,
@@ -64,22 +45,14 @@ pub enum ConditionalVerdict {
     Moved { witnessed: u64, current: u64 },
 }
 
-/// One query's outcome, on either side: the answer set, or one of the
-/// defined typed runtime errors (aggregate overflow; and
-/// [`bumbledb::Error::DerivedBudgetExceeded`] on a derived-tuples trip.
-/// Naive reach is deliberately unbudgeted, so an engine trip surfaces
-/// as a readable divergence, never a harness crash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
-    /// [`bumbledb::Error::DerivedBudgetExceeded`] — a typed execution
-    /// error, carried as identity. Naive is unbudgeted, so an engine
-    /// trip is a readable divergence.
+
     DerivedBudget,
 }
 
-/// The first disagreement: which op, and what each side said.
 #[derive(Debug)]
 pub enum Divergence {
     Write {
@@ -94,8 +67,6 @@ pub enum Divergence {
     },
 }
 
-/// What a clean run exercised — callers assert the stream actually
-/// covered both verdicts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub commits: u64,
@@ -103,16 +74,8 @@ pub struct Summary {
     pub queries: u64,
 }
 
-/// Replays the ops in order against both sides.
-///
 /// # Errors
-///
-/// The first [`Divergence`].
-///
 /// # Panics
-///
-/// On tool-level failures (storage errors, a query either side refuses) —
-/// never on a disagreement.
 pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Divergence> {
     let mut summary = Summary::default();
     for (index, op) in ops.iter().enumerate() {
@@ -155,15 +118,6 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
     Ok(summary)
 }
 
-/// The engine's sealed violation set as the model's citation values —
-/// the typed identities every oracle compares (witness fact bytes are
-/// engine-side detail the model never derives; the capacity MEASURE is
-/// not: both twins carry the witnessed group total — ruled 2026-07-24,
-/// C14 — so the differential cross-checks the reported measure
-/// engine-vs-naive, not just the citation). The engine's set is
-/// sorted and deduplicated by construction, so the mapped list is
-/// directly comparable to [`NaiveDb::violations`]' — same sort key,
-/// same total object.
 #[must_use]
 pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violation> {
     violations
@@ -184,10 +138,6 @@ pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violatio
         .collect()
 }
 
-/// One delta through the engine's write path: deletes then inserts (the
-/// same order [`NaiveDb::apply`] uses, so no-op cancellation agrees).
-/// Shared with the judgment conformance serializer
-/// (`conformance::judgment`), which records the agreed verdict.
 pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     let outcome = db.write(|tx| {
         for (rel, fact) in &delta.deletes {
@@ -204,10 +154,9 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
         Err(Error::ClosedRelationWrite { relation }) => {
             Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
-        // The measure of a ray at a capacity statement — a typed
+
         // refusal, not a violation set; the witness fact bytes are
-        // engine-side detail (`cited`'s rule), the statement identity is
-        // the comparable citation.
+
         Err(Error::CapacityRayMeasure { statement, .. }) => {
             Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
         }
@@ -215,10 +164,6 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     }
 }
 
-/// One complete-admission candidate through [`InstanceBuilder::admit`]:
-/// load ordinary facts, then the packed-freeze roster. Shared with the
-/// complete-admission serializer (`conformance::complete`), which
-/// records the agreed verdict against [`NaiveDb::judge_complete`].
 pub(crate) fn engine_admit(
     schema: SchemaDescriptor,
     facts: &[(RelationId, Vec<Value>)],
@@ -259,11 +204,6 @@ fn admit_load_error(err: Error) -> Verdict {
     }
 }
 
-/// One delta through the engine's conditional write path
-/// (`Db::write_from` under `witness`), as a [`ConditionalVerdict`] —
-/// the conditional sibling of [`engine_write`], mapping the typed
-/// `GenerationMoved` payload through whole (reader: the witness
-/// scenarios, `tests/witness.rs`).
 #[cfg(test)]
 pub(crate) fn engine_write_from<S>(
     db: &Db<S>,
@@ -298,8 +238,6 @@ pub(crate) fn engine_write_from<S>(
     }
 }
 
-/// The model side of one conditional write, as the same
-/// [`ConditionalVerdict`] shape.
 #[cfg(test)]
 pub(crate) fn naive_write_from(
     naive: &mut NaiveDb,
@@ -315,9 +253,6 @@ pub(crate) fn naive_write_from(
     }
 }
 
-/// One query through the engine as a [`Answers`] verdict — shared with the
-/// dual-run grounding differential (`tests/ground.rs`), which compares
-/// grounding-on, ground-off, and model answers three ways.
 pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Answers {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args = crate::families::param_args(params);
