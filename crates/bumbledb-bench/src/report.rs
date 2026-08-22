@@ -1,35 +1,18 @@
-//! The report (docs/architecture/60-validation.md): one run → one self-contained,
-//! versionable artifact — comparison tables, gate verdicts, budget
-//! checks, allocation and execution statistics, flame summaries, and
-//! full provenance. The thing a human reads before making (or refusing)
-//! the claim. Renders never write outside `out_dir`; the human copies
-//! artifacts into the repo when publishing.
+//! The thing a human reads before making (or refusing)
 
 use crate::harness::Stats;
 
-/// Where the numbers came from. The engine git rev is read at *runtime*
-/// (`git rev-parse HEAD` from the repo dir, "unknown" outside one) —
-/// a build script would freeze the rev at compile time and lie after a
-/// rebase; runtime resolution names the tree the binary actually ran in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     pub crate_version: String,
     pub git_rev: String,
-    /// ISO-8601 UTC, hand-formatted.
+
     pub timestamp: String,
     pub host: String,
-    /// The shared-machine honesty stamp — present iff the scheduling
-    /// boost was engaged ([`crate::boost`]); absent, the JSON shape is
-    /// byte-identical to the pre-boost artifact.
+
     pub shared: Option<SharedMachine>,
 }
 
-/// The shared-machine stamp (owner ruling, 2026-07-20): this run
-/// competed with background load instead of claiming an idle machine.
-/// `boost` names the claimed scheduling class; the 1/5/15-minute load
-/// averages bracket the lane — start sampled at boost engagement, end
-/// sampled when the report's provenance is built. An unsampled slot
-/// reads -1.0 ([`crate::boost::loadavg`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SharedMachine {
     pub boost: &'static str,
@@ -38,8 +21,7 @@ pub struct SharedMachine {
 }
 
 impl SharedMachine {
-    /// The one human-readable spelling (the markdown renderers share
-    /// it, so the prose face can never drift per artifact).
+
     #[must_use]
     pub fn describe(&self) -> String {
         format!(
@@ -55,19 +37,15 @@ impl SharedMachine {
     }
 }
 
-/// The run's configuration, as printed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunConfig {
     pub scale: &'static str,
     pub seed: u64,
     pub samples: u32,
-    /// Which constructor built the timed stores: `durable` or
-    /// `nosync` (`bench --nosync`).
+
     pub store: &'static str,
 }
 
-/// Family gate verdicts. `Win` ⇔ ours p50 strictly < theirs p50 (a tie
-/// is a loss — the claim is "faster", not "not slower").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Win,
@@ -75,11 +53,8 @@ pub enum Verdict {
     ReportOnly,
 }
 
-/// The warm p99 budget (`00-product.md`): 10 ms, inclusive.
 pub const P99_BUDGET_NS: u64 = 10_000_000;
 
-/// Allocation window numbers, feature-independent plain data (the CLI
-/// converts from `AllocSnapshot` when the obs build ran one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocReport {
     pub allocs: u64,
@@ -88,9 +63,6 @@ pub struct AllocReport {
     pub dealloc_bytes: u64,
 }
 
-/// The one snapshot-to-report conversion (previously three verbatim
-/// copies at the report arms): window numbers only — `live_bytes` is
-/// absolute, not window data.
 impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
     fn from(s: bumbledb::alloc_counter::AllocSnapshot) -> Self {
         Self {
@@ -102,9 +74,6 @@ impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
     }
 }
 
-/// The one stamp-to-report conversion (previously a per-lane "local
-/// twin" in the driver, the writes lane, and the lawful lane): the
-/// proxy bracket's plain-data form.
 impl From<crate::clockproxy::GhzStamp> for GhzReport {
     fn from(stamp: crate::clockproxy::GhzStamp) -> Self {
         Self {
@@ -116,24 +85,18 @@ impl From<crate::clockproxy::GhzStamp> for GhzReport {
     }
 }
 
-/// The execution digest: the planner-honesty numbers a human scans.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecDigest {
-    /// The worst per-node estimate-vs-executed-work factor. D2 may stop
-    /// existential work early, so this is not a pure row-count-error bound.
+
     pub worst_estimate_factor: f64,
-    /// Condensed cover histogram (e.g. `n0:t0x256 n1:t1x255/t2x1`).
+
     pub covers: String,
-    /// Bindings emitted to the shared sink across all rules.
+
     pub emitted: u64,
-    /// Emitted bindings rejected by the sink's active seen-set.
+
     pub absorbed: u64,
 }
 
-/// The clock-proxy bracket around one family's measurement block:
-/// effective GHz before and
-/// after, whether the block was re-measured once, and whether the final
-/// bracket still read contaminated.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GhzReport {
     pub pre: f64,
@@ -142,7 +105,6 @@ pub struct GhzReport {
     pub contaminated: bool,
 }
 
-/// One read family's comparison row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadFamilyReport {
     pub name: String,
@@ -154,15 +116,12 @@ pub struct ReadFamilyReport {
     pub exec: Option<ExecDigest>,
     pub p99_within_budget: bool,
     pub ghz: Option<GhzReport>,
-    /// Per-rep-normalized p50, when `--proxy-per-rep`
+
     /// ran: samples rescaled to the cohort's best clock before the
-    /// percentile — the confirm-run column that unmasks contamination
-    /// hiding inside a block.
+
     pub p50_norm: Option<u64>,
 }
 
-/// One write/cold family's row (`theirs` absent for cold — no `SQLite`
-/// mirror exists).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteFamilyReport {
     pub name: String,
@@ -172,7 +131,6 @@ pub struct WriteFamilyReport {
     pub ghz: Option<GhzReport>,
 }
 
-/// Store-level numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreNumbers {
     pub db_bytes: u64,
@@ -181,24 +139,21 @@ pub struct StoreNumbers {
     pub cache_bytes: u64,
 }
 
-/// One traced family's rendered flame table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlameEmbed {
     pub name: String,
     pub table: String,
 }
 
-/// The whole run, plain data — everything the renderers print.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunReport {
     pub provenance: Provenance,
     pub config: RunConfig,
     pub corpus_digest: String,
     pub verify_stamp: String,
-    /// The budget gates at scale L; at S/M it prints as informational.
+
     pub budget_gates: bool,
-    /// A `--families`-filtered run: the overall verdict is PARTIAL —
-    /// never ALL-WIN, whatever the filtered families did.
+
     pub partial: bool,
     pub reads: Vec<ReadFamilyReport>,
     pub writes: Vec<WriteFamilyReport>,
