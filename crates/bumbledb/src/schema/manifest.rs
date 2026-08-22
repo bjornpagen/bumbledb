@@ -1,8 +1,6 @@
 //! The theory's manifest: name → id, as plain data
-//! (`docs/architecture/70-api.md` § the manifest). The macro's id
-//! constants give the *Rust* host its numbers at compile time
+//! . The macro's id
 //! (`Calendar::BUSY`, `Calendar::BUSY_PERSON`); the manifest gives a
-//! *foreign* host the same numbers as a runtime value — a plain Rust
 //! struct straight off the descriptor, no serde, no derive machinery
 //! (the dependency law: a downstream binding serializes it however it
 //! likes; the engine never learns the wire format).
@@ -18,16 +16,11 @@ use bumbledb_theory::Value;
 /// sees every ground axiom without touching Rust. Statements ride in
 /// materialized order with their canonical spellings, so a foreign host
 /// can cite any statement id — a rejection's, a diagnostic's — without a
-/// Rust renderer in reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-    /// One entry per relation; `RelationId` = the index, stated
-    /// explicitly on each entry so a reader never re-derives it.
+
     pub relations: Vec<RelationManifest>,
-    /// One entry per MATERIALIZED statement (fresh auto-keys, closed
-    /// auto-keys, then declared statements —
-    /// [`SchemaDescriptor::materialized_statements`] owns the order);
-    /// `StatementId` = the index, stated explicitly.
+
     pub statements: Vec<StatementManifest>,
 }
 
@@ -46,11 +39,9 @@ pub struct StatementManifest {
 pub struct RelationManifest {
     pub name: Box<str>,
     pub id: RelationId,
-    /// One entry per field, in declaration order; `FieldId` = the index.
+
     pub fields: Vec<FieldManifest>,
-    /// A closed relation's ground axioms in declaration order (`None` =
-    /// ordinary): handle → id → intrinsic values, plain data off the
-    /// descriptor.
+
     pub extension: Option<Vec<RowManifest>>,
 }
 
@@ -76,21 +67,15 @@ pub struct FieldManifest {
 /// theory data (hosted in `bumbledb-theory`), and the manifest needs the
 /// engine-side renderer, so the method hangs off it here.
 pub trait ManifestDescriptor {
-    /// Renders the manifest off the descriptor — the ids are the
-    /// declaration-order indices, made explicit.
+
     fn manifest(&self) -> Manifest;
 }
 
 impl ManifestDescriptor for SchemaDescriptor {
     /// # Panics
-    ///
-    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
-    /// — impossible for a descriptor the declaration boundary admits.
+
     fn manifest(&self) -> Manifest {
-        // Materialized once, `==` links once — every statement's spelling
-        // reads the same list through the threaded renderer (per-entry
-        // `render_declared` re-materialized the whole roster per
-        // statement: O(n²) clones).
+
         let materialized = self.materialized_statements();
         let mirrors = super::validate::mirror_links(&materialized);
         Manifest {
@@ -116,8 +101,7 @@ impl ManifestDescriptor for SchemaDescriptor {
                 .iter()
                 .enumerate()
                 .map(|(rel_idx, relation)| {
-                    // The extension table: handle → declaration-order id →
-                    // (column, value) pairs — the vocabulary as data.
+
                     let extension = relation.extension.as_ref().map(|rows| {
                         rows.iter()
                             .enumerate()
@@ -136,13 +120,7 @@ impl ManifestDescriptor for SchemaDescriptor {
                     RelationManifest {
                         name: relation.name.clone(),
                         id: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
-                        // The SEALED roster — synthetic (`id`, U64) first
-                        // for a closed relation — through THE one owner of
-                        // the synthetic-id law
-                        // (`RelationDescriptor::sealed_fields`); the
-                        // manifest reports the ids the sealed schema
-                        // answers to (handle-name entries are the emission
-                        // PRD's).
+
                         fields: relation
                             .sealed_fields()
                             .enumerate()
