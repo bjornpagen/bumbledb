@@ -3,7 +3,6 @@
 use super::{Executor, Poison};
 
 impl Executor {
-
     /// every loop before a second site can fire) and always paired with
 
     pub(super) fn poison(&mut self, poison: Poison) {
