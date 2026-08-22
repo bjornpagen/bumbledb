@@ -13,7 +13,6 @@ use super::read_meta::{MetaBlock, classify_meta_block, parse_meta, parse_meta_he
 
 impl Environment {
     /// # Errors
-
     /// LMDB environment; `FormatMismatch`, then `SchemaMismatch`;
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         Self::open_lane(path, schema, OpenLane::Write)
