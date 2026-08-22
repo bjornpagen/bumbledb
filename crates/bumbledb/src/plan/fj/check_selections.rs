@@ -2,17 +2,10 @@ use super::{PlanError, PlanOccurrence};
 use crate::image::view::FilterPredicate;
 use crate::ir::WordCmp;
 
-/// The selection invariant for **participating** occurrences, asserted
-/// at the boundary because [`PlanOccurrence`] is plain data anyone can
-/// construct: `filters` may not carry an Eq-constant compare —
-/// [`split_filters`] routes every Eq into `selections`.
-/// Non-participating occurrences are exempt and skipped here: a negated
-/// occurrence's Eq-constants stay in its filter list — the ordinary
-/// filtered view the anti-probe runs against
-/// (docs/architecture/40-execution.md, § anti-probe filters) — and a
-/// grounding-folded occurrence retains its pre-split list purely as
-/// introspection's fold picture (`plan/ground/evaluate.rs`), never resolved or
-/// scanned.
+/// The selection invariant for **participating** occurrences, asserted at the
+/// boundary because [`PlanOccurrence`] is plain data anyone can construct:
+/// `filters` may not carry an Eq-constant compare — [`split_filters`] routes
+/// every Eq into `selections`.
 pub(crate) fn check_selections(occurrences: &[PlanOccurrence]) -> Result<(), PlanError> {
     for occurrence in occurrences {
         if !occurrence.role.participates() {
