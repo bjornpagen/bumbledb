@@ -1,6 +1,5 @@
 //! Generic core behind an admitted instance, plus the owned-instance
 //! query bodies. Public query methods live on the concrete types.
-
 use std::marker::PhantomData;
 use std::sync::Arc;
 
