@@ -1,5 +1,4 @@
 //! The thing a human reads before making (or refusing)
-
 use crate::harness::Stats;
 
 #[derive(Debug, Clone, PartialEq)]
