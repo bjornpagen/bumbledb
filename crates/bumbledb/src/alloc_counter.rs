@@ -42,7 +42,6 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
@@ -61,7 +60,6 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let old = layout.size() as u64;
         let new = new_size as u64;
@@ -85,7 +83,6 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 /// Window-relative counters: events and bytes since the last [`reset`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocWindow {
-
     pub allocs: u64,
 
     pub deallocs: u64,
@@ -98,7 +95,6 @@ pub struct AllocWindow {
 /// Process-lifetime counters: live heap and its high-water.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocAbsolute {
-
     pub live_bytes: u64,
 
     pub peak_live_bytes: u64,
