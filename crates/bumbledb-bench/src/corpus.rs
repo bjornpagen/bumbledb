@@ -1,7 +1,3 @@
-//! Corpus loading (docs/architecture/60-validation.md): one generator stream, two stores,
-//! identical contents — the precondition for every verify and every
-//! timing run.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -12,7 +8,6 @@ use crate::corpus_gen::{GenConfig, Sizes, relation_rows};
 use crate::schema::{Ledger, ids, schema};
 use crate::sqlmap;
 
-/// One load's outcome.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadStats {
     pub facts: u64,
@@ -21,14 +16,13 @@ pub struct LoadStats {
 }
 
 impl LoadStats {
-    /// One load's stats from its count and wall time (shared with the
-    /// calendar loader, `crate::calendar::corpus`).
+
     #[must_use]
     pub fn of(facts: u64, wall: Duration) -> Self {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
-        )] // reporting, not arithmetic
+        )] 
         let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
         Self {
             facts,
@@ -38,14 +32,7 @@ impl LoadStats {
     }
 }
 
-/// Loads the corpus into a bumbledb store, relation by relation in the
-/// containment-safe declaration order, through one collection `insert_dyn`
-/// per relation inside `db.write`.
-///
 /// # Errors
-///
-/// Engine errors from `insert_dyn` (a corpus load has no resume story;
-/// regenerate).
 pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     let start = Instant::now();
     let mut facts = 0u64;
@@ -62,30 +49,8 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     Ok(LoadStats::of(facts, start.elapsed()))
 }
 
-/// The `SQLite` session PRAGMAs for loading and benching, with fairness
-/// rationale (docs/architecture/60-validation.md):
-/// - `journal_mode=WAL`: `SQLite`'s best self for a read-heavy profile.
-/// - `synchronous=FULL`: the durability level `00-product.md` pins for
-///   the comparison (both engines pay the fsync bill).
-/// - `fullfsync=ON` + `checkpoint_fullfsync=ON`: under
-///   `synchronous=FULL` both engines must flush **to media**. LMDB does
-///   unconditionally on macOS (`lmdb-master-sys` `mdb.c:171`:
-///   `MDB_FDATASYNC(fd)` = `fcntl(fd, F_FULLFSYNC)` under `__APPLE__`);
-///   `SQLite`'s default `fullfsync=OFF` issues a plain `fsync(2)`
-///   instead, which macOS does not propagate through the drive cache
-///   (the amalgamation's `unixSync`: `F_FULLFSYNC` only `if(fullSync)`).
-///   Without parity the write comparison flatters `SQLite` ~40x while
-///   claiming the same durability. No-ops off macOS.
-/// - `cache_size=-262144` (256 MiB): generous page cache — the corpus
-///   should be memory-resident on both sides, as it is for bumbledb.
-/// - `temp_store=MEMORY`: no accidental disk temp files.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
-///
 /// # Panics
-///
 /// If WAL refuses to engage — the fairness protocol is unconditional.
 pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
     let mode: String =
@@ -99,20 +64,8 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Loads one row stream into a `SQLite` table: prepared-statement inserts
-/// in transactions of 4096 rows (the SQLite oracle's chosen commit size,
-/// not an engine chunk),
-/// interval fields split through the normative mapping. The one insert
-/// loop every `SQLite` mirror shares — the ledger corpus, the verify
-/// target corpus, and the scenario worlds.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
-///
 /// # Panics
-///
-/// Only on a row value breaking the mapping axiom (a programmer error).
 pub fn insert_rows(
     conn: &Connection,
     relation: &bumbledb::schema::Relation,
@@ -135,16 +88,8 @@ pub fn insert_rows(
     Ok(facts)
 }
 
-/// Loads one relation's generator stream into the `SQLite` mirror.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
-///
 /// # Panics
-///
-/// Only on a corpus value breaking the mapping axiom (a programmer
-/// error).
 pub fn load_sqlite_relation(
     conn: &Connection,
     cfg: GenConfig,
@@ -153,20 +98,9 @@ pub fn load_sqlite_relation(
     insert_rows(conn, schema().relation(rel), relation_rows(cfg, rel))
 }
 
-/// Creates, configures, and loads the `SQLite` mirror: DDL from the schema
-/// descriptors (the closed vocabularies' extension INSERTs included —
-/// schema surface, not corpus), every relation via
-/// [`load_sqlite_relation`], then `ANALYZE` and a truncating WAL
-/// checkpoint.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (WAL refused; corpus values
-/// breaking the mapping axiom).
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
     let conn = Connection::open(path)?;
     configure_sqlite(&conn)?;
@@ -187,13 +121,7 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
     Ok((conn, LoadStats::of(facts, start.elapsed())))
 }
 
-/// Cross-store equality: per-relation counts, then a seeded sample of
-/// facts fetched from `SQLite` by fresh id and compared value-for-value
-/// against the generator (which both stores loaded from).
-///
 /// # Panics
-///
-/// On any inequality — this is test/verify support, not a soft check.
 pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
     let schema = schema();
     let sizes = Sizes::of(cfg.scale);
@@ -211,9 +139,7 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
         assert_eq!(ours as u64, theirs, "row counts diverge for {name}");
         assert_eq!(ours as u64, sizes.rows(rel), "generator count for {name}");
     }
-    // The closed vocabularies: the engine answers the sealed extension
-    // virtually; the mirror holds the same rows from its extension
-    // INSERTs — a count divergence here is a mirror-build bug.
+
     for rel in ids::RELATIONS..u32::try_from(schema.relations().len()).expect("small") {
         let rel = RelationId(rel);
         let name = schema.relation(rel).name();
@@ -229,9 +155,6 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
         assert!(theirs > 0, "a closed relation is never empty: {name}");
     }
 
-    // 100 seeded sample postings, fetched from SQLite by id, compared to
-    // the generator's row (bumbledb equality to the generator is already
-    // covered transitively by counts + set semantics + the verify layer).
     let mut rng = crate::corpus_gen::Rng::new(cfg.seed ^ 0xA5A5);
     for _ in 0..100 {
         let i = rng.range(sizes.postings);
@@ -269,8 +192,6 @@ mod tests {
         dir
     }
 
-    /// Both loads at S scale, then the cross-store equality sweep — the
-    /// passing gate in one test (S is the test scale by design).
     #[test]
     fn both_stores_load_the_same_corpus() {
         let dir = scratch("corpus-load");
@@ -287,7 +208,6 @@ mod tests {
         assert!(ours.facts_per_sec > 0.0 && theirs.facts_per_sec > 0.0);
         assert_loaded_equal(&db, &conn, cfg);
 
-        // PRAGMA verification: the fairness settings actually engaged.
         let mode: String = conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .expect("pragma");
