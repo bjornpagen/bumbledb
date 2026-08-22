@@ -85,7 +85,6 @@ pub(crate) fn occurrence_stats_on<C: CatalogRead, I: ImageBind>(
     occurrence: &Occurrence,
     rows: u64,
 ) -> crate::error::Result<OccStats> {
-
     match OccBind::of_occurrence(occurrence) {
         OccBind::RecDelta(_) => {
             let floor = DELTA_PLANNING_ROWS.max(1);
@@ -162,7 +161,6 @@ fn occurrence_estimate<C: CatalogRead>(
 
     let mut folded_range_fields: Vec<FieldId> = Vec::new();
     for residual in &residuals {
-
         if let FilterPredicate::FieldsAllen { mask, .. }
         | FilterPredicate::FieldAllen { mask, .. } = residual
         {
