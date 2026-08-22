@@ -1,37 +1,10 @@
 //! bumbledb: an embedded, typed, set-semantic relational database over
 //! LMDB, executing conjunctive queries with Free Join.
-//!
-//! The surface is plain data in, plain data out (`docs/architecture/`, the
-//! normative design):
-//!
+//! The surface is plain data in, plain data out:
 //! - Declare a schema with the [`schema!`] macro — its `pub Name;` header
-//!   names a unit struct implementing [`Theory`], and the body expands
-//!   to host newtypes and one typed [`Fact`] struct per relation
-//!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
-//!   The macro is sugar; [`schema::SchemaDescriptor`] is the contract.
-//! - Open a handle with [`Db::create`] / [`Db::open`] — `Db::create(path,
-//!   Ledger)` returns [`Admission`]`<Db>`: empty that does not hold is
-//!   rejected with no lease. Share the handle across threads (`Send +
-//!   Sync`; the engine owns zero threads). `Db<S>` carries the schema as
-//!   typestate: a schema-A fact cannot reach a schema-B database (see
-//!   below).
-//! - Write through [`Db::write`]: collection [`WriteTx::insert`] /
-//!   [`WriteTx::delete`] (empty, singleton `[&fact]`, many — one algebra,
-//!   [`MutationReport` `{ submitted, changed }`]) and [`WriteTx::reserve`]
-//!   (`FreshRange`; empty is not a minted id). ETL is a host loop of
-//!   `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
-//!   mutation is [`Error::TransactionPoisoned`] carrying the nested
-//!   cause. `delete(old); insert(new)` in either order is the blessed
-//!   mutation idiom.
-//! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
-//!   inside [`Db::read`] on a [`ReadInstance`] into a reusable
-//!   [`Answers`] — results are sets; the host sorts.
-//! - Migrate by ETL: [`ReadInstance::scan`] exports, [`Db::write`] +
-//!   [`WriteTx::insert_dyn`] imports (schema change = a new database, never in place).
-//!
-//! Newtypes are the nominal safety layer — mixing two of them is a host
-//! compile error:
-//!
+//! names a unit struct implementing [`Theory`], and the body expands
+//! (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
+//! `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
@@ -41,11 +14,8 @@
 //! let account = AccountId(1);
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
 //! ```
-//!
 //! The schema typestate closes the cross-schema hole the same way: an
 //! `Inventory` fact into a `Ledger` database is a compile error, not a
-//! runtime surprise —
-//!
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
@@ -65,34 +35,18 @@
 //! })
 //! .unwrap();
 //! ```
-//!
-//! The workspace holds the three-command contract — green after every
 //! change:
-//!
+//! The workspace holds the three-command contract — green after every
 //! ```text
 //! cargo fmt --all --check
 //! cargo clippy --workspace --all-targets -- -D warnings
 //! cargo test --workspace
 //! ```
 
-// Nightly dividend (the crucible packet (git ecec1dc3)): `try`
-// blocks replace the immediately-invoked-closure error idiom — the
-// block states "this region fails as a unit" without a fake function
-// call.
 #![feature(try_blocks)]
-// Nightly dividend (the crucible packet (git ecec1dc3)): the
-// predicate-scan, dense-fold, and index-gather kernels are `std::simd`
-// bodies on every target — measured at or above the retired hand-NEON
-// twins, deleting the intrinsic dual and most of the kernel layer's
-// `unsafe`, and Miri-interpretable for the UB lane (PRD 15). The Allen
-// configuration kernel alone stays intrinsic per that PRD's measured
-// verdict matrix.
+
 #![feature(portable_simd)]
 
-// 64-bit only (docs/architecture/00-product.md): `usize` is 8 bytes everywhere
-// and no design decision accommodates narrower platforms. Building for a
-// 32-bit target (e.g. `--target i686-unknown-linux-gnu`) fails with this
-// explicit error instead of miscompiling pointer-width assumptions.
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
 
@@ -125,7 +79,6 @@ mod value;
 mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
-/// The accepted-collection transport (`proposals/one-representation/20`):
 /// the bridge crates' parse-once write representation, consumed by the
 /// doc-hidden `*_accepted` verbs. A transport form, not embedding API.
 #[doc(hidden)]
@@ -153,21 +106,13 @@ pub use plan::ground::with_grounding_disabled;
 /// artifact, never reuse one.
 pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 pub use storage::env::GenerationId;
-// The IR vocabulary a host needs to build a `Query`, and the id types that
-// appear in `Db`'s own signatures — importable from the root, no
-// module-path scavenger hunt.
+
 pub use ir::{
     AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,
     Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, NonEmpty, OrderCmp, ParamId,
     ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId, WordCmp,
 };
-// The bindings roster (docs/architecture/70-api.md § the SchemaSpec
-// bindings contract): everything a foreign-host bridge needs, reachable
-// from the crate root — the declared/spec schema surface with its typed
-// errors, the fingerprint identity, and the dynamic-surface error
-// vocabulary. `Db`, transactions, prepared queries, `Value`, the IR
-// vocabulary, and the rejection types (`Violation`/`Violations`) are
-// re-exported above.
+
 pub use crate::encoding::InternId;
 pub use error::{
     AtomIndex, CitedFact, DynIdError, FactShapeError, FindIndex, RowIndex, RuleIndex, SchemaError,
@@ -184,49 +129,36 @@ pub use schema::{
 #[doc(hidden)]
 pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 
-/// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
+/// The declarative schema surface. (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
 /// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
 /// descriptor types.)
-///
 /// The grammar is parse-shape only and names resolve to ids at expansion;
 /// semantics beyond names flow through schema validation (typed
 /// [`error::SchemaError`] from [`Db::create`] / [`Db::open`]). The
 /// invocation's first item is the header `pub Name;` — the unit struct
-/// that names the schema ([`Theory`]) and disambiguates multiple
-/// schemas in one module. Six shapes the macro itself refuses:
-///
-/// A missing header:
-///
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     relation Holder { id: u64 as HolderId, fresh }
 /// }
 /// ```
-///
-/// Field-level constraint words do not exist — everything relational is a
 /// statement:
-///
+/// Field-level constraint words do not exist — everything relational is a
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
 ///     relation Holder { id: u64 as HolderId, fresh, unique }
 /// }
 /// ```
-///
 /// An unknown modifier — the only modifier is `fresh`, and the dead SQL
-/// generation word takes this same path
 /// (``schema!: unknown field modifier `autoincrement` (the only modifier is `fresh`)``):
-///
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
 ///     relation Holder { id: u64 as HolderId, autoincrement }
 /// }
 /// ```
-///
 /// An FD's right side is its own relation (`R(X) -> R`):
-///
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -235,9 +167,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Account(holder) -> Holder;
 /// }
 /// ```
-///
 /// An FD takes no selection (the descriptor cannot represent one):
-///
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -250,11 +180,8 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Account(id | kind == Savings) -> Account;
 /// }
 /// ```
-///
-/// An unknown field name in a statement — expansion resolves names to
 /// declaration-order ids, so the error names the relation and field
 /// (``schema!: relation `Holder` has no field `nope` ``):
-///
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -262,11 +189,8 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     Holder(nope) -> Holder;
 /// }
 /// ```
-///
-/// Bare `bytes` is not a type — the width is the type
 /// (``schema!: unknown type `bytes` — write `bytes<N>` ``); variable-width
-/// binary does not exist (`docs/architecture/10-data-model.md`):
-///
+/// binary does not exist:
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -285,15 +209,11 @@ pub mod __private {
 
 #[cfg(test)]
 pub(crate) mod testutil {
-    //! Shared test scaffolding: a self-cleaning temp directory (no external
-    //! dev-dependency — deps stay exactly heed + blake3).
 
     use std::path::{Path, PathBuf};
 
     use crate::error::{Admission, Result, Violations};
 
-    /// The theory-rejection payload of an admitted-or-rejected result.
-    /// Panics on infrastructure error or unexpected acceptance.
     #[track_caller]
     pub fn expect_rejected<T>(result: Result<Admission<T>>) -> Violations {
         match result {
@@ -308,10 +228,7 @@ pub(crate) mod testutil {
     pub struct TempDir(PathBuf);
 
     impl TempDir {
-        /// Creates (or wipes and recreates) a per-test directory. `tag` must
-        /// be distinct per test function so parallel tests never collide;
-        /// the pid suffix keeps concurrent suite runs (other worktrees,
-        /// co-tenant agents) from wiping each other's dirs.
+
         pub fn new(tag: &str) -> Self {
             let path =
                 std::env::temp_dir().join(format!("bumbledb-test-{tag}-{}", std::process::id()));
