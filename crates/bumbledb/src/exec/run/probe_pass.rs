@@ -7,7 +7,6 @@ use super::{
 };
 
 impl Executor {
-
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
@@ -30,7 +29,6 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) {
-
         if !matches!(self.drive_state, super::DriveState::Running) {
             scratch.parents.clear();
             scratch.element_origins.clear();
@@ -505,7 +503,6 @@ impl Executor {
                 }
             };
             if leaf {
-
                 bindings.load_row(
                     &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
                 );
@@ -524,7 +521,6 @@ impl Executor {
                 }
                 let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
                 if flow == Flow::SkipSuffix {
-
                     counters.skip(node_idx);
                     match tables.absorb {
                         super::SkipAbsorb::Node(a) if node_idx >= a => self.cancel_origin(origin),
@@ -537,7 +533,6 @@ impl Executor {
                     }
                 }
             } else {
-
                 let cover_slots = &self.slot_map[node_idx][cover_sub];
                 let child = &mut self.scratch[node_idx + 1];
                 let start = child.pending_bindings.len();
