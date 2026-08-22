@@ -55,7 +55,6 @@ pub enum ValueType {
     /// construction (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
 
     /// that merely checks is a CHECK constraint, refused
-
     FixedInterval {
         element: IntervalElement,
         width: u64,
@@ -63,7 +62,6 @@ pub enum ValueType {
 }
 
 impl ValueType {
-
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
@@ -92,7 +90,6 @@ impl ValueType {
 /// .
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generation {
-
     None,
 
     Fresh,
@@ -111,7 +108,6 @@ pub struct FieldDescriptor {
 /// type, not a match failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueMismatch {
-
     Type,
 }
 
@@ -145,7 +141,6 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
         ) => Ok(()),
 
         // `lean/Bumbledb/Values.lean: FixedU64.not_ray`). A wide or
-
         (
             Value::IntervalU64(interval),
             ValueType::FixedInterval {
@@ -183,17 +178,14 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
 /// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiteralSet {
-
     /// before the disjunctive extension, unchanged in meaning.
     One(Value),
 
     /// (`lean/Bumbledb/Countermodels.lean:
-
     Many(Box<[Value]>),
 }
 
 impl LiteralSet {
-
     #[must_use]
     pub fn literals(&self) -> &[Value] {
         match self {
@@ -239,7 +231,6 @@ pub struct Side {
 /// `lean/Bumbledb/Schema.lean: Weight`). `Unit` is the count instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Weight {
-
     Unit,
 
     Field(FieldId),
@@ -258,7 +249,6 @@ pub enum Weight {
 /// `lean/Bumbledb/Schema.lean: Bound`). `TargetDuration` is the
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bound {
-
     Lit(u64),
 
     TargetField(FieldId),
@@ -273,19 +263,20 @@ pub enum Bound {
 /// with the sides swapped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementDescriptor {
-
     Functionality {
         relation: RelationId,
         projection: Box<[FieldId]>,
     },
 
-    Containment { source: Side, target: Side },
+    Containment {
+        source: Side,
+        target: Side,
+    },
 
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`;
     /// `lean/Bumbledb/Schema.lean: Statement.capacity`). Field order is
 
     /// 2026-07-24, C2: the corpus JSON, the FFI marshal, the descriptor
-
     Capacity {
         target: Side,
 
@@ -335,14 +326,12 @@ pub struct RelationDescriptor {
 /// descriptor.
 #[derive(Debug, Clone, Copy)]
 pub enum SealedField<'a> {
-
     SyntheticId,
 
     Declared(&'a FieldDescriptor),
 }
 
 impl<'a> SealedField<'a> {
-
     #[must_use]
     pub fn name(self) -> &'a str {
         match self {
@@ -362,7 +351,6 @@ impl<'a> SealedField<'a> {
 }
 
 impl RelationDescriptor {
-
     pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
         self.extension
             .is_some()
@@ -381,14 +369,12 @@ pub struct SchemaDescriptor {
 }
 
 impl SchemaDescriptor {
-
     /// # Panics
 
     #[must_use]
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
-
             for (sealed_idx, slot) in relation.sealed_fields().enumerate() {
                 if let SealedField::Declared(field) = slot
                     && field.generation == Generation::Fresh
@@ -423,7 +409,6 @@ impl SchemaDescriptor {
 /// `Violation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatementKind {
-
     Functionality,
 
     Containment,
@@ -432,7 +417,6 @@ pub enum StatementKind {
 }
 
 impl StatementDescriptor {
-
     #[must_use]
     pub const fn kind(&self) -> StatementKind {
         match self {
