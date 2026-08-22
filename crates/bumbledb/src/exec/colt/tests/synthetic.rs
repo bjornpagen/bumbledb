@@ -18,7 +18,6 @@ fn synthetic_view(rows: &[(u64, u64)]) -> View {
 
 #[test]
 fn store_free_gathers_match_a_naive_model() {
-
     let mut rows: Vec<(u64, u64)> = (0..500).map(|i| (i % 40, i)).collect();
     rows.extend((500..700).map(|i| (0, i)));
     let view = synthetic_view(&rows);
