@@ -1,89 +1,10 @@
-//! The conformance lane (the covenant campaign, PRD 13): the Lean
-//! denotation executes as the THIRD differential oracle.
-//!
-//! The dual-oracle blind spot: the engine and the naive model were
-//! written from the same docs — a shared misreading passes every
-//! two-way differential forever. The Lean tree
-//! (`lean/Bumbledb/Query/Denotation.lean`) is derived from the
-//! mathematics, and its executable half `evalList` is PROVED equal to
-//! the set denotation (`eval_sound`), so evaluating it on real Tiny
-//! worlds is a DENOTATION check, not a third implementation.
-//!
-//! This module is the Rust half of the lane:
-//!
-//! * the **serializer** — one hand-readable JSON document per case
-//!   (`{ theory, instance, query, params, answers }`, tagged values,
-//!   answers canonically sorted; format documented with an annotated
-//!   example in `lean/conformance/README.md`);
-//! * the **corpus builder** — seeded querygen cases (the valid arm
-//!   behind the `Rng` seam, `Scale::Tiny`) plus the hand-picked shapes,
-//!   written to `lean/conformance/cases/*.json` (checked in — the
-//!   replay corpus);
-//! * the **comparator** (`three_way_conformance_over_the_checked_in_corpus`)
-//!   — per checked-in case, replayed from its recorded provenance: the
-//!   engine fresh, the naive model fresh, byte-compare against the
-//!   checked-in file, then `lake exe conformance` for the Lean side. Any disagreement names the case file. A DISAGREEMENT IS
-//!   A TROPHY (engine bug / naive-model bug / spec bug — triage per the
-//!   fuzzing charter, `docs/architecture/60-validation.md`); this test
-//!   reports, it never fixes.
-//!
-//! The RECURSIVE arm ([`reach`], `reach-*.json`) rides the same
-//! corpus and comparator: reach cases run the engine against the naive
-//! interiors-then-rec-then-main eval on build AND replay, `SQLite`
-//! corroborating where the translator admits, judged by
-//! `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way like
-//! its query and judgment siblings.
-//!
-//! The COMPLETE-ADMISSION arm ([`complete`], `complete-*.json`)
-//! likewise: [`bumbledb::InstanceBuilder::admit`] against
-//! [`crate::naive::NaiveDb::judge_complete`], then Lean
-//! `Txn.completeAdmissionB` / `Txn.judgeB` over the candidate.
-//!
-//! ## Scope fences (each counted in [`Report`], never silent)
-//!
-//! * Tiny scale, the valid querygen arm only — the hostile arm
-//!   (`corpus_gen::irgen`) types nothing and stays with the fuzz lane.
-//! * **Unresolved string literals excluded** (the latch): the model has
-//!   no intern dictionary — the serializer interns per case, and a
-//!   query/param string absent from the world's vocabulary is a
-//!   recorded, principled exclusion.
-//! * **Membership on negated atoms excluded**: the Lean anti-join
-//!   quantifies `Matches` over binding terms, and point membership is a
-//!   typing rule the serializer lowers to a fresh variable + `PointIn`
-//!   condition — a lowering with no home inside a negated atom.
-//! * **Element-typed param-set membership excluded**: the lowered
-//!   `PointIn`-with-set comparison would violate the Lean shape
-//!   discipline (`WellTyped`) that `eval_sound` names as its premise.
-//! * **Membership under an additive fold**: LICENSED (finding 087,
-//!   discharged 2026-07-23). Each serialized rule carries its SURFACE
-//!   WIDTH (`"width"` — the written rule's variable count, below the
-//!   membership lowering's fresh mints); the Lean glue reads `fullRow`
-//!   at that width, so a minted interval variable is fold-invisible
-//!   exactly as it is answer-invisible
-//!   (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`).
-//!   The doc's fold-domain law (`20-query-ir.md` § aggregation: a
-//!   membership term selects, it does not bind) now holds on all three
-//!   oracles, and the third oracle adjudicates the class on every push.
-//! * **Runtime-error executions excluded** (`Overflow`):
-//!   the lane compares answer sets on error-free executions only.
-//! * **Slow and wide cases excluded by budget** (naive wall time / answer
-//!   rows): the corpus is a per-push CI lane; the caps are counted and
-//!   recorded, and shrink the case, never the model.
-//!
-//! ## The membership lowering (recorded)
-//!
-//! The engine's membership BINDING is a typing rule, not a syntax node
-//! (`ir/validate/context.rs::resolve_bivalents`). The Lean matching
-//! equation reads every binding as value selection, so the serializer
-//! performs the same resolution the validator does: an element-typed
-//! term on an interval field becomes a fresh interval variable plus a
-//! `PointIn` condition — the exact predicate form the typing rule
+//! The Lean tree mathematics, and its executable half `evalList` is PROVED
+//! equal to the set denotation (`eval_sound`), so evaluating it on real Tiny
+//! (`lean/Bumbledb/Query/Denotation.lean`) is derived from the example in
+//! `lean/conformance/README.md`); written to `lean/conformance/cases/*.json`
+//! (checked in — the `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way
+//! like (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`).
 //! licenses (`lean/Bumbledb/Query/Syntax.lean`, the membership note).
-//! The engine executes the ORIGINAL query; Lean evaluates the lowered
-//! one; agreement of the two is part of what the lane checks.
-//!
-//! No engine `pub` accessor was needed: `Answers` extraction via
-//! `differential::engine_query` sufficed (recorded per the PRD).
 
 pub mod complete;
 pub mod judgment;
@@ -106,49 +27,34 @@ use crate::differential::{self, Answers};
 use crate::naive::{Delta, NaiveDb, ParamValue, Tuple};
 use crate::querygen::{self, ParamDraw, target};
 
-/// The two Tiny world seeds the corpus alternates over — conformance's
-/// own constants (the fuzz lane's cached worlds are its own).
 pub const WORLD_SEEDS: [u64; 2] = [0x00C0_4F01, 0x00C0_4F02];
 
-/// The seeded-case target (the PRD's N ≈ 200; hand cases ride on top).
 pub const SEEDED_CASES: usize = 200;
 
-/// Per-case seed base: `case_seed = CASE_SEED_BASE + attempt` — recorded
-/// in each case's provenance, so the comparator replays the exact query
-/// and draw through `Rng::new(case_seed)`.
 pub const CASE_SEED_BASE: u64 = 0x0013_0000;
 
-/// The naive-model wall-time budget per case. The Lean evaluator is the
-/// same nested-loop cost class (`evalList` — join, filters, projection),
-/// so the naive wall is the proxy that keeps the corpus run a per-push
-/// lane; over-budget cases are counted (`excluded_slow`), never silent.
 const NAIVE_BUDGET_MS: u128 = 25;
 
-/// The answer-row cap per case (file size + Lean parse time); counted
-/// (`excluded_wide`), never silent.
 const MAX_ANSWER_ROWS: usize = 512;
 
-/// The fragment-coverage report: cases expressible / generated, with
-/// every exclusion named and counted (the crucible's no-silent-caps
-/// rule).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Report {
-    /// Candidate (query, draw) pairs attempted.
+
     pub attempted: u64,
-    /// Cases written to the corpus.
+
     pub written: u64,
-    /// A query/param string literal outside the world's vocabulary.
+
     pub excluded_unresolved: u64,
-    /// The engine answered `Overflow`.
+
     pub excluded_engine_error: u64,
-    /// Naive wall time over [`NAIVE_BUDGET_MS`].
+
     pub excluded_slow: u64,
-    /// Answer set over [`MAX_ANSWER_ROWS`].
+
     pub excluded_wide: u64,
 }
 
 impl Report {
-    /// The coverage line the builder and comparator log.
+
     #[must_use]
     pub fn coverage_line(&self) -> String {
         format!(
@@ -164,15 +70,11 @@ impl Report {
     }
 }
 
-/// Why one candidate case is outside the lane's fragment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Exclusion {
     UnresolvedLiteral,
 }
 
-/// One loaded Tiny world: the engine store, the naive model, and the
-/// per-world intern dictionary (string → dense id, first-seen order
-/// over the corpus streams — the ids Lean compares, engine-independent).
 pub struct World {
     pub cfg: GenConfig,
     pub db: Db<target::Target>,
@@ -182,12 +84,11 @@ pub struct World {
     _dir: ScratchDir,
 }
 
-/// A self-cleaning scratch directory for the engine store.
 struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-        // Unique per run (pid + wall-clock nanos): a fixed tag path lets
+
         // a concurrent or wedged prior run collide on the LMDB flock.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -208,16 +109,7 @@ impl Drop for ScratchDir {
     }
 }
 
-/// Builds one Tiny world: engine collection inserts in declaration order (the
-/// DU cluster in joint chunks, as the verify harness loads it), the
-/// naive model seeded from the descriptor and judged over the whole
-/// corpus as one delta, and the intern dictionary collected from the
-/// corpus streams and the sealed extensions.
-///
 /// # Panics
-///
-/// On tool-level failures (store creation, a corpus the theory
-/// rejects) — never on a disagreement.
 #[must_use]
 pub fn build_world(seed: u64) -> World {
     let cfg = GenConfig {
@@ -232,7 +124,7 @@ pub fn build_world(seed: u64) -> World {
         let rel = RelationId(rel);
         match rel {
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
-            target::ids::IMPORT_BATCH => {} // loaded with its entries
+            target::ids::IMPORT_BATCH => {} 
             _ => {
                 db.write(|tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
@@ -247,9 +139,7 @@ pub fn build_world(seed: u64) -> World {
         }
     }
     // The fixed-width Lane (`interval<i64, 5>`) sits after the closed
-    // vocabulary, so the `0..TARGET_RELATIONS` sweep skips it — its own
-    // load here (statement-free payload, no draws: every earlier
-    // relation's corpus stream is byte-stable).
+
     db.write(|tx| {
         tx.insert_dyn(
             target::ids::LANE,
@@ -292,9 +182,6 @@ pub fn build_world(seed: u64) -> World {
     world
 }
 
-/// The `JournalEntry == ImportBatch` cluster in joint chunks: the DU
-/// `==` statement holds in neither one-relation prefix, so entries and
-/// their import batches commit together.
 fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
     const CHUNK: u64 = 4096;
     let domains = target::Domains::of(cfg.scale);
@@ -323,7 +210,7 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
 }
 
 impl World {
-    /// Adds a string value to the dictionary (first-seen order).
+
     fn intern(&mut self, value: &Value) {
         if let Value::String(bytes) = value
             && !self.dict.contains_key(bytes)
@@ -334,8 +221,6 @@ impl World {
         }
     }
 
-    /// The dictionary id of a string, or the unresolved-literal
-    /// exclusion.
     fn resolve(&self, text: &str) -> Result<u64, Exclusion> {
         self.dict
             .get(text)
@@ -344,9 +229,8 @@ impl World {
     }
 }
 
-/// The Allen basic names, in `Basic::ALL` order — the mask spelling of
-/// the interchange format (and of `lean/Bumbledb/Query/Syntax.lean`'s
-/// `AllenRel`).
+/// The Allen basic names, in `Basic::ALL` order — the mask spelling of the
+/// interchange format (and of `lean/Bumbledb/Query/Syntax.lean`'s `AllenRel`).
 const BASIC_NAMES: [&str; 13] = [
     "before",
     "meets",
@@ -363,7 +247,6 @@ const BASIC_NAMES: [&str; 13] = [
     "after",
 ];
 
-/// Serializes an Allen mask as its admitted-relation name list.
 fn push_mask(out: &mut String, mask: AllenMask) {
     out.push('[');
     let mut first = true;
@@ -379,11 +262,6 @@ fn push_mask(out: &mut String, mask: AllenMask) {
     out.push(']');
 }
 
-/// [`push_value`] AT A FIELD'S TYPE: a fixed-width interval position
-/// renders `[start, width]` under the family's own tag — the width is
-/// the type, so the field re-derives the spelling and
-/// `Conformance.lean: decodeValue` re-checks the Q2 bound decoding it.
-/// Every other type falls through to the value's own spelling.
 fn push_value_typed(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -408,9 +286,6 @@ fn push_value_typed(
     push_value(world, used, out, value)
 }
 
-/// Serializes one value in the tagged form; strings resolve through the
-/// world dictionary (`used` collects the ids the case actually spends,
-/// so the emitted dictionary stays small).
 fn push_value(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -452,11 +327,6 @@ fn push_value(
     Ok(())
 }
 
-/// Serializes one fact as a value array, at its relation's positional
-/// types (`types` empty for answer rows — a fixed-width FIND is not a
-/// case shape this lane carries: the engine's answer channel widens to
-/// bounds, so the corpus keeps fixed values in instance columns and
-/// scalar finds in heads).
 fn push_fact(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -475,7 +345,6 @@ fn push_fact(
     Ok(())
 }
 
-/// Serializes one term.
 fn push_term(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -501,8 +370,6 @@ fn push_term(
     Ok(())
 }
 
-/// Serializes one comparison leaf (the operator flattened into the
-/// object; an Allen mask rides beside it).
 fn push_comparison(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -532,7 +399,6 @@ fn push_comparison(
     Ok(())
 }
 
-/// Serializes one condition tree node.
 fn push_condition(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -559,7 +425,6 @@ fn push_condition(
     }
 }
 
-/// Serializes one find term.
 fn push_find(out: &mut String, find: &FindTerm) {
     match find {
         FindTerm::Var(v) => {
@@ -580,8 +445,6 @@ fn push_find(out: &mut String, find: &FindTerm) {
     }
 }
 
-/// Whether `(atom, field)` is interval-typed. Interior (derived) columns
-/// are scalar in this corpus; the seeded serializer never sees one.
 fn field_is_interval(atom: &Atom, field: FieldId) -> bool {
     match atom.source {
         AtomSource::Edb(relation) => target::schema()
@@ -593,8 +456,6 @@ fn field_is_interval(atom: &Atom, field: FieldId) -> bool {
     }
 }
 
-/// One rule's variable count — the naive model's `count_vars`, walked
-/// over every syntactic site (bindings, conditions, finds, Arg keys).
 fn count_vars(rule: &Rule) -> u16 {
     fn see(count: &mut u16, var: VarId) {
         *count = (*count).max(var.0 + 1);
@@ -636,11 +497,6 @@ fn count_vars(rule: &Rule) -> u16 {
     count
 }
 
-/// Which variables are scalar-anchored (bound on some non-interval
-/// field of a positive atom) — the bivalent-resolution rule: an
-/// anchored variable's interval-field occurrence is point membership;
-/// an unanchored one is interval-typed and its occurrence is value
-/// equality.
 fn scalar_anchors(rule: &Rule, var_count: u16) -> Vec<bool> {
     let mut anchored = vec![false; usize::from(var_count)];
     for atom in &rule.atoms {
@@ -655,8 +511,6 @@ fn scalar_anchors(rule: &Rule, var_count: u16) -> Vec<bool> {
     anchored
 }
 
-/// Whether one binding term on an interval field reads as point
-/// membership (the typing rule) or value equality.
 fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
     match term {
         Term::Var(v) => anchored[usize::from(v.0)],
@@ -675,12 +529,12 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
     }
 }
 
-/// One rule after the membership lowering: rewritten positive atoms,
-/// negated atoms left in SURFACE form (Lean `AntiProbe` /
-/// `surfaceMatchesB` reads membership there), the original conditions
-/// plus the lowered `PointIn` leaves, and the SURFACE WIDTH — the
-/// written rule's variable count, below the fresh mints, so the Lean
-/// fold domain projects every mint away (finding 087, discharged).
+/// One rule after the membership lowering: rewritten positive atoms, negated
+/// atoms left in SURFACE form (Lean `AntiProbe` / `surfaceMatchesB` reads
+/// membership there), the original conditions plus the lowered `PointIn`
+/// leaves, and the SURFACE WIDTH — the written rule's variable count, below the
+/// fresh mints, so the Lean fold domain projects every mint away (finding 087,
+/// discharged).
 struct LoweredRule<'a> {
     finds: &'a [FindTerm],
     atoms: Vec<Atom>,
@@ -689,9 +543,6 @@ struct LoweredRule<'a> {
     width: u16,
 }
 
-/// Performs the bivalent resolution the validator owns: element-typed
-/// terms on interval fields become fresh interval variables plus
-/// `PointIn` conditions (module doc, "the membership lowering").
 fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> LoweredRule<'a> {
     let var_count = count_vars(rule);
     let anchored = scalar_anchors(rule, var_count);
@@ -728,9 +579,6 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> LoweredRule<'a> {
     }
 }
 
-/// The relations a lowered query mentions, positive and negated — the
-/// serialized instance carries exactly these (`snapshot_single`: the
-/// denotation reads nothing else).
 fn mentioned(rules: &[LoweredRule<'_>]) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
     for rule in rules {
@@ -743,7 +591,6 @@ fn mentioned(rules: &[LoweredRule<'_>]) -> BTreeSet<RelationId> {
     set
 }
 
-/// The type tag of one field, as the format spells it.
 fn type_name(value_type: &ValueType) -> String {
     match value_type {
         ValueType::Bool => "bool".into(),
@@ -757,9 +604,7 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Interval {
             element: bumbledb::schema::IntervalElement::I64,
         } => "interval_i64".into(),
-        // The fixed-width family: the width is the type, so it rides
-        // the spelling (`bytes<N>`'s precedent) — `Main.lean:
-        // typeOfName` parses exactly this form.
+
         ValueType::FixedInterval {
             element: bumbledb::schema::IntervalElement::U64,
             width: w,
@@ -771,8 +616,6 @@ fn type_name(value_type: &ValueType) -> String {
     }
 }
 
-/// A closed relation's facts, exactly as the naive model seeds them:
-/// `[row id, payload…]` in declaration order.
 fn closed_facts(relation: RelationId) -> Vec<Vec<Value>> {
     let descriptor = target::descriptor();
     let extension = descriptor.relations[relation.0 as usize]
@@ -792,10 +635,6 @@ fn closed_facts(relation: RelationId) -> Vec<Vec<Value>> {
         .collect()
 }
 
-/// Serializes one full case document, or the exclusion that keeps it
-/// out of the corpus. The answers are canonically sorted: each row
-/// rendered in the tagged compact form, rows in lexicographic byte
-/// order of that rendering (the README's canonical-order rule).
 fn render_case(
     world: &World,
     name: &str,
@@ -818,7 +657,6 @@ fn render_case(
 
     let query_block = render_cq_lowered(world, &mut used, interiors, head, &lowered)?;
 
-    // The params block.
     let mut params_block = String::from("[");
     for (index, param) in params.iter().enumerate() {
         if index > 0 {
@@ -844,7 +682,6 @@ fn render_case(
     }
     params_block.push(']');
 
-    // The answers block, canonically sorted by rendered row.
     let mut rows: Vec<String> = Vec::with_capacity(answers.len());
     for tuple in answers {
         let mut row = String::new();
@@ -858,13 +695,9 @@ fn render_case(
         format!("[\n{}\n]", rows.join(",\n"))
     };
 
-    // The theory + instance blocks (mentioned relations only —
-    // `snapshot_single`: the denotation reads nothing else).
     let (relations_block, instance_block, axioms_block) =
         world_blocks(world, &mut used, mentioned(&lowered))?;
 
-    // The used slice of the intern dictionary (hand-readability: the
-    // ids Lean compares, with their texts beside them).
     let strings_block = strings_block(world, &used);
 
     Ok(format!(
@@ -875,10 +708,6 @@ fn render_case(
     ))
 }
 
-/// The theory + instance + ground-axiom blocks for one
-/// mentioned-relation set — the shared tail of the query and reach
-/// serializers (the recursive arm's cases carry the identical world
-/// shape).
 fn world_blocks(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -909,10 +738,7 @@ fn world_blocks(
             let _ = write!(relations_block, "\"{}\"", type_name(&field.value_type));
         }
         relations_block.push_str("]}");
-        // The sealed positional types (a closed relation's list opens
-        // with the synthetic id, matching its id-prefixed facts) — the
-        // fixed-width positions re-derive their `[start, width]`
-        // spelling from these.
+
         let field_types: Vec<ValueType> = descriptor
             .fields()
             .iter()
@@ -952,8 +778,6 @@ fn world_blocks(
     Ok((relations_block, instance_block, axioms_block))
 }
 
-/// The used slice of the intern dictionary (hand-readability: the ids
-/// Lean compares, with their texts beside them).
 fn strings_block(world: &World, used: &BTreeSet<u64>) -> String {
     let mut strings_block = String::from("[");
     for (index, id) in used.iter().enumerate() {
@@ -969,13 +793,6 @@ fn strings_block(world: &World, used: &BTreeSet<u64>) -> String {
     strings_block
 }
 
-/// One tagged encoding of Q1. CQ is `{ "cq": { interiors, head, rules } }`;
-/// Reach is `{ "reach": { interiors, rec, head, rules } }`. Rec payload
-/// is `{ head, base, step }` — `step` is the rec arms, not an inner
-/// `"rec"` key. Nested interiors/rec spell `head`, never `"arity"`.
-/// Interiors-only is the `cq` tag (no `"rec": null`). Atoms are
-/// `edb` / `interior`. Query-case rules stay the lowered dialect
-/// (`width`, tagged finds); reach-case rules stay the IR dialect.
 pub(super) fn render_reach_query_block(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -1014,10 +831,7 @@ fn render_cq_lowered(
 ) -> Result<String, Exclusion> {
     let mut main = String::new();
     push_lowered_rules(world, used, &mut main, rules)?;
-    // `dnf` sits beside the cq payload when the rule list is one
-    // written rule's DNF lowering. This renderer writes the IR trees
-    // (membership-lowered), so the mark stays off — Conformance
-    // defaults absent `dnf` to false.
+
     render_cq_doc(world, used, interiors, head, &main)
 }
 
@@ -1232,7 +1046,6 @@ fn push_reach_rule(
     Ok(())
 }
 
-/// Serializes one atom. EDB is `"edb"`; interiors are `"interior"`.
 fn push_atom(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -1259,7 +1072,6 @@ fn push_atom(
     Ok(())
 }
 
-/// One randomized draw as positional [`ParamValue`]s (dense ids).
 fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     let len = draw.scalars.len() + draw.sets.len();
     let mut out: Vec<ParamValue> = vec![ParamValue::Scalar(Value::Bool(false)); len];
@@ -1272,15 +1084,7 @@ fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     out
 }
 
-/// One candidate through the pipeline: naive (timed, budgeted), engine
-/// fresh, parity asserted (an engine≠naive disagreement here is a
-/// TROPHY — this lane reports it and stops; triage per the fuzzing
-/// charter), then the serialized document or the counted exclusion.
-///
 /// # Panics
-///
-/// On an engine-vs-naive disagreement — deliberately loud: the corpus
-/// builder refuses to check in an already-disputed case.
 fn one_case(
     world: &World,
     name: &str,
@@ -1315,14 +1119,7 @@ fn one_case(
     }
 }
 
-/// One case fresh through BOTH oracles: the naive model (timed — the
-/// builder's budget proxy) and the engine, parity asserted. `None`
-/// answers = a defined runtime error on both sides.
-///
 /// # Panics
-///
-/// On an engine-vs-naive disagreement — a TROPHY, reported loudly with
-/// the case name; triage per the fuzzing charter.
 fn execute_case(
     world: &World,
     name: &str,
@@ -1347,7 +1144,6 @@ fn execute_case(
     }
 }
 
-/// One hand-picked case: a name, a query, and its params.
 struct HandCase {
     name: &'static str,
     query: Query,
@@ -1394,10 +1190,6 @@ fn pack(over: u16) -> FindTerm {
     FindTerm::Pack { over: VarId(over) }
 }
 
-/// The hand-picked shapes the PRD names: exact partition (Pack over the
-/// Mandate segment groups, rays included), aggregates (empty-global,
-/// union fold), Allen literal masks, Pack, negation, unions, membership,
-/// measure, param sets, and the closed-relation join.
 #[expect(
     clippy::too_many_lines,
     reason = "one flat case roster, data not logic"
@@ -1405,17 +1197,14 @@ fn pack(over: u16) -> FindTerm {
 fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
     use target::ids;
     let domains = target::Domains::of(cfg.scale);
-    // A committed mandate interval and an instant inside it (real
-    // corpus values — the interval-param and point-literal cases).
+
     let (m_account, _, (m_start, m_end)) = target::mandate(cfg, &domains, 0);
     let instant = m_start.midpoint(m_end);
     let _full_i64 = Value::IntervalI64(
         bumbledb::Interval::<i64>::new(i64::MIN, i64::MAX - 1).expect("nonempty"),
     );
     vec![
-        // Pack over the exactly-partitioned Mandate segment groups —
-        // abutting segments coalesce, gaps survive, a packed ray is a
-        // ray (the exact-partition shape).
+
         HandCase {
             name: "hand-pack-exact-partition",
             query: Query::single(rule(
@@ -1429,8 +1218,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // The empty-global aggregate: no bindings, no groups, the EMPTY
-        // answer set — never a zero row (`empty_global_no_answer`).
+
         HandCase {
             name: "hand-empty-global-aggregates",
             query: Query::single(rule(
@@ -1447,7 +1235,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // Negation: postings no tag names — the plain anti-join.
+
         HandCase {
             name: "hand-negation-untagged",
             query: Query::single(rule(
@@ -1464,8 +1252,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // Union with duplicate head answers across rules: one answer
-        // (`union_idempotent` at the query).
+
         HandCase {
             name: "hand-union-overlapping-rules",
             query: Query {
@@ -1502,8 +1289,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             },
             params: vec![],
         },
-        // Membership through a variable: the posting instant inside the
-        // account's mandate interval (the bivalent lowering's flagship).
+
         HandCase {
             name: "hand-membership-var",
             query: Query::single(rule(
@@ -1527,7 +1313,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // Membership through a literal point (a real corpus instant).
+
         HandCase {
             name: "hand-membership-literal",
             query: Query::single(rule(
@@ -1545,8 +1331,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // An interval-valued param compared for identity (no scalar
-        // anchor — the equality face of the bivalent rule).
+
         HandCase {
             name: "hand-interval-param-equality",
             query: Query::single(rule(
@@ -1565,7 +1350,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 bumbledb::Interval::<i64>::new(m_start, m_end).expect("corpus segments nonempty"),
             ))],
         },
-        // A param set on a scalar field (the EqVarSet face).
+
         HandCase {
             name: "hand-param-set",
             query: Query::single(rule(
@@ -1586,8 +1371,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 Value::U64(m_account),
             ])],
         },
-        // The closed-relation join: ground axioms are ordinary facts on
-        // the Lean side too.
+
         HandCase {
             name: "hand-closed-join",
             query: Query::single(rule(
@@ -1613,15 +1397,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
     ]
 }
 
-/// The whole corpus, deterministically: the hand cases, then seeded
-/// querygen cases (query and draw replayed from `Rng::new(case_seed)`,
-/// the seed recorded in each file's provenance) until [`SEEDED_CASES`]
-/// are expressible. Returns the coverage report and the `(file name,
-/// document)` pairs in corpus order.
-///
 /// # Panics
-///
-/// On an engine-vs-naive disagreement (a trophy — see [`one_case`]).
 #[must_use]
 pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
     let mut report = Report::default();
@@ -1672,10 +1448,7 @@ pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
 }
 
 /// The checked-in corpus directory (`lean/conformance/cases`).
-///
 /// # Panics
-///
-/// Never in practice (the manifest path is UTF-8 and has two parents).
 #[must_use]
 pub fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1685,13 +1458,7 @@ pub fn corpus_dir() -> PathBuf {
         .join("lean/conformance/cases")
 }
 
-/// Regenerates the checked-in corpus on disk — the query cases AND the
-/// judgment cases (the write-side lane, [`judgment`]) — (the builder
-/// half; the `regenerate_the_conformance_corpus` test wraps it).
-///
 /// # Panics
-///
-/// On filesystem failures, or an engine-vs-naive trophy.
 #[must_use = "the coverage report is the recorded number"]
 pub fn write_corpus(dir: &Path) -> Report {
     let (report, cases) = generate_corpus();
@@ -1716,20 +1483,7 @@ pub fn write_corpus(dir: &Path) -> Report {
     report
 }
 
-/// Replays every checked-in case FROM ITS PROVENANCE — the comparator's
-/// engine+naive half. Per file: rebuild the query and params (the hand
-/// roster by name, or `Rng::new(case_seed)` + the recorded draw), run
-/// the engine and the naive model fresh (parity asserted — a trophy
-/// panics with the case name), re-serialize, and hold the file to byte
-/// equality. Provenance-driven on purpose: the builder's slow/wide
-/// budgets are wall-clock measurements taken once at build time; the
-/// comparator replays exactly what was checked in, so its verdict is
-/// deterministic under any machine load.
-///
 /// # Panics
-///
-/// On a byte mismatch (names the case file), an engine/naive trophy,
-/// unreadable provenance, or an empty corpus directory.
 #[must_use = "the case count is the comparator's evidence line"]
 pub fn replay_checked_in_corpus() -> usize {
     let dir = corpus_dir();
@@ -1752,9 +1506,9 @@ pub fn replay_checked_in_corpus() -> usize {
             .expect("corpus names are UTF-8")
             .to_owned();
         let text = std::fs::read_to_string(path).expect("read a corpus case");
-        // Query-side Duration is gone. Checked-in measure IR stays on
+
         // disk (do not edit cases/); skip engine+naive replay. Lean
-        // still denotates those files in `lake exe conformance`.
+
         if text.contains("\"measure\":") || text.contains("\"agg_measure\":") {
             continue;
         }
@@ -1777,7 +1531,6 @@ pub fn replay_checked_in_corpus() -> usize {
     files.len()
 }
 
-/// One case's fresh document from its recorded provenance.
 fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> String {
     let parsed = crate::json::parse(text).expect("a corpus case parses as JSON");
     let provenance = parsed
@@ -1816,8 +1569,6 @@ fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> Str
     })
 }
 
-/// A `u64` field of a hand-rolled-JSON object (corpus provenance values
-/// are small and exact in the parser's `f64` carrier).
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -1844,12 +1595,6 @@ mod tests {
     use super::*;
     use bumbledb::FoldOp;
 
-    /// Membership under an additive fold is LICENSED (finding 087,
-    /// discharged): the lowering fires, and the rule carries its
-    /// SURFACE width — the written rule's variable count, below the
-    /// fresh mints — so the Lean fold domain projects every mint away
-    /// (`membership_lowering_preserves_fold`). The retired fence would
-    /// have hidden the class from the third oracle forever.
     #[test]
     fn membership_under_an_additive_fold_is_licensed_at_surface_width() {
         let membership_body = || {
@@ -1868,9 +1613,6 @@ mod tests {
             conditions: vec![],
         };
 
-        // The additive folds — Count (fold-domain size), Sum
-        // (per-binding repetition) — lower cleanly, the fresh mint
-        // sitting above the recorded surface width.
         for finds in [
             vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             vec![
@@ -1891,8 +1633,6 @@ mod tests {
             );
         }
 
-        // The always-licensed shapes are unchanged: the set-semantics
-        // projection (membership_lowering_preserves' own regime) …
         let projection = rule(vec![FindTerm::Var(VarId(0))]);
         let lowered = lower_rule(&projection, &[]);
         assert_eq!(
@@ -1900,7 +1640,7 @@ mod tests {
             1,
             "the lowering fired: one PointIn condition"
         );
-        // … a set-reading fold (insensitive to the binding split) …
+
         let max_rule = rule(vec![FindTerm::Aggregate {
             op: FoldOp::Max,
             over: VarId(0),
@@ -1911,8 +1651,7 @@ mod tests {
             1,
             "Max reads the value set — insensitive, not fenced"
         );
-        // … and an additive fold whose rule has NO fired lowering
-        // (the interval field bound to an interval-typed variable).
+
         let no_membership = Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
             atoms: vec![Atom {
@@ -1932,13 +1671,7 @@ mod tests {
     }
 
     /// Regenerates `lean/conformance/cases/` in place. Ignored: run it
-    /// deliberately (`cargo test -p bumbledb-bench regenerate_the_conformance_corpus
-    /// -- --ignored --nocapture`) when the generator, the corpus seeds,
-    /// or the format change — the checked-in files are the replay
-    /// corpus, and the comparator holds every run to their bytes. Run
-    /// it on a quiet machine: the slow/wide budgets are wall-clock
-    /// measurements taken here, once (the comparator replays what was
-    /// written and never re-measures).
+
     #[test]
     #[ignore = "regenerates the checked-in corpus; run deliberately"]
     fn regenerate_the_conformance_corpus() {
@@ -1946,10 +1679,6 @@ mod tests {
         eprintln!("{}", report.coverage_line());
     }
 
-    /// Regenerates the RECURSIVE arm's `reach-*.json` cases only —
-    /// the query and judgment cases keep their bytes (their wall-clock
-    /// budgets were measured at their own build time and never
-    /// re-measure on replay).
     #[test]
     #[ignore = "regenerates the checked-in reach cases; run deliberately"]
     fn regenerate_the_recursive_conformance_corpus() {
@@ -1957,10 +1686,6 @@ mod tests {
         eprintln!("{}", report.coverage_line());
     }
 
-    /// Regenerates the JUDGMENT arm's `judgment-*.json` cases only —
-    /// the fixtures are deterministic (hand-authored, no wall-clock
-    /// budgets), so this is safe on any machine; the query and reach
-    /// cases keep their bytes.
     #[test]
     #[ignore = "regenerates the checked-in judgment cases; run deliberately"]
     fn regenerate_the_judgment_conformance_corpus() {
@@ -1970,9 +1695,6 @@ mod tests {
         }
     }
 
-    /// Regenerates the complete-admission arm's `complete-*.json`
-    /// cases only — verdicts are the agreed `InstanceBuilder::admit`
-    /// and naive `judge_complete` outcome (a trophy panics).
     #[test]
     #[ignore = "regenerates the checked-in complete-admission cases; run deliberately"]
     fn regenerate_the_complete_admission_corpus() {
@@ -1982,27 +1704,14 @@ mod tests {
         }
     }
 
-    /// The engine+naive half of the comparator, no Lean toolchain
-    /// needed: replay every checked-in case from its provenance (fresh
-    /// worlds, fresh engine executions, naive parity asserted inside)
-    /// and hold the file to byte equality — any drift names the case
-    /// file.
     #[test]
     fn the_corpus_replays_byte_identical_from_its_provenance() {
         let cases = replay_checked_in_corpus();
         eprintln!("conformance: {cases} checked-in cases replayed byte-identical");
     }
 
-    /// THE three-way comparator (the PRD's test): for each corpus case,
-    /// the engine fresh and the naive model fresh (byte-held to the
-    /// checked-in file), then `lake exe conformance` — the Lean
-    /// denotation, join + surface anti-join / `AntiProbe` — over the same files.
-    /// Any disagreement names the case file. Ignored in the plain
-    /// workspace run because it needs the Lean toolchain;
     /// `scripts/lean.sh` runs it with `--ignored` after the corpus
-    /// replay — the Lean-dependent lane owns the Lean-dependent test,
-    /// so the three-way comparator gates every lean.sh run while
-    /// check.sh stays toolchain-independent.
+
     #[test]
     #[ignore = "needs the Lean toolchain (elan/lake) on PATH; scripts/lean.sh runs it"]
     fn three_way_conformance_over_the_checked_in_corpus() {
