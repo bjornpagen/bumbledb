@@ -1,5 +1,4 @@
 //! Fixture stores with each desync class hand-injected through raw LMDB
-
 use super::*;
 use crate::encoding::{
     InternId, ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash,
