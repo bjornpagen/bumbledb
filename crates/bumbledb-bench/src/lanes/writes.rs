@@ -317,7 +317,6 @@ fn delete_recorded(
                 .pop_front()
                 .expect("the pre-phase sized the deque to (warmups + samples) × batch exactly");
             if tx.delete([&victim])?.changed() == 0 {
-
                 return Err(bumbledb::Error::from(std::io::Error::other(
                     "the delete lane must be delete-bearing: a recorded posting was absent",
                 )));
@@ -674,7 +673,6 @@ fn run_lane(
 /// # Errors
 /// The device-honesty refusal; setup failures; the post-state gate.
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
-
     if args.trace && !cfg!(feature = "obs") {
         return Err(crate::driver::obs_missing("--trace"));
     }
