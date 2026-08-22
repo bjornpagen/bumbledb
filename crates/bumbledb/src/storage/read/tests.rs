@@ -219,7 +219,7 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
     let txn = env.read_txn().expect("txn");
     let results: Vec<Result<(u64, crate::encoding::FactView<'_, '_>)>> =
         scan(&txn, &schema, R).expect("scan").collect();
-    assert!(results[0].is_ok()); 
+    assert!(results[0].is_ok());
     let err = results[1].as_ref().unwrap_err();
     assert!(
         matches!(
