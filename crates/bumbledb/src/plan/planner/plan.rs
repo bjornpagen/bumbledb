@@ -6,15 +6,13 @@ use crate::schema::Schema;
 /// occurrence subsets, minimizing the sum of intermediate-result
 /// estimates. Negated occurrences enter no DP state — they never join;
 /// they only shrink results, and the planner treats them as free filters
-/// (docs/architecture/40-execution.md). Grounding-eliminated occurrences left
+/// . Grounding-eliminated occurrences left
 /// planning entirely (`plan/ground.rs`). Deterministic: ties break toward
 /// the smaller trailing occurrence id, independent of `stats` input order.
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations: `stats` missing a
 /// participating occurrence, or a query over the caps the validation
 /// boundary enforces.
+/// Only on programmer-invariant violations: `stats` missing a
 pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
     let participating: Vec<&Occurrence> = normalized
         .occurrences
@@ -33,9 +31,6 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         densified
     };
 
-    // Exhaustive left-deep DP; the cost is the sum of every prefix estimate
-    // including the base relation's rows (the root iteration is real work,
-    // and counting it breaks ties toward iterating the small side).
     let full = (1u32 << n) - 1;
     let mut best: Vec<Option<State>> = vec![None; (full as usize) + 1];
     for (i, occ) in occs.iter().enumerate() {
@@ -45,19 +40,14 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             last: u8::try_from(i).expect("n <= 20"),
         });
     }
-    // Per-mask prefix-variable memo: vars(mask) folds once per mask
-    // (the lowest bit's occurrence unioned with the rest), so the inner
-    // candidate loop reads one entry instead of refolding all n
-    // occurrences per (mask, last) pair — the audit's O(2ⁿ·n²) note.
+
     let mut mask_vars: Vec<u128> = vec![0; (full as usize) + 1];
     for mask in 1..=full {
         let low = usize::try_from(mask.trailing_zeros()).expect("small");
         mask_vars[mask as usize] = mask_vars[(mask & (mask - 1)) as usize] | occs[low].vars;
     }
     let mut fill_span = crate::obs::span(crate::obs::names::PLAN_FILL);
-    // Counted, never per-candidate spanned: the DP's inner work is one
-    // point-event pair (`a0` subproblems, `a1` candidate evaluations), the
-    // doctrine's pruned-candidate COUNT (docs/architecture/40-execution.md).
+
     let mut subproblems = 0u64;
     let mut candidates = 0u64;
     for mask in 1..=full {
@@ -77,7 +67,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             let cost = prev.cost.saturating_add(est);
             let better = match candidate {
                 None => true,
-                // Strict less: ties keep the earlier (smaller) last id.
+
                 Some(existing) => cost < existing.cost,
             };
             if better {
@@ -93,7 +83,6 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
     fill_span.set_pair(subproblems, candidates);
     fill_span.end();
 
-    // Reconstruct the order back-to-front.
     let mut order = vec![OccId(0); n];
     let mut estimates = vec![0u64; n];
     let mut mask = full;
