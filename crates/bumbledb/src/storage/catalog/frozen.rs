@@ -19,17 +19,13 @@ const KEY_LEN_SIZE: usize = 4;
 const VALUE_LEN_SIZE: usize = 8;
 const HEADER_SIZE: usize = KEY_LEN_SIZE + VALUE_LEN_SIZE;
 
-/// One packed ordered map. Each record is
-/// `key_len: u32 | value_len: u64 | key bytes | value bytes`.
-/// `offsets[i]` locates record `i`.
 pub(crate) struct FrozenMap {
     records: Box<[u8]>,
     offsets: Box<[u64]>,
 }
 
 impl FrozenMap {
-    /// Packs already-sorted unique keys. Caller proves order and
-    /// uniqueness — merge is the one site that walks neighbors.
+
     pub(crate) fn pack(
         entries: impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)>,
     ) -> Self {
@@ -192,7 +188,6 @@ impl FrozenMap {
     }
 }
 
-/// Lending range cursor over one [`FrozenMap`].
 pub(crate) struct FrozenRange<'catalog, 'bounds> {
     map: &'catalog FrozenMap,
     next: usize,
@@ -211,8 +206,8 @@ impl ReadCursor for FrozenRange<'_, '_> {
     }
 }
 
-/// Monotone exact-key walker. After a hit or miss, the next `get` may
-/// only ask for a nondecreasing key until [`SortedGets::reset`].
+/// After a hit or miss, the next `get` may only ask for a nondecreasing key
+/// until [`SortedGets::reset`].
 pub(crate) struct FrozenGets<'a> {
     map: &'a FrozenMap,
     pos: usize,
@@ -272,7 +267,6 @@ impl SortedGets for FrozenGets<'_> {
     }
 }
 
-/// Fact scan: `F` keys of one relation, already sorted by row id.
 pub(crate) struct FrozenFactCursor<'a> {
     map: &'a FrozenMap,
     next: usize,
@@ -296,9 +290,8 @@ impl FactCursor for FrozenFactCursor<'_> {
     }
 }
 
-/// Admitted packed catalog: `_data`, `_dict`, and the dictionary next-id.
-/// No `_meta`. Typestate-identical to [`super::heap::CandidateCatalog`]
-/// after the complete key phase — freeze is a move.
+/// Typestate-identical to [`super::heap::CandidateCatalog`] after the complete
+/// key phase — freeze is a move.
 pub(crate) struct FrozenCatalog {
     pub(crate) data: FrozenMap,
     pub(crate) dict: FrozenMap,
