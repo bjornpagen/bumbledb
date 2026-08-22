@@ -116,7 +116,6 @@ pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
     let account = b.add_atom(ids::ACCOUNT);
     b.bind(account, ids::account::ID, Term::Var(account_join));
     if rng.chance(1, 2) {
-
         let holder_join = b.bind_var(account, ids::account::HOLDER);
         let holder = b.add_atom(ids::HOLDER);
         b.bind(holder, ids::holder::ID, Term::Var(holder_join));
@@ -176,7 +175,6 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
         .expect("shape binds amount");
     let at = b.var_at(0, ids::posting::AT).expect("var or fresh");
     if rng.chance(1, 5) {
-
         let _ = b.var_at(0, ids::posting::RECONCILED);
     }
     let account = b
