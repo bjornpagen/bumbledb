@@ -1,80 +1,11 @@
 //! The DRAM-tier displaced lanes — the roster extension's measurement
 //! infrastructure for the memory regime the S-scale roster cannot see
-//! (`docs/reference/apple-silicon-performance.md`: residency is a
-//! property of phase *interleaving*, not footprint —
-//! `m2max.mem.residency-is-interleaving`; 24 MB of interleaved foreign
-//! streaming degrades a nominally resident probe structure +53% —
-//! `m2max.mem.co-tenant-displacement`). Two workload shapes, each with
-//! a resident control and a displaced ladder:
-//!
-//! - `disp_probe*` — the join fold `Q(t, Sum(v)) :- Spoke(id, hub = h,
-//!   val = v), Hub(id = h, tag = t)`: the executor iterates the HUB
-//!   side (2^19 rows, through the fold split's tag-prefix map — 1,024
-//!   group keys ≈ 4 MiB, forced beside the spoke map and pinned by the
-//!   same obs test) and probes the forced SPOKE map keyed by hub
-//!   value — ~2^19 scattered probes per pass. Working set, traced from
-//!   the engine itself (the obs test in [`tests`] pins the engine's own
-//!   `colt_force` events, not just the arithmetic): the spoke map
-//!   ingests all 2^20 positions, lands
-//!   [`FORCED_MAP_DISTINCT`] = 453,241 distinct hub keys, and sizes to
-//!   2^18 buckets = 32 MiB bucket words + 2 MiB ctrl bytes ≈ **34 MiB**
-//!   ([`forced_spoke_map_bytes`]). Each force runs ONCE per prepared
-//!   query (the view memo — every execute after the first shows
-//!   `view_memo_hit` and zero `colt_force`/`image_build`, also pinned),
-//!   so every timed pass is steady state: the 34 MiB map re-walked by
-//!   2^19 hash-scattered probes, beside the 8 MiB hub image and the
-//!   8 MiB spoke val column gathered through the map's position lists —
-//!   ≈ 50 MiB touched per pass, past one P-cluster's 32 MiB L2 by
-//!   construction.
-//! - `disp_stream*` — the scan fold `Q(Sum(v)) :- Spoke(id, val = v)`:
-//!   a 16 MiB two-column stream, the shape the ledger says pays 2.4–3×
-//!   *less* under displacement than hit-heavy probes — the contrast
-//!   control that shows the lanes distinguish shapes, not just bytes.
-//!
-//! First measured sessions (S, durable, mutex-held, clock-proxy clean;
-//! 2026-07-16): the two shapes split exactly along the regime line. The
-//! probe pass is already DRAM-tier *undisturbed* — its ≈ 50 MiB
-//! steady-state working set exceeds one P-cluster's L2 on its own, so
-//! the foreign mass adds no eviction the pass wasn't already paying and
-//! is measured NEUTRAL on it (135.2/132.5 ms at d24/d96 vs 134.8 ms
-//! resident; an apparent 1.22× d24 gap in the first session did not
-//! reproduce and is recorded as cross-block ambient, not effect). An
-//! earlier revision of this doc attributed the neutrality to "~170 MiB
-//! of force writes per pass" self-displacing the row — REFUTED by the
-//! engine's own trace: the force runs once per prepare, never in a
-//! timed pass (the retraction rides commit history; the obs test now
-//! pins the memoization). The stream pass is L2/SLC-resident
-//! undisturbed and pays the displacement as predicted. Confirmed
-//! post-review with `--proxy-per-rep` (three further mutex-held
-//! sessions, DVFS-normalized p50 ratios vs the resident row): **96 MiB
-//! = 1.18–1.20×** (clean clock brackets in two of three — the durable
-//! fact, previously quoted 1.19–1.22× from raw cross-block p50s), while
-//! **24 MiB wobbles 1.10–1.19×** across sessions — the first record's
-//! 1.08–1.10× band was too narrow; quote the 24 MiB point only with its
-//! spread. Read the rows accordingly: `disp_probe` is the roster's
-//! standing DRAM-tier probe row (the >32 MiB working set itself);
-//! `disp_stream_d*` are its standing displaced-residency rows, `d96`
-//! the one to quote.
-//!
-//! The displaced variants stream a foreign buffer BETWEEN engine passes
-//! (the in-situ shape, [`ForeignStream`]) through
-//! [`harness::measure_interleaved`] — the foreign traffic is never
-//! inside a timed span, so each sample prices the engine pass *given*
-//! the displacement. The displacement mass is the row's parameter
-//! ([`DisplacedFamily::displace_mib`]): 24 MiB (the co-tenant fact's
-//! point, inside the 48 MB SLC) and 96 MiB (past the SLC — the full
-//! DRAM tier). Both engines get the identical between-pass traffic —
-//! the mirror is displaced exactly like the engine.
-//!
-//! Discipline mirrors the closure lane: seeded corpus regenerated per
-//! run (never stored), verify-before-time inline at the lane's own
-//! scale (every family × draw row-identical across engines before a
-//! single timed sample), `SQLite` parity at the shrunk `Tiny` scale in
-//! tests (the windowed family's unit-mass precedent — the brute oracle
-//! is O(rows) per pass), the exact warm protocol shape with the lane's
-//! own default sample count ([`PROTO`]: probe passes are ~130 ms, so 12
-//! samples suffice and 256 would take minutes; `--samples` still
-//! overrides), and `Kind::Report` rows: measurement, not gate claims.
+//! (`docs/reference/apple-silicon-performance.md`: residency is a property of
+//! phase *interleaving*, not footprint — `m2max.mem.residency-is-interleaving`;
+//! 24 MB of interleaved foreign streaming degrades a nominally resident probe
+//! structure +53% — query (the view memo — every execute after the first shows
+//! scale (every family × draw row-identical across engines before a is O(rows)
+//! per pass), the exact warm protocol shape with the lane's
 
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
@@ -108,7 +39,6 @@ bumbledb::schema! {
     Spoke(hub) <= Hub(id);
 }
 
-/// Relation and field ids by declaration order.
 pub mod ids {
     use bumbledb::{FieldId, RelationId};
 
@@ -128,11 +58,7 @@ pub mod ids {
     }
 }
 
-/// The validated displaced schema, memoized for the mirror's DDL.
-///
 /// # Panics
-///
-/// Never in practice: the declaration passes the acceptance gate.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -144,27 +70,18 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// The displaced corpus shape. Like the closure world, the shape IS the
-/// identity — one size for every timed scale (the lane prices a memory
-/// regime, not the ledger's mass), `Tiny` for the parity slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DispSizes {
-    /// Hub rows — the iterated probing side (2^19 probes per pass at
-    /// the bench point) and the key space the spoke hubs scatter over.
+
     pub hubs: u64,
-    /// Spoke rows — the forced-map side: all 2^20 positions ingest into
-    /// the COLT keyed by hub value (≈ 453k distinct), sizing the probed
-    /// structure to ≈ 34 MiB ([`forced_spoke_map_bytes`]), past the
-    /// 32 MiB L2.
+
     pub spokes: u64,
-    /// Distinct tag values (the fold's group count — small by design so
-    /// the group map never competes with the probed structure).
+
     pub tags: u64,
 }
 
 impl DispSizes {
-    /// Two size points, the closure precedent: `Tiny` for tests and the
-    /// differential slice, the DRAM-tier shape for every timed scale.
+
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
@@ -181,46 +98,21 @@ impl DispSizes {
         }
     }
 
-    /// The hub image's byte mass: 2 word columns × 8 B per row
-    /// (`bumbledb::image`: every u64 field decodes to one 8-byte word
-    /// column).
     #[must_use]
     pub fn hub_image_bytes(&self) -> u64 {
         self.hubs * 2 * 8
     }
 
-    /// The spoke image's byte mass: 3 word columns × 8 B per row.
     #[must_use]
     pub fn spoke_image_bytes(&self) -> u64 {
         self.spokes * 3 * 8
     }
 }
 
-/// The forced COLT map's byte mass over a singleton-arity node holding
-/// `positions` positions with `distinct` distinct key values, computed
-/// from the engine's own sizing rule (`bumbledb::exec::colt::force`):
-/// initial buckets `next_pow2(clamp(positions/8, 16, 2·positions) ·
-/// 5/16)` (the pre-pass guess is from the POSITION count — distinct
-/// keys are unknown before the pass), then rehash-doubling per ingested
-/// position while `(len + 1) · 5 > nbuckets · 16` with `len` the
-/// distinct keys landed so far; ctrl is `nbuckets · 8` bytes, buckets
-/// are `nbuckets · (8·arity + 8)` u64 words. The doubling loop here
-/// uses `(distinct + 1)` — exact whenever any position follows the last
-/// new key (this lane's shape: positions ≫ distinct, so appends trail
-/// the final insert), conservative by at most one doubling at exact
-/// boundary counts on an all-distinct node (the engine's own
-/// check-before-probe over-size, `exec/colt/force.rs`).
-///
-/// The number this returns is the lane's ≥ 32 MiB claim — pinned by
-/// [`tests`] against BOTH this arithmetic and the engine's own
-/// `colt_force` trace at the bench shape, so a layout change in the
-/// engine shows up as a failing assertion, not a silently mis-labeled
-/// regime.
-///
+/// The doubling loop here uses `(distinct + 1)` — exact whenever any position
+/// follows the last keys are unknown before the pass), then rehash-doubling per
+/// ingested
 /// # Panics
-///
-/// Never in practice: 64-bit `usize` (the arithmetic never leaves the
-/// lane's ≤ 2^20-position range).
 #[must_use]
 pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
     let count = usize::try_from(positions).expect("64-bit usize");
@@ -235,24 +127,11 @@ pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
     u64::try_from(ctrl + buckets).expect("fits u64")
 }
 
-/// The traced shape of the forced map at the bench point, pinned by the
-/// obs test in [`tests`] against the engine's own `colt_force` event:
-/// the executor iterates the HUB side and probes SPOKE, so the forced
-/// map ingests all 2^20 spoke positions keyed by hub value —
-/// 453,241 distinct (2^19 keys scattered by 2^20 uniform draws,
 /// `1 − e^-2` occupancy; seed-invariant for seeds < 2^20, where the
-/// generator's `seed ^ row` merely permutes the row set).
 pub const FORCED_MAP_POSITIONS: u64 = 1 << 20;
-/// See [`FORCED_MAP_POSITIONS`].
+
 pub const FORCED_MAP_DISTINCT: u64 = 453_241;
 
-/// One relation's full row stream — a pure function of `(seed, sizes)`
-/// via the corpus generator's per-row mix, so streams are restartable
-/// and identical across engines. Spoke hubs scatter uniformly over the
-/// hub key space, filling the forced spoke map to ~453k distinct hub
-/// keys (`1 − e^-2` of 2^19); each pass's 2^19 hub-side probes then
-/// hash-scatter across the full ≥ 32 MiB structure, far past any
-/// predictor's capacity.
 pub fn relation_rows(
     sizes: DispSizes,
     seed: u64,
@@ -281,14 +160,6 @@ fn var(id: u16) -> Term {
     Term::Var(VarId(id))
 }
 
-/// probe — `Q(t, Sum(v)) :- Spoke(id, hub = h, val = v),
-/// Hub(id = h, tag = t)`: the hub side iterates through the fold
-/// split's tag-prefix map, probing the forced spoke map keyed by hub
-/// value (the direction the engine actually plans — pinned by the obs
-/// test in [`tests`]), folded by tag. The
-/// fresh spoke id binding makes every binding distinct, so the
-/// distinct-bindings elision engages (the balance-family precedent) and
-/// no seen-set competes with the probed map.
 #[must_use]
 pub fn probe_query() -> Query {
     Query::single(Rule {
@@ -318,9 +189,6 @@ pub fn probe_query() -> Query {
     })
 }
 
-/// stream — `Q(Sum(v)) :- Spoke(id, val = v)`: the pure two-column scan
-/// fold (16 MiB per pass at the bench shape) — the stream-shaped
-/// contrast row.
 #[must_use]
 pub fn stream_query() -> Query {
     Query::single(Rule {
@@ -337,24 +205,14 @@ pub fn stream_query() -> Query {
     })
 }
 
-/// The foreign co-tenant: `mass` MiB streamed read-modify-write at
-/// cache-line stride between engine passes — one byte touched per 64 B
-/// line allocates and dirties the full line, the cheapest full-mass
-/// eviction pressure (a 96 MiB pass is a fraction of a millisecond,
-/// bandwidth-bound). Mass 0 is the resident control: the buffer is
-/// empty and [`ForeignStream::stream`] is a no-op through the same code
-/// path.
 pub struct ForeignStream {
     buf: Vec<u8>,
 }
 
 impl ForeignStream {
-    /// A zeroed buffer of `mib` MiB.
-    ///
+
     /// # Panics
-    ///
-    /// Never in practice: 64-bit `usize` (the ladder tops out at
-    /// 96 MiB).
+
     #[must_use]
     pub fn new(mib: u64) -> Self {
         Self {
@@ -362,10 +220,6 @@ impl ForeignStream {
         }
     }
 
-    /// One full read-modify-write pass over the buffer.
-    /// `inline(never)`: the foreign pass stays one disassembly-gated
-    /// symbol (the RMW loop must exist as claimed), and its cost never
-    /// smears into the callers' codegen.
     #[inline(never)]
     pub fn stream(&mut self) {
         let (lines, _) = self.buf.as_chunks_mut::<64>();
@@ -376,23 +230,16 @@ impl ForeignStream {
     }
 }
 
-/// One displaced family: a query shape and its between-pass foreign
-/// mass — the displacement mass IS the row's parameter.
 pub struct DisplacedFamily {
     pub name: &'static str,
     pub kind: Kind,
     pub query: fn() -> Query,
-    /// Foreign-stream mass between passes, in MiB (0 = the resident
-    /// control).
+
     pub displace_mib: u64,
-    /// The regime the row instruments (rendered nowhere yet — the
-    /// registry documents itself).
+
     pub about: &'static str,
 }
 
-/// The displaced registry: each shape's resident control, the co-tenant
-/// fact's 24 MiB point (inside the SLC), and the 96 MiB
-/// past-the-SLC point.
 #[must_use]
 pub fn all() -> &'static [DisplacedFamily] {
     &[
@@ -441,33 +288,20 @@ pub fn all() -> &'static [DisplacedFamily] {
     ]
 }
 
-/// The lane's default protocol (a `--samples` override still applies —
-/// the driver passes it through like every other read lane): passes run
-/// ~130 µs (the stream shape) to ~130 ms (the DRAM-tier probe shape),
-/// so the read default's 256 samples would spend minutes on the probe
-/// ladder buying nothing — 12 measured samples sit far above the timer
-/// quantum even at the stream shape (≈ 260× the floor) and well inside
-/// the percentile machinery's needs (the cold protocol's 16-sample
-/// precedent).
+/// The lane's default protocol (a `--samples` override still applies — the
+/// percentile machinery's needs (the cold protocol's 16-sample
 pub const PROTO: Protocol = Protocol {
     warmups: 3,
     samples: 12,
 };
 
-/// The mirror's DDL: mapped tables plus the statement-derived indexes
-/// (the `Spoke(hub) <= Hub(id)` containment gives the mirror its hub
-/// probe index).
 #[must_use]
 pub fn ddl() -> Vec<String> {
     sqlmap::schema_ddl(schema())
 }
 
-/// Loads the displaced corpus into a fresh engine store and a `SQLite`
 /// mirror file — targets before sources, the loader law.
-///
 /// # Errors
-///
-/// Engine and `SQLite` errors, stringified.
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
@@ -503,21 +337,12 @@ pub fn load_stores(
     Ok((db, conn))
 }
 
-/// The lane's draws: both shapes are param-less full folds (the
-/// stats-family precedent) — one empty draw. A 2^20-probe scattered
-/// sequence is its own fresh data; no rotation is needed to defeat the
-/// predictor.
 #[must_use]
 pub fn draws() -> Vec<Draw> {
     vec![scalar_draw(vec![])]
 }
 
-/// Verify-before-time, inline at the lane's own scale (the closure
-/// precedent): every family × draw row-identical across engines.
-///
 /// # Errors
-///
-/// The first mismatch, rendered — or either engine's error.
 pub fn verify_family(
     db: &Db<DisplacedWorld>,
     conn: &rusqlite::Connection,
@@ -552,16 +377,11 @@ pub fn verify_family(
     Ok(())
 }
 
-/// The timed displaced lane: build the scratch world, verify every
-/// family, then measure both engines under the interleaved protocol —
-/// the foreign stream runs between passes on BOTH arms (the mirror is
-/// displaced exactly like the engine), report-only rows beside the read
-/// families.
-///
+/// The timed displaced lane: build the scratch world, verify every family, then
+/// measure both engines under the interleaved protocol — the foreign stream
+/// runs between passes on BOTH arms (the mirror is displaced exactly like the
+/// engine), report-only rows beside the read families.
 /// # Errors
-///
-/// Refusals (RAM-backed scratch), verify mismatches, and engine errors
-/// — each message names the family.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -578,15 +398,12 @@ pub fn bench_families(
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
     }
-    // The lane's own default sample count, but the user's --samples
-    // request applies here exactly like every other read lane.
+
     let proto = Protocol {
         warmups: PROTO.warmups,
         samples: samples.unwrap_or(PROTO.samples),
     };
-    // The device-honesty rule is symmetric: this lane times reads
-    // against its scratch world, so the scratch is checked exactly like
-    // the write families'.
+
     crate::devhonesty::assert_disk_backed(scratch, "the timed displaced families")
         .map_err(|refusal| refusal.to_string())?;
     let dir = scratch.join("displaced");
@@ -697,7 +514,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, // the profile pass would time nothing new; the plan digest is the tests' job
+            exec: None, 
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });
