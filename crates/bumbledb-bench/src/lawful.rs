@@ -94,7 +94,6 @@ pub fn schema() -> &'static bumbledb::Schema {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LawSizes {
-
     pub tasks: u64,
 
     pub attempts_per_task: u64,
@@ -103,7 +102,6 @@ pub struct LawSizes {
 }
 
 impl LawSizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
