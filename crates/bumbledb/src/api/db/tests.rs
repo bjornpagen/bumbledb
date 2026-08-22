@@ -9,7 +9,6 @@ use bumbledb_theory::schema::{
     StatementId, ValueType,
 };
 
-/// Named(name str) — a string-carrying relation for dictionary tests.
 fn named_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -25,15 +24,6 @@ fn named_schema() -> SchemaDescriptor {
     }
 }
 
-/// The reader cache, semantics pinned:
-/// (a) a commit between reads is visible to the next read (the
-///     parked snapshot is invalidated by the commit sequence);
-/// (b) reads with no intervening commit reuse the parked snapshot
-///     (observable: the LMDB generation is identical);
-/// (c) an erroring read closure leaves the cache serviceable;
-/// (d) 10,000 reads neither grow the reader table nor leak (probed
-///     by the reads simply succeeding — LMDB's table is 126 slots
-///     by default, so slot leakage fails loudly well before 10k).
 #[test]
 fn the_reader_cache_is_invisible_except_in_speed() {
     let dir = TempDir::new("db-reader-cache");
@@ -50,7 +40,6 @@ fn the_reader_cache_is_invisible_except_in_speed() {
         Ok(n)
     };
 
-    // (a) write-between-reads visibility.
     let before = db.read(|snap| count_named(snap)).expect("read");
     assert_eq!(before, 0);
     db.write(|tx| {
@@ -62,8 +51,6 @@ fn the_reader_cache_is_invisible_except_in_speed() {
     let after = db.read(|snap| count_named(snap)).expect("read");
     assert_eq!(after, 1, "the commit is visible to the very next read");
 
-    // (b) no intervening commit: the generation is snapshot-identical
-    // (the parked reader IS the same snapshot).
     #[expect(
         clippy::redundant_closure_for_method_calls,
         reason = "ReadInstance::generation is not HRTB enough for Db::read"
@@ -76,7 +63,6 @@ fn the_reader_cache_is_invisible_except_in_speed() {
     let g2 = db.read(|snap| snap.generation()).expect("read");
     assert_eq!(g1, g2, "parked reuse serves the same snapshot");
 
-    // (c) an erroring closure leaves the cache serviceable.
     let err: Result<()> = db.read(|_| {
         Err(crate::error::Error::Overflow(
             crate::error::OverflowKind::Aggregate { find: FindIndex(7) },
@@ -86,8 +72,6 @@ fn the_reader_cache_is_invisible_except_in_speed() {
     let again = db.read(|snap| count_named(snap)).expect("read after error");
     assert_eq!(again, 1);
 
-    // (d) reader-table hygiene under 10k reads interleaved with
-    // writes (every write invalidates; every read re-parks).
     for i in 0..100u64 {
         db.write(|tx| {
             tx.insert_dyn(named, [&[Value::String(format!("n{i}").into())]])
@@ -108,8 +92,6 @@ fn dict_entries<S>(db: &Db<S>) -> u64 {
     db.env.dict().len(rtxn.raw()).expect("len")
 }
 
-/// The delete path never mints — a typo'd
-/// delete leaves `_dict` byte-identical, at the storage level.
 #[test]
 fn a_typo_delete_leaves_the_dictionary_unchanged() {
     let dir = TempDir::new("db-mint-free-dict");
@@ -139,7 +121,6 @@ fn a_typo_delete_leaves_the_dictionary_unchanged() {
     .unwrap();
     assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
 
-    // Deleting the real fact still works — the committed-dict arm.
     db.write(|tx| {
         let changed = tx.delete_dyn(named, [&[Value::String("real".into())]])?;
         assert_eq!(changed.changed(), 1);
@@ -149,9 +130,6 @@ fn a_typo_delete_leaves_the_dictionary_unchanged() {
     .unwrap();
 }
 
-/// Entry(name str, amount i64) with `Entry(name) -> Entry` — a
-/// string-keyed relation for the dynamic point reads. The declared key is
-/// the schema's only statement: StatementId(0).
 fn entry_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -184,10 +162,6 @@ fn entry(name: &str, amount: i64) -> Vec<Value> {
     vec![Value::String(name.into()), Value::I64(amount)]
 }
 
-/// The dynamic read-your-writes matrix: every pre-commit `get_dyn` answer
-/// equals the post-commit one (the final-state view the judgment phase
-/// judges — `70-api.md`), including for a fact whose string key was
-/// interned in this very transaction.
 #[test]
 fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     let dir = TempDir::new("db-get-dyn-ryw");
@@ -196,21 +170,19 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
         .expect("accepted");
 
     db.write(|tx| {
-        // Insert, then read back through the pending delta (the key
-        // string exists only as a provisional intern id here).
+
         assert_eq!(tx.insert_dyn(ENTRY, [&entry("a", 1)])?.changed(), 1);
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
             Some(entry("a", 1))
         );
-        // Delete: the determinant map records absence.
+
         assert_eq!(tx.delete_dyn(ENTRY, [&entry("a", 1)])?.changed(), 1);
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
             None
         );
-        // Delete + reinsert(modified): the key tuple re-establishes with
-        // the new fact.
+
         assert_eq!(tx.insert_dyn(ENTRY, [&entry("a", 2)])?.changed(), 1);
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
@@ -221,7 +193,6 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     .expect("write")
     .unwrap();
 
-    // The post-commit answer is byte-identical.
     db.write(|tx| {
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
@@ -233,8 +204,6 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     .unwrap();
 }
 
-/// Committed-state fallthrough: a fact committed in a prior transaction
-/// and untouched in this delta is found through the `U` → `F` path.
 #[test]
 fn get_dyn_falls_through_to_committed_state() {
     let dir = TempDir::new("db-get-dyn-committed");
@@ -246,8 +215,7 @@ fn get_dyn_falls_through_to_committed_state() {
         .unwrap();
 
     db.write(|tx| {
-        // Touch a *different* tuple so the delta is nonempty but the
-        // probed key has no overlay.
+
         tx.insert_dyn(ENTRY, [&entry("other", 1)])?;
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("seed".into())])?,
@@ -259,9 +227,6 @@ fn get_dyn_falls_through_to_committed_state() {
     .unwrap();
 }
 
-/// A never-interned string key value proves no fact carries it: `Ok(None)`
-/// and the dictionary next-id is untouched (the delete-path mint-free
-/// contract, extended to point reads).
 #[test]
 fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
     let dir = TempDir::new("db-get-dyn-mint-free");
@@ -290,8 +255,6 @@ fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
     assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
 }
 
-/// The dynamic surface is data: a wrong statement id, arity, or value
-/// type is a typed `FactShape` error, never a panic.
 #[test]
 fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     let dir = TempDir::new("db-get-dyn-shape");
@@ -299,7 +262,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-        // Out-of-range statement id.
+
         let err = tx
             .get_dyn(ENTRY, StatementId(7), &[Value::String("x".into())])
             .unwrap_err();
@@ -313,7 +276,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
             ),
             "{err:?}"
         );
-        // Key arity mismatch.
+
         let err = tx.get_dyn(ENTRY, ENTRY_KEY, &entry("x", 1)).unwrap_err();
         assert!(
             matches!(
@@ -328,7 +291,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
             ),
             "{err:?}"
         );
-        // Key value type mismatch.
+
         let err = tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::U64(3)]).unwrap_err();
         assert!(
             matches!(
@@ -346,7 +309,6 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     .unwrap();
 }
 
-/// S(id fresh, v) — the fresh-minting relation for witness tests.
 fn fresh_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -369,8 +331,6 @@ fn fresh_schema() -> SchemaDescriptor {
     }
 }
 
-/// What the `schema!` macro would generate for `id: u64 as SId, fresh` —
-/// the typed mint path's proof-carrying newtype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SId(u64);
 
@@ -386,9 +346,6 @@ impl Fresh for SId {
     }
 }
 
-/// The resolver is the checking boundary of the untyped mint path: ids
-/// and generation are data, so every mis-aimed resolution is a typed
-/// `FactShape` error, never a panic.
 #[test]
 fn fresh_field_rejects_non_witnesses_with_typed_errors() {
     let dir = TempDir::new("db-fresh-field-resolver");
@@ -417,9 +374,6 @@ fn fresh_field_rejects_non_witnesses_with_typed_errors() {
     );
 }
 
-/// Resolve once, mint per row: one witness mints across many `reserve_at`
-/// calls, interleaves with the typed path in one sequence, and the
-/// sequence persists across transactions.
 #[test]
 fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     let dir = TempDir::new("db-alloc-witness");
@@ -443,8 +397,7 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     })
     .expect("mint")
     .unwrap();
-    // A committed sequence never re-issues: the witness continues where
-    // the first transaction stopped.
+
     db.write(|tx| {
         assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 5);
         Ok(())
@@ -453,13 +406,12 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     .unwrap();
 }
 
-/// The panic gap, closed (`EscapedIdBurn`, the drop guard in
-/// `db/write.rs`): the never-reissue law binds EVERY termination of a
-/// write — a PANICKING closure included. `reserve` hands the id to the
-/// host before the commit's fate is known
-/// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`), so the
-/// unwound transaction persists no data but burns its escaped mint —
-/// the api-level mirror of the storage-level
+/// The panic gap, closed (`EscapedIdBurn`, the drop guard in `db/write.rs`):
+/// the never-reissue law binds EVERY termination of a write — a PANICKING
+/// closure included. `reserve` hands the id to the host before the commit's
+/// fate is known (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`), so
+/// the unwound transaction persists no data but burns its escaped mint — the
+/// api-level mirror of the storage-level
 /// `fresh_ids_reserved_in_a_rejected_txn_are_burned`.
 #[test]
 fn a_panicking_write_burns_its_escaped_fresh_ids() {
@@ -481,10 +433,9 @@ fn a_panicking_write_burns_its_escaped_fresh_ids() {
         });
     }));
     assert!(unwound.is_err(), "the closure's panic propagates");
-    // The unwound transaction persisted no data — the clock never moved...
+
     assert_eq!(db.generation().expect("generation").value(), 0);
-    // ...but the id it handed out is gone forever: the next write mints
-    // PAST the burned id.
+
     db.write(|tx| {
         assert_eq!(
             tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
@@ -592,15 +543,12 @@ fn a_panicking_write_with_a_failed_flush_still_never_reissues() {
     .unwrap();
 }
 
-/// The drop-order lock window: `Db`'s fields drop in declaration
-/// order, and a parked reader's transaction owns its own env clone —
-/// if the `Environment` (and with it the advisory lock) dropped before
-/// `read_cache`, another handle could acquire the lock while heed
-/// still holds the path open, and its `Db::open` would surface heed's
-/// `EnvAlreadyOpened` as an untyped `Lmdb` error — breaking a retry
-/// loop keyed on the typed `EnvironmentLocked`. The opener thread
-/// hammers the window while the owner drops; every non-lock error is
-/// the regression.
+/// The drop-order lock window: `Db`'s fields drop in declaration order, and a
+/// parked reader's transaction owns its own env clone — if the `Environment`
+/// (and with it the advisory lock) dropped before `read_cache`, another handle
+/// could acquire the lock while heed still holds the path open, and its
+/// `Db::open` would surface heed's `EnvAlreadyOpened` as an untyped `Lmdb`
+/// error — breaking a retry loop keyed on the typed `EnvironmentLocked`.
 #[test]
 fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
     let dir = TempDir::new("db-drop-order");
@@ -609,9 +557,9 @@ fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
             .expect("create")
             .expect("accepted"),
     );
-    // 1,000 rounds reproduced the pre-fix window well within the first
+
     // hundred on the M2 Max; the budget keeps the race real without
-    // dominating the suite.
+
     for _ in 0..1000 {
         let db = Db::open(dir.path(), named_schema()).expect("open owner");
         db.read(|_| Ok(())).expect("park a reader");
@@ -633,7 +581,7 @@ fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
             }
         });
         // The opener is provably in its retry loop before the drop
-        // opens the window.
+
         while !hot.load(std::sync::atomic::Ordering::Acquire) {
             std::hint::spin_loop();
         }
@@ -645,20 +593,7 @@ fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
     }
 }
 
-/// The cross-schema witness law (RULED 2026-07-15, reversing "the
-/// witness carries the proof"): [`crate::schema::FreshField`] carries a
-/// BINDING — its resolving handle's schema typestate — so a witness of
-/// one `schema!` schema on another's transaction is a compile error
-/// (`tests/schema-compile-fail/foreign_fresh_witness.rs`, the other half
-/// of this lock). Here at the dyn boundary the binding proves nothing:
-/// every `Db<SchemaDescriptor>` shares one typestate, so a witness
-/// resolved by database A reaches database B well-typed — and the
-/// mint's per-transaction sequence init re-checks the generation and
-/// refuses typed, never a panic, never a silent mint (the pre-ruling
-/// hole: debug asserted, release minted 0,1,2… from a Q key of a field
-/// NOT fresh in the store's schema, breaking `Generation::Fresh`'s
-/// never-reissue guarantee). The refusal aborts the transaction whole:
-/// no Q entry, no state change.
+/// The refusal aborts the transaction whole: no Q entry, no state change.
 #[test]
 fn a_foreign_witness_is_refused_typed_not_minted() {
     let foreign_dir = TempDir::new("db-foreign-witness-resolver");
@@ -669,8 +604,7 @@ fn a_foreign_witness_is_refused_typed_not_minted() {
         .fresh_field(RelationId(0), FieldId(0))
         .expect("fresh in ITS OWN schema");
     let dir = TempDir::new("db-foreign-witness");
-    // A different schema at this store: field 0 of relation 0 is a
-    // plain String column, not fresh.
+
     let db = Db::create(dir.path(), named_schema())
         .expect("create")
         .expect("accepted");
@@ -682,14 +616,10 @@ fn a_foreign_witness_is_refused_typed_not_minted() {
         }
         other => panic!("a foreign witness must refuse typed, not mint: {other:?}"),
     }
-    // The aborted transaction persisted nothing — the store's clock
-    // never moved.
+
     assert_eq!(db.generation().expect("generation").value(), 0);
 }
 
-/// Shape failure of a collection is parse-then-apply: no row enters the
-/// delta, so the transaction is not poisoned and a later insert in the
-/// same write still commits.
 #[test]
 fn a_shape_failure_does_not_poison_the_write() {
     let dir = TempDir::new("db-shape-no-poison");
@@ -797,9 +727,9 @@ fn poison_preserves_the_original_error_and_empty_insert_is_no_engine_request() {
     }
 }
 
-/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) }: the closed fixture
-/// for the write-refusal tests (hand-built — the macro grammar for closed
-/// relations is the emission PRD's).
+/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) }: the closed fixture for
+/// the write-refusal tests (hand-built — the macro grammar for closed relations
+/// is the emission PRD's).
 fn closed_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -824,12 +754,11 @@ fn closed_schema() -> SchemaDescriptor {
     }
 }
 
-/// Any delta operation naming a closed relation is `ClosedRelationWrite`,
-/// typed away before any encoding runs — the mis-shaped value below (one
-/// value where the sealed arity is two) never even reaches the shape
-/// check — and nothing reaches the delta: a closure that swallows the
-/// refusal commits empty, so the state-changing generation never moves
-/// and the store stays rowless.
+/// Any delta operation naming a closed relation is `ClosedRelationWrite`, typed
+/// away before any encoding runs — the mis-shaped value below (one value where
+/// the sealed arity is two) never even reaches the shape check — and nothing
+/// reaches the delta: a closure that swallows the refusal commits empty, so the
+/// state-changing generation never moves and the store stays rowless.
 #[test]
 fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     let dir = TempDir::new("db-closed-write");
@@ -850,7 +779,7 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     ));
 
     // A collection naming a closed relation is refused the same way —
-    // nothing enters the delta.
+
     let collection = db
         .write(|tx| {
             tx.insert_dyn(currency, vec![vec![Value::U64(9)]])
@@ -863,7 +792,7 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     ));
 
     // The delta stayed empty: swallowing the refusal commits nothing —
-    // no generation movement, no stored rows.
+
     let before = db.generation().expect("generation");
     db.write(|tx| {
         assert!(matches!(
@@ -875,9 +804,7 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     .expect("the refusal is the operation's, not the transaction's")
     .unwrap();
     assert_eq!(db.generation().expect("generation"), before);
-    // The read surface still answers — the extension, virtually: exactly
-    // the two ground axioms, never a stored row (the store contains zero
-    // vocabulary bytes; `verify_store` convicts any that appear).
+
     db.read(|snap| {
         let rows: Vec<Vec<Value>> = snap.scan(currency)?.collect::<crate::error::Result<_>>()?;
         assert_eq!(
@@ -892,10 +819,6 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     .expect("read");
 }
 
-/// Point reads on a closed relation resolve against the sealed extension
-/// — the closed auto-key (`Currency(id) -> Currency`, statement 0: no
-/// fresh fields exist) probes no `U` namespace, and the error surface for
-/// unknown ids is exactly the ordinary one.
 #[test]
 fn closed_point_reads_resolve_against_the_extension() {
     let dir = TempDir::new("db-closed-get");
@@ -906,16 +829,14 @@ fn closed_point_reads_resolve_against_the_extension() {
     let auto_key = StatementId(0);
 
     db.write(|tx| {
-        // A known handle id: the full row (synthetic id ‖ intrinsics).
+
         let row = tx
             .get_dyn(currency, auto_key, &[Value::U64(1)])?
             .expect("Eur is row 1");
         assert_eq!(row, vec![Value::U64(1), Value::U64(2)]);
-        // An id beyond the extension: absent, exactly like an ordinary
-        // relation's missing key.
+
         assert_eq!(tx.get_dyn(currency, auto_key, &[Value::U64(9)])?, None);
-        // The existing typed error surface, unchanged: unknown relation,
-        // non-key statement, arity mismatch.
+
         assert!(matches!(
             tx.get_dyn(RelationId(7), auto_key, &[Value::U64(0)]),
             Err(Error::FactShape(FactShapeError::Id(
@@ -938,13 +859,6 @@ fn closed_point_reads_resolve_against_the_extension() {
     .unwrap();
 }
 
-/// The `Q` ratchet law at the public surface, across commits
-/// (`docs/architecture/50-storage.md` § Key layout, the `Q` row): an
-/// explicit-id insert advances the fresh high-water past the supplied
-/// value AND the advance persists, so a later transaction's mint is
-/// strictly greater — a copied id (the rebirth pattern: explicit-id
-/// inserts of another store's rows) can never collide with a
-/// subsequent fresh mint.
 #[test]
 fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
     let dir = TempDir::new("db-fresh-ratchet");
@@ -954,7 +868,6 @@ fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
     let rel = RelationId(0);
     let field = bumbledb_theory::schema::FieldId(0);
 
-    // Commit 1: an explicit id well past anything ever minted.
     db.write(|tx| {
         tx.insert_dyn(rel, [&[Value::U64(41), Value::U64(1)]])
             .map(|_| ())
@@ -962,7 +875,6 @@ fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
     .expect("explicit-id write")
     .unwrap();
 
-    // Commit 2: the next mint is strictly greater — never a collision.
     let witness = db.fresh_field(rel, field).expect("fresh field");
     let minted = db
         .write(|tx| {
@@ -976,7 +888,7 @@ fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
     assert!(minted > 41, "minted {minted} must exceed the copied id 41");
 
     // And the ratchet survives a reopen: the mark was flushed to `Q`,
-    // not just held in memory.
+
     drop(db);
     let db = Db::open(dir.path(), fresh_schema()).expect("reopen");
     let witness = db.fresh_field(rel, field).expect("fresh field");
@@ -991,11 +903,6 @@ fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
     );
 }
 
-/// The pooled point-read lane (docs/architecture/70-api.md § point
-/// reads): `get_dyn_into` fills the caller's buffer on a hit — capacity
-/// AND allocation retained across warm gets — clears it on a miss, and
-/// answers byte-identically to the owned `get_dyn` on both the snapshot
-/// and write-transaction surfaces.
 #[test]
 fn get_dyn_into_reuses_the_callers_buffer_on_both_surfaces() {
     let dir = TempDir::new("db-get-dyn-into");
@@ -1088,12 +995,10 @@ fn read_instance_prepares_executes_and_gets() {
     .expect("read");
 }
 
-/// The exact-count law on the store surface (one-representation PRD 40):
-/// after mixed inserts and deletes across commits, `count` equals the
-/// scan length in the SAME lease — the API twin of the storage pin
+/// The exact-count law on the store surface: after mixed inserts and deletes
+/// across commits, `count` equals the scan length in the SAME lease — the API
+/// twin of the storage pin
 /// (`storage/read/tests.rs::row_count_equals_scan_count_after_mixed_commits`).
-/// A closed relation answers its sealed extension length: the extension
-/// IS its rows (virtual storage — no stored counter exists to read).
 #[test]
 fn count_equals_scan_length_after_mixed_commits_and_reads_the_sealed_extension() {
     let dir = TempDir::new("db-count");
@@ -1205,15 +1110,6 @@ fn write_from_rejects_a_foreign_witness() {
     assert_eq!(db.generation().expect("generation").value(), 0);
 }
 
-// =====================================================================
-// The accepted-collection transport (`proposals/one-representation/20`):
-// the one parse, the doc-hidden `*_accepted` verbs, and the ten-law
-// table's write side re-pointed at the new lane.
-// =====================================================================
-
-// One relation over every value type — the differential fixture: the
-// typed lane (`schema!` facts), the dyn lane (`Value` rows), and the
-// accepted lane (builder-fed) must be three spellings of one write.
 crate::schema! {
     pub OneRep;
     relation Sample {
@@ -1249,8 +1145,7 @@ fn sample_facts() -> Vec<Sample<'static>> {
             window: iv_u(0, 2),
             span: iv_i(-1, 0),
         },
-        // `memo` repeats deliberately: the interned string must land on
-        // one id whichever lane carried it.
+
         Sample {
             flag: true,
             count: 7,
@@ -1299,10 +1194,6 @@ fn coherent(db: &Db<OneRep>) {
     );
 }
 
-/// The differential-equivalence pin (the digest stop-ship proxy, 80):
-/// the same fact set through the typed lane, `insert_dyn`, and
-/// `insert_accepted` into three fresh stores produces identical state —
-/// scans, dictionary population, generation, and a coherent sweep each.
 #[test]
 fn the_three_write_lanes_produce_identical_stores() {
     let typed_dir = TempDir::new("db-lanes-typed");
@@ -1366,18 +1257,17 @@ fn the_three_write_lanes_produce_identical_stores() {
     coherent(&accepted_db);
 }
 
-/// The collection is `Send` by construction — built on the caller's
-/// thread, consumable on the transaction's (invariant 5 of 20).
+/// The collection is `Send` by construction — built on the caller's thread,
+/// consumable on the transaction's (invariant 5 of 20).
 #[test]
 fn accepted_collection_is_send() {
     fn assert_send<T: Send>() {}
     assert_send::<AcceptedCollection>();
 }
 
-/// Law 2, accepted lane: an empty collection is `MutationReport::EMPTY`
-/// before ANY refusal — unknown relation, closed relation, and a
-/// poisoned transaction all answer the empty report, exactly as the dyn
-/// lane always has.
+/// Law 2, accepted lane: an empty collection is `MutationReport::EMPTY` before
+/// ANY refusal — unknown relation, closed relation, and a poisoned transaction
+/// all answer the empty report, exactly as the dyn lane always has.
 #[test]
 fn an_empty_accepted_collection_is_lawful_before_any_refusal() {
     let dir = TempDir::new("db-accepted-empty");
@@ -1389,7 +1279,7 @@ fn an_empty_accepted_collection_is_lawful_before_any_refusal() {
     let unknown = CollectionBuilder::new(RelationId(99), fields)
         .seal()
         .expect("empty seals lawfully");
-    // Poisoned transaction, empty: still no engine request.
+
     let outcome = db.write(|tx| {
         assert_eq!(
             tx.insert_accepted(&unknown)
@@ -1423,10 +1313,10 @@ fn an_empty_accepted_collection_is_lawful_before_any_refusal() {
     assert!(matches!(outcome, Err(Error::TransactionPoisoned { .. })));
 }
 
-/// Laws 5 and the roster walls, accepted lane: closed refusal is typed
-/// before the delta; an unknown relation is `UnknownRelation`; a
-/// collection whose sealed arity disagrees with the target roster is the
-/// authoritative second wall's `ArityMismatch`.
+/// Laws 5 and the roster walls, accepted lane: closed refusal is typed before
+/// the delta; an unknown relation is `UnknownRelation`; a collection whose
+/// sealed arity disagrees with the target roster is the authoritative second
+/// wall's `ArityMismatch`.
 #[test]
 fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     let dir = TempDir::new("db-accepted-walls");
@@ -1453,7 +1343,7 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
                 "{err:?}"
             );
         }
-        // Unknown relation: typed, never a panic — ids are data.
+
         let foreign = AcceptedCollection::from_value_rows(
             RelationId(99),
             sealed_fields,
@@ -1474,10 +1364,9 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     .unwrap();
 }
 
-/// The arity re-verification (the authoritative second wall): a
-/// collection sealed against a narrower roster than the target's is
-/// refused with the same typed `ArityMismatch` the dyn parse would
-/// raise.
+/// The arity re-verification (the authoritative second wall): a collection
+/// sealed against a narrower roster than the target's is refused with the same
+/// typed `ArityMismatch` the dyn parse would raise.
 #[test]
 fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
     let dir = TempDir::new("db-accepted-arity-wall");
@@ -1485,8 +1374,7 @@ fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
         .expect("create")
         .expect("accepted");
     let fields = db.schema().relation(ENTRY).fields();
-    // Sealed against the roster's first column only: shape-lawful for
-    // THAT roster, arity-illegal for the target.
+
     let mut builder = CollectionBuilder::new(ENTRY, &fields[..1]);
     builder.push_str("ada").expect("string column");
     let narrow = builder.seal().expect("complete against its roster");
@@ -1511,20 +1399,18 @@ fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
     .unwrap();
 }
 
-/// The roster ECHO (the second wall's type half): a collection sealed
-/// against a forged roster of the SAME arity but different value types is
-/// refused at apply with the typed `TypeMismatch` naming the first
-/// differing field — arity re-anchoring alone would have admitted it and
-/// the encoder's positional arms would have written wrong-width fact
-/// bytes.
+/// The roster ECHO (the second wall's type half): a collection sealed against a
+/// forged roster of the SAME arity but different value types is refused at
+/// apply with the typed `TypeMismatch` naming the first differing field — arity
+/// re-anchoring alone would have admitted it and the encoder's positional arms
+/// would have written wrong-width fact bytes.
 #[test]
 fn an_accepted_collection_of_foreign_types_is_refused_at_apply() {
     let dir = TempDir::new("db-accepted-type-wall");
     let db = Db::create(dir.path(), entry_schema())
         .expect("create")
         .expect("accepted");
-    // Entry's sealed roster is (name str, amount i64); the forgery keeps
-    // the arity and swaps both value types.
+
     let forged = [
         FieldDescriptor {
             name: "name".into(),
@@ -1559,10 +1445,6 @@ fn an_accepted_collection_of_foreign_types_is_refused_at_apply() {
     .unwrap();
 }
 
-/// Law 3 (`submitted`/`changed` exact) and law 4's dyn-twin semantics on
-/// the accepted lane: a duplicate row within one collection submits 2 and
-/// changes 1; the delete disposition resolves without minting, so a
-/// never-interned string proves absence and grows nothing.
 #[test]
 fn accepted_reports_are_exact_and_delete_never_mints() {
     let dir = TempDir::new("db-accepted-exact");
@@ -1607,8 +1489,6 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
     );
 }
 
-/// `Marker()` — a fieldless relation (nullary relations are LEGAL;
-/// `schema/tests/valid.rs`).
 fn nullary_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -1620,15 +1500,6 @@ fn nullary_schema() -> SchemaDescriptor {
     }
 }
 
-/// The arity-0 collapse law (20, set semantics): a fieldless collection
-/// IS its row count, so an accepted collection STATING `u64::MAX` rows —
-/// the arity-0 seal takes the count directly; the cells wall `0 == rows ×
-/// 0` is vacuous, so any stated count is shape-lawful — applies as ONE
-/// judged empty-tuple apply and returns promptly: `submitted` echoes the
-/// stated count exactly, `changed` is the one effect (`<= 1`), and the
-/// delete twin is symmetric (one delete op). Pre-collapse, this test
-/// would push and apply 2^64 − 1 rows from a 16-byte payload — the
-/// unbounded amplification the representation now cannot state.
 #[test]
 fn a_nullary_accepted_collection_applies_in_constant_time() {
     let dir = TempDir::new("db-accepted-nullary");
@@ -1657,8 +1528,7 @@ fn a_nullary_accepted_collection_applies_in_constant_time() {
     })
     .expect("delete lane")
     .unwrap();
-    // The arity-0 seal refuses a widthful roster typed: a zero-width row
-    // against a two-column roster is the arity mismatch it is.
+
     let entry_fields = [
         FieldDescriptor {
             name: "name".into(),
@@ -1689,13 +1559,6 @@ fn a_nullary_accepted_collection_applies_in_constant_time() {
     );
 }
 
-/// The one-way ruling of fieldless rows (20): the stated-count
-/// constructor `seal_nullary` is the ONE spelling, so the push lane
-/// refuses a zero-width row TYPED — the mixed sequence (push an empty
-/// row, then state a count) is unrepresentable instead of panicking the
-/// seal's `debug_assert` in debug and silently replacing the pushed count
-/// in release. The dyn path keeps counting its payload-witnessed empty
-/// slices: N empty slices submit exactly N, through the same one seal.
 #[test]
 fn a_fieldless_row_push_is_refused_typed() {
     let dir = TempDir::new("db-nullary-push");
@@ -1705,8 +1568,7 @@ fn a_fieldless_row_push_is_refused_typed() {
     let marker = RelationId(0);
     let fields = db.schema().relation(marker).fields();
     // The mixed sequence is refused AT THE PUSH, with the zero-width
-    // roster's one push answer — seal_nullary's zero-rows precondition
-    // now holds by construction.
+
     let mut builder = CollectionBuilder::new(marker, fields);
     let err = builder.push_value_row(&[]).expect_err("one spelling");
     assert!(
@@ -1722,9 +1584,7 @@ fn a_fieldless_row_push_is_refused_typed() {
         ),
         "{err:?}"
     );
-    // The dyn path counts payload-witnessed empty slices through the one
-    // fieldless constructor: 3 empty slices are 3 rows, behavior
-    // identical to the retired per-row accrual.
+
     let rows: [&[Value]; 3] = [&[], &[], &[]];
     let coll = AcceptedCollection::from_value_rows(marker, fields, rows)
         .expect("empty slices are the fieldless roster's arity-lawful rows");
@@ -1737,7 +1597,7 @@ fn a_fieldless_row_push_is_refused_typed() {
     })
     .expect("dyn lane")
     .unwrap();
-    // A widthful row against the fieldless roster stays the arity
+
     // mismatch it always was, judged before any count accrues.
     let wide: [&[Value]; 2] = [&[], &[Value::U64(1)]];
     let err = AcceptedCollection::from_value_rows(marker, fields, wide).expect_err("widthful row");
@@ -1756,11 +1616,6 @@ fn a_fieldless_row_push_is_refused_typed() {
     );
 }
 
-/// The one cell judgment, all feeding surfaces: every typed push checks
-/// its positional roster arm and answers the same `TypeMismatch` (naming
-/// relation and field) the `Value` feed does; the `bytes<N>` width and
-/// interval-family rules hold; a partial row cannot seal. An illegal
-/// collection is unrepresentable — these errors are the proof.
 #[test]
 fn the_collection_builder_is_the_one_shape_judgment() {
     let schema = crate::schema::ValidateDescriptor::validate(crate::Theory::descriptor(OneRep))
@@ -1778,7 +1633,6 @@ fn the_collection_builder_is_the_one_shape_judgment() {
         );
     };
 
-    // Typed pushes against the wrong positional arm, each surface.
     type_mismatch(
         CollectionBuilder::new(rel, fields)
             .push_u64(1)
@@ -1793,11 +1647,11 @@ fn the_collection_builder_is_the_one_shape_judgment() {
     builder.push_i64(-3).expect("delta");
     type_mismatch(builder.push_bytes(&[1, 2, 3]).expect_err("str column"), 3);
     builder.push_str("alpha").expect("memo");
-    // The length is the type: bytes<3> refuses any other width.
+
     type_mismatch(builder.push_bytes(&[1, 2]).expect_err("bytes<3>"), 4);
     type_mismatch(builder.push_str("not-bytes").expect_err("bytes<3>"), 4);
     builder.push_bytes(&[1, 2, 3]).expect("tag");
-    // The interval family: the element domain is part of the kind.
+
     type_mismatch(
         builder
             .push_interval_i64(crate::Interval::<i64>::new(-1, 1).expect("nonempty"))
@@ -1816,8 +1670,7 @@ fn the_collection_builder_is_the_one_shape_judgment() {
     builder
         .push_interval_i64(crate::Interval::<i64>::new(-4, 4).expect("nonempty"))
         .expect("span");
-    // One complete row seals; a dangling partial row is the arity
-    // mismatch it is.
+
     builder.push_bool(true).expect("second row opens");
     let err = builder.seal().expect_err("partial row");
     assert!(
@@ -1834,9 +1687,6 @@ fn the_collection_builder_is_the_one_shape_judgment() {
         "{err:?}"
     );
 
-    // The Value feed answers the identical errors — one judgment, two
-    // feeding surfaces (parse-all-first at the source: the first illegal
-    // row refuses the whole collection; no partial proof exists).
     let ok = sample_value_rows().remove(0);
     let short = vec![Value::Bool(true)];
     let err = AcceptedCollection::from_value_rows(rel, fields, [&ok, &short])
