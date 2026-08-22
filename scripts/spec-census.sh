@@ -1,37 +1,7 @@
 #!/usr/bin/env bash
-# The spec census (the covenant campaign, PRD 10): the grep-checked half
-# of the Bridge. The Lean half of every ledger row is checked by the
-# build (each row carries a term-level `@theoremName` reference); this
-# script checks the other half:
-#
-#   (a) every `mechanism` token of `lean/Bumbledb/Bridge.lean` greps to
-#       an existing path and symbol under crates/;
-#   (b) every `instrument` token greps to an existing test fn or
-#       conformance case;
-#   (c) every `lean/…` citation in the surviving markdown (lean/README.md,
-#       lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
-#       proposals/) resolves to a real file — and, when it names a
-#       declaration (`lean/….lean: name`), to a real declaration in it;
-#   (d) every backticked `path.rs::symbol` citation in lean/ doc
-#       comments resolves: some file under crates/*/src
-#       whose path ends with the cited path contains the symbol's
-#       final `::`-segment word-bounded. (Line-number citations inside
-#       lean doc comments are NOT checked — they drift silently; prefer
-#       the symbol form, which this check keeps honest.)
-#   (e) every backticked Lean declaration name in lean/ markdown
-#       (`Txn.judgeB`, …) resolves: its final dot-segment greps
-#       word-bounded somewhere in the Lean sources — the same rule (c)
-#       applies to the docs' `lean/….lean: name` citations, applied
-#       where lean-side prose cites declarations directly (so a
-#       renamed theorem cannot live on in a README).
-#
-# Parse contract (recorded in Bridge.lean's module doc): mechanism and
-# instrument strings are semicolon-joined tokens, each either
-# `symbol (path)` — the path must exist and the symbol's final
-# `::`-segment must grep word-bounded inside it — or a bare
-# `crates/…` path (existence). Premise strings carry none of
-# `crates/`, `::`, so only mechanism/instrument strings are
-# scanned. Exit nonzero on any dangler. Conventions follow check.sh.
+# (a) every `mechanism` token of `lean/Bumbledb/Bridge.lean` greps to
+# (c) every `lean/…` citation in the surviving markdown (lean/README.md,
+# lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -44,17 +14,14 @@ if [ ! -f "$BRIDGE" ]; then
   exit 1
 fi
 
-# ---- (a) + (b): the ledger's mechanism and instrument tokens ---------
-
 scanned=0
-# Every double-quoted string literal in the ledger that carries a
-# census-scannable token (strings are single-line by construction).
+
 while IFS= read -r str; do
   case "$str" in
     *crates/* | *::*) ;;
     *) continue ;;
   esac
-  # Split the string on '; ' into tokens.
+
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     scanned=$((scanned + 1))
@@ -86,16 +53,12 @@ if [ "$scanned" -eq 0 ]; then
   fail=1
 fi
 
-# The ledger count: the asserted literal must match the row count, so
-# the census notices a drifted assertion even before the build does.
 rows=$(grep -c '\.row @' "$BRIDGE")
 asserted=$(sed -n 's/.*ledger\.length = \([0-9][0-9]*\).*/\1/p' "$BRIDGE" | head -n 1)
 if [ -z "$asserted" ] || [ "$rows" -ne "$asserted" ]; then
   echo "spec-census: FAIL — ledger has $rows rows but asserts ${asserted:-nothing}" >&2
   fail=1
 fi
-
-# ---- (c): docs-side lean/ citation integrity --------------------------
 
 docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md proposals/README.md RULINGS.md REPRESENTATION-FIRST.md)
 if [ "${#docs[@]}" -eq 0 ]; then
@@ -109,9 +72,8 @@ for f in "${docs[@]}"; do
   fi
 done
 
-# Bare lean/ path citations: the file (or directory) must exist.
 while IFS= read -r cite; do
-  cite="${cite%%[),:\`]}" # strip trailing punctuation; keep extension dots
+  cite="${cite%%[),:\`]}" 
   [ -n "$cite" ] || continue
   if [ ! -e "$cite" ]; then
     echo "spec-census: FAIL — docs cite '$cite' which does not exist" >&2
@@ -119,8 +81,6 @@ while IFS= read -r cite; do
   fi
 done < <(grep -ohE 'lean/[A-Za-z0-9_/.-]*' "${docs[@]}" | sort -u)
 
-# Declaration citations `lean/….lean: name`: the declaration's final
-# dot-segment must grep word-bounded inside the cited file.
 while IFS= read -r cite; do
   file="${cite%%:*}"
   decl="$(printf '%s' "${cite#*:}" | tr -d ' ')"
@@ -133,14 +93,6 @@ while IFS= read -r cite; do
     fail=1
   fi
 done < <(grep -ohE 'lean/[A-Za-z0-9_/.-]+\.lean: *[A-Za-z_][A-Za-z0-9_.]*' "${docs[@]}" | sort -u)
-
-# ---- (d): lean-side rust symbol citations ----------------------------
-# The normative spec's doc comments anchor recorded narrowings to rust
-# code. Line-number anchors drift silently (the 2026-07-15 fidelity
-# review found four drifted ranges); symbol anchors are checkable, so
-# they are what this lane keeps honest: `path.rs::symbol` in backticks,
-# path resolved as a suffix under crates/*/src, the
-# symbol's final `::`-segment grepped word-bounded in a matching file.
 
 lean_cites=0
 while IFS= read -r cite; do
@@ -170,11 +122,6 @@ if [ "$lean_cites" -eq 0 ]; then
   echo "spec-census: FAIL — no lean-side symbol citations found (convention drifted?)" >&2
   fail=1
 fi
-
-# ---- (e): lean-side Lean declaration citations -------------------------
-# Backticked dotted declaration names in lean/ markdown. The case filter
-# drops file and path spellings (`Bridge.lean`, `cases/foo.json`) — they
-# carry no checkable declaration and (c)'s existence check owns paths.
 
 lean_decl_cites=0
 while IFS= read -r cite; do
