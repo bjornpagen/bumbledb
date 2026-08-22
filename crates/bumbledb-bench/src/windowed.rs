@@ -1,32 +1,3 @@
-//! The window-judgment write lane — the measurement infrastructure for
-//! the capacity statement's UNIT (count) instance
-//! (`docs/architecture/30-dependencies.md` § capacity statement): what
-//! does ADMISSION cost when the schema carries count-window laws and
-//! every commit's touched parents must be measured? The row names keep
-//! the word "window" deliberately (C16: it names the `{lo..hi}` object,
-//! which survives); the weighted rows live in [`crate::capacity`].
-//!
-//! Three engine-only report rows over two twin worlds:
-//! - `commit_window_baseline` — the twin theory WITHOUT window
-//!   statements (same relations, same containment, same seeded mass):
-//!   the control every window number is read against;
-//! - `commit_window_admission` — one child insert per commit under the
-//!   `WParent(id) <={0..64} WChild(parent)` window: the touched-
-//!   parent count probe on the hot path;
-//! - `commit_window_exclusion` — one φ-selected child (`flag == 1`)
-//!   per commit under the **`{0}` exclusion**
-//!   `WParent(id | kind == 1) <={0} WChild(parent | flag == 1)`
-//!   (the `{0}` exclusion: no selected child may exist per selected parent —
-//!   the exclusion window as a count), inserted under unselected
-//!   parents so every commit is legal and the measured cost is the
-//!   judge, not a refusal.
-//!
-//! `SQLite`-unpaired by decision (the `commit_witnessed` precedent): a
-//! trigger emulation would time the emulation, not the engine. Naive
-//! parity runs in tests — [`crate::naive::NaiveDb`] judges the same
-//! windows, verdicts and citations compared through the differential
-//! runner.
-
 use std::path::Path;
 
 use bumbledb::{Db, RelationId, Value};
@@ -38,8 +9,6 @@ use crate::writebench::write_protocol;
 #[cfg(test)]
 mod tests;
 
-/// The windowed twin: the containment plus the two window statements —
-/// the bounded fan-cap and the `{0}` exclusion.
 pub mod world {
     bumbledb::schema! {
         pub WindowedWorld;
@@ -60,8 +29,6 @@ pub mod world {
     }
 }
 
-/// The control twin: same relations, same containment, NO windows —
-/// the admission delta prices the window judge alone.
 pub mod baseline {
     bumbledb::schema! {
         pub UnwindowedWorld;
@@ -80,7 +47,6 @@ pub mod baseline {
     }
 }
 
-/// Relation ids (both twins declare identically).
 pub mod ids {
     use bumbledb::RelationId;
 
@@ -88,28 +54,20 @@ pub mod ids {
     pub const CHILD: RelationId = RelationId(1);
 }
 
-/// The seeded mass — parameterized so the naive parity slice can
-/// shrink every axis (the brute-force model is O(parents × children)
-/// per judged delta; the unit-corpus discipline every naive lane
-/// follows).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mass {
     pub parents: u64,
-    /// Seeded children per parent (far under the 64 cap, so every
-    /// measured commit is legal).
+
     pub children_per_parent: u64,
 }
 
 impl Mass {
-    /// The timed lane's mass: enough parents that per-sample probes hit
-    /// a real tree, enough children that every touched parent's count
-    /// probe walks occupied pages — "under load", not an empty store.
+
     pub const BENCH: Self = Self {
         parents: 4_096,
         children_per_parent: 8,
     };
 
-    /// The naive slice's unit mass.
     #[must_use]
     pub const fn unit() -> Self {
         Self {
@@ -119,26 +77,20 @@ impl Mass {
     }
 }
 
-/// The timed lane's parent count (the sample RNG's draw domain).
 pub const PARENTS: u64 = Mass::BENCH.parents;
 
-/// Every eighth parent is ψ-selected by the exclusion (`kind == 1`).
 #[must_use]
 pub fn parent_kind(i: u64) -> u64 {
     u64::from(i.is_multiple_of(8))
 }
 
-/// One relation's seeded row stream (both twins share it — the corpus
-/// is the theory-independent mass).
 pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
         ids::PARENT => {
             Box::new((0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(parent_kind(i))]))
         }
         ids::CHILD => Box::new((0..mass.parents * mass.children_per_parent).map(move |i| {
-            // Seeded children carry flag 0: the exclusion's source
-            // selection matches nothing at load, so the seed commits
-            // under both twins identically.
+
             vec![
                 Value::U64(i),
                 Value::U64(i / mass.children_per_parent),
@@ -149,11 +101,7 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
     }
 }
 
-/// Loads one twin's seeded mass (schema-generic: the corpus is shared).
-///
 /// # Errors
-///
-/// Engine errors, stringified.
 pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
         db.write(|tx| {
@@ -166,8 +114,6 @@ pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     Ok(())
 }
 
-/// A parent the exclusion does NOT select (`kind == 0`) — rejection
-/// draw at 7/8 acceptance.
 fn unselected_parent(rng: &mut Rng) -> u64 {
     loop {
         let p = rng.range(PARENTS);
@@ -177,16 +123,8 @@ fn unselected_parent(rng: &mut Rng) -> u64 {
     }
 }
 
-/// `commit_window_admission`: one flag-0 child per commit under the
-/// full window roster.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_admission(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -207,16 +145,8 @@ pub fn commit_window_admission(
     })
 }
 
-/// `commit_window_baseline`: the identical insert against the
-/// window-free twin — the control.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_baseline(
     db: &Db<baseline::UnwindowedWorld>,
     proto: Protocol,
@@ -237,17 +167,8 @@ pub fn commit_window_baseline(
     })
 }
 
-/// `commit_window_exclusion`: one φ-selected (`flag == 1`) child per
-/// commit under an unselected parent — the `{0}` exclusion's judge on
-/// the hot path, every commit legal.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_window_exclusion(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
@@ -268,13 +189,7 @@ pub fn commit_window_exclusion(
     })
 }
 
-/// The lane: seed both twins under `scratch`, run the three rows —
-/// engine-only [`crate::report::WriteFamilyReport`]s, `theirs: None`
-/// (unpaired by decision).
-///
 /// # Errors
-///
-/// Refusals and engine errors, stringified.
 pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,
@@ -291,8 +206,7 @@ pub fn write_families(
     if !names.iter().any(|name| selected(name)) {
         return Ok(Vec::new());
     }
-    // The caller (driver::write_families) already asserted the scratch
-    // is disk-backed; these rows are fsync-bound like every commit row.
+
     std::fs::create_dir_all(scratch).map_err(|e| format!("windowed scratch: {e}"))?;
     eprintln!("bench: loading the windowed twin worlds");
     let windowed = mode.create(&scratch.join("windowed"), world::WindowedWorld)?;
@@ -309,9 +223,7 @@ pub fn write_families(
         }
         eprintln!("bench: {name}");
         let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
-        // The traced solo sample (--trace): one captured commit after
-        // the timed window — the window-judgment spans, readable from
-        // disk (engine-only lane, no mirror to keep in lockstep).
+
         if let Some(table) = crate::trace_out::traced_solo(trace_dir, name, run)? {
             flames.push(crate::report::FlameEmbed {
                 name: name.to_owned(),
@@ -328,8 +240,7 @@ pub fn write_families(
         Ok(())
     };
     // Baseline first: the control's clock shadow must not carry the
-    // windowed rows' fsyncs (symmetry — every row is fsync-bound and
-    // equally shadowed by its predecessor).
+
     push("commit_window_baseline", &mut |proto| {
         commit_window_baseline(&unwindowed, proto)
     })?;
