@@ -20,7 +20,6 @@ fn touches() -> crate::allen::AllenMask {
 }
 
 impl Executor {
-
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -36,7 +35,6 @@ impl Executor {
         bindings: &Bindings,
         allen_sources: &[(Source, Source)],
     ) -> bool {
-
         let mut driver: Option<(usize, u64, u64)> = None;
         for (r_idx, (lhs, rhs)) in allen_sources.iter().enumerate() {
             let ((Source::Batch(word), Source::Slot(slot))
