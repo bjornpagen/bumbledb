@@ -17,7 +17,6 @@ const CLAIM_LOG: &str = "scheduler boost: requested — no-op on this platform";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Engaged {
-
     pub boost: &'static str,
 
     pub load_start: [f64; 3],
