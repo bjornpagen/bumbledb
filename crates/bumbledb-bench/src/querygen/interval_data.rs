@@ -22,10 +22,10 @@ fn offsets(seed: u64, group: u64, k: u64) -> (u64, u64, bool) {
     let parent_end = parent_start + 256;
     match k {
         0 => (0, w0, false),
-        1 => (w0, w0 + w1, false), 
+        1 => (w0, w0 + w1, false),
         2 => (parent_start, parent_end, false),
-        _ if group.is_multiple_of(3) => (parent_end + gap, 0, true), 
-        _ => (parent_start + inset, parent_end - inset, false),      
+        _ if group.is_multiple_of(3) => (parent_end + gap, 0, true),
+        _ => (parent_start + inset, parent_end - inset, false),
     }
 }
 
@@ -91,7 +91,6 @@ pub fn ladder_i64(seed: u64, group: u64, rng: &mut Rng) -> ((i64, i64), Rung) {
             }
         }
         Rung::Nested => {
-
             let (start, end) = group_i64(seed, group, 2);
             let inset = 1 + i64::try_from(rng.range(64)).expect("small");
             (start + inset, end - inset)
@@ -174,7 +173,6 @@ mod tests {
     #[test]
     fn groups_are_disjoint() {
         for group in 0..8 {
-
             let bounded_end = group_i64(SEED, group, 2).1;
             let next_start = group_i64(SEED, group + 1, 0).0;
             assert!(bounded_end <= next_start, "ordered groups");
