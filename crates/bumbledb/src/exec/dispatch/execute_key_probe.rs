@@ -5,24 +5,12 @@ use crate::image::view::Const;
 use crate::schema::Schema;
 use crate::storage::catalog::CatalogRead;
 
-/// Executes the key probe: key bytes from constants, one `U`/`M` get,
-/// one `F` fetch, remaining filters on the fact bytes, then the single
-/// binding through the ordinary sink (sinks are reused, not special-cased
-/// — a key-probe rule inside a multi-rule query unions through the same
-/// spanning seen-set as every other rule). The emit is counted like a
-/// join emit (the rule loop's union accounting). Multi-word variables
-/// (intervals, bytes<N>) occupy their whole slot span.
-///
 /// # Errors
-///
-/// `Lmdb`/`Corruption` from the storage reads. A missing key or a failed
-/// filter is not an error: the result is simply empty.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
-)] // the prepared query's split borrows,
-// exactly like `run_join`'s — bundling
-// would only rename the same eight things
+)] 
+
 pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters, Cat: CatalogRead>(
     plan: &KeyProbePlan,
     catalog: &Cat,
@@ -40,9 +28,7 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters, Cat: CatalogRea
         .relation(plan.relation)
         .layout()
         .encoded(stored.as_ref());
-    // The single binding, through the ordinary sink (the aggregate-find
-    // key-probe path; plain-variable key_probes take the direct lane).
-    // Interval variables occupy their two-slot span.
+
     bindings.reset();
     for var in &plan.vars {
         match fact_operand(fact, var.field)? {
