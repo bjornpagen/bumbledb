@@ -136,7 +136,7 @@ fn a_ray_weight_refuses_with_one_agreed_verdict() {
                 deletes: vec![],
                 inserts: vec![
                     pool(1, 0, 100),
-                    pool(1, 200, 300), 
+                    pool(1, 200, 300),
                     device(1, 3, u64::MAX, 0),
                 ],
             },
