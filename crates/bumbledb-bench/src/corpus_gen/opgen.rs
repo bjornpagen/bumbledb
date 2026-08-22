@@ -9,7 +9,6 @@ use super::{GenConfig, Rng, Scale};
 
 #[derive(Debug, Clone)]
 pub enum FuzzOp {
-
     Insert(Delta),
 
     Delete(Delta),
@@ -25,11 +24,14 @@ pub enum FuzzOp {
         params: Vec<ParamValue>,
     },
 
-    Reprepare { slot: usize },
+    Reprepare {
+        slot: usize,
+    },
 
-    ViewRead { relation: RelationId },
+    ViewRead {
+        relation: RelationId,
+    },
     /// Drop the environment and reopen the store from disk (the pending
-
     Reopen,
 
     VerifyStore,
@@ -211,7 +213,6 @@ fn batch(rng: &mut Rng, cfg: GenConfig, world: &Domains, kind: Kind) -> Delta {
     let mut delta = Delta::default();
     for _ in 0..=rng.range(3) {
         if rng.chance(1, 10) {
-
             let mut cases = closed_write_cases(rng, 6);
             if kind == Kind::Inserts {
                 cases.retain(|case| !case.delete);
