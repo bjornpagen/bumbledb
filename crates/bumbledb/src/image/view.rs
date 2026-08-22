@@ -2,7 +2,6 @@
 //! survivor-position vectors over images. Views are query-local and never
 //! cached; COLT roots iterate the view,
 //! and view positions index the image.
-
 use std::sync::Arc;
 
 use crate::image::RelationImage;
@@ -198,7 +197,6 @@ impl BoundView {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: `idx` out of the view's range.
     #[must_use]
     pub fn position_at(&self, idx: usize) -> u32 {
