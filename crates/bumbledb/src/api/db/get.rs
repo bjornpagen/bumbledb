@@ -3,7 +3,6 @@
 //! judges — so read-modify-write idioms (upsert, check-then-act conditions)
 //! are sound without exposing query machinery to the write path. These are
 //! determinant gets: no images, no plans, no `ReadInstance`.
-
 use super::collection::shape_mismatch;
 use super::{Fact, Key, Probe, WriteTx};
 use crate::encoding::encode_u64;
@@ -131,18 +130,14 @@ pub(super) fn closed_fact_by_determinant<'rel>(
 
 impl<S> WriteTx<'_, S> {
     /// otherwise. Before commit it answers exactly what a post-commit
-
     /// # Errors
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.mutation.contains(fact)
     }
 
     /// pages, stable for the transaction by LMDB `CoW`) or from this
-
     /// ```
-
     /// ```
-
     /// # Errors
     #[expect(
         clippy::needless_pass_by_value,
