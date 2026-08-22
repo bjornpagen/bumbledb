@@ -14,7 +14,6 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// point — `Q(amount, at) :- Posting(id = ?0, amount, at)`. Key probe.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -41,8 +40,6 @@ fn point_params(cfg: &GenConfig) -> Vec<Draw> {
     sets
 }
 
-/// `containment_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
-/// Account(id = ?0, holder = h), Holder(id = h, name)`.
 fn containment_walk_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -84,11 +81,6 @@ fn containment_walk_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// chain — `Q(src, amount, at) :- Posting(entry = e, account = a,
-/// amount, at), JournalEntry(id = e, source = src),
-/// Account(id = a, currency = Usd)` with `at >= ?0` — the multi-hop
-/// walk across postings/entries/accounts, an enum literal pinning the
-/// account side (~1/3 of accounts).
 fn chain_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -133,22 +125,12 @@ fn chain_query() -> Query {
 fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let span = i64::try_from(sizes.postings).expect("fits") * corpus_gen::AT_STEP;
-    // Four suffix edges near the corpus end, selecting ≈2/4/6/8%.
+
     (1..=4)
         .map(|k| scalar_draw(vec![Value::I64(corpus_gen::AT_BASE + span - span * k / 50)]))
         .collect()
 }
 
-/// `deep_chain` — `Q(name, src, amount, at) :- Posting(entry = e,
-/// account = a, amount, at), JournalEntry(id = e, source = src),
-/// Account(id = a, holder = h), Holder(id = h, name)` with `at >= ?0`
-/// — chain's walk extended one hop through the account into its holder:
-/// four atoms, four plan nodes (`binary2fj` mints one node per
-/// occurrence), the only family whose pipeline reaches node 3. That
-/// depth is the mid-stream pump regime (ruled 2026-07-23, R22, finding
-/// 088): every ≤ 3-node plan leaves the tail-drain placement
-/// unmeasurable, so this shape exists to keep it measured. Params are
-/// chain's suffix edges — the two families differ by exactly the hop.
 fn deep_chain_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -192,8 +174,6 @@ fn deep_chain_query() -> Query {
     })
 }
 
-/// range — `Q(id, amount) :- Posting(id, amount, at)`, `at >= ?0`,
-/// `at < ?1` — the pure scan family.
 fn range_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -225,7 +205,7 @@ fn range_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let span = i64::try_from(sizes.postings).expect("fits") * corpus_gen::AT_STEP;
     let width = span / 50;
-    // Four ≈2%-selectivity windows spread over the timestamp span.
+
     (0..4)
         .map(|k| {
             let start = corpus_gen::AT_BASE + span * (2 * k + 1) / 16;
@@ -234,12 +214,6 @@ fn range_params(cfg: &GenConfig) -> Vec<Draw> {
         .collect()
 }
 
-/// balance — `Q(a, Sum(amount)) :- Posting(id, account = a, amount),
-/// Account(id = a, holder = ?0)`. The fresh id binding makes every
-/// posting a distinct binding, so the fold is the *ledger balance* —
-/// duplicate amounts on one account count once each, not once total —
-/// and the distinct-bindings elision engages (key coverage), putting
-/// the seen-set-elided aggregate path under the oracle.
 pub(super) fn balance_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -270,8 +244,7 @@ pub(super) fn balance_query() -> Query {
 
 fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
-    // The hot-owning holder: whoever holds hot account 0 (deterministic —
-    // the generator is a pure function of (cfg, relation, row)).
+
     let account0 = corpus_gen::row(cfg, &sizes, ids::ACCOUNT, 0);
     let hot_holder = account0[usize::from(ids::account::HOLDER.0)].clone();
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0005);
@@ -280,9 +253,6 @@ fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
     sets
 }
 
-/// stats — `Q(c, Min(at), Max(amount), Count) :- Posting(account = a,
-/// amount, at), Account(id = a, currency = c)` — the literal-free full
-/// fold grouped by currency.
 fn stats_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -317,12 +287,10 @@ fn stats_query() -> Query {
 }
 
 fn stats_params(_: &GenConfig) -> Vec<Draw> {
-    // Literal-free full fold: one empty draw.
+
     vec![scalar_draw(vec![])]
 }
 
-/// string — `Q(id, amount) :- Posting(id, amount, instrument = i),
-/// Instrument(id = i, symbol = ?0)` — the interned-string point lookup.
 fn string_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -358,15 +326,11 @@ fn string_params(cfg: &GenConfig) -> Vec<Draw> {
             )])
         })
         .collect();
-    // The never-interned miss: no corpus vocabulary starts with this.
+
     sets.push(scalar_draw(vec![Value::String("missing-family".into())]));
     sets
 }
 
-/// skew — `Q(p, amount) :- Posting(id = p, amount),
-/// PostingTag(posting = p, tag = ?0)` — the skewed tag join: the
-/// generator routes [`corpus_gen::HOT_TAG_PCT`]% of first tags to `Fee`
-/// (ordinal 0), so the rotation spans hot and uniform fan-outs.
 fn skew_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -389,8 +353,7 @@ fn skew_query() -> Query {
 }
 
 fn skew_params(_: &GenConfig) -> Vec<Draw> {
-    // The hot tag, then the two uniform tags (all three ordinals — an
-    // out-of-range ordinal is unrepresentable, so no miss draw exists).
+
     vec![
         scalar_draw(vec![Value::U64(0)]),
         scalar_draw(vec![Value::U64(1)]),
@@ -398,11 +361,6 @@ fn skew_params(_: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// spread — `Q(x, y) :- Posting(entry = e, amount = x),
-/// Posting(entry = e, amount = y)` with `x < y` — the cross-atom
-/// residual family and the duplicate-witness projection: a self-join
-/// whose ordered comparison exercises residual placement, and whose
-/// `(x, y)` pairs are witnessed by many distinct entries.
 fn spread_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -432,18 +390,10 @@ fn spread_query() -> Query {
 }
 
 fn spread_params(_: &GenConfig) -> Vec<Draw> {
-    // Param-less full-relation family (like stats): ~1 ordered pair per
-    // entry at any scale (2 postings per entry), so the result is
-    // ~entries rows — measured acceptable at S.
+
     vec![scalar_draw(vec![])]
 }
 
-/// triangle — `Q(a) :- Posting(account = a, instrument = i),
-/// Posting(instrument = i, entry = w), Posting(entry = w, account = a)`
-/// with `?0 <= a < ?1` — a true 3-cycle over the ledger via self-joins
-/// on Posting's three containment fields: three occurrences, three shared
-/// variables, a cyclic hypergraph — exactly the dynamic-cover stress
-/// the paper's triangle exposes.
 fn triangle_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -487,13 +437,7 @@ fn triangle_query() -> Query {
 }
 
 fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
-    // The unnarrowed cycle is O(postings x instrument-fanout) work —
-    // beyond the 10 ms budget class at S (measured on the previous
-    // ledger) — so the account window `?0 <= a < ?1` keeps the family
-    // inside it. Windows are *cold* (they start past the hot set — any
-    // window containing hot account 0 is dominated by its posting
-    // share): three ~1%-of-accounts slices spread over the cold range,
-    // plus the empty window.
+
     let sizes = Sizes::of(cfg.scale);
     let hot = sizes.hot_accounts();
     let width = (sizes.accounts / 100).max(1);
@@ -510,10 +454,6 @@ fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
     sets
 }
 
-/// `entries_for_account_set` — `Q(e) :- Posting(entry = e,
-/// account ∈ ?set0)` — the param-set family (`ParamSet` replaces the
-/// retired host-side union convention): entries touching any account of
-/// a bound set, `IN`-list on the `SQLite` side, re-rendered per draw.
 fn entries_for_account_set_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -549,24 +489,6 @@ fn entries_for_account_set_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `postings_without_tag` — `Q(p, amount) :- Posting(id = p,
-/// account = ?0, amount), ¬PostingTag(posting = p)` — the negation
-/// family: one account's untagged postings (the generator tags even
-/// posting ids only, so roughly half of any account's postings
-/// survive the anti-join).
-///
-/// **The cross-process p50 bimodality is the rotation-boundary
-/// tail-max, not an engine mode (mechanism hunt, 2026-07-17).** The
-/// two cold-account draws (≈ 2.6 µs each) fill ranks 0–127 of the
-/// 256-sample rotation exactly, with the miss at ≈ 11.5 µs and the
-/// hot account at ≈ 1.05 ms above them — so the nearest-rank p50
-/// (`sorted[127]`) is the MAX of 128 cold samples, an extreme order
-/// statistic that swung 2.75–9.54 µs across 30 fresh processes while
-/// every draw median held within ±0.5% (colds 2500–2625 ns). Same
-/// evidence and refutations as `slot_booking_overlap`
-/// (calendar/families.rs): same binary + same store still flips,
-/// byte-identical regenerated stores flip identically, a relinked
-/// binary moves nothing — the flip is the statistic, not the engine.
 fn postings_without_tag_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -597,9 +519,6 @@ fn postings_without_tag_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `latest_posting_per_account` — `Q(a, Max(t)) :- Posting(id = p,
-/// account = a, at = t)` — each account's latest posting time (the
-/// remaining Max fold; the engine never Arg-restricts).
 fn latest_posting_per_account_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -623,17 +542,10 @@ fn latest_posting_per_account_query() -> Query {
 }
 
 fn latest_posting_per_account_params(_: &GenConfig) -> Vec<Draw> {
-    // Param-less full restriction: one empty draw.
+
     vec![scalar_draw(vec![])]
 }
 
-/// `mandate_at_instant` — `Q(o) :- Posting(account = ?0, at = ?1),
-/// Mandate(account = ?0, org = o, active ∋ ?1)` — the interval
-/// membership probe through a **param point**: which orgs held a
-/// mandate on the account at the instant of one of its postings. The
-/// posting atom anchors `?1` as a scalar point (the bivalent-anchor
-/// rule: a lone interval-position param would read as interval value
-/// equality), exactly the doc's at-instant probe form.
 fn mandate_at_instant_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -662,9 +574,7 @@ fn mandate_at_instant_query() -> Query {
 fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0114_000E);
-    // Three real postings' (account, at) instants — the mandate windows
-    // tile the posting-at span, so most instants land inside a segment —
-    // plus the account miss.
+
     let mut sets: Vec<Draw> = (0..3)
         .map(|_| {
             let posting = corpus_gen::row(cfg, &sizes, ids::POSTING, rng.range(sizes.postings));
@@ -681,14 +591,6 @@ fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
     sets
 }
 
-/// `mandate_overlap` — `Q(a1, a2) :- Mandate(account = a1, org = ?0,
-/// active = u), Mandate(account = a2, org = ?0, active = v),
-/// Allen(u, v, INTERSECTS)` — the interval-intersection family.
-/// **Chosen shape:** Mandate × Mandate joined through a shared org param
-/// — a true Allen-mask JOIN across accounts (account pairs concurrently
-/// mandated to one org), not a window filter; the pointwise key makes
-/// same-account intersection impossible, so the join must cross accounts
-/// to produce anything beyond the reflexive pairs.
 fn mandate_overlap_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -729,15 +631,11 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
         .collect()
 }
 
-/// The registry: the fifteen gated, in the suite's canonical order —
-/// the ported ten, then the redesign's five (param set, negation,
-/// latest-posting Max, membership, overlap) — then the report tail: the
-/// depth lane (`deep_chain`, the ≥ 4-node pump regime).
 #[must_use]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the registry is a table, one entry per family
+)] 
 pub fn all() -> &'static [Family] {
     &[
         Family {
