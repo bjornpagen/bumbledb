@@ -190,7 +190,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
-            occurrence(1, 1, &[]), 
+            occurrence(1, 1, &[]),
             occurrence(2, 2, &[(0, 1), (1, 2)]),
         ],
         vec![],
@@ -251,7 +251,6 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
 
 #[test]
 fn deep_nodes_accumulate_full_batches_across_pump_returns() {
-
     #[derive(Default)]
     struct MaxPass {
         current: usize,
