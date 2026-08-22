@@ -33,7 +33,6 @@ function generate(): string {
 	}
 	lines.push("")
 	for (let i = 0; i < RELATIONS; i += 1) {
-
 		lines.push(
 			`const R${i} = relation("R${i}", { id: u64.fresh, ref: u64, kind: Vocab${i % VOCABS}.id, at: interval(u64), label: str, score: i64 })`
 		)
