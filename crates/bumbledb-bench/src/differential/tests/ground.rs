@@ -1,12 +1,3 @@
-//! The dual-run grounding differential (`docs/architecture/40-execution.md`
-//! § the grounding; the naive model is the semantics oracle): each
-//! eliminable fixture runs through the engine twice — rewrite on and
-//! off, via the engine's `ground-off` test-support switch — and three-way
-//! compares with the model, under the projection sink and the aggregate
-//! sink. The profile surface proves the runs are not vacuously equal:
-//! the grounding-on plan carries exactly one `Role::Eliminated` mark naming
-//! the fixture's fallen relation; the ground-off plan carries none.
-
 use std::path::Path;
 
 use bumbledb::schema::{
@@ -21,9 +12,6 @@ use crate::differential::{Answers, engine_query};
 use crate::fixture::{TempDir, atom, field, fresh, side, var};
 use crate::naive::{Delta, NaiveDb};
 
-/// One store pair over a fixture: the engine store and the model,
-/// loaded with the same single-commit delta (containment clusters
-/// insert together — judged on the final state, both sides).
 fn stores(
     dir: &Path,
     descriptor: &SchemaDescriptor,
@@ -49,8 +37,6 @@ fn stores(
     (db, naive)
 }
 
-/// The dual run: grounding-on, ground-off, and the model must produce one
-/// result set. Plan-mark proof died with K23's profile stack.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_grounding_disabled(|| engine_query(db, query, &[]));
@@ -63,9 +49,8 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: 
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
 }
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh,
-/// holder u64); Posting(account) <= Account(id) — statement 2 after the
-/// two fresh auto-keys.
+/// Posting(id fresh, account u64, amount i64); Account(id fresh, holder u64);
+/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
 fn walk_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -91,8 +76,6 @@ fn walk_descriptor() -> SchemaDescriptor {
     }
 }
 
-/// Accounts 1..=3 and postings with duplicate (account, amount) pairs —
-/// the aggregate fold must count distinct posting bindings either way.
 fn walk_inserts() -> Vec<(RelationId, Vec<Value>)> {
     let mut inserts: Vec<(RelationId, Vec<Value>)> = (1u64..=3)
         .map(|id| (RelationId(1), vec![Value::U64(id), Value::U64(id * 7)]))
@@ -113,10 +96,6 @@ fn walk_inserts() -> Vec<(RelationId, Vec<Value>)> {
     inserts
 }
 
-/// The existence walk through both sinks: `Q(pid, m) :- Posting(id =
-/// pid, account = x, amount = m), Account(id = x)` and the per-account
-/// `Sum(m)` — the Account occurrence falls, results identical three
-/// ways.
 #[test]
 fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("walk");
@@ -148,10 +127,10 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Account");
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det, 1 = Custom); Det(grading u64,
-/// rate i64) with the declared key Det(grading) -> Det and the pair
-/// `Grading(id | kind == Det) == Det(grading)` as its two containments
-/// — statements 1, 2, 3 after Grading's auto-key.
+/// Grading(id fresh, kind u64 — 0 = Det, 1 = Custom); Det(grading u64, rate
+/// i64) with the declared key Det(grading) -> Det and the pair `Grading(id |
+/// kind == Det) == Det(grading)` as its two containments — statements 1, 2, 3
+/// after Grading's auto-key.
 fn du_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -186,7 +165,6 @@ fn du_descriptor() -> SchemaDescriptor {
     }
 }
 
-/// Two Det gradings (with their arm rows) and one Custom.
 fn du_inserts() -> Vec<(RelationId, Vec<Value>)> {
     vec![
         (RelationId(0), vec![Value::U64(1), Value::U64(0)]),
@@ -207,9 +185,6 @@ fn du_atoms() -> (Atom, Atom) {
     )
 }
 
-/// The DU one-sided walk, header direction, both sinks: `Q(g, rate) :-
-/// Det(grading = g, rate), Grading(id = g, kind == Det)` and the global
-/// `Sum(rate)` — the header falls.
 #[test]
 fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("du-header");
@@ -236,11 +211,10 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Grading");
 }
 
-/// The DU one-sided walk, child direction, both sinks: `Q(g) :-
-/// Grading(id = g, kind == Det), Det(grading = g)` and the grouped
-/// count — the child falls (its `rate` stays unread; the statement scan
-/// order fells the child before the header's turn, and support
-/// acyclicity keeps the header standing).
+/// The DU one-sided walk, child direction, both sinks: `Q(g):- Grading(id = g,
+/// kind == Det), Det(grading = g)` and the grouped count — the child falls (its
+/// `rate` stays unread; the statement scan order fells the child before the
+/// header's turn, and support acyclicity keeps the header standing).
 #[test]
 fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("du-child");
@@ -264,12 +238,8 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Det");
 }
 
-/// The missing-φ near-miss refuses on the real pipeline, and the
-/// unrewritten plan still agrees with the model — the refusal's own
-/// differential. `Q(g, k) :- Grading(id = g, kind = k), Det(grading =
-/// g)`: the header's `kind` is a projected variable, not the literal φ,
-/// so the child may not fall (its certificate needs σφ membership) and
-/// the header may not either (it produces output).
+/// The missing-φ near-miss refuses on the real pipeline, and the unrewritten
+/// plan still agrees with the model — the refusal's own differential.
 #[test]
 fn the_missing_phi_near_miss_refuses_and_still_agrees() {
     let dir = TempDir::new("du-missing-phi");
