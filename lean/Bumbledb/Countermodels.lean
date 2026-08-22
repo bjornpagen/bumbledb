@@ -10,224 +10,224 @@ import Bumbledb.Txn.DeltaRestriction
 import Bumbledb.Admission
 
 /-!
-# Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
+# Countermodels — the design scratchpad ( onward, grows all campaign)
 
 Anything refused or bounded gets its countermodel here, ported or
 new — countermodel-first is a covenant law, and the scratchpad is
 part of the spec.
 
-## PRD 02 residents
+## residents
 
 * `empty_interval_vacuous` — over a RAW bounds pair, because the
-  in-tree `Interval` cannot be empty: it carries `h : start < «end»`
-  as a field, and that unrepresentability is the POINT. The raw shape
-  is what the artifact's `empty_nat_interval_has_no_points` warned
-  about: an empty point set satisfies ANY coverage obligation
-  vacuously, so an engine that admitted raw bounds would let a fact
-  denote nothing and every dependency judgment over it hold for free.
-  `crate::Interval::new` returning `Option` (parse, don't validate)
-  is the mechanism that keeps this countermodel outside the tree —
-  in-tree, `Bumbledb.interval_nonempty` is a theorem.
+ in-tree `Interval` cannot be empty: it carries `h: start < «end»`
+ as a field, and that unrepresentability is the POINT. The raw shape
+ is what the artifact's `empty_nat_interval_has_no_points` warned
+ about: an empty point set satisfies ANY coverage obligation
+ vacuously, so an engine that admitted raw bounds would let a fact
+ denote nothing and every dependency judgment over it hold for free.
+ `crate::Interval::new` returning `Option` (parse, don't validate)
+ is the mechanism that keeps this countermodel outside the tree —
+ in-tree, `Bumbledb.interval_nonempty` is a theorem.
 
 * The str-order refusal — `StrId` is an opaque intern id with
-  decidable equality ONLY. No `LT`/`LE`/`Ord` instance exists for the
-  intern domain: an intern id is a per-database allocation accident,
-  so an order on ids would order the interning history, not the
-  values. This is a deliberate absence (a typing fact), machine-
-  checked below with `#check_failure`: the instance searches FAIL,
-  and the build breaks if anyone ever adds the instances.
+ decidable equality ONLY. No `LT`/`LE`/`Ord` instance exists for the
+ intern domain: an intern id is a per-database allocation accident,
+ so an order on ids would order the interning history, not the
+ values. This is a deliberate absence (a typing fact), machine-
+ checked below with `#check_failure`: the instance searches FAIL,
+ and the build breaks if anyone ever adds the instances.
 
-## PRD 03 residents
+## residents
 
 * `bare_eq_not_unique` — the two-row countermodel (port): bare `==`
-  (mutual containment) holds between a one-fact source and a two-fact
-  target sharing one projected key value, while the target projection
-  is NOT a key. Bare projected view equality is not unique
-  correspondence; the key premises of `KeyBackedEquality` are load-
-  bearing, which is why each `==` direction must independently pass
-  `resolve_target_key` (the ==-reverse-key locks).
+ (mutual containment) holds between a one-fact source and a two-fact
+ target sharing one projected key value, while the target projection
+ is NOT a key. Bare projected view equality is not unique
+ correspondence; the key premises of `KeyBackedEquality` are load-
+ bearing, which is why each `==` direction must independently pass
+ `resolve_target_key` (the ==-reverse-key locks).
 
-## PRD 04 residents
+## residents
 
 * `unsafe_rule_infinite` — the unsafe rule whose "denotation" is
-  INFINITE: one head variable bound by no positive atom, one
-  nonemptiness-gate atom, a one-fact instance — and the answer set
-  contains one tuple per intern id, so no list can enumerate it.
-  This is what `Safe` (positive range restriction) refuses, and why
-  `antijoin_over_active_domain` carries `Safe` as a hypothesis:
-  negation and projection are only meaningful over the active domain,
-  never over the infinite complement. The validator's mechanisms:
-  `NegatedVariableUnbound`, `ComparisonOnlyVariable`, and the
-  find-side binding check.
+ INFINITE: one head variable bound by no positive atom, one
+ nonemptiness-gate atom, a one-fact instance — and the answer set
+ contains one tuple per intern id, so no list can enumerate it.
+ This is what `Safe` (positive range restriction) refuses, and why
+ `antijoin_over_active_domain` carries `Safe` as a hypothesis:
+ negation and projection are only meaningful over the active domain,
+ never over the infinite complement. The validator's mechanisms:
+ `NegatedVariableUnbound`, `ComparisonOnlyVariable`, and the
+ find-side binding check.
 
-## PRD 05 resident
+## resident
 
 * `sql_zero_row_from_no_binding` — the refused SQL reading of the
-  empty global aggregate (the seed artifact's `sum [] = 0`): a model
-  that ALWAYS emits one row manufactures, over a rule that derives
-  nothing, an answer with NO deriving witness — an answer from no
-  binding, which the engine-faithful `Query.aggAnswers` cannot
-  express (it demands the witness; `Query.empty_global_no_answer`).
-  The artifact-divergence note in `Query/Aggregates.lean` records
-  why the engine's contract is the authority.
+ empty global aggregate (the seed artifact's `sum [] = 0`): a model
+ that ALWAYS emits one row manufactures, over a rule that derives
+ nothing, an answer with NO deriving witness — an answer from no
+ binding, which the engine-faithful `Query.aggAnswers` cannot
+ express (it demands the witness; `Query.empty_global_no_answer`).
+ The artifact-divergence note in `Query/Aggregates.lean` records
+ why the engine's contract is the authority.
 
-## PRD 04 resident (continued)
+## resident (continued)
 
 * `one_way_overhang` — the [0,10)/[0,20) overshoot (port): one-way
-  coverage of a [0,10) source by a [0,20) target HOLDS (with the
-  target vacuously pointwise-keyed — a disjoint cover), while exact
-  partition FAILS at point 15, which the target covers outside the
-  source's support. The tiling over-read's killer: coverage is
-  support INCLUSION (`coverage_is_support_inclusion`), never
-  equality; exact partition needs both directions
-  (`exact_partition_iff`), which is exactly recipe 26's five-statement
-  construction and its commit matrix's one-way-overhang-accepted row.
+ coverage of a [0,10) source by a [0,20) target HOLDS (with the
+ target vacuously pointwise-keyed — a disjoint cover), while exact
+ partition FAILS at point 15, which the target covers outside the
+ source's support. The tiling over-read's killer: coverage is
+ support INCLUSION (`coverage_is_support_inclusion`), never
+ equality; exact partition needs both directions
+ (`exact_partition_iff`), which is exactly recipe 26's five-statement
+ construction and its commit matrix's one-way-overhang-accepted row.
 
-## PRD 06 resident
+## resident
 
 * `sweep_premise_load_bearing` — the sweep's REQUIRED premise
-  countermodel: an unordered segment list that jointly covers its
-  source window while the one-pass walk convicts — the false REJECT,
-  the "wrong verdict without erroring". Two recorded boundaries: the
-  false-ACCEPT direction is NOT constructible
-  (`Exec.sweep_never_false_accepts` is premise-free), and violating
-  `Disjoint` alone cannot produce a wrong verdict
-  (`Exec.sweep_complete_of_ordered` spends only `Ordered`) — see the
-  section note and `Exec/Sweep.lean`'s module doc.
+ countermodel: an unordered segment list that jointly covers its
+ source window while the one-pass walk convicts — the false REJECT,
+ the "wrong verdict without erroring". Two recorded boundaries: the
+ false-ACCEPT direction is NOT constructible
+ (`Exec.sweep_never_false_accepts` is premise-free), and violating
+ `Disjoint` alone cannot produce a wrong verdict
+ (`Exec.sweep_complete_of_ordered` spends only `Ordered`) — see the
+ section note and `Exec/Sweep.lean`'s module doc.
 
-## PRD 09 residents
+## residents
 
 * `per_op_judgment_wrong` — the FinalStateView seam's formal
-  justification: a two-deletion transaction (parent and child of a
-  containment) whose FINAL state holds, whose two op orders reach the
-  SAME final state, and whose parent-first order transiently violates
-  mid-sequence. A per-operation judge would reject one order of a
-  valid transaction — which is why judgment reads one final state
-  (`Txn.judge`'s signature; `Txn.final_state_judgment_order_free`)
-  and why `judgment.rs::FinalStateView` is a type, not a discipline.
+ justification: a two-deletion transaction (parent and child of a
+ containment) whose FINAL state holds, whose two op orders reach the
+ SAME final state, and whose parent-first order transiently violates
+ mid-sequence. A per-operation judge would reject one order of a
+ valid transaction — which is why judgment reads one final state
+ (`Txn.judge`'s signature; `Txn.final_state_judgment_order_free`)
+ and why `judgment.rs::FinalStateView` is a type, not a discipline.
 
 * `incremental_verdict_needs_holds` — the delta-restricted judgment's
-  load-bearing premise (`Txn/DeltaRestriction.lean`): WITHOUT
-  `holds(pre)`, the restricted verdict accepts a violating final
-  state — a pre-existing key violation in an untouched binding
-  survives an empty delta whose touched set is empty, so every
-  restricted check passes vacuously while the final state does not
-  hold. Inside the lifecycle the premise is free (`State.models`);
-  outside it, this countermodel is exactly why `Db::verify_store`
-  exists — the sweeper re-runs both judgment forms globally, owning
-  the class no incremental check can see ("an incremental form wrong
-  once, long ago, preserved by every commit since" —
-  `docs/architecture/60-validation.md` § the store sweeper, the
-  division of authority).
+ load-bearing premise (`Txn/DeltaRestriction.lean`): WITHOUT
+ `holds(pre)`, the restricted verdict accepts a violating final
+ state — a pre-existing key violation in an untouched binding
+ survives an empty delta whose touched set is empty, so every
+ restricted check passes vacuously while the final state does not
+ hold. Inside the lifecycle the premise is free (`State.models`);
+ outside it, this countermodel is exactly why `Db::verify_store`
+ exists — the sweeper re-runs both judgment forms globally, owning
+ the class no incremental check can see ("an incremental form wrong
+ once, long ago, preserved by every commit since" —
+ § the store sweeper, the
+ division of authority).
 
 * `obligation_partition_needs_validation` — the complete roster's
-  load-bearing validation witness (`Txn.obligation_partition`): a
-  closed relation whose sealed axioms collide on a functionality
-  statement has an empty complete roster (closed functionality is
-  skipped) while `holds` fails. Without the closed-constant witness,
-  an empty complete roster does not recover `holds`, which is why
-  L3 (`Txn.completeRosterPasses_iff_holds`) cannot be proved for a
-  roster that skips validation-discharged obligations.
+ load-bearing validation witness (`Txn.obligation_partition`): a
+ closed relation whose sealed axioms collide on a functionality
+ statement has an empty complete roster (closed functionality is
+ skipped) while `holds` fails. Without the closed-constant witness,
+ an empty complete roster does not recover `holds`, which is why
+ L3 (`Txn.completeRosterPasses_iff_holds`) cannot be proved for a
+ roster that skips validation-discharged obligations.
 
 * `stale_but_sound` — the maintenance protocol's freshness gap: a
-  committed state (it `holds` its theory) whose derived relation is
-  SOUND (its containment backs every derived fact — vacuously, here)
-  yet STALE: the parent fact's derived copy never landed. No
-  dependency statement can demand catch-up, so freshness is not a
-  property of any committed state — it is host discipline (the
-  `write_from` witness loop), exactly
-  `Txn.derived_soundness_vs_freshness`'s other half.
+ committed state (it `holds` its theory) whose derived relation is
+ SOUND (its containment backs every derived fact — vacuously, here)
+ yet STALE: the parent fact's derived copy never landed. No
+ dependency statement can demand catch-up, so freshness is not a
+ property of any committed state — it is host discipline (the
+ `write_from` witness loop), exactly
+ `Txn.derived_soundness_vs_freshness`'s other half.
 
-## PRD 07 resident
+## resident
 
 * `distinct_premise_load_bearing` — the unkeyed double-count: one
-  positive occurrence whose bound fields cover NO key, two DISTINCT
-  facts (same bound amount, different unbound payload) collapsing to
-  ONE full binding, and a `Sum` that double-counts under seen-set
-  elision — 200 where the distinct binding set sums 100. The
-  bag-semantics accident `DistinctWitness` forecloses, made concrete:
-  `Query.distinct_witness_licence`'s premise
-  (`Query.BoundFieldsCoverKey`) cannot be dropped, which is why
-  `provably_distinct` is the only mint of the witness and
-  `AggregateSink::without_seen_set` demands it by value.
+ positive occurrence whose bound fields cover NO key, two DISTINCT
+ facts (same bound amount, different unbound payload) collapsing to
+ ONE full binding, and a `Sum` that double-counts under seen-set
+ elision — 200 where the distinct binding set sums 100. The
+ bag-semantics accident `DistinctWitness` forecloses, made concrete:
+ `Query.distinct_witness_licence`'s premise
+ (`Query.BoundFieldsCoverKey`) cannot be dropped, which is why
+ `provably_distinct` is the only mint of the witness and
+ `AggregateSink::without_seen_set` demands it by value.
 
-## PRD 08 residents
+## residents
 
 * `elimination_needs_containment` — dropping a containment-backed
-  atom WITHOUT the containment premise changes answers: a two-atom
-  rule in full `Query.ElimStep` shape (every syntactic elimination
-  condition holds) over an instance where the source fact has no
-  target witness — the survivor answers, the original does not. Why
-  elimination consults the THEORY (`plan/ground.rs::removable` scans
-  `schema.containments()`), never just the shapes: the shape conditions
-  are checkable at prepare, the existence guarantee is the statement's
-  alone.
+ atom WITHOUT the containment premise changes answers: a two-atom
+ rule in full `Query.ElimStep` shape (every syntactic elimination
+ condition holds) over an instance where the source fact has no
+ target witness — the survivor answers, the original does not. Why
+ elimination consults the THEORY (`plan/ground.rs::removable` scans
+ `schema.containments`), never just the shapes: the shape conditions
+ are checkable at prepare, the existence guarantee is the statement's
+ alone.
 
 * `latch_miss_not_static` — the latch's two constructors are not
-  interchangeable: a rule empty at one instance through a selection
-  miss (`Query.EmptyAt.selectionMiss` — the `PendingIntern` dictionary
-  miss, `Ok(false)`) ANSWERS at another instance, so the miss verdict
-  can never be promoted to the plan-level `PreparedBody::Empty` — which is
-  exactly the design decision `api/prepared/bind.rs`'s latch encodes
-  (the miss short-circuits one execution; only the fold's refutation
-  deletes the rule).
+ interchangeable: a rule empty at one instance through a selection
+ miss (`Query.EmptyAt.selectionMiss` — the `PendingIntern` dictionary
+ miss, `Ok(false)`) ANSWERS at another instance, so the miss verdict
+ can never be promoted to the plan-level `PreparedBody::Empty` — which is
+ exactly the design decision `api/prepared/bind.rs`'s latch encodes
+ (the miss short-circuits one execution; only the fold's refutation
+ deletes the rule).
 
 ## Spec-fidelity F3 residents (the FieldSet split locks)
 
 * `split_permuted_some` / `split_two_intervals_none` /
-  `split_all_scalar_none` — the shape locks of the set-canonical
-  `Header.intervalSplit` (the F3 fix): a written-order reading gave
-  `[interval, scalar]` the classical judgment where the engine
-  deliberately canonicalizes on the field SET (`resolve_target_key`
-  counts interval positions as a set; `key_permutation` bridges
-  statement order to key order), and it gave `[interval, interval]`
-  a pointwise reading with an interval inside the "scalar" prefix.
-  The three concrete headers pin the corrected split: one interval
-  field splits to `some` at ANY written position, two intervals and
-  all-scalar split to `none`.
+ `split_all_scalar_none` — the shape locks of the set-canonical
+ `Header.intervalSplit` (the F3 fix): a written-order reading gave
+ `[interval, scalar]` the classical judgment where the engine
+ deliberately canonicalizes on the field SET (`resolve_target_key`
+ counts interval positions as a set; `key_permutation` bridges
+ statement order to key order), and it gave `[interval, interval]`
+ a pointwise reading with an interval inside the "scalar" prefix.
+ The three concrete headers pin the corrected split: one interval
+ field splits to `some` at ANY written position, two intervals and
+ all-scalar split to `none`.
 
 ## Extension residents (the capacity statement, E3)
 
 * `unit_window_two_children` — the unit-weight `{1}` window refuted
-  by one parent with two distinct children (the bare-`==` rows,
-  reread):
-  the upper bound is load-bearing, not decorative — a window is never
-  just its floor (`window_floor_containment` is the floor's half).
+ by one parent with two distinct children (the bare-`==` rows,
+ reread):
+ the upper bound is load-bearing, not decorative — a window is never
+ just its floor (`window_floor_containment` is the floor's half).
 
 * `disjunctive_window_not_literal_conjunction` — why E3's literal
-  sets are FIRST-CLASS, not per-literal sugar: the `{1}` window over
-  `payload ∈ {true, false}` accepts each one-child relation and
-  rejects their union, while ANY conjunction of per-literal windows
-  accepting both one-child relations accepts the union too
-  (`selTrue_group_union` / `selFalse_group_union` — each literal's
-  child group transfers whole). Counts over a union do not decompose;
-  the admitted count-vectors of a union window are not a product set.
+ sets are FIRST-CLASS, not per-literal sugar: the `{1}` window over
+ `payload ∈ {true, false}` accepts each one-child relation and
+ rejects their union, while ANY conjunction of per-literal windows
+ accepting both one-child relations accepts the union too
+ (`selTrue_group_union` / `selFalse_group_union` — each literal's
+ child group transfers whole). Counts over a union do not decompose;
+ the admitted count-vectors of a union window are not a product set.
 
 * `joined_window_blast` — the E1 shape (a window over a joined pair
-  of atoms) has NO oracle-bounded enforcement plan, and the refusal
-  is BY REPRESENTATION (the admission-calculus resident; the
-  countermodel section below).
+ of atoms) has NO oracle-bounded enforcement plan, and the refusal
+ is BY REPRESENTATION (the admission-calculus resident; the
+ countermodel section below).
 
 * `joined_window_form_uninhabitable` — the blast composed against
-  the acceptance gate's type (`Admission.lean: AdmissibleForm`): the
-  E1 shape at its own grouping discipline has NO oracle-plan field —
-  two runs whose touched consultations agree while the judgment
-  differs, so "prohibitively expensive" is a type error (the section
-  at the end of this file).
+ the acceptance gate's type (`Admission.lean: AdmissibleForm`): the
+ E1 shape at its own grouping discipline has NO oracle-plan field —
+ two runs whose touched consultations agree while the judgment
+ differs, so "prohibitively expensive" is a type error (the section
+ at the end of this file).
 
 ## The Free Join wrong-cover resident (the plan formalism)
 
 * `loose_cover_rebinds` — the paper's looser cover rule ("containing
-  all new variables", Free Join §3.2), refuted on the triangle query:
-  a plan the paper's definition accepts (`loose_plan_paper_valid`)
-  and bumbledb's exactly-new-variables rule refuses
-  (`loose_plan_not_valid`) whose loose execution REBINDS an
-  already-bound variable from the cover's facts without re-checking
-  the occurrence that bound it, emitting a tuple outside the rule's
-  denotation. This is `docs/architecture/40-execution.md` § the
-  paper's core — the audit-found deviation paragraph — mechanized;
-  until now it was prose plus a Rust regression test. The valid-plan
-  side is `Exec/Plan.lean: valid_plan_sound`.
+ all new variables", Free Join §3.2), refuted on the triangle query:
+ a plan the paper's definition accepts (`loose_plan_paper_valid`)
+ and bumbledb's exactly-new-variables rule refuses
+ (`loose_plan_not_valid`) whose loose execution REBINDS an
+ already-bound variable from the cover's facts without re-checking
+ the occurrence that bound it, emitting a tuple outside the rule's
+ denotation. This is § the
+ paper's core — the audit-found deviation paragraph — mechanized;
+ until now it was prose plus a Rust regression test. The valid-plan
+ side is `Exec/Plan.lean: valid_plan_sound`.
 -/
 
 namespace Bumbledb.Countermodels
@@ -235,7 +235,7 @@ namespace Bumbledb.Countermodels
 /-! ## The empty-interval countermodel (raw bounds pair) -/
 
 /-- A RAW bounds pair — the shape the in-tree `Interval` refuses to
-be: no `h : start < «end»` field, so `start ≥ «end»` (an empty point
+be: no `h: start < «end»` field, so `start ≥ «end»` (an empty point
 set) is representable. -/
 structure RawInterval where
   start : Nat
@@ -259,7 +259,7 @@ theorem raw_interval_no_points :
 coverage obligation vacuously: were empty intervals representable,
 every dependency judgment quantifying over an interval's points would
 hold for free on them. Unrepresentable in-tree — `Interval` carries
-`h : start < «end»`, which is the point (`Bumbledb.interval_nonempty`
+`h: start < «end»`, which is the point (`Bumbledb.interval_nonempty`
 is the in-tree theorem; `crate::Interval::new` is the mechanism). -/
 theorem empty_interval_vacuous (P : Nat → Prop) :
     ∀ x ∈ (RawInterval.mk 10 5).points, P x := by
@@ -285,7 +285,7 @@ example : DecidableEq StrId := inferInstance
 #guard_msgs (drop info) in
 #check_failure (inferInstance : Ord StrId)
 
-/-! ## The bare-`==` countermodel (PRD 03)
+/-! ## The bare-`==` countermodel (
 
 A one-fact source and a two-fact target: field 0 carries the shared
 key value in every fact, field 1 the payload that makes the two
@@ -350,7 +350,7 @@ theorem bare_eq_not_unique :
       congrArg (fun f : Fact => Value.asBool (f ⟨1⟩)) heq
     cases hb
 
-/-! ## The one-way-overhang countermodel (PRD 03)
+/-! ## The one-way-overhang countermodel (
 
 The [0,10)/[0,20) overshoot, ported onto the in-tree `Interval U64`
 (nonempty by construction — the raw-pair vacuity above is exactly
@@ -430,7 +430,7 @@ stay exclusive to the general type, by construction rather than by
 check.
 
 **The Tier-3 refusal, recorded here with its boundary.** The
-admission rule (`docs/architecture/10-data-model.md`) admits a type
+admission rule admits a type
 parameter iff it CHANGES THE ENCODING — `w` does (one word instead
 of two). A parameter that merely CHECKS values — a refinement
 `u64 where v < 100`, a CHECK constraint in type costume — changes no
@@ -469,7 +469,7 @@ theorem unit_slot_at_ceiling_unconstructible :
   have h : U64.maxEnd.val = 2 ^ 64 - 1 := rfl
   omega
 
-/-! ## The unsafe-rule countermodel (PRD 04)
+/-! ## The unsafe-rule countermodel (
 
 One rule: `finds [v₀]`, one zero-binding gate atom, nothing else. The
 head variable is bound by NO positive atom — the rule is unsafe — and
@@ -551,7 +551,7 @@ theorem unsafe_rule_infinite (C : Query.Classify) (ρ : Query.ParamEnv) :
     List.mem_filterMap.mpr ⟨_, hinl, rfl⟩
   exact Nat.not_succ_le_self _ (le_foldr_max _ _ hid)
 
-/-! ## The SQL zero-row countermodel (PRD 05)
+/-! ## The SQL zero-row countermodel (
 
 The artifact-divergence's refused reading, as a model: a global
 aggregate that ALWAYS emits one row — folding the possibly-empty
@@ -601,7 +601,7 @@ theorem sql_zero_row_from_no_binding (C : Query.Classify)
     (∀ t, t ∉ Query.aggAnswers C gateRule (Query.edbEnv emptyInstance) ρ keys foldRow) :=
   ⟨rfl, Query.empty_global_no_answer (gateRule_derives_nothing C ρ)⟩
 
-/-! ## The sweep-premise countermodel (PRD 06)
+/-! ## The sweep-premise countermodel (
 
 The REQUIRED premise countermodel of `Exec/Sweep.lean`: the one-pass
 coverage walk returns a WRONG VERDICT — without erroring — the moment
@@ -611,24 +611,24 @@ opens its frontier at 1, meets start 5 first, reads a gap, and
 convicts: a FALSE REJECT.
 
 Two recorded boundaries of the countermodel (the design findings of
-PRD 06, `Exec/Sweep.lean` module doc):
+ `Exec/Sweep.lean` module doc):
 
-* **The false-ACCEPT direction is NOT constructible.** The PRD asked
-  for both directions "if constructible";
-  `Exec.sweep_never_false_accepts` proves acceptance sound with NO
-  premises at all — the frontier only ever advances across points a
-  consumed segment holds — so a violated premise can only convict the
-  innocent, never acquit the guilty. The checker's failure mode off
-  its witness is spurious `Admission::Rejected`, never a silently accepted
-  violation.
+* **The false-ACCEPT direction is NOT constructible.** The 
+ for both directions "if constructible";
+ `Exec.sweep_never_false_accepts` proves acceptance sound with NO
+ premises at all — the frontier only ever advances across points a
+ consumed segment holds — so a violated premise can only convict the
+ innocent, never acquit the guilty. The checker's failure mode off
+ its witness is spurious `Admission::Rejected`, never a silently accepted
+ violation.
 * **Violating `Disjoint` alone cannot produce a wrong verdict.**
-  Completeness needs only `Ordered` (`Exec.sweep_complete_of_ordered`)
-  — max-frontier tracking subsumes overlap, exactly the Rust module's
-  claim. `Disjoint` licences the predecessor-seek entry below the
-  fold's altitude (`judgment.rs::check_coverage`), and it is what the
-  verifier's `pointwise_overlap_is_found_by_the_ordered_walk` fixture
-  guards: the ordered walk is also how a broken disjointness premise
-  is DETECTED, so the witness must stay minted at key acceptance.
+ Completeness needs only `Ordered` (`Exec.sweep_complete_of_ordered`)
+ — max-frontier tracking subsumes overlap, exactly the Rust module's
+ claim. `Disjoint` licences the predecessor-seek entry below the
+ fold's altitude (`judgment.rs::check_coverage`), and it is what the
+ verifier's `pointwise_overlap_is_found_by_the_ordered_walk` fixture
+ guards: the ordered walk is also how a broken disjointness premise
+ is DETECTED, so the witness must stay minted at key acceptance.
 
 This is the audit's "wrong verdict without erroring" made concrete —
 the theorem-shaped reason `check_coverage` demands the
@@ -678,7 +678,7 @@ exactly what the premise buys. -/
 example : Exec.sweepCovered coveringSrc [segEarly, segLate] = true := by
   decide
 
-/-! ## The per-op-judgment countermodel (PRD 09)
+/-! ## The per-op-judgment countermodel (
 
 One containment `child([0]) <= parent([0])` over an all-scalar
 header, one linking fact in both relations, one transaction deleting
@@ -759,7 +759,7 @@ order the host writes is semantically arbitrary; that is why judgment
 is final-state (`Txn.judge` takes ONE instance;
 `Txn.final_state_judgment_order_free`) and why per-operation checking
 is wrong, not merely slow. Bridge: `judgment.rs::FinalStateView`
-("operation order is no longer representable here") — the
+("operation order is representable here") — the
 constitution's seam, formally justified. -/
 theorem per_op_judgment_wrong :
     holds pcTheory (Txn.applyOps pcInst parentFirst) ∧
@@ -768,7 +768,7 @@ theorem per_op_judgment_wrong :
       (Txn.applyOps pcInst [.delete parentRel [linkFact]]) :=
   ⟨per_op_final_holds, per_op_orders_agree, per_op_mid_violates⟩
 
-/-! ## The stale-but-sound countermodel (PRD 09)
+/-! ## The stale-but-sound countermodel (
 
 The same theory, read as a maintenance pair: `childRel` a derived
 relation the host maintains as a copy of `parentRel`, the containment
@@ -787,7 +787,7 @@ missing — the state is stale against the host's derivation contract
 (`Txn.committed_states_model`), so no committed state can attest
 freshness: soundness is the engine's judgment, freshness is host
 discipline — the `write_from` witness loop, and the formal
-host-discipline gap of constitution PRD 20's maintenance protocol. -/
+host-discipline gap of constitution maintenance protocol. -/
 theorem stale_but_sound :
     holds pcTheory staleInst ∧
     linkFact ∈ staleInst parentRel ∧ linkFact ∉ staleInst childRel := by
@@ -837,7 +837,7 @@ lifecycle the premise is free (`Txn.State.models`); outside it, this
 is exactly why `Db::verify_store` exists: the sweeper re-runs both
 judgment forms globally over the full committed state, owning the
 class no incremental check can see
-(`docs/architecture/60-validation.md` § the store sweeper — the
+ § the store sweeper — the
 division of authority the delta-restricted judgment implies). -/
 theorem incremental_verdict_needs_holds :
     (∀ st, st ∈ fdTheory.statements →
@@ -926,7 +926,7 @@ theorem obligation_partition_needs_validation :
         cases List.mem_singleton.mp hmem
         rfl) rawEmpty
 
-/-! ## The unkeyed double-count countermodel (PRD 07)
+/-! ## The unkeyed double-count countermodel (
 
 The `DistinctWitness` premise, load-bearing. One positive occurrence
 binds only the amount field; the relation carries two facts agreeing
@@ -1037,7 +1037,7 @@ theorem dedup_dupStream : Query.dedup dupStream = [[amount]] := by
   rw [if_neg (fun h : [amount] ∈ ([] : List (List Value)) => nomatch h)]
   rfl
 
-/-- **The countermodel (PRD 07).** `distinct_premise_load_bearing` —
+/-- **The countermodel (`distinct_premise_load_bearing` —
 the `DistinctWitness` premise cannot be dropped: the unkeyed
 occurrence's two distinct facts collapse to one full binding
 (`both_facts_one_binding`, `postingA_ne_postingB`), no key is covered
@@ -1061,7 +1061,7 @@ theorem distinct_premise_load_bearing (ρ : Query.ParamEnv) :
   rw [dedup_dupStream]
   rfl
 
-/-! ## The elimination-needs-containment countermodel (PRD 08)
+/-! ## The elimination-needs-containment countermodel (
 
 Two atoms joined on their id fields, in FULL elimination shape — every
 syntactic condition of `Query.ElimStep` holds — but over an instance
@@ -1173,7 +1173,7 @@ theorem elim_rule_empty (C : Query.Classify) (ρ : Query.ParamEnv) :
   simp [Query.edbEnv, Query.sourceDen, elimTgt] at hf
   exact absurd hf.1 (by decide)
 
-/-- **The countermodel (PRD 08).** `elimination_needs_containment` —
+/-- **The countermodel (`elimination_needs_containment` —
 the elimination shape holds, the containment premise fails, and
 dropping the atom CHANGES answers: the survivor emits the orphan's
 tuple, the original emits nothing. Why the elimination consults the
@@ -1191,9 +1191,9 @@ theorem elimination_needs_containment (C : Query.Classify)
   ⟨elim_step_holds, elim_no_containment,
     [orphanFact ⟨0⟩], elim_survivor_answers C ρ, elim_rule_empty C ρ _⟩
 
-/-! ## The latch-miss countermodel (PRD 08) -/
+/-! ## The latch-miss countermodel ( -/
 
-/-- **The countermodel (PRD 08).** `latch_miss_not_static` — the
+/-- **The countermodel (`latch_miss_not_static` — the
 selection miss is PER-INSTANCE: the one-atom rule is empty at the
 empty instance through `Query.EmptyAt.selectionMiss` (the dictionary
 miss's abstract face), yet ANSWERS at the orphan instance — so the
@@ -1373,7 +1373,7 @@ theorem disjunctive_window_not_literal_conjunction :
         CapacityLaw twoTarget selFalse keyProj .unit wf winParents
           Selection.empty keyProj)) := by
   refine ⟨⟨?_, ?_, ?_⟩, ?_⟩
-  · -- the true child alone: the union count is one
+  · 
     intro g hg hψ
     have hg' : g = winParent := hg
     subst hg'
@@ -1393,7 +1393,7 @@ theorem disjunctive_window_not_literal_conjunction :
         (Set.atMost_one_of_subsingleton fun a b ha hb =>
           (show a = rowTrue from ha.1).trans
             (show b = rowTrue from hb.1).symm)
-  · -- the false child alone: the union count is one
+  · 
     intro g hg hψ
     have hg' : g = winParent := hg
     subst hg'
@@ -1413,7 +1413,7 @@ theorem disjunctive_window_not_literal_conjunction :
         (Set.atMost_one_of_subsingleton fun a b ha hb =>
           (show a = rowFalse from ha.1).trans
             (show b = rowFalse from hb.1).symm)
-  · -- the union: the disjunctive count is two — the ceiling breaks
+  · 
     intro h
     have hmost :=
       (h winParent rfl (Selection.empty_satisfies _)).2 1 rfl
@@ -1427,8 +1427,8 @@ theorem disjunctive_window_not_literal_conjunction :
       intro bd hbd
       rcases List.mem_singleton.mp hbd with rfl
       exact List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl)
-  · -- any per-literal conjunction accepting both singles accepts the
-    -- union: each literal's group transfers whole
+  · 
+
     intro wt wf h10 h01
     constructor
     · intro g hg hψ
@@ -1443,26 +1443,26 @@ theorem disjunctive_window_not_literal_conjunction :
 Two countermodels fence the linear reach's two premises:
 
 * **The odd loop** — `p ← ¬p`, a rule whose negated atom names
-  `self`. Unrepresentable in `LinearRec` syntax (negation cannot
-  inhabit a rec arm). The operator is NOT monotone
-  (`odd_not_monotone`), its naive rounds oscillate
-  (`odd_rounds_oscillate` — the empty table derives, the derived
-  table underives), and NO table is a fixpoint (`odd_no_fixpoint`) —
-  there is no consistent semantics to assign, which is why
-  `Exec/Reach.lean: reachOp_mono` is structural rather than a
-  convention.
+ `self`. Unrepresentable in `LinearRec` syntax (negation cannot
+ inhabit a rec arm). The operator is NOT monotone
+ (`odd_not_monotone`), its naive rounds oscillate
+ (`odd_rounds_oscillate` — the empty table derives, the derived
+ table underives), and NO table is a fixpoint (`odd_no_fixpoint`) —
+ there is no consistent semantics to assign, which is why
+ `Exec/Reach.lean: reachOp_mono` is structural rather than a
+ convention.
 
 * **The successor operator** — value invention in a rule head,
-  modeled at the OPERATOR level because it is unrepresentable in
-  `Rule` syntax (heads are projected variables — the creation
-  quarantine): `succOp X = {0} ∪ {m + 1 | m ∈ X}` is monotone
-  (`succOp_monotone`) yet its naive chain ascends forever
-  (`succ_chain_ascends`) and every prefixed point is infinite
-  (`succ_prefixed_infinite` — no list enumerates it). Termination's
-  premise (heads project BOUND variables, so candidates live on the
-  finite active domain — `Exec/Reach.lean: reach_den_finite`)
-  is load-bearing, exactly the chain-window fence
-  (`docs/architecture/20-query-ir.md` § the chain-window fence). -/
+ modeled at the OPERATOR level because it is unrepresentable in
+ `Rule` syntax (heads are projected variables — the creation
+ quarantine): `succOp X = {0} ∪ {m + 1 | m ∈ X}` is monotone
+ (`succOp_monotone`) yet its naive chain ascends forever
+ (`succ_chain_ascends`) and every prefixed point is infinite
+ (`succ_prefixed_infinite` — no list enumerates it). Termination's
+ premise (heads project BOUND variables, so candidates live on the
+ finite active domain — `Exec/Reach.lean: reach_den_finite`)
+ is load-bearing, exactly the chain-window fence
+ § the chain-window fence). -/
 
 /-- The odd loop's one atom: the rec itself, negated, zero bindings. -/
 def oddSelf : Query.InteriorId := ⟨0⟩
@@ -1643,7 +1643,7 @@ delta projects to at the grouping, one group per matching join
 partner: deciding the shape costs consultations proportional to the
 JOIN, not to the touched groups, which is exactly the blast radius
 the acceptance gate's cost law refuses
-(`docs/architecture/30-dependencies.md` § the acceptance gate). The
+ § the acceptance gate). The
 two-parent witness below is the seed: the delta projects to no
 parent tag, the pre-state joined sets at both tags are empty, and
 both gain a pair from the one insert. -/
@@ -1736,7 +1736,7 @@ subatom that ALSO carries an already-bound variable be iterated. On
 skewed data the executor then REBINDS the bound variable from the
 cover's facts without re-checking the occurrence that bound it —
 earlier nodes are never revisited. The triangle query below is the
-`docs/architecture/40-execution.md` § the-paper's-core deviation
+ § the-paper's-core deviation
 paragraph, mechanized: `R = {(1,2)}`, `S = {(3,4)}`, `T = {(1,4)}`;
 the loose plan iterates `R` whole, then lets `S`'s subatom `(b, c)`
 cover node 2 (whose one new variable is `c`), rebinding `b` from 2 to
@@ -1990,7 +1990,7 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
           [⟨0, [triA, triB]⟩] fun _ => True)
       refine ⟨triMid, ?_, ⟨1, [triB, triC]⟩, List.mem_cons_self,
         ?_, ?_, ?_⟩
-      · -- node 1: R's subatom covers itself, binding a = 1, b = 2
+      · 
         refine ⟨triMid, trivial, ⟨0, [triA, triB]⟩,
           List.mem_cons_self, fun v hv => And.left hv,
           fun v _ => rfl, ?_⟩
@@ -2005,7 +2005,7 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
           rcases List.mem_cons.mp hb' with rfl | hb''
           · exact (by decide : triMid triB = triFactR ⟨1⟩)
           · exact absurd hb'' List.not_mem_nil
-      · -- the paper cover: S's subatom contains the new variable c
+      · 
         intro v hv
         obtain ⟨h1, h2⟩ := hv
         rcases List.mem_cons.mp h1 with rfl | h1'
@@ -2018,7 +2018,7 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
         rcases List.mem_cons.mp h1''' with rfl | h1''''
         · exact List.mem_cons_of_mem _ List.mem_cons_self
         · exact absurd h1'''' List.not_mem_nil
-      · -- the REBIND: off the cover's variables the binding is kept
+      · 
         intro v hv
         have hb : ¬ v.id = 1 := by
           intro h
@@ -2032,7 +2032,7 @@ theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
           exact List.mem_cons_self
         show triLooseOut v = if v.id = 1 then tri2 else triLooseOut v
         rw [if_neg hb]
-      · -- node 2's probes: S and T both consistent with (1, 3, 4)
+      · 
         intro s hs
         rcases List.mem_cons.mp hs with rfl | hs'
         · refine ⟨triAtomS, rfl, triFactS, ?_, ?_⟩
@@ -2379,7 +2379,7 @@ theorem joined_window_form_uninhabitable :
       F.surfaceProj () true = blastGrp ∧
       F.surfaceProj () false = blastGrp := by
   rintro ⟨F, hJ, hsp, hsc, hpp, hpc⟩
-  -- the two conforming families
+
   have hfacts1 : ∀ ix, (blastOracle1 ix).facts =
       F.surface () ix admTheory (blastDelta.applyTo blastPre) := by
     intro ix
@@ -2408,7 +2408,7 @@ theorem joined_window_form_uninhabitable :
     (fun _ _ => True) blastOracle1 hfacts1 hkeys1
   have h2 := F.plan_decides () admTheory blastEmpty blastDelta Unit
     (fun _ _ => True) blastOracle2 hfacts2 hkeys2
-  -- every touched key is the one delta fact's projection
+
   have htouch : ∀ t, t ∈ F.Touched () blastDelta → t = [keyVal] := by
     intro t ht
     obtain ⟨ix, R, f, hf, hproj⟩ :=
@@ -2423,7 +2423,7 @@ theorem joined_window_form_uninhabitable :
       exact hproj.symm
     · rw [hpp] at hproj
       exact hproj.symm
-  -- the touched consultations agree across the runs
+
   have hcons : ∀ ix, (blastOracle1 ix).consult [keyVal] =
       (blastOracle2 ix).consult [keyVal] := by
     intro ix
@@ -2442,7 +2442,7 @@ theorem joined_window_form_uninhabitable :
     rw [Admission.ProbeShape.toPlan_answers,
       Admission.ProbeShape.toPlan_answers, htouch t ht]
     exact hcons ix
-  -- run 2: pre and final both hold, so the delta check passes
+
   have hpre2 : F.Judgment () admTheory blastEmpty :=
     (hJ admTheory blastEmpty).mpr fun t =>
       window_admits_empty fun pr hpr => hpr.1
@@ -2454,7 +2454,7 @@ theorem joined_window_form_uninhabitable :
   have hdc2 : F.DeltaCheck () admTheory blastEmpty blastDelta :=
     (F.delta_restricts () admTheory blastEmpty blastDelta hpre2).mp
       hfin2
-  -- transfer the verdicts to run 1, whose consultations agree
+
   have hlhs1 : ∀ t, t ∈ F.Touched () blastDelta →
       F.Verdict () blastDelta t
         (fun ix =>
@@ -2463,8 +2463,7 @@ theorem joined_window_form_uninhabitable :
     rw [hans t ht]
     exact h2.mpr hdc2 t ht
   have hdc1 := h1.mp hlhs1
-  -- run 1: pre holds, so the delta check forces the final judgment —
-  -- which the gained joined pair refutes
+
   have hpre1 : F.Judgment () admTheory blastPre :=
     (hJ admTheory blastPre).mpr fun t =>
       window_admits_empty fun pr hpr =>
