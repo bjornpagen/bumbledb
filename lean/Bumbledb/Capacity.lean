@@ -18,9 +18,9 @@ one denotation home.
 
 The completed operator family, every rung the same partition law:
 
-* `==`   — the `{1}` window (`keyed_eq_unit_window`)
-* `<=`   — existence (`window_floor_containment`)
-* `<={lo..hi}`    — unit weight, the count instance
+* `==` — the `{1}` window (`keyed_eq_unit_window`)
+* `<=` — existence (`window_floor_containment`)
+* `<={lo..hi}` — unit weight, the count instance
 * `<=[w]{lo..hi}` — the weighted capacity statement (this module)
 
 ## Measuring without finiteness (ruling C7)
@@ -61,52 +61,52 @@ it through the enumeration collapse.
 ## Syntax resolved against rows (rulings C1, C4, C6)
 
 * `Weight` (`Schema.lean`, C4 — the total three-case sum) reads
-  through `Weight.apply`: `unit ↦ const 1`; `field i ↦` the u64
-  payload of the SOURCE row's field; `durationOf i ↦` the interval
-  measure. Signed weights are refused at the gate (polarity), never
-  here.
+ through `Weight.apply`: `unit ↦ const 1`; `field i ↦` the u64
+ payload of the SOURCE row's field; `durationOf i ↦` the interval
+ measure. Signed weights are refused at the gate (polarity), never
+ here.
 * `Bound` resolves by NAME against the TARGET's whole field roster
-  (C1 — the projection tuple stays the pure grouping key), through
-  `Bound.resolve` over the fact the judge already holds.
+ (C1 — the projection tuple stays the pure grouping key), through
+ `Bound.resolve` over the fact the judge already holds.
 * `CapWindow.resolve` lands the syntactic window in the literal
-  `Window` — the `{lo..hi}` object that SURVIVES the cutover (ruling
-  C16): admission is stated over the resolved form
-  (`Window.admitsMeasure`), so "one walk decides a window" keeps its
-  shape with sum in place of length. A dependent floor is
-  unrepresentable (C6: `CapWindow.lo : Nat`).
+ `Window` — the `{lo..hi}` object that SURVIVES the cutover (ruling
+ C16): admission is stated over the resolved form
+ (`Window.admitsMeasure`), so "one walk decides a window" keeps its
+ shape with sum in place of length. A dependent floor is
+ unrepresentable (C6: `CapWindow.lo: Nat`).
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **The value readings are junk-total for GATE-REFUSED shapes.**
-  `Value.u64Nat` and `Value.durationNat` read 0 off every non-u64 /
-  non-interval shape — the recorded junk-total default. `CapacityLaw`
-  is consumed on accepted theories only, where the weight typing arm
-  of the acceptance gate has already refused every shape the junk
-  value could distinguish.
+ `Value.u64Nat` and `Value.durationNat` read 0 off every non-u64 /
+ non-interval shape — the recorded junk-total default. `CapacityLaw`
+ is consumed on accepted theories only, where the weight typing arm
+ of the acceptance gate has already refused every shape the junk
+ value could distinguish.
 * **A ray Duration weight is a typed refusal, not 0.** `durationNat?`
-  is `none` on a general-interval ray (`measure_ray_none`). The engine
-  refuses the commit with `Error::CapacityRayMeasure` — undefined,
-  never a 0-weight, never a violation (C10 at judge time; C20
-  parent-blind at write-time plan). `durationNat` still collapses
-  `none` to 0 so the numeric fold stays total; that 0 is **not** the
-  engine reading. `CapacityLaw` is only consumed on instances the
-  engine would judge: every Duration weight on a written child and
-  every Duration bound on a selected parent is defined
-  (`Weight.durationDefined` / `CapWindow.durationDefined`).
+ is `none` on a general-interval ray (`measure_ray_none`). The engine
+ refuses the commit with `Error::CapacityRayMeasure` — undefined,
+ never a 0-weight, never a violation (C10 at judge time; C20
+ parent-blind at write-time plan). `durationNat` still collapses
+ `none` to 0 so the numeric fold stays total; that 0 is **not** the
+ engine reading. `CapacityLaw` is only consumed on instances the
+ engine would judge: every Duration weight on a written child and
+ every Duration bound on a selected parent is defined
+ (`Weight.durationDefined` / `CapWindow.durationDefined`).
 * **C20 is engine law.** Empty-parent vacuity
-  (`capacity_of_empty_parent`) proves every `CapacityLaw` when no
-  ψ-selected parent exists. It does **not** license a ray Duration
-  child insert: C20 refuses that write at plan time whether or not
-  any parent exists (`docs/design/capacity-laws.md` §8b).
+ (`capacity_of_empty_parent`) proves every `CapacityLaw` when no
+ ψ-selected parent exists. It does **not** license a ray Duration
+ child insert: C20 refuses that write at plan time whether or not
+ any parent exists (`docs/design/capacity-laws.md` §8b).
 * **Acceptance is not restated.** `Y` a key of `B`, the weight-typing
-  roster (signed/non-u64 refusals, the path-weight refusal naming the
-  pinned-column idiom), dependent-bound typing, and the dimension
-  gate (C18) are validator mechanism; `CapacityLaw` carries none of
-  them as conjuncts — exactly the containment discipline.
+ roster (signed/non-u64 refusals, the path-weight refusal naming the
+ pinned-column idiom), dependent-bound typing, and the dimension
+ gate (C18) are validator mechanism; `CapacityLaw` carries none of
+ them as conjuncts — exactly the containment discipline.
 * **Bound subsumption is pointwise over resolved windows**
-  (`CapWindow.Subsumes`): the syntactic Bound-comparison relation the
-  respelling detector needs is a recorded seam (dossier § 7 item 16),
-  not stated here.
+ (`CapWindow.Subsumes`): the syntactic Bound-comparison relation the
+ respelling detector needs is a recorded seam (dossier § 7 item 16),
+ not stated here.
 
 ## The build-lane ledger (the L4 handoff)
 
