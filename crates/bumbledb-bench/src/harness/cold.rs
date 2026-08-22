@@ -4,12 +4,7 @@ use super::stats::stats;
 use super::{Measurement, Protocol};
 
 /// The cold protocol, defined exactly: per sample (warmups included),
-/// `touch()` runs first — committing one fact, bumping the generation,
-/// and evicting the image cache — then `f()` is timed once.
-///
 /// # Errors
-///
-/// Either closure's error, verbatim.
 pub fn measure_cold<T, F>(proto: Protocol, mut touch: T, mut f: F) -> Result<Measurement, String>
 where
     T: FnMut() -> Result<(), String>,
@@ -19,13 +14,7 @@ where
     let mut work = 0u64;
     for round in 0..proto.warmups + proto.samples {
         touch()?;
-        // Spin-settle (measured): the touch's commit
-        // fsync just down-clocked this core (DVFS floor 1.05–1.46 GHz,
-        // demand-driven recovery) — 2 ms of spin demand reaches the
-        // ramp's knee, so the sample measures cold CACHE at working
-        // CLOCK instead of conflating the two. NEVER sleep here: the
-        // E-core wake lottery (25–40% at ≥ 5 ms, measured) is the
-        // sharpest trap.
+
         crate::clockproxy::warm_up(std::time::Duration::from_millis(2));
         let start = Instant::now();
         let count = f()?;
@@ -44,13 +33,7 @@ where
     })
 }
 
-/// The canonical cold touch: commits one `Org` fact whose name carries
-/// the fresh id under the `__touch_` prefix — distinct forever (fresh ids
-/// never repeat) and disjoint from every corpus name (`org-NN`).
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn org_touch(
     db: &bumbledb::Db<crate::schema::Ledger>,
 ) -> impl FnMut() -> Result<(), String> + '_ {
