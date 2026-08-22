@@ -4,7 +4,6 @@
 //! strictly below the stored next-value, or
 //! `reserve` re-issues an id the host already holds. A tallied fresh
 //! field with no stored entry reads as zero, exactly as the `S` pass
-
 use std::collections::BTreeSet;
 
 use crate::error::{CorruptionError, Result};
