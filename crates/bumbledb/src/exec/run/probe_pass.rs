@@ -7,11 +7,7 @@ use super::{
 };
 
 impl Executor {
-    /// One cross-parent probe pass: hashes, prefetch,
-    /// probes, and residuals run over `fill` elements drawn from many
-    /// pending entries; survivors either append to the child's pending
-    /// (middle child — flushed when a full batch accumulates) or run the
-    /// last node per parent through `run_node`.
+
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
@@ -34,9 +30,7 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) {
-        // A poisoned execution's tail flushes (pump's remainder, deeper
-        // recursion unwinds) skip the whole pipeline — every survivor
-        // would be discarded at the routing loop's own check anyway.
+
         if !matches!(self.drive_state, super::DriveState::Running) {
             scratch.parents.clear();
             scratch.element_origins.clear();
@@ -47,8 +41,7 @@ impl Executor {
         let carried_w = tables.carried[node_idx].len();
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
-        // Batch assembly rides the Gather phase (Gap B) — window
-        // granularity is the pass, never the tuple.
+
         counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.survivors.clear();
         scratch
@@ -57,13 +50,7 @@ impl Executor {
         counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Residuals run BEFORE the sibling probes — the cost-class
-        // ordering (docs/architecture/40-execution.md, § inputs from
-        // normalization): residual operands read only cover batch words
-        // and outer bindings, and sibling probes bind no variables, so
-        // the pure-ALU rejection legally precedes the memory-bound
-        // hash probes and every probe it kills is a bucket load never
-        // issued. Per-parent Slot reads, word offsets via the cover's
-        // word bases (width 2 = the pairwise interval compare).
+
         counters.phase_start(node_idx, JoinPhase::Residual);
         for spec in &self.precompute[node_idx].residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
@@ -89,9 +76,7 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        // Word residuals: the decomposed interval compositions over
-        // pre-offset slot pairs — same placement, same compaction
-        // (docs/architecture/20-query-ir.md, § normalization).
+
         for spec in &self.precompute[node_idx].word_residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
             let side = |addr: crate::image::view::OperandAddr| {
@@ -117,13 +102,7 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        // Allen residuals: gather the four endpoint streams per
-        // survivor — read at word-base offsets 0/1, batch key words or
-        // the element's parent row — classify the whole batch through
-        // the configuration kernel, test the resolved broadcast mask,
-        // and compact on the branchless cursor-write (the line-parallel
-        // twin of `run_node`'s pass; docs/architecture/40-execution.md,
-        // § vectorized execution).
+
         for (r_idx, spec) in self.precompute[node_idx]
             .allen_residual_slots
             .iter()
@@ -165,15 +144,8 @@ impl Executor {
         }
         counters.phase_end(node_idx, JoinPhase::Residual);
 
-        // Sibling passes: per-parent Slot reads and per-parent cursors —
-        // the pipelined twin of run_node's sibling loop, kept
-        // line-parallel (a change here needs its mirror there; the
         // extraction refusal is recorded at that loop's head).
-        // Instruction diet (measured): value sources resolve once
-        // per (pass, subatom) — never a per-element variable search —
-        // loop invariants (carried column, start cursor) hoist, and the
-        // inner loops write pre-sized buffers by index (a `Vec::push`'s
-        // grow branch blocks LICM and unrolling in exactly these loops).
+
         for sub_idx in 0..node.subatoms.len() {
             if sub_idx == cover_sub || scratch.survivors.is_empty() {
                 continue;
@@ -184,8 +156,7 @@ impl Executor {
             let s_level = tables.entry_level[node_idx][occ];
             let cover_vars = &node.subatoms[cover_sub].vars;
             counters.phase_start(node_idx, JoinPhase::Hash);
-            // One source per key WORD (the SlotWidth layout): an interval
-            // variable reads two consecutive batch words or slots.
+
             scratch.sources[sub_idx].clear();
             let mut word = 0;
             for var in &subatom.vars {
@@ -201,9 +172,7 @@ impl Executor {
             }
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.hashes, n);
-            // One gather loop for every source shape (the
-            // single-batch-word specialized twin measured < 2% at
-            // family level post-bucket-layout and was deleted).
+
             {
                 let survivors = &scratch.survivors[..n];
                 let entry_keys = &scratch.entry_keys[..];
@@ -212,17 +181,7 @@ impl Executor {
                 let sources = &scratch.sources[sub_idx][..];
                 let probe_keys = &mut scratch.probe_keys[..n * sub_arity];
                 let hashes = &mut scratch.hashes[..n];
-                // The const-arity dispatch (the wordmap's `hash_core`
-                // precedent): one predictable branch per pass (the same
-                // arm every pass of a given subatom) buys the unrolled,
-                // gather-fused hash for the key widths in use; exotic
-                // widths keep the dyn loop. Measured (interleaved twin,
-                // per-draw arm medians): triangle 1.055x at S scale /
-                // 1.043x at M, chain 1.022x, spread 1.021x, skew 1.017x;
-                // non-probe families unchanged. The falsifier harness
-                // (both arms behind one switch + the ab_hash bin) lives
-                // in the stripped commit 564da7c6 — check it out to
-                // re-falsify.
+
                 match sub_arity {
                     1 => gather_hash_core::<1, C>(
                         survivors,
@@ -303,18 +262,13 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Hash);
             let carried = tables.carried_index(node_idx, occ);
             let start_cursor = colts[occ].start();
-            // A first-appearance sibling probes the batch-constant start
-            // cursor: force its map here, under the Force phase, like
-            // the twin — otherwise the prefetch sweep below no-ops on
-            // the unforced node and the O(positions) ingest lands inside
-            // phase 2's first probe, booked as Probe. Carried cursors
-            // stay lazy (per-element; a pinned row never needs a map).
+
             if carried.is_none() {
                 counters.phase_start(node_idx, JoinPhase::Force);
                 colts[occ].ensure_forced(start_cursor, s_level);
                 counters.phase_end(node_idx, JoinPhase::Force);
             }
-            // Phase 1.5, width-floor gated — see run_node.
+
             if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                 crate::obs::event(
                     crate::obs::names::PREFETCH_PASS,
@@ -333,10 +287,7 @@ impl Executor {
             }
             counters.phase_start(node_idx, JoinPhase::Probe);
             grow_scratch(&mut scratch.mask, n);
-            // The measured alias-hoist shape: reads
-            // survivors/parents/pending_cursors/probe_keys/hashes,
-            // writes sibling_children/mask — all hoisted to disjoint
-            // locals so the stores cannot alias the read headers.
+
             {
                 let survivors = &scratch.survivors[..n];
                 let parents = &scratch.parents[..];
@@ -367,12 +318,6 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Probe);
         }
 
-        // The pass's cursor-source table, occ-indexed: advanced at this
-        // node (the cover's child or a probed sibling's), inherited from
-        // the parent (carried column), or the colt's start when never
-        // advanced. Resolved once per pass — the membership loops and
-        // the routing arm below index it instead of re-searching the
-        // subatom list per element (the instruction diet).
         counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.cursor_srcs.clear();
         for (occ, colt) in colts.iter().enumerate() {
@@ -394,14 +339,8 @@ impl Executor {
         }
         counters.phase_end(node_idx, JoinPhase::Gather);
 
-        // Membership probes (docs/architecture/40-execution.md, the
-        // point-membership scan): scan the occurrence's remaining
-        // positions per surviving binding — cursors read through the
-        // pass's source table, point words through per-spec resolved
         // sources. They stay AFTER the sibling probes (unlike the ALU
-        // residuals above): a probed occurrence's cursor may be this
-        // pass's own sibling child, and the position scan is
-        // probe-class work.
+
         if !self.precompute[node_idx].point_probes.is_empty() {
             counters.phase_start(node_idx, JoinPhase::Residual);
         }
@@ -416,12 +355,7 @@ impl Executor {
             let cursor_src = scratch.cursor_srcs[spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
-            // The cursor split: a pinned-row cursor names ONE fact, so
-            // its membership conjunction is a data-parallel compare over
-            // gathered interval columns — batched below, the r2 residual
-            // window's dominant shape. A node cursor keeps the
-            // existential position walk (irregular control flow by
-            // doctrine — `colt/gather.rs`).
+
             scratch.point_rows.clear();
             scratch.point_row_ks.clear();
             for k in 0..n {
@@ -456,11 +390,7 @@ impl Executor {
                 scratch.mask[k] =
                     u8::from(colts[spec.occ].any_position_matches(cursor, &scratch.point_checks));
             }
-            // The pinned-row batch, per part: one column-pair gather over
-            // every pinned position (views resolve once per part, never
-            // per element), then the half-open compare folds into the
-            // mask branchlessly — the line-parallel twin of the word
-            // residuals above, not a per-element position walk.
+
             let m = scratch.point_rows.len();
             if m > 0 {
                 grow_scratch(&mut scratch.allen_gather, 2 * m);
@@ -497,10 +427,6 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Residual);
         }
 
-        // Anti-probes: the residual step's sibling (docs/architecture/
-        // 40-execution.md, § anti-probe filters) — hits are compacted
-        // away on the same cursor-write. Slot reads go through each
-        // element's parent row, exactly like the residuals above.
         anti_probe_pass(
             &self.precompute[node_idx].anti_probes,
             node_idx,
@@ -523,40 +449,12 @@ impl Executor {
             counters,
         );
 
-        // Survivor routing. Origins: the absorb node mints one
-        // fresh origin per routed survivor — the cancellation unit is
-        // exactly "one absorb-element's subtree"; deeper nodes inherit.
-        // Refuted (2026-07-16, interleaved A/B at b48dcd51): batching
-        // this loop — one `load_row` per run of same-parent survivors
-        // on the leaf arm, `extend_from_within` duplication instead of
-        // the full-row copy on the middle arm — measured NEUTRAL,
-        // min-of-5 over 5 cross-process pairs at L2-resident scale S:
-        // spread 0.988, skew 0.997, triangle 0.987, chain mean 0.997,
-        // busy_scan 0.985; the 10–25% bar decisively unmet, no family
-        // robustly worse either. Same-parent survivor runs are too
-        // short in these corpora to amortize the run cache — the added
-        // per-survivor parent compare offsets the saved copies. That
-        // twin armed only THIS loop; run_node's line-parallel mirror
-        // kept full copies — arm both (and confront the extraction
-        // refusal) before judging the descend bucket untouchable. The
-        // W2 gravestone commit carries the full protocol.
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
         let mints_origins = tables.absorb == super::SkipAbsorb::Node(node_idx);
-        // The origin mint space is checked HERE, at mint granularity —
-        // one branch per probe pass (this pass mints at most one origin
-        // per survivor), never on the per-tuple path. Past 2³² absorb
-        // survivors the u32 counter would wrap in release, cancel the
+
         // WRONG origin, and silently drop valid rows — beyond the scale
-        // axiom, but valid input, so it is the typed `Overflow` error
-        // (surfaced by `execute`), never a wrap and never a panic. The
-        // representation fix — widening origins to u64 — was rejected:
-        // origin ids are stored per pending row in hot scratch arrays
-        // (`pending_origins`, `element_origins`, the `cancelled`
-        // high-water table), and doubling that width is measured bytes
-        // on the hot path spent against a beyond-axiom case; the
-        // boundary check at mint granularity is the cheaper honest
-        // shape.
+
         if mints_origins
             && self
                 .next_origin
@@ -569,13 +467,13 @@ impl Executor {
             return;
         }
         // The window opens AFTER the poison return above: every
-        // phase_start has its phase_end (the timer nesting-depth
+
         // invariant), so the cold path may not return out of an open
-        // window.
+
         counters.phase_start(node_idx, JoinPhase::Descend);
-        // Real origins exist strictly below the absorb node; the seed id
+
         // above it must never match a minted id. Resolved once per pass,
-        // never per survivor (the instruction diet).
+
         let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         for k in 0..scratch.survivors.len() {
             if !matches!(self.drive_state, super::DriveState::Running) {
@@ -593,8 +491,7 @@ impl Executor {
             if below_absorb && self.origin_cancelled(origin) {
                 continue;
             }
-            // The pass's cursor-source table, indexed — resolved once
-            // per pass above, never a per-survivor subatom search.
+
             let assemble = |occ: usize| -> Cursor {
                 match scratch.cursor_srcs[occ] {
                     super::CursorSrc::Cover => scratch.children[element],
@@ -608,9 +505,7 @@ impl Executor {
                 }
             };
             if leaf {
-                // The last node runs per parent through the ordinary
-                // machinery: bindings row + cursors restored, then
-                // run_node — leaf fast paths, counters, phases and all.
+
                 bindings.load_row(
                     &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
                 );
@@ -622,19 +517,14 @@ impl Executor {
                     let occ = usize::from(subatom.occ.0);
                     self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
                 }
-                // The leaf's membership probes read their occurrence's
-                // advanced cursor too (fully descended by attachment) —
-                // assemble it exactly like a leaf subatom's.
+
                 for probe in &leaf_node.point_probes {
                     let occ = usize::from(probe.occ.0);
                     self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
                 }
                 let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
                 if flow == Flow::SkipSuffix {
-                    // The leaf skipped (D2): everything descended from
-                    // this survivor's origin can only duplicate rows.
-                    // The origin is real exactly when this node is at or
-                    // below the absorb (minted here or inherited).
+
                     counters.skip(node_idx);
                     match tables.absorb {
                         super::SkipAbsorb::Node(a) if node_idx >= a => self.cancel_origin(origin),
@@ -647,11 +537,7 @@ impl Executor {
                     }
                 }
             } else {
-                // One child borrow for the whole append (the closing-probe
-                // constant diet: the re-indexed `self.scratch[node_idx + 1]`
-                // was three bounds-checked walks per survivor), and the
-                // carried cursors extend through one capacity check
-                // instead of a grow branch per cursor.
+
                 let cover_slots = &self.slot_map[node_idx][cover_sub];
                 let child = &mut self.scratch[node_idx + 1];
                 let start = child.pending_bindings.len();
@@ -671,22 +557,15 @@ impl Executor {
         counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
         scratch.element_origins.clear();
-        // Flush downstream at one accumulated batch. Bounded memory: the child
-        // holds at most two batches transiently (the 1×batch trigger
+
         // plus one pass's appends before the next check). The 2×-batch
-        // threshold measured 0.0–0.6% once the per-pass overhead was
-        // priced at 11–30 ns — reverted to the simpler contract.
+
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
     }
 }
 
-/// Phase-1 gather + hash with the key width fixed at K — the
-/// probe-pass twin of the wordmap's `hash_core` dispatch
-/// (`exec/swar.rs`): the per-word source match unrolls, the `k * K`
-/// indexing strength-reduces, and the hash fold fuses with the gather
-/// instead of the rolled ~5-cycle serial chain runtime arity leaves.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
@@ -713,7 +592,7 @@ fn gather_hash_core<const K: usize, C: Counters>(
     counters: &mut C,
 ) {
     // The width is a dispatch invariant; the array view kills the
-    // per-word bounds checks inside the loop.
+
     let sources: &[Source; K] = sources.try_into().unwrap_or_else(|_| {
         panic!(
             "hash dispatch width K={K} does not match sources.len()={}",
