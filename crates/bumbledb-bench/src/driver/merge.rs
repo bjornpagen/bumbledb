@@ -2,12 +2,7 @@ use std::path::PathBuf;
 
 use crate::{json, report};
 
-/// `merge`: N run directories' `report.json` → the min-of-runs table on
-/// stdout.
-///
 /// # Errors
-///
-/// Unreadable or unparseable report files, named.
 pub fn cmd_merge(dirs: &[PathBuf]) -> Result<i32, String> {
     let runs: Vec<(String, json::Value)> = dirs
         .iter()
