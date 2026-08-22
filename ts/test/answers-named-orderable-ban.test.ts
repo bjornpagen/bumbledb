@@ -169,7 +169,6 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("the rec-head plumb: a main rule's interior-joined closed column decodes named (the descriptor survives the head)", function recHead() {
-
 		const reach = query(Oncall)
 			.reach("seen", {
 				base: [
@@ -337,7 +336,6 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("an out-of-roster id on answer decode throws pointed through the marshal's ONE bijection (shared with fact decode)", function outsideRoster() {
-
 		const svar = v(Incident).sev
 		assert.throws(function nineIsOutside() {
 			decodeAnswers([{ name: "s", entry: { kind: "var", over: svar }, closed: Sev.id.closed, slot: undefined }], [[9n]])
