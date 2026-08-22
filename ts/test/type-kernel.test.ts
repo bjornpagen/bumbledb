@@ -1,17 +1,3 @@
-/**
- * Runtime pins for the MINIMAL structural field kernel (K3): descriptors
- * honest at runtime (`{ kind, width?, element?, fresh? }` frozen plain
- * objects — PURE STRUCTURE, no `domain` slot, no `.as`: the type-lie sweep
- * below proves the absences own-property by own-property), closed
- * relations in both tiers (the roster-carrying `id` descriptor in
- * declaration order, payload readback, the `__proto__`-safe own-property
- * minting — handles are DATA on the roster, never properties of the
- * value), the field constructors' grammar bounds, `span()`'s half-open
- * nonempty law, and the selection-literal machine's roster judgment — the
- * runtime half of the two-boundary split (structural types admit what the
- * roster and the engine then judge).
- */
-
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
@@ -128,11 +114,11 @@ describe("closed relations", function describeClosed() {
 		assert.deepStrictEqual(Object.keys(Grade.columns), ["mastered"])
 		assert.equal(Grade.columns.mastered, bool, "the carrier holds the declared descriptor itself, by identity")
 		assert.equal(Grade.data.columns[0]?.field, Grade.columns.mastered, "the lowering reads the same descriptors")
-		// the bare tier declares no columns — the carrier is present and empty
+
 		assert.ok(Object.hasOwn(Kind, "columns"), "the bare tier carries the empty columns record")
 		assert.ok(Object.isFrozen(Kind.columns))
 		assert.deepStrictEqual(Kind.columns, {})
-		// the carrier's TYPE flows through the mint: a width label reads back as its literal
+
 		const width: 8 = closed("Sev", { tag: bytes(8) }, { Info: { tag: new Uint8Array(8) } }).columns.tag.width
 		assert.equal(width, 8)
 	})
@@ -141,8 +127,7 @@ describe("closed relations", function describeClosed() {
 		assert.throws(function duplicateHandle() {
 			closed("Kind", ["Checking", "Checking"])
 		}, /duplicate handle Checking/)
-		// H5: the reserved-name wall died with the handle constants — a
-		// method-named handle is ordinary roster data in both tiers.
+
 		const bare = closed("Kind", ["Checking", "match"])
 		assert.deepStrictEqual(bare.data.handles, ["Checking", "match"])
 		const payload = closed("Sev", { pages: bool }, { where: { pages: true } })
@@ -166,12 +151,12 @@ describe("closed relations", function describeClosed() {
 
 	test("axiom rows are minted as OWN properties for every admitted name", function probeProtoHandle() {
 		/**
-		 * "__proto__" is a legal identifier (the macro analog admits it), so
-		 * the axiom row must land as an OWN property — own-property definition
-		 * shadows the object-protocol accessor instead of silently riding it
-		 * (which would swap the record's prototype instead of creating the
-		 * row).
-		 */
+ * "__proto__" is a legal identifier (the macro analog admits it), so
+ * the axiom row must land as an OWN property — own-property definition
+ * shadows the object-protocol accessor instead of silently riding it
+ * (which would swap the record's prototype instead of creating the
+ * row).
+ */
 		const handles = ["Alpha", "__proto__"] as const
 		const K = closed("K", handles)
 		assert.deepEqual(
@@ -226,17 +211,10 @@ describe("selection literal resolution", function describeSelections() {
 	})
 
 	test("where() rides the same machine: an ill-typed forged spelling still faces the roster", function probeWhereRoster() {
-		/**
-		 * The two-boundary split, demonstrated: since H1 the TYPE tier already
-		 * refuses a bigint and an out-of-roster string on a closed-reference
-		 * field (the value type is the precise handle union), so forging one
-		 * requires an ill-typed call — and the literal machine STILL refuses
-		 * it at construction (the runtime belt under the type claim; the
-		 * engine would refuse it again at commit).
-		 */
+
 		const { Account } = buildLedgerPieces()
 		assert.throws(function bigintForged() {
-			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
+
 			Account.where({ kind: 7n })
 		}, /expected a Kind handle name \(string\), got bigint/)
 		assert.throws(function outOfRoster() {
