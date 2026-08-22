@@ -1,11 +1,10 @@
 use super::{LOAD_DEN, WordMap, ctrl_tag, hash_core, hash_words};
 
 impl<V: Copy> WordMap<V> {
-
     /// # Panics
 
     /// Only on a programmer-invariant violation: `key.len() != arity`.
-    #[inline(always)] 
+    #[inline(always)]
 
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
@@ -53,7 +52,6 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe_core::<K>(key, hash);
         if !found {
-
             self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
@@ -79,7 +77,6 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe(key, hash);
         if !found {
-
             self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
