@@ -34,7 +34,6 @@ pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
             vars: fold_vars,
         }];
         for lookup in node.subatoms.into_iter().skip(1) {
-
             if lookup.vars.iter().any(|v| suffix[0].vars.contains(v)) {
                 suffix.push(lookup);
             } else {
