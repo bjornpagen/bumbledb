@@ -7,8 +7,6 @@ pub(super) fn s(text: String) -> Value {
     Value::String(text.into())
 }
 
-/// One deterministic row (pure in (seed, relation, index) — params can
-/// recompute any row's content).
 fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, rel.0, i));
     match rel {
@@ -25,10 +23,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         ],
         ids::KEYWORD => vec![Value::U64(i), s(format!("kw-{i:05}"))],
         ids::MOVIE => {
-            // Year correlates with kind: kind k spans a 30-year band —
-            // the correlated-predicate trap (year filters and kind
-            // filters are NOT independent, exactly what static
-            // independence assumptions get wrong).
+
             let kind = rng.range(KINDS);
             let band_start = 1930 + i64::try_from(kind).expect("small") * 10;
             let year = band_start + i64::try_from(rng.range(40)).expect("small");
@@ -40,19 +35,14 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
             ]
         }
         ids::CAST_INFO => {
-            // (movie, person) distinct: derive both from i injectively,
-            // with the skew on the person side.
+
             let movie = i % MOVIES;
             let person = if rng.chance(1, 4) {
                 rng.range(HOT_PEOPLE)
             } else {
                 HOT_PEOPLE + rng.range(PEOPLE - HOT_PEOPLE)
             };
-            // Injectivity fix-up: mix i into the person draw's low bits
-            // deterministically; collisions on (movie, person) are
-            // deduplicated by set semantics on the engine side, so the
-            // pair must be injective for the SQLite mirror. Derive
-            // person from a per-movie slot instead.
+
             let slot = i / MOVIES;
             let person = (person + slot) % PEOPLE;
             vec![
@@ -82,10 +72,6 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
     }
 }
 
-/// Derived pairs can collide; the
-/// loader deduplicates per relation so both engines load the identical
-/// fact set (set semantics native on ours, INSERT OR IGNORE-free on
-/// theirs).
 pub(super) fn distinct_rows(seed: u64, rel: bumbledb::RelationId, n: u64) -> Vec<Vec<Value>> {
     let mut loaded = std::collections::HashSet::new();
     let mut out = Vec::new();
