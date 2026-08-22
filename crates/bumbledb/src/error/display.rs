@@ -96,7 +96,6 @@ fn target_key_rejection(
 }
 
 impl Violation {
-
     fn law(&self) -> &'static str {
         match self {
             Self::Functionality { .. } => "functionality",
@@ -423,9 +422,8 @@ impl fmt::Display for SchemaError {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         match self {
             Self::DuplicateRelationName { name } => write!(f, "duplicate relation name `{name}`"),
             Self::DuplicateFieldName { relation: r, name } => {
@@ -538,9 +536,8 @@ impl fmt::Display for StatementErrorKind {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         match self {
             Self::UnknownRelation { relation: r } => write!(f, "unknown relation {}", r.0),
             Self::UnknownField {
@@ -770,7 +767,7 @@ impl fmt::Display for ValidationError {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
@@ -999,7 +996,7 @@ impl fmt::Display for Error {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { mismatch } => {
@@ -1145,7 +1142,6 @@ impl fmt::Display for Error {
 }
 
 impl Violations {
-
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
         ViolationsDisplayWith {
@@ -1181,7 +1177,6 @@ impl fmt::Display for ViolationsDisplayWith<'_> {
 }
 
 impl Error {
-
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
         let _ = schema;
@@ -1200,7 +1195,6 @@ impl fmt::Display for DisplayWith<'_> {
 }
 
 impl SchemaError {
-
     fn statement(&self) -> Option<StatementId> {
         match self {
             Self::Statement { statement, .. } => Some(*statement),
