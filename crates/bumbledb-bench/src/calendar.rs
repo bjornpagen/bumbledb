@@ -119,7 +119,6 @@ pub mod ids {
     pub const CLAIM_ARM: RelationId = RelationId(11);
 
     /// 10..12) sit after every ordinary relation by declaration: they
-
     pub const RELATIONS: u32 = 10;
 
     pub mod account {
