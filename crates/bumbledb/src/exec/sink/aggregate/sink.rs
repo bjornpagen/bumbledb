@@ -17,23 +17,15 @@ impl Sink for AggregateSink {
         Flow::Continue
     }
 
-    /// The scan-fold pushdown: supported for the
-    /// elided constant-group regime over word columns — positions fold
-    /// straight through the kernels with no key batch materialized.
-    /// Partials are identity-seeded and merged at `end_scan`, so an
-    /// empty scan creates no group row (matching the batch paths).
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         if !matches!(self.dedup, DedupState::Elided { .. }) {
             return ScanOffer::Declined;
         }
-        // Measures and Pack fold per row (derived words / claim lists
-        // — no fold kernel exists); their leaves stay on
-        // the batch path.
+
         if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
             return ScanOffer::Declined;
         }
-        // Group spans checked word-wise: an interval group variable is
-        // scan-constant only if neither of its words is a leaf key.
+
         if self
             .group_spans
             .iter()
@@ -47,12 +39,11 @@ impl Sink for AggregateSink {
                 continue;
             };
             let AggSpec::Fold { slot, .. } = spec else {
-                continue; // Count contributes no slot
+                continue; 
             };
             let source = match scan.key_slots.iter().position(|k| *k == *slot) {
                 Some(word) => {
-                    // Aggregates fold integer columns; a byte-backed column
-                    // here would be a validation hole — decline, don't trust.
+
                     if !matches!(
                         scan.colt.suffix_column(scan.level, word),
                         ColumnView::Words(_)
@@ -65,8 +56,7 @@ impl Sink for AggregateSink {
             };
             self.scan_sources.push(source);
         }
-        // Identity-seeded partials; the group key resolves now (outer
-        // bindings are constant for this node entry).
+
         self.acc_scratch.clear();
         for find in &self.finds {
             if let SinkSpec::Agg(spec) = find {
@@ -91,12 +81,12 @@ impl Sink for AggregateSink {
             let acc = &mut self.acc_scratch[acc_i];
             acc_i += 1;
             let AggSpec::Fold { op, .. } = spec else {
-                continue; // Count finishes at end_scan
+                continue; 
             };
             let source = self.scan_sources[fold_i];
             fold_i += 1;
             let FoldSource::Column(word) = source else {
-                continue; // outer-constant: finished at end_scan
+                continue; 
             };
             let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
                 unreachable!("begin_scan declined byte columns")
@@ -136,7 +126,7 @@ impl Sink for AggregateSink {
         if count == 0 {
             return 0;
         }
-        // Finish the outer-sourced and Count partials.
+
         let mut acc_i = 0;
         let mut fold_i = 0;
         for find in &self.finds {
@@ -177,11 +167,7 @@ impl Sink for AggregateSink {
                 }
             }
         }
-        // Merge the partials into the group's row (identity seeds make
-        // the merge exact for every op).
-        // Once per batch (the group-run memo that
-        // skipped this probe measured < 2% under the const-arity map
-        // and was deleted — the probe IS the fast path now).
+
         let group_idx = self.probe_group();
         let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
             unreachable!("scan merge is the Folds arm");
@@ -204,14 +190,9 @@ impl Sink for AggregateSink {
         if batch.survivors.is_empty() {
             return Flow::Continue;
         }
-        // Group-key classification, cached on the leaf shape: every
-        // group slot outer means the whole batch folds into ONE
-        // accumulator row — the trie already grouped it.
+
         self.refresh_shape_cache(batch);
-        // Measures and Pack fold per row: derived words exist only in
-        // the scratch row, and Pack's group state is a claim list, so
-        // no gather kernel applies — the per-row scratch fold is the
-        // correctness path.
+
         if matches!(self.group_state, GroupState::Pack { .. }) || !self.measures.is_empty() {
             self.fold_batch_rows(batch);
             return Flow::Continue;
@@ -220,13 +201,10 @@ impl Sink for AggregateSink {
             !matches!(self.dedup, DedupState::Elided { .. }),
             self.cached_constant_group,
         ) {
-            // Dedup required (the plan could not prove distinctness):
-            // the seen-set pass runs per row, but the group probe still
-            // hoists — surviving entries gather-fold like the elided
-            // path.
+
             (true, true) => self.fold_batch_dedup_constant_group(batch),
             (false, true) => self.fold_batch_constant_group(batch, batch.survivors),
-            // Varying group keys: the per-row correctness arm.
+
             (_, false) => self.fold_batch_rows(batch),
         }
         Flow::Continue
