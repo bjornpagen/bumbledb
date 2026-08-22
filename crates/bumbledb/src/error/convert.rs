@@ -1,5 +1,4 @@
 //! `From` conversions into [`Error`] and the `std::error::Error` impl.
-
 use super::{
     CorruptionError, DynIdError, Error, FactShapeError, IoFailure, LmdbFailure, SchemaError,
     ValidationError,
@@ -19,7 +18,6 @@ impl From<heed::Error> for Error {
 
 impl Error {
     /// macOS: the data-page `pwrite`s, `fcntl(F_FULLFSYNC)`, the
-
     pub(crate) fn from_commit(err: heed::Error) -> Self {
         match err {
             heed::Error::Io(error) => Self::CommitSync {
