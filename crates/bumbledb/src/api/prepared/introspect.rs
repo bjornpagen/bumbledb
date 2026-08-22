@@ -5,7 +5,6 @@ use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
 
 impl<S> PreparedQuery<S> {
-
     /// # Errors
 
     pub(crate) fn introspect(
