@@ -1,5 +1,3 @@
-/// Deterministic per-row seed (the same construction as the ledger
-/// generator's: corpus content is a pure function of (seed, rel, row)).
 #[must_use]
 pub fn mix(seed: u64, rel: u32, row: u64) -> u64 {
     let mut h = seed ^ 0x9E37_79B9_7F4A_7C15;
