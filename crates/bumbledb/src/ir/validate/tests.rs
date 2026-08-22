@@ -14,11 +14,6 @@ mod reject;
 mod rules;
 mod signature;
 
-/// The fixture schema:
-/// Holder(id fresh, name string);
-/// Account(id fresh, holder u64, status u64, validity interval<u64>);
-/// Posting(id fresh, account u64, amount i64, at i64, memo bytes,
-///         flag bool, span interval<u64>).
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -74,9 +69,8 @@ const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const POSTING: RelationId = RelationId(2);
 
-/// Interval fields, by fixture position.
-const VALIDITY: u16 = 3; // Account.validity
-const SPAN: u16 = 6; // Posting.span
+const VALIDITY: u16 = 3; 
+const SPAN: u16 = 6; 
 
 fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {
