@@ -1,26 +1,3 @@
-/**
- * The TS-render ⇄ manifest-render golden (TODO.md §7 item 3a): for every
- * statement construct the schema surface can utter — the FD key form
- * (scalar, composite pointwise-interval), containment (plain, σ-selected,
- * ψ-selected, closed-target, multi-field pointwise), the `==` bijection,
- * every legal capacity spelling (`{n}`, `{0}`, `{lo..hi}`, `{lo..*}`,
- * `{0..hi}`, the weighted bracket, the dependent bound, the Duration
- * pair), and the sub-vocabulary handle-set selection — the SDK's
- * `renderStatement` output equals, byte for byte, the engine-rendered
- * spelling the manifest ships for the same store
- * (`schema/render.rs::render_declared` via `dbManifest`). The engine's
- * materialized order is mirrored positionally (fresh auto-keys, closed
- * auto-keys, then declared statements, a `mirrors` occupying two slots), so
- * the golden also pins the implied-key spellings the SDK never utters.
- * Selection literals lean adversarial on purpose: the `char::escape_debug`
- * and `u8::escape_ascii` mirrors are exactly where the two renderers could
- * drift silently. The ψ-on-closed golden (PRD-K1) runs against its own
- * store: `Grade.where({ mastered: true })` as a statement face — created,
- * manifest-pinned, folded by the ENGINE at validate, and rejected with the
- * violation's canonical string equal to the manifest spelling byte for
- * byte.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -64,14 +41,8 @@ const Booking = relation("Booking", { room: u64, during: interval(u64) })
 const Slot = relation("Slot", { room: u64, during: interval(u64) })
 const SavingsTerms = relation("SavingsTerms", { account: u64 })
 
-/**
- * The escape gauntlet: a single quote, escaped double quotes, a tab, a
- * newline, a literal backslash, and a combining acute (grapheme-extending,
- * printable — `char::escape_debug` escapes it as `\u{301}` anyway).
- */
 const gauntletLabel = 'it\'s "w\teird"\n\\e\u0301'
 
-/** Bytes across `u8::escape_ascii`'s arms: printable, NUL, high bit, quote. */
 const gauntletTag = new Uint8Array([0x62, 0x00, 0xff, 0x22])
 
 /**
@@ -104,7 +75,7 @@ const literalGauntletCapacity = capacity(
 	within(0n, 5n),
 	on(Account.where({ weight: 7n, tag: gauntletTag, active: span(-3n, 9n) }), "holder")
 )
-/** The weighted rows (dossier § 4.4): the dependent bound and the calendar shape against the engine arm. */
+
 const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
 const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64 })
 const Hall = relation("Hall", { id: u64.fresh, span: interval(i64) })
@@ -150,14 +121,6 @@ const Golden = schema(
 	statements
 )
 
-/**
- * The ψ-on-closed fixtures (PRD-K1): a payload-tier closed vocabulary
- * ψ-selected by its own column as a statement face — one containment and
- * one capacity law over `Grade(id | mastered == true)`, and NO handle literal
- * anywhere (a handle literal resolves through the law-computed newtype,
- * which lands in K4; the ψ selection itself is a plain bool literal and
- * resolves against the sealed columns today).
- */
 const Grade = closed(
 	"Grade",
 	{ mastered: bool },
@@ -171,13 +134,11 @@ const closedPsiContainment = contained(on(Certificate, "grade"), on(Grade.where(
 const closedPsiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade"))
 const Mastery = schema("Mastery", { Grade, Certificate }, [closedPsiContainment, closedPsiCapacity])
 
-/** One expected materialized slot: the form tag and the canonical spelling. */
 interface Slot {
 	readonly kind: StatementKindTag
 	readonly spelling: string
 }
 
-/** The SDK statement form tags mapped onto the manifest's vocabulary. */
 function kindTag(statement: Statement): StatementKindTag {
 	switch (statement.data.kind) {
 		case "key":
@@ -190,17 +151,6 @@ function kindTag(statement: Statement): StatementKindTag {
 	}
 }
 
-/**
- * The expected manifest, slot by slot — the SDK's positional mirror of
- * `SchemaDescriptor::materialized_statements`: one fresh auto-key per
- * minted field (relation declaration order, then field order), one closed
- * auto-key per closed relation (declaration order), then the declared
- * statements, a `mirrors` filling two adjacent slots with the one `==`
- * spelling (the engine renders both partners identically, in the written
- * orientation). Implied-key spellings are spelled by hand here — the SDK
- * has no statement value for them, and the key form's canonical shape is
- * exactly this string.
- */
 function expectedSlots(theory: AnySchema): Slot[] {
 	const slots: Slot[] = []
 	for (const member of Object.values(theory.relations)) {
