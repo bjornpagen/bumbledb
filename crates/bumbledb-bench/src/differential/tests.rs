@@ -133,7 +133,6 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
     let mut pattern_cases = 0u64;
     for _ in 0..200 {
         let delta = match rng.below(11) {
-
             0..=3 => {
                 let reference = rng.below(8);
                 Delta {
@@ -225,7 +224,7 @@ fn booking_atom() -> Atom {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
     let fold = |op: FoldOp, over: u16| FindTerm::Aggregate {
@@ -233,14 +232,11 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         over: VarId(over),
     };
     vec![
-
         (plain(vec![v(0), v(1), v(2)], vec![booking_atom()]), vec![]),
-
         (
             plain(vec![v(0)], vec![atom(MARKER, &[(0, var(0))])]),
             vec![],
         ),
-
         (
             plain(
                 vec![v(0)],
@@ -251,7 +247,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-
         (
             plain(
                 vec![v(0), v(1)],
@@ -262,7 +257,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-
         (
             plain(
                 vec![v(0), v(2)],
@@ -270,7 +264,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(0)],
@@ -283,34 +276,27 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-
         (
             plain(vec![v(0), FindTerm::Count], vec![booking_atom()]),
             vec![],
         ),
-
         (plain(vec![FindTerm::Count], vec![booking_atom()]), vec![]),
-
         (
             plain(vec![v(0), fold(FoldOp::Sum, 2)], vec![booking_atom()]),
             vec![],
         ),
-
         (
             plain(vec![fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
-
         (
             plain(vec![v(0), fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
-
         (
             plain(vec![fold(FoldOp::Min, 2)], vec![booking_atom()]),
             vec![],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(2), v(5)],
@@ -336,7 +322,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(2), v(5)],
@@ -362,7 +347,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(2), v(3)],
@@ -376,7 +360,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-
         (
             plain(
                 vec![v(0), v(1)],
@@ -387,7 +370,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![ParamValue::Scalar(Value::U64(1))],
         ),
-
         (
             plain(
                 vec![v(0), v(1)],
@@ -398,7 +380,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![ParamValue::Set(vec![Value::U64(0), Value::U64(2)])],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(2)],
@@ -412,7 +393,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-
         (
             Query::single(Rule {
                 finds: vec![v(0)],
@@ -425,7 +405,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![ParamValue::Set(vec![Value::U64(1), Value::U64(2)])],
         ),
-
         (
             plain(
                 vec![v(0)],
@@ -433,7 +412,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-
         (
             Query {
                 interiors: vec![],
@@ -463,7 +441,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             },
             vec![],
         ),
-
         (
             Query {
                 interiors: vec![],
@@ -496,7 +473,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             },
             vec![],
         ),
-
         (
             Query {
                 interiors: vec![],
