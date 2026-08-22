@@ -170,7 +170,6 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
         .expect("accepted");
 
     db.write(|tx| {
-
         assert_eq!(tx.insert_dyn(ENTRY, [&entry("a", 1)])?.changed(), 1);
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
@@ -215,7 +214,6 @@ fn get_dyn_falls_through_to_committed_state() {
         .unwrap();
 
     db.write(|tx| {
-
         tx.insert_dyn(ENTRY, [&entry("other", 1)])?;
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("seed".into())])?,
@@ -262,7 +260,6 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-
         let err = tx
             .get_dyn(ENTRY, StatementId(7), &[Value::String("x".into())])
             .unwrap_err();
@@ -829,7 +826,6 @@ fn closed_point_reads_resolve_against_the_extension() {
     let auto_key = StatementId(0);
 
     db.write(|tx| {
-
         let row = tx
             .get_dyn(currency, auto_key, &[Value::U64(1)])?
             .expect("Eur is row 1");
@@ -1145,7 +1141,6 @@ fn sample_facts() -> Vec<Sample<'static>> {
             window: iv_u(0, 2),
             span: iv_i(-1, 0),
         },
-
         Sample {
             flag: true,
             count: 7,
