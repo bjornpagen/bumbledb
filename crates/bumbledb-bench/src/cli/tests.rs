@@ -193,13 +193,13 @@ fn storage_parses_the_lane_flags() {
             out: Some(PathBuf::from("artifacts")),
         })
     );
-    // Bare `storage` is the defaults.
+
     assert_eq!(
         parse(&argv(&["storage"])),
         Ok(Cmd::Storage(StorageArgs::default()))
     );
     assert_eq!(StorageArgs::default().scales, vec![Scale::S]);
-    // A bad scale token inside the list is named.
+
     let err = parse(&argv(&["storage", "--scales", "S,XXL"])).unwrap_err();
     assert!(err.contains("XXL"), "{err}");
     let err = parse(&argv(&["storage", "--scales", ""])).unwrap_err();
@@ -240,7 +240,7 @@ fn writes_parses_the_lane_flags() {
             out: Some(PathBuf::from("artifacts")),
         })
     );
-    // Bare `writes` is the defaults: NoSync FIRST (the durable lane's
+
     // fsync shadow lands after every nosync sample), the batch ladder.
     assert_eq!(
         parse(&argv(&["writes"])),
@@ -251,10 +251,10 @@ fn writes_parses_the_lane_flags() {
         vec![DurabilityLane::Nosync, DurabilityLane::Durable]
     );
     assert_eq!(WritesArgs::default().batches, vec![1, 10, 100, 1000]);
-    // A zero batch is rejected, naming the flag.
+
     let err = parse(&argv(&["writes", "--batches", "0"])).unwrap_err();
     assert!(err.contains("--batches"), "{err}");
-    // An unknown lane token is named.
+
     let err = parse(&argv(&["writes", "--lanes", "durable,paranoid"])).unwrap_err();
     assert!(err.contains("paranoid"), "{err}");
 }
@@ -293,7 +293,7 @@ fn curves_parses_the_lane_flags() {
             out: Some(PathBuf::from("artifacts")),
         })
     );
-    // Bare `curves` is the defaults: 30 s cap, no warmth panel.
+
     assert_eq!(
         parse(&argv(&["curves"])),
         Ok(Cmd::Curves(CurvesArgs::default()))
@@ -419,8 +419,7 @@ fn churn_parses_its_flags() {
             out: Some(PathBuf::from("artifacts")),
         })
     );
-    // Bare `churn` is the night-run defaults: the ops schedule consts,
-    // the full registry.
+
     assert_eq!(
         parse(&argv(&["churn"])),
         Ok(Cmd::Churn(ChurnArgs::default()))
@@ -502,7 +501,7 @@ fn lawful_parses_its_flags() {
 
 #[test]
 fn crud_refuses_an_unknown_flag() {
-    // The worlds own their sizes — no scale flag (the scenarios
+
     // precedent); the refusal names both the token and the command.
     let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
     assert!(err.contains("--scale"), "{err}");
@@ -528,8 +527,6 @@ fn the_world_commands_refuse_trace_with_alloc() {
     assert!(err.contains("scenarios"), "{err}");
 }
 
-/// The write worlds take `--trace` but have no alloc pass — `--alloc`
-/// refuses by name instead of parsing into a flag nothing reads.
 #[test]
 fn the_write_worlds_take_trace_and_refuse_alloc() {
     for cmd in ["crud", "lawful"] {
@@ -559,8 +556,6 @@ fn help_names_the_shared_machine_boost_switch() {
     assert!(text.contains("shared_machine"), "{text}");
 }
 
-/// The boost seam's membership: every measurement-running subcommand
-/// boosts, every non-measuring one never does.
 #[test]
 fn the_boost_seam_membership_is_pinned() {
     for tokens in [
