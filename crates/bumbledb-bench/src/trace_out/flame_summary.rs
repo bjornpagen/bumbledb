@@ -3,10 +3,7 @@ use bumbledb::obs::{Category, TraceEvent};
 use super::{FlameRow, FlameSummary, RENDER_ROWS, containment};
 
 impl FlameSummary {
-    /// Aggregates a capture by span name through the one containment
-    /// sweep ([`containment::sweep`]): each span's duration is charged
-    /// to its *direct* parent's child time; point events count as calls
-    /// with zero duration (Phase accumulators stay out — the flame rows
+
     /// must not see them; `render_phase_table` does).
     #[must_use]
     pub fn compute(events: &[TraceEvent]) -> Self {
@@ -51,15 +48,11 @@ impl FlameSummary {
         Self { rows, wall_ns }
     }
 
-    /// The aligned text table: top [`RENDER_ROWS`] rows by self time,
-    /// microseconds with three decimals, plus the total-wall line.
     #[must_use]
     pub fn render(&self) -> String {
         self.render_top(RENDER_ROWS)
     }
 
-    /// [`FlameSummary::render`] with a caller-chosen row cap (the report
-    /// embeds top 10).
     #[must_use]
     pub fn render_top(&self, rows: usize) -> String {
         use std::fmt::Write as _;
