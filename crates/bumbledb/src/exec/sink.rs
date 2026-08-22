@@ -1,10 +1,8 @@
 //! The two consumers of bindings: set-projection with dedup and
 //! the D2 subtree-skip signal, and aggregate folds with binding dedup
 //! .
-//! **The sinks are where union lives**: one sink hears every rule of a query, its seen-set
-//! spanning rules — reset once per execution, never per rule — so a later
-//! rule re-deriving a head fact is absorbed exactly like a within-rule
-//! `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+//! The sinks are where union lives: `union_spans` keys the multi-rule
+//! aggregate head projection. `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`.
 use crate::encoding::encode_i64;
 use crate::exec::wordmap::WordMap;
 
