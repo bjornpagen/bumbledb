@@ -124,7 +124,12 @@ impl AcceptedCollection {
     /// The dyn lane's one-call parse: per-row arity first, then the
     /// per-cell judgment — exactly the order (and the errors) of the
     /// retired `parse_dyn_row` collection loop. Empty is lawful and
-    /// constructs without touching the roster.
+    /// constructs without touching the roster. A fieldless roster counts
+    /// its payload-witnessed empty slices — each row's emptiness IS the
+    /// arity judgment a zero-width roster admits — and seals the count
+    /// through the one fieldless constructor,
+    /// [`CollectionBuilder::seal_nullary`] (the push lane never accrues
+    /// nullary rows; N empty slices still submit exactly N).
     ///
     /// # Errors
     ///
@@ -135,6 +140,24 @@ impl AcceptedCollection {
         fields: &[FieldDescriptor],
         rows: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<Self> {
+        if fields.is_empty() {
+            let mut count: u64 = 0;
+            for row in rows {
+                let row = row.as_ref();
+                if !row.is_empty() {
+                    return Err(FactShapeError::ArityMismatch {
+                        relation,
+                        mismatch: Mismatch {
+                            witnessed: row.len(),
+                            required: 0,
+                        },
+                    }
+                    .into());
+                }
+                count += 1;
+            }
+            return CollectionBuilder::new(relation, fields).seal_nullary(count);
+        }
         let mut builder = CollectionBuilder::new(relation, fields);
         for row in rows {
             builder.push_value_row(row.as_ref())?;
@@ -275,7 +298,9 @@ impl<'s> CollectionBuilder<'s> {
     ///
     /// # Errors
     ///
-    /// `FactShape` as [`AcceptedCollection::from_value_rows`].
+    /// `FactShape` as [`AcceptedCollection::from_value_rows`]; a
+    /// fieldless roster refuses EVERY pushed row (the one-way ruling
+    /// below).
     pub fn push_value_row(&mut self, row: &[Value]) -> Result<()> {
         if row.len() != self.fields.len() {
             return Err(FactShapeError::ArityMismatch {
@@ -288,10 +313,24 @@ impl<'s> CollectionBuilder<'s> {
             .into());
         }
         if row.is_empty() {
-            // A fieldless relation's row has no cells; the row itself
-            // still counts (`submitted` is exact).
-            self.rows += 1;
-            return Ok(());
+            // The one-way ruling of fieldless rows (`proposals/
+            // one-representation/20`): a fieldless collection IS its row
+            // count, and the stated-count constructor
+            // [`Self::seal_nullary`] is the ONE spelling — the push lane
+            // never accrues nullary rows (a pushed count would be
+            // silently replaced by the stated one), so `seal_nullary`'s
+            // zero-rows precondition holds by construction. The refusal
+            // is the zero-width roster's one push answer
+            // ([`Self::expected`]): any push overflows the zero-width
+            // row.
+            return Err(FactShapeError::ArityMismatch {
+                relation: self.relation,
+                mismatch: Mismatch {
+                    witnessed: 1,
+                    required: 0,
+                },
+            }
+            .into());
         }
         for value in row {
             self.push_value(value)?;
@@ -474,7 +513,10 @@ impl<'s> CollectionBuilder<'s> {
     /// # Errors
     ///
     /// `FactShape` (`ArityMismatch`, witnessed 0) when the roster is not
-    /// fieldless — a zero-width row against a widthful roster.
+    /// fieldless — a zero-width row against a widthful roster. The ONE
+    /// refusal of this seal: on a fieldless roster no push can have
+    /// succeeded (every push lane refuses the zero-width roster typed),
+    /// so the seal below never fails.
     pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
         if !self.fields.is_empty() {
             return Err(FactShapeError::ArityMismatch {
@@ -486,6 +528,12 @@ impl<'s> CollectionBuilder<'s> {
             }
             .into());
         }
+        // Genuinely unreachable, kept as belt: rows accrue only through
+        // the push lanes, and every push at a fieldless roster refuses
+        // typed ([`Self::push_value_row`]'s one-way ruling;
+        // [`Self::expected`]'s zero-width answer for the cell pushes) —
+        // no public sequence can reach this seal with a pushed count for
+        // the stated one to replace.
         debug_assert!(self.rows == 0, "the stated count IS the collection");
         self.rows = rows;
         self.seal()

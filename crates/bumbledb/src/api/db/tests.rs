@@ -1689,6 +1689,73 @@ fn a_nullary_accepted_collection_applies_in_constant_time() {
     );
 }
 
+/// The one-way ruling of fieldless rows (20): the stated-count
+/// constructor `seal_nullary` is the ONE spelling, so the push lane
+/// refuses a zero-width row TYPED — the mixed sequence (push an empty
+/// row, then state a count) is unrepresentable instead of panicking the
+/// seal's `debug_assert` in debug and silently replacing the pushed count
+/// in release. The dyn path keeps counting its payload-witnessed empty
+/// slices: N empty slices submit exactly N, through the same one seal.
+#[test]
+fn a_fieldless_row_push_is_refused_typed() {
+    let dir = TempDir::new("db-nullary-push");
+    let db = Db::create(dir.path(), nullary_schema())
+        .expect("create")
+        .expect("accepted");
+    let marker = RelationId(0);
+    let fields = db.schema().relation(marker).fields();
+    // The mixed sequence is refused AT THE PUSH, with the zero-width
+    // roster's one push answer — seal_nullary's zero-rows precondition
+    // now holds by construction.
+    let mut builder = CollectionBuilder::new(marker, fields);
+    let err = builder.push_value_row(&[]).expect_err("one spelling");
+    assert!(
+        matches!(
+            err,
+            Error::FactShape(FactShapeError::ArityMismatch {
+                relation,
+                mismatch: Mismatch {
+                    witnessed: 1,
+                    required: 0,
+                },
+            }) if relation == marker
+        ),
+        "{err:?}"
+    );
+    // The dyn path counts payload-witnessed empty slices through the one
+    // fieldless constructor: 3 empty slices are 3 rows, behavior
+    // identical to the retired per-row accrual.
+    let rows: [&[Value]; 3] = [&[], &[], &[]];
+    let coll = AcceptedCollection::from_value_rows(marker, fields, rows)
+        .expect("empty slices are the fieldless roster's arity-lawful rows");
+    assert_eq!(coll.rows(), 3);
+    db.write(|tx| {
+        let report = tx.insert_dyn(marker, rows)?;
+        assert_eq!(report.submitted(), 3, "submitted is exact");
+        assert_eq!(report.changed(), 1, "the one empty tuple entered once");
+        Ok(())
+    })
+    .expect("dyn lane")
+    .unwrap();
+    // A widthful row against the fieldless roster stays the arity
+    // mismatch it always was, judged before any count accrues.
+    let wide: [&[Value]; 2] = [&[], &[Value::U64(1)]];
+    let err = AcceptedCollection::from_value_rows(marker, fields, wide).expect_err("widthful row");
+    assert!(
+        matches!(
+            err,
+            Error::FactShape(FactShapeError::ArityMismatch {
+                relation,
+                mismatch: Mismatch {
+                    witnessed: 1,
+                    required: 0,
+                },
+            }) if relation == marker
+        ),
+        "{err:?}"
+    );
+}
+
 /// The one cell judgment, all feeding surfaces: every typed push checks
 /// its positional roster arm and answers the same `TypeMismatch` (naming
 /// relation and field) the `Value` feed does; the `bytes<N>` width and
