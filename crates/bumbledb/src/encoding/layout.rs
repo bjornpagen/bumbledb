@@ -1,5 +1,4 @@
 //! Layout machinery: computing a relation's dense fact byte layout.
-
 use super::{FactLayout, ValueType};
 
 impl FactLayout {
