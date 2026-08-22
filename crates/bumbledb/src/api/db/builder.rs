@@ -1,7 +1,6 @@
 //! Unproved heap candidate: collection mutation and overlay point reads.
 //! No query preparation or execution. [`InstanceBuilder::admit`] consumes
 //! the builder into an [`super::OwnedInstance`].
-
 use super::OwnedInstance;
 use super::get as get_path;
 use super::mutation_core::{HeapMutation, MutationCore};
@@ -61,9 +60,7 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// The whole collection is encoded before any member is staged.
-
     /// # Errors
-
     /// `TransactionPoisoned` if a prior apply failed after a prefix
     pub fn load<'f, F: Fact<'f, Schema = S> + 'f>(
         &mut self,
@@ -81,7 +78,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// parsed before any member is staged.
-
     /// # Errors
     pub fn load_dyn(
         &mut self,
@@ -101,7 +97,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     /// constructor already refused.
     #[doc(hidden)]
     pub fn load_accepted(&mut self, collection: &AcceptedCollection) -> Result<MutationReport> {
@@ -202,7 +197,6 @@ impl<S> InstanceBuilder<S> {
     }
 
     /// # Errors
-
     /// `TransactionPoisoned` if a prior apply failed after a prefix
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
         self.mutation.refuse_poisoned()?;
