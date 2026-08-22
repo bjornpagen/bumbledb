@@ -6,17 +6,16 @@ use super::{
 };
 
 impl Executor {
-
     /// positions per run before the sink sees them; a leaf that could
 
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
-    )] 
+    )]
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     pub(super) fn run_leaf_scan<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -77,7 +76,6 @@ impl Executor {
 
                 filtered.clear();
                 if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-
                     for (idx, (op, lhs_src, rhs_src)) in scan_residuals.iter().enumerate() {
                         let side = |src: &Source| match *src {
                             Source::Batch(word) => {
