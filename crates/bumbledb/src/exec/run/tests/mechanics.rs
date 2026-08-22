@@ -151,7 +151,6 @@ fn backtracking_restores_sources_across_sequential_executions() {
 
 #[test]
 fn results_are_identical_across_batch_sizes() {
-
     let dir = TempDir::new("run-batch-equality");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..150).map(|i| (i % 7, i % 11)).collect();
@@ -240,9 +239,9 @@ fn pinned_siblings_probe_without_hashing() {
     let views = views_of(&dir, &schema, &[a_rows, b_rows, c_rows]);
     let normalized = normalized(
         vec![
-            occurrence(0, 0, &[(0, 0), (1, 1)]), 
-            occurrence(1, 1, &[(0, 0), (1, 2)]), 
-            occurrence(2, 2, &[(0, 1), (1, 2)]), 
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 0), (1, 2)]),
+            occurrence(2, 2, &[(0, 1), (1, 2)]),
         ],
         vec![],
     );
