@@ -171,7 +171,6 @@ fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
 }
 
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
-
     match value_type {
         ValueType::Bool => out.push(ValueTypeTag::Bool.tag()),
         ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
@@ -259,7 +258,6 @@ mod tests {
 
     #[test]
     fn golden_fingerprint_pins_the_hash() {
-
         // must not drift while the format label stays `v5`. `base()` covers
 
         assert_eq!(
@@ -270,7 +268,6 @@ mod tests {
 
     #[test]
     fn mirror_links_never_reach_the_fingerprint() {
-
         let mut decl = base();
         decl.statements.push(containment(
             side(RelationId(0), &[FieldId(0)]),
@@ -296,13 +293,11 @@ mod tests {
 
     #[test]
     fn identical_declarations_yield_identical_fingerprints() {
-
         assert_eq!(base_fingerprint(), fingerprint(&schema_of(base())));
     }
 
     #[test]
     fn reordering_two_fields_changes_the_fingerprint() {
-
         let of_fields = |names: [&str; 2]| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
@@ -328,7 +323,6 @@ mod tests {
 
     #[test]
     fn changing_a_field_type_changes_the_fingerprint() {
-
         let mut decl = base();
         decl.relations[0].fields[1].value_type = ValueType::I64;
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
@@ -381,7 +375,6 @@ mod tests {
 
     #[test]
     fn reordering_a_projection_changes_the_fingerprint() {
-
         let of_projection = |fields: [u16; 2]| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
@@ -415,7 +408,6 @@ mod tests {
 
     #[test]
     fn the_interval_width_is_a_fingerprint_input() {
-
         let of = |ty: ValueType| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
@@ -449,7 +441,6 @@ mod tests {
 
     #[test]
     fn golden_bytes_pin_the_canonical_encoding() {
-
         let schema = schema_of(SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 extension: None,
@@ -464,26 +455,25 @@ mod tests {
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
         expected.extend_from_slice(b"bumbledb-schema-v5");
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"R");
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"x");
-        expected.push(2); 
-        expected.push(1); 
-        expected.push(0); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.push(0); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
+        expected.push(2);
+        expected.push(1);
+        expected.push(0);
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
         assert_eq!(bytes, expected);
     }
 
     #[test]
     fn golden_bytes_pin_the_statement_encoding() {
-
         let schema = schema_of(SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -518,44 +508,44 @@ mod tests {
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
         expected.extend_from_slice(b"bumbledb-schema-v5");
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
+        expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
+        expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(b"id");
-        expected.push(2); 
-        expected.push(0); 
-        expected.push(0); 
+        expected.push(2);
+        expected.push(0);
+        expected.push(0);
         expected.extend_from_slice(&7u32.to_le_bytes());
         expected.extend_from_slice(b"Account");
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
+        expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"holder");
-        expected.push(2); 
-        expected.push(0); 
+        expected.push(2);
+        expected.push(0);
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"status");
-        expected.push(2); 
-        expected.push(0); 
-        expected.push(0); 
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
-        expected.push(0); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
-        expected.push(1); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u16.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u64.to_be_bytes()); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
+        expected.push(2);
+        expected.push(0);
+        expected.push(0);
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.push(1);
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u64.to_be_bytes());
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(bytes, expected);
     }
 
@@ -592,7 +582,6 @@ mod tests {
             ],
             statements: vec![
                 fd(RelationId(0), &[FieldId(0)]),
-
                 capacity(
                     side(RelationId(1), &[FieldId(0)]),
                     2,
@@ -605,7 +594,6 @@ mod tests {
                     Some(3),
                     side(RelationId(0), &[FieldId(0)]),
                 ),
-
                 capacity_weighted(
                     side(RelationId(0), &[FieldId(0)]),
                     Weight::Field(FieldId(1)),
@@ -613,7 +601,6 @@ mod tests {
                     Some(Bound::TargetField(FieldId(1))),
                     side(RelationId(1), &[FieldId(0)]),
                 ),
-
                 capacity_weighted(
                     side(RelationId(0), &[FieldId(0)]),
                     Weight::DurationOf(FieldId(2)),
@@ -629,75 +616,75 @@ mod tests {
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
         expected.extend_from_slice(b"bumbledb-schema-v5");
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
+        expected.extend_from_slice(&2u32.to_le_bytes());
         let put_relation = |expected: &mut Vec<u8>, name: &str, fields: [&str; 3]| {
             expected.extend_from_slice(&u32::try_from(name.len()).expect("len").to_le_bytes());
             expected.extend_from_slice(name.as_bytes());
-            expected.extend_from_slice(&3u32.to_le_bytes()); 
+            expected.extend_from_slice(&3u32.to_le_bytes());
             for (idx, field_name) in fields.iter().enumerate() {
                 expected.extend_from_slice(
                     &u32::try_from(field_name.len()).expect("len").to_le_bytes(),
                 );
                 expected.extend_from_slice(field_name.as_bytes());
                 if idx == 2 {
-                    expected.push(6); 
-                    expected.push(0); 
+                    expected.push(6);
+                    expected.push(0);
                 } else {
-                    expected.push(2); 
+                    expected.push(2);
                 }
-                expected.push(0); 
+                expected.push(0);
             }
-            expected.push(0); 
+            expected.push(0);
         };
         put_relation(&mut expected, "Pool", ["id", "supply", "span"]);
         put_relation(&mut expected, "Dev", ["pool", "watts", "busy"]);
-        expected.extend_from_slice(&5u32.to_le_bytes()); 
-        expected.push(0); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
+        expected.extend_from_slice(&5u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
 
         let put_bare_side = |expected: &mut Vec<u8>, relation: u32| {
             expected.extend_from_slice(&relation.to_le_bytes());
-            expected.extend_from_slice(&1u32.to_le_bytes()); 
-            expected.extend_from_slice(&0u16.to_le_bytes()); 
-            expected.extend_from_slice(&0u32.to_le_bytes()); 
+            expected.extend_from_slice(&1u32.to_le_bytes());
+            expected.extend_from_slice(&0u16.to_le_bytes());
+            expected.extend_from_slice(&0u32.to_le_bytes());
         };
 
-        expected.push(4); 
-        put_bare_side(&mut expected, 0); 
-        expected.push(0); 
-        expected.extend_from_slice(&2u64.to_le_bytes()); 
-        expected.push(0); 
-        put_bare_side(&mut expected, 1); 
-
         expected.push(4);
         put_bare_side(&mut expected, 0);
-        expected.push(0); 
-        expected.extend_from_slice(&0u64.to_le_bytes()); 
-        expected.push(1); 
-        expected.push(0); 
-        expected.extend_from_slice(&3u64.to_le_bytes()); 
+        expected.push(0);
+        expected.extend_from_slice(&2u64.to_le_bytes());
+        expected.push(0);
         put_bare_side(&mut expected, 1);
 
         expected.push(4);
         put_bare_side(&mut expected, 0);
-        expected.push(1); 
-        expected.extend_from_slice(&1u16.to_le_bytes()); 
-        expected.extend_from_slice(&0u64.to_le_bytes()); 
-        expected.push(1); 
-        expected.push(1); 
-        expected.extend_from_slice(&1u16.to_le_bytes()); 
+        expected.push(0);
+        expected.extend_from_slice(&0u64.to_le_bytes());
+        expected.push(1);
+        expected.push(0);
+        expected.extend_from_slice(&3u64.to_le_bytes());
         put_bare_side(&mut expected, 1);
 
         expected.push(4);
         put_bare_side(&mut expected, 0);
-        expected.push(2); 
-        expected.extend_from_slice(&2u16.to_le_bytes()); 
-        expected.extend_from_slice(&0u64.to_le_bytes()); 
-        expected.push(1); 
-        expected.push(2); 
-        expected.extend_from_slice(&2u16.to_le_bytes()); 
+        expected.push(1);
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&0u64.to_le_bytes());
+        expected.push(1);
+        expected.push(1);
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        put_bare_side(&mut expected, 1);
+
+        expected.push(4);
+        put_bare_side(&mut expected, 0);
+        expected.push(2);
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&0u64.to_le_bytes());
+        expected.push(1);
+        expected.push(2);
+        expected.extend_from_slice(&2u16.to_le_bytes());
         put_bare_side(&mut expected, 1);
         assert_eq!(bytes, expected);
     }
@@ -718,7 +705,6 @@ mod tests {
 
     #[test]
     fn identical_closed_declarations_yield_identical_fingerprints() {
-
         assert_eq!(
             fingerprint(&schema_of(closed_base())),
             fingerprint(&schema_of(closed_base()))
@@ -727,7 +713,6 @@ mod tests {
 
     #[test]
     fn reordering_extension_rows_changes_the_fingerprint() {
-
         let mut decl = closed_base();
         let rows = decl.relations[0].extension.as_mut().expect("closed");
         rows.swap(0, 1);
@@ -739,7 +724,6 @@ mod tests {
 
     #[test]
     fn changing_an_extension_value_changes_the_fingerprint() {
-
         let mut decl = closed_base();
         decl.relations[0].extension.as_mut().expect("closed")[1] =
             crate::schema::tests::row("Eur", vec![Value::U64(3)]);
@@ -762,7 +746,6 @@ mod tests {
 
     #[test]
     fn golden_bytes_pin_the_extension_encoding() {
-
         let schema = schema_of(closed_base());
         let mut bytes = Vec::new();
         canonical_bytes(&schema, &mut bytes);
@@ -770,41 +753,40 @@ mod tests {
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
         expected.extend_from_slice(b"bumbledb-schema-v5");
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
+        expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
+        expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(b"id");
-        expected.push(2); 
-        expected.push(0); 
+        expected.push(2);
+        expected.push(0);
         expected.extend_from_slice(&11u32.to_le_bytes());
         expected.extend_from_slice(b"minor_units");
-        expected.push(2); 
-        expected.push(0); 
-        expected.push(1); 
-        expected.extend_from_slice(&2u32.to_le_bytes()); 
+        expected.push(2);
+        expected.push(0);
+        expected.push(1);
+        expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&3u32.to_le_bytes());
         expected.extend_from_slice(b"Usd");
-        expected.extend_from_slice(&16u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u64.to_be_bytes()); 
-        expected.extend_from_slice(&2u64.to_be_bytes()); 
+        expected.extend_from_slice(&16u32.to_le_bytes());
+        expected.extend_from_slice(&0u64.to_be_bytes());
+        expected.extend_from_slice(&2u64.to_be_bytes());
         expected.extend_from_slice(&3u32.to_le_bytes());
         expected.extend_from_slice(b"Eur");
-        expected.extend_from_slice(&16u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u64.to_be_bytes()); 
-        expected.extend_from_slice(&2u64.to_be_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.push(0); 
-        expected.extend_from_slice(&0u32.to_le_bytes()); 
-        expected.extend_from_slice(&1u32.to_le_bytes()); 
-        expected.extend_from_slice(&0u16.to_le_bytes()); 
+        expected.extend_from_slice(&16u32.to_le_bytes());
+        expected.extend_from_slice(&1u64.to_be_bytes());
+        expected.extend_from_slice(&2u64.to_be_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
         assert_eq!(bytes, expected);
     }
 
     #[test]
     fn length_prefixes_prevent_name_aliasing() {
-
         let of_names = |relation: &str, field_name: &str| {
             schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
