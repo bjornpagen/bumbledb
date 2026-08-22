@@ -1,5 +1,4 @@
 //! The single in-order pass over a middle node's pending entries.
-
 use super::{
     BatchToken, Bindings, Colt, Counters, Executor, JoinPhase, KeyCount, PipeTables, Sink,
     ValidatedPlan, better_cover,
