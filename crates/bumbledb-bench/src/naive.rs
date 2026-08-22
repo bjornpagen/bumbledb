@@ -16,7 +16,6 @@ use tuple::{endpoints, overlaps};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NaiveDb {
-
     statements: Vec<StatementDescriptor>,
 
     field_types: Vec<Vec<ValueType>>,
@@ -56,14 +55,12 @@ pub enum Violation {
 
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). The twin carries
     /// the WITNESSED measure (ruled 2026-07-24, C14 — measure parity in
-
     Capacity {
         statement: StatementId,
 
         measure: u128,
     },
     /// A delete or insert named a closed relation — refused before the
-
     ClosedRelationWrite {
         relation: RelationId,
     },
@@ -74,7 +71,6 @@ pub enum Violation {
 }
 
 impl Violation {
-
     /// before source (1) before target (2). `ClosedRelationWrite` is
     /// refused before any judgment and never sorts beside statement
 
@@ -96,7 +92,6 @@ impl Violation {
             ),
             Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
             // A refusal, never sorted beside statement citations (the
-
             Self::CapacityRayMeasure { statement } => (statement.0, 3, 0),
         }
     }
@@ -104,14 +99,12 @@ impl Violation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalAbort {
-
     Moved { witnessed: u64, current: u64 },
 
     Violations(Vec<Violation>),
 }
 
 impl NaiveDb {
-
     #[must_use]
     pub fn new(schema: &SchemaDescriptor) -> Self {
         let field_types: Vec<Vec<ValueType>> = schema
@@ -434,7 +427,6 @@ impl NaiveDb {
             }
         }
         if !found.is_empty() {
-
             return sealed(found);
         }
         for (rel, facts) in inserted.iter().enumerate() {
@@ -461,7 +453,6 @@ impl NaiveDb {
             };
             for fact in &state[source.relation.0 as usize] {
                 if inserted[source.relation.0 as usize].contains(fact) {
-
                     continue;
                 }
 
@@ -492,7 +483,6 @@ impl NaiveDb {
                     hi,
                     source,
                 } => {
-
                     // every walked parent's own row BEFORE its window
 
                     if let Some(Bound::TargetDuration(field)) = hi
