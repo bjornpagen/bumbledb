@@ -1,15 +1,7 @@
-//! The pinned-run arm (the fold pushdown for probe-pinned leaves,
-//! `leaf.rs`): one batched emit over many pinned leaf rows is
-//! value-identical to the recursive per-survivor path — combined
-//! outer+leaf key layout, leaf residuals included.
-
 use super::*;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, FoldOp};
 use crate::ir::WordCmp;
 
-/// Hand-built two-node plan `[R(g)][R(x)]` over one occurrence — the
-/// dimension-bound shape whose leaf the probe pass pins per survivor.
-/// All-vars sinks: aggregate plans mark every node sink-relevant.
 fn split_plan(normalized: &NormalizedQuery, schema: &Schema) -> ValidatedPlan {
     let node = |vars: &[u16]| crate::plan::fj::Node {
         estimate: 0,
@@ -24,8 +16,6 @@ fn split_plan(normalized: &NormalizedQuery, schema: &Schema) -> ValidatedPlan {
     validate(&plan, normalized, schema, &all_vars(normalized)).expect("valid plan")
 }
 
-/// GROUP BY g: Count + Sum(x) — the Sum reads a leaf key word, so the
-/// batched arm's gather fold runs against real survivors.
 fn finds(plan: &ValidatedPlan) -> Vec<FindSpec> {
     vec![
         FindSpec::Var {
@@ -48,10 +38,6 @@ fn answers_of(sink: AggregateSink) -> Vec<Vec<u64>> {
     rows
 }
 
-/// Each storage position's parent-cover word, read back through the
-/// colt (level 0 holds the g column): the probe pass carries exactly
-/// this pairing — a pinned position under the parent whose keys
-/// probed it.
 fn outer_words_of(colt: &Colt, positions: &[u32]) -> Vec<u64> {
     positions
         .iter()
@@ -68,8 +54,7 @@ fn pinned_run_matches_the_recursive_path() {
     let rows = vec![(1u64, 10u64), (1, 11), (1, 12), (2, 1), (3, 2), (3, 6)];
     for residuals in [
         vec![],
-        // g < x at the leaf: kills (2,1) and (3,2) — the batched arm's
-        // residual pass must compact exactly as the recursive one.
+
         vec![FilterPredicate::FieldsCompare {
             left: OperandAddr::from(VarId(0)),
             right: OperandAddr::from(VarId(1)),
@@ -83,8 +68,6 @@ fn pinned_run_matches_the_recursive_path() {
         let query = normalized(vec![occurrence(0, 0, &[(0, 0), (1, 1)])], residuals);
         let plan = split_plan(&query, &schema);
 
-        // The recursive reference: the ordinary executor, same sink
-        // configuration.
         let mut colts = colts_for(&plan, &views);
         let mut bindings = Bindings::new(plan.slot_count());
         let mut reference = AggregateSink::new(finds(&plan), plan.slot_count());
@@ -98,9 +81,6 @@ fn pinned_run_matches_the_recursive_path() {
             )
             .expect("execute");
 
-        // The pinned run: every leaf row pinned by position, its
-        // parent's cover word riding as a batch word — ONE emit for
-        // the whole run.
         let colts = colts_for(&plan, &views);
         let bindings = Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count());
@@ -130,9 +110,6 @@ fn pinned_run_matches_the_recursive_path() {
     }
 }
 
-/// Splitting one run into several (the caller flushes at parent
-/// boundaries and batch capacity) folds to the same answers — the
-/// batched arm is insensitive to run partitioning.
 #[test]
 fn pinned_run_partitioning_is_transparent() {
     let rows = vec![(1u64, 10u64), (1, 11), (1, 12), (2, 1), (3, 2), (3, 6)];
@@ -145,8 +122,7 @@ fn pinned_run_partitioning_is_transparent() {
     let positions: Vec<u32> = (0..u32::try_from(rows.len()).expect("small")).collect();
     let outer_keys = outer_words_of(&colts_for(&plan, &views)[0], &positions);
     let mut reference: Option<Vec<Vec<u64>>> = None;
-    // The one-part partitioning IS a single-range slice — the whole
-    // window in one piece, not a six-element collect.
+
     #[allow(clippy::single_range_in_vec_init)]
     let partitionings: [&[std::ops::Range<usize>]; 3] =
         [&[0..6], &[0..3, 3..4, 4..6], &[0..1, 1..6]];
