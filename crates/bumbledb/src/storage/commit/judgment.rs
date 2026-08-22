@@ -1142,7 +1142,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     }
 
     /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):
-
     fn resolve_hi(
         &self,
         statement: &CapacityStatement,
@@ -1155,7 +1154,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
     /// u128 (`lean/Bumbledb/Oracle.lean: capacity_plan_consultations`;
 
     /// (ruled 2026-07-24, C14: the clip serves the verdict, the full sum
-
     fn measure_children(
         &mut self,
         statement: &CapacityStatement,
