@@ -26,7 +26,6 @@ crate::schema! {
 
 const KIND: RelationId = RelationId(0);
 
-/// Q(holder, balance) :- Account(holder, balance).
 fn all_accounts() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -125,12 +124,10 @@ fn admitted_instance_prepares_executes_gets_and_scans() {
     assert!(instance.peek_image(Account::RELATION).is_some());
 }
 
-/// The exact-count law on the heap surface (one-representation PRD 40):
-/// after mixed loads and deletes, `count` equals the scan length — the
-/// admitted-instance twin of the storage pin
+/// The exact-count law on the heap surface: after mixed loads and deletes,
+/// `count` equals the scan length — the admitted-instance twin of the storage
+/// pin
 /// (`storage/read/tests.rs::row_count_equals_scan_count_after_mixed_commits`).
-/// Both reads observe the one frozen catalog, so agreement is by
-/// construction; pinned anyway.
 #[test]
 fn count_equals_scan_length_after_mixed_loads_and_deletes() {
     let mut builder = InstanceBuilder::new(Ledger).expect("valid");
