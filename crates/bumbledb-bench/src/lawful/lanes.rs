@@ -68,7 +68,6 @@ pub struct LawCursor {
 
 impl LawCursor {
     /// The mint base after load: the seeded corpus is dense from 0, so
-
     #[must_use]
     pub fn at_base(sizes: LawSizes) -> Self {
         Self {
