@@ -11,7 +11,6 @@ use crate::storage::dict;
 use bumbledb_theory::schema::IntervalElement;
 
 impl<S> PreparedQuery<S> {
-
     #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
         self.visit_rules_mut(|rule| match rule {
@@ -94,7 +93,6 @@ impl<S> PreparedQuery<S> {
         match &self.params[idx] {
             ParamSpec::Set { .. } => Err(Error::ParamSetExpected { param }),
             ParamSpec::Scalar { ty, point } => {
-
                 if let ValueType::FixedBytes { len } = ty {
                     let mismatch = Error::ParamTypeMismatch {
                         param,
@@ -190,7 +188,7 @@ impl<S> PreparedQuery<S> {
                 words.clear();
                 words
             }
-            _ => Vec::new(), 
+            _ => Vec::new(),
         };
         for (element, value) in values.iter().enumerate() {
             let Some(word_count) = element_words(catalog, value, expected, &mut words)? else {
@@ -266,7 +264,6 @@ fn element_words<C: CatalogRead>(
     expected: &ValueType,
     out: &mut Vec<u64>,
 ) -> Result<Option<usize>> {
-
     if let ValueType::FixedBytes { len } = expected {
         let Value::FixedBytes(raw) = value else {
             return Ok(None);
@@ -313,7 +310,6 @@ pub(super) fn resolve_filters<C: CatalogRead>(
     latched: &mut u32,
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
-
         if occurrence.role.discharged() {
             debug_assert!(occurrence.selections.is_empty());
             continue;
@@ -322,7 +318,6 @@ pub(super) fn resolve_filters<C: CatalogRead>(
         let negated = occurrence.role == crate::ir::normalize::Role::Negated;
         let filters = &mut out_filters[occ_idx];
         if filters.len() != occurrence.filters.len() {
-
             filters.clear();
             filters.extend(occurrence.filters.iter().cloned());
         }
@@ -390,7 +385,7 @@ fn resolve_selection_into<C: CatalogRead>(
         }
         Const::ParamSet(param) => {
             if missed[usize::from(param.0)] {
-                return Ok(false); 
+                return Ok(false);
             }
             let Const::WordSet(words) = &params[usize::from(param.0)] else {
                 unreachable!("validated: a set param resolves to a word set")
