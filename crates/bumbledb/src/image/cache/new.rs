@@ -1,5 +1,4 @@
 //! Construction of an empty [`ImageCache`], shaped by its schema.
-
 use crate::schema::Schema;
 
 use super::{ImageCache, RelationSlot, stats};
