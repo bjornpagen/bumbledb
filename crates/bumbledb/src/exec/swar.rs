@@ -6,7 +6,6 @@
 //! Everything here is an `#[inline(always)]` pure-ALU leaf: the probe
 //! constants are ONE thing; before this module each was a byte-identical
 #![allow(clippy::inline_always)]
-
 /// Tail-zero big-endian `bytes<N>` code words (encoding.rs pads at the tail;
 /// `fact_word.rs` reads big-endian) put ALL their entropy up there — whole code
 /// families collapsed into one home bucket before this.
