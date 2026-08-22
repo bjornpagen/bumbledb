@@ -356,7 +356,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         (1, (3, 12)),
         (2, (3, 12)),
         (2, (20, 30)),
-        (3, (40, u64::MAX)), 
+        (3, (40, u64::MAX)),
     ];
     let probes = [5u64, 25, 45, 100];
 
