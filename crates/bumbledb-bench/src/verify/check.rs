@@ -9,14 +9,12 @@ use crate::naive::ParamValue;
 use crate::translate::ParamSlot;
 
 impl<S> Run<'_, S> {
-
     pub(super) fn check(
         &mut self,
         case: &Case<'_>,
         param_order: &[ParamSlot],
         params: &[ParamValue],
     ) -> bool {
-
         let mut rendered_query = None;
         let (ours, theirs): (
             Result<Vec<compare::Answer>, String>,
