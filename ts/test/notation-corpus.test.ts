@@ -1,23 +1,3 @@
-/**
- * The notation conformance corpus, TS replay (PRD-M4): the checked-in
- * corpus (`crates/bumbledb-query/tests/notation-corpus/`) pins one
- * (notation ⇄ QueryIr JSON) pair per case, byte-authored by the Rust
- * suite; this suite replays the SAME documents from the other host —
- * every `"builder": true` case is constructed in the query builder and
- * its lowered `QueryIr` must `JSON.stringify` to exactly the pinned
- * `query` bytes; every `"builder": false` case (the spellings the
- * builder's laws refuse — an interior head position bound only by the
- * interior atom, sparse positions, position selections) is written as
- * hand IR and held to the same byte equality, and the skipped-from-builder
- * count is asserted EXACTLY, so a silent skip is impossible. Every case's
- * query — both flags — must be ACCEPTED by `dbPrepare` against a store of
- * the corpus theory, and that theory is declared here structurally (the laws
- * type the columns) yet pins to the same engine fingerprint as the Rust
- * `schema!` declaration (`schema-fingerprint.txt` — the T5 mechanism,
- * one line), so the corpus schemas cannot drift. A disagreement is a
- * trophy, not a merge conflict (the corpus README states the law).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -43,14 +23,6 @@ const corpusDir = path.join(import.meta.dirname, "..", "..", "crates", "bumbledb
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-notation-corpus-"))
 const storeDir = path.join(tmpRoot, "store")
 
-/**
- * The corpus theory: the benchmark ledger, declared structurally — the
- * exact twin of the `schema!` declaration in
- * `crates/bumbledb-query/tests/notation_corpus.rs` (relations, fields,
- * and statements in identical declaration order; Rust spells the domains
- * as newtypes, this side derives them from the same statements). The
- * fingerprint pin below is the referee.
- */
 const Currency = closed("Currency", ["Usd", "Eur", "Gbp"])
 const Source = closed("Source", ["Manual", "Import", "System"])
 const Tag = closed("Tag", ["Fee", "Rebate", "Adjustment"])
@@ -92,17 +64,10 @@ const Ledger = schema(
 	]
 )
 
-/** Relation ids = record declaration order (the law `lowerQuery` rides). */
 const ACCOUNT_ID = 4
 const POSTING_ID = 7
 const ORG_PARENT_ID = 10
 
-/**
- * The corpus normalization (documented in the corpus README): every id
- * is a JSON number; every `bigint` payload renders as its decimal
- * string. `JSON.stringify` with this replacer over a `QueryIr` value
- * produces exactly the bytes the Rust encoder pins.
- */
 function bigintAsDecimalString(_key: string, value: unknown): unknown {
 	return typeof value === "bigint" ? value.toString() : value
 }
@@ -222,18 +187,10 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 		})
 }
 
-/** One positional variable term (assignable at both term and find positions). */
 function posVar(id: number): { readonly kind: "var"; readonly var: number } {
 	return { kind: "var", var: id }
 }
 
-/**
- * The `"builder": false` cases as HAND-WRITTEN `QueryIr` — the spellings
- * the builder's laws refuse (an interior head position bound only by the
- * interior atom; sparse interior positions; interior position selections).
- * A host writing IR by hand is exactly the story these pins tell: the bytes
- * must still equal the corpus, and the engine must still prepare them.
- */
 const handWritten: Readonly<Record<string, QueryIr>> = {
 	"org-reach": {
 		kind: "reach",
@@ -372,9 +329,7 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 						source: { kind: "interior", interior: 0 },
 						bindings: [
 							[0, posVar(0)],
-							// The WIRE is raw: "Usd" lowers to its declaration-order
-							// row id (Currency: Usd 0, Eur 1, Gbp 2) — the name↔id
-							// bijection is the SDK's, above this seam.
+
 							[1, { kind: "literal", value: { kind: "u64", value: 0n } }]
 						]
 					}
@@ -385,7 +340,7 @@ const handWritten: Readonly<Record<string, QueryIr>> = {
 		]
 	}
 }
-/** One parsed corpus document (the fields this replayer reads). */
+
 interface CorpusDoc {
 	readonly name: string
 	readonly builder: boolean
@@ -484,14 +439,9 @@ describe("the notation conformance corpus (TS replay)", () => {
 			}
 		}
 
-		// The skip census, exact: the corpus's `"builder": false` count is
-		// pinned here, so a case silently falling out of the builder lane
-		// (or a new unbuildable case arriving) fails until this number is
-		// consciously moved.
 		assert.equal(skipped, 3, "exactly the three unbuildable spellings skip the builder lane")
 		assert.equal(Object.keys(handWritten).length, skipped, "every hand-written IR belongs to a skipped corpus case")
 
-		// No orphan constructions: every entry replays a real corpus case.
 		const names = new Set(
 			files.map(function stem(file) {
 				return file.slice(0, -".json".length)
