@@ -144,7 +144,7 @@ fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;
@@ -181,7 +181,6 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             ids::INSTRUMENT => string_cmp(b, rng, atom, ids::INSTRUMENT, ids::instrument::SYMBOL),
             ids::TRANSFER => {
                 if rng.chance(1, 3) {
-
                     // and must not be compared against interval values.
                     let Some(var) = b.var_at(atom, ids::transfer::WINDOW) else {
                         continue;
@@ -196,7 +195,6 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         rhs,
                     });
                 } else if rng.chance(1, 2) {
-
                     let Some(var) = b.var_at(atom, ids::transfer::EXTREF) else {
                         continue;
                     };
@@ -225,7 +223,6 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         rhs,
                     });
                 } else {
-
                     let which = usize::try_from(rng.range(target::DIGEST_WIDTHS.len() as u64))
                         .expect("small");
                     let width = target::DIGEST_WIDTHS[which];
@@ -267,7 +264,6 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                 }
             }
             ids::MANDATE => {
-
                 let Some(var) = b.var_at(atom, ids::mandate::ACTIVE) else {
                     continue;
                 };
