@@ -15,7 +15,7 @@ fn converse_twin(query: &Query) -> Option<Query> {
     let _ = crate::walk::every_rule_mut(&mut twin, |rule| {
         for tree in &mut rule.conditions {
             let ConditionTree::Leaf(comparison) = tree else {
-                continue; 
+                continue;
             };
             if let CmpOp::Allen { mask } = comparison.op {
                 comparison.op = CmpOp::Allen {
