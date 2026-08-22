@@ -3,18 +3,9 @@ use std::path::PathBuf;
 use crate::harness::Protocol;
 use crate::report;
 
-/// `scenarios`: the non-ledger worlds — load, oracle-gate, time, and
-/// write the artifacts (`scenarios.md` for humans, `scenarios.json` for
-/// tooling — charts pin from committed copies of the JSON). Report-class:
-/// always exit 0 unless a gate (engine disagreement) or setup fails.
-///
 /// # Errors
-///
-/// Setup failures and oracle disagreements, as messages.
 pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
-    // Without the obs build a capture is empty — the trace pass would
-    // write span-free artifacts wearing real names, so it refuses like
-    // --alloc always has (the alloc pass refuses inside the harness).
+
     if args.trace && !cfg!(feature = "obs") {
         return Err(super::bench::obs_missing("--trace"));
     }
@@ -22,9 +13,7 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
         warmups: 8,
         samples: args.samples.unwrap_or(64),
     };
-    // The out dir resolves FIRST: per-query traces land under
-    // <out>/trace/scenarios/<scenario>/, so the run needs the root before
-    // it times anything.
+
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-scenarios",
