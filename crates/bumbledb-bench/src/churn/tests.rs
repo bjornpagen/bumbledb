@@ -1,5 +1,4 @@
 //! — the oracle gate the lane must pass before the owner ever times it.
-
 use crate::corpus_gen::{GenConfig, Scale, Sizes};
 use crate::storemode::StoreMode;
 
