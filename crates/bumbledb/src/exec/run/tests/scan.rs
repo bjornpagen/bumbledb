@@ -1,18 +1,8 @@
-//! The scan-fold pushdown's width freedom (PRD 04): the hoisted
-//! projection emit and the leaf residual filter are column-hoisted over
-//! the plan's own lists — no projection-arity cap, no residual-count
-//! cap. These tests pin the >8-word and >8-residual classes over runs
-//! long enough to engage the hoisted arms
-//! ([`crate::exec::SCAN_HOIST_THRESHOLD`]), against both the
-//! per-position arm and the generic batch path.
-
 use super::*;
 use crate::exec::SCAN_HOIST_THRESHOLD;
 use crate::exec::colt::SuffixRun;
 use crate::ir::WordCmp;
 
-/// One relation of `fields` U64 columns f0..fn — the wide-projection
-/// fixture ([`schema`] is binary-only).
 fn wide_schema(fields: usize) -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -32,7 +22,6 @@ fn wide_schema(fields: usize) -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits word rows into the wide relation and returns its view.
 fn wide_views_of(
     dir: &TempDir,
     schema: &Schema,
@@ -53,15 +42,11 @@ fn wide_views_of(
     vec![crate::image::build(&txn.catalog(), schema, RelationId(0)).expect("build")]
 }
 
-/// The single-atom all-columns plan over the wide relation, plus the
-/// projection slots in field order.
 fn wide_plan(fields: u16) -> (NormalizedQuery, Vec<(u16, u16)>) {
     let vars: Vec<(u16, u16)> = (0..fields).map(|k| (k, k)).collect();
     (normalized(vec![occurrence(0, 0, &vars)], vec![]), vars)
 }
 
-/// Runs a plan through the real projection sink (the scan path) and
-/// returns the distinct projected answers, `slots`-ordered.
 fn scan_rows_of(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
@@ -83,8 +68,6 @@ fn scan_rows_of(
     sink.answers().map(<[u64]>::to_vec).collect()
 }
 
-/// Runs the same plan through [`CollectSink`] (declines scans — the
-/// generic batch path) and projects its full bindings to `slots`.
 fn batch_rows_of(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
@@ -96,10 +79,6 @@ fn batch_rows_of(
         .collect()
 }
 
-/// A projection past 8 words over leaf runs past the hoist threshold —
-/// the class the deleted `[ColumnView; 8]` scratch panicked on. The
-/// hoisted emit is width-unbounded by construction; the batch path
-/// (`CollectSink` projected) is the equality oracle.
 #[test]
 fn projection_past_eight_words_over_hoisted_runs() {
     let dir = TempDir::new("run-scan-wide");
@@ -118,17 +97,12 @@ fn projection_past_eight_words_over_hoisted_runs() {
     assert_eq!(batch_rows_of(&plan, &views, &slots), expected);
 }
 
-/// Hoisted vs per-position equality on IDENTICAL positions: one sink
-/// consumes the whole span as a single hoisted run, the other the same
-/// positions as fanout-sized runs (below the threshold — the
-/// per-position arm). Same colt, same rows out.
 #[test]
 fn hoisted_and_per_position_arms_agree() {
     let dir = TempDir::new("run-scan-arms");
     let fields = 10u16;
     let schema = wide_schema(usize::from(fields));
-    // Distinct facts (f0 = i); the projected suffix f1..f9 repeats per
-    // `i % 6`, so the 9-word (>8) projection also exercises dedup.
+
     let rows: Vec<Vec<u64>> = (0..24u64)
         .map(|i| {
             std::iter::once(i)
@@ -174,21 +148,15 @@ fn hoisted_and_per_position_arms_agree() {
     assert_eq!(answers_of(&hoisted).len(), 6, "dedup still holds");
 }
 
-/// More leaf residuals than the deleted table held (9 > 8), over runs
-/// past the hoist threshold: the residual-hoisted arm iterates the
-/// plan's own list at any length. Verified against a naive reference
-/// AND the batch path.
 #[test]
 fn leaf_scan_residuals_past_eight() {
     let dir = TempDir::new("run-scan-residuals");
     let schema = schema(2);
-    // R0(a, x): a ∈ {1, 2}; R1(x, b): fanout 12 ≥ the threshold.
+
     let r0: Vec<(u64, u64)> = (0..6).map(|i| (i % 2 + 1, i % 3)).collect();
     let r1: Vec<(u64, u64)> = (0..36).map(|i| (i % 3, i / 3)).collect();
     let views = views_of(&dir, &schema, &[r0.clone(), r1.clone()]);
-    // Nine residuals (the old cap was eight), jointly `b > a`: duplicate
-    // specs are semantically idempotent, so the count is the only thing
-    // under test.
+
     let residuals: Vec<FilterPredicate> = (0..9)
         .map(|k| FilterPredicate::FieldsCompare {
             op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },
@@ -218,10 +186,6 @@ fn leaf_scan_residuals_past_eight() {
     assert_eq!(batch_rows_of(&plan, &views, &slots), expected);
 }
 
-/// Scan-path vs batch-path equality across the fixture set: fanouts
-/// below and above the hoist threshold, with and without leaf
-/// residuals — the projection sink's scan output always equals the
-/// batch path's projected bindings.
 #[test]
 fn scan_and_batch_paths_agree_across_fixtures() {
     for (name, fanout, residuals) in [
