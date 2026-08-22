@@ -3,7 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-STRIPPER=$(mktemp)
+# Repo-local scratch, not mktemp: the guard must run identically in
+# sandboxed harnesses whose system temp dirs are unwritable.
+STRIPPER="scripts/.comment-strip.$$.py"
 trap 'rm -f "$STRIPPER"' EXIT
 
 cat > "$STRIPPER" << 'PY'

@@ -1,7 +1,7 @@
 # 70 — The TypeScript package
 
 `@bjornpagen/bumbledb-log`. A thin peer of `@bjornpagen/bumbledb` (peer
-dependency, 0.15.x lockstep): the codec and the footprint/braid functions
+dependency, 0.17.x lockstep): the codec and the footprint/braid functions
 mirrored byte-exactly, the five-verb store over `fetch` + `aws4fetch`,
 replica and writer composed from the engine SDK's existing verbs. No
 engine surface duplicated — the replica hands out the SDK's own `Db`.

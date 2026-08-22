@@ -15,7 +15,9 @@ a Lean theorem (L6–L10). Set semantics does the same to recovery:
 re-application is a proven no-op (L10), so recovery *is* replay — no
 intent fields, no forced-case tables, no applied-watermark machinery.
 
-These documents are **normative** in the `docs/architecture/` sense.
+These documents are **normative**: they bind the build the way the
+engine's laws bind the engine — the code implements them or reports the
+gap; it never improvises past them.
 Read [00-product.md](00-product.md) first; [15-conflict-algebra.md](15-conflict-algebra.md)
 is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 

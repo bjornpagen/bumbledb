@@ -68,7 +68,7 @@ credential-gated smoke.
 docs. The three mirrored pure functions validated against Lane A's corpus
 files byte-exactly; `aws4fetch` store (s3/r2/fs); replica/writer/tenants
 with the exact unions of 70; the temporal gate; the Vercel recipe;
-packaging in the 0.15.x lockstep; exported `Err*` values.
+packaging in the 0.17.x lockstep; exported `Err*` values.
 
 ## Lane D — replica + chain sidecar (after A + B)
 
