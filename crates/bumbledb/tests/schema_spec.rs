@@ -1,19 +1,3 @@
-//! The `SchemaSpec` bindings contract (`docs/architecture/70-api.md`
-//! § the `SchemaSpec` bindings contract), pinned from the public surface:
-//!
-//! - **Fingerprint parity** — one theory exercising every descriptor
-//!   construct (both closed tiers, `fresh`, `str`, `bytes<N>`, general
-//!   and fixed-width intervals, all three statement forms, `==`, a
-//!   literal-set selection, every legal capacity spelling — unit,
-//!   weighted, Duration-weighted, dependent-bound), built through
-//!   the `schema!` macro and through [`bumbledb::SchemaSpec`], yields
-//!   IDENTICAL fingerprints: macro and spec produce indistinguishable
-//!   descriptors.
-//! - **The spec-path ban table** — name-resolution failures are typed
-//!   and COMPLETE (every unresolvable name enumerated), and capacity
-//!   canonicity errors name the canonical spelling verbatim, mirroring
-//!   the macro's expansion errors (per-aggregate where weight-sensitive).
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec,
@@ -66,7 +50,6 @@ bumbledb::schema! {
     Holder(id) <=[balance]{1..*} Account(holder | status == Open);
 }
 
-/// A field spec with no newtype and no fresh mark.
 fn field(name: &str, value_type: ValueType) -> FieldSpec {
     FieldSpec {
         name: name.into(),
@@ -76,7 +59,6 @@ fn field(name: &str, value_type: ValueType) -> FieldSpec {
     }
 }
 
-/// A side with no selection.
 fn side(relation: &str, projection: &[&str]) -> SideSpec {
     SideSpec {
         relation: relation.into(),
@@ -85,7 +67,6 @@ fn side(relation: &str, projection: &[&str]) -> SideSpec {
     }
 }
 
-/// A side with one `field == Handle` selection.
 fn side_selected(relation: &str, projection: &[&str], field: &str, handle: &str) -> SideSpec {
     SideSpec {
         selection: vec![(
@@ -96,10 +77,6 @@ fn side_selected(relation: &str, projection: &[&str], field: &str, handle: &str)
     }
 }
 
-/// The spec twin of the `Everything` schema above, statement for
-/// statement — names where the macro wrote names, `bidirectional: true`
-/// where it wrote `==`, one `CapacityWindowSpec` per legal capacity
-/// spelling (unit, weighted, Duration-weighted, dependent-bound).
 #[expect(
     clippy::too_many_lines,
     reason = "one construct-complete theory, clearer kept together"
@@ -332,11 +309,6 @@ fn everything_spec() -> SchemaSpec {
 }
 
 // The seam roster: every literal construct the token→`Value` seam can
-// emit rides a SELECTION at least once (bool, u64, negative i64, str,
-// bytes<N>, general u64/i64 intervals, a width-matched fixed interval,
-// a handle, a non-string literal set), the fixed family covers the i64
-// element, closed rows carry i64/interval/bytes/u64 values, and an FD
-// takes a multi-field determinant — the constructs `Everything` misses.
 bumbledb::schema! {
     pub Seam;
 
@@ -380,7 +352,6 @@ bumbledb::schema! {
     Item(id | delta == {-9223372036854775808, 3}) <= Item(id);
 }
 
-/// A side with one `field == literal` (plain-value) selection.
 fn side_valued(relation: &str, projection: &[&str], field: &str, literal: Value) -> SideSpec {
     SideSpec {
         selection: vec![(
@@ -391,7 +362,6 @@ fn side_valued(relation: &str, projection: &[&str], field: &str, literal: Value)
     }
 }
 
-/// The spec twin of the `Seam` schema above.
 #[expect(
     clippy::too_many_lines,
     reason = "one construct-complete theory, clearer kept together"
@@ -615,13 +585,13 @@ fn the_extension_row_cap_is_the_validators_not_the_lowerings() {
         }],
         statements: Vec::new(),
     };
-    // 256 rows: at the cap, lowers and seals.
+
     closed(256)
         .descriptor()
         .expect("resolves")
         .validate()
         .expect("at the cap the theory seals");
-    // 257 rows: lowers (the cap is semantic), sealed rejection is typed.
+
     let over = closed(257).descriptor().expect("names still resolve");
     assert!(
         over.validate().is_err(),
@@ -637,11 +607,10 @@ fn a_row_with_extra_values_is_rejected_not_silently_truncated() {
         .as_mut()
         .expect("Kind is closed")
         .rows;
-    // Kind declares two columns; this row now supplies three literals.
+
     rows[0].values.push(LiteralSpec::Value(Value::Bool(false)));
     // The lowering must not silently drop the third literal: the column
-    // zip cannot represent it, so the spec is rejected typed (the
-    // short-row case stays the engine validator's arity check).
+
     let error = spec
         .descriptor()
         .expect_err("an over-wide row never lowers");
@@ -689,8 +658,7 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
         target: side("Holder", &["id"]),
         bidirectional: false,
     });
-    // The target pairs AccountId with AccountId — coherent on purpose,
-    // so the unknown handle is the statement's ONE issue.
+
     spec.statements.push(StatementSpec::Containment {
         source: side_selected("Account", &["id"], "status", "Thawed"),
         target: side("SavingsTerms", &["account"]),
@@ -732,8 +700,7 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
 #[test]
 fn a_handle_on_a_non_reference_field_is_typed() {
     let mut spec = everything_spec();
-    // The target pairs AccountId with AccountId — coherent on purpose,
-    // so the mis-aimed handle is the statement's ONE issue.
+
     spec.statements.push(StatementSpec::Containment {
         source: side_selected("Account", &["id"], "holder", "Frozen"),
         target: side("SavingsTerms", &["account"]),
@@ -756,15 +723,10 @@ fn a_handle_on_a_non_reference_field_is_typed() {
     );
 }
 
-// The coherence check through the spec path — the TS SDK's entry
-// (`docs/architecture/30-dependencies.md` § the taxonomy is checked):
-// the same three-case rule the macro's compile-fail twins pin, judged by
-// the ONE shared lowering.
-
 #[test]
 fn paired_faces_with_disagreeing_newtypes_are_rejected_typed() {
     let mut spec = everything_spec();
-    // Account.holder is HolderId; Kind's synthetic id is KindId.
+
     spec.statements.push(StatementSpec::Containment {
         source: side("Account", &["holder"]),
         target: side("Kind", &["id"]),
@@ -800,7 +762,7 @@ fn paired_faces_with_disagreeing_newtypes_are_rejected_typed() {
 #[test]
 fn a_labeled_face_never_pairs_with_a_bare_one() {
     let mut spec = everything_spec();
-    // SavingsTerms.account is AccountId; SavingsTerms.rate_bps is bare.
+
     spec.statements.push(StatementSpec::Containment {
         source: side("SavingsTerms", &["account"]),
         target: side("SavingsTerms", &["rate_bps"]),
@@ -837,8 +799,7 @@ fn a_labeled_face_never_pairs_with_a_bare_one() {
 #[test]
 fn bare_faces_pair_with_bare_faces() {
     let mut spec = everything_spec();
-    // Holder.name is bare on both faces — the check passes and the
-    // spec lowers (a deliberately-bare pairing stays legal).
+
     spec.statements.push(StatementSpec::Containment {
         source: side("Holder", &["name"]),
         target: side("Holder", &["name"]),
@@ -850,8 +811,7 @@ fn bare_faces_pair_with_bare_faces() {
 #[test]
 fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     let mut spec = everything_spec();
-    // The ψ-selected capacity target: selection never changes the field
-    // pairing — Holder.id (HolderId) still pairs Kind's id (KindId).
+
     spec.statements.push(StatementSpec::Capacity {
         target: SideSpec {
             selection: vec![(
@@ -886,12 +846,6 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     );
 }
 
-/// One banned capacity spelling per row of the ban table
-/// (`docs/architecture/70-api.md` § the canonical-utterance law), each
-/// error's `Display` naming the canonical form the author pastes back.
-/// A ban is canonical-utterance policing when weight-independent and
-/// semantic deduplication when not — the weight-independent rows fire
-/// identically on the unit instance here and the weighted probes below.
 #[test]
 fn the_capacity_ban_table_rejects_at_spec_construction_naming_the_canonical_form() {
     let banned: [(CapacityWindowSpec, SpecIssue, &str); 5] = [
@@ -959,10 +913,6 @@ fn the_capacity_ban_table_rejects_at_spec_construction_naming_the_canonical_form
     }
 }
 
-/// The weight-SENSITIVE row of the ban law: `{1..*}` is banned on the
-/// unit instance only (above) — the weighted floor is legal, because
-/// "positive total" is not an existence claim over rows (a zero-weight
-/// row satisfies containment but not the sum floor).
 #[test]
 fn the_weighted_floor_is_legal_where_the_unit_floor_is_banned() {
     let mut spec = everything_spec();
@@ -976,10 +926,10 @@ fn the_weighted_floor_is_legal_where_the_unit_floor_is_banned() {
         .expect("`<=[w]{1..*}` is the legal weighted floor");
 }
 
-/// The path BOUND refuses at the spec surface exactly as the weight
-/// does (ruling 6, one law both slots): the typed `BoundPathRefused`
-/// naming the pinned-column idiom — never the accidental
-/// `UnknownField` a dotted name fell to before the symmetry landed.
+/// The path BOUND refuses at the spec surface exactly as the weight does
+/// (ruling 6, one law both slots): the typed `BoundPathRefused` naming the
+/// pinned-column idiom — never the accidental `UnknownField` a dotted name fell
+/// to before the symmetry landed.
 #[test]
 fn a_path_bound_is_refused_naming_the_pinned_column_idiom() {
     let mut spec = everything_spec();
@@ -1007,9 +957,6 @@ fn a_path_bound_is_refused_naming_the_pinned_column_idiom() {
     );
 }
 
-/// The path weight refuses at the spec surface (ruling 6: the weight
-/// vocabulary is closed at the row), its diagnostic naming the
-/// pinned-column composition idiom verbatim.
 #[test]
 fn a_path_weight_is_refused_naming_the_pinned_column_idiom() {
     let mut spec = everything_spec();
@@ -1037,8 +984,8 @@ fn a_path_weight_is_refused_naming_the_pinned_column_idiom() {
     );
 }
 
-/// Dependent bounds are hi-slot only (ruled 2026-07-24, C6): a
-/// dependent floor is a typed refusal naming the ruling.
+/// Dependent bounds are hi-slot only (ruled 2026-07-24, C6): a dependent floor
+/// is a typed refusal naming the ruling.
 #[test]
 fn a_dependent_floor_is_refused_hi_slot_only() {
     let mut spec = everything_spec();
