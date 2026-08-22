@@ -12,7 +12,6 @@ use crate::querygen::target::ids;
 
 #[derive(Clone, Copy)]
 enum Template {
-
     TagOnPosting,
 
     MandateOnAccount,
