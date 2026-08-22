@@ -4,7 +4,6 @@
 //! disjointness: within one scalar-prefix group the cursor is ordered by
 //! interval start, so one lookback checks `prev.end <= next.start` — the
 //! invariant the neighbor probe assumes but never re-checks globally.
-
 use crate::error::{CorruptionError, Result};
 use crate::schema::StatementView;
 use crate::storage::catalog::CatalogRead;
