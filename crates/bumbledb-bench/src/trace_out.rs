@@ -11,7 +11,6 @@ pub struct FlameRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlameSummary {
-
     pub rows: Vec<FlameRow>,
 
     pub wall_ns: u64,
