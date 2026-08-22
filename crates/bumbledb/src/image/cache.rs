@@ -5,7 +5,6 @@
 //! relation is a [`GenerationCache`]. A store generation on a closed
 //! image is unrepresentable — the closed arm has no generation field.
 //! arm, R16) — drop (their ordinals shifted or their prefix broke —
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
