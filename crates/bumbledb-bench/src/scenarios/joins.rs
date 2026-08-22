@@ -1,11 +1,3 @@
-//! The join-order stress scenario (JOB-inspired): an IMDb-shaped
-//! snowflake with skewed fan-ins and correlated predicates. The Join
-//! Order Benchmark's thesis is that realistic, correlated, skewed data
-//! punishes bad join orders by orders of magnitude — this is that
-//! pressure, expressed in the engine's conjunctive subset (no LIKE, no
-//! OR, no outer joins; selectivity comes from closed vocabularies,
-//! ranges, and interned-string points instead).
-
 use super::{Scenario, ScenarioQuery, mix};
 use bumbledb::schema::ValidateDescriptor as _;
 
@@ -86,14 +78,7 @@ bumbledb::schema! {
     MovieKeyword(movie, keyword) -> MovieKeyword;
 }
 
-/// Relation ids by declaration order.
-/// The validated scenario schema, memoized for the inspection surfaces
-/// (DDL rendering, typing); the store is created from [`Joins`]'s
-/// descriptor (`scenarios::load`).
-///
 /// # Panics
-///
-/// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -120,7 +105,6 @@ pub mod ids {
     pub const ROLE: RelationId = RelationId(10);
 }
 
-/// Sizes (fixed — the scenario is one world, not a scale axis).
 pub const KINDS: u64 = 7;
 pub const COMPANIES: u64 = 5_000;
 pub const PEOPLE: u64 = 50_000;
@@ -130,8 +114,5 @@ pub const CASTS: u64 = 250_000;
 pub const MOVIE_COMPANIES: u64 = 75_000;
 pub const MOVIE_KEYWORDS: u64 = 150_000;
 
-/// Hot rows: the skew knobs. 1% of people take ~25% of cast rows;
-/// 1% of keywords take ~25% of keyword rows (power-law-ish fan-in,
-/// the JOB pressure).
 const HOT_PEOPLE: u64 = PEOPLE / 100;
 const HOT_KEYWORDS: u64 = KEYWORDS / 100;
