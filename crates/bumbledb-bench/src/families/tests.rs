@@ -12,8 +12,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-/// The set-bound families pin their goldens under a fixed representative
-/// set — documented in the param policy, independent of any seed.
 fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
     if family.name == "entries_for_account_set" {
         vec![(
@@ -41,9 +39,6 @@ fn all_sixteen_validate_and_prepare() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The golden criterion: every family's SQL golden is byte-pinned
-/// against the translator (set-bound families under the documented
-/// representative set).
 #[test]
 fn every_golden_equals_its_translation() {
     for family in all() {
@@ -74,7 +69,7 @@ fn params_are_deterministic_with_the_documented_misses() {
             .expect("registered")
             .params)(&CFG)
     };
-    // The documented misses.
+
     let point = draws("point");
     let ParamValue::Scalar(Value::U64(miss)) = point[3][0] else {
         panic!("point param")
@@ -92,7 +87,7 @@ fn params_are_deterministic_with_the_documented_misses() {
         panic!("string param")
     };
     assert!(raw.starts_with("missing-"), "string set 4 is a miss");
-    // The set family's documented sizes: 1, 3 (hot account 0 in), 8, 0.
+
     let sets = draws("entries_for_account_set");
     let lens: Vec<usize> = sets
         .iter()
@@ -108,7 +103,7 @@ fn params_are_deterministic_with_the_documented_misses() {
         panic!("set draw")
     };
     assert!(with_hot.contains(&Value::U64(0)), "hot account 0 included");
-    // The at-instant probes are real posting rows.
+
     let instants = draws("mandate_at_instant");
     for draw in &instants[..3] {
         assert!(matches!(draw[0], ParamValue::Scalar(Value::U64(_))));
@@ -127,7 +122,7 @@ fn params_are_deterministic_with_the_documented_misses() {
 fn the_digest_tracks_every_ingredient() {
     let baseline = digest();
     assert_eq!(baseline, digest(), "deterministic");
-    // Perturb each ingredient of one family on a copy of the items.
+
     let items = |perturb: usize| {
         all().iter().enumerate().map(move |(i, f)| {
             let mut name = f.name;
@@ -152,8 +147,6 @@ fn the_digest_tracks_every_ingredient() {
     }
 }
 
-/// The family-owned index registry: deduplicated DDL (chain and range
-/// share `idx_posting_at`), and every expected pair has DDL.
 #[test]
 fn the_index_registry_deduplicates_and_matches() {
     let ddl = index_ddl();
@@ -170,17 +163,17 @@ fn the_index_registry_deduplicates_and_matches() {
     names.sort();
     names.dedup();
     assert_eq!(names.len(), expected.len(), "names are distinct");
-    // The shared shape appears exactly once.
+
     assert_eq!(
         ddl.iter().filter(|s| s.contains("idx_posting_at")).count(),
         1
     );
 }
 
-/// The doc's interval protocol: the pointwise Mandate key's
-/// statement-derived index IS the `(account, active_start, active_end)`
-/// composite — the interval families' honest opponent — and the overlap
-/// family adds the org-side composite.
+/// The doc's interval protocol: the pointwise Mandate key's statement-derived
+/// index IS the `(account, active_start, active_end)` composite — the interval
+/// families' honest opponent — and the overlap family adds the org-side
+/// composite.
 #[test]
 fn interval_families_get_their_composites() {
     let ddl = crate::sqlmap::ddl(schema());
@@ -196,11 +189,6 @@ fn interval_families_get_their_composites() {
     );
 }
 
-/// The engine result of the balance family over a two-equal-amount
-/// slice: both amount-5 postings count (the true-balance semantics),
-/// engine and translated SQL alike.
-/// The minimal consistent slice: one holder/account, two postings of
-/// amount 5 on distinct entries (every containment target present).
 fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
     vec![
         (ids::HOLDER, vec![Value::U64(0), s("h")]),
@@ -245,7 +233,7 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
 #[test]
 fn balance_counts_equal_amounts_separately() {
     let rows = equal_amount_slice();
-    // Engine side.
+
     let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
     let _ = std::fs::remove_dir_all(&dir);
     let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
@@ -270,7 +258,6 @@ fn balance_counts_equal_amounts_separately() {
         "both amount-5 postings count"
     );
 
-    // Translated-SQL side, over the identical rows.
     let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
     for statement in crate::sqlmap::ddl(schema()) {
         conn.execute(&statement, []).expect("ddl");
@@ -296,11 +283,6 @@ fn s(text: &str) -> Value {
     Value::String(text.into())
 }
 
-/// The depth lane's identity (R22, finding 088): four atoms — one plan
-/// node each (`binary2fj` mints one node per occurrence; `factor` never
-/// changes node count) — report-kind, on chain's draws. Every other
-/// read family is ≤ 3 atoms, so shrinking this shape un-measures the
-/// mid-stream pump regime.
 #[test]
 fn deep_chain_is_the_four_atom_report_lane() {
     let family = all()
@@ -328,10 +310,6 @@ fn deep_chain_is_the_four_atom_report_lane() {
     );
 }
 
-/// The depth lane executes its deepest node: a warm S-scale trace holds
-/// node-3 join phases — the plan really is 4 nodes at runtime, so the
-/// mid-stream pump regime (the tail-drain placement, R22/088) is on the
-/// measured path, not just in the IR.
 #[cfg(feature = "obs")]
 #[test]
 fn deep_chain_reaches_node_three_at_runtime() {
@@ -403,7 +381,7 @@ fn the_query_list_renders_every_section_of_both_theories() {
         assert!(md.contains(family.param_policy), "{} policy", family.name);
     }
     assert_eq!(md.matches("Family-list digest: `").count(), 2);
-    // 16 ledger + 7 calendar sections, one ```sql block each.
+
     assert_eq!(
         md.matches("```sql").count(),
         all().len() + crate::calendar::families::all().len()
