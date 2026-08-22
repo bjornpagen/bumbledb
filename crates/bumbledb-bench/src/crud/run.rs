@@ -17,7 +17,6 @@ use super::{CrudSizes, CrudWorld, corpus, families, ids, ops, render, schema};
 
 #[derive(Debug, Clone)]
 pub struct CrudRow {
-
     pub family: &'static str,
 
     pub lane: &'static str,
@@ -91,7 +90,6 @@ pub(crate) fn fold(
     trace_root: Option<&Path>,
     load: &LaneLoader<'_>,
 ) -> Result<(String, String), String> {
-
     // ramdisk sanction): a RAM-backed target refuses before any store
 
     crate::devhonesty::assert_disk_backed(dir, "the timed crud lanes")
@@ -197,7 +195,6 @@ type FamilyOutcome = (
 );
 
 impl LaneRun<'_> {
-
     #[expect(
         clippy::too_many_lines,
         reason = "one match arm per registered family: the registry IS the run order"
