@@ -6,34 +6,19 @@ use crate::sqlmap;
 use super::FairnessCheck;
 
 impl FairnessCheck {
-    /// Asserts the session and store shape: WAL on, `synchronous=FULL`,
-    /// `fullfsync`/`checkpoint_fullfsync` ON (flush-to-media parity with
-    /// LMDB's macOS commits — docs/architecture/60-validation.md), the
-    /// mmap covering the whole file (the memory-residency parity claim
+
     /// as a checked invariant, finding 074 — LMDB maps the whole store
-    /// unconditionally), every expected index present (the
-    /// statement-derived [`sqlmap::expected_indexes`] registry PLUS the
-    /// family-owned composites, `crate::families::expected_indexes`,
-    /// against `PRAGMA index_list`), and `ANALYZE` statistics populated.
-    /// Statement reuse needs no runtime check — [`PreparedFamily`] owns
-    /// the only construction site by type.
-    ///
+
     /// # Errors
-    ///
-    /// A message naming the first failed rule.
+
     pub fn run(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(schema());
         expected.extend(crate::families::expected_indexes());
         Self::run_with(conn, &expected)
     }
 
-    /// [`FairnessCheck::run`] for the calendar mirror: the same session
-    /// rules against the calendar schema's statement-derived registry
-    /// plus its family-owned composites.
-    ///
     /// # Errors
-    ///
-    /// A message naming the first failed rule.
+
     pub fn run_calendar(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(crate::calendar::schema());
         expected.extend(crate::calendar::families::expected_indexes());
@@ -55,9 +40,9 @@ impl FairnessCheck {
                 "fairness: synchronous is {synchronous}, not FULL (2)"
             ));
         }
-        // Durability parity (docs/architecture/60-validation.md): LMDB flushes to media on
+
         // every macOS commit; SQLite must too, or the write comparison
-        // is a lie told at the same synchronous level.
+
         for pragma in ["fullfsync", "checkpoint_fullfsync"] {
             let on: i64 = conn
                 .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
