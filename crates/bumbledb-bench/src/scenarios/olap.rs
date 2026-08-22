@@ -100,7 +100,6 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         ],
         ids::CUSTOMER => vec![Value::U64(i), Value::U64(rng.range(4))],
         ids::SALE => {
-
             let day = if rng.chance(1, 2) {
                 (DAYS * 2 / 3) + rng.range(DAYS / 3)
             } else {
