@@ -33,7 +33,6 @@ const DOC_DELETE: &str = "DELETE FROM \"Doc\" WHERE \"id\" = ?1";
 pub struct FreshCursor(pub u64);
 
 impl FreshCursor {
-
     #[must_use]
     pub fn at_base(sizes: CrudSizes) -> Self {
         Self(sizes.docs + sizes.delete_pool)
