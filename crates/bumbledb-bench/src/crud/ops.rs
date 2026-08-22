@@ -3,7 +3,6 @@
 //! evolving [`CounterModel`], `(seed, sizes, count, model)` where `count =
 //! protocol.warmups + protocol.samples` — the runner's total closure
 //! invocations (batch
-
 use std::collections::HashMap;
 
 use bumbledb::Value;
