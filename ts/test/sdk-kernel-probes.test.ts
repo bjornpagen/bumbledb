@@ -1,26 +1,26 @@
 /**
  * sdk-kernel bug-hunt pins (found 2026-07-17), restated on the STRUCTURAL
- * surface. Each test pins one formerly-confirmed defect at its fixed
+ * surface. Each test pins one -confirmed defect at its fixed
  * behavior; the controls beside it pin the adjacent behavior that always
  * held.
  *
- *   1. pointIn() with a literal interval operand — legal per the type
- *      surface and per the IR (`ir::CmpOp::PointIn` is interval-left,
- *      point-right; `Term::Literal(Value::IntervalU64)` is a legal lhs) —
- *      lowers to PointIn interval-left: comparison-literal tagging is
- *      op-aware and tags the interval-shaped literal by the point
- *      sibling's element domain. The structural surface also makes it a
- *      TYPE-level guarantee: the interval shape is legal exactly at
- *      `pointIn`/`allen` positions.
- *   2. The unused-param law, structural form: params are typed BY USE and
- *      the registry is usage-derived, so a param VALUE no rule places
- *      never registers — the query lowers, prepares, and executes under
- *      exactly its inferred `Params` object (the old dead-declaration
- *      refusal is obsolete: there is no declaration to leave dead).
- *   3. closed() mints handle constants and axiom rows with own-property
- *      definition, so an object-protocol handle name ("__proto__") is a
- *      fully working handle instead of a silent prototype swap — and the
- *      constants are BARE bigints (no brand exists anywhere).
+ * 1. pointIn with a literal interval operand — legal per the type
+ * surface and per the IR (`ir::CmpOp::PointIn` is interval-left,
+ * point-right; `Term::Literal(Value::IntervalU64)` is a legal lhs) —
+ * lowers to PointIn interval-left: comparison-literal tagging is
+ * op-aware and tags the interval-shaped literal by the point
+ * sibling's element domain. The structural surface also makes it a
+ * TYPE-level guarantee: the interval shape is legal exactly at
+ * `pointIn`/`allen` positions.
+ * 2. The unused-param law, structural form: params are typed BY USE and
+ * the registry is usage-derived, so a param VALUE no rule places
+ * never registers — the query lowers, prepares, and executes under
+ * exactly its inferred `Params` object (the old dead-declaration
+ * refusal is obsolete: there is no declaration to leave dead).
+ * 3. closed mints handle constants and axiom rows with own-property
+ * definition, so an object-protocol handle name ("__proto__") is a
+ * fully working handle instead of a silent prototype swap — and the
+ * constants are BARE bigints (no brand exists anywhere).
  */
 
 import assert from "node:assert/strict"
@@ -67,11 +67,7 @@ test("CONTROL: pointIn() accepts a point literal with an interval var", function
 })
 
 test("pointIn() with a literal interval operand lowers to PointIn (interval-left, point-right)", function pointInLiteralInterval() {
-	/**
-	 * "sessions whose timestamp falls inside a fixed window" — the literal
-	 * interval lands as the IR's lhs whatever the surface argument order;
-	 * the point-typed sibling's element domain tags it intervalU64.
-	 */
+
 	const q = query(Probe).rule((r) => {
 		const { holder, at } = v(Session)
 		return r
@@ -92,11 +88,7 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 })
 
 test("a param value no rule places never registers — the query lowers under its inferred Params", function unusedParam() {
-	/**
-	 * CONTROL: a USED param registers once, anchored by its binding field,
-	 * and lands in the wire registry — the params contract the
-	 * usage-derived registry protects.
-	 */
+
 	const used = query(Probe).rule((r) => {
 		const { id } = v(Holder)
 		return r
@@ -114,12 +106,7 @@ test("a param value no rule places never registers — the query lowers under it
 	assert.equal(typeof usedParams.wanted, "bigint")
 
 	const q = query(Probe).rule((r) => {
-		/**
-		 * Created, placed in no rule: params are typed by USE, so this value
-		 * contributes nothing — not to the inferred `Params` type, not to
-		 * the wire registry, not to the lowered IR. The old dead-declaration
-		 * refusal is obsolete because the dead declaration is unrepresentable.
-		 */
+
 		const ghost = r.param("ghost")
 		assert.equal(ghost.name, "ghost")
 		const { id } = v(Holder)
@@ -134,14 +121,7 @@ test("a param value no rule places never registers — the query lowers under it
 })
 
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {
-	/**
-	 * "__proto__" is a legal identifier (the macro analog admits it), and
-	 * handles are DATA, never properties of the value — but the axioms
-	 * record IS keyed by handle name, so its rows must be minted with
-	 * own-property definition: assignment would silently ride the
-	 * Object.prototype accessor and swap the record's prototype instead of
-	 * creating the row.
-	 */
+
 	const handles = ["Alpha", "__proto__"] as const
 	const K = closed("K", handles)
 	assert.deepEqual(K.data.handles, handles, "the roster carries every handle in declaration order")
