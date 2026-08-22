@@ -2,7 +2,6 @@
 //! [`bdb_value`], carries every `bumbledb::Value` variant in BOTH
 //! directions. Inbound, the bridge copies the view into Rust-owned data
 //! outbound, variable-width payloads BORROW from the Rust-owned carrier.
-
 use bumbledb::{AnswerValue, BindValue, Interval, Value};
 
 use crate::error::fail_shape;
