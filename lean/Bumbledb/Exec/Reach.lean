@@ -18,12 +18,12 @@ the same class as `ResultBytesOverflow` vs `rulesAnswers`.
 ## Narrowings recorded (law 5)
 
 * **`evalLinearReach` candidates.** The proved evaluator uses the finite
-  union of `allTuples recDom r.finds.length` over `baseRules ++
-  stepRules`.
+ union of `allTuples recDom r.finds.length` over `baseRules ++
+ stepRules`.
 * **Private `fueledLoop_fixpoint`.** Inflation (`acc ⊆ step acc`) is
-  an invariant hypothesis, not a property of every list. Public
-  `reachStep` stays `T(acc) = base ++ rec(acc)` as specified; the
-  naive chain from `[]` is inflationary by `reachOp_mono`.
+ an invariant hypothesis, not a property of every list. Public
+ `reachStep` stays `T(acc) = base ++ rec(acc)` as specified; the
+ naive chain from `[]` is inflationary by `reachOp_mono`.
 -/
 
 namespace Bumbledb.Query
@@ -878,7 +878,7 @@ theorem reachDen_instance {C : Classify} {rec : LinearRec} {self : InteriorId}
 two instances agreeing on every mentioned stored relation yield
 identical answers. Interior and rec tables are determined by those
 relations. Bridge: snapshot isolation — an execution runs against one
-storage snapshot (`crate::Db::query` pins one read transaction); PRD 09
+storage snapshot (`crate::Db::query` pins one read transaction); 
 owns the transaction side. -/
 theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
     (ρ : ParamEnv) (h : ∀ R, R ∈ q.relations → I R = J R) :
