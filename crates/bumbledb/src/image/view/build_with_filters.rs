@@ -1,5 +1,4 @@
 //! record of the one-scan claim.
-
 use std::sync::Arc;
 
 use crate::error::Result;
