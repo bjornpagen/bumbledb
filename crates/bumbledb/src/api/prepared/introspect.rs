@@ -25,7 +25,6 @@ impl<S> PreparedQuery<S> {
     }
 
     /// templates after execution: a hit has already latched to `Word` and
-
     fn pending_literal_note(&self) -> Option<String> {
         if self.latch.is_latched() {
             return None;
