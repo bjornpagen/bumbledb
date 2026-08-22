@@ -17,10 +17,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// One loaded S oracle covers the read-side criteria: the fairness
-/// contract passes, then fails by name when an index is dropped;
-/// sample drains (count == COUNT(*) cross-check); re-binding across
-/// param draws changes counts; one `PreparedFamily` runs 100 samples.
 #[test]
 fn fairness_and_the_prepared_sample_contract() {
     let dir = scratch("read");
@@ -30,7 +26,6 @@ fn fairness_and_the_prepared_sample_contract() {
     let conn = open_for_bench(&path).expect("open for bench");
     FairnessCheck::run(&conn).expect("fairness holds on a loaded corpus");
 
-    // The range family: window params make counts uniform per set.
     let family = families::all()
         .iter()
         .find(|f| f.name == "range")
@@ -55,8 +50,7 @@ fn fairness_and_the_prepared_sample_contract() {
     let mut counts = Vec::new();
     for params in &sets {
         let count = sample_args(&mut prepared, params).expect("sample");
-        // Drain cross-check: the count matches COUNT(*) over the
-        // same SQL and binding.
+
         let expected: i64 = conn
             .query_row(
                 &format!("SELECT COUNT(*) FROM ({})", translated.sql),
@@ -72,8 +66,6 @@ fn fairness_and_the_prepared_sample_contract() {
         "the ~2% windows select uniformly by construction: {counts:?}"
     );
 
-    // Re-binding across param draws changes counts: the point family's
-    // three hits return one row each, the miss returns none.
     let point = families::all()
         .iter()
         .find(|f| f.name == "point")
@@ -99,14 +91,11 @@ fn fairness_and_the_prepared_sample_contract() {
     assert_eq!(point_counts, vec![1, 1, 1, 0], "hits then the miss");
     drop(point_prepared);
 
-    // Prepared-once discipline: 100 samples on the same statement.
     for round in 0..100 {
         let set = &sets[round % sets.len()];
         sample_args(&mut prepared, set).expect("reused statement");
     }
 
-    // Clearing fullfsync fails the contract by name
-    // (docs/architecture/60-validation.md).
     conn.pragma_update(None, "fullfsync", "OFF")
         .expect("pragma");
     let err = FairnessCheck::run(&conn).expect_err("must fail");
@@ -123,12 +112,6 @@ fn fairness_and_the_prepared_sample_contract() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The write mirrors run their full protocols with directionally sane
-/// results (a 512-row transaction outlasts a 1-row one). Both commit
-/// shapes are `F_FULLFSYNC`-dominated (~24 ms each on the pinned
-/// machine), so under a saturated test host the direction can invert by
-/// scheduler noise alone — the measurement re-runs up to three rounds
-/// and fails only when the inversion is reproducible.
 #[test]
 fn write_mirrors_run_with_sane_direction() {
     const ROUNDS: usize = 3;
@@ -172,11 +155,6 @@ fn write_mirrors_run_with_sane_direction() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The DNF cap's interrupt mechanism, smoked for correctness (not a
-/// benchmark): a query that cannot finish inside its cap comes back
-/// [`CapOutcome::Tripped`]; a trivial one under a generous cap comes
-/// back [`CapOutcome::Done`] — and the handler is cleared between the
-/// two, so the second run is uncapped-equivalent.
 #[test]
 fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     let conn = Connection::open_in_memory().expect("open");
