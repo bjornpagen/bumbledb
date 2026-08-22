@@ -2,15 +2,12 @@
 //! delta and the heap construction stage (fact and dictionary bytes
 //! accumulate here and free as a whole); the executor's scratch is
 //! retained-capacity `Vec` pools, not this type. No external crate, no
-//! `unsafe`:
 //! allocations hand out index-based [`ArenaSlice`] handles, never pointers,
 //! so chunk storage may move without invalidating anything.
-
-/// Default chunk capacity; oversized allocations get their own chunk.
+//! `unsafe`:
 const CHUNK_CAPACITY: usize = 64 * 1024;
 
 /// An index-based handle to bytes stored in an [`Arena`].
-///
 /// Provenance: one arena exists per write delta. The handle is meaningful
 /// only against the arena that minted it. A generation tag is required
 /// the day a second arena appears; until then the pairing is structural,
@@ -27,10 +24,7 @@ pub struct ArenaSlice {
 #[derive(Debug, Default)]
 pub struct Arena {
     chunks: Vec<Vec<u8>>,
-    /// The open chunk ordinary allocations bump into — an explicit
-    /// index, not "the last chunk": an oversized spill pushes its own
-    /// exactly-sized chunk past it without advancing it, so the open
-    /// chunk's free tail stays live instead of stranding.
+
     active: usize,
 }
 
@@ -40,18 +34,13 @@ impl Arena {
         Self::default()
     }
 
-    /// Copies `bytes` into the arena, returning its handle.
-    ///
     /// # Panics
-    ///
+
     /// Only on a programmer-invariant violation: a single allocation or
-    /// chunk offset exceeding `u32::MAX` (the scale axiom keeps every
-    /// allocation orders of magnitude below that).
+
     pub fn alloc(&mut self, bytes: &[u8]) -> ArenaSlice {
         let chunk_idx = if bytes.len() > CHUNK_CAPACITY {
-            // A dedicated exactly-sized chunk, pushed past the active
-            // one — which keeps its free tail for the next ordinary
-            // allocation.
+
             self.chunks.push(Vec::with_capacity(bytes.len()));
             self.chunks.len() - 1
         } else {
@@ -75,7 +64,6 @@ impl Arena {
         }
     }
 
-    /// Resolves a handle back to its bytes.
     #[must_use]
     pub fn get(&self, slice: ArenaSlice) -> &[u8] {
         let chunk = &self.chunks[slice.chunk as usize];
@@ -108,8 +96,8 @@ mod tests {
         let mut arena = Arena::new();
         let (a, b, c) = (
             vec![1u8; 40 * 1024],
-            vec![2u8; 40 * 1024],  // exceeds the first chunk
-            vec![3u8; 200 * 1024], // its own chunk
+            vec![2u8; 40 * 1024],  
+            vec![3u8; 200 * 1024], 
         );
         let first = arena.alloc(&a);
         let second = arena.alloc(&b);
