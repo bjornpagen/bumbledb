@@ -91,7 +91,6 @@ impl ViewMemo {
         }) {
             match &mut occ_memo.active {
                 Binding::Derived => {
-
                     return false;
                 }
                 Binding::Bound(active) => {
