@@ -22,13 +22,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// The declared world seals with every statement family the mandate
-/// names, by count: 4 declared keys + 3 fresh auto-keys (+ 3 closed
-/// auto-keys), 7 containments exactly one of which selects its target
-/// (the ψ-selected steer-scope law), 1 capacity law (the `{0..8}`
-/// attempt count — the unit-weight instance, asserted explicitly),
-/// and a payload-bearing closed vocabulary (`Outcome.terminal`). The id
-/// constants pin declaration order.
 #[test]
 fn the_lawful_schema_validates_and_carries_every_statement_family() {
     let schema = super::schema();
@@ -102,9 +95,6 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
     );
 }
 
-/// The enforcement map is TOTAL over the materialized statement list —
-/// an engine law without a `SQLite` row is a failing count here, never
-/// a silent parity gap — and every notation is unique (the map's key).
 #[test]
 fn the_enforcement_map_is_total_over_the_materialized_statements() {
     let materialized = LawfulWorld.descriptor().materialized_statements();
@@ -122,9 +112,6 @@ fn the_enforcement_map_is_total_over_the_materialized_statements() {
     );
 }
 
-/// Both durability lanes load value-identical twins at `Tiny`, judged
-/// by the shared post-state comparator over all five ordinary
-/// relations (Verdict included — empty on both sides).
 #[test]
 fn the_lawful_twins_load_value_identical_at_tiny() {
     let sizes = LawSizes::of(Scale::Tiny);
@@ -153,14 +140,6 @@ fn the_lawful_twins_load_value_identical_at_tiny() {
     }
 }
 
-/// Naive parity — the semantic oracle for the full law roster: both
-/// oracles preloaded with the Tiny corpus (outside the runner, so the
-/// summary counts the judged ops alone), then two legal writes (one
-/// single-insert, one 4-row cluster continuing the fresh sequences) and
-/// the four violating deltas — a duplicate `(task, n)` key, an absent
-/// task reference, an over-cap attempt burst, and a scope under an
-/// Observe steer — verdicts, statement ids, and directions compared
-/// whole by the differential runner.
 #[test]
 fn the_lawful_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
@@ -190,18 +169,15 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
             inserts,
         })
     };
-    // The seeded fresh frontiers: attempt ids 0..attempts, steer ids
-    // 0..steers.
+
     let attempts = sizes.tasks * sizes.attempts_per_task;
     let ops = vec![
-        // One legal attempt on task 1 (n = 2, above the seeded {0, 1}).
+
         write(vec![(
             ids::ATTEMPT,
             vec![Value::U64(attempts), Value::U64(1), Value::U64(2)],
         )]),
-        // One legal 4-row cluster, ids continuing both fresh sequences:
-        // an attempt, its verdict (Accepted), a Repartition steer, and
-        // its scope — judged as one final state on both oracles.
+
         write(vec![
             (
                 ids::ATTEMPT,
@@ -217,13 +193,12 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 vec![Value::U64(sizes.steers), Value::U64(0)],
             ),
         ]),
-        // The duplicate (task, n) key: the first op's determinant under
-        // a new id — MUST abort on both.
+
         write(vec![(
             ids::ATTEMPT,
             vec![Value::U64(attempts + 2), Value::U64(1), Value::U64(2)],
         )]),
-        // An attempt under an absent task id — MUST abort on both.
+
         write(vec![(
             ids::ATTEMPT,
             vec![
@@ -232,8 +207,7 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 Value::U64(0),
             ],
         )]),
-        // The window trip: 7 more attempts on task 5 blow the {0..8}
-        // cap (2 seeded + 7 = 9 > 8) — MUST abort on both.
+
         write(
             (0..7)
                 .map(|k| {
@@ -248,8 +222,7 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 })
                 .collect(),
         ),
-        // A scope under steer 0 (Observe): the ψ selection rejects the
-        // target — MUST abort on both.
+
         write(vec![(ids::STEER_SCOPE, vec![Value::U64(0), Value::U64(5)])]),
     ];
 
@@ -263,19 +236,15 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The tiny per-family protocol: 1 warmup + 2 measured samples = 3
-/// closure invocations (the crud test-protocol precedent).
+/// The tiny per-family protocol: 1 warmup + 2 measured samples = 3 closure
+/// invocations (the crud test-protocol precedent).
 const TINY_PROTO: Protocol = Protocol {
     warmups: 1,
     samples: 2,
 };
 
-/// Total closure invocations under [`TINY_PROTO`].
 const COUNT: usize = 3;
 
-/// The post-state judgment over all five ordinary relations — the one
-/// fold every lawful write test ends on (Verdict included: the cluster
-/// family is its only writer).
 fn assert_twins_identical(db: &Db<LawfulWorld>, conn: &rusqlite::Connection) {
     for rel in [
         ids::TASK,
@@ -292,12 +261,6 @@ fn assert_twins_identical(db: &Db<LawfulWorld>, conn: &rusqlite::Connection) {
     }
 }
 
-/// Both LEGAL commit families run their engine runner then their
-/// `SQLite` runner over the ONE shared op stream (sliced in registry
-/// order, per-task n counters continuing across the boundary) on a
-/// Durable twin pair, and the twins end value-identical on all five
-/// ordinary relations — the representation verdict's proof. Each
-/// measurement's work is the family's rows-per-sample × samples.
 #[test]
 fn every_lawful_commit_family_leaves_the_twins_value_identical() {
     let sizes = LawSizes::of(Scale::Tiny);
@@ -331,12 +294,12 @@ fn every_lawful_commit_family_leaves_the_twins_value_identical() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Every rejection lane refuses on BOTH engines and commits NOTHING:
-/// after the untimed window setup, each of the four rejection families
-/// runs both runners to completion (the engine runner completing `Ok`
-/// IS the proof its closure observed `Admission::Rejected` with the
-/// expected citation — anything else aborts it), the engine generation
-/// stands still, and every mirror table's `COUNT(*)` is unchanged.
+/// Every rejection lane refuses on BOTH engines and commits NOTHING: after the
+/// untimed window setup, each of the four rejection families runs both runners
+/// to completion (the engine runner completing `Ok` IS the proof its closure
+/// observed `Admission::Rejected` with the expected citation — anything else
+/// aborts it), the engine generation stands still, and every mirror table's
+/// `COUNT(*)` is unchanged.
 #[test]
 fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
     let sizes = LawSizes::of(Scale::Tiny);
@@ -409,12 +372,6 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The four rejection shapes cite the expected violation kinds — one
-/// direct `db.write` per shape, the sealed sets normalized through
-/// [`differential::cited`]: Functionality for the duplicate key,
-/// Containment for the absent task, Capacity for the over-cap
-/// attempt group, and Containment ON THE ψ STATEMENT for the Observe-steer
-/// scope.
 #[test]
 fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     let dir = scratch("citations");
@@ -509,10 +466,6 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The full tiny run renders both artifacts: the markdown carries the
-/// enforcement map, both lane sections, and all six family names; the
-/// JSON parses with one enforcement row per map entry, one lane row per
-/// (family × lane), and the certified post-state claim.
 #[test]
 fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
     let dir = scratch("full-run");
@@ -558,17 +511,13 @@ fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The traced lawful path (`--trace`): the legal commit family AND a
-/// rejection family land their traced twin samples as parseable
-/// Chrome+folded pairs under `<out>/trace/lawful/<lane>/`, and the
-/// JUDGMENT spans reach the artifacts — the legal commit's judgment
-/// phases plus the commit itself, and the containment rejection's
-/// judgment-then-abort (a KEY rejection aborts earlier, at the
-/// apply-phase functionality check, before any judgment span opens —
-/// the containment refusal is the one whose refusal IS judgment work).
-/// The work-parity and post-state folds still pass: the traced twin
-/// sample ran on BOTH engines, in stream lockstep. One sample per
-/// family: a smoke test, not a measurement.
+/// The traced lawful path (`--trace`): the legal commit family AND a rejection
+/// family land their traced twin samples as parseable Chrome+folded pairs under
+/// `<out>/trace/lawful/<lane>/`, and the JUDGMENT spans reach the artifacts —
+/// the legal commit's judgment phases plus the commit itself, and the
+/// containment rejection's judgment-then-abort (a KEY rejection aborts earlier,
+/// at the apply-phase functionality check, before any judgment span opens — the
+/// containment refusal is the one whose refusal IS judgment work).
 #[cfg(feature = "obs")]
 #[test]
 fn traced_lawful_lands_the_judgment_spans() {
@@ -613,7 +562,7 @@ fn traced_lawful_lands_the_judgment_spans() {
             }
         }
         // The legal commit's artifact additionally carries the LMDB
-        // commit phase — the fsync-bound span, readable from disk.
+
         let commit = std::fs::read_to_string(lane_dir.join("law_commit_attempt.json"))
             .expect("the legal commit trace");
         assert!(
