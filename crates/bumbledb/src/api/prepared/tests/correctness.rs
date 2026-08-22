@@ -1,9 +1,6 @@
 use super::*;
 use crate::ir::FoldOp;
 
-/// u64 ordered comparisons and cross-atom
-/// residuals — the generator's new constructs — each pinned against
-/// an independent nested-loop reference, no `SQLite` in sight.
 #[test]
 fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     let dir = TempDir::new("prepared-new-construct-differential");
@@ -21,8 +18,6 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(id) :- Posting(id, account = a), a >= 7 — a u64 ordered
-    // comparison over the dense id domain.
     let range = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -54,9 +49,6 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     expected.sort_unstable();
     assert_eq!(got, expected, "u64 ordered comparison");
 
-    // Q(x, y) :- Posting(account = k, amount = x),
-    //            Posting(account = k, amount = y), x < y — the
-    // cross-atom residual, checked by nested loop.
     let spread = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -108,12 +100,6 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     );
 }
 
-/// An aggregate whose body has a node
-/// binding only existential (non-projected, non-aggregated)
-/// variables folds every distinct full binding — pinned against an
-/// independent nested-loop reference. The plan's sink-relevance bits
-/// mark every variable-binding node relevant under aggregation, so
-/// no suffix skip can ever starve the fold.
 #[test]
 fn aggregates_fold_every_binding_of_existential_suffixes() {
     let dir = TempDir::new("prepared-agg-existential");
@@ -127,10 +113,6 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
     ];
     insert_postings(&env, &schema, rows);
 
-    // Q(x, Sum(y)) :- Posting(account = x, amount = y),
-    //                 Posting(account = x, memo = m)
-    // — m is existential; the self-join's second occurrence opens a
-    // node binding only m.
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -159,7 +141,6 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         conditions: vec![],
     });
 
-    // The nested-loop reference over distinct (x, y, m) bindings.
     let mut bindings = std::collections::BTreeSet::new();
     for p1 in rows {
         for p2 in rows {
@@ -194,11 +175,6 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
     assert_eq!(got, expected.into_iter().collect::<Vec<_>>());
 }
 
-/// Regression for the `Ne`-miss semantics
-/// (docs/architecture/20-query-ir.md): a never-interned value under
-/// `Ne` matches every stored row — the miss resolves to the sentinel
-/// intern id, not to an empty result. The old blanket "miss ⇒ empty"
-/// rule silently returned nothing here.
 #[test]
 fn ne_against_a_never_interned_string_matches_everything() {
     let dir = TempDir::new("prepared-ne-miss");
@@ -207,7 +183,6 @@ fn ne_against_a_never_interned_string_matches_everything() {
     insert_postings(&env, &schema, &[(1, 7, "rent", -1200), (2, 9, "food", -55)]);
     let cache = ImageCache::new(&schema);
 
-    // Literal path: Q(amount) :- Posting(memo = m, amount), m != "ghost".
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -231,7 +206,6 @@ fn ne_against_a_never_interned_string_matches_everything() {
         .expect("execute");
     assert_eq!(out.len(), 2, "no stored memo equals a never-interned value");
 
-    // Param path: Q(amount) :- Posting(memo = m, amount), m != ?0.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -253,7 +227,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])
         .expect("execute");
     assert_eq!(out.len(), 2);
-    // An interned value under Ne excludes exactly its rows.
+
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("rent")])
         .expect("execute");
