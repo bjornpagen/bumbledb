@@ -53,7 +53,6 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
     assert_eq!(prepared.pipeline.main_rules().len(), 2, "one plan per rule");
     for rule in prepared.pipeline.main_rules() {
-
         let PreparedRule::FreeJoin(rule) = rule else {
             panic!("fixture rules use Free Join");
         };
@@ -246,7 +245,6 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         answers,
         vec![
             ("a".to_owned(), 10),
-
             ("b".to_owned(), 25),
             ("c".to_owned(), 40),
         ]
@@ -457,7 +455,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
         conditions: vec![],
     };
     let mut rule0 = by_account_rule(3);
-    rule0.conditions.clear(); 
+    rule0.conditions.clear();
     let query = Query {
         interiors: vec![],
         head: vec![HeadTerm::Var, HeadTerm::Var],
