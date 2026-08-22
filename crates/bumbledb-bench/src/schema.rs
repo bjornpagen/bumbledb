@@ -94,7 +94,6 @@ pub mod ids {
     pub const TAG: RelationId = RelationId(11);
 
     /// ids 9..12) sit after every ordinary relation by declaration:
-
     pub const RELATIONS: u32 = 9;
 
     pub mod holder {
