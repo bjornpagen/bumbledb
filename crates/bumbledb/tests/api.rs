@@ -1,7 +1,6 @@
 //! end to end through the public surface — create → write{reserve+insert} →
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
 //! the export → collection-insert ETL round trip on both lanes (`insert`
-
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, FoldOp, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
     RecRule, RecStep, Rule, Term, Value, VarId,
