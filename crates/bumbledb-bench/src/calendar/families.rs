@@ -39,7 +39,6 @@ pub struct CalFamily {
 
 impl CalFamily {
     /// # Errors
-
     pub fn sql_for(
         &self,
         query: &Query,
