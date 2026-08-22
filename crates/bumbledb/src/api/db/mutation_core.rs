@@ -1,11 +1,10 @@
 //! Shared collection-mutation algebra: [`MutationCore`] over a heap stage
 //! or a store delta.
-//!
 //! `M` owns net dispositions, pending interns, fresh reservations, and
 //! base lookup when a base exists. The core owns the schema, encode
-//! scratch, construction phase, and parse-all-first collection protocol.
 //! [`InstanceBuilder`] uses [`HeapMutation`]. [`WriteTx`] wraps
 //! [`StoreMutation`].
+//! scratch, construction phase, and parse-all-first collection protocol.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -28,21 +27,18 @@ use crate::storage::env::ReadTxn;
 use crate::storage::read;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
-/// Clean → Applied (a fact entered) → Poisoned (apply failed after).
 pub(super) enum MutationPhase {
     Clean,
     Applied,
     Poisoned(Box<Error>),
 }
 
-/// Last-wins overlay for one determinant tuple.
 pub(super) enum OverlayFact<'a> {
     Miss,
     Present(&'a [u8]),
     Absent,
 }
 
-/// Backend storage for [`MutationCore`].
 pub(super) trait MutationBackend {
     fn apply(
         &mut self,
@@ -91,20 +87,16 @@ pub(super) trait MutationBackend {
     ) -> Result<Option<&[u8]>>;
 }
 
-/// Heap construction backend: empty base, chunked [`HeapStage`].
 pub(crate) struct HeapMutation {
     pub(super) stage: HeapStage,
 }
 
-/// Durable mutation backend: delta over an admitted store's read view.
 pub(crate) struct StoreMutation<'db> {
     pub(super) view: ReadTxn<'db>,
     pub(super) delta: WriteDelta<'db>,
 }
 
-/// Private collection protocol shared by heap construction and durable
-/// writes. `Send + !Sync`: the TypeScript binding hands a builder to an
-/// async native task for admission.
+/// Private collection protocol shared by heap construction and durable writes.
 pub(crate) struct MutationCore<M, S> {
     schema: Arc<Schema>,
     pub(super) scratch: Vec<u8>,
@@ -369,8 +361,7 @@ impl<M, S> MutationCore<M, S> {
 }
 
 impl<M: MutationBackend, S> MutationCore<M, S> {
-    /// Parse-all-first collection apply: every member is encoded before
-    /// any disposition is recorded.
+
     pub(super) fn apply_collection<T>(
         &mut self,
         relation: RelationId,
@@ -399,7 +390,7 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
                 }
                 ApplyRow::Ready => {
                     let start = self.parse_bytes.len();
-                    // `with_scratch` restored the encoded bytes into `scratch`.
+
                     let len = self.scratch.len();
                     self.parse_bytes.extend_from_slice(&self.scratch);
                     self.parse_ready.push(true);
@@ -489,10 +480,8 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         }
     }
 
-    /// Parses the dyn lane's rows into ONE [`AcceptedCollection`], under
-    /// the standing law order: an empty collection is `None` — no engine
     /// request, judged before any refusal — then poison, closed, unknown
-    /// relation, and the shape parse (arity per row, type-kind per cell).
+
     fn accept_dyn(
         &self,
         rel: RelationId,
@@ -511,23 +500,8 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         Ok(Some(coll))
     }
 
-    /// Applies one shape-proved collection under `want` — the one
-    /// consumption of [`AcceptedCollection`], built ON the parse-all-first
-    /// [`Self::apply_collection`] machinery: row indices in, borrowed cell
-    /// views interned and encoded through the reused `refs`/`scratch`
-    /// path, no per-row container anywhere.
-    ///
-    /// Law order preserved exactly: empty is `MutationReport::EMPTY`
     /// before any refusal; then poison, closed, unknown relation, and the
-    /// roster re-verification — the authoritative second wall, BOTH
-    /// halves. The collection's own relation IS the apply target (the
-    /// transport surfaces take only the collection), so relation equality
-    /// holds by construction; the roster re-anchor is the arity check
-    /// against the relation this core sealed PLUS the roster-echo proof
-    /// (the collection carries the value-type row its cells were judged
-    /// against, and apply proves that echo IS the target roster — arity
-    /// alone would admit a same-arity, type-different forgery straight
-    /// into the encoder's positional arms).
+
     pub(super) fn apply_accepted(
         &mut self,
         coll: &AcceptedCollection,
@@ -553,11 +527,9 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
             }
             .into());
         }
-        // The roster ECHO (the second wall's type half): O(arity) per
-        // collection, zero per-cell cost — sealed cells were proved
-        // against the echo, this loop proves the echo is the target
+
         // roster, and the refusal is the honest `TypeMismatch` naming the
-        // first differing field.
+
         for (ordinal, (echoed, field)) in (0u16..).zip(coll.roster().iter().zip(relation.fields()))
         {
             if *echoed != field.value_type {
@@ -569,21 +541,7 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
             }
         }
         let layout = relation.layout();
-        // The arity-0 collapse law (set semantics; `proposals/
-        // one-representation/20`): every row of a fieldless relation IS
-        // the one empty tuple, so a collection of N rows is ONE judged
-        // apply — the empty tuple, applied once (rows > 0 here; empty
-        // short-circuited above) — with `submitted = rows` echoed exactly
-        // and `changed` the one effect (0 or 1), insert and delete twins
-        // symmetric (one op each, `changed <= 1`). The count is DATA on
-        // the bridge crossing (the cells wall `0 == rows × 0` is vacuous,
-        // so any stated count is shape-lawful), and the cost of an apply
-        // must be bounded by the payload the caller marshaled, never by a
-        // stated count: the collapse is O(1) where the general loop would
-        // be O(rows). The one apply rides the SAME parse-all-first
-        // machinery (spans, poison-on-failure discipline included), so a
-        // failure of the one judged apply poisons exactly as the general
-        // loop's first row would.
+
         if relation.fields().is_empty() {
             let one = match want {
                 Disposition::Insert => {
@@ -613,8 +571,6 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         }
     }
 
-    /// Encodes accepted row `row`, minting novel strings — the insert
-    /// disposition's arm.
     fn encode_accepted_mint(
         &mut self,
         coll: &AcceptedCollection,
@@ -631,9 +587,6 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
         finish_encode(encoded, refs, self, layout, bytes)
     }
 
-    /// Encodes accepted row `row`, resolve-only — the delete
-    /// disposition's arm: a never-interned string proves the row absent
-    /// ([`ApplyRow::Skip`]) without growing the dictionary.
     fn encode_accepted_resolve(
         &mut self,
         coll: &AcceptedCollection,
