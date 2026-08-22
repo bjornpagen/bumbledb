@@ -176,7 +176,6 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
     plan.occurrences()
         .iter()
         .map(|occurrence| {
-
             let columns: Vec<Vec<usize>> = occurrence
                 .trie_schema
                 .iter()
