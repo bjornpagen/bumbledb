@@ -256,7 +256,6 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
 
 impl Context {
     /// The closed-reference order wall (ruled 2026-07-23, R4): a
-
     /// them is refused exactly as the enum's ordinal order was, judged
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
         if self.closed_vars.contains_key(&var) {
@@ -389,10 +388,8 @@ impl Context {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: an unknown `VarId` (every
     /// comparison variable was checked atom-bound before the typed
-
     pub(super) fn resolved_var_type(&self, var: VarId) -> &ValueType {
         &self.var_types[&var]
     }
