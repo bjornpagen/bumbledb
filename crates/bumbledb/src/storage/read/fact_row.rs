@@ -8,9 +8,7 @@ use bumbledb_theory::schema::RelationId;
 use super::row_id_value::row_id_value;
 
 /// `M` probe: the row id of a fact, if it is live.
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
 #[cfg(test)]
 pub fn fact_row(txn: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result<Option<u64>> {
@@ -20,9 +18,7 @@ pub fn fact_row(txn: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result
 /// `M` probe by a caller-computed hash — the delta already hashed the fact
 /// for its own map key; blake3 is the record path's most expensive CPU
 /// step and must not run twice.
-///
 /// # Errors
-///
 /// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
 pub fn fact_row_by_hash(
     txn: &ReadTxn<'_>,
