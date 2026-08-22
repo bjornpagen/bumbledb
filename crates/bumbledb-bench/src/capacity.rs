@@ -78,7 +78,6 @@ pub struct Mass {
 }
 
 impl Mass {
-
     pub const BENCH: Self = Self {
         parents: 4_096,
         children_per_parent: 8,
