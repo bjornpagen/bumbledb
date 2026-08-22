@@ -3,9 +3,6 @@ use crate::error::{CorruptionError, Error, Mismatch, Result};
 use crate::schema::Schema;
 use bumbledb_theory::schema::RelationId;
 
-/// Parses stored fact bytes against the relation's layout. The returned
-/// [`FactView`] is the width proof field readers consume — a wrong-width
-/// slice is [`CorruptionError::WrongFactWidth`], never a later index panic.
 pub(crate) fn check_width<'bytes, 'layout>(
     schema: &'layout Schema,
     rel: RelationId,
