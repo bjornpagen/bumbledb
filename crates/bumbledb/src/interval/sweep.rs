@@ -32,11 +32,9 @@ where
         if let (Some((_, frontier)), Some((_, e))) = (run, window)
             && frontier >= e
         {
-
             return Ok(());
         }
         let Some(item) = segments.next() else {
-
             if let Some((start, frontier)) = run {
                 continuation.maximal(start, frontier)?;
             }
@@ -45,7 +43,6 @@ where
         let (start, end, payload) = item?;
         if let Some((run_start, frontier)) = run {
             if start > frontier {
-
                 continuation.maximal(run_start, frontier)?;
                 if window.is_some() {
                     return Ok(());
@@ -130,7 +127,7 @@ mod tests {
 
     fn naive_pack(segments: &[(u64, u64)]) -> Vec<(u64, u64)> {
         let mut packed = Vec::new();
-        let mut run: Option<(u64, u64)> = None; 
+        let mut run: Option<(u64, u64)> = None;
         for p in 0..=LAST_POINT {
             if covers_point(segments, p) {
                 run = Some(run.map_or((p, p), |(a, _)| (a, p)));
@@ -139,7 +136,6 @@ mod tests {
             }
         }
         if let Some((a, b)) = run {
-
             packed.push((a, if b == LAST_POINT { u64::MAX } else { b + 1 }));
         }
         packed
@@ -159,7 +155,7 @@ mod tests {
             let segment = derived.unwrap_or_else(|| {
                 let start = rng.next() % 24;
                 let end = if rng.next().is_multiple_of(4) {
-                    u64::MAX 
+                    u64::MAX
                 } else {
                     start + 1 + rng.next() % 6
                 };
@@ -191,7 +187,7 @@ mod tests {
             let segments = random_segments(&mut rng);
             let s = rng.next() % 28;
             let e = if rng.next().is_multiple_of(3) {
-                u64::MAX 
+                u64::MAX
             } else {
                 s + 1 + rng.next() % (LAST_POINT - s)
             };
@@ -209,7 +205,6 @@ mod tests {
 
     #[test]
     fn adjacency_continues_and_the_minimal_gap_breaks() {
-
         assert_eq!(pack(&[(2, 5), (5, 9)]), vec![(2, 9)]);
         assert!(covered(&[(2, 5), (5, 9)], (2, 9)));
         assert!(!covered(&[(2, 5), (5, 9)], (2, 10)));
@@ -227,7 +222,6 @@ mod tests {
 
     #[test]
     fn rays_are_ordinary_largest_end_words() {
-
         assert!(covered(&[(5, u64::MAX)], (7, u64::MAX)));
         assert!(covered(&[(0, 3), (3, u64::MAX)], (0, u64::MAX)));
         assert!(!covered(&[(0, 3), (3, 9)], (0, u64::MAX)));
@@ -237,7 +231,6 @@ mod tests {
 
     #[test]
     fn a_window_ignores_gaps_outside_itself() {
-
         assert!(covered(&[(0, 1), (4, 9)], (5, 8)));
         assert!(covered(&[(1, 4)], (1, 4)));
         assert!(!covered(&[(1, 4)], (1, 5)));
@@ -266,7 +259,6 @@ mod tests {
 
     #[test]
     fn consumed_segments_are_handed_over_in_order_and_gaps_convict_first() {
-
         // the verdict fires before its σ re-check would.
         let mut trace = Trace(Vec::new());
         let input = [Ok((1, 4, 0u64)), Ok((6, 9, 1u64))];
