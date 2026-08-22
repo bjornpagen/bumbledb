@@ -1,10 +1,3 @@
-//! The point-lookup scenario: a key-value-shaped store where every
-//! query touches a handful of rows. This is `SQLite`'s home turf — one
-//! B-tree descent per point — and the regime where bumbledb’s determinant index
-//! probe and per-execution overhead (snapshot open, bind, memo check)
-//! either hold up or drown the win. String keys stress the interning
-//! dictionary on every lookup.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term, Value,
@@ -37,14 +30,7 @@ bumbledb::schema! {
     Doc(bucket) <= Bucket(id);
 }
 
-/// Relation ids by declaration order.
-/// The validated scenario schema, memoized for the inspection surfaces
-/// (DDL rendering, typing); the store is created from [`Points`]'s
-/// descriptor (`scenarios::load`).
-///
 /// # Panics
-///
-/// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -66,8 +52,6 @@ pub mod ids {
 pub const BUCKETS: u64 = 4_096;
 pub const DOCS: u64 = 300_000;
 
-/// The smoke corpus (tests only): the same generators over tiny counts,
-/// so the tier-0 keyed-get gate exercises exactly what the night times.
 #[cfg(test)]
 const BUCKETS_SMOKE: u64 = 16;
 #[cfg(test)]
@@ -81,8 +65,6 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
     doc_row_sized(seed, i, BUCKETS)
 }
 
-/// One doc row with its bucket drawn from `buckets` — the full corpus
-/// and the smoke twin share the generator, differing only in counts.
 fn doc_row_sized(seed: u64, i: u64, buckets: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, ids::DOC.0, i));
     let mut payload = Vec::with_capacity(32);
@@ -94,7 +76,7 @@ fn doc_row_sized(seed: u64, i: u64, buckets: u64) -> Vec<Value> {
         Value::String(format!("doc/{i:08x}").into()),
         Value::U64(rng.range(buckets)),
         Value::I64(i64::try_from(rng.range(1_000_000)).expect("small")),
-        // Identity-shaped: a random 32-byte payload digest, inline.
+
         Value::FixedBytes(payload.into()),
     ]
 }
@@ -103,7 +85,6 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// p1 — point by fresh id (the key probe vs one B-tree descent).
 fn by_id() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -130,7 +111,6 @@ fn id_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p2 — point by string key (interning on every execution).
 fn by_key() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -158,19 +138,7 @@ fn key_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p5 — the keyed GET surface (0.5.0's flagship): the typed point read
-/// through the declared key law `Doc(key) -> Doc`, via the dynamic entry
-/// the TS SDK bridge calls (`ReadInstance::get_dyn` — the scenario stores
-/// are `Db<SchemaDescriptor>`, so the dynamic surface is the reachable
-/// twin of the macro-typed `snap.get(key)`). No query, no plan, no
-/// prepared object: determinant encode → index probe → full-fact decode.
-/// The statement resolves on the validated schema by relation +
-/// projection — materialized order is a fact of validation, never a
-/// literal in this table.
-///
 /// # Panics
-///
-/// Never: the `Doc(key) -> Doc` law is declared above.
 fn doc_key_statement(schema: &bumbledb::Schema) -> bumbledb::StatementId {
     schema
         .keys()
@@ -180,8 +148,6 @@ fn doc_key_statement(schema: &bumbledb::Schema) -> bumbledb::StatementId {
         .id
 }
 
-/// p5's params: p2's shape — 3 real keys + 1 miss — under its own draw
-/// salt, so the two lanes never share a rotation by accident.
 fn keyed_get_params(seed: u64) -> Vec<Vec<Value>> {
     let mut rng = Rng::new(mix(seed, 903, 5));
     let key = |i: u64| Value::String(format!("doc/{i:08x}").into());
@@ -193,7 +159,6 @@ fn keyed_get_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p3 — bucket fetch through the containment edge: ~73 docs per bucket.
 fn bucket_fetch() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -217,7 +182,7 @@ fn bucket_fetch() -> Query {
 }
 
 fn bucket_params(_: u64) -> Vec<Vec<Value>> {
-    // Class enum + a bucket-id ceiling: small slices of the dimension.
+
     vec![
         vec![Value::U64(0), Value::U64(64)],
         vec![Value::U64(1), Value::U64(64)],
@@ -226,7 +191,6 @@ fn bucket_params(_: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p4 — size-band count: secondary-range aggregation, no join.
 fn size_band() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Count],
@@ -259,7 +223,6 @@ fn size_band_params(_: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// The scenario registration.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
@@ -327,9 +290,6 @@ pub fn scenario() -> Scenario {
     }
 }
 
-/// The smoke twin (tests only): identical schema, the keyed-get lane's
-/// registration over the tiny corpus with hit keys drawn from it — the
-/// oracle-gate entry for the p5 unit smoke (zero timing).
 #[cfg(test)]
 fn scenario_smoke() -> Scenario {
     #[expect(
@@ -382,9 +342,6 @@ fn scenario_smoke() -> Scenario {
 mod tests {
     use super::*;
 
-    /// The p5 smoke gate: tiny corpus, zero timing — the FULL uncapped
-    /// multiset oracle (3 hits + the miss) through the exact gate seam
-    /// the night run times (`gate_scenario` → the keyed-get arm).
     #[test]
     fn keyed_get_smoke_gate_agrees() {
         let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-smoke");
@@ -394,9 +351,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The surface pinned directly against the corpus truth: a known key
-    /// returns exactly its generated row (every field, declaration
-    /// order); a never-interned key answers `None`.
     #[test]
     fn keyed_get_returns_the_exact_fact() {
         let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-exact");
