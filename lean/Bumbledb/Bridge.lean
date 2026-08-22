@@ -38,8 +38,9 @@ lived in `docs/architecture/30-dependencies.md`.
   job): every `mechanism` and `instrument` token of the form
   `symbol (path)` must find its path on disk and its symbol inside that
   path; bare `crates/…` tokens must exist on disk; and every
-  `lean/…` citation in `docs/architecture/` and `docs/cookbook.md` must
-  resolve to a real declaration in this tree.
+  `lean/…` citation in the surviving markdown (`lean/README.md`,
+  `lean/conformance/README.md`, `docs/cookbook.md`, `ts/COOKBOOK.md`,
+  `proposals/`) must resolve to a real declaration in this tree.
 
 ## String conventions (the census's parse contract)
 

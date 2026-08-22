@@ -919,7 +919,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
  */
 function closedOrderError(context: string, position: string, vocabulary: string): Error {
 	return errors.new(
-		`${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (docs/architecture/10-data-model.md; equality, membership, and counting remain)`
+		`${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (equality, membership, and counting remain)`
 	)
 }
 

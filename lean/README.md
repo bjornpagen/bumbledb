@@ -119,7 +119,7 @@ Mechanism and measurement (the planner's cost decisions, batching,
 kernels, LMDB layout, every pinned number), durability and crash (the
 crashpoint estate owns those; Level 2 models committed-state
 transitions only), the notation grammar (a host-surface fact), and
-operations. Those live in `docs/architecture/`, whole. **Hashing is
+operations. The laws live in the code, at the site each governs. **Hashing is
 mechanism:** Lean identity is canonical encoding equality
 (`value_eq_iff_encode_eq`); the store treats blake3 equality as fact
 equality (collision axiom in `10-data-model.md`). **Schema fingerprint**

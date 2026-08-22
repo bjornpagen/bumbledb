@@ -78,26 +78,26 @@ one on purpose.
 ## The lineage (the chain of citation)
 
 - **Brooks, *The Mythical Man-Month* ch. 9 (1975), p. 102**, under the heading
-  "Representation Is the Essence of Programming": "Show me your flowcharts and
-  conceal your tables, and I shall continue to be mystified. Show me your
-  tables, and I won't usually need your flowcharts; they'll be obvious." And:
-  "strategic breakthrough will come from redoing the representation of your
-  data or table. This is where the heart of a program lies."
+ "Representation Is the Essence of Programming": "Show me your flowcharts and
+ conceal your tables, and I shall continue to be mystified. Show me your
+ tables, and I won't usually need your flowcharts; they'll be obvious." And:
+ "strategic breakthrough will come from redoing the representation of your
+ data or table. This is where the heart of a program lies."
 - **Pike, "Notes on Programming in C" (1989), Rule 5**: "Data dominates. If
-  you've chosen the right data structures and organized things well, the
-  algorithms will almost always be self-evident. Data structures, not
-  algorithms, are central to programming. (See Brooks p. 102.)" — the literal
-  citation, the second documented link.
+ you've chosen the right data structures and organized things well, the
+ algorithms will almost always be self-evident. Data structures, not
+ algorithms, are central to programming. (See Brooks p. 102.)" — the literal
+ citation, the second documented link.
 - **Raymond, *The Cathedral and the Bazaar* (1997), lesson 9**: "Smart data
-  structures and dumb code works a lot better than the other way around,"
-  followed by the attribution: "Brooks, Chapter 9… it's the same point." He
-  reached it replacing fetchmail's monolithic protocol branching with a table
-  of method pointers.
+ structures and dumb code works a lot better than the other way around,"
+ followed by the attribution: "Brooks, Chapter 9… it's the same point." He
+ reached it replacing fetchmail's monolithic protocol branching with a table
+ of method pointers.
 - **Torvalds, git mailing list (July 27, 2006)**: "Bad programmers worry about
-  the code. Good programmers worry about data structures and their
-  relationships." Body: "I'm a huge proponent of designing your code around
-  the data, rather than the other way around… one of the reasons git has been
-  fairly successful." Independent corroboration at the largest scale.
+ the code. Good programmers worry about data structures and their
+ relationships." Body: "I'm a huge proponent of designing your code around
+ the data, rather than the other way around… one of the reasons git has been
+ fairly successful." Independent corroboration at the largest scale.
 
 The convergence is the evidence: 1975 → 1989 (citing Brooks) → 1997 (calling
 it "the same point") → 2006 (independent), across four subcultures, citations
@@ -106,63 +106,63 @@ written down. That is what separates a principle from a fashion.
 ## Why precise types remove branches
 
 - **Illegal states are the hidden source of branching** (Minsky, "make
-  illegal states unrepresentable," 2010/2011): put the invariants in the type
-  and the compiler rejects the states the guards were defending against; the
-  guards have nothing left to guard.
+ illegal states unrepresentable," 2010/2011): put the invariants in the type
+ and the compiler rejects the states the guards were defending against; the
+ guards have nothing left to guard.
 - **Validation discards proof; parsing keeps it** (King, "Parse, Don't
-  Validate," 2019): a validator returns nothing and forces every downstream
-  caller to re-check; a parser returns a refined type that carries the proof,
-  so the check happens once at the boundary and never again. This is the most
-  precise account of the mechanism: the information the branch tested for
-  moves into the type.
+ Validate," 2019): a validator returns nothing and forces every downstream
+ caller to re-check; a parser returns a refined type that carries the proof,
+ so the check happens once at the boundary and never again. This is the most
+ precise account of the mechanism: the information the branch tested for
+ moves into the type.
 - **Null is the mechanism inverted** (Hoare, "the billion-dollar mistake,"
-  2009): null is effectively a member of every type, which is precisely why
-  it forces a check on every dereference — the worst possible representation;
-  the fix he skipped in 1965 was the disjoint union, i.e., the sum type.
+ 2009): null is effectively a member of every type, which is precisely why
+ it forces a check on every dereference — the worst possible representation;
+ the fix he skipped in 1965 was the disjoint union, i.e., the sum type.
 - **A type signature is an enforced specification** (Wadler, "Theorems for
-  Free!," 1989; Reynolds, the Abstraction Theorem, 1983): a polymorphic
-  signature alone constrains behavior — `∀a. [a] → [a]` can only rearrange,
-  duplicate, or drop — and well-typed clients provably cannot branch on a
-  concrete representation.
+ Free!," 1989; Reynolds, the Abstraction Theorem, 1983): a polymorphic
+ signature alone constrains behavior — `∀a. [a] → [a]` can only rearrange,
+ duplicate, or drop — and well-typed clients provably cannot branch on a
+ concrete representation.
 
 ## Techniques that remove branches
 
 - **A switch on a type tag is a polymorphism not yet named** (Fowler,
-  "Replace Conditional with Polymorphism"): the variation moves from
-  tag-plus-branches into identity-plus-dispatch.
+ "Replace Conditional with Polymorphism"): the variation moves from
+ tag-plus-branches into identity-plus-dispatch.
 - **Absence and boundaries are representational choices** (Woolf's Null
-  Object; CLRS's sentinel nodes): represent "nothing" or "the boundary" as a
-  real object and the checks disappear wholesale — CLRS's keyed sentinel even
-  removes a per-iteration loop test.
+ Object; CLRS's sentinel nodes): represent "nothing" or "the boundary" as a
+ real object and the checks disappear wholesale — CLRS's keyed sentinel even
+ removes a per-iteration loop test.
 - **Off-by-one is usually a coordinate error** (Dijkstra, EWD831): the
-  half-open interval `[a, b)` is the one convention where length is `b − a`,
-  the empty range is clean, and adjacent ranges share a boundary — the error
-  is not fixed, it is made unrepresentable.
+ half-open interval `[a, b)` is the one convention where length is `b − a`,
+ the empty range is clean, and adjacent ranges share a boundary — the error
+ is not fixed, it is made unrepresentable.
 - **Some special cases are pure coordinate artifacts** (homogeneous
-  coordinates): translation is an affine exception in Cartesian coordinates
-  and the same matrix multiply as rotation in homogeneous ones. The exception
-  lived in the representation, provably, not the problem.
+ coordinates): translation is an affine exception in Cartesian coordinates
+ and the same matrix multiply as rotation in homogeneous ones. The exception
+ lived in the representation, provably, not the problem.
 - **The ceiling is control flow as data** (SICP ch. 4: "the evaluator is just
-  another program"; Greenspun's Tenth Rule as the warning): represent the
-  logic as an AST or transition table and write a small evaluator —
-  table-driven code, state machines, and DSLs are one family, branching
-  pushed out of code into inspectable data.
+ another program"; Greenspun's Tenth Rule as the warning): represent the
+ logic as an AST or transition table and write a small evaluator —
+ table-driven code, state machines, and DSLs are one family, branching
+ pushed out of code into inspectable data.
 
 ## The limit (what keeps the doctrine honest)
 
 - **Representation is globally cheap but locally expensive; control flow is
-  the reverse.** A representation costs design, abstraction, indirection, and
-  sometimes speed up front. A branch is free now and expensive later, through
-  drift and combinatorial state. That cost structure — not virtue — is why
-  adding a branch is the common reflex and investing in representation is the
-  experienced one.
+ the reverse.** A representation costs design, abstraction, indirection, and
+ sometimes speed up front. A branch is free now and expensive later, through
+ drift and combinatorial state. That cost structure — not virtue — is why
+ adding a branch is the common reflex and investing in representation is the
+ experienced one.
 - **It removes accidental complexity, not essential complexity** (Brooks, "No
-  Silver Bullet"). Representation collapses accidental special cases but
-  cannot dissolve essential ones; force two genuinely different cases into
-  one representation and the branching just hides inside config flags. The
-  right representation is usually only visible after the imperative version
-  exposes the pattern — part of the skill is knowing when the refactor is
-  earned.
+ Silver Bullet"). Representation collapses accidental special cases but
+ cannot dissolve essential ones; force two genuinely different cases into
+ one representation and the branching just hides inside config flags. The
+ right representation is usually only visible after the imperative version
+ exposes the pattern — part of the skill is knowing when the refactor is
+ earned.
 
 *Owner's source document verified against primary materials June 30, 2026;
 recorded in-repo 2026-07-19.*

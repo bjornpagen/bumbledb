@@ -16,7 +16,7 @@
 // for every workspace crate — no design decision accommodates narrower
 // platforms.
 #[cfg(target_pointer_width = "32")]
-compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
+compile_error!("bumbledb targets 64-bit platforms only");
 
 pub mod allen;
 pub mod interval;

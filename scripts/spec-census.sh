@@ -8,8 +8,9 @@
 #       an existing path and symbol under crates/;
 #   (b) every `instrument` token greps to an existing test fn or
 #       conformance case;
-#   (c) every `lean/…` citation in docs/architecture/ and
-#       docs/cookbook.md resolves to a real file — and, when it names a
+#   (c) every `lean/…` citation in the surviving markdown (lean/README.md,
+#       lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
+#       proposals/) resolves to a real file — and, when it names a
 #       declaration (`lean/….lean: name`), to a real declaration in it;
 #   (d) every backticked `path.rs::symbol` citation in lean/ doc
 #       comments resolves: some file under crates/*/src
@@ -96,11 +97,21 @@ fi
 
 # ---- (c): docs-side lean/ citation integrity --------------------------
 
-docs=(docs/architecture/*.md docs/cookbook.md)
+docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md proposals/README.md RULINGS.md REPRESENTATION-FIRST.md)
+if [ "${#docs[@]}" -eq 0 ]; then
+  echo "spec-census: FAIL — lane (c) scanned zero markdown files (vacuous pass)" >&2
+  fail=1
+fi
+for f in "${docs[@]}"; do
+  if [ ! -f "$f" ]; then
+    echo "spec-census: FAIL — lane (c) missing '$f' (vacuous pass)" >&2
+    fail=1
+  fi
+done
 
 # Bare lean/ path citations: the file (or directory) must exist.
 while IFS= read -r cite; do
-  cite="${cite%%[),.:\`]}" # strip trailing punctuation the prose adds
+  cite="${cite%%[),:\`]}" # strip trailing punctuation; keep extension dots
   [ -n "$cite" ] || continue
   if [ ! -e "$cite" ]; then
     echo "spec-census: FAIL — docs cite '$cite' which does not exist" >&2
@@ -201,9 +212,7 @@ deleted_spelling='ForeignSnapshot|`Snapshot`|Snapshot<'\''|&Snapshot([^A-Za-z_]|
 
 api_snapshot_docs=(
   docs/cookbook.md
-  docs/architecture/00-product.md
-  docs/architecture/50-storage.md
-  docs/architecture/10-data-model.md
+  README.md
 )
 api_snapshot_docs_allow='MVCC snapshot|MVCC read snapshot|reader snapshot isolation|restored snapshot|WAL/snapshot|concurrent snapshot|the snapshot past the table|inside its own snapshot|open-snapshot'
 
@@ -334,12 +343,10 @@ fi
 purged_spelling='Db::ephemeral|bdb_db_ephemeral|StoreKindMismatch|StoreKind::|enum StoreKind|`StoreKind`|\bStoreKind\b|\bephemeral\b|\bexhume\b|Exhumed|ExhumeHandle|DescriptorMissing|DescriptorRoundTrip|META_STORE_KIND|META_SCHEMA_DESCRIPTOR|trait Instance|Instance<S>|sealed Instance|enum EnvMode|`EnvMode`|EnvMode::|\bEnvMode\b|persisted descriptor|self-describing'
 
 purged_docs=(
-  docs/architecture/*.md
   docs/cookbook.md
-  docs/feature-register.md
-  docs/design/*.md
-  docs/research/*.md
   ts/PUBLISHING.md
+  README.md
+  RULINGS.md
 )
 purged_allow='purged|add-back|Add-back'
 

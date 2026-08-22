@@ -382,8 +382,7 @@ It generates and verifies the datasets, runs the durable and non-durable
 comparisons, exercises the additional workloads, measures storage and writes,
 runs the heap-versus-store ladder, performs the long-running update test, and
 records the machine state around each timed section. The full configuration
-and individual commands are in
-[the benchmark guide](docs/architecture/61-bench-lanes.md).
+and individual commands live with the bench crate (`crates/bumbledb-bench`).
 
 ## Why reads are fast
 
@@ -409,9 +408,8 @@ Prepared queries reuse their plans, temporary storage, indexes, and output
 buffers, which is why an execution within previously seen sizes performs no
 heap allocation.
 
-The detailed execution model, including the planner, trie layout, vectorized
-kernels, interval index, and assembly checks, is documented in
-[Execution](docs/architecture/40-execution.md).
+The detailed execution model lives in the executor modules
+(`crates/bumbledb/src/exec`, `plan`, `interval`).
 
 ## Schemas and queries
 
@@ -451,19 +449,11 @@ representation rather than separate query engines.
 
 ## Architecture
 
-The architecture documents describe the behavior that the implementation is
-expected to preserve:
-
-| Document | Contents |
-|---|---|
-| [Product](docs/architecture/00-product.md) | workload, process model, durability, supported platforms, and deliberate boundaries |
-| [Data model](docs/architecture/10-data-model.md) | stored types, intervals, set semantics, and identity |
-| [Queries](docs/architecture/20-query-ir.md) | records, negation, comparisons, parameters, aggregates, and recursion |
-| [Constraints](docs/architecture/30-dependencies.md) | keys, references, conditional rules, interval rules, and commit checking |
-| [Execution](docs/architecture/40-execution.md) | planning, Free Join, indexes, batching, and vectorized operations |
-| [Storage](docs/architecture/50-storage.md) | LMDB layout, dictionaries, indexes, transactions, and cached read data |
-| [Validation](docs/architecture/60-validation.md) | reference comparisons, randomized tests, benchmark design, and reproducibility |
-| [API](docs/architecture/70-api.md) | database lifecycle, reads, writes, point lookups, prepared queries, and export/import |
+The laws live in the code at the site each governs. Decision records and
+OPEN triggers live in [`RULINGS.md`](RULINGS.md). The representation
+doctrine is [`REPRESENTATION-FIRST.md`](REPRESENTATION-FIRST.md). Worked
+schemas are [`docs/cookbook.md`](docs/cookbook.md). Measurement notes are
+[`docs/reference/apple-silicon-performance.md`](docs/reference/apple-silicon-performance.md).
 
 The implementation of Free Join follows Wang, Willsey, and Suciu,
 *Free Join: Unifying Worst-Case Optimal and Traditional Joins* (SIGMOD 2023),
