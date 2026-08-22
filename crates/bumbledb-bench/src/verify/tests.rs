@@ -100,7 +100,6 @@ fn a_wrong_oracle_fails_with_a_bundle() {
     config.random_cases = 0;
     let failure = run_with_sql_override(&config, |family| {
         (family == "point").then(|| {
-
             "SELECT DISTINCT t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0 \
              WHERE t0.\"id\" = ?1 + 1"
                 .to_owned()
