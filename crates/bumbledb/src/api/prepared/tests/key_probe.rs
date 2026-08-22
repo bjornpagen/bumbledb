@@ -632,7 +632,6 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
     });
     let cache = ImageCache::new(&schema);
     {
-
         let txn = env.read_txn().expect("txn");
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         assert!(
