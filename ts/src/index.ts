@@ -1,14 +1,14 @@
 /**
  * @bjornpagen/bumbledb — the type-theoretic TypeScript SDK for the
  * bumbledb embedded relational engine. Public surface: the structural type
- * kernel (fields as pure structure, `relation()`, `closed()` — domains are
- * never declared: THE LAWS TYPE THE COLUMNS, `schema()` computing every
+ * kernel (fields as pure structure, `relation`, `closed` — domains are
+ * never declared: THE LAWS TYPE THE COLUMNS, `schema` computing every
  * field's equivalence class FROM the statement list at both tiers), the
- * statement algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
+ * statement algebra with `schema` and `SchemaSpec` lowering (PRD-06), the `Db`
  * runtime (exclusive-lock stores, transactions, typed violations, callback
  * instance reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07), the query surface (kysely-shaped:
  * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
- * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
+ * variables minted by `v` and joined by OBJECT REFERENCE (reuse is the
  * join), the head a `find` RECORD whose keys name the answer columns
  * (renames are real), params still STRING-named, plus negation,
  * conditions, aggregates, and interiors / one linear rec via
