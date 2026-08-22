@@ -4,15 +4,7 @@ use super::stats::{normalized_p50, stats};
 use super::traced::traced_sample;
 use super::{Measurement, Modes, Protocol};
 
-/// [`measure_batched`] in plain per-call timing mode — the thin
-/// convenience for the write/scenario families (the former three-layer
-/// `measure`/`measure_with`/`measure_batched` stack collapsed to this
-/// pair: no caller distinguished the middle layer from
-/// `measure_batched(.., 1, ..)`).
-///
 /// # Errors
-///
-/// The closure's error, verbatim.
 pub fn measure<F>(proto: Protocol, f: F) -> Result<Measurement, String>
 where
     F: FnMut() -> Result<u64, String>,
@@ -20,18 +12,9 @@ where
     measure_batched(proto, Modes::default(), 1, f)
 }
 
-/// The one measurement loop, timing `batch` calls per sample and dividing the
-/// elapsed time — the quantum check's mechanism. Work counts sum across
-/// every call; batch 1 is the plain protocol.
-///
+/// Work counts sum across every call; batch 1 is the plain protocol.
 /// # Errors
-///
-/// The closure's error; a request for both modes at once; an
-/// alloc-window request on a build without the `obs` feature.
-///
 /// # Panics
-///
-/// On `batch == 0` (a programmer error).
 pub fn measure_batched<F>(
     proto: Protocol,
     modes: Modes,
@@ -44,24 +27,9 @@ where
     measure_interleaved(proto, modes, batch, || (), f)
 }
 
-/// [`measure_batched`] with an untimed `between` closure run before
-/// every warmup call and every timed sample — the in-situ shape
-/// (`crate::displaced`): foreign traffic streams BETWEEN engine passes
-/// and never inside a timed span, so the sample prices the pass *given*
-/// the displacement, not the displacement itself
-/// (`docs/reference/apple-silicon-performance.md`
-/// `m2max.mem.residency-is-interleaving`). With `batch > 1` the
 /// `between` work runs once per timed sample (before the batch), not
-/// per call.
-///
 /// # Errors
-///
-/// The closure's error; a request for both modes at once; an
-/// alloc-window request on a build without the `obs` feature.
-///
 /// # Panics
-///
-/// On `batch == 0` (a programmer error).
 pub fn measure_interleaved<B, F>(
     proto: Protocol,
     modes: Modes,
@@ -113,8 +81,7 @@ where
     } else {
         None
     };
-    // Percentiles sort in place, so the normalized p50 (which needs the
-    // pre-sort alignment with sample_ghz) computes first.
+
     let p50_norm = sample_ghz.as_ref().map(|ghz| normalized_p50(&samples, ghz));
     Ok(Measurement {
         stats: stats(&mut samples),
@@ -125,13 +92,8 @@ where
     })
 }
 
-/// The alloc-window seam (the obs.rs idiom: the feature fork lives
-/// here, in one module twin — call sites are written once,
-/// `#[cfg]`-free). Under `obs` the engine's counting allocator is
-/// registered: `require` admits the mode, `arm` zeroes the window
-/// counters, `read` takes the reading. Off, `require` is the typed
-/// refusal — so `arm` and `read` are unreachable inert twins, honest
-/// about a counter that does not exist.
+/// Off, `require` is the typed refusal — so `arm` and `read` are unreachable
+/// inert twins, honest about a counter that does not exist.
 mod alloc_window {
     use bumbledb::alloc_counter::AllocSnapshot;
 
