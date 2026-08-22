@@ -21,7 +21,6 @@ pub struct SharedMachine {
 }
 
 impl SharedMachine {
-
     #[must_use]
     pub fn describe(&self) -> String {
         format!(
@@ -87,7 +86,6 @@ impl From<crate::clockproxy::GhzStamp> for GhzReport {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecDigest {
-
     pub worst_estimate_factor: f64,
 
     pub covers: String,
@@ -118,7 +116,6 @@ pub struct ReadFamilyReport {
     pub ghz: Option<GhzReport>,
 
     /// ran: samples rescaled to the cohort's best clock before the
-
     pub p50_norm: Option<u64>,
 }
 
