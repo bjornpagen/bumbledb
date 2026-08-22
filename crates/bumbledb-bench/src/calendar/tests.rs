@@ -17,15 +17,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// The id registry matches declaration order, and the statement roster
-/// is complete: ten ordinary relations plus the two closed
-/// vocabularies (`Rsvp`/`Arm`), six fresh auto-keys, the two closed
-/// auto-keys, the thirteen declared containments (working-hours
-/// coverage, the two vocabulary containments, and the fixed-width
-/// `Slot(room)` among them), the declared keys
-/// (`Attendance(event, person)`, `Claim(source)`, and the four
-/// pointwise keys — `Slot(room, span)` is the fixed-width one), and
-/// the `==` pair lowered to its two directions.
 #[test]
 fn the_schema_is_statement_complete() {
     let s = schema();
@@ -79,8 +70,7 @@ fn the_schema_is_statement_complete() {
         {
             closed_keys += 1;
         } else {
-            // The fresh auto-keys lead; the declared scalar keys are
-            // Attendance(event, person) and Claim(source).
+
             if autos < 6 && scalar_keys == 0 {
                 autos += 1;
             } else {
@@ -103,9 +93,7 @@ fn the_schema_is_statement_complete() {
         "the pointwise keys: per-person claims, room exclusion, per-person hours, \
          and the fixed-width slot grid"
     );
-    // The `==` lowers to two containments; with the thirteen declared
-    // ones (incl. the working-hours coverage, the two vocabulary
-    // containments, and Slot(room)) that is fifteen total.
+
     assert_eq!(containments.len(), 15, "thirteen declared + the == pair");
     assert!(
         containments.contains(&(ids::SLOT, ids::ROOM)),
@@ -127,8 +115,6 @@ fn the_schema_is_statement_complete() {
     );
 }
 
-/// Chain validity by construction: sequential, non-overlapping,
-/// abutting every third boundary, the ray stratum's tail unbounded.
 #[test]
 fn chains_are_valid_under_the_pointwise_key() {
     let sizes = CalSizes::of(Scale::S);
@@ -162,8 +148,6 @@ fn chains_are_valid_under_the_pointwise_key() {
     assert!(abutments > 0, "the neighbor-probe boundary exists as data");
 }
 
-/// Both stores load the same corpus at S scale, and the joint `==`
-/// cluster load commits clean — the statements hold at every chunk.
 #[test]
 fn both_stores_load_the_same_corpus() {
     let dir = scratch("corpus-load");
@@ -178,9 +162,6 @@ fn both_stores_load_the_same_corpus() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The translator-paired goldens are pinned: `translate` output equals
-/// the hand-written SQL byte-for-byte (the arbitration anchor), and the
-/// one unpaired family is exactly `free_busy` — reported, never dropped.
 #[test]
 fn goldens_pin_the_translator() {
     for family in families::all() {
@@ -202,9 +183,6 @@ fn goldens_pin_the_translator() {
     );
 }
 
-/// Every family produces witnesses on the unit corpus — the joins are
-/// real, not vacuously empty (the S-scale rotations include misses by
-/// policy; the unit draw is the guaranteed hit).
 #[test]
 fn every_family_has_witnesses_on_the_unit_corpus() {
     let dir = scratch("unit-witnesses");
@@ -231,9 +209,9 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The hand-written `free_busy` coalesce is row-identical to the
-/// engine's `Pack` on the unit corpus — `SQLite`'s honest best shot,
-/// verified before it is ever timed.
+/// The hand-written `free_busy` coalesce is row-identical to the engine's
+/// `Pack` on the unit corpus — `SQLite`'s honest best shot, verified before it
+/// is ever timed.
 #[test]
 fn the_hand_coalesce_matches_pack() {
     let dir = scratch("coalesce");
@@ -274,9 +252,6 @@ fn the_hand_coalesce_matches_pack() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// One SQL golden shape check on a loaded store: every family's SQL for
-/// its first S draw prepares and executes on the mirror (window
-/// functions included), and translation errors never reach a bench run.
 #[test]
 fn every_family_sql_prepares_on_the_mirror() {
     let dir = scratch("sql-prepares");
@@ -299,8 +274,6 @@ fn every_family_sql_prepares_on_the_mirror() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A dedicated golden for `set_bindings` parity: the calendar families
-/// are scalar-only, so translator re-rendering never engages.
 #[test]
 fn calendar_families_are_scalar_only() {
     for family in families::all() {
