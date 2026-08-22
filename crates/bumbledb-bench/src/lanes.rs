@@ -1,7 +1,6 @@
 //! The charter: each lane produces a report artifact and exits 0 on success;
 //! non-zero only on refusal, setup failure, oracle disagreement, or post-state
 //! mismatch.
-
 pub mod curves;
 pub mod heap;
 pub mod storage;
