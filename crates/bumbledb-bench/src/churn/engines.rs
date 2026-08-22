@@ -1,10 +1,3 @@
-//! The churn lane's twin stores and per-cycle appliers: one bumbledb
-//! store and N `SQLite` mirrors receiving IDENTICAL logical operations
-//! at identical commit granularity — one transaction per cycle on both
-//! sides. Delete-bearing **by contract**, not by hope: a removal whose
-//! delete is a no-op aborts the whole cycle on ours and refuses on the
-//! mirror, so the lane can never silently degrade into insert-only.
-
 use std::path::Path;
 
 use bumbledb::{Db, RelationId, Value};
@@ -14,28 +7,16 @@ use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, Po
 
 use super::ops::PostingBody;
 
-/// The mirror's sync twin. The parity claim, per lane:
-///
-/// - [`Full`](Self::Full) is the standard fairness session
-///   ([`crate::corpus::configure_sqlite`] — WAL, `synchronous=FULL`,
-///   `fullfsync=ON`, `checkpoint_fullfsync=ON`, 256 MiB cache,
-///   `temp_store=MEMORY`).
-/// - [`Nosync`](Self::Nosync) is the SAME session then
-///   `PRAGMA synchronous=OFF` — WAL writes with no sync boundary at
-///   commit, the documented matched twin of LMDB's `MDB_NOSYNC`
-///   ephemeral kind (both engines' commits reach the OS page cache and
-///   never wait on media).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqliteSync {
-    /// The standard fairness session — both engines pay the fsync bill.
+
     Full,
-    /// The fairness session with `synchronous=OFF` — the ephemeral
-    /// twin.
+
     Nosync,
 }
 
 impl SqliteSync {
-    /// The lane label, as reports print it.
+
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -45,15 +26,10 @@ impl SqliteSync {
     }
 }
 
-/// The bumbledb side of the churn lane. `last_minted` is the row-id
-/// high-water WITNESS: the never-reissue law burns the id space
-/// monotonically, and the driver records the burn from its own returned
-/// facts — no engine addition is needed.
 pub struct OursLane {
-    /// The engine store under churn.
+
     pub db: Db<Ledger>,
-    /// The highest posting id minted so far — the monotone-burn
-    /// witness.
+
     pub last_minted: u64,
 }
 
@@ -65,16 +41,7 @@ impl std::fmt::Debug for OursLane {
     }
 }
 
-/// Creates the engine store and loads every writable relation EXCEPT
-/// `PostingTag`: its containment targets postings, and a tagged posting
-/// could not be churned out without a target-side abort — the churned
-/// relation stays reference-free by construction. The collection insert's
-/// explicit ids set the fresh high-water, so `last_minted` starts at
-/// `postings - 1`.
-///
 /// # Errors
-///
-/// Engine errors, stringified with the failing relation named.
 pub fn create_ours(
     dir: &Path,
     r#gen: GenConfig,
@@ -98,20 +65,9 @@ pub fn create_ours(
     })
 }
 
-/// Creates one `SQLite` mirror: the fairness session (plus the
-/// [`SqliteSync::Nosync`] override when asked), the full schema DDL with
-/// the closed vocabularies' extension INSERTs, the same relation set as
-/// [`create_ours`] (`PostingTag` excluded for the same reason), then
-/// `ANALYZE` and a truncating WAL checkpoint.
-///
 /// # Errors
-///
-/// `SQLite` errors, stringified with the failing step named.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (WAL refused; corpus values
-/// breaking the mapping axiom).
 pub fn create_sqlite(
     path: &Path,
     r#gen: GenConfig,
@@ -149,8 +105,6 @@ pub fn create_sqlite(
     Ok(conn)
 }
 
-/// One posting as its dynamic row — the mirror insert's and the model
-/// multiset's shared rendering.
 #[must_use]
 pub fn posting_values(p: &Posting) -> Vec<Value> {
     vec![
@@ -163,22 +117,14 @@ pub fn posting_values(p: &Posting) -> Vec<Value> {
     ]
 }
 
-/// Applies one cycle to ours in ONE `db.write`: every removal deletes
-/// (a no-op delete aborts the whole transaction inside the closure —
-/// the `writebench::posting_swap` in-closure sentinel-abort precedent,
-/// so a cycle is delete-bearing by contract and a refusal commits
-/// nothing), then every body mints a fresh id and inserts. Returns the
-/// added postings.
-///
+/// Applies one cycle to ours in ONE `db.write`: every removal deletes (a no-op
+/// delete aborts the whole transaction inside the closure — the
+/// `writebench::posting_swap` in-closure sentinel-abort precedent, so a cycle
+/// is delete-bearing by contract and a refusal commits nothing), then every
+/// body mints a fresh id and inserts.
 /// # Errors
-///
-/// Engine errors, stringified; a non-delete-bearing cycle, named.
-///
 /// # Panics
-///
 /// On a broken monotone-burn invariant: the minted ids must be strictly
-/// ascending and the first must exceed `lane.last_minted` (loud —
-/// `last_minted` is the never-reissue law's witness).
 pub fn apply_ours(
     lane: &mut OursLane,
     removals: &[Posting],
@@ -189,9 +135,7 @@ pub fn apply_ours(
         .write(|tx| {
             for removal in removals {
                 if tx.delete([removal])?.changed() == 0 {
-                    // The in-closure sentinel abort: returning `Err`
-                    // here drops the delta whole, so nothing below ever
-                    // reaches the store.
+
                     return Err(bumbledb::Error::from(std::io::Error::other(
                         "the churn cycle must be delete-bearing: a removal target was absent",
                     )));
@@ -217,8 +161,7 @@ pub fn apply_ours(
         .unwrap()
         .value;
     // The monotone-burn invariant, loud: strictly ascending mints, the
-    // first above the recorded high-water; unchanged when nothing
-    // minted.
+
     let mut watermark = lane.last_minted;
     for posting in &added {
         assert!(
@@ -232,24 +175,14 @@ pub fn apply_ours(
     Ok(added)
 }
 
-/// The mirror's posting delete, by id.
 pub const POSTING_DELETE: &str = "DELETE FROM \"Posting\" WHERE \"id\" = ?1";
 
-/// Applies one cycle to a mirror in ONE transaction — the same commit
-/// granularity as ours: every removed id deletes exactly one row (else
-/// the refusal names the id — the mirror must be delete-bearing too),
-/// then every added posting inserts through the normative mapping. A
-/// refusal rolls the transaction back whole.
-///
+/// granularity as ours: every removed id deletes exactly one row (else the
+/// refusal names the id — the mirror must be delete-bearing too), then every
+/// added posting inserts through the normative mapping. A refusal rolls the
+/// transaction back whole.
 /// # Errors
-///
-/// `SQLite` errors, stringified; a delete affecting anything but one
-/// row, naming the id.
-///
 /// # Panics
-///
-/// Only on a posting value breaking the mapping axiom (a programmer
-/// error).
 pub fn apply_sqlite(
     conn: &rusqlite::Connection,
     removed: &[Posting],
@@ -268,8 +201,8 @@ pub fn apply_sqlite(
     }
 }
 
-/// The transaction body of [`apply_sqlite`] — split out so a refusal
-/// can roll back after every cached statement is dropped.
+/// The transaction body of [`apply_sqlite`] — split out so a refusal can roll
+/// back after every cached statement is dropped.
 fn apply_sqlite_body(
     conn: &rusqlite::Connection,
     removed: &[Posting],
