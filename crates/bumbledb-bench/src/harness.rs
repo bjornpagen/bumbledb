@@ -1,5 +1,4 @@
 //! precisely defined cold protocol.
-
 use bumbledb::Value;
 use bumbledb::obs::TraceEvent;
 
