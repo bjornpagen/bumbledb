@@ -5,7 +5,6 @@
 //! (§3.3), and the sealed [`ValidatedPlan`] witness
 //! .
 //! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
-
 use crate::image::ColumnSpan;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
@@ -274,7 +273,6 @@ impl ValidatedPlan {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: a variable outside the plan.
     #[must_use]
     pub fn slot_of(&self, var: VarId) -> usize {
@@ -289,7 +287,6 @@ impl ValidatedPlan {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: a variable outside the plan.
     #[must_use]
     pub fn width_of(&self, var: VarId) -> usize {
@@ -314,7 +311,6 @@ impl ValidatedPlan {
     }
 
     /// # Panics
-
     /// On a programmer-invariant violation: an occurrence outside the plan.
     #[cfg(test)]
     #[must_use]
