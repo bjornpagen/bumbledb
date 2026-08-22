@@ -1,92 +1,9 @@
 //! The grounding-evaluator: folding stage-zero atoms
-//! (docs/architecture/40-execution.md, § the ground: elimination and
-//! evaluation).
-//!
+//! .
 //! A closed relation's extension is sealed at validate — stage-0 data
-//! (`docs/architecture/40-execution.md` § the staging law). A query atom over
+//! . A query atom over
 //! it whose filters are prepare-resolvable constants is therefore not a
 //! join to plan: the evaluator runs the filters against the sealed rows
-//! **at prepare**, producing the surviving id-set `S`, and the atom's
-//! whole contribution becomes a plan-constant membership on its
-//! siblings — `Const::WordSet` riding exactly the param-set selection
-//! machinery (`plan/fj/split_filters.rs` routes the Eq into a
-//! set-bound selection level, probed once per element with the
-//! survivor union — the machinery makes exactly the choices it makes
-//! for a bound param set today; **nothing new executes**).
-//!
-//! # Foldability (positive occurrence `C`, all strict — any failure
-//! # leaves the virtual-image join, which is cheap and always correct)
-//!
-//! 1. Every variable bound by `C` except at most one is dead outside
-//!    `C` ([`super::var_is_dead`]); the at-most-one live variable is
-//!    bound at `C`'s id position `FieldId(0)` — the join variable `k`,
-//!    and some *other* participating occurrence binds `k` (the
-//!    membership needs a home). **What does NOT fold, deliberately**: a
-//!    closed atom with a live non-id variable — payload escaping to the
-//!    head ("return each event's severity rank") keeps its join against
-//!    the L1-resident, generation-immortal virtual image. Folding
-//!    payload projection would require value substitution into the head
-//!    — a rewrite class with real complexity and no measured need.
-//!    REFUSED, recorded; trigger: the calendar family showing
-//!    vocabulary-join cost above noise.
-//! 2. `C` carries only Eq/range/Allen/membership filters over its own
-//!    columns with prepare-resolvable constants
-//!    ([`crate::image::view::is_prepare_resolvable`]). A param-bearing filter REFUSES
-//!    the fold in v0 (a bind-time fold variant is refused, recorded;
-//!    trigger: a measured win in the calendar-family profile); measure
-//!    filters refuse too (their ray error is raised per execution — a
-//!    prepare-time evaluation would move the error to `prepare`, an
-//!    observable timing change for zero measured need).
-//! 3. `C` is not negated — negated closed atoms fold to the COMPLEMENT
-//!    (below).
-//!
-//! # The fold
-//!
-//! - `k` live and `|S| ≥ 1`: mark `C` [`Role::Folded`] and attach `S`
-//!   to every other participating occurrence binding `k` as an
-//!   `Eq`-`WordSet` membership filter.
-//! - `|S| == 0`: the rule is statically empty — the fold's rule-death
-//!   channel ([`NormalizedQuery::dead`], rendered `folded to ∅: …`);
-//!   the pipeline runs fold then ground, so the evaluator writes the
-//!   verdict itself rather than routing a set back through the fold.
-//! - No live `k` (a pure constant gate, e.g. a nonemptiness check over
-//!   a ψ-subset): `|S| ≥ 1` deletes the atom outright; `|S| == 0` kills
-//!   the rule. The gate must bind **no variables at all**: a dead-but-
-//!   bound variable still multiplies an aggregate's fold domain (the
-//!   binding set is over ALL query variables — 40-execution, D2), so a
-//!   var-binding gate is REFUSED, recorded; trigger: a measured
-//!   projection-sink-only win.
-//!
-//! The fold mark carries the σ-survivors (n ≤ 256) and polarity as a
-//! sum; introspection reads the mark. The rendered picture always uses
-//! the retained original filters so diagnostics preserve the user's
-//! spelling.
-//!
-//! # Negated closed atoms — the complement fold, direction pinned
-//!
-//! `!Kind(id: k, mastered == true)` rejects a binding iff its `k`
-//! matches a σ-surviving fact, i.e. iff `k ∈ S` (id is the whole key).
-//!
-//! - `|S| == 0`: the anti-probe **rejects nothing** — the atom deletes
-//!   outright, no membership attached, the rule is NOT empty. (This
-//!   direction needs no domain reasoning: `k ∉ ∅` holds for every `k`.)
-//! - `0 < |S| < |extension|`: `k ∉ S` rewrites to `k ∈ complement`
-//!   (extension ids minus `S`) — attached exactly like a positive fold.
-//!   **Sound only under the domain guarantee** ([`domain_within_ids`]):
-//!   `k ∉ S ⟺ k ∈ complement` requires `k ∈ extension ids`; a `k`
-//!   outside the extension survives the anti-probe but would fail the
-//!   complement membership. The guarantee's two witnesses: `k` is bound
-//!   at the id position of another participating occurrence of the same
-//!   closed relation, or a binder's field carries an accepted
-//!   containment into the closed relation's id (with the statement's φ
-//!   carried literally by that occurrence — every committed value is
-//!   then inside the compiled closed-target member set).
-//!   No witness → REFUSED, recorded (the anti-probe stays; trigger: a
-//!   profiled anti-probe worth folding under a richer domain analysis).
-//! - complement empty (`S` = the whole extension): under the same
-//!   guarantee every binding's `k` is rejected — the rule is dead.
-//! - A zero-binding negated gate (`!Kind(mastered == true)`): `|S| ≥ 1`
-//!   rejects every binding — rule dead; `|S| == 0` deletes (above).
 
 use std::collections::BTreeSet;
 
@@ -99,11 +16,6 @@ use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::var_is_dead;
 
-/// One evaluator step of the grounding loop: finds the first foldable
-/// occurrence, applies its fold (mark + membership attachment, outright
-/// deletion, or the rule-death verdict) and reports whether anything
-/// changed. One action per call — the caller's loop re-runs elimination
-/// between folds (each rewrite can expose the other).
 pub(super) fn fold_step(
     normalized: &mut NormalizedQuery,
     schema: &Schema,
@@ -122,7 +34,6 @@ pub(super) fn fold_step(
     false
 }
 
-/// One positive occurrence's fold attempt (module doc, conditions 1–2).
 fn fold_positive(
     normalized: &mut NormalizedQuery,
     schema: &Schema,
@@ -130,15 +41,13 @@ fn fold_positive(
     c_idx: usize,
 ) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
-    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): sealed
-    // extensions exist only for closed stored relations, so an `Interior`
-    // occurrence has no stage-0 rows and never folds.
+
     let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
         return false;
     };
     let relation = schema.relation(relation_id);
     if relation.body().closed_rows().is_none() {
-        return false; // ordinary relations have no stage-0 rows
+        return false; 
     }
     if !occurrence
         .filters
@@ -153,25 +62,16 @@ fn fold_positive(
     let binders = if let Some(k) = join_id_var(normalized, c_idx, output_vars) {
         let binders = membership_binders(normalized, c_idx, k);
         if binders.is_empty() {
-            // A live join variable with no other participating binder:
-            // deleting C would leave `k` unbound (a projected handle
-            // enumerating the extension, or a residual/anti-probe
-            // read) — the membership has no home. The single-atom
-            // closed scan stays; it is one L1-resident image.
+
             return false;
         }
         binders
     } else {
-        // The pure-gate shape: only a var-less atom may delete — a
-        // dead-but-bound variable still multiplies an aggregate's fold
-        // domain (module doc), and the gate's truth must survive
-        // without it.
+
         if !normalized.occurrences[c_idx].vars.is_empty() {
             return false;
         }
-        // Deleting the last participating occurrence would leave the
-        // rule bodyless — a plan shape nothing downstream represents.
-        // The single-atom gate keeps its scan.
+
         if !normalized
             .occurrences
             .iter()
@@ -184,9 +84,7 @@ fn fold_positive(
     };
     let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
     if survivors.is_empty() {
-        // The rule-death channel (module doc): σ over the sealed rows
-        // is empty, so the atom — and with it the conjunction — denotes
-        // nothing on ANY store.
+
         normalized.dead = Some(format!(
             "folded to ∅: {}",
             folded_picture(schema, relation_id, &normalized.occurrences[c_idx].filters,)
@@ -198,12 +96,9 @@ fn fold_positive(
     true
 }
 
-/// One negated occurrence's fold attempt (module doc, the complement
-/// fold — direction pinned there and by the tests).
 fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
-    // The positive fold's Interior guard, verbatim: no sealed extension,
-    // no stage-0 rows, no fold (20-query-ir.md § engine recursion's consumer guards).
+
     let OccBind::Edb(relation_id) = OccBind::of_occurrence(occurrence) else {
         return false;
     };
@@ -220,38 +115,32 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     }
     let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
     if survivors.is_empty() {
-        // No fact can ever match the probe's filters: the anti-probe
-        // never rejects, whatever the bindings — the atom deletes
-        // outright (and the rule is NOT empty). Any binding shape
-        // qualifies: emptiness of σ needs no key reasoning.
+
         remove_anti_probe(normalized, c_idx);
         normalized.occurrences[c_idx].role = Role::Folded(folded_negated(relation_id, Vec::new()));
         return true;
     }
     if occurrence.vars.is_empty() {
-        // The negated gate: some sealed row satisfies the filters on
-        // every store, so the probe rejects every binding — rule dead.
+
         normalized.dead = Some(format!(
             "folded: !{} rejects every binding",
             folded_picture(schema, relation_id, &occurrence.filters)
         ));
         return true;
     }
-    // The keyed shape: exactly one variable, at the id position — the
-    // probe is then precisely `k ∈ S`. A payload-bound probe key would
+
     // need multi-column set reasoning; REFUSED v0, recorded (trigger: a
-    // profiled multi-key anti-probe on a closed relation).
+
     let &[(FieldId(0), k)] = occurrence.vars.as_slice() else {
         return false;
     };
     let closed = relation_id;
     let binders = membership_binders(normalized, c_idx, k);
     if binders.is_empty() {
-        return false; // the complement membership needs a home
+        return false; 
     }
     if !domain_within_ids(normalized, schema, c_idx, k, closed) {
-        // Without the domain guarantee, `k ∉ S` and `k ∈ complement`
-        // disagree on out-of-extension values (module doc — the
+
         // direction this refusal pins). The anti-probe stays.
         return false;
     }
@@ -260,8 +149,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         .filter(|id| survivors.binary_search(id).is_err())
         .collect();
     if complement.is_empty() {
-        // S is the whole extension: with `k` domain-guaranteed inside
-        // it, the probe rejects every binding — rule dead.
+
         normalized.dead = Some(format!(
             "folded: !{} rejects every binding",
             folded_picture(schema, closed, &normalized.occurrences[c_idx].filters)
@@ -295,13 +183,9 @@ fn folded_negated(relation: RelationId, survivors: Vec<u64>) -> FoldedMark {
     }
 }
 
-// The foldability conditions, one named predicate each (the grounding
-// conditions' naming discipline — `join_covers_full_key`,
-// `target_otherwise_unused`); each unit-tested in isolation (tests.rs).
-
-/// **Condition 1 (refusal half)** — whether any non-id variable of
-/// `c_idx` is live outside it: a payload variable escaping to the head,
-/// another occurrence, or a residual/anti-probe/membership-point read.
+/// **Condition 1 (refusal half)** — whether any non-id variable of `c_idx` is
+/// live outside it: a payload variable escaping to the head, another
+/// occurrence, or a residual/anti-probe/membership-point read.
 pub(super) fn payload_escapes(
     normalized: &NormalizedQuery,
     c_idx: usize,
@@ -315,11 +199,6 @@ pub(super) fn payload_escapes(
         })
 }
 
-/// **Condition 1 (join half)** — the occurrence's live join variable:
-/// the variable bound at the id position `FieldId(0)`, if it is live
-/// outside the occurrence. A dead id variable is no join (the atom is
-/// then a gate candidate — and a var-binding gate refuses, module
-/// doc).
 pub(super) fn join_id_var(
     normalized: &NormalizedQuery,
     c_idx: usize,
@@ -333,9 +212,6 @@ pub(super) fn join_id_var(
         .filter(|var| !var_is_dead(normalized, c_idx, *var, output_vars))
 }
 
-/// One sealed extension row as an operand source. Prepare-resolvable
-/// filters never intern; a corrupt fixed-interval start is unreachable
-/// on a validation-admitted extension.
 struct SealedRow<'a> {
     fact: crate::encoding::FactView<'a, 'a>,
 }
@@ -388,11 +264,6 @@ impl crate::image::view::Operands for SealedRow<'_> {
     }
 }
 
-/// The prepare-time evaluation: σ(filters) over the sealed extension
-/// rows, as the ascending surviving row-id list (row id = declaration
-/// index — `schema.rs`, `SealedRow`). n ≤ 256 rows through the shared
-/// predicate walk. Callers have already proved [`is_prepare_resolvable`].
-/// Crate-visible for the introspection surface (`exec/introspection/into_stats.rs`).
 pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Vec<u64> {
     let layout = relation.layout();
     relation
@@ -415,10 +286,6 @@ pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) ->
         .collect()
 }
 
-/// The participating occurrences (other than `c_idx`) binding `var`,
-/// with the field each binds it at — the membership set's homes. Never
-/// a negated occurrence: attaching a positive membership inside an
-/// anti-probe would weaken its rejection.
 pub(super) fn membership_binders(
     normalized: &NormalizedQuery,
     c_idx: usize,
@@ -438,14 +305,6 @@ pub(super) fn membership_binders(
         .collect()
 }
 
-/// **The complement fold's domain guarantee** — whether `k`'s values
-/// are provably within the closed relation's extension ids. Two
-/// witnesses (module doc): a participating occurrence binding `k` at
-/// the id position of the same closed relation, or one binding `k` at a
-/// field whose accepted containment targets the closed relation's id —
-/// with the statement's source selection φ carried **literally** by
-/// that occurrence (the elimination pass's condition-2 discipline: set
-/// containment over (field, encoded literal), never inference).
 pub(super) fn domain_within_ids(
     normalized: &NormalizedQuery,
     schema: &Schema,
@@ -468,10 +327,6 @@ pub(super) fn domain_within_ids(
         })
 }
 
-/// Whether some accepted containment maps `(occurrence.relation, field)`
-/// into `closed`'s id position, with its φ carried literally by the
-/// occurrence. Any ψ only shrinks the member set — still inside the
-/// extension ids, which is all the domain guarantee needs.
 fn containment_into_id(
     schema: &Schema,
     occurrence: &crate::ir::normalize::Occurrence,
@@ -497,13 +352,7 @@ fn containment_into_id(
     })
 }
 
-/// Attaches the plan-constant membership to every binder: one
-/// `Eq`-`WordSet` compare per (occurrence, field) — the exact shape
-/// `split_filters` routes into a set-bound selection level, so the set
-/// rides the param-set machinery verbatim (probed once per element
-/// with the survivor union — the machinery's own choices, nothing new
-/// executes). `ids` is sorted ascending (construction order), the
-/// `WordSet` invariant.
+/// `ids` is sorted ascending (construction order), the `WordSet` invariant.
 fn attach_membership(normalized: &mut NormalizedQuery, binders: &[(usize, FieldId)], ids: &[u64]) {
     debug_assert!(!ids.is_empty(), "empty sets take the rule-death path");
     debug_assert!(ids.windows(2).all(|w| w[0] < w[1]), "sorted, deduplicated");
@@ -518,9 +367,6 @@ fn attach_membership(normalized: &mut NormalizedQuery, binders: &[(usize, FieldI
     }
 }
 
-/// Deletes a folded negated occurrence's anti-probe descriptor: the
-/// rejection it encoded is now the attached complement membership (or
-/// provably never fired).
 fn remove_anti_probe(normalized: &mut NormalizedQuery, c_idx: usize) {
     let occ_id = normalized.occurrences[c_idx].occ_id;
     normalized
@@ -528,14 +374,6 @@ fn remove_anti_probe(normalized: &mut NormalizedQuery, c_idx: usize) {
         .retain(|probe| probe.occurrence != occ_id);
 }
 
-/// The fold's rendered picture — `Kind{mastered == true}` — in the rule
-/// notation's value formats (`ir/render`, one notation on every
-/// diagnostic surface). Two readers: the rule-death verdict
-/// (`folded to ∅: …`) and introspection's fold line
-/// (`exec/introspect/into_stats.rs`), off the folded occurrence's retained
-/// filter list. A word at the relation's own id position prints its
-/// handle (a handle set for an attached membership) — the vocabulary's
-/// names on every surface a row id reaches.
 pub(crate) fn folded_picture(
     schema: &Schema,
     relation: RelationId,
