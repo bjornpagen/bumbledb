@@ -390,7 +390,6 @@ fn fixed_bytes_round_trip_at_pad_boundaries() {
         assert!(padded[len..].iter().all(|&b| b == 0));
         let decoded = decode_padded_fixed_bytes(&padded, u16::try_from(len).unwrap())
             .expect("zero pad decodes");
-        assert_eq!(decoded.as_bytes(), &raw[..]);
         assert_eq!(decoded.padded(), &padded[..]);
     }
 }

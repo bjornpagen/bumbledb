@@ -108,17 +108,6 @@ impl FixedBytesValue {
         }
     }
 
-    /// The value's `len` raw bytes. Test-only since the point-probe
-    /// parse lane retired (`proposals/one-representation/20`): product
-    /// paths land `bytes<N>` payloads in the accepted collection's arena
-    /// and read the encoding through [`Self::padded`]; the pad-law pins
-    /// (`encoding/tests.rs`) are the remaining reader.
-    #[cfg(test)]
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes[..usize::from(self.len)]
-    }
-
     /// The canonical word-padded encoding: `⌈len/8⌉ × 8` bytes, the raw
     /// bytes zero-padded (pad already zero by construction).
     #[must_use]
