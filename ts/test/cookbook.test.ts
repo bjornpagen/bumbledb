@@ -1065,7 +1065,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("28. migration is ETL — two theories, two fingerprints", async function r28() {
-
 		const EmployeeV1 = relation("Employee", { id: u64.fresh, name: str })
 		const SalaryV1 = relation("Salary", { employee: u64, amount: i64 })
 		const PayrollV1 = schema("PayrollV1", { Employee: EmployeeV1, Salary: SalaryV1 }, [
