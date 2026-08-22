@@ -25,7 +25,6 @@ impl<S> PreparedQuery<S> {
     }
 
     /// typed error before anything else runs. One u64 compare — with the
-
     pub(super) fn check_identity(
         &self,
         identity: &crate::storage::env::CatalogIdentity,
