@@ -1,17 +1,6 @@
 import * as errors from "@superbuilders/errors"
 
 /**
- * The build-host platform vocabulary, extracted from `build.ts` so each
- * piece is a unit the test suite pins (`test/build-platform.test.ts`)
- * without executing the build. Two distinct concepts meet in the build and
- * BOTH are declared here: the LOCAL platform (where did this host's cargo
- * build land, where must it be placed/linked/smoke-loaded — derived from
- * the running process) is computed; the PUBLISH set ({@link
- * PUBLISH_PLATFORM} — which platform package ships to the registry) is a
- * deliberate hand-written constant and is never derived from a host.
- */
-
-/**
  * The single platform this release PUBLISHES; its package dir is
  * `npm/<target>` and the build's version-lockstep gate pins it.
  * Deliberately a hand-written constant, never derived from the host:
@@ -25,16 +14,6 @@ import * as errors from "@superbuilders/errors"
  */
 const PUBLISH_PLATFORM = "darwin-arm64"
 
-/**
- * The dev twin's whole manifest derivation, pure and testable: the
- * committed publish manifest with exactly four host-specific fields
- * rewritten (`name`, `description`, `os`, `cpu`); every other field
- * (`version`, `main`, `files`, `engines`, `repository`, `publishConfig`,
- * …) is inherited BY CONSTRUCTION, so the twin can never drift from the
- * publish shape field by field — the old hand-written literal had already
- * drifted. Key order is preserved (spread keeps the source order; the
- * rewritten keys already exist in the publish manifest, so no key moves).
- */
 function deriveDevTwinManifest(
 	publishManifest: Record<string, unknown>,
 	localPlatform: string,
@@ -68,25 +47,11 @@ function assertSupported(platform: string): asserts platform is keyof typeof NAT
 	}
 }
 
-/**
- * The per-platform package dir/suffix for a build host: `<platform>-<arch>`
- * exactly as the binary packages spell it (`darwin`/`arm64` → `darwin-arm64`,
- * `linux`/`x64` → `linux-x64`) — the same string the runtime loader
- * (`src/native.ts`) assembles when it resolves
- * `@bjornpagen/bumbledb-<platform>-<arch>` by name. Only the platforms in
- * {@link NATIVE_ARTIFACT} are accepted; anything else fails loudly here
- * rather than placing an artifact under a name no loader will ever ask for.
- */
 function localPlatformTarget(platform: string, arch: string): string {
 	assertSupported(platform)
 	return `${platform}-${arch}`
 }
 
-/**
- * Cargo's cdylib artifact name on a build host, from {@link NATIVE_ARTIFACT}.
- * The build copies this file to `bumbledb.node` inside the local platform
- * package dir — the name the loader resolves at runtime.
- */
 function nativeArtifactName(platform: string): string {
 	assertSupported(platform)
 	return NATIVE_ARTIFACT[platform]
