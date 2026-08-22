@@ -5,7 +5,6 @@
 //! (checked in — the `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way
 //! like (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`).
 //! licenses (`lean/Bumbledb/Query/Syntax.lean`, the membership note).
-
 pub mod complete;
 pub mod judgment;
 pub mod reach;
