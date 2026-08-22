@@ -1,5 +1,4 @@
 //! LMDB environment, keys, dictionary, delta write path, and reads.
-
 use crate::error::{CorruptionError, Error, Result};
 
 #[cfg_attr(not(test), allow(dead_code))]
