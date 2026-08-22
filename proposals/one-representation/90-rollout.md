@@ -315,6 +315,24 @@ both upstream reports closed with numbers, digests verified identical.
       crossing carries the count), and `INTERN_PROBE` is a per-COMMIT
       aggregate (delta totals final at commit entry), not per collection
       (point.rs + the 10-measurement row).
+- [x] Hunt round 3 (2026-08-21, adversarial hunt over the
+      one-representation 0.16.0 build): lens B clean — 120/120 store
+      differential byte-identical (nullary edges included), 60-seed
+      parity fuzz exact, 51k-fact end-to-end smoke green. Lens A's two
+      defects fixed: the TargetKeyWall false wall on statement-tuple
+      UNIONS (a ternary between two individually-lawful `as const` lists
+      distributed the naked `Stmts` through the scan and the roster
+      independently, cross-judging one arm's faces against the other
+      arm's keys; now the one `DecidableRoster` detector — the type tier
+      judges only a single, non-union, statically-complete tuple — with
+      the union repro pinned compiling in containment-parity) in
+      64ef41bc; and `seal_nullary`'s violable precondition (push an
+      empty row, then state a count: a debug `debug_assert` panic and a
+      release-mode silent count replacement, both caller-reachable; now
+      the push lane refuses zero-width rows typed and `from_value_rows`
+      counts payload-witnessed empty slices into the one fieldless
+      constructor, so the precondition holds by construction) in
+      0801b97f.
 - [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md):
       persistence/verifier/RSS numbers come from the owner's Primer run
       post-adoption (the full bench was waived — "no rebench"); count
