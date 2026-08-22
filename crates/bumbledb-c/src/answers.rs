@@ -1,15 +1,6 @@
 //! The owned answers carrier: execution crosses the
 //! engine's flat `Answers` buffer WHOLE behind one opaque handle; the host
-//! decodes cell by cell through bounds-checked accessors — never one FFI
-//! call per cell on the engine side, never a panic from an index bug
-//! (`Answers::get` panics on out-of-range; the bounds are checked HERE).
-//!
-//! The carrier is caller-owned and reusable (the engine's own warm-path
-//! allocation contract): `bdb_answers_new` once, `bdb_instance_execute`
-//! into it repeatedly (each execution clears it first, retaining
-//! capacity), `bdb_answers_clear` for an explicit reset,
-//! `bdb_answers_destroy` when done. Cell views borrow the carrier and are
-//! valid only while it is alive and un-re-executed.
+//! decodes cell by cell through bounds-checked accessors.
 
 use bumbledb::Answers;
 
@@ -95,7 +86,7 @@ pub extern "C" fn bdb_answers_get(
 ) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         let answers = &ref_in(answers)?.answers;
-        // The bridge-side bounds check (§22): the engine's `get` asserts.
+
         if row >= answers.len() || column >= answers.arity() {
             return Err(Fail::Misuse);
         }
@@ -117,7 +108,6 @@ pub extern "C" fn bdb_answers_destroy(answers: *mut bdb_answers) -> bdb_status {
     })
 }
 
-/// Executes a prepared query against the instance with positional
 /// params, filling the caller's reusable carrier (cleared first,
 /// capacity retained). The prepared handle is taken exclusively for the
 /// call (`&mut` on the engine side — one execution at a time); executing
