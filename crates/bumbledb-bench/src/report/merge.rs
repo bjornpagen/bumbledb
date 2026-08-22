@@ -2,7 +2,6 @@ use std::fmt::Write as _;
 
 use crate::json;
 
-/// One family's numbers pulled out of a parsed `report.json`.
 struct MergeRow {
     p50: f64,
     p95: f64,
@@ -34,20 +33,7 @@ fn merge_rows(parsed: &json::Value, key: &str) -> Vec<(String, MergeRow)> {
         .collect()
 }
 
-/// The cross-run merge: N
-/// parsed `report.json` documents → one markdown table per family with
-/// each run's p50 and the min-of-runs p50/p95. Blocks whose clock-proxy
-/// bracket stayed contaminated are excluded from the minima, and the
-/// exclusion count is printed.
-///
-/// Runs must share one durability label (`config.store`): min-merging a
-/// no-sync run into a durable table would publish an `MDB_NOSYNC` p50
-/// as the per-family minimum with no marker (finding 020).
-///
 /// # Errors
-///
-/// A run with no readable read families, a run missing its
-/// `config.store` label, or runs whose durability labels differ.
 pub fn merge_markdown(runs: &[(String, json::Value)]) -> Result<String, String> {
     let stores: Vec<(&str, &str)> = runs
         .iter()
@@ -81,8 +67,6 @@ pub fn merge_markdown(runs: &[(String, json::Value)]) -> Result<String, String> 
         })
         .collect::<Result<_, String>>()?;
 
-    // Family order follows the first run; families missing from a run
-    // render as `-`.
     let order: Vec<String> = per_run[0].1.iter().map(|(name, _)| name.clone()).collect();
     let mut excluded = 0usize;
 
