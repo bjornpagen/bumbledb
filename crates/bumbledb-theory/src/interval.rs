@@ -4,7 +4,6 @@
 //! `start < end` and the encoder never re-checks it. The engine's
 //! coalescing segment sweep is not theory and stays engine-side
 //! (`bumbledb::interval::sweep`).
-
 mod sealed {
     pub trait Sealed {}
     impl Sealed for u64 {}
