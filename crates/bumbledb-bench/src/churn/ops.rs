@@ -11,7 +11,6 @@ use crate::schema::{AccountId, InstrumentId, JournalEntryId, Posting, PostingId,
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mix {
-
     pub churn: u64,
 
     pub updates: u64,
@@ -20,7 +19,6 @@ pub struct Mix {
 }
 
 impl Mix {
-
     #[must_use]
     pub fn removals(&self) -> u64 {
         self.churn + self.updates
@@ -57,7 +55,6 @@ pub const DEFAULT_ANALYZE_EVERY: u64 = 500;
 /// store exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChurnConfig {
-
     pub r#gen: GenConfig,
 
     pub cycles: u64,
@@ -70,7 +67,6 @@ pub struct ChurnConfig {
 }
 
 impl ChurnConfig {
-
     #[must_use]
     pub fn smoke(seed: u64) -> Self {
         Self {
@@ -128,7 +124,6 @@ pub fn validate(cfg: &ChurnConfig, mix: &Mix) -> Result<(), String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostingBody {
-
     pub entry: u64,
 
     pub account: u64,
@@ -157,7 +152,6 @@ pub fn stationary_body(rng: &mut Rng, sizes: &Sizes) -> PostingBody {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CyclePlan {
-
     pub updates: Vec<usize>,
 
     pub deletes: Vec<usize>,
@@ -205,7 +199,6 @@ pub struct LiveSet {
 }
 
 impl LiveSet {
-
     #[must_use]
     pub fn from_corpus(r#gen: GenConfig) -> Self {
         let sizes = Sizes::of(r#gen.scale);
