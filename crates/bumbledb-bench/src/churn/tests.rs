@@ -1,4 +1,3 @@
-//! The churn smoke suite: `Tiny` scale, correctness only, milliseconds
 //! — the oracle gate the lane must pass before the owner ever times it.
 
 use crate::corpus_gen::{GenConfig, Scale, Sizes};
@@ -18,10 +17,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Drives one full churn run: one ours lane plus the requested mirrors,
-/// every cycle planned, resolved, applied to every store, and folded
-/// into the model. Returns the lane, the labeled mirrors, the model,
-/// and the scratch dir (for cleanup).
 fn drive(
     cfg: &ChurnConfig,
     mix: &Mix,
@@ -73,9 +68,6 @@ fn tiny_postings() -> usize {
     usize::try_from(Sizes::of(Scale::Tiny).postings).expect("64-bit usize")
 }
 
-/// The full three-way gate on the steady default: model, engine, and
-/// both mirror kinds agree, and steady state holds — facts in == facts
-/// out, so the working set never moved.
 #[test]
 fn churn_smoke_end_states_agree_three_ways() {
     let cfg = ChurnConfig::smoke(1);
@@ -96,8 +88,6 @@ fn churn_smoke_end_states_agree_three_ways() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The growth mode: the working set grows by exactly `growth` per
-/// cycle, and the three views still agree.
 #[test]
 fn churn_growth_mode_grows_the_working_set() {
     let cfg = ChurnConfig {
@@ -123,8 +113,6 @@ fn churn_growth_mode_grows_the_working_set() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The delete-heavy mix — half the Tiny working set churned per cycle —
-/// still lands on three-way agreement at the original working-set size.
 #[test]
 fn churn_delete_heavy_end_state_agrees() {
     let cfg = ChurnConfig {
@@ -145,8 +133,6 @@ fn churn_delete_heavy_end_state_agrees() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The pure-function law made observable: the same seed drives the
-/// identical run twice — equal posting multisets, equal id burn.
 #[test]
 fn churn_replay_is_deterministic() {
     let cfg = ChurnConfig::smoke(4);
@@ -164,9 +150,6 @@ fn churn_replay_is_deterministic() {
     let _ = std::fs::remove_dir_all(&dir_b);
 }
 
-/// The durable/ephemeral differential, extended to churn: the two store
-/// kinds land on the identical posting multiset and the identical mint
-/// high-water.
 #[test]
 fn churn_ephemeral_minter_matches_durable() {
     let cfg = ChurnConfig::smoke(5);
@@ -184,10 +167,9 @@ fn churn_ephemeral_minter_matches_durable() {
     let _ = std::fs::remove_dir_all(&dir_b);
 }
 
-/// The delete-bearing contract falsified from both sides (the
-/// `posting_swap` test's twin): a live removal commits; the SAME
-/// removal again must refuse the whole cycle, and the refusal commits
-/// nothing — the generation does not move.
+/// The delete-bearing contract falsified from both sides (the `posting_swap`
+/// test's twin): a live removal commits; the SAME removal again must refuse the
+/// whole cycle, and the refusal commits nothing — the generation does not move.
 #[test]
 fn churn_stale_removal_refuses_the_whole_cycle() {
     let dir = scratch("stale");
@@ -213,8 +195,6 @@ fn churn_stale_removal_refuses_the_whole_cycle() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The plan is a pure function of its arguments, its removal indices
-/// are distinct and in range, and its counts follow the mix exactly.
 #[test]
 fn churn_cycle_plan_is_pure_and_distinct() {
     let r#gen = GenConfig {
@@ -245,8 +225,6 @@ fn churn_cycle_plan_is_pure_and_distinct() {
     );
 }
 
-/// The nosync twin genuinely engages: `synchronous` reads 0 (OFF) on
-/// the nosync mirror and 2 (FULL) on the fairness session.
 #[test]
 fn churn_nosync_pragma_engages() {
     let dir = scratch("nosync");
@@ -270,8 +248,8 @@ fn churn_nosync_pragma_engages() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Every refusal arm of [`ops::validate`], hit once — and the shipped
-/// configs pass.
+/// Every refusal arm of [`ops::validate`], hit once — and the shipped configs
+/// pass.
 #[test]
 fn churn_validate_refuses_bad_configs() {
     let good = ChurnConfig::smoke(1);
@@ -333,13 +311,8 @@ fn churn_validate_refuses_bad_configs() {
     );
 }
 
-/// The probe registry's names, in registry order — every sample point
-/// must carry exactly these.
 const PROBE_NAMES: [&str; 3] = ["churn_point", "churn_balance", "churn_window"];
 
-/// The shape every driven lane must share: samples exactly at the
-/// stride's cycle boundaries, three probes named as the registry, and
-/// positive observables at every point.
 fn assert_series_shape(series: &super::report::RunSeries, cycles: &[u64]) {
     for lane in &series.lanes {
         let sampled: Vec<u64> = lane.samples.iter().map(|sample| sample.cycle).collect();
@@ -361,11 +334,6 @@ fn assert_series_shape(series: &super::report::RunSeries, cycles: &[u64]) {
     }
 }
 
-/// The full "steady" run at smoke scale: three lanes in registry order,
-/// the sample stride, the probe registry at every point, the engine
-/// counters on the right lanes, and the maintenance ledger — nonzero
-/// somewhere on the maint lane (`vacuum_every` 2 guarantees it), zero
-/// everywhere else.
 #[test]
 fn churn_run_steady_smoke_produces_the_full_series() {
     let cfg = ChurnConfig::smoke(1);
@@ -416,9 +384,6 @@ fn churn_run_steady_smoke_produces_the_full_series() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The "nosync" matched pair at smoke scale: the ephemeral minter and
-/// its `synchronous=OFF` twin drive to Ok — the end gate passing IS the
-/// value-identity claim.
 #[test]
 fn churn_run_nosync_smoke_agrees() {
     let cfg = ChurnConfig::smoke(2);
@@ -432,9 +397,6 @@ fn churn_run_nosync_smoke_agrees() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The "delete-heavy" run at smoke scale: two lanes agree end to end,
-/// and the monotone burn is EXACT — 512 mints per cycle for 4 cycles
-/// over the initial high-water of 1023.
 #[test]
 fn churn_run_delete_heavy_smoke_agrees() {
     let cfg = ChurnConfig {
@@ -460,8 +422,6 @@ fn churn_run_delete_heavy_smoke_agrees() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The registry covers the five mandated lanes in exactly three rows,
-/// under unique run names.
 #[test]
 fn churn_registry_covers_the_mandated_lanes() {
     let specs = lanes::all();
