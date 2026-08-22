@@ -4,7 +4,6 @@
 //! fact scan, so their roster walks here — dependent bounds resolve per
 //! axiom row, each judged against its own resolved ceiling.
 //! Ordinary-parent capacity statements ride the `F` pass (`facts.rs`),
-
 use crate::encoding::encode_u64;
 use crate::error::{Check, Error, Result};
 use crate::schema::CapacityEnforcement;
