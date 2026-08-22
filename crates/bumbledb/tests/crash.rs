@@ -27,7 +27,7 @@ fn item(k: u64) -> Item {
 #[ignore = "crash-child body; spawned by kill_during_commit_leaves_a_consistent_database"]
 fn crash_child_commit_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_DIR") else {
-        return; 
+        return;
     };
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for k in 1..u64::MAX {
@@ -86,7 +86,6 @@ fn kill_during_commit_leaves_a_consistent_database() {
         }
 
         db.write(|tx| {
-
             if let Some(existing) = live.first() {
                 assert_eq!(
                     tx.insert([existing])?.changed(),
@@ -117,7 +116,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
 #[ignore = "crash-child body; spawned by kill_during_counters_only_commit_leaves_q_consistent"]
 fn crash_child_reserve_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_RESERVE_DIR") else {
-        return; 
+        return;
     };
     let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for _ in 0..u64::MAX {
