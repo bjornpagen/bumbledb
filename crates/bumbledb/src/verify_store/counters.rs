@@ -45,10 +45,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                         }
                     }
                     StatKind::RowIdHighWater => {
-                        // The one id allocator (R16): the S high-water exists
-                        // only where no fresh field does — a fresh-keyed
-                        // relation's mint is Q, so a stored high-water is a
-                        // namespace violation whatever its value.
+
                         if s.schema.fresh_mint_field(rel).is_some() {
                             s.malformed(key, "S high-water on a fresh-keyed relation");
                         } else if let Some(tally) = s.tallies.get(&rel)
@@ -78,9 +75,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
                     counted: tally.rows,
                 }),
             );
-            // Fresh-less relations only: a fresh-keyed relation OWES no
-            // S high-water (the one id allocator, R16 — its mint is Q,
-            // judged by the Q pass's ratchet law).
+
             let water = (!seen.contains(&(rel, StatKind::RowIdHighWater))
                 && s.schema.fresh_mint_field(rel).is_none())
             .then_some(StoreFinding::Corruption(
