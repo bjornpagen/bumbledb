@@ -24,7 +24,6 @@ pub struct Protocol {
 }
 
 impl Protocol {
-
     pub const WARM: Self = Self {
         warmups: 32,
         samples: 256,
@@ -64,7 +63,6 @@ pub struct Modes {
     pub alloc_window: bool,
     pub trace: bool,
     /// Record an effective-GHz proxy reading after EVERY sample:
-
     pub proxy_per_rep: bool,
 }
 
