@@ -792,7 +792,6 @@ mod closed_relations {
 
 mod closed_column_accessors {
     //! Declared columns project too (ruled 2026-07-23, R14 —
-
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
 
@@ -1351,7 +1350,6 @@ mod duration_named_field {
 
 mod radix_literals {
     //! Integer literals are rustc's (ruled 2026-07-23, R8): the
-
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{Bound, IntervalElement, LiteralSet, ValueType};
     use bumbledb::{Theory as _, Value};
@@ -1397,7 +1395,6 @@ mod radix_literals {
 mod fixed_width_intervals {
 
     //! `lean/Bumbledb/Values.lean: FixedU64.not_ray`). One stored word,
-
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
     };
@@ -1671,9 +1668,8 @@ mod fixed_width_intervals {
 }
 
 mod element_domain_typing {
-
-    //! element domain and never a width (`lean/Bumbledb/Schema.lean:
-
+    //! Q1: interval positions carry an element domain and never a width.
+    //! `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`.
     use bumbledb::error::Direction;
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,
