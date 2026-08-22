@@ -1,7 +1,6 @@
 #![cfg(not(feature = "alloc-counter"))]
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; the census only counts and delegates.
 #![allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
-
 mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
