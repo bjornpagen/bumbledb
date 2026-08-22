@@ -103,7 +103,11 @@ allocated bytes, and peak live:
 
 Mapping: 1 = harness minus bridge root; 2 = `MARSHAL_FACTS`; 3 =
 `DYN_PARSE`; 4 = `INTERN_PROBE` + the dictionary share of `DYN_ENCODE`;
-5 = `DELTA_APPLY`/`BUILDER_LOAD`; 6 = `JUDGMENT_*`; 7 = `COUNTERS_FLUSH`
+5 = `DELTA_APPLY` (the leaf on both write lanes — `BUILDER_LOAD` is its
+builder-lane CONTAINER, enclosing the parse/encode/apply leaves, so a
+component row folds non-overlapping leaves and never a leaf plus its
+parent; the container's self time is the phase table's wall clock);
+6 = `JUDGMENT_*`; 7 = `COUNTERS_FLUSH`
 (dictionary puts + next-id); 8 = `APPLY_INSERTS`/`APPLY_DELETES` (M/F/U/R
 puts) and, on the builder lane, the freeze emit phases; 9 = `LMDB_COMMIT`
 (+ `PUBLISH_COPY`/`PUBLISH_SYNC` on the builder lane); 10–11 = the scan

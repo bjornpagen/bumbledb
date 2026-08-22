@@ -2,16 +2,28 @@
 //! (proposals/one-representation/10-measurement.md § the output): span
 //! names → report components, the ONE mapping every primerlane trace
 //! folds through. The accumulation-side points (`MARSHAL_FACTS`,
-//! `DYN_PARSE`, `DYN_ENCODE`, `INTERN_PROBE`, `DELTA_APPLY`,
-//! `BUILDER_LOAD`) are registered here before their call sites land —
-//! the 20/30 lanes wire them; this table is where their totals already
-//! have a home, so a wired span changes a row from zero, never the
-//! report shape.
+//! `DYN_PARSE`, `DYN_ENCODE`, `INTERN_PROBE`, `DELTA_APPLY`) are
+//! registered here before their call sites land — the 20/30 lanes wire
+//! them; this table is where their totals already have a home, so a
+//! wired span changes a row from zero, never the report shape.
+//!
+//! The fold is CONTAINMENT-HONEST: every row names non-overlapping LEAF
+//! points, never a leaf plus its enclosing container in one sum. On the
+//! builder lane `BUILDER_LOAD` ENCLOSES the `DYN_PARSE`/`DYN_ENCODE`/
+//! `DELTA_APPLY` spans (`builder.rs`'s `observed_load` wraps the whole
+//! `MutationCore` apply), so its duration already contains theirs —
+//! summing it into any row would charge the nested time twice (the
+//! `trace_out` containment precedent: a parent's time beyond its
+//! children is SELF time, and this table attributes leaves only).
+//! `BUILDER_LOAD` is therefore deliberately absent: its leaves fold
+//! into rows 2–4, and its self time (heap-stage overhead) is priced by
+//! the phase table's wall clock, not double-charged here.
 
 use bumbledb::obs::{TraceEvent, TracePoint, names};
 
-/// Component rows in the upstream report's order; each names the spans
-/// whose durations it sums. Components 1 (TS fact projection) and
+/// Component rows in the upstream report's order; each names the
+/// non-overlapping leaf spans whose durations it sums (the containment
+/// law above). Components 1 (TS fact projection) and
 /// 10–12 (the read lanes) are wall-clock phases, not span sums, so they
 /// live in the phase table, not here.
 pub const COMPONENTS: &[(&str, &[TracePoint])] = &[
@@ -21,7 +33,10 @@ pub const COMPONENTS: &[(&str, &[TracePoint])] = &[
         "string ownership and interning",
         &[names::INTERN_PROBE, names::DYN_ENCODE],
     ),
-    ("delta apply", &[names::DELTA_APPLY, names::BUILDER_LOAD]),
+    // The leaf on BOTH write lanes (`apply_prepared` runs under the
+    // transaction and the builder alike); never `BUILDER_LOAD`, its
+    // builder-lane container.
+    ("delta apply", &[names::DELTA_APPLY]),
     (
         "commit judgment",
         &[
