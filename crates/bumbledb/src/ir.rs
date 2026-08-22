@@ -4,7 +4,6 @@
 //! exists: an unbound field is *absent* from `bindings`, so "wildcard bound
 //! to something" is unwritable. Variables carry dense ids only; names are a
 //! debugging sidecar the engine never stores.
-
 pub(crate) mod normalize;
 pub mod render;
 pub mod validate;
@@ -53,7 +52,6 @@ pub struct InteriorId(pub u32);
 
 impl InteriorId {
     /// # Panics
-
     /// is 64-bit only; this is a programmer invariant, not an IR
     /// overflow (`InteriorIdOverflow` is judged before any
     #[must_use]
