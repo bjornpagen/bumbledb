@@ -33,7 +33,6 @@ mod tests;
 pub(crate) struct CatalogIdentity(Arc<CatalogIdentityCell>);
 
 struct CatalogIdentityCell {
-
     _private: (),
 }
 
@@ -66,7 +65,6 @@ pub const FORMAT_VERSION: u32 = 8;
 pub struct GenerationId(u64);
 
 impl GenerationId {
-
     #[must_use]
     pub const fn value(self) -> u64 {
         self.0
@@ -165,7 +163,6 @@ fn parent_dir(dir: &std::path::Path) -> &std::path::Path {
 /// by mutating a real store's meta block.
 #[cfg(test)]
 impl Environment {
-
     pub(crate) fn force_format_version_for_tests(&self, version: u32) -> crate::error::Result<()> {
         let mut wtxn = self.env.write_txn()?;
         self.meta.put(
@@ -179,7 +176,6 @@ impl Environment {
 }
 
 impl Environment {
-
     /// LMDB pieces; the escaped-fresh maps start empty (a reopen has
 
     pub(super) fn assemble(
@@ -231,7 +227,6 @@ pub struct ReadTxn<'env> {
 }
 
 impl ReadTxn<'_> {
-
     pub(crate) fn raw(&self) -> &RoTxn<'_, AnyTls> {
         &self.txn
     }
