@@ -37,7 +37,6 @@ pub(crate) struct Bounds<'a> {
 }
 
 impl<'a> Bounds<'a> {
-
     pub(crate) const fn all() -> Self {
         Self {
             start: Bound::Unbounded,
