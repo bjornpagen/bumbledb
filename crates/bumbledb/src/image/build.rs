@@ -2,7 +2,6 @@
 //! into structure-of-arrays slabs —
 //! and the synthesis path, which fills the same slabs from a closed
 //! relation's sealed extension with no catalog anywhere.
-
 use std::ops::Bound;
 use std::sync::Arc;
 
@@ -428,7 +427,6 @@ impl Default for TransientImage {
 
 impl TransientImage {
     /// # Panics
-
     /// Only on programmer-invariant violations: a row narrower than the
     pub fn refill<'r>(
         &mut self,
@@ -440,7 +438,6 @@ impl TransientImage {
     }
 
     /// # Panics
-
     /// As [`Self::refill`]: programmer-invariant violations only.
     pub fn append<'r, I>(
         &mut self,
