@@ -62,22 +62,18 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
     assert_eq!(
         materialized,
         vec![
-
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(0)]),
             },
-
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
             },
-
             StatementDescriptor::Containment {
                 source: side(RelationId(1), &[FieldId(1)]),
                 target: side(RelationId(0), &[FieldId(0)]),
             },
-
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(1), FieldId(2)]),
@@ -163,7 +159,7 @@ fn nullary_relation_constructs() {
 
 #[test]
 fn example_schema_resolves_exactly() {
-    let savings = Value::U64(1); 
+    let savings = Value::U64(1);
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -196,12 +192,10 @@ fn example_schema_resolves_exactly() {
             },
         ],
         statements: vec![
-
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-
             containment(
                 side_where(
                     RelationId(1),
@@ -214,7 +208,6 @@ fn example_schema_resolves_exactly() {
                 side(RelationId(2), &[FieldId(0)]),
                 side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
             ),
-
             fd(RelationId(2), &[FieldId(0)]),
         ],
     }
@@ -232,11 +225,7 @@ fn example_schema_resolves_exactly() {
             .iter()
             .map(|statement| &statement.enforcement)
             .collect::<Vec<_>>(),
-        vec![
-            &probe(0, 1), 
-            &probe(2, 0), 
-            &probe(1, 0), 
-        ]
+        vec![&probe(0, 1), &probe(2, 0), &probe(1, 0),]
     );
 
     let mirrors: Vec<Option<StatementId>> = schema
@@ -311,8 +300,7 @@ fn permuted_target_projection_resolves_with_permutation() {
             },
         ],
         statements: vec![
-            fd(RelationId(0), &[FieldId(0), FieldId(1)]), 
-
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]),
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1)]),
                 side(RelationId(0), &[FieldId(1), FieldId(0)]),
@@ -355,7 +343,7 @@ fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
             },
         ],
         statements: vec![
-            fd(RelationId(0), &[FieldId(0), FieldId(1), FieldId(2)]), 
+            fd(RelationId(0), &[FieldId(0), FieldId(1), FieldId(2)]),
             // S(x, y, z) <= T(c, a, b): a 3-cycle against the key.
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1), FieldId(2)]),
@@ -441,11 +429,8 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     assert_eq!(
         decl.materialized_statements(),
         vec![
-
             fd(RelationId(1), &[FieldId(0)]),
-
             fd(RelationId(0), &[FieldId(0)]),
-
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -908,7 +893,6 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
         statements: vec![
             fd(RelationId(0), &[FieldId(0), FieldId(1)]),
             fd(RelationId(1), &[FieldId(0), FieldId(1)]),
-
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1)]),
                 side(RelationId(0), &[FieldId(0), FieldId(1)]),
