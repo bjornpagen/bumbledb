@@ -66,7 +66,6 @@ impl Colt {
     }
 
     /// Scalar — the measured in-situ winner over a NEON sweep. A miss
-
     #[inline(always)]
     fn probe_walk<const A: usize>(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         debug_assert_eq!(key.len(), A);
