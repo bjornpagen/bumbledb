@@ -16,8 +16,6 @@ pub(super) fn gen_config(corpus: &CorpusArgs) -> GenConfig {
     }
 }
 
-/// Resolves the digest-keyed directory for a corpus config (the digest
-/// is the corpus identity).
 #[must_use]
 pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
     let digest = corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg));
@@ -34,12 +32,7 @@ pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
 
 const CORPUS_MARKER: &str = "corpus.ok";
 
-/// [`ensure_corpus`] with an injectable loader — the reuse-logic test
-/// seam (a counter hook proves the marker short-circuits regeneration).
-///
 /// # Errors
-///
-/// The loader's error; scratch I/O as a message.
 pub fn ensure_corpus_with(
     dir: &Path,
     cfg: GenConfig,
@@ -57,13 +50,7 @@ pub fn ensure_corpus_with(
     Ok(paths)
 }
 
-/// Generates + loads both stores into the digest-keyed directory,
-/// reusing an existing one carrying the `corpus.ok` marker (regeneration
-/// is identity; the cache is convenience for L).
-///
 /// # Errors
-///
-/// Load errors as messages.
 pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> {
     ensure_corpus_with(dir, cfg, &mut |paths| {
         eprintln!(
@@ -72,10 +59,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
             cfg.scale.label(),
             paths.root.display()
         );
-        // Load into a scratch sibling, then compact into place
-        // (docs/architecture/50-storage.md): a collection insert is exactly the CoW-churn-heavy
-        // case — ~40% of the loaded file is freelist — and the cached
-        // corpus is write-once, so it ships live-sized.
+
         let load_dir = paths.root.join("db-load");
         let db = Db::create(&load_dir, Ledger)
             .map_err(|e| format!("create db: {e:?}"))?
@@ -87,7 +71,6 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove db-load: {e}"))?;
         corpus::load_sqlite(&paths.oracle, cfg).map_err(|e| format!("load sqlite: {e}"))?;
 
-        // The calendar theory: same discipline, second store pair.
         let cal_load_dir = paths.root.join("cal-db-load");
         let cal = Db::create(&cal_load_dir, crate::calendar::Scheduling)
             .map_err(|e| format!("create cal db: {e:?}"))?
