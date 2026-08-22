@@ -2,17 +2,12 @@ use super::*;
 use crate::ir::WordCmp;
 use std::collections::BTreeSet;
 
-/// The suffix-skip evidence encodes aggregate skip-illegality. A projection over one variable leaves deeper
-/// nodes skippable (the D2 win); the all-variables sink set an
-/// aggregate plan passes marks every variable-binding node relevant.
 #[test]
 fn aggregate_sink_vars_mark_every_node_relevant() {
     let normalized = clover();
     let mut plan = binary2fj(&normalized, &order(&[0, 1, 2]));
     factor(&mut plan);
 
-    // Projection over x only: at least one node binds nothing
-    // projected — D2 has something to skip.
     let projected: BTreeSet<VarId> = [X].into_iter().collect();
     let narrow = validate(&plan, &normalized, &schema(3, 3), &projected).expect("valid plan");
     assert!(
@@ -23,8 +18,6 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
         "projections keep skippable nodes"
     );
 
-    // The aggregate rule: every variable sink-relevant — every
-    // variable-binding node absorbs any skip that reaches it.
     let all_vars: BTreeSet<VarId> = [X, A, B, C].into_iter().collect();
     let full = validate(&plan, &normalized, &schema(3, 3), &all_vars).expect("valid plan");
     assert!(
@@ -36,17 +29,17 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     );
 }
 
-/// A plan that drops a zero-variable (gate)
-/// occurrence must not validate — the executor would skip the
-/// nonemptiness check and return all of R instead of the empty set.
+/// A plan that drops a zero-variable (gate) occurrence must not validate — the
+/// executor would skip the nonemptiness check and return all of R instead of
+/// the empty set.
 #[test]
 fn a_plan_dropping_a_gate_occurrence_is_rejected() {
-    // Q(x) :- R(x), Gate() — occurrence 1 binds nothing.
+
     let query = normalized(
         vec![occurrence(0, 0, &[(1, X)]), occurrence(1, 1, &[])],
         vec![],
     );
-    // The hand-built plan covers only the bound occurrence.
+
     let plan = FjPlan {
         nodes: vec![Node {
             estimate: 0,
@@ -60,7 +53,6 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
         PlanError::MissingOccurrence { occ: OccId(1) }
     );
 
-    // The degenerate extreme: an all-gates query with an empty plan.
     let all_gates = normalized(vec![occurrence(0, 0, &[])], vec![]);
     let empty = FjPlan { nodes: vec![] };
     assert_eq!(
@@ -70,8 +62,6 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
         PlanError::MissingOccurrence { occ: OccId(0) }
     );
 
-    // Positive control: the gate carried as an empty-vars subatom —
-    // exactly what binary2fj emits — validates.
     let with_gate = FjPlan {
         nodes: vec![Node {
             estimate: 0,
@@ -82,8 +72,6 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
         .expect("a gate subatom is the legal form");
 }
 
-/// A subatom referencing an occurrence outside the query is a
-/// typed rejection, not an executor index panic.
 #[test]
 fn a_subatom_with_an_unknown_occurrence_is_rejected() {
     let query = normalized(vec![occurrence(0, 0, &[(1, X)])], vec![]);
@@ -104,9 +92,6 @@ fn a_subatom_with_an_unknown_occurrence_is_rejected() {
     );
 }
 
-/// Negated occurrences join no node: a hand-built plan smuggling one
-/// into a subatom is rejected by name — the executor reaches negation
-/// exclusively through anti-probes.
 #[test]
 fn a_subatom_over_a_negated_occurrence_is_rejected() {
     let query = normalized(
@@ -130,13 +115,9 @@ fn a_subatom_over_a_negated_occurrence_is_rejected() {
     );
 }
 
-/// The attachment criterion (PRD 15): a negated atom over variables
-/// first all-bound at the second node of a three-node plan lands in
-/// that node's `anti_probes` — not earlier, not later.
 #[test]
 fn anti_probe_attaches_to_the_earliest_all_bound_node() {
-    // Unfactored clover plan: node 0 binds {x, a}, node 1 binds {b},
-    // node 2 binds {c}. The negated atom reads (x, b): bound at node 1.
+
     let mut occurrences = clover().occurrences;
     occurrences.push(negated(3, 2, &[(1, X), (2, B)]));
     let query = normalized(occurrences, vec![]);
@@ -148,9 +129,6 @@ fn anti_probe_attaches_to_the_earliest_all_bound_node() {
     assert!(validated.nodes()[2].anti_probes.is_empty());
 }
 
-/// The attachment criterion's other half: a negated atom over
-/// root-bound variables lands at the root — and so does a
-/// zero-variable emptiness gate (the empty set is bound everywhere).
 #[test]
 fn root_only_anti_probes_attach_to_the_root() {
     let mut occurrences = clover().occurrences;
@@ -172,14 +150,10 @@ fn root_only_anti_probes_attach_to_the_root() {
     );
 }
 
-/// A negated occurrence's trie schema is its single probe level: all
-/// its variables in binding (slot) order, per §3.3 — the shape of a
-/// fully-hoisted positive lookup.
 #[test]
 fn negated_occurrences_get_probe_order_trie_schemas() {
     let mut occurrences = clover().occurrences;
-    // Written (b, x) in field order — the probe level follows binding
-    // order (x bound at node 0, b at node 1), not field order.
+
     occurrences.push(negated(3, 2, &[(1, B), (2, X)]));
     let query = normalized(occurrences, vec![]);
     let plan = binary2fj(&query, &order(&[0, 1, 2]));
@@ -190,9 +164,7 @@ fn negated_occurrences_get_probe_order_trie_schemas() {
 
 #[test]
 fn trie_schemas_match_the_papers_triangle_worked_example() {
-    // Triangle plan [[R(x,y),S(y),T(x)],[S(z),T(z)]] (§3.3): R is a
-    // vector, S a map->vector, T a map->map (no trailing [] under COLT
-    // laziness — the build-phase question dissolves, 40-execution).
+
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -229,8 +201,7 @@ fn trie_schemas_match_the_papers_triangle_worked_example() {
 
 #[test]
 fn gj_style_plan_has_multiple_covers_on_the_first_node() {
-    // The paper: "for the first node we could have also chosen S(x) or
-    // T(x) as cover" — the GJ plan for the clover query.
+
     let plan = FjPlan {
         nodes: vec![
             Node {
@@ -259,8 +230,7 @@ fn gj_style_plan_has_multiple_covers_on_the_first_node() {
 
 #[test]
 fn residuals_attach_to_the_first_node_binding_both_sides() {
-    // Residual a < b: a is bound by node 1 (R's a), b by node 2 (S's b)
-    // in the unfactored clover plan — so it places on node 2.
+
     let query = normalized(
         clover().occurrences,
         vec![FilterPredicate::FieldsCompare {
@@ -276,16 +246,13 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
     assert!(validated.nodes()[2].residuals.is_empty());
 }
 
-/// The placement regression (found executing PRD 16): an item whose
-/// variable set first fails at the root must keep being checked in
-/// full at every later node. The bug this pins: consuming one
-/// variables iterator across the node scan leaves it exhausted after
-/// the first failing node, so the NEXT node passes vacuously — a < c
-/// (bound at nodes 0 and 2) attached to node 1, where c is unbound,
-/// and the executor compared against a zero slot.
+/// The bug this pins: consuming one variables iterator across the node scan
+/// leaves it exhausted after the first failing node, so the NEXT node passes
+/// vacuously — a < c (bound at nodes 0 and 2) attached to node 1, where c is
+/// unbound, and the executor compared against a zero slot.
 #[test]
 fn placement_rechecks_every_variable_at_every_node() {
-    // Residual half: a < c places on node 2 (c binds there), never 1.
+
     let query = normalized(
         clover().occurrences,
         vec![FilterPredicate::FieldsCompare {
@@ -300,7 +267,6 @@ fn placement_rechecks_every_variable_at_every_node() {
     assert!(validated.nodes()[1].residuals.is_empty());
     assert_eq!(validated.nodes()[2].residuals.len(), 1);
 
-    // Anti-probe half: ¬T(a, c) places on node 2 through the same rule.
     let mut occurrences = clover().occurrences;
     occurrences.push(negated(3, 2, &[(1, A), (2, C)]));
     let query = normalized(occurrences, vec![]);
@@ -313,7 +279,7 @@ fn placement_rechecks_every_variable_at_every_node() {
 
 #[test]
 fn self_join_plans_validate_over_occurrences() {
-    // Grandparent over OrgParent: two occurrences of one relation.
+
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -350,8 +316,7 @@ fn duplicate_occurrence_within_a_node_is_rejected() {
 
 #[test]
 fn distinct_witness_tracks_key_coverage() {
-    // Fresh-keyed occurrence: field 0 (the auto-key) is var-bound in
-    // every occurrence -> witness present.
+
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, X), (1, A)]),
@@ -363,7 +328,6 @@ fn distinct_witness_tracks_key_coverage() {
     let validated = validate(&plan, &query, &schema(2, 2), &BTreeSet::new()).expect("valid plan");
     assert!(validated.distinct_witness().is_some());
 
-    // Occurrence 1 binds only a non-key field -> no witness.
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, X), (1, A)]),
@@ -382,8 +346,7 @@ fn binding_slots_follow_node_order() {
     let mut plan = binary2fj(&query, &order(&[0, 1, 2]));
     factor(&mut plan);
     let validated = validate(&plan, &query, &schema(3, 3), &BTreeSet::new()).expect("valid plan");
-    // Factored clover: node 0 binds {x, a}, node 1 binds {b}, node 2
-    // binds {c}. Slot order follows; every scalar is one slot wide.
+
     assert_eq!(
         validated.slots(),
         &[
