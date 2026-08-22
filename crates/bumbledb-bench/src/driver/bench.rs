@@ -22,7 +22,6 @@ pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
     )
 }
 
-/// The feature-missing message: the exact cargo invocation to use.
 pub(crate) fn obs_missing(what: &str) -> String {
     format!(
         "{what} needs an obs build; run:\n\
@@ -30,8 +29,6 @@ pub(crate) fn obs_missing(what: &str) -> String {
     )
 }
 
-/// Whether the digest directory carries a stamp matching this corpus at
-/// the case count recorded beside it.
 fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
     let Ok(raw) = std::fs::read_to_string(paths.root.join(CASES_FILE)) else {
         return false;
@@ -51,22 +48,17 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     if args.alloc && !cfg!(feature = "obs") {
         return Err(obs_missing("--alloc"));
     }
-    // Same rule for the trace pass: without the obs build a capture is
-    // empty, and a span-free artifact wearing a real name is a lie.
+
     if args.trace && !cfg!(feature = "obs") {
         return Err(obs_missing("--trace"));
     }
     if args.alloc && args.trace {
         return Err("--alloc and --trace are mutually exclusive modes".to_owned());
     }
-    // The device-honesty rule is symmetric (docs/architecture/
-    // 60-validation.md): EVERY timed lane refuses a RAM-backed target.
-    // The read families time against the corpus under --dir, so the
-    // corpus dir is checked exactly like the write scratch (which
+
     // write_families checks itself). Before ensure_corpus: refuse
     // before generating anything onto the ram disk. The verify/
-    // differential/fuzz lanes stay exempt — they check answers, not
-    // wall clocks.
+
     crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed read families")
         .map_err(|refusal| refusal.to_string())?;
     let paths = ensure_corpus(&args.corpus.dir, cfg)?;
@@ -74,8 +66,7 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     if !verified && !args.i_am_lying {
         return Err(stamp_refusal(&args.corpus));
     }
-    // Family selection: filtering never bypasses gate semantics — a
-    // filtered run's verdict is PARTIAL.
+
     let all_names: Vec<&str> = families::all()
         .iter()
         .map(|f| f.name)
@@ -97,16 +88,8 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     Ok((paths, verified))
 }
 
-/// `bench`. Returns the exit code: 0 when every selected gate family
-/// won (and the budget held where it gates), 1 otherwise.
-///
 /// # Errors
-///
-/// Refusals (stamp, feature, unknown family) and setup errors — each
-/// message names the next action.
-///
 /// # Panics
-///
 /// Only on tool-invariant violations.
 #[expect(
     clippy::too_many_lines,
@@ -131,9 +114,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     } else {
         crate::duralane::DurabilityLane::Durable
     };
-    // The NosyncLane re-anchor (issue 33): the hidden NOSYNC attach
-    // opens the SAME stamped durable-shaped corpus. Kind is not data
-    // anymore, so there is no twin to reload.
+
     let mode = lane.store_mode();
     if args.ephemeral {
         eprintln!("bench: opening the stamped corpus under NosyncLane");
@@ -147,8 +128,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         .map_err(|e| format!("open calendar oracle: {e}"))?;
     sqlite_run::FairnessCheck::run_calendar(&cal_conn)?;
 
-    // The DVFS ramp eater (measured): ≥ 200 ms of warm work before
-    // the first family, so opening samples measure a settled clock.
     eprintln!("bench: warming clocks (200 ms spin)");
     clockproxy::warm_up(std::time::Duration::from_millis(200));
 
@@ -176,9 +155,9 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             reads.push(run.read_family(family)?);
         }
     }
-    // The calendar family set (docs/architecture/60-validation.md § the
+
     // calendar benchmark): same protocol, second store pair; the DU
-    // whole-read exercises the spanning multi-rule union.
+
     for family in crate::calendar::families::all() {
         if selected(family.name) {
             reads.push(run.read_cal_family(family)?);
@@ -187,9 +166,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let mut flames = std::mem::take(&mut run.flames);
     drop(run);
 
-    // The closure lane (the roster extension): its own scratch world,
-    // verified inline (the recursion surface is translator-
-    // inexpressible, so it sits outside the stamped registry), timed
     // under the same protocol — report-only rows beside the reads. It
     // runs after the stamped read families (its corpus load commits
     // fsync) and before the write families (it times reads).
@@ -203,9 +179,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         lane.store_mode(),
     )?);
 
-    // The displaced lanes (the roster extension): the DRAM-tier
-    // in-situ rows — their own scratch world, verified inline like the
-    // closure lane, foreign traffic streamed BETWEEN passes (untimed)
     // with the mass as the row's parameter. After the closure lane
     // (same reads-before-writes law), before the write families.
     reads.extend(crate::displaced::bench_families(
@@ -219,12 +192,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     )?);
 
     // Write families run AFTER every read family (measured): an
-    // fsync drops the core to its DVFS floor with
-    // demand-driven recovery, so any read family measured in that
-    // shadow reads slow-clock time. `insert_stream` (seconds of fsync) is last
-    // of all — asserted inside write_families. Under --trace the
-    // windowed/capacity judgment lanes land their traced solo samples
-    // beside the read-family pairs and embed into the same flame list.
+
     let trace_dir = args.trace.then(|| out_dir.join("trace"));
     let writes = write_families(
         cfg,
@@ -253,9 +221,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         },
         corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {
-            // The provenance shows how much evidence earned the stamp:
-            // a --cases 0 run is legal (families-only verification is
-            // honest) but the report visibly says '0 randomized cases'.
+
             let stamp = std::fs::read_to_string(&paths.stamp)
                 .map_or_else(|_| "UNVERIFIED".to_owned(), |s| s.trim().to_owned());
             let cases = std::fs::read_to_string(paths.root.join(CASES_FILE))
@@ -279,10 +245,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     Ok(i32::from(!gates_ok))
 }
 
-/// Cache residency (the engine's trace-gated observability, real only
-/// on the obs build): the feature fork lives here, in one function
-/// twin — the report site is written once, `#[cfg]`-free (the obs.rs
-/// law). Zeros off: no cache counters exist to read.
 #[cfg(feature = "obs")]
 fn cache_residency<S>(db: &bumbledb::Db<S>) -> (u64, u64) {
     db.cache_resident()
