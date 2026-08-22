@@ -20,7 +20,8 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { TermOps } from "#index.ts"
-import { ALLEN, allen, bool, i64, interval, lt, pointIn, query, relation, schema, u64, v } from "#index.ts"
+import { ALLEN, bool, i64, interval, query, relation, schema, u64, v } from "#index.ts"
+import { allen, lt, pointIn } from "#query/atom.ts"
 
 const Reading = relation("Reading", {
 	id: u64.fresh,
@@ -37,7 +38,7 @@ const World = schema("World", { Reading }, [])
 /** The constant-comparison refusal (the engine's `ConstantComparison` twin). */
 const CONSTANT = /a comparison without a variable side is constant-valued/
 
-/** Captures the rule scope's TermOps (the free exports ARE the methods — pinned in free-comparisons). */
+/** Captures the rule scope's TermOps. */
 function capturedOps(): TermOps {
 	let ops: TermOps | undefined
 	query(World).rule((r) => {

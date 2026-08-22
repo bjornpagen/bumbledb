@@ -13,10 +13,8 @@
  * (renames are real), params still STRING-named, plus negation,
  * conditions, aggregates, and interiors / one linear rec via
  * `q.interior` / `q.reach` —
- * `db.prepare` as a plain value; the comparison/connective builders are
- * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
- * common host identifiers — import aliasing is the answer; the SDK does
- * not rename for collision-avoidance). The raw native bridge is not exported.
+ * `db.prepare` as a plain value; comparisons and connectives live on
+ * the rule scope). The raw native bridge is not exported.
  */
 
 export type {
@@ -64,7 +62,6 @@ export type {
 	Prepared,
 	ReadInstance,
 	SyncResult,
-	Tx,
 	Violation,
 	Witness,
 	WriteFromOutcome,
@@ -134,7 +131,7 @@ export type {
 	RuleData,
 	Tree
 } from "#query/atom.ts"
-export { ALLEN, allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
+export { ALLEN } from "#query/atom.ts"
 export type { Agg, FindEntry } from "#query/find.ts"
 export type {
 	AnyQuery,

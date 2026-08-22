@@ -48,7 +48,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import type { Db as DbValue } from "#index.ts"
-import { closed, contained, Db, key, ne, on, query, relation, renderStatement, schema, str, u64, v } from "#index.ts"
+import { closed, contained, Db, key, on, query, relation, renderStatement, schema, str, u64, v } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
@@ -165,7 +165,7 @@ const restMembers = query(OperandViews).rule(function restArm(r) {
 	const { id: m, capsule: c, pos, kind } = v(Member)
 	return r
 		.match(Member, { id: m, program: r.param("program"), capsule: c, pos, kind })
-		.where(ne(kind, "Taught"))
+		.where(r.ne(kind, "Taught"))
 		.find({ m, c, pos, kind })
 })
 
@@ -335,7 +335,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 					const { id: m, capsule: c, pos, kind } = v(Member)
 					return r
 						.match(Member, { id: m, program: r.param("program"), capsule: c, pos, kind })
-						.where(ne(kind, "Taught"))
+						.where(r.ne(kind, "Taught"))
 						.find({ m, pos })
 				})
 		}, /every rule of a query derives the same head/)
@@ -429,7 +429,7 @@ describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function pri
 					return r
 						.match(Produces, { grp: from, capability: cap })
 						.match(Requires, { consumer: to, capability: cap, state: "Upheld" })
-						.where(ne(from, to))
+						.where(r.ne(from, to))
 						.find({ from, to })
 				}
 			],
@@ -442,7 +442,7 @@ describe("primer cycle detector: rec reach(x,x) on a DAG is empty", function pri
 						.match(Produces, { grp: from, capability: cap })
 						.match(Requires, { consumer: midReq.consumer, capability: cap, state: "Upheld" })
 						.match(Requires, { consumer: to, state: "Upheld" })
-						.where(ne(from, midReq.consumer))
+						.where(r.ne(from, midReq.consumer))
 						.interior("reach", { from: midReq.consumer, to })
 						.find({ from, to })
 				}

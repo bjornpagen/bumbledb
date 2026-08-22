@@ -23,7 +23,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import type { Db as DbValue, Fact, ReadInstance, Tx } from "#index.ts"
+import type { Db as DbValue, Fact, ReadInstance, WriteTx } from "#index.ts"
 import {
 	abandon,
 	bool,
@@ -386,7 +386,7 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("a spent transaction refuses use", function spentTx() {
-		let escaped: Tx<(typeof Ledger)["relations"]> | undefined
+		let escaped: WriteTx<(typeof Ledger)["relations"]> | undefined
 		const captured = db.write(function capture(tx) {
 			escaped = tx
 		})
@@ -610,7 +610,7 @@ describe("the Db runtime against a real store", function suite() {
  * refusals at the seam back up. The well-shaped insert compiles as the
  * control.
  */
-function marshalShapesAreTyped(tx: Tx<(typeof Ledger)["relations"]>): void {
+function marshalShapesAreTyped(tx: WriteTx<(typeof Ledger)["relations"]>): void {
 	tx.insert(Audit, [
 		{
 			id: 1n,

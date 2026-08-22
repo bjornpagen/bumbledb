@@ -34,7 +34,6 @@ import type { Infer, Schema, SchemaRelations } from "#index.ts"
 import {
 	ALLEN,
 	abandon,
-	allen,
 	bool,
 	bytes,
 	capacity,
@@ -42,16 +41,12 @@ import {
 	contained,
 	Db,
 	duration,
-	eq,
 	i64,
 	interval,
 	key,
 	lower,
-	lt,
 	mirrors,
-	not,
 	on,
-	pointIn,
 	query,
 	ref,
 	relation,
@@ -248,14 +243,14 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { service, window } = v(Outage)
 			return r
 				.match(Outage, { service, window })
-				.where(pointIn(r.param("t"), window))
+				.where(r.pointIn(r.param("t"), window))
 				.find({ service })
 		})
 		const overlapping = query(Uptime).rule((r) => {
 			const { service, window } = v(Outage)
 			return r
 				.match(Outage, { service, window })
-				.where(allen(window, ALLEN.intersects, r.param("incident")))
+				.where(r.allen(window, ALLEN.intersects, r.param("incident")))
 				.find({ service, window })
 		})
 		const downtime = query(Uptime).rule((r) => {
@@ -315,7 +310,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { id: b } = v(Business)
 			return r
 				.match(Business, { id: b })
-				.where(not(MailingAddress, { business: b }))
+				.where(r.not(MailingAddress, { business: b }))
 				.find({ b })
 		})
 
@@ -480,7 +475,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { slot, track } = v(Slot)
 			return r
 				.match(Slot, { playlist: r.param("list"), slot, track })
-				.where(pointIn(r.param("pos"), slot))
+				.where(r.pointIn(r.param("pos"), slot))
 				.find({ track })
 		})
 
@@ -541,7 +536,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r
 				.match(Follows, { follower: a, followee: b })
 				.match(Follows, { follower: b, followee: a })
-				.where(lt(a, b))
+				.where(r.lt(a, b))
 				.find({ a, b })
 		})
 
@@ -641,14 +636,14 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { room, span } = v(Booking)
 			return r
 				.match(Booking, { room, span })
-				.where(allen(span, ALLEN.intersects, r.param("want")))
+				.where(r.allen(span, ALLEN.intersects, r.param("want")))
 				.find({ room, span })
 		})
 		const personLoad = query(Calendar).rule((r) => {
 			const { person, span } = v(Claim)
 			return r
 				.match(Claim, { person, span })
-				.where(allen(span, ALLEN.intersects, r.param("window")))
+				.where(r.allen(span, ALLEN.intersects, r.param("window")))
 				.find({ person, span })
 		})
 
@@ -671,7 +666,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { rate_bps, valid } = v(Version)
 			return r
 				.match(Version, { policy: r.param("p"), rate_bps, valid })
-				.where(pointIn(r.param("t"), valid))
+				.where(r.pointIn(r.param("t"), valid))
 				.find({ rate_bps })
 		})
 		const successions = query(Pricing).rule((r) => {
@@ -680,7 +675,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r
 				.match(Version, { policy: p, valid: a })
 				.match(Version, { policy: p, valid: b })
-				.where(allen(a, ALLEN.meets, b))
+				.where(r.allen(a, ALLEN.meets, b))
 				.find({ a, b })
 		})
 
@@ -704,7 +699,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { seq, span } = v(PayPeriod)
 			return r
 				.match(PayPeriod, { year: r.param("y"), seq, span })
-				.where(pointIn(r.param("t"), span))
+				.where(r.pointIn(r.param("t"), span))
 				.find({ seq })
 		})
 
@@ -735,7 +730,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r
 				.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
 				.match(Bracket, { regime: reg, income: b, rate_bps })
-				.where(pointIn(r.param("taxable"), b))
+				.where(r.pointIn(r.param("taxable"), b))
 				.find({ rate_bps })
 		})
 
@@ -930,7 +925,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 						const { id: c } = v(Node)
 						return r
 							.match(Node, { id: c })
-							.where(eq(c, r.param("root")))
+							.where(r.eq(c, r.param("root")))
 							.find({ c })
 					}
 				],
@@ -954,7 +949,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 						const { id: c } = v(Node)
 						return r
 							.match(Node, { id: c })
-							.where(eq(c, r.param("root")))
+							.where(r.eq(c, r.param("root")))
 							.find({ c })
 					}
 				],
@@ -1050,7 +1045,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 						const { id: a } = v(Account)
 						return r
 							.match(Account, { id: a })
-							.where(eq(a, r.param("root")))
+							.where(r.eq(a, r.param("root")))
 							.find({ a })
 					}
 				],
@@ -1134,7 +1129,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r
 				.match(Employee, { id: e, name })
 				.match(Salary, { employee: e, amount, applies: w })
-				.where(pointIn(r.param("at"), w))
+				.where(r.pointIn(r.param("at"), w))
 				.find({ name, amount })
 		})
 

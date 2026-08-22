@@ -36,22 +36,17 @@ import {
 	Db,
 	type Infer,
 	abandon,
-	allen,
 	bool,
 	bytes,
 	capacity,
 	closed,
 	contained,
 	duration,
-	eq,
 	i64,
 	interval,
 	key,
-	lt,
 	mirrors,
-	not,
 	on,
-	pointIn,
 	query,
 	ref,
 	relation,
@@ -128,7 +123,7 @@ const downAt = query(Uptime).rule((r) => {
 	const { service, window } = v(Outage)
 	return r
 		.match(Outage, { service, window })
-		.where(pointIn(r.param("t"), window))
+		.where(r.pointIn(r.param("t"), window))
 		.find({ service })
 })
 // overlapping an incident window (one Allen mask, no operator zoo):
@@ -136,7 +131,7 @@ const overlapping = query(Uptime).rule((r) => {
 	const { service, window } = v(Outage)
 	return r
 		.match(Outage, { service, window })
-		.where(allen(window, ALLEN.intersects, r.param("incident")))
+		.where(r.allen(window, ALLEN.intersects, r.param("incident")))
 		.find({ service, window })
 })
 // total downtime per service (the denotation's one arithmetic):
@@ -225,7 +220,7 @@ const unaddressed = query(Optionality).rule((r) => {
 	const { id: b } = v(Business)
 	return r
 		.match(Business, { id: b })
-		.where(not(MailingAddress, { business: b }))
+		.where(r.not(MailingAddress, { business: b }))
 		.find({ b })
 })
 ```
@@ -507,7 +502,7 @@ const playingAt = query(Playlists).rule((r) => {
 	const { slot, track } = v(Slot)
 	return r
 		.match(Slot, { playlist: r.param("list"), slot, track })
-		.where(pointIn(r.param("pos"), slot))
+		.where(r.pointIn(r.param("pos"), slot))
 		.find({ track })
 })
 
@@ -623,7 +618,7 @@ const mutual = query(Graph).rule((r) => {
 	return r
 		.match(Follows, { follower: a, followee: b })
 		.match(Follows, { follower: b, followee: a })
-		.where(lt(a, b))
+		.where(r.lt(a, b))
 		.find({ a, b })
 })
 ```
@@ -772,14 +767,14 @@ const roomConflicts = query(Calendar).rule((r) => {
 	const { room, span } = v(Booking)
 	return r
 		.match(Booking, { room, span })
-		.where(allen(span, ALLEN.intersects, r.param("want")))
+		.where(r.allen(span, ALLEN.intersects, r.param("want")))
 		.find({ room, span })
 })
 const personLoad = query(Calendar).rule((r) => {
 	const { person, span } = v(Claim)
 	return r
 		.match(Claim, { person, span })
-		.where(allen(span, ALLEN.intersects, r.param("window")))
+		.where(r.allen(span, ALLEN.intersects, r.param("window")))
 		.find({ person, span })
 })
 ```
@@ -815,7 +810,7 @@ const inForce = query(Pricing).rule((r) => {
 	const { rate_bps, valid } = v(Version)
 	return r
 		.match(Version, { policy: r.param("p"), rate_bps, valid })
-		.where(pointIn(r.param("t"), valid))
+		.where(r.pointIn(r.param("t"), valid))
 		.find({ rate_bps })
 })
 // clean successions (half-open makes MEETS exact, no ±1 fudge):
@@ -825,7 +820,7 @@ const successions = query(Pricing).rule((r) => {
 	return r
 		.match(Version, { policy: p, valid: a })
 		.match(Version, { policy: p, valid: b })
-		.where(allen(a, ALLEN.meets, b))
+		.where(r.allen(a, ALLEN.meets, b))
 		.find({ a, b })
 })
 ```
@@ -858,7 +853,7 @@ const holding = query(Payroll).rule((r) => {
 	const { seq, span } = v(PayPeriod)
 	return r
 		.match(PayPeriod, { year: r.param("y"), seq, span })
-		.where(pointIn(r.param("t"), span))
+		.where(r.pointIn(r.param("t"), span))
 		.find({ seq })
 })
 ```
@@ -908,7 +903,7 @@ const marginal = query(Tax).rule((r) => {
 	return r
 		.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
 		.match(Bracket, { regime: reg, income: b, rate_bps })
-		.where(pointIn(r.param("taxable"), b))
+		.where(r.pointIn(r.param("taxable"), b))
 		.find({ rate_bps })
 })
 ```
@@ -1257,7 +1252,7 @@ const reach = query(Closure)
 				const { id: c } = v(Node)
 				return r
 					.match(Node, { id: c })
-					.where(eq(c, r.param("root")))
+					.where(r.eq(c, r.param("root")))
 					.find({ c })
 			}
 		],
@@ -1289,7 +1284,7 @@ const unreached = query(Closure)
 				const { id: c } = v(Node)
 				return r
 					.match(Node, { id: c })
-					.where(eq(c, r.param("root")))
+					.where(r.eq(c, r.param("root")))
 					.find({ c })
 			}
 		],
@@ -1360,7 +1355,7 @@ const nativeRollup = query(Accounts)
 				const { id: a } = v(Account)
 				return r
 					.match(Account, { id: a })
-					.where(eq(a, r.param("root")))
+					.where(r.eq(a, r.param("root")))
 					.find({ a })
 			}
 		],
@@ -1500,7 +1495,7 @@ const inForceAt = query(Payroll).rule((r) => {
 	return r
 		.match(Employee, { id: e, name })
 		.match(Salary, { employee: e, amount, applies: w })
-		.where(pointIn(r.param("at"), w))
+		.where(r.pointIn(r.param("at"), w))
 		.find({ name, amount })
 })
 ```

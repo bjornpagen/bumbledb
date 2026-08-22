@@ -33,7 +33,7 @@ and result rows are inferred, and a failed constraint check is returned as
 structured data rather than thrown as an exception.
 
 ```ts
-import { bool, closed, contained, Db, gt, type Infer, key, on, query, relation, schema, u64, v } from "@bjornpagen/bumbledb"
+import { bool, closed, contained, Db, type Infer, key, on, query, relation, schema, u64, v } from "@bjornpagen/bumbledb"
 
 // A fixed set can carry typed columns as well as names.
 // Its ID type is the union "DirectPass" | "JudgedPass" | "Failed".
@@ -92,7 +92,7 @@ const certifiedAbove = query(Review).rule((r) => {
 	return r
 		.match(Certificate, { attempt: a, kind: k })
 		.match(Kind, { id: k, mastered: true, rank }) // reusing k at Kind.id creates the join
-		.where(gt(rank, r.param("floor")))
+		.where(r.gt(rank, r.param("floor")))
 		.find({ a, rank })
 })
 

@@ -465,8 +465,6 @@ interface WriteTx<Rels extends SchemaRelations> {
 	): Fact<R> | undefined
 }
 
-type Tx<Rels extends SchemaRelations> = WriteTx<Rels>
-
 const witnessTypes: unique symbol = Symbol("bumbledb.witness.types")
 
 /**
@@ -2182,7 +2180,6 @@ export type {
 	Prepared,
 	ReadInstance,
 	SyncResult,
-	Tx,
 	Violation,
 	Witness,
 	WriteFromOutcome,
