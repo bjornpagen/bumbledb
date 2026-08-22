@@ -55,7 +55,7 @@ pub(crate) fn ground(normalized: &mut NormalizedQuery, schema: &Schema, finds: &
         }
         if evaluate::fold_step(normalized, schema, &output_vars) {
             if normalized.dead.is_some() {
-                return; 
+                return;
             }
             continue;
         }
@@ -71,7 +71,7 @@ fn removable(
 ) -> Option<(usize, usize, StatementId)> {
     for statement in schema.containments() {
         if !matches!(statement.enforcement, Enforcement::ScalarProbe { .. }) {
-            continue; 
+            continue;
         }
         let source = &statement.source;
         let target = &statement.target;
@@ -338,7 +338,6 @@ fn negated_within(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool
 
 #[derive(Clone, Copy)]
 enum Matching {
-
     Multiset,
 
     Containment,
@@ -408,7 +407,6 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
     let mut vars = BTreeSet::new();
     for term in finds {
         match term {
-
             FindTerm::Var(var) => {
                 vars.insert(*var);
             }
