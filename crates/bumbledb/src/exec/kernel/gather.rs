@@ -1,34 +1,14 @@
-// ---------------------------------------------------------------------
-// The fold kernels. Two access shapes each:
-// `_idx` gathers `values[idx as usize * stride + offset]` per index (the
-// leaf batch's entry-major keys, and the scan pushdown's position
-// gathers at stride 1 / offset 0); the contiguous form walks a strided slice
-// directly (dense survivor runs — no index loads at all).
-//
-// The `_idx` kernels are `std::simd` gathers on every target
-// (the crucible packet (git ecec1dc3), Q2 — ADOPT, measured: min/max
-// ~9% faster than the retired scalar-unrolled bodies, sums at parity
-// via the same carry-count trick as the dense fold; three `unsafe`
-// blocks and their bounds obligations deleted — `gather_or_default`
-// masks lanes safely). Four lanes: the adds race down separate
-// dependency chains while the OoO window overlaps the gathers.
-// ---------------------------------------------------------------------
-
 use std::simd::prelude::*;
 
-/// The i64 biased-word sign flip (order-preserving storage form to
-/// logical value).
 #[inline]
 pub(super) fn biased_to_i64(word: u64) -> i64 {
     (word ^ (1 << 63)).cast_signed()
 }
 
-/// The gather lane width: four index lanes per wave.
 const IDX_LANES: usize = 4;
 
-/// The invariant the callers owe (checked in debug builds): every
-/// strided index lands inside `values`. The safe gathers below would
-/// otherwise read the lane default, never out of bounds.
+/// The invariant the callers owe (checked in debug builds): every strided index
+/// lands inside `values`.
 #[inline]
 fn debug_assert_idx_bounds(values: &[u64], stride: usize, offset: usize, indices: &[u32]) {
     debug_assert!(stride > 0);
@@ -70,7 +50,7 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
         let idx = Simd::<u32, IDX_LANES>::from_array(*chunk).cast::<usize>() * stride_v + offset_v;
         let v = Simd::gather_or_default(values, idx);
         let new = lows + v;
-        // Overflowed lanes read all-ones; subtracting adds 1.
+
         carries -= lows.simd_gt(new).to_simd().cast::<u64>();
         lows = new;
     }
@@ -87,11 +67,9 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
 /// Word-order (min, max) at the indexed positions in one pass — biased
 /// i64 words are order-preserving, so one kernel serves both
 /// signednesses.
-///
 /// # Panics
-///
-/// Only on a programmer-invariant violation: an empty index list (the
 /// executor never emits empty batches).
+/// Only on a programmer-invariant violation: an empty index list (the
 #[must_use]
 pub fn fold_min_max_u64_idx(
     values: &[u64],
