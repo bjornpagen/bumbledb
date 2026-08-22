@@ -3,7 +3,6 @@ use std::mem::MaybeUninit;
 use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
 
 impl<V: Copy> WordMap<V> {
-
     #[must_use]
     pub fn new(arity: usize) -> Self {
         Self {
