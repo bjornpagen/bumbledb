@@ -19,7 +19,6 @@ pub(super) struct ReadSpec<'a> {
 }
 
 impl BenchRun<'_> {
-
     pub(super) fn read_family(
         &mut self,
         family: &families::Family,
