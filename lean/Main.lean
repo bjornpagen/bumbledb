@@ -3,7 +3,7 @@ import Bumbledb.Decide
 import Bumbledb.Exec.Reach
 
 /-!
-# The conformance driver (PRD 13; judgment + recursive arms) — the IO shell
+# The conformance driver ( judgment + recursive arms) — the IO shell
 
 `lake exe conformance [cases-dir]`: read every `*.json` case, dispatch
 on the case kind, and compare against the recorded engine verdicts.
@@ -14,39 +14,39 @@ spec bug), triaged before anything else merges, never repaired here.
 Four arms, dispatched by file name (`lean/conformance/README.md`):
 
 * **query cases** (everything else): evaluate the denotation
-  (`Bumbledb.Conformance.checkCase` — join + surface anti-join / AntiProbe,
-  plus the recorded aggregate glue) and compare answer sets. The
-  document's Query is the tagged `cq` arm.
+ (`Bumbledb.Conformance.checkCase` — join + surface anti-join / AntiProbe,
+ plus the recorded aggregate glue) and compare answer sets. The
+ document's Query is the tagged `cq` arm.
 * **judgment cases** (`judgment-*.json`): decode `(theory, instance,
-  delta)`, apply the delta by row-set arithmetic, and run the PROVED
-  two-phase judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
-  agrees with the model's `Txn.judge` verdict and violation sets phase
-  for phase (`Txn.judgeB_agrees`, under no premise beyond the
-  closed-roster merge). The recorded verdict is compared WHOLE:
-  accept, or the rejecting phase plus the per-phase violation set as
-  statement indices, in the contracted citation order — ascending
-  statement indices, a both-directions containment cited once
-  (`RVerdict`'s doc carries the contract and its engine anchors). The
-  decode glue below is IO-shell material (this file), never spec:
-  `verdictOf` is one pattern match on `judgeB`'s position-tagged
-  payload — the compared citation list IS the proved artifact's index
-  projection (2026-07-23 audit, finding 143). Closed-source
-  containments stay outside this incremental arm (delta-restriction).
+ delta)`, apply the delta by row-set arithmetic, and run the PROVED
+ two-phase judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
+ agrees with the model's `Txn.judge` verdict and violation sets phase
+ for phase (`Txn.judgeB_agrees`, under no premise beyond the
+ closed-roster merge). The recorded verdict is compared WHOLE:
+ accept, or the rejecting phase plus the per-phase violation set as
+ statement indices, in the contracted citation order — ascending
+ statement indices, a both-directions containment cited once
+ (`RVerdict`'s doc carries the contract and its engine anchors). The
+ decode glue below is IO-shell material (this file), never spec:
+ `verdictOf` is one pattern match on `judgeB`'s position-tagged
+ payload — the compared citation list IS the proved artifact's index
+ projection (2026-07-23 audit, finding 143). Closed-source
+ containments stay outside this incremental arm (delta-restriction).
 * **complete-admission cases** (`complete-*.json`, instance-lifetime
-  L5): the same document shape and the same `judgeB`, but `instance`
-  IS the candidate (no green pre-state). An empty delta is a no-op,
-  so `finalWorld` is the candidate and `completeAdmissionB` is
-  `judgeB` over it. The incremental lane's closed-source fence
-  **lifts**: generated worlds including closed-source containments
-  run through complete admission against `judgeB`.
+ L5): the same document shape and the same `judgeB`, but `instance`
+ IS the candidate (no green pre-state). An empty delta is a no-op,
+ so `finalWorld` is the candidate and `completeAdmissionB` is
+ `judgeB` over it. The incremental lane's closed-source fence
+ **lifts**: generated worlds including closed-source containments
+ run through complete admission against `judgeB`.
 * **reach cases** (`reach-*.json`): decode a tagged Query
-  (`cq` | `reach`; `Bumbledb/Query/Syntax.lean`) and run
-  `Query.evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound`
-  is its agreement with `evalQuery`), comparing answer sets against
-  the recorded agreed answers. Filename selects the evaluator, not
-  the Query constructor. Atoms are `edb` / `interior`.
+ (`cq` | `reach`; `Bumbledb/Query/Syntax.lean`) and run
+ `Query.evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound`
+ is its agreement with `evalQuery`), comparing answer sets against
+ the recorded agreed answers. Filename selects the evaluator, not
+ the Query constructor. Atoms are `edb` / `interior`.
 
-This file is the ONE place PRD 13 allows `partial` definitions; the
+This file is the ONE place allows `partial` definitions; the
 modules below happen to need none — the loops are `for`s over finite
 file lists and structural recursions over decoded JSON.
 -/
@@ -88,9 +88,7 @@ def typeOfName (s : String) : Except String ValueType :=
       match ((s.drop 6).dropEnd 1).toNat? with
       | some n => .ok (.fixedBytes n)
       | none => .error s!"bad bytes width in {s}"
-    -- `interval<E, w>`: the width is the type — the `bytes<N>`
-    -- spelling precedent, generalized (`w = 0` denotes nothing and is
-    -- refused exactly as the macro grammar refuses it).
+
     else if s.startsWith "interval_u64_fixed<" && s.endsWith ">" then
       match ((s.drop 19).dropEnd 1).toNat? with
       | some w => if 0 < w then .ok (.intervalFixed .u64 w)
@@ -218,7 +216,7 @@ inductive RVerdict where
   /-- The commit was accepted. -/
   | accept
   /-- The commit was rejected in one phase with the complete cited
-  statement-index set of that phase. -/
+ statement-index set of that phase. -/
   | reject (keyPhase : Bool) (violations : List Nat)
 deriving BEq
 
@@ -238,10 +236,10 @@ def decodeVerdict (j : Json) : Except String RVerdict := do
 /-- One decoded judgment case. -/
 structure JCase where
   /-- The theory (header from the relations block, closed rosters from
-  the ground axioms, the materialized statement list). -/
+ the ground axioms, the materialized statement list). -/
   theory : Theory
   /-- The pre-state world: open instance rows plus the ground-axiom
-  rows (the `WorldCarriesClosed` merge, the query lane's own rule). -/
+ rows (the `WorldCarriesClosed` merge, the query lane's own rule). -/
   world : List (RelId × List Row)
   /-- The delta's deletes, per relation. -/
   deletes : List (RelId × List Row)
@@ -447,7 +445,7 @@ structure RCase where
   /-- The world the query's `edb` atoms read. -/
   world : Query.ListInstance
   /-- The query: interiors then either main (`.cq`) or rec-plus-main
-  (`.reach`). -/
+ (`.reach`). -/
   query : Query.Query
   /-- The positional parameter environment. -/
   env : Query.ParamEnv
