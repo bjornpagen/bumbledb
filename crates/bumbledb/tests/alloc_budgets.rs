@@ -1,12 +1,3 @@
-//! Ordinary-tier allocation-law budgets (audit 28): [`AllocWindow`] /
-//! [`AllocAbsolute`] pins on the named hot paths. One test function —
-//! the counting allocator is process-global; a sibling `#[test]` would
-//! race the window.
-//!
-//! The lib registers the counter only under `alloc-counter`. This
-//! binary registers it when that feature is off so `cargo test
-//! --workspace` has eyes.
-
 use bumbledb::alloc_counter::{self, AllocWindow};
 use bumbledb::ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId};
 use bumbledb::schema::FieldId;
@@ -37,22 +28,10 @@ bumbledb::schema! {
     Account(holder) <= Holder(id);
 }
 
-/// Steady-batch width for [`ALLOCS_PER_COMMITTED_FACT`].
 const COMMIT_BATCH: u64 = 64;
 
-/// Host allocations allowed per fact in a warmed same-shape batch
-/// commit.
-///
-/// Derivation from the arena design (`arena.rs`): a `WriteDelta` is
-/// born empty every commit. The bump arena hands out 64 KiB chunks —
-/// one heap allocation for the first fact, then zero arena allocs
-/// while the batch stays under the chunk (`COMMIT_BATCH` × a two-word
-/// row is well under 2 KiB). The fact `HashMap` grows logarithmically.
-/// Each unique fresh key inserts one `BTreeMap` determinant node.
-/// Plan/judgment collect exact-size `Vec`s once per commit (amortized
-/// 1/N). Measured on this fixture after three warmup commits: 172
-/// window allocs / 64 facts = 2.69. `K = 3` is that ceiling. Issue
-/// 29's hunt may lower it; it must not rise.
+/// Measured on this fixture after three warmup commits: 172 window allocs / 64
+/// facts = 2.69. Issue 29's hunt may lower it; it must not rise.
 const ALLOCS_PER_COMMITTED_FACT: u64 = 3;
 
 fn scan_query() -> Query {
@@ -254,12 +233,6 @@ fn insert_batch(db: &Db<Budget>, next_tag: &mut u64) {
     }));
 }
 
-/// Admission-phase peak: the proposal's `max(A+I+R, A+R+F+J)` is not a
-/// named counter on `HeapStage` / `admit_catalog` (those files are not
-/// this lane). [`AllocAbsolute::peak_live_bytes`] is the honest
-/// instrument — pin that admit's peak delta stays inside three arena
-/// chunks (fact + dict + runs) plus the frozen catalog `F` plus one
-/// chunk of judgment scratch.
 fn admission_peak_bound() {
     const CHUNK: u64 = 64 * 1024;
     let mut builder = InstanceBuilder::new(Budget).expect("valid");
@@ -298,7 +271,7 @@ fn admission_peak_bound() {
 
 #[test]
 fn alloc_law_budgets() {
-    // Admit first, while process peak-live is still close to this window.
+
     admission_peak_bound();
 
     let (heap, _hid, heap_aid, _hh, heap_acct) = seed_heap();
