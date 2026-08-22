@@ -67,7 +67,6 @@ pub struct KeyProbePlan {
 }
 
 impl KeyProbePlan {
-
     #[must_use]
     pub fn slot_of(&self, var: VarId) -> usize {
         self.vars
