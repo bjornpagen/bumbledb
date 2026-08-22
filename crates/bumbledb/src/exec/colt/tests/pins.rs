@@ -1,8 +1,5 @@
 use super::*;
 
-/// splitmix64's finalizer: the fresh-data generator for the probe
-/// twin bench (fresh keys per repetition — the TAGE discipline,
-/// `m2max.predict.tage-memorizes-benchmarks`).
 fn mix(x: u64) -> u64 {
     let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -10,8 +7,6 @@ fn mix(x: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// The arity-4 stored row for index `i` — distinct in word 0, so any
-/// `i ≥ n_rows` is a guaranteed miss key.
 fn row4(i: u64) -> [u64; 4] {
     [
         i,
@@ -21,7 +16,6 @@ fn row4(i: u64) -> [u64; 4] {
     ]
 }
 
-/// P(a, b, c, d u64) — the arity-4 probe fixture.
 fn schema4() -> Schema {
     let field = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -40,7 +34,6 @@ fn schema4() -> Schema {
     .expect("valid fixture")
 }
 
-/// Builds an image over `n` committed [`row4`] rows.
 fn view4_of(dir: &TempDir, schema: &Schema, n: u64) -> Arc<crate::image::RelationImage> {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
@@ -67,15 +60,6 @@ fn view4_of(dir: &TempDir, schema: &Schema, n: u64) -> Arc<crate::image::Relatio
     crate::image::build(&txn.catalog(), schema, R).expect("build")
 }
 
-/// Identity, pinned in a general register: an empty asm template whose
-/// only effect is the operand constraint — the compiler cannot trace
-/// the value through it, so the XOR-difference OR-reduction in
-/// [`flag_free_probe4`] stays an `eor`/`orr` tree ending in one `cbz`
-/// instead of being re-fused into the serial `cmp` + `ccmp` flag chain
-/// (the `AArch64` backend's or-of-xor combine — LLVM substitutes, the
-/// machine code is the arm). Zero instructions, zero memory, flags
-/// preserved. `hint::black_box` pins the same shape at the price of a
-/// stack round trip per candidate.
 #[inline(always)]
 #[cfg_attr(
     target_arch = "aarch64",
@@ -89,7 +73,7 @@ fn opaque(diff: u64) -> u64 {
     {
         let mut pinned = diff;
         // SAFETY: an empty template — no instructions execute, no memory
-        // or flags are touched (`nomem`, `nostack`, `preserves_flags`).
+
         unsafe {
             core::arch::asm!(
                 "/* {0} */",
@@ -105,19 +89,12 @@ fn opaque(diff: u64) -> u64 {
     }
 }
 
-/// The REFUTED flag-free twin (T3), preserved as the falsifier's arm:
-/// the candidate compare XOR-differences the 4 stored words, OR-reduces
-/// and exits on one `cbz` — zero cmp/ccmp µops in the candidate compare
-/// (disassembly-checked on this test binary) where the shipped walk
-/// carries the serial `cmp` + `ccmp`×3 chain — and the key-word reads
-/// are unchecked (safety: the map's bucket range is
-/// `bucket_start .. bucket_start + nbuckets * stride`, sized exactly so
-/// at every mint and only appended after; `b ≤ nbm`, `slot < 8`,
-/// `i < 4 = arity`). Everything else is the shipped walk, line for
-/// line. The `m2max.core.flag-strand-mlp` prediction — 1.2–1.7× at
-/// DRAM-tier displaced probes — measured 0.95–1.03 instead: the probe
-/// batch's cross-element independence already saturates the miss
-/// lanes, so unparking the flag triad buys nothing here.
+/// The REFUTED flag-free twin (T3), preserved as the falsifier's arm: the
+/// candidate compare XOR-differences the 4 stored words, OR-reduces and exits
+/// on one `cbz` — zero cmp/ccmp µops in the candidate compare
+/// (disassembly-checked on this test binary) where the shipped walk carries the
+/// serial `cmp` + `ccmp`×3 chain — and the key-word reads are unchecked
+/// (safety: the map's bucket range is `bucket_start..
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -161,9 +138,6 @@ fn flag_free_probe4(colt: &Colt, m: &Map, key: &[u64], hash: u64) -> (bool, usiz
     }
 }
 
-/// One timed pass of the shipped (cmp+ccmp) probe. `inline(never)`:
-/// a clean symbol for the test binary's disassembly check, and no
-/// cross-arm optimization.
 #[inline(never)]
 fn shipped_pass(colt: &Colt, m: &Map, keys: &[u64], hashes: &[u64]) -> u64 {
     let mut hits = 0u64;
@@ -174,7 +148,6 @@ fn shipped_pass(colt: &Colt, m: &Map, keys: &[u64], hashes: &[u64]) -> u64 {
     hits
 }
 
-/// One timed pass of the flag-free twin ([`flag_free_probe4`]).
 #[inline(never)]
 fn flag_free_pass(colt: &Colt, m: &Map, keys: &[u64], hashes: &[u64]) -> u64 {
     let mut hits = 0u64;
@@ -185,10 +158,6 @@ fn flag_free_pass(colt: &Colt, m: &Map, keys: &[u64], hashes: &[u64]) -> u64 {
     hits
 }
 
-/// Streams a foreign buffer between probe passes — residency is a
-/// property of phase interleaving, not footprint
-/// (`m2max.mem.residency-is-interleaving`), so the displaced regime is
-/// constructed by realistic foreign traffic, never by cache flushing.
 #[inline(never)]
 fn stream_foreign(buf: &[u64]) -> u64 {
     let mut acc = 0u64;
@@ -198,10 +167,6 @@ fn stream_foreign(buf: &[u64]) -> u64 {
     acc
 }
 
-/// Fresh arity-4 probe keys + hashes for one repetition: `hit_pct`%
-/// drawn from the stored rows, the rest guaranteed-absent (word 0
-/// past the insert domain). Hashes precomputed — phase 1 is ALU work,
-/// the timed pass is phase 2's load chain.
 fn gen_probe_keys(
     rep: u64,
     hit_pct: u64,
@@ -224,27 +189,6 @@ fn gen_probe_keys(
     }
 }
 
-/// The flag-free probe-compare twin bench (T3) — the falsifier that
-/// REFUTED it. The prediction (`m2max.core.flag-strand-mlp`): the
-/// shipped candidate compare's serial cmp+ccmp×3 chain parks flag µops
-/// in the 3-port triad's scheduler behind every displaced-bucket miss,
-/// so a flag-free eor/orr/cbz compare should buy 1.2–1.7× at DRAM-tier
-/// displaced probes and ±0 at L2. Measured (interleaved same-session
-/// A/B, fresh keys per repetition, arm order alternating, arity-4
-/// 42 MB map displaced by 96 MB of foreign traffic between passes per
-/// `m2max.mem.residency-is-interleaving`): shipped/twin medians
-/// 0.95–1.03 at the DRAM tier across hit rates 10/50/90 and two
-/// sessions — a wash-to-small-loss where 1.2–1.7 was predicted — and
-/// 1.02–1.08 at L2 (a small inversion of the predicted ±0, largest at
-/// 90% hits where the compare actually runs). The gravestone: the probe batch's
-/// cross-element independence is already saturating the miss lanes —
-/// each probe is an independent 2-deep chain (ctrl word, then up to 4
-/// spread key words), so the out-of-order window supplies the lanes and the
-/// parked flag µops never bind; unparking them just trades 4 triad
-/// µops for 7 wider-tree ALU µops. Prints per-regime/per-hit-rate
-/// ratio distributions (>1 = twin wins); asserts only arm agreement —
-/// the timing verdict belongs to the measured falsifier run under
-/// `scripts/measure.sh`, not to CI ambient.
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn flag_free_compare_twin_at_displaced_and_resident_probes() {
@@ -253,12 +197,12 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
     let schema = schema4();
 
     // DRAM-tier displaced: 400k keys → 131072 buckets × 320 B ≈ 42 MB
-    // of bucket slab (+1 MB ctrl). L2-resident: 20k keys ≈ 2.7 MB.
+
     let regimes: &[(&str, u64, bool)] = &[
         ("displaced-dram", 400_000, true),
         ("l2-resident", 20_000, false),
     ];
-    // 96 MB of foreign traffic — past the SLC, streamed between passes.
+
     let foreign: Vec<u64> = (0..12_000_000u64).map(mix).collect();
 
     for &(regime, n_rows, displace) in regimes {
@@ -271,7 +215,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
-        )] // far below 2^52
+        )] 
         let slab_mb = (m.nbuckets * m.stride() * 8) as f64 / 1e6;
 
         let mut keys = Vec::new();
@@ -280,8 +224,8 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
             let mut ratios = Vec::new();
             for rep in 0..REPS {
                 gen_probe_keys(rep, hit_pct, n_rows, PROBES, &mut keys, &mut hashes);
-                let mut ns = [0f64; 2]; // [shipped, flag-free twin]
-                // Arm order alternates per rep (drift cancellation).
+                let mut ns = [0f64; 2]; 
+
                 for arm_slot in 0..2 {
                     let shipped_arm = (rep % 2 == 0) == (arm_slot == 0);
                     if displace {
@@ -303,7 +247,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
                         ns[usize::from(!shipped_arm)] = nanos as f64 / PROBES as f64;
                     }
                 }
-                ratios.push(ns[0] / ns[1]); // shipped / twin: >1 = twin wins
+                ratios.push(ns[0] / ns[1]); 
             }
             ratios.sort_by(f64::total_cmp);
             let median = ratios[ratios.len() / 2];
@@ -316,7 +260,6 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
             );
         }
 
-        // Arm agreement: identical (found, slot) on a fresh key set.
         gen_probe_keys(REPS, 50, n_rows, PROBES, &mut keys, &mut hashes);
         for (j, h) in hashes.iter().enumerate() {
             let key = &keys[j * 4..j * 4 + 4];
@@ -329,25 +272,10 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
     }
 }
 
-/// The build-cost pin (measured): the 22%-cheaper build belonged to
-/// a ctrl-word-IN-bucket layout (one line per insert); the shipped
-/// spec keeps ctrl in a separate slab (the probe-side choice), so an
-/// insert touches ctrl + key + child lines and the build measured
-/// PARITY at the DRAM-tier 100k shape (ratio 1.00) and ~1.5× slower
-/// at an L2-resident 20k shape. The pin protects DRAM-tier parity — the
-/// force-heavy ledger families gate the rest. Biased AGAINST the
-/// shipped side: the reference consumes pre-decoded keys while
-/// `force()` pays its own column decode. Ignored: a microbenchmark,
-/// run explicitly.
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn bucketized_force_stays_at_parity_with_the_linear_build() {
-    /// The prior build, reconstructed: linear probe over a ctrl
-    /// byte slab + row-major `(key, child)` rows, first-empty
-    /// insert, rehash-double at ITS OWN 3/4-load trigger
-    /// (`(len + 1) * 4 >= capacity * 3`; the shipped bucket-of-8
-    /// map's is the 0.4 max load) — near-distinct keys, so the
-    /// duplicate/chunk machinery never fires and is elided.
+
     fn linear_build(keys: &[u64]) -> (Vec<u8>, Vec<u64>) {
         let mut capacity = ((keys.len() / 8).max(16)).next_power_of_two();
         let mut ctrl = vec![0u8; capacity];
@@ -356,7 +284,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         let mut dense: Vec<u32> = Vec::with_capacity(keys.len());
         for (pos, &k) in keys.iter().enumerate() {
             if (len + 1) * 4 >= capacity * 3 {
-                // Rehash-double, insertion order preserved.
+
                 let new_capacity = capacity * 2;
                 let mut new_ctrl = vec![0u8; new_capacity];
                 let mut new_rows = vec![0u64; new_capacity * 2];
@@ -393,7 +321,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
                     break;
                 }
                 if c == wanted && rows[2 * idx] == k {
-                    break; // duplicate: absorbed (near-distinct corpus)
+                    break; 
                 }
                 idx = (idx + 1) & mask;
             }
@@ -431,7 +359,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
     #[expect(
         clippy::cast_precision_loss,
         reason = "reporting accepts lossy integer-to-float conversion"
-    )] // both far below 2^52
+    )] 
     let ratio = linear_ns as f64 / bucket_ns as f64;
     println!("force build: bucket {bucket_ns} ns, linear-ref {linear_ns} ns, ratio {ratio:.2}");
     assert!(
@@ -440,10 +368,6 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
     );
 }
 
-/// One full force+iterate over a two-level trie: force the root, drain
-/// its keys, then drain every child's positions — the two phases the
-/// chunk geometry prices (chunk writes in the force, chain walks in
-/// the iterate). Fixed stack buffers; the checksum keeps LLVM honest.
 fn force_and_iterate(colt: &mut Colt) -> u64 {
     let root = Colt::root();
     colt.ensure_forced(root, 0);
@@ -476,27 +400,6 @@ fn force_and_iterate(colt: &mut Colt) -> u64 {
     sum
 }
 
-/// The chunk-geometry pin (finding 094; the R22 measured-choice
-/// doctrine: microbench at fanouts {2, 4, 8, 64}, land the winner):
-/// force+iterate with the graded first chunk (8) against the flat
-/// geometry (first chunk 64 — the retired fixed-frame sizes inside
-/// the same slab layout, so the pin isolates the geometry itself),
-/// interleaved in one process, store-free images. Prints per-fanout
-/// times and chunk-pool footprints; asserts only arm agreement — the
-/// verdict is read from the run.
-///
-/// Run:
-/// `scripts/measure.sh cargo test --release -p bumbledb chunk_geometry -- --ignored --nocapture`
-///
-/// Recorded (reference host, 2026-07-24, release, 2^18 positions,
-/// co-tenant campaign run — re-pin at the bench night per R21):
-/// fanout 2 — graded 0.72× time, 0.16× footprint (35.1 MB → 5.8 MB);
-/// fanout 4 — 0.77× time, 0.16×; fanout 8 — 0.86× time, 0.16×;
-/// fanout 64 — 1.01× time (noise-band tie), 1.16× footprint (the one
-/// regression: a 64-fanout chain reserves 8 + 64 where flat fit 64 —
-/// bounded by the extra first frame, bought back many times over by
-/// every smaller fanout). The graded geometry wins every timed
-/// fanout; `FIRST_CHUNK_CAP = 8` ships.
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]
 #[expect(
