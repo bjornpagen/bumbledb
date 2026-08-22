@@ -1,8 +1,3 @@
-//! The crud corpus: seeded rows and the durability-paired twin loader.
-//! Every row is a pure function of `(seed, i)` (the displaced
-//! `relation_rows` precedent), so the delete lane can re-derive any pool
-//! row to hand `tx.delete` the full fact — no row store, no drift.
-
 use std::path::Path;
 
 use bumbledb::{Db, RelationId, Value};
@@ -13,9 +8,6 @@ use crate::sqlmap;
 
 use super::{CrudSizes, CrudWorld, ids, schema};
 
-/// One seeded `Doc` row: id and key are the row index (the pool rows at
-/// `docs..docs+delete_pool` included), `val` a small seeded i64, and a
-/// seeded 32-byte payload (the points-world `doc_row` payload pattern).
 fn doc_row(seed: u64, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, ids::DOC, i));
     let val = i64::try_from(rng.range(1_000_000)).expect("small");
@@ -31,9 +23,6 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
     ]
 }
 
-/// One relation's full row stream — a pure function of `(seed, sizes)`:
-/// `Doc` rows `0..docs+delete_pool` (the pool rides above the standing
-/// mass, [`CrudSizes`]), `Counter` rows `0..counters` starting at zero.
 pub fn relation_rows(
     sizes: CrudSizes,
     seed: u64,
@@ -46,19 +35,15 @@ pub fn relation_rows(
     }
 }
 
-/// Loads the crud corpus into a fresh durability-paired twin under
-/// `dir` (delete-and-recreated — scratch, never user data): the engine
-/// store through the lane's constructor, the `SQLite` mirror through
-/// the lane's pragma set ([`DurabilityLane::configure`]) and the
-/// schema-derived DDL (which emits the UNIQUE indexes for both key
-/// statements — the upsert lane's `ON CONFLICT` target), then
-/// `ANALYZE`, a truncating WAL checkpoint, and the parity readback
-/// ([`DurabilityLane::assert_parity`]) — a misconfigured twin refuses
+/// Loads the crud corpus into a fresh durability-paired twin under `dir`
+/// (delete-and-recreated — scratch, never user data): the engine store through
+/// the lane's constructor, the `SQLite` mirror through the lane's pragma set
+/// ([`DurabilityLane::configure`]) and the schema-derived DDL (which emits the
+/// UNIQUE indexes for both key statements — the upsert lane's `ON CONFLICT`
+/// target), then `ANALYZE`, a truncating WAL checkpoint, and the parity
+/// readback ([`DurabilityLane::assert_parity`]) — a misconfigured twin refuses
 /// here, before any lane runs.
-///
 /// # Errors
-///
-/// Scratch I/O, engine, `SQLite`, and parity errors, stringified.
 pub fn load_stores(
     dir: &Path,
     seed: u64,
