@@ -1,8 +1,6 @@
 use crate::corpus_gen;
 use crate::families::{Kind, all, digest};
 
-/// The human-readable versioned query list: IR + SQL + param policy per
-/// family (emitted into the repo as QUERIES.md).
 #[must_use]
 pub fn render_queries_md() -> String {
     use std::fmt::Write as _;
