@@ -3,7 +3,6 @@
 //! engine law: no new `unsafe` outside the sanctioned modules, and a
 //! before any verdict is drawn from B/A.
 //! list at densities 1.0/0.99/0.9/0.5) before any design decision.
-
 use std::simd::prelude::*;
 use std::time::Instant;
 
