@@ -4,7 +4,6 @@
 //! the plain `Display` impls cite them by id; the [`Error::display_with`]
 //! and [`SchemaError::display_with`] adapters pair the error with the
 //! schema it speaks about and render the statement back in the `schema!`
-
 use std::fmt;
 
 use crate::encoding::InternId;
