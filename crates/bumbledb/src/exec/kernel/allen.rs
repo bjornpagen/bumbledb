@@ -4,7 +4,6 @@
 //! predicate that exists or ever will (8192 masks, one arithmetic): per
 //! pair, 8 predicate lanes (`cmhi`/`cmeq` over the four endpoint words)
 //! pack into a 6-bit signature; a 64-byte nibble table held in q
-
 use bumbledb_theory::allen::AllenMask;
 
 #[cfg(target_arch = "aarch64")]
