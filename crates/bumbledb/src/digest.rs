@@ -1,9 +1,7 @@
-//! A stable streaming blake3 wrapper (reader: the bench crate's corpus
-//! identity — `docs/architecture/60-validation.md`). The dependency
+//! A stable streaming blake3 wrapper. The dependency
 //! quarantine keeps `blake3` out of `bumbledb-bench`; this thin surface
 //! lends the hash without leaking the dependency's types.
-
-/// An incremental 256-bit digest.
+//! An incremental 256-bit digest.
 #[derive(Debug, Default)]
 pub struct Digest(blake3::Hasher);
 
@@ -13,12 +11,10 @@ impl Digest {
         Self::default()
     }
 
-    /// Appends bytes.
     pub fn update(&mut self, bytes: &[u8]) {
         self.0.update(bytes);
     }
 
-    /// Finishes into the 32-byte digest.
     #[must_use]
     pub fn finalize(&self) -> [u8; 32] {
         *self.0.finalize().as_bytes()
