@@ -9,11 +9,6 @@ fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }
 
-/// Renders the scenario report as markdown: one row per `SQLite` lane
-/// (the query name, rows, and ours p50 repeat on each), DNF lanes named
-/// as such with no percentiles, geomeans over the timed primaries only.
-/// Trailing alloc (`--alloc`) and flame (`--trace`) sections appear only
-/// when those passes ran.
 #[must_use]
 #[expect(
     clippy::too_many_lines,
@@ -117,7 +112,6 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
         );
     }
 
-    // The alloc pass (--alloc): one line per query with a reading.
     if reports.iter().any(|r| r.alloc.is_some()) {
         let _ = writeln!(out, "\n## Allocations (per query, --alloc)\n");
         let _ = writeln!(
@@ -136,8 +130,6 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
         }
     }
 
-    // The trace pass (--trace): the warm flame top-10 per query, exactly
-    // as the ledger read families embed it.
     if reports.iter().any(|r| r.flame.is_some()) {
         let _ = writeln!(out, "\n## Flame summaries (per query, --trace)\n");
         for r in reports {
