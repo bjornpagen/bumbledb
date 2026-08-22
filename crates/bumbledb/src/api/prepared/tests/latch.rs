@@ -1,13 +1,5 @@
-//! The literal latch (PRD 09): the dictionary is append-only, so `str`
-//! literal resolution is monotone — a hit rewrites the plan template
-//! once, permanently; a miss stays live. With zero pending literals and
-//! zero params, `resolve_filters` is skipped entirely (the
-//! fully-latched fast path).
-
 use super::*;
 
-/// Q(amount) :- Posting(memo == <literal>, amount) — param-free, one str
-/// literal, the latch's minimal habitat.
 fn literal_query(memo: &str) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -57,8 +49,6 @@ fn a_str_literal_latches_on_first_execution() {
     };
     assert_eq!(rule.resolution, ResolutionState::Complete);
 
-    // The latch IS the rewrite: the template slot now carries the word —
-    // no parallel resolution state exists to consult.
     let plan = &rule.plan;
     let pending = plan.occurrences().iter().any(|occurrence| {
         occurrence
@@ -77,7 +67,6 @@ fn a_str_literal_latches_on_first_execution() {
     });
     assert!(!pending, "the template slot was rewritten in place");
 
-    // Subsequent executions ride the fast path with identical results.
     prepared
         .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("re-execute");
@@ -121,8 +110,6 @@ fn a_miss_stays_live_and_latches_after_interning() {
     );
     drop(txn);
 
-    // Something interned it since: the miss becomes a hit — monotone,
-    // one way, never the reverse.
     insert_postings(&env, &schema, &[(2, 8, "carol", 30)]);
     cache.advance(crate::GenerationId::from_storage(2), &[POSTING], &[]);
     let txn = env.read_txn().expect("txn");
@@ -133,17 +120,12 @@ fn a_miss_stays_live_and_latches_after_interning() {
     assert_eq!(prepared.latch.remaining(), 0);
     assert!(!report.contains("pending literals:"), "{report}");
 
-    // Third execution: the fast path, same answer.
     prepared
         .execute(&txn, &cache, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert_eq!(amounts(&out), vec![30]);
 }
 
-/// The trace-level pins: the latch event fires exactly once per distinct
-/// literal, and the fully-latched + param-free execution skips
-/// `resolve_filters` provably (its span is absent) with results
-/// identical to the slow path on the same snapshot.
 #[cfg(feature = "trace")]
 #[test]
 fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
