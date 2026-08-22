@@ -156,7 +156,6 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
         }
 
         // refusal, not a violation set; the witness fact bytes are
-
         Err(Error::CapacityRayMeasure { statement, .. }) => {
             Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
         }
