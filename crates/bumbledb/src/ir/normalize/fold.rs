@@ -50,7 +50,6 @@ pub(super) fn fold(schema: &Schema, occurrences: &mut [Occurrence]) -> Option<St
         return None;
     }
     for occurrence in occurrences.iter_mut() {
-
         if !occurrence.role.participates() {
             continue;
         }
@@ -68,7 +67,6 @@ pub(crate) struct RangeSummary {
 }
 
 impl RangeSummary {
-
     fn new() -> Self {
         Self {
             lo: 0,
@@ -106,7 +104,6 @@ fn range_is_empty(summary: &RangeSummary) -> bool {
 
 fn eq_conflicts(first: &Const, second: &Const) -> bool {
     match (first, second) {
-
         (Const::WordSet(words), Const::Word(word)) | (Const::Word(word), Const::WordSet(words)) => {
             set_refutes_eq(words, Some(*word))
         }
@@ -147,7 +144,6 @@ fn point_outside(interval: (u64, u64), point: u64) -> bool {
 }
 
 fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<String> {
-
     let relation = schema.relation(occurrence.bind.edb()?);
 
     let mut eqs: BTreeMap<FieldId, Const> = BTreeMap::new();
@@ -178,7 +174,6 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
                 eqs.insert(field.field(), value.clone());
             }
             Some(prior) => {
-
                 if eq_conflicts(prior, value) {
                     return Some(eq_pair_picture(relation, field.field(), prior, value));
                 }
@@ -198,7 +193,6 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
         *constituents += 1;
     }
     for (field, (summary, _)) in &ranges {
-
         if range_is_empty(summary) {
             return Some(order_filters_picture(relation, *field, &occurrence.filters));
         }
@@ -242,7 +236,6 @@ fn interval_contradictions(
     }
     for filter in filters {
         match filter {
-
             FilterPredicate::FieldAllen {
                 field,
                 other: IntervalConst::Interval { start, end },
@@ -331,7 +324,6 @@ fn emit(
     for (field, (summary, constituents)) in ranges {
         let pinned = matches!(eqs.get(field), Some(Const::Word(_)));
         if pinned {
-
             // and the bounds are implied: drop every constituent.
             replacements.insert(*field, Vec::new());
         } else if *constituents >= 2 {
