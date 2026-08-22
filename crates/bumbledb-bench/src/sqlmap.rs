@@ -382,7 +382,7 @@ mod tests {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     fn mini_descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -471,7 +471,6 @@ mod tests {
                     relation: RelationId(2),
                     projection: Box::new([FieldId(0), FieldId(2)]),
                 },
-
                 StatementDescriptor::Containment {
                     source: Side {
                         relation: RelationId(3),
