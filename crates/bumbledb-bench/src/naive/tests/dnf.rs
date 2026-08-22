@@ -1,10 +1,3 @@
-//! The DNF lowering property (PRD ALG-06): for randomized predicate
-//! trees over small corpora, the **lowered rule set's union equals naive
-//! tree evaluation**. The naive model evaluates the input tree directly
-//! from the definition — it never lowers — so the differential *is* the
-//! proof of [`bumbledb::ir::distribute`]: distributing to rules and
-//! unioning their denotations changes nothing.
-
 use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
@@ -17,9 +10,6 @@ use crate::corpus_gen::Rng;
 use crate::fixture::field;
 use crate::naive::{Delta, NaiveDb, Tuple};
 
-/// One relation is enough: the property is about conditions, not joins —
-/// Posting(account u64, amount i64), with tiny value domains so random
-/// comparisons select real subsets.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -36,7 +26,7 @@ fn schema() -> SchemaDescriptor {
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT_DOMAIN: u64 = 5;
-const AMOUNT_SPREAD: u64 = 7; // amounts in -3..=3
+const AMOUNT_SPREAD: u64 = 7; 
 
 fn corpus(rng: &mut Rng, rows: u64) -> NaiveDb {
     let mut db = NaiveDb::new(&schema());
@@ -59,8 +49,6 @@ fn corpus(rng: &mut Rng, rows: u64) -> NaiveDb {
     db
 }
 
-/// One random comparison: a variable side (account or amount) against a
-/// literal drawn from the same small domain, under a random operator.
 fn leaf(rng: &mut Rng) -> ConditionTree {
     let (var, literal) = if rng.chance(1, 2) {
         (VarId(0), Value::U64(rng.range(ACCOUNT_DOMAIN)))
@@ -86,9 +74,6 @@ fn leaf(rng: &mut Rng) -> ConditionTree {
     ConditionTree::Leaf(Comparison { op, lhs, rhs })
 }
 
-/// A random predicate tree. Child counts include zero, so the empty
-/// conjunction (true) and the empty disjunction (false — the rule lowers
-/// to zero rules) are exercised, not just tolerated.
 fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
     if depth == 0 || rng.chance(2, 5) {
         return leaf(rng);
@@ -116,10 +101,6 @@ fn posting_rule(conditions: Vec<ConditionTree>) -> Rule {
     }
 }
 
-/// The property, quantified over seeds: distribute the tree query to
-/// Or-free rules, evaluate each rule naively as the conjunctive query it
-/// is, union the results — and compare against evaluating the *tree*
-/// naively, which never touched the lowering.
 #[test]
 fn lowered_rule_set_union_equals_naive_tree_evaluation() {
     for seed in 0..300 {
