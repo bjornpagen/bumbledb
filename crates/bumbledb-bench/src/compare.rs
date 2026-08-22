@@ -1,7 +1,3 @@
-//! Canonical answers and multiset comparison (docs/architecture/60-validation.md):
-//! one owned answer form both engines decode into, and one diff whose
-//! mismatches are undeniable and debuggable — the verify layer's core.
-
 use bumbledb::schema::ValueType;
 use bumbledb::{AnswerValue, Answers, Value};
 
@@ -9,7 +5,6 @@ use crate::naive::ParamValue;
 use crate::sqlmap;
 use crate::translate::ParamSlot;
 
-/// One canonical cell. Total order = the canonical multiset order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Owned {
     Bool(bool),
@@ -21,11 +16,8 @@ pub enum Owned {
     IntervalI64(i64, i64),
 }
 
-/// One canonical answer.
 pub type Answer = Vec<Owned>;
 
-/// Decodes bumbledb [`Answers`] into canonical answers (column types
-/// from the prepared query's signature — the answer-typing authority).
 #[must_use]
 pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
     answers
@@ -46,9 +38,6 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
         .collect()
 }
 
-/// One engine [`Value`] in canonical form — the ONE `Value` → [`Owned`]
-/// mapping, shared by the `SQLite` decode ([`from_sqlite`]) and the
-/// keyed-get fact decode ([`from_fact`]).
 fn owned_value(value: &Value) -> Owned {
     match value {
         Value::Bool(v) => Owned::Bool(*v),
@@ -61,28 +50,13 @@ fn owned_value(value: &Value) -> Owned {
     }
 }
 
-/// Decodes one dynamic fact (owned engine [`Value`]s in field declaration
-/// order — the keyed-get surface's answer shape) into a canonical answer.
-/// UTF-8 is proved at [`Value::String`] construction; a mask is not a
-/// stored field.
 #[must_use]
 pub fn from_fact(fact: &[Value]) -> Answer {
     fact.iter().map(owned_value).collect()
 }
 
-/// Executes a prepared `SQLite` statement with the given typed params and
-/// decodes every answer into canonical form, guided by the expected column
-/// types (the engine side already knows them — aggregate columns
-/// included; an interval find spans two INTEGER result columns and
-/// reassembles through the pair decode).
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim; a mapping mismatch (wrong storage class,
-/// negative INTEGER in a u64 column) as a message naming the column.
-///
 /// # Panics
-///
 /// On a set arg bound to a placeholder slot (a translator invariant).
 pub fn from_sqlite(
     stmt: &mut rusqlite::Statement<'_>,
@@ -118,12 +92,8 @@ pub fn from_sqlite(
     Ok(out)
 }
 
-/// How many exemplar answers a mismatch carries per side.
 const EXEMPLARS: usize = 8;
 
-/// A failed multiset comparison: sizes plus up to [`EXEMPLARS`] answers each
-/// side has that the other lacks (multiset difference — duplicate-count
-/// differences surface here too).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
     pub ours_len: usize,
@@ -149,11 +119,7 @@ impl std::fmt::Display for Mismatch {
     }
 }
 
-/// Multiset equality via sort + two-pointer diff, collecting exemplars.
-///
 /// # Errors
-///
-/// The [`Mismatch`] when the multisets differ.
 pub fn multisets(mut ours: Vec<Answer>, mut theirs: Vec<Answer>) -> Result<(), Mismatch> {
     ours.sort();
     theirs.sort();
@@ -268,13 +234,11 @@ mod tests {
             ]]
         );
 
-        // Width confusion is a typed error, not a wrong pass: a negative
-        // INTEGER read as u64 must refuse.
         let wrong = vec![
             ValueType::Bool,
             ValueType::U64,
             ValueType::U64,
-            ValueType::U64, // the -7 column misdeclared
+            ValueType::U64, 
             ValueType::String,
             ValueType::FixedBytes { len: 2 },
         ];
