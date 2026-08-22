@@ -1,8 +1,3 @@
-//! Closed-relation synthesis: the image comes from the sealed extension,
-//! not from a scan — the fingerprint's preimage IS the storage
-//! (`docs/architecture/50-storage.md` § virtual relations). No environment
-//! exists anywhere in this module: synthesis is pure.
-
 use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
 use crate::image::{ColumnWidth, synthesize_closed};
 use crate::ir::Value;
@@ -10,10 +5,6 @@ use bumbledb_theory::schema::{IntervalElement, Row};
 
 use super::*;
 
-/// The three-tier theory (the PRD-02 grammar, hand-sealed): an ordinary
-/// relation, a columnless vocabulary (synthetic id only), and a closed
-/// relation with intrinsic columns of every span shape — word (u64),
-/// word-pair (interval), byte (bool).
 fn theory() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -107,7 +98,6 @@ fn theory() -> Schema {
 const STATUS: RelationId = RelationId(1);
 const SEASON: RelationId = RelationId(2);
 
-/// One canonical-encoding word, compared exactly as the image holds it.
 fn word(bytes: [u8; 8]) -> u64 {
     u64::from_be_bytes(bytes)
 }
@@ -117,7 +107,6 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     let schema = theory();
     let image = synthesize_closed(SEASON, schema.relation(SEASON));
 
-    // rows == extension len; the implicit id column (FieldId 0) is 0..n.
     assert_eq!(image.row_count(), 3);
     let id_span = image.span(bumbledb_theory::schema::FieldId(0));
     assert_eq!(id_span.width, ColumnWidth::Word);
@@ -126,9 +115,6 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         &[0, 1, 2]
     );
 
-    // The interval field: two word columns, each half the canonical
-    // encoding from validate — compared against `encoding::encode`
-    // directly.
     let span = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(span.width, ColumnWidth::WordPair);
     let spans = [(1u64, 90u64), (172, 265), (265, 355)];
@@ -157,7 +143,6 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         expected_ends.as_slice()
     );
 
-    // The bool field: one byte column of validated encodings.
     let sunny = image.span(bumbledb_theory::schema::FieldId(2));
     assert_eq!(sunny.width, ColumnWidth::Byte);
     assert_eq!(
@@ -165,7 +150,6 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         &[encode_bool(false), encode_bool(true), encode_bool(false)]
     );
 
-    // The u64 field: canonical `encode_u64` words.
     let rank = image.span(bumbledb_theory::schema::FieldId(3));
     assert_eq!(rank.width, ColumnWidth::Word);
     assert_eq!(
@@ -177,7 +161,6 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         ]
     );
 
-    // Distinct counters are exact over the synthesized columns.
     assert_eq!(image.distinct_count(usize::from(id_span.first_column)), 3);
     assert_eq!(image.distinct_count(usize::from(sunny.first_column)), 2);
 }
