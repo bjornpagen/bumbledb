@@ -116,17 +116,17 @@ describe("ψ query atoms over closed relations", function suite() {
 		// (Info 0, Warn 1, Crit 2, Fatal 3) — the name↔id bijection is the
 		// SDK marshal's, above this seam.
 		const committed = native.dbWrite(db, function write(tx) {
-			native.txInsert(tx, INCIDENT_ID, [1n, 0n])
-			native.txInsert(tx, INCIDENT_ID, [2n, 1n])
-			native.txInsert(tx, INCIDENT_ID, [3n, 2n])
-			native.txInsert(tx, INCIDENT_ID, [4n, 3n])
-			native.txInsert(tx, INCIDENT_ID, [5n, 2n])
-			native.txInsert(tx, ESCALATION_ID, [1n, 0n])
-			native.txInsert(tx, ESCALATION_ID, [2n, 1n])
-			native.txInsert(tx, ESCALATION_ID, [3n, 2n])
-			native.txInsert(tx, ESCALATION_ID, [4n, 3n])
-			native.txInsert(tx, ESCALATION_ID, [5n, 2n])
-			native.txInsert(tx, ESCALATION_ID, [5n, 3n])
+			native.txInsert(tx, INCIDENT_ID, 1n, [1n, 0n])
+			native.txInsert(tx, INCIDENT_ID, 1n, [2n, 1n])
+			native.txInsert(tx, INCIDENT_ID, 1n, [3n, 2n])
+			native.txInsert(tx, INCIDENT_ID, 1n, [4n, 3n])
+			native.txInsert(tx, INCIDENT_ID, 1n, [5n, 2n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [1n, 0n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [2n, 1n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [3n, 2n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [4n, 3n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [5n, 2n])
+			native.txInsert(tx, ESCALATION_ID, 1n, [5n, 3n])
 			return true
 		})
 		assert.equal(committed.tag, "accepted", "the seed commit lands")

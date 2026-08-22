@@ -538,11 +538,15 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
     ///
     /// Law order preserved exactly: empty is `MutationReport::EMPTY`
     /// before any refusal; then poison, closed, unknown relation, and the
-    /// arity-vs-roster re-verification — the authoritative second wall.
-    /// The collection's own relation IS the apply target (the transport
-    /// surfaces take only the collection), so relation equality holds by
-    /// construction; the roster re-anchor is the arity check against the
-    /// relation this core sealed.
+    /// roster re-verification — the authoritative second wall, BOTH
+    /// halves. The collection's own relation IS the apply target (the
+    /// transport surfaces take only the collection), so relation equality
+    /// holds by construction; the roster re-anchor is the arity check
+    /// against the relation this core sealed PLUS the roster-echo proof
+    /// (the collection carries the value-type row its cells were judged
+    /// against, and apply proves that echo IS the target roster — arity
+    /// alone would admit a same-arity, type-different forgery straight
+    /// into the encoder's positional arms).
     pub(super) fn apply_accepted(
         &mut self,
         coll: &AcceptedCollection,
@@ -567,6 +571,21 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
                 },
             }
             .into());
+        }
+        // The roster ECHO (the second wall's type half): O(arity) per
+        // collection, zero per-cell cost — sealed cells were proved
+        // against the echo, this loop proves the echo is the target
+        // roster, and the refusal is the honest `TypeMismatch` naming the
+        // first differing field.
+        for (ordinal, (echoed, field)) in (0u16..).zip(coll.roster().iter().zip(relation.fields()))
+        {
+            if *echoed != field.value_type {
+                return Err(FactShapeError::TypeMismatch {
+                    relation: rel,
+                    field: FieldId(ordinal),
+                }
+                .into());
+            }
         }
         let layout = relation.layout();
         match want {

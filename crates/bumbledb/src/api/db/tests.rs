@@ -1511,6 +1511,54 @@ fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
     .unwrap();
 }
 
+/// The roster ECHO (the second wall's type half): a collection sealed
+/// against a forged roster of the SAME arity but different value types is
+/// refused at apply with the typed `TypeMismatch` naming the first
+/// differing field — arity re-anchoring alone would have admitted it and
+/// the encoder's positional arms would have written wrong-width fact
+/// bytes.
+#[test]
+fn an_accepted_collection_of_foreign_types_is_refused_at_apply() {
+    let dir = TempDir::new("db-accepted-type-wall");
+    let db = Db::create(dir.path(), entry_schema())
+        .expect("create")
+        .expect("accepted");
+    // Entry's sealed roster is (name str, amount i64); the forgery keeps
+    // the arity and swaps both value types.
+    let forged = [
+        FieldDescriptor {
+            name: "name".into(),
+            value_type: ValueType::U64,
+            generation: Generation::None,
+        },
+        FieldDescriptor {
+            name: "amount".into(),
+            value_type: ValueType::U64,
+            generation: Generation::None,
+        },
+    ];
+    let mut builder = CollectionBuilder::new(ENTRY, &forged);
+    builder.push_u64(7).expect("u64 against the forged roster");
+    builder.push_u64(9).expect("u64 against the forged roster");
+    let foreign = builder.seal().expect("complete against its roster");
+    db.write(|tx| {
+        let err = tx.insert_accepted(&foreign).expect_err("type wall");
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::TypeMismatch {
+                    relation: ENTRY,
+                    field: FieldId(0),
+                })
+            ),
+            "{err:?}"
+        );
+        Ok(())
+    })
+    .expect("the wall refuses the operation, not the transaction")
+    .unwrap();
+}
+
 /// Law 3 (`submitted`/`changed` exact) and law 4's dyn-twin semantics on
 /// the accepted lane: a duplicate row within one collection submits 2 and
 /// changes 1; the delete disposition resolves without minting, so a

@@ -218,6 +218,11 @@ impl fmt::Display for FactShapeError {
                     relation.0, field.0
                 )
             }
+            Self::PayloadBound { relation } => write!(
+                f,
+                "relation {}: variable-width payloads exceed the 4 GiB transport bound of one collection",
+                relation.0
+            ),
         }
     }
 }

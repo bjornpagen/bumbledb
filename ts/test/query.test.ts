@@ -135,13 +135,13 @@ describe("the query surface against a real store", function suite() {
 		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
 		const committed = native.dbWrite(db, function write(tx) {
-			native.txInsert(tx, HOLDER_ID, [ids.ada, "ada", 1n])
-			native.txInsert(tx, HOLDER_ID, [ids.grace, "grace", 2n])
-			native.txInsert(tx, HOLDER_ID, [ids.kurt, "kurt", 3n])
-			native.txInsert(tx, HOLDER_ID, [ids.lone, "lone", 9n])
+			native.txInsert(tx, HOLDER_ID, 1n, [ids.ada, "ada", 1n])
+			native.txInsert(tx, HOLDER_ID, 1n, [ids.grace, "grace", 2n])
+			native.txInsert(tx, HOLDER_ID, 1n, [ids.kurt, "kurt", 3n])
+			native.txInsert(tx, HOLDER_ID, 1n, [ids.lone, "lone", 9n])
 			const checking = 0n
 			const savings = 1n
-			native.txInsert(tx, ACCOUNT_ID, [
+			native.txInsert(tx, ACCOUNT_ID, 1n, [
 				ids.adaChecking,
 				ids.ada,
 				checking,
@@ -151,7 +151,7 @@ describe("the query surface against a real store", function suite() {
 				true,
 				new Uint8Array([1, 2])
 			])
-			native.txInsert(tx, ACCOUNT_ID, [
+			native.txInsert(tx, ACCOUNT_ID, 1n, [
 				ids.adaSavings,
 				ids.ada,
 				savings,
@@ -161,7 +161,7 @@ describe("the query surface against a real store", function suite() {
 				false,
 				new Uint8Array([3, 4])
 			])
-			native.txInsert(tx, ACCOUNT_ID, [
+			native.txInsert(tx, ACCOUNT_ID, 1n, [
 				ids.graceSavings,
 				ids.grace,
 				savings,
@@ -171,7 +171,7 @@ describe("the query surface against a real store", function suite() {
 				false,
 				new Uint8Array([5, 6])
 			])
-			native.txInsert(tx, ACCOUNT_ID, [
+			native.txInsert(tx, ACCOUNT_ID, 1n, [
 				ids.kurtChecking,
 				ids.kurt,
 				checking,
@@ -181,8 +181,8 @@ describe("the query surface against a real store", function suite() {
 				true,
 				new Uint8Array([7, 8])
 			])
-			native.txInsert(tx, PARENT_ID, [ids.grace, ids.ada])
-			native.txInsert(tx, PARENT_ID, [ids.kurt, ids.grace])
+			native.txInsert(tx, PARENT_ID, 1n, [ids.grace, ids.ada])
+			native.txInsert(tx, PARENT_ID, 1n, [ids.kurt, ids.grace])
 			return true
 		})
 		assert.equal(committed.tag, "accepted", "the seed commit lands")

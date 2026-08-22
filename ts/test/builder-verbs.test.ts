@@ -168,6 +168,37 @@ describe("TS builder verb set", function suite() {
 		owned[Symbol.dispose]()
 	})
 
+	test("nullary rows are representable on the crossing — N facts, 0 cells, exact reports", async function nullaryRows() {
+		// The crossing carries the row count EXPLICITLY (rowsOf counts while
+		// projecting; the bridge verifies cells.length === rows × arity for
+		// EVERY arity): a nullary relation's facts project to zero cells, so
+		// a derived cells.length / arity would have collapsed 3 submitted
+		// facts to an empty write — silent write loss. Nullary relations are
+		// LEGAL (the engine pins them, schema/tests/valid.rs).
+		const Marker = relation("Marker", {})
+		const Flags = schema("NullaryFlags", { Marker }, [])
+		const builder = InstanceBuilder.create(Flags)
+		const owned = accepted(await builder.admit())
+		const db = await Db.fromInstance(path.join(tmpRoot, "nullary-rows"), owned)
+		db.write(function insertMarkers(tx) {
+			// Set semantics collapse the three submitted facts to the ONE
+			// empty tuple: submitted is exact, changed counts the view.
+			const report = tx.insert(Marker, [{}, {}, {}])
+			assert.equal(report.submitted, 3n)
+			assert.equal(report.changed, 1n)
+			assert.equal(tx.contains(Marker, {}), true)
+		})
+		assert.equal(db.contains(Marker, {}), true)
+		assert.equal(db.count(Marker), 1n)
+		db.write(function deleteMarker(tx) {
+			const report = tx.delete(Marker, [{}])
+			assert.equal(report.submitted, 1n)
+			assert.equal(report.changed, 1n)
+		})
+		assert.equal(db.count(Marker), 0n)
+		owned[Symbol.dispose]()
+	})
+
 	test("a spent builder refuses every verb before the native call", async function spentRefuses() {
 		const builder = InstanceBuilder.create(Ledger)
 		builder.load(Holder, [{ id: 1n, name: "ada" }])

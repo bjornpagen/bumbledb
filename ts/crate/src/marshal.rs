@@ -7,11 +7,14 @@
 //!   `string ⇄ str`, `Uint8Array ⇄ bytes<N>` (width-checked), a
 //!   `{start, end}` bigint pair ⇄ interval. The expected type always comes
 //!   from the resident sealed roster — marshaling never guesses.
-//! - **Collections cross as ONE flat row-major cells array**
-//!   (`proposals/one-representation/20`): rows = `cells.len() / arity`
-//!   against the resident roster, built into one [`AcceptedCollection`]
-//!   in one pass. The single-fact point lanes (`contains`/`get`) keep
-//!   their one-row `Vec<Value>` form.
+//! - **Collections cross as ONE flat row-major cells array plus the
+//!   explicit row count** (`proposals/one-representation/20`): the JS
+//!   side states `rows` (it alone knows N for a fieldless roster — a
+//!   derived `cells.len() / arity` cannot represent nullary rows), the
+//!   bridge verifies `cells.len() == rows × arity` against the resident
+//!   roster, and one [`AcceptedCollection`] is built in one pass. The
+//!   single-fact point lanes (`contains`/`get`) keep their one-row
+//!   `Vec<Value>` form.
 //! - **IR, spec, and query params are tagged plain objects mirroring the
 //!   engine's own data types 1:1** (`bumbledb::ir`, `bumbledb::SchemaSpec`):
 //!   there is no anchoring schema position to direct an arbitrary literal, so
@@ -382,26 +385,34 @@ pub(crate) fn fact_row(
 }
 
 /// One shape-proved collection from ONE flat row-major cells array —
-/// THE collection crossing (`proposals/one-representation/20`): rows
-/// derive from the resident sealed roster (`cells.len() / arity`; a
-/// nonzero remainder is the arity mismatch it is, refused in the row
-/// lane's exact error shape), and every cell feeds the engine's one
-/// positional judgment ([`CollectionBuilder`]'s typed pushes) in a single
-/// pass — no per-row container exists anywhere between the caller's array
-/// and the sealed proof `insert_accepted`/`load_accepted`/
-/// `delete_accepted` consume. Empty (length 0) is lawful, constructs
-/// without touching the roster (mirroring the retired `fact_rows`
-/// short-circuit), and still reaches the engine, which answers
-/// `MutationReport::EMPTY`.
+/// THE collection crossing (`proposals/one-representation/20`): the JS
+/// side counts the rows while projecting (it is the ONE side that knows N
+/// when the roster is fieldless) and the crossing carries that count
+/// explicitly; this pass verifies `cells.len() == rows × arity` EXACTLY
+/// against the resident sealed roster for EVERY arity. The old
+/// `cells.len() / arity` derivation is dead: it could not represent N
+/// nullary rows (N × 0 cells decoded as rows = 0, silently dropping the
+/// write — nullary relations are LEGAL, `schema/tests/valid.rs`), and
+/// arity-0 rows are representable here (`rows = N`, cells empty). A
+/// stated count disagreeing with the cells is refused in the row lane's
+/// exact error shape, naming the relation. Every cell feeds the engine's
+/// one positional judgment ([`CollectionBuilder`]'s typed pushes) in a
+/// single pass — no per-row container exists anywhere between the
+/// caller's array and the sealed proof `insert_accepted`/`load_accepted`/
+/// `delete_accepted` consume. Empty (`rows == 0`, no cells) is lawful,
+/// constructs without touching the roster (mirroring the retired
+/// `fact_rows` short-circuit), and still reaches the engine, which
+/// answers `MutationReport::EMPTY`.
 pub(crate) fn accepted_collection(
     env: Env,
     rosters: &[SealedRoster],
     relation: u32,
+    rows: u64,
     cells: &Array,
 ) -> napi::Result<AcceptedCollection> {
     let mut span = bumbledb::obs::span(bumbledb::obs::names::MARSHAL_FACTS);
     let rel = RelationId(relation);
-    if cells.len() == 0 {
+    if rows == 0 && cells.len() == 0 {
         span.set_count(0);
         return CollectionBuilder::new(rel, &[])
             .seal()
@@ -411,20 +422,33 @@ pub(crate) fn accepted_collection(
     let name: &str = &roster.name;
     let arity = roster.fields.len();
     let len = cells.len() as usize;
-    if arity == 0 || !len.is_multiple_of(arity) {
-        // Any cell against a fieldless roster overflows the zero-width
-        // row; otherwise the remainder is the dangling partial row's
-        // witnessed width.
-        let witnessed = if arity == 0 { len } else { len % arity };
+    // The stated count against the product, in u128 so `rows × arity`
+    // cannot overflow the comparison — the one exact judgment covering
+    // the dangling partial row, the fieldless overflow, and a mis-stated
+    // count alike.
+    let expected = u128::from(rows) * (arity as u128);
+    if expected != len as u128 {
         return Err(err(format!(
-            "bumbledb marshal: relation `{name}`: expected {arity} values, got {witnessed}"
+            "bumbledb marshal: relation `{name}`: expected {expected} values, got {len}"
         )));
     }
     let mut builder = CollectionBuilder::new(rel, &roster.fields);
-    for index in 0..cells.len() {
-        let field = &roster.fields[(index as usize) % arity];
-        let value = req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
-        push_cell(env, &mut builder, name, field, &value)?;
+    if arity == 0 {
+        // A nullary row has no cells; each still counts (`submitted` is
+        // exact — set semantics collapse the store to the one empty
+        // tuple, which is the engine's `changed` to report).
+        for _ in 0..rows {
+            builder
+                .push_value_row(&[])
+                .map_err(|error| throw_engine(env, &error))?;
+        }
+    } else {
+        for index in 0..cells.len() {
+            let field = &roster.fields[(index as usize) % arity];
+            let value =
+                req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
+            push_cell(env, &mut builder, name, field, &value)?;
+        }
     }
     let collection = builder.seal().map_err(|error| throw_engine(env, &error))?;
     span.set_count(collection.rows());

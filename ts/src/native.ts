@@ -490,16 +490,20 @@ interface Native {
 	/**
 	 * Records a collection of inserts into the delta; returns the engine
 	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
-	 * (length rows×arity) in sealed field order — the one collection
-	 * crossing (proposals/one-representation/20): the bridge derives the
-	 * row count from its resident sealed roster and builds the engine's
-	 * shape-proved collection in a single pass. Empty is lawful and still
-	 * a mutation. Nothing is judged until commit; shape violations throw
+	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
+	 * row count the caller states — the one collection crossing
+	 * (proposals/one-representation/20): the JS side alone knows N when the
+	 * roster is fieldless (N nullary facts project to 0 cells, so no
+	 * derivation can recover N), and the bridge verifies
+	 * `cells.length === rows × arity` exactly against its resident sealed
+	 * roster before building the engine's shape-proved collection in a
+	 * single pass. Empty (`rows === 0n`, no cells) is lawful and still a
+	 * mutation. Nothing is judged until commit; shape violations throw
 	 * typed, naming relation and field.
 	 */
-	txInsert(tx: TxHandle, relationId: number, cells: readonly FactValue[]): WireMutationReport
-	/** Records a collection of deletes from the same flat cells crossing as {@link Native.txInsert}. */
-	txDelete(tx: TxHandle, relationId: number, cells: readonly FactValue[]): WireMutationReport
+	txInsert(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
+	/** Records a collection of deletes from the same flat cells-plus-count crossing as {@link Native.txInsert}. */
+	txDelete(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
 	/**
 	 * Final-state membership (base + pending delta — the exact view the
 	 * commit judgment judges; check-then-act is race-free by construction).
@@ -536,9 +540,19 @@ interface Native {
 	preparedClose(prepared: PreparedHandle): void
 
 	instanceBuilderNew(spec: SchemaSpec): BuilderHandle
-	/** The builder twin of {@link Native.txInsert}: the same flat row-major cells crossing. */
-	instanceBuilderLoad(builder: BuilderHandle, relationId: number, cells: readonly FactValue[]): WireMutationReport
-	instanceBuilderDelete(builder: BuilderHandle, relationId: number, cells: readonly FactValue[]): WireMutationReport
+	/** The builder twin of {@link Native.txInsert}: the same flat row-major cells-plus-count crossing. */
+	instanceBuilderLoad(
+		builder: BuilderHandle,
+		relationId: number,
+		rows: bigint,
+		cells: readonly FactValue[]
+	): WireMutationReport
+	instanceBuilderDelete(
+		builder: BuilderHandle,
+		relationId: number,
+		rows: bigint,
+		cells: readonly FactValue[]
+	): WireMutationReport
 	instanceBuilderReserve(builder: BuilderHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
 	instanceBuilderContains(builder: BuilderHandle, relationId: number, values: readonly FactValue[]): boolean
 	instanceBuilderGet(

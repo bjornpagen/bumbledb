@@ -85,24 +85,42 @@ interface MutationReport {
  * the union's second arm) is DELETED (70-deletions D1) — it existed only
  * because the row spelling was slow, and a transport kept beside its
  * replacement is a mode; the row spelling is now also the fast one (the
- * facts cross as one flat row-major cells array).
+ * facts cross as one flat row-major cells array beside the explicit row
+ * count — {@link FlatCollection}).
  */
 type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>>
+
+/**
+ * One projected collection as it crosses the bridge: the exact row count
+ * beside the flat cells. `rows` is EXPLICIT because the cells alone
+ * cannot state it — a nullary relation's N facts project to 0 cells, so
+ * any bridge-side `cells.length / arity` derivation would silently
+ * collapse them to an empty write (nullary relations are LEGAL; the
+ * engine pins them) — and the JS side is the ONE side that knows N.
+ */
+interface FlatCollection {
+	readonly rows: bigint
+	readonly cells: readonly FactValue[]
+}
 
 /**
  * The flat projector: every fact's cells land in ONE row-major
  * `FactValue` array (length rows×arity) — no JS array per fact exists
  * anywhere between the caller's objects and the native crossing
- * (proposals/one-representation/20, V1). The per-cell judgment is
- * `cellOf` — the one cell judge `rowOf` also speaks (closed handle→id,
- * well-formedness, interval shape) — and the missing-field refusal is
- * `rowOf`'s, byte for byte; only the output form differs (flat, never
- * per-row).
+ * (proposals/one-representation/20, V1) — and the row count is counted
+ * while projecting (the {@link FlatCollection} law: the stated count is
+ * what the bridge verifies against `rows × arity`, exactly, for every
+ * arity). The per-cell judgment is `cellOf` — the one cell judge `rowOf`
+ * also speaks (closed handle→id, well-formedness, interval shape) — and
+ * the missing-field refusal is `rowOf`'s, byte for byte; only the output
+ * form differs (flat, never per-row).
  */
-function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FactValue[] {
+function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FlatCollection {
 	const data = relation.data
 	const cells: FactValue[] = []
+	let rows = 0n
 	for (const fact of facts) {
+		rows += 1n
 		const record = recordOf(fact)
 		for (const declared of data.fields) {
 			const value = record[declared.name]
@@ -112,15 +130,16 @@ function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): F
 			cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
 		}
 	}
-	return cells
+	return { rows, cells }
 }
 
 function mutateCollection<R extends AnyRelation>(
 	relation: R,
 	facts: CollectionWrite<R>,
-	apply: (cells: readonly FactValue[]) => WireMutationReport
+	apply: (rows: bigint, cells: readonly FactValue[]) => WireMutationReport
 ): MutationReport {
-	const report = apply(rowsOf(relation, facts))
+	const flat = rowsOf(relation, facts)
+	const report = apply(flat.rows, flat.cells)
 	return Object.freeze({ submitted: report.submitted, changed: report.changed })
 }
 
@@ -1561,9 +1580,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
-			return mutateCollection(relation, facts, function applyCells(cells) {
+			return mutateCollection(relation, facts, function applyCells(rows, cells) {
 				return bridged("bumbledb tx insert", function record() {
-					return native.txInsert(txHandle, entry.id, cells)
+					return native.txInsert(txHandle, entry.id, rows, cells)
 				})
 			})
 		}
@@ -1571,8 +1590,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
+			const flat = rowsOf(relation, facts)
 			const report = bridged("bumbledb tx delete", function record() {
-				return native.txDelete(txHandle, entry.id, rowsOf(relation, facts))
+				return native.txDelete(txHandle, entry.id, flat.rows, flat.cells)
 			})
 			return Object.freeze({ submitted: report.submitted, changed: report.changed })
 		}
@@ -2010,17 +2030,18 @@ function wrapBuilder<Rels extends SchemaRelations>(
 		load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
 			assertLive()
 			const entry = ordinaryEntry(tables, theory, relation)
-			return mutateCollection(relation, facts, function applyCells(cells) {
+			return mutateCollection(relation, facts, function applyCells(rows, cells) {
 				return bridged("bumbledb builder load", function loadCells() {
-					return native.instanceBuilderLoad(nativeHandle, entry.id, cells)
+					return native.instanceBuilderLoad(nativeHandle, entry.id, rows, cells)
 				})
 			})
 		},
 		delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
 			const entry = ordinaryEntry(tables, theory, relation)
+			const flat = rowsOf(relation, facts)
 			const report = bridged("bumbledb builder delete", function remove() {
-				return native.instanceBuilderDelete(nativeHandle, entry.id, rowsOf(relation, facts))
+				return native.instanceBuilderDelete(nativeHandle, entry.id, flat.rows, flat.cells)
 			})
 			return Object.freeze({ submitted: report.submitted, changed: report.changed })
 		},

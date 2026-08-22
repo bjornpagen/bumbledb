@@ -497,7 +497,7 @@ describe("native handle lifecycle probes", function nativeSuite() {
 			return false
 		})
 		assert.throws(function useAfterAbort() {
-			native.txInsert(captured as TxHandle, 0, [])
+			native.txInsert(captured as TxHandle, 0, 0n, [])
 		}, /closed/)
 		const outcome = native.dbWrite(handle, function empty() {
 			return true

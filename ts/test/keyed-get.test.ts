@@ -220,9 +220,9 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		let p = 0n
 		const outcome = native.dbWrite(handle, function write(tx) {
 			g = mintedStart(native.txReserve(tx, grpRel.id, 0, 1n))
-			assert.deepEqual(native.txInsert(tx, grpRel.id, [g, "algebra"]), { submitted: 1n, changed: 1n })
+			assert.deepEqual(native.txInsert(tx, grpRel.id, 1n, [g, "algebra"]), { submitted: 1n, changed: 1n })
 			p = mintedStart(native.txReserve(tx, programRel.id, 0, 1n))
-			assert.deepEqual(native.txInsert(tx, programRel.id, [p, g, "linear equations"]), {
+			assert.deepEqual(native.txInsert(tx, programRel.id, 1n, [p, g, "linear equations"]), {
 				submitted: 1n,
 				changed: 1n
 			})

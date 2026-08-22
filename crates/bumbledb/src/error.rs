@@ -729,6 +729,13 @@ pub enum FactShapeError {
         relation: RelationId,
         field: FieldId,
     },
+    /// A collection's variable-width payload (string or `bytes<N>` cells)
+    /// crossed the 4 GiB transport bound of the accepted collection's u32
+    /// arena spans (`api/db/collection.rs` — one collection is one call's
+    /// facts, so the bound is transport, not capacity: split the
+    /// collection). ETL input is data, so the bound is a typed refusal,
+    /// never a panic (`docs/architecture/70-api.md`).
+    PayloadBound { relation: RelationId },
 }
 
 impl From<DynIdError> for FactShapeError {

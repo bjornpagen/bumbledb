@@ -97,8 +97,18 @@ pub struct AcceptedCollection {
     /// Proved equal to the feeding roster's width at construction;
     /// re-anchored against the *target* roster at apply (the
     /// authoritative second wall — a collection may outlive the handle
-    /// it was built against).
+    /// it was built against, and arity alone re-anchors only the WIDTH:
+    /// the [`Self::roster`] echo below is the wall's type half).
     arity: u16,
+    /// The roster ECHO: the arity-long value-type row every cell was
+    /// judged against, captured at seal. The echo law (the apply-side
+    /// second wall, whole): sealed cells are proved against the echo, and
+    /// `apply_accepted` proves the echo IS the target relation's own
+    /// field value-types — so a collection built against a same-arity,
+    /// type-different roster refuses typed at apply instead of encoding
+    /// wrong-width fact bytes. O(arity) per collection, zero per-cell
+    /// cost ([`ValueType`] is `Copy`).
+    roster: Box<[ValueType]>,
     /// Exact row count — `MutationReport::submitted`'s input.
     rows: u64,
     /// R2, pinned: flat, arity-strided, row-major. `rows · arity` cells.
@@ -148,6 +158,12 @@ impl AcceptedCollection {
     #[must_use]
     pub fn arity(&self) -> u16 {
         self.arity
+    }
+
+    /// The value-type roster every cell was judged against — the echo the
+    /// apply-side wall verifies against the target relation's own fields.
+    pub(super) fn roster(&self) -> &[ValueType] {
+        &self.roster
     }
 
     /// Row `row`'s `arity` cells, borrowed from the arenas — the
@@ -299,8 +315,8 @@ impl<'s> CollectionBuilder<'s> {
             Value::Bool(value) => Cell::Bool(*value),
             Value::U64(value) => Cell::U64(*value),
             Value::I64(value) => Cell::I64(*value),
-            Value::String(text) => self.land_str(text),
-            Value::FixedBytes(raw) => self.land_bytes(raw),
+            Value::String(text) => self.land_str(text)?,
+            Value::FixedBytes(raw) => self.land_bytes(raw)?,
             Value::IntervalU64(interval) => Cell::IntervalU64(*interval),
             Value::IntervalI64(interval) => Cell::IntervalI64(*interval),
         };
@@ -385,7 +401,7 @@ impl<'s> CollectionBuilder<'s> {
         if !matches!(expected, ValueType::String) {
             return Err(shape_mismatch(self.relation, field, ValueMismatch::Type).into());
         }
-        let cell = self.land_str(value);
+        let cell = self.land_str(value)?;
         self.cells.push(cell);
         self.advance();
         Ok(())
@@ -405,24 +421,42 @@ impl<'s> CollectionBuilder<'s> {
         if !matches!(expected, ValueType::FixedBytes { len } if value.len() == usize::from(*len)) {
             return Err(shape_mismatch(self.relation, field, ValueMismatch::Type).into());
         }
-        let cell = self.land_bytes(value);
+        let cell = self.land_bytes(value)?;
         self.cells.push(cell);
         self.advance();
         Ok(())
     }
 
-    fn land_str(&mut self, value: &str) -> Cell {
-        let off = arena_span(self.strings.len());
-        let len = arena_span(value.len());
+    fn land_str(&mut self, value: &str) -> Result<Cell> {
+        let off = self.arena_span(self.strings.len())?;
+        let len = self.arena_span(value.len())?;
         self.strings.push_str(value);
-        Cell::Str { off, len }
+        Ok(Cell::Str { off, len })
     }
 
-    fn land_bytes(&mut self, value: &[u8]) -> Cell {
-        let off = arena_span(self.bytes.len());
-        let len = arena_span(value.len());
+    fn land_bytes(&mut self, value: &[u8]) -> Result<Cell> {
+        let off = self.arena_span(self.bytes.len())?;
+        let len = self.arena_span(value.len())?;
         self.bytes.extend_from_slice(value);
-        Cell::FixedBytes { off, len }
+        Ok(Cell::FixedBytes { off, len })
+    }
+
+    /// Arena offsets are u32 spans (R2's fixed-width cell): one
+    /// collection's variable-width payload is bounded by the 4 GiB
+    /// transport contract (a bridge collection is one call's facts). ETL
+    /// input is data, so the bound is a typed refusal, never a panic
+    /// (`docs/architecture/70-api.md`'s recorded ruling). UNTESTABLE as
+    /// stated: witnessing the refusal takes a >4 GiB arena, which no CI
+    /// harness can afford, and the tree holds no precedent for a
+    /// test-scoped bound override — the typed arm stands on this comment
+    /// and the [`FactShapeError::PayloadBound`] pin in `error.rs`.
+    fn arena_span(&self, len: usize) -> Result<u32> {
+        u32::try_from(len).map_err(|_| {
+            FactShapeError::PayloadBound {
+                relation: self.relation,
+            }
+            .into()
+        })
     }
 
     /// Seals the proof: complete rows only (`cells == rows · arity`) —
@@ -450,20 +484,13 @@ impl<'s> CollectionBuilder<'s> {
         Ok(AcceptedCollection {
             relation: self.relation,
             arity: self.arity,
+            roster: self.fields.iter().map(|field| field.value_type).collect(),
             rows: self.rows,
             cells: self.cells,
             strings: self.strings,
             bytes: self.bytes,
         })
     }
-}
-
-/// Arena offsets are u32 spans (R2's fixed-width cell): one collection
-/// is bounded far under 4 GiB of variable-width payload by the transport
-/// contract (a bridge collection is one call's facts), so overflow is a
-/// programmer-invariant violation, not host data.
-fn arena_span(len: usize) -> u32 {
-    u32::try_from(len).expect("arena span fits u32")
 }
 
 /// Intern pending strings of row `row` and fill `refs` — the one

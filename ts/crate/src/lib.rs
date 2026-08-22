@@ -1148,19 +1148,24 @@ fn fresh_range_wire(range: FreshRange<u64>) -> FreshRangeWire {
 }
 
 /// One crossing per write verb (`proposals/one-representation/20`): the
-/// flat row-major cells array becomes ONE shape-proved
+/// flat row-major cells array — beside the EXPLICIT row count only the JS
+/// side can state (a fieldless roster's N facts project to 0 cells, so no
+/// derivation can recover N) — becomes ONE shape-proved
 /// `AcceptedCollection` in one marshal pass, handed to the engine's
 /// doc-hidden `*_accepted` transport lane. The paired column crossings
 /// this bridge used to carry are D2 in the deletion ledger
 /// (`proposals/one-representation/70`).
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn tx_insert(
     env: Env,
     tx: &External<TxHandle>,
     relation: u32,
+    rows: BigInt,
     cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, &cells)?;
+    let rows = marshal::u64_in(&rows, "collection rows")?;
+    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, rows, &cells)?;
     let report = tx
         .tx()?
         .insert_accepted(&collection)
@@ -1169,13 +1174,16 @@ pub fn tx_insert(
 }
 
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn tx_delete(
     env: Env,
     tx: &External<TxHandle>,
     relation: u32,
+    rows: BigInt,
     cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, &cells)?;
+    let rows = marshal::u64_in(&rows, "collection rows")?;
+    let collection = marshal::accepted_collection(env, &tx.sealed.rosters, relation, rows, &cells)?;
     let report = tx
         .tx()?
         .delete_accepted(&collection)
@@ -1459,15 +1467,20 @@ pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<Bui
 }
 
 /// The builder twin of [`tx_insert`]'s one crossing: same flat cells
-/// array, same `AcceptedCollection`, the engine's `load_accepted`.
+/// array with the explicit row count, same `AcceptedCollection`, the
+/// engine's `load_accepted`.
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn instance_builder_load(
     env: Env,
     builder: &External<BuilderHandle>,
     relation: u32,
+    rows: BigInt,
     cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let collection = marshal::accepted_collection(env, &builder.sealed.rosters, relation, &cells)?;
+    let rows = marshal::u64_in(&rows, "collection rows")?;
+    let collection =
+        marshal::accepted_collection(env, &builder.sealed.rosters, relation, rows, &cells)?;
     let report = live_mut(&builder.inner, "builder")?
         .load_accepted(&collection)
         .map_err(|error| throw_engine(env, &error))?;
@@ -1475,13 +1488,17 @@ pub fn instance_builder_load(
 }
 
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn instance_builder_delete(
     env: Env,
     builder: &External<BuilderHandle>,
     relation: u32,
+    rows: BigInt,
     cells: Array,
 ) -> napi::Result<MutationReportWire> {
-    let collection = marshal::accepted_collection(env, &builder.sealed.rosters, relation, &cells)?;
+    let rows = marshal::u64_in(&rows, "collection rows")?;
+    let collection =
+        marshal::accepted_collection(env, &builder.sealed.rosters, relation, rows, &cells)?;
     let report = live_mut(&builder.inner, "builder")?
         .delete_accepted(&collection)
         .map_err(|error| throw_engine(env, &error))?;
