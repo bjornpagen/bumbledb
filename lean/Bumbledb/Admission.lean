@@ -7,7 +7,7 @@ import Bumbledb.Decide
 **The admission law.** A statement form — or a future operator that
 wants statement-vocabulary standing — enters the vocabulary by
 inhabiting `AdmissibleForm`. The type IS the acceptance gate's
-checklist (`docs/architecture/30-dependencies.md` § the acceptance
+checklist § the acceptance
 gate), and an inhabitant is the whole mathematical case for
 acceptance: reason about exact operators before writing Rust. Five
 forms inhabit it below — the three fact-level forms
@@ -23,7 +23,7 @@ oracle-plan field (`Countermodels.joined_window_form_uninhabitable`,
 composing the blast countermodel `Countermodels.joined_window_blast`):
 "prohibitively expensive" is a type error, not an opinion. The
 query-side sibling is the recursion safety roster
-(`Exec/Reach.lean`, `docs/architecture/20-query-ir.md` § interiors
+(`Exec/Reach.lean`, § interiors
 and rec): one
 doctrine on both paths — a feature's admission is a proof obligation,
 never a vibe.
@@ -32,36 +32,36 @@ never a vibe.
 
 * **`Judgment`** — the form's Level-0 denotation, per parameter.
 * **`surface` / `surfaceProj`** — the consulted stored surfaces: which
-  fact sets the form's judge reads, each with its grouping projection
-  (the determinant-index key).
+ fact sets the form's judge reads, each with its grouping projection
+ (the determinant-index key).
 * **`quarantined`** — creation-quarantine compliance: the judgment
-  factors through the consulted surfaces — two instances agreeing on
-  every surface receive one verdict, so the judgment reads STORED
-  values only (`docs/architecture/20-query-ir.md` § the creation
-  quarantine, the write-side face).
+ factors through the consulted surfaces — two instances agreeing on
+ every surface receive one verdict, so the judgment reads STORED
+ values only § the creation
+ quarantine, the write-side face).
 * **`check` / `checkPremise` / `check_decides`** — the executable
-  checker, sound AND complete against the denotation on row-listed
-  instances under the merge premise plus the form's DECLARED checker
-  premise (`Decide.lean`'s per-form checkers; every inhabitant below
-  declares the trivial premise — the field exists so a form whose
-  judge needs an acceptance rule must say so in the open).
+ checker, sound AND complete against the denotation on row-listed
+ instances under the merge premise plus the form's DECLARED checker
+ premise (`Decide.lean`'s per-form checkers; every inhabitant below
+ declares the trivial premise — the field exists so a form whose
+ judge needs an acceptance rule must say so in the open).
 * **`DeltaCheck` / `delta_restricts`** — the delta-restricted check
-  and THE restriction theorem: over a holding pre-state, the final
-  state satisfies the judgment IFF the restricted check passes
-  (`Txn/DeltaRestriction.lean`).
+ and THE restriction theorem: over a holding pre-state, the final
+ state satisfies the judgment IFF the restricted check passes
+ (`Txn/DeltaRestriction.lean`).
 * **`Touched` / `touched_delta_bounded`** — the touched keys, forced
-  to be delta-derived: every probed key is the projection of some
-  delta fact at a consulted surface's grouping, so the probe COUNT is
-  bounded by the delta (the cost law's first half).
+ to be delta-derived: every probed key is the projection of some
+ delta fact at a consulted surface's grouping, so the probe COUNT is
+ bounded by the delta (the cost law's first half).
 * **`probe` / `Verdict` / `plan_decides`** — the order-oracle plan:
-  per consulted surface a sanctioned probe shape (`ProbeShape`, whose
-  price is `Oracle.EnforcementPlan.consultations` — one descent for a
-  point probe, the entry seek plus the walked group for a prefix
-  walk), and per touched key a verdict over the probes' answers that,
-  against EVERY conforming oracle family, decides `DeltaCheck` (the
-  cost law's second half: nothing outside the touched groups is ever
-  read). Law 3's abstract-cost scoping, spent exactly as in
-  `Oracle.lean`.
+ per consulted surface a sanctioned probe shape (`ProbeShape`, whose
+ price is `Oracle.EnforcementPlan.consultations` — one descent for a
+ point probe, the entry seek plus the walked group for a prefix
+ walk), and per touched key a verdict over the probes' answers that,
+ against EVERY conforming oracle family, decides `DeltaCheck` (the
+ cost law's second half: nothing outside the touched groups is ever
+ read). Law 3's abstract-cost scoping, spent exactly as in
+ `Oracle.lean`.
 
 The composition (`AdmissibleForm.gate_decides_final`): over a holding
 pre-state, the touched verdicts against any conforming oracle family
@@ -71,64 +71,64 @@ pattern, per form, as one theorem of the structure.
 ## Design records
 
 * **Per-form parameterization, statement-agnostic (the design call
-  recorded).** `AdmissibleForm Param Ix` carries the form's
-  schema-level parameters (`Param`) and its consulted-surface index
-  (`Ix`); it does NOT carry a `Statement` constructor. A new form
-  inhabits the structure BEFORE its constructor lands — that is the
-  admission law's point — and the E1 countermodel must be statable at
-  all (a joined side is unwritable as an `Atom`, so a
-  constructor-anchored structure could never even pose the question).
-  The tie to the closed `Statement` vocabulary is the per-form
-  `…_denotes` theorems below: under the form's split scope, the
-  `Judgment` field IS `Statement.judgment`'s arm.
+ recorded).** `AdmissibleForm Param Ix` carries the form's
+ schema-level parameters (`Param`) and its consulted-surface index
+ (`Ix`); it does NOT carry a `Statement` constructor. A new form
+ inhabits the structure BEFORE its constructor lands — that is the
+ admission law's point — and the E1 countermodel must be statable at
+ all (a joined side is unwritable as an `Atom`, so a
+ constructor-anchored structure could never even pose the question).
+ The tie to the closed `Statement` vocabulary is the per-form
+ `…_denotes` theorems below: under the form's split scope, the
+ `Judgment` field IS `Statement.judgment`'s arm.
 * **Quarantine as surface-extensionality (the formulation recorded).**
-  The tasked candidate — invariance under value-preserving instance
-  isomorphism — collapses here: selections read declared literal
-  sets, so the only isomorphisms available preserve every stored
-  value on every read position, i.e. they fix the surfaces pointwise.
-  The cleaner statement is the factoring itself: the judgment is a
-  function of the consulted surfaces' fact sets, nothing else — no
-  minted value, no other relation, no host state can move a verdict.
+ The tasked candidate — invariance under value-preserving instance
+ isomorphism — collapses here: selections read declared literal
+ sets, so the only isomorphisms available preserve every stored
+ value on every read position, i.e. they fix the surfaces pointwise.
+ The cleaner statement is the factoring itself: the judgment is a
+ function of the consulted surfaces' fact sets, nothing else — no
+ minted value, no other relation, no host state can move a verdict.
 * **The oracle-plan field's shape.** Every inhabitant is a
-  single-key form, so the field is stated over
-  `Oracle.OrderedOracle (List Value) P Fact` families indexed by `Ix`,
-  every probe at the ONE touched key — the one-oracle-per-evaluation
-  discipline (`Oracle.plan_answers_sound`) made structural, with the
-  surfaces pinned per form (a verdict cannot read a join because no
-  field gives it one). The per-form `Planned` theorems of
-  `Oracle.lean` discharge the fact-level fields; the acceptance
-  premises price the probes there
-  (`Oracle.accepted_target_key_prices_the_probe`), unchanged. The
-  `Verdict` field reads each surface at the ONE touched key, and
-  `touched_delta_bounded` forces every touched key to be a delta
-  fact's projection — the two fences whose joint exclusion makes
-  `Countermodels.joined_window_form_uninhabitable` true; an
-  answer-dependent (chase-shaped) read or an every-group escalation
-  is structurally refused here, which is part of why the order-mark
-  forms left the vocabulary (`docs/architecture/30-dependencies.md`
-  § refused: order marks).
+ single-key form, so the field is stated over
+ `Oracle.OrderedOracle (List Value) P Fact` families indexed by `Ix`,
+ every probe at the ONE touched key — the one-oracle-per-evaluation
+ discipline (`Oracle.plan_answers_sound`) made structural, with the
+ surfaces pinned per form (a verdict cannot read a join because no
+ field gives it one). The per-form `Planned` theorems of
+ `Oracle.lean` discharge the fact-level fields; the acceptance
+ premises price the probes there
+ (`Oracle.accepted_target_key_prices_the_probe`), unchanged. The
+ `Verdict` field reads each surface at the ONE touched key, and
+ `touched_delta_bounded` forces every touched key to be a delta
+ fact's projection — the two fences whose joint exclusion makes
+ `Countermodels.joined_window_form_uninhabitable` true; an
+ answer-dependent (chase-shaped) read or an every-group escalation
+ is structurally refused here, which is part of why the order-mark
+ forms left the vocabulary 
+ § refused: order marks).
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **The pointwise inhabitants enter at the walk shape.** Their
-  verdicts read whole walked groups; the engine's finer reads — the
-  two-neighbor probe (`Oracle.neighbor_probe_decides`) and the
-  one-pass sweep (`Oracle.coverage_walk_decides`), both at the
-  interval altitude — refine the walk below this structure's
-  fact-altitude field, and a wider walk only re-reads more (the
-  recorded superset license in `Oracle.lean`).
+ verdicts read whole walked groups; the engine's finer reads — the
+ two-neighbor probe (`Oracle.neighbor_probe_decides`) and the
+ one-pass sweep (`Oracle.coverage_walk_decides`), both at the
+ interval altitude — refine the walk below this structure's
+ fact-altitude field, and a wider walk only re-reads more (the
+ recorded superset license in `Oracle.lean`).
 * **The type prices a walk at its walked group and no finer.** A
-  degenerate grouping (an empty projection) would make one "group"
-  the whole relation; the gate's ACCEPTANCE rules (the target-key and
-  key-form demands, `docs/architecture/30-dependencies.md`) refuse
-  such shapes at declaration, and that refusal is mechanism the docs
-  own. This type states the honest abstract count for whatever
-  grouping the form declares.
+ degenerate grouping (an empty projection) would make one "group"
+ the whole relation; the gate's ACCEPTANCE rules (the target-key and
+ key-form demands, refuse
+ such shapes at declaration, and that refusal is mechanism the docs
+ own. This type states the honest abstract count for whatever
+ grouping the form declares.
 * **Verdicts read whole consults.** The two sanctioned shapes both
-  answer with `consult` (`ProbeShape.toPlan_answers`). Engine-side
-  clipping of a walk is representation
-  (`Exec/Sweep.lean: sweep_ignores_spent_segments`, the recorded
-  license in `Oracle.lean`).
+ answer with `consult` (`ProbeShape.toPlan_answers`). Engine-side
+ clipping of a walk is representation
+ (`Exec/Sweep.lean: sweep_ignores_spent_segments`, the recorded
+ license in `Oracle.lean`).
 
 ## The capacity inhabitant: acceptance and enforcement discharged
 
@@ -204,52 +204,52 @@ structure AdmissibleForm (Param : Type) (Ix : Type) where
   /-- A consulted surface: the stored fact set the judge reads. -/
   surface : Param → Ix → Theory → Instance → Set Fact
   /-- The surface's grouping projection — the index key its probes
-  descend by. -/
+ descend by. -/
   surfaceProj : Param → Ix → List FieldId
   /-- Creation-quarantine compliance: the judgment factors through
-  the consulted surfaces — stored values only. -/
+ the consulted surfaces — stored values only. -/
   quarantined : ∀ p T I J,
     (∀ ix, surface p ix T I = surface p ix T J) →
     (Judgment p T I ↔ Judgment p T J)
   /-- The executable checker (`Decide.lean`'s altitude). -/
   check : Param → Theory → RowInstance → Bool
   /-- The checker's OWN acceptance premise, per instance — the
-  discipline of the tree (`Decide.lean`: acceptance enters as a
-  hypothesis, never a denotation conjunct), made a declared field so
-  a form states loudly what its executable judge spends. Every
-  inhabitant below declares the trivial premise; a form whose checker
-  needs more (the ranked form's hop-key rule) must declare it here,
-  in the open. -/
+ discipline of the tree (`Decide.lean`: acceptance enters as a
+ hypothesis, never a denotation conjunct), made a declared field so
+ a form states loudly what its executable judge spends. Every
+ inhabitant below declares the trivial premise; a form whose checker
+ needs more (the ranked form's hop-key rule) must declare it here,
+ in the open. -/
   checkPremise : Param → Theory → RowInstance → Prop
   /-- The checker is sound and complete against the denotation on
-  row-listed instances, under the merge premise and the form's
-  declared checker premise. -/
+ row-listed instances, under the merge premise and the form's
+ declared checker premise. -/
   check_decides : ∀ p T (W : RowInstance), WorldCarriesClosed T W →
     checkPremise p T W →
     (check p T W = true ↔ Judgment p T W.den)
   /-- The delta-restricted check (`Txn/DeltaRestriction.lean`'s
-  altitude). -/
+ altitude). -/
   DeltaCheck : Param → Theory → Instance → Txn.Delta → Prop
   /-- The restriction theorem: over a holding pre-state, the final
-  state satisfies the judgment IFF the restricted check passes. -/
+ state satisfies the judgment IFF the restricted check passes. -/
   delta_restricts : ∀ p T I (d : Txn.Delta), Judgment p T I →
     (Judgment p T (d.applyTo I) ↔ DeltaCheck p T I d)
   /-- The touched keys a delta licenses the judge to probe. -/
   Touched : Param → Txn.Delta → Set (List Value)
   /-- Every touched key is delta-derived — the probe count is bounded
-  by the delta, the cost law's first half. -/
+ by the delta, the cost law's first half. -/
   touched_delta_bounded : ∀ p (d : Txn.Delta) t, t ∈ Touched p d →
     ∃ ix R f, (f ∈ d.adds R ∨ f ∈ d.removes R) ∧
       f.project (surfaceProj p ix) = t
   /-- The probe shape per consulted surface — the plan term, priced
-  by `ProbeShape.point_consultations` / `walk_consultations`. -/
+ by `ProbeShape.point_consultations` / `walk_consultations`. -/
   probe : Param → Ix → ProbeShape
   /-- The per-touched-key verdict over the probes' answers. -/
   Verdict : Param → Txn.Delta → List Value → (Ix → List Fact) → Prop
   /-- The oracle-plan theorem: against EVERY conforming oracle
-  family over the surfaces, the touched verdicts decide the
-  delta-restricted check — nothing outside the touched groups is
-  read, the cost law's second half. -/
+ family over the surfaces, the touched verdicts decide the
+ delta-restricted check — nothing outside the touched groups is
+ read, the cost law's second half. -/
   plan_decides : ∀ p T I (d : Txn.Delta) (P : Type)
     (ple : P → P → Prop)
     (o : Ix → Oracle.OrderedOracle (List Value) P Fact ple),
