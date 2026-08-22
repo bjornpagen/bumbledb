@@ -2,8 +2,6 @@ use super::{FjPlan, PlanError, PlanNode};
 use crate::ir::VarId;
 use std::collections::BTreeSet;
 
-/// Derives per-node covers and new-var sets, rejecting duplicate
-/// occurrences within a node and cover-less nodes.
 pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
     let mut nodes = Vec::with_capacity(plan.nodes.len());
     let mut available: BTreeSet<VarId> = BTreeSet::new();
@@ -26,15 +24,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             .copied()
             .filter(|v| !available.contains(v))
             .collect();
-        // A cover must contain all of the node's new vars AND nothing else
-        // (Deviation from the paper's Definition, recorded in
-        // docs/architecture/40-execution.md): a subatom that also carries an
-        // already-bound variable is iterable per the paper, but iterating it
-        // would *rebind* the bound variable without re-checking the
-        // occurrence that bound it — wrong results under dynamic cover
-        // choice. Restricting covers to exactly-the-new-vars keeps every
-        // binary2fj node's opening subatom (its vars are exactly the
-        // remainder) and every GJ-style single-var cover.
+
         let covers: Vec<u8> = node
             .subatoms
             .iter()
@@ -57,7 +47,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             anti_probes: Vec::new(),
             point_probes: Vec::new(),
             new_vars,
-            suffix_skip: super::SuffixSkip::Forbidden, // refined by validation from sink_vars
+            suffix_skip: super::SuffixSkip::Forbidden, 
             estimate: node.estimate,
         });
     }
