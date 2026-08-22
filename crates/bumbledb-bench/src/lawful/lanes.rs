@@ -4,7 +4,6 @@
 //! lanes, where the refusal IS the measured work. **The refusal contract rides
 //! in the closure's type** (the runner per family, explicit [`Protocol`],
 //! `harness::measure` legal lane ever mints after them.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Schema, StatementId, Theory};
 use rusqlite::Connection;
