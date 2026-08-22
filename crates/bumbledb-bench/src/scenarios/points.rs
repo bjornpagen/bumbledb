@@ -76,7 +76,6 @@ fn doc_row_sized(seed: u64, i: u64, buckets: u64) -> Vec<Value> {
         Value::String(format!("doc/{i:08x}").into()),
         Value::U64(rng.range(buckets)),
         Value::I64(i64::try_from(rng.range(1_000_000)).expect("small")),
-
         Value::FixedBytes(payload.into()),
     ]
 }
@@ -182,7 +181,6 @@ fn bucket_fetch() -> Query {
 }
 
 fn bucket_params(_: u64) -> Vec<Vec<Value>> {
-
     vec![
         vec![Value::U64(0), Value::U64(64)],
         vec![Value::U64(1), Value::U64(64)],
