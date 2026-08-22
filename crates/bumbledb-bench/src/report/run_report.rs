@@ -1,7 +1,6 @@
 use super::{RunReport, Verdict};
 
 impl RunReport {
-
     #[must_use]
     pub fn all_win(&self) -> bool {
         self.reads
