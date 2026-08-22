@@ -1,11 +1,5 @@
-//! One walk over a Query: interiors, then rec (base + step), then main.
-//! Empty prefixes are skipped — CQ `params_for` / coverage RNG and
-//! anchors stay identical when interiors are empty.
-
 use bumbledb::{InteriorId, ProjectionRule, Query, RecRule, RecStep, Rule};
 
-/// Every rule-list in declaration order: interiors, rec.base, rec.rec, main.
-/// Derived arms lower through `to_rule` so callers see one [`Rule`] shape.
 pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
     let mut out: Vec<Rule> = Vec::new();
     match query {
@@ -38,10 +32,6 @@ pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
     out.into_iter()
 }
 
-/// Apply `f` to every rule in declaration order. Stops and returns
-/// `false` on the first `f` that returns `false`. Derived arms are
-/// lowered, mutated, and written back through their condition lists
-/// (the contradiction plant and converse twin only touch conditions).
 pub fn every_rule_mut(query: &mut Query, mut f: impl FnMut(&mut Rule) -> bool) -> bool {
     match query {
         Query {
