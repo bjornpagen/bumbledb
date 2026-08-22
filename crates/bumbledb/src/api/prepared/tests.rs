@@ -34,9 +34,6 @@ mod snapshot;
 mod statically_empty;
 mod view_memo;
 
-/// The unit-typestate prepare: these tests drive the environment
-/// directly, below the `Db<S>` surface where the schema typestate
-/// lives, so `S` is uninferable — pin it to `()`.
 fn prepare(
     txn: &crate::storage::env::ReadTxn<'_>,
     cache: &ImageCache,
@@ -46,7 +43,6 @@ fn prepare(
     super::build::prepare(txn, cache, std::sync::Arc::new(schema.clone()), query)
 }
 
-/// Posting(id fresh u64, account u64, memo string, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -105,7 +101,6 @@ fn insert_postings(env: &Environment, schema: &Schema, rows: &[(u64, u64, &str, 
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// Q(memo, amount) :- Posting(account = ?0, memo, amount), amount >= ?1.
 fn by_account_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -142,9 +137,6 @@ fn answers_of(buffer: &Answers) -> Vec<(String, i64)> {
     answers
 }
 
-/// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
-/// (docs/architecture/40-execution.md): a param-Eq on a field outside
-/// every key.
 fn by_memo_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
