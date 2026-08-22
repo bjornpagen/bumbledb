@@ -81,13 +81,11 @@ after(function cleanup() {
 const goldensPath = path.join(import.meta.dirname, "..", "..", "fixtures", "cookbook-fingerprints.txt")
 const regenerating = process.env.REGEN_FINGERPRINTS === "1"
 
-/** The pinned goldens — absent while regenerating (the values are in flux). */
 const goldens = regenerating ? undefined : readGoldens()
 
 /** Every admitted pinned fingerprint, recipe id → hex — the regen source. */
 const witnessed = new Map<string, string>()
 
-/** The header the regeneration writes back verbatim, above the sorted lines. */
 const GOLDENS_HEADER = `# fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
 # fingerprint goldens: one line per engine-cookbook recipe, \`rNN <64-hex>\`,
 # sorted by recipe number.
@@ -123,7 +121,6 @@ after(function writeGoldens() {
 	fs.writeFileSync(goldensPath, `${GOLDENS_HEADER}\n${lines.join("\n")}\n`)
 })
 
-/** Reads the goldens fixture: `rNN <64-hex>` lines; `#` comments and blanks skipped. */
 function readGoldens(): ReadonlyMap<string, string> {
 	const pinned = new Map<string, string>()
 	for (const raw of fs.readFileSync(goldensPath, "utf8").split("\n")) {
@@ -144,15 +141,8 @@ function readGoldens(): ReadonlyMap<string, string> {
 	return pinned
 }
 
-/**
- * Recipe 28's v1 theory is the migration SOURCE the recipe exports from —
- * prose in the engine cookbook, not the recipe's pinned schema block — so
- * its store admits unpinned: the test body asserts its fingerprint differs
- * from the pinned v2 target, and the Rust roster carries only the target.
- */
 const unpinnedStores: ReadonlySet<string> = new Set(["r28-payroll-v1"])
 
-/** The recipe id a store name carries (`rNN-…`), or undefined when unpinned. */
 function recipeIdOf(name: string): string | undefined {
 	if (unpinnedStores.has(name)) {
 		return undefined
@@ -163,7 +153,6 @@ function recipeIdOf(name: string): string | undefined {
 	return id
 }
 
-/** One admitted recipe store: the open `Db` and the theory's engine-computed fingerprint. */
 interface Admitted<Rels extends SchemaRelations> {
 	readonly db: Db<Rels>
 	readonly fingerprint: string
@@ -202,13 +191,11 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 	return { db, fingerprint }
 }
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
 }
 
-/** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
 	return [...values].sort(function asc(left, right) {
 		if (left < right) {
@@ -232,7 +219,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		// The M1 ruling, pinned through the renderer (never by hand): the key
-		// is the dependency-theoretic arrow closing over its own relation.
+
 		assert.equal(
 			renderStatement(key(Outage, ["service", "window"])),
 			"Outage(service, window) -> Outage",
@@ -273,9 +260,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			mirrors(on(Task.where({ kind: "CustomOperator" }), "id"), on(CustomOperatorGrading, "task"))
 		])
 
-		// Host dispatch over the discriminator: native `switch` narrowing over
-		// the handle union, exhaustive via `satisfies never` (the cookbook's
-		// `gradedBy`).
 		const gradedBy = (kind: Infer<typeof Kind.id>) => {
 			switch (kind) {
 				case "Deterministic":
@@ -368,8 +352,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r.match(Ticket, { id: t, priority: "Urgent" }).find({ t })
 		})
 
-		// Set membership is a plain array — closed-only in query match records
-		// (ordinary-field membership is a bound ∈-set param, r.inSet).
 		const actionable = query(Tickets).rule((r) => {
 			const { id: t } = v(Ticket)
 			return r.match(Ticket, { id: t, priority: ["Normal", "Urgent"] }).find({ t })
@@ -400,15 +382,11 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Certificate, "kind"), on(Kind.where({ mastered: true }), "id"))
 		])
 
-		// ψ on the read side: the closed atom is matchable like any relation.
 		const masteredAttempts = query(Review).rule((r) => {
 			const { id: a, kind: k } = v(Attempt)
 			return r.match(Attempt, { id: a, kind: k }).match(Kind, { id: k, mastered: true }).find({ a })
 		})
 
-		// The payload tier's host dispatch: the record-table idiom — total by
-		// type over the handle union, each entry reading its sealed axiom row
-		// off the typed `Kind.axioms` readback.
 		const labels: Record<Infer<typeof Kind.id>, string> = {
 			DirectPass: `mastered, rank ${Kind.axioms.DirectPass.rank}`,
 			JudgedPass: `mastered, rank ${Kind.axioms.JudgedPass.rank}`,
@@ -619,7 +597,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Claim, "person"), on(Person, "id")),
 			contained(on(Claim, "arm"), on(Arm, "id")),
 			key(Booking, ["room", "span"]),
-			// The statement that TYPES Claim.source into "Attendance.id":
+
 			mirrors(on(Attendance.where({ rsvp: "Accepted" }), "id"), on(Claim.where({ arm: "Busy" }), "source")),
 			key(WorkHours, ["person", "hours"]),
 			contained(on(Claim.where({ arm: "Busy" }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
@@ -796,9 +774,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const { db } = await admit("r20-jobs", Jobs)
 		const prepared = db.prepare(stillQueued)
 
-		// update-where, witnessed: query the premise on the attempt's snapshot,
-		// then delete(old) + insert(new) per matched fact — "still Queued" is
-		// the witness; the claim and its lease commit together (the mirrors).
 		const outcome = db.read(function updateWhere(instance, witness) {
 			const queued = instance.execute(prepared, {})
 			if (queued.length === 0) {
@@ -899,15 +874,11 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Parent, "parent"), on(Node, "id"))
 		])
 
-		// The loop's one query — the frontier's children, one ∈-set probe:
 		const step = query(Closure).rule((r) => {
 			const { child: c } = v(Parent)
 			return r.match(Parent, { child: c, parent: r.inSet("frontier") }).find({ c })
 		})
-		// The same closure, one query under the reach driver
-		// (?root seeds the rec; the main rule is the finished set's own
-		// identity projection — an interior atom is a positive occurrence, so it
-		// grounds its variables and no re-grounding join exists):
+
 		const reach = query(Closure)
 			.reach("reach", {
 				base: [
@@ -930,7 +901,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 				const { id: c } = v(Node)
 				return r.interior("reach", { c }).find({ c })
 			})
-		// The complement — negation OF the finished rec is engine-legal
+
 		// (negation in rec is refused):
 		const unreached = query(Closure)
 			.reach("reach", {
@@ -972,7 +943,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		assert.equal(seededForest.tag, "accepted", "the three-level forest lands")
 		const root = must(minted.root)
 
-		// The host loop — the frontier discipline IS semi-naive evaluation's Δ:
 		const seen = new Set<bigint>([root])
 		let frontier: readonly bigint[] = [root]
 		for (;;) {
@@ -995,7 +965,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		assert.deepEqual(sorted([...seen]), sorted(engineNative), "the two dialects agree, root for root")
 		assert.deepEqual(sorted([...seen]), sorted([root, must(minted.mid), must(minted.leaf)]))
 
-		// The complement lands in-plan: every node the closure never reached.
 		const complement = db.read((i) => i.execute(unreachedPrepared, { root })).map((row) => row.c)
 		const everyNode = db.read((i) => i.scan(Node)).map((node) => node.id)
 		assert.deepEqual(
@@ -1017,7 +986,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Posting, "account"), on(Account, "id"))
 		])
 
-		// The host composition's two queries (recipe 24's loop runs between them):
 		const frontierStep = query(Accounts).rule((r) => {
 			const { child: c } = v(AccountParent)
 			return r.match(AccountParent, { child: c, parent: r.inSet("frontier") }).find({ c })
@@ -1026,8 +994,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { id, minor } = v(Posting)
 			return r.match(Posting, { id, account: r.inSet("subtree"), minor }).find({ total: r.sum(minor) })
 		})
-		// The engine-native form: the rec converges first, then the
-		// main fold runs once over the finished subtree.
+
 		const nativeRollup = query(Accounts)
 			.reach("sub", {
 				base: [
@@ -1098,14 +1065,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("28. migration is ETL — two theories, two fingerprints", async function r28() {
-		// The old theory, judged and fingerprinted:
+
 		const EmployeeV1 = relation("Employee", { id: u64.fresh, name: str })
 		const SalaryV1 = relation("Salary", { employee: u64, amount: i64 })
 		const PayrollV1 = schema("PayrollV1", { Employee: EmployeeV1, Salary: SalaryV1 }, [
 			contained(on(SalaryV1, "employee"), on(EmployeeV1, "id"))
 		])
 
-		// The new theory adds what v1 never recorded — WHEN a salary applied:
 		const Employee = relation("Employee", { id: u64.fresh, name: str })
 		const Salary = relation("Salary", { employee: u64, amount: i64, applies: interval(i64) })
 		const Payroll = schema("Payroll", { Employee, Salary }, [
@@ -1152,8 +1118,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	test("30. the keyed read — the key law made callable, on every scope", async function r30() {
 		const Grp = relation("Grp", { id: u64.fresh, label: str })
 		const Course = relation("Course", { id: u64.fresh, grp: u64, title: str })
-		// The law: one course per group — hold the statement VALUE, it is
-		// the read's selector (statement identity is the membership rule).
+
 		const courseGrpKey = key(Course, ["grp"])
 
 		const KeyedRead = schema("KeyedRead", { Grp, Course }, [contained(on(Course, "grp"), on(Grp, "id")), courseGrpKey])
@@ -1171,18 +1136,15 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const grp = must(minted.grp)
 		const course = must(minted.course)
 
-		// db.get, 3-arg — the declared key statement selects the read:
 		const byGroup = db.read((i) => i.get(Course, courseGrpKey, { grp }))
 		assert.ok(byGroup, "the declared key answers the typed point read")
 		assert.equal(byGroup.id, course)
 		assert.equal(byGroup.title, "linear equations")
 
-		// The primary 2-arg form — the fresh field IS the primary key:
 		const byId = db.read((i) => i.get(Course, { id: course }))
 		assert.ok(byId, "the fresh field answers the primary point read")
 		assert.equal(byId.grp, grp)
 
-		// instance.get — the same spelling inside a read scope (the symmetry rule):
 		assert.equal(
 			db.read(function inScope(instance, _witness) {
 				return instance.get(Course, courseGrpKey, { grp })?.id
@@ -1191,8 +1153,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			"the read scope agrees with the standalone spelling"
 		)
 
-		// tx.get — the write transaction answers the FINAL state
-		// (read-your-writes), through the key statement and the primary form:
 		const mutated = db.write(function mutate(tx) {
 			const g = put(tx, Grp, { label: "geometry" })
 			const p = put(tx, Course, { grp: g.id, title: "proofs" })
@@ -1216,16 +1176,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const Racks = schema("Racks", { Pool, Model, Device }, [
 			contained(on(Device, "pool"), on(Pool, "id")),
-			// The pinned column: a device's watts provably equals its model's —
-			// the two-column containment IS the join, stated as a law (ruling 6:
-			// path weights refuse naming exactly this pair).
+
 			key(Model, ["id", "watts"]),
 			contained(on(Device, ["model", "watts"]), on(Model, ["id", "watts"])),
-			// Σ watts over a pool's devices stays within the pool's own supply:
+
 			capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))
 		])
 
-		// The capacity operator renders positionally — the dossier's ruled spelling:
 		assert.equal(
 			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))),
 			"Pool(id) <=[watts]{0..supply} Device(pool)",
@@ -1234,7 +1191,6 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const { db } = await admit("r31-power-budget", Racks)
 
-		// utilization is a query, never a column (the ledger's law, recipe 19):
 		const draw = query(Racks).rule((r) => {
 			const { id, pool, watts } = v(Device)
 			return r.match(Device, { id, pool, watts }).find({ pool, total: r.sum(watts) })
@@ -1252,8 +1208,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const Rooms = schema("Rooms", { Room, Booking }, [
 			contained(on(Booking, "room"), on(Room, "id")),
-			// The pointwise key forbids double-booking (recipe 1); the capacity
-			// law bounds the TOTAL. Different laws — a schema usually wants both.
+
 			key(Booking, ["room", "booked"]),
 			capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room"))
 		])
