@@ -1,17 +1,10 @@
-//! The store-free colt fixture — the unchecked-gather interior's
-//! standing referee (the fuzz corpus replay and the ASAN lane died
 //! with the 2026-07-20 hard-delete): `TransientImage::refill` builds a
-//! real `RelationImage` from encoded word rows with zero storage
-//! involved, so this module runs under the Miri lane
-//! (`scripts/miri.sh`) — the one dynamic checker that can see an
-//! out-of-bounds `get_unchecked` in `gather_segment`'s interior, which
 //! the LMDB-backed fixtures beside it keep out of Miri's reach.
 
 use super::*;
 use crate::image::TransientImage;
 use bumbledb_theory::schema::ValueType;
 
-/// A store-free view over `(k, v)` u64 rows.
 fn synthetic_view(rows: &[(u64, u64)]) -> View {
     let words: Vec<[u64; 2]> = rows.iter().map(|&(k, v)| [k, v]).collect();
     let mut slot = TransientImage::default();
@@ -23,15 +16,9 @@ fn synthetic_view(rows: &[(u64, u64)]) -> View {
     apply(&image, &[], &[], Vec::new())
 }
 
-/// Force, probe, and drain over a synthetic image agree with a naive
-/// model — every gather shape crossed: the forced-map iter at level 0,
-/// singleton rows, and multi-chunk position chains through
-/// `gather_segment`'s unchecked interior at the suffix.
 #[test]
 fn store_free_gathers_match_a_naive_model() {
-    // 500 positions over 40 keys: per-key fanouts of 12–13 exercise
-    // singleton-to-chunk promotion; key 0 gets 200 extra duplicates so
-    // one chain crosses chunk boundaries.
+
     let mut rows: Vec<(u64, u64)> = (0..500).map(|i| (i % 40, i)).collect();
     rows.extend((500..700).map(|i| (0, i)));
     let view = synthetic_view(&rows);
@@ -51,7 +38,6 @@ fn store_free_gathers_match_a_naive_model() {
     }
     assert!(colt.get(root, 0, &[40]).is_none(), "absent keys miss");
 
-    // The root drain (forced-map iteration) yields each key once.
     let keys = drain(&mut colt, root, 0);
     assert_eq!(keys.len(), 40);
 }
