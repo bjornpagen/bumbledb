@@ -17,7 +17,6 @@ use bumbledb_theory::schema::{
     SchemaDescriptor, ValueType,
 };
 
-/// R(id u64, flag bool, a i64, b i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -75,7 +74,7 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
     let mut delta = WriteDelta::new(schema);
     for i in 0..50i64 {
         let id = i.cast_unsigned();
-        // Every fifth row has a == b so the equality filter has matches.
+
         let b = if i % 5 == 0 { i - 25 } else { (i % 7) - 3 };
         delta
             .insert(&view, R, &fact(schema, id, i % 2 == 0, i - 25, b))
@@ -86,7 +85,6 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
     env
 }
 
-/// The naive oracle: per-row decode via the fact codec, no images.
 fn oracle(
     env: &Environment,
     schema: &Schema,
@@ -134,7 +132,6 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn.catalog(), &schema, R).expect("build");
 
-    // flag == true AND a >= -10 AND a < 15
     let predicates = vec![
         FilterPredicate::Compare {
             field: FieldId(1).into(),
@@ -224,12 +221,12 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
 
     let (image, view) = build_with_filters(&txn, &schema, R, &predicates, &[], Vec::new())?;
     let reference = build(&txn.catalog(), &schema, R)?;
-    // Byte-identical columns (addresses differ; contents must not).
+
     assert_eq!(image.row_count(), reference.row_count());
     for field in 0..4 {
         assert_eq!(image.column(field), reference.column(field));
     }
-    // ...and the view equals apply() over that image.
+
     let reapplied = apply(&image, &predicates, &[], Vec::new());
     assert_eq!(
         view.positions().collect::<Vec<_>>(),
@@ -239,10 +236,6 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
     Ok(())
 }
 
-// --- the interval filter kinds (PRD 14, scalar path) ------------------------
-
-/// P(id u64, during interval<i64>, review interval<i64>, at i64) — columns
-/// 0, (1, 2), (3, 4), 5.
 fn interval_schema() -> Schema {
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
@@ -275,11 +268,8 @@ const P_DURING: FieldId = FieldId(1);
 const P_REVIEW: FieldId = FieldId(2);
 const P_AT: FieldId = FieldId(3);
 
-/// One fixture row: `(id, during, review, at)`.
 type PRow = (u64, (i64, i64), (i64, i64), i64);
 
-/// The rows, chosen so every interval shape and both membership
-/// boundaries discriminate.
 const P_ROWS: [PRow; 5] = [
     (1, (2, 9), (2, 5), 2),
     (2, (9, 12), (9, 10), 9),
@@ -288,13 +278,10 @@ const P_ROWS: [PRow; 5] = [
     (5, (1, 3), (1, 3), 1),
 ];
 
-/// The biased I64 column word.
 fn w(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
 
-/// Survivor ids in ascending id order (scan order is content-hash order,
-/// so set comparisons sort).
 fn sorted_ids(view: &View) -> Vec<u64> {
     let mut ids = survivor_ids(view);
     ids.sort_unstable();
@@ -332,24 +319,17 @@ fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> 
     build(&txn.catalog(), &schema, P).expect("build")
 }
 
-/// PRD 14 criterion: `PointIn` survives exactly the rows whose interval
-/// contains the point — `point == start` survives, `point == end` does
-/// not (the half-open boundary).
 #[test]
 fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     let dir = TempDir::new("view-point-in");
     let image = interval_image(&dir);
 
-    // 9 == start of [9,12) (row 2, survives) and == end of [2,9)
-    // (row 1, dies).
     let at_nine = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Word(w(9)),
     }];
     assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
 
-    // 2 == start of [2,9) (survives), == end of [-5,2) (dies), and an
-    // interior point of [1,3).
     let at_two = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Word(w(2)),
@@ -359,7 +339,6 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         [1, 4, 5]
     );
 
-    // The same point through the bind-time param slice.
     let via_param = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Param(ParamId(0)),
@@ -379,14 +358,12 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
         set: SetConst::ParamSet(ParamId(0)),
     }];
 
-    // {-4, 10}: -4 lies in [-5,2) (row 3), 10 in [9,12) (row 2).
     let params = [Const::WordSet(vec![w(-4), w(10)])];
     assert_eq!(
         sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
         [2, 3]
     );
 
-    // The empty set lies in no interval.
     let empty = [Const::WordSet(Vec::new())];
     assert!(apply(&image, &predicates, &empty, Vec::new()).is_empty());
 }
@@ -398,7 +375,6 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     let run =
         |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
 
-    // INTERSECTS: the point-sets share a point (the 9-bit composite).
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
             left: P_DURING.into(),
@@ -407,7 +383,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         }),
         [1, 2, 3, 5]
     );
-    // COVERS (⊇): equals ∪ contains ∪ started-by ∪ finished-by.
+
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
             left: P_DURING.into(),
@@ -416,7 +392,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         }),
         [1, 2, 5]
     );
-    // A singleton basic: exact equality through the algebra.
+
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
             left: P_DURING.into(),
@@ -425,8 +401,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         }),
         [5]
     );
-    // Point membership as a same-fact composition, half-open on both
-    // fixture boundaries (rows 1 and 2 sit at start, rows 3 and 4 at end).
+
     assert_eq!(
         run(FilterPredicate::FieldsPointIn {
             interval: P_DURING.into(),
@@ -434,7 +409,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         }),
         [1, 2, 5]
     );
-    // Interval fields compare pairwise over their two-word spans.
+
     assert_eq!(
         run(FilterPredicate::FieldsCompare {
             left: P_DURING.into(),
@@ -458,8 +433,6 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
     let dir = TempDir::new("view-field-within");
     let image = interval_image(&dir);
 
-    // Scalar field within [2,9): membership with the half-open boundary
-    // (at == 2 survives, at == 9 dies).
     let scalar_within = vec![FilterPredicate::FieldWithin {
         field: P_AT.into(),
         outer: IntervalConst::Interval {
