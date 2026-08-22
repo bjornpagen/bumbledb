@@ -3,7 +3,7 @@ import Bumbledb.Query.Membership
 import Bumbledb.Exec.Rewrites
 
 /-!
-# Exec/Dedup — seen-set union and the elision licences (Level 1, PRD 07)
+# Exec/Dedup — seen-set union and the elision licences (Level 1, 
 
 Deduplication as set union, the algorithmic essence only (the
 mechanism fence): the seen-set is a first-occurrence fold
@@ -40,71 +40,71 @@ of the two it spends.
 ## Bridge notes (the exact Rust consumers)
 
 * **The sinks are where union lives** (`exec/sink.rs`'s module doc;
-  the two consumers are `exec/sink.rs::ProjectionSink` and
-  `exec/sink.rs::AggregateSink`): one sink hears every rule of a
-  query, its seen-set
-  spanning rules — no merge node, no concat-then-dedup pass exists.
-  `seenfold_is_set_semantics` is that seen-set's spec: folding the
-  emitted stream through first-occurrence filtering computes exactly
-  PRD 04's `rulesAnswers` set.
+ the two consumers are `exec/sink.rs::ProjectionSink` and
+ `exec/sink.rs::AggregateSink`): one sink hears every rule of a
+ query, its seen-set
+ spanning rules — no merge node, no concat-then-dedup pass exists.
+ `seenfold_is_set_semantics` is that seen-set's spec: folding the
+ emitted stream through first-occurrence filtering computes exactly
+ `rulesAnswers` set.
 * **`DistinctWitness`** (`plan/fj/provably_distinct.rs::DistinctWitness`)
-  is the only licence to construct an aggregate sink without a binding
-  seen-set: `AggregateSink::without_seen_set`
-  (`exec/sink/aggregate/new.rs::without_seen_set`) requires the
-  witness by value, and the ordinary constructors cannot omit the set
-  (the `seen: Option<WordMap<()>>` field of
-  `exec/sink.rs::AggregateSink`).
-  `BoundFieldsCoverKey` is the witness's premise;
-  `distinct_witness_licence` is its theorem;
-  `Countermodels.distinct_premise_load_bearing` is the double-count
-  the premise forecloses.
+ is the only licence to construct an aggregate sink without a binding
+ seen-set: `AggregateSink::without_seen_set`
+ (`exec/sink/aggregate/new.rs::without_seen_set`) requires the
+ witness by value, and the ordinary constructors cannot omit the set
+ (the `seen: Option<WordMap<>>` field of
+ `exec/sink.rs::AggregateSink`).
+ `BoundFieldsCoverKey` is the witness's premise;
+ `distinct_witness_licence` is its theorem;
+ `Countermodels.distinct_premise_load_bearing` is the double-count
+ the premise forecloses.
 * **`DisjointArms`**: pairwise arm disjointness is a semantic
-  hypothesis, not a prepare-time mint. Execution always keeps the one
-  spanning head-projection seen-set (`exec/sink.rs::seen`): the measured
-  cross-rule elision refutation (docs/architecture/40-execution.md § set
-  semantics, "Refutation — cross-rule dedup removal") is the doc-side
-  authority, cited here and deliberately not restated — performance, not
-  semantics. `disjoint_witness_licence` proves what pairwise disjointness
-  COULD license; the docs record why the engine declines.
+ hypothesis, not a prepare-time mint. Execution always keeps the one
+ spanning head-projection seen-set (`exec/sink.rs::seen`): the measured
+ cross-rule elision refutation 
+ semantics, "Refutation — cross-rule dedup removal") is the doc-side
+ authority, cited here and deliberately not restated — performance, not
+ semantics. `disjoint_witness_licence` proves what pairwise disjointness
+ COULD license; the docs record why the engine declines.
 * **`union_spans`** (`exec/sink.rs::union_spans`): the multi-rule union
-  regime keys the **head projection** of the binding — per head
-  position, the slot span the position reads from THIS rule's binding
-  layout — never the rule's full slot array, because dedup keys must
-  be rule-independent (a `VarId` is rule-scoped: the same id in two
-  rules names two unrelated variables, so a full-binding key has no
-  cross-rule meaning). `union_regime_head_projection` is the law. One
-  vocabulary gap recorded: the nullary `Count` head position
-  contributes NO words to the union key
-  (`exec/sink/aggregate/new.rs::union_span` maps `over_slot: None` to
-  absence) — a keyless head
-  position is unrepresentable in the theorem's `VarId` finds; sound,
-  since omitting a constant column never changes key equality.
+ regime keys the **head projection** of the binding — per head
+ position, the slot span the position reads from THIS rule's binding
+ layout — never the rule's full slot array, because dedup keys must
+ be rule-independent (a `VarId` is rule-scoped: the same id in two
+ rules names two unrelated variables, so a full-binding key has no
+ cross-rule meaning). `union_regime_head_projection` is the law. One
+ vocabulary gap recorded: the nullary `Count` head position
+ contributes NO words to the union key
+ (`exec/sink/aggregate/new.rs::union_span` maps `over_slot: None` to
+ absence) — a keyless head
+ position is unrepresentable in the theorem's `VarId` finds; sound,
+ since omitting a constant column never changes key equality.
 * **The DNF re-key law (ruled 2026-07-23, R2).** Surface `or` is
-  fold-transparent: a DNF-DERIVED rule set re-keys the union dedup on
-  the SHARED SLOT ARRAY — the disjuncts of one written rule share one
-  variable vocabulary and one binding layout (`Rule.lower` splits
-  condition trees only), so the rule-scoped-`VarId` objection above
-  dissolves and the fold domain never moves. `dnf_rekey_transparent`
-  (the closing section) is the law, PROVED: the re-keyed union
-  denotation of a lowering equals the written rule's own aggregate
-  denotation. The head-projection key governs HAND-WRITTEN multi-rule
-  queries only. The R2 agreement, DISCHARGED (2026-07-23 audit):
-  `dnf_rekey_stream` is the executable face's spec — seen-filtering a
-  complete enumeration's shared-slot rows computes exactly
-  `dnfFoldDomain`, duplicate-free — and the conformance glue's
-  re-keyed arm (`Conformance.lean`'s `dnfBindings`, taken on the
-  serializer's derivation mark) with the engine's re-keyed union sink
-  both read exactly that stream.
+ fold-transparent: a DNF-DERIVED rule set re-keys the union dedup on
+ the SHARED SLOT ARRAY — the disjuncts of one written rule share one
+ variable vocabulary and one binding layout (`Rule.lower` splits
+ condition trees only), so the rule-scoped-`VarId` objection above
+ dissolves and the fold domain never moves. `dnf_rekey_transparent`
+ (the closing section) is the law, PROVED: the re-keyed union
+ denotation of a lowering equals the written rule's own aggregate
+ denotation. The head-projection key governs HAND-WRITTEN multi-rule
+ queries only. The R2 agreement, DISCHARGED (2026-07-23 audit):
+ `dnf_rekey_stream` is the executable face's spec — seen-filtering a
+ complete enumeration's shared-slot rows computes exactly
+ `dnfFoldDomain`, duplicate-free — and the conformance glue's
+ re-keyed arm (`Conformance.lean`'s `dnfBindings`, taken on the
+ serializer's derivation mark) with the engine's re-keyed union sink
+ both read exactly that stream.
 * **The R1 refusal (ruled 2026-07-23, R1), stated and justified** —
-  a validation-model refusal (stated, never proved:
-  `CountAcrossRulesAccepted`): a nullary `Count` in a fold-free head
-  of a 2+-rule query is a typed validation error beside
-  `ArgAcrossRules`. Under the head-projection law its answer is
-  definitionally the constant 1 per group — `foldfree_head_constant`
-  PROVES the uninformativeness (the head row is a function of the
-  group key, so every union fiber is a singleton —
-  `nullary_count_fiber_singleton`); the modeling answer is one Count
-  per disjunct, host-merged.
+ a validation-model refusal (stated, never proved:
+ `CountAcrossRulesAccepted`): a nullary `Count` in a fold-free head
+ of a 2+-rule query is a typed validation error beside
+ `ArgAcrossRules`. Under the head-projection law its answer is
+ definitionally the constant 1 per group — `foldfree_head_constant`
+ PROVES the uninformativeness (the head row is a function of the
+ group key, so every union fiber is a singleton —
+ `nullary_count_fiber_singleton`); the modeling answer is one Count
+ per disjunct, host-merged.
 
 ## The `provably_distinct` reading (recorded; theorem 2's model)
 
@@ -114,7 +114,7 @@ chain) or equality-pinned to one constant (the `Eq`-filter arm, which
 admits words, bytes, intervals, params, and pending interns and
 EXCLUDES sets: "set-bound fields pin nothing") — cover the projection
 of one of the relation's declared keys (the closing
-`keys().iter().any` screen). Negated occurrences bind nothing and
+`keys.iter.any` screen). Negated occurrences bind nothing and
 grounding-eliminated occurrences contribute no facts, so only
 participating occurrences are quantified (the `participates` filter;
 here the positive atom list `Rule.atoms` IS the participating set).
@@ -130,20 +130,20 @@ seen-set retained), while `Term.pins` marks every `lit` as pinning.
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Derivation events are an abstract type `ε`.** The licences
-  quantify over an event list with observers (`facts`, `bind`) rather
-  than modeling the join's enumeration order — WHICH events arrive is
-  Free Join mechanism (doc-side); the theorems need only that each
-  event is a valid match selection and that distinct events carry
-  distinct fact tuples (the join visits each fact combination once).
+ quantify over an event list with observers (`facts`, `bind`) rather
+ than modeling the join's enumeration order — WHICH events arrive is
+ Free Join mechanism (doc-side); the theorems need only that each
+ event is a valid match selection and that distinct events carry
+ distinct fact tuples (the join visits each fact combination once).
 * **Keys enter as `Functionality` hypotheses.** The Rust checks read
-  DECLARED schema keys; the semantic content a declared key has on a
-  committed instance is PRD 03's `Functionality` via `holds` (PRD 09),
-  so the theorems take it directly — acceptance-vs-denotation kept
-  separate, as in `Dependencies.lean`.
+ DECLARED schema keys; the semantic content a declared key has on a
+ committed instance is `Functionality` via `holds` (
+ so the theorems take it directly — acceptance-vs-denotation kept
+ separate, as in `Dependencies.lean`.
 * **The single-rule slot-array key is `slots.map σ`** with `slots`
-  covering the rule's atom variables — the `SlotWidth` word layout
-  (how many words a value occupies) is mechanism; the model keys
-  whole values.
+ covering the rule's atom variables — the `SlotWidth` word layout
+ (how many words a value occupies) is mechanism; the model keys
+ whole values.
 -/
 
 namespace Bumbledb.Query
@@ -152,7 +152,7 @@ namespace Bumbledb.Query
 
 First-occurrence filtering: the fold carries the seen-set and emits a
 row exactly when its key is fresh — the Lean image of the sinks'
-`WordMap` insert-if-absent. PRD 05's `dedup` (last-occurrence) has the
+`WordMap` insert-if-absent. `dedup` (last-occurrence) has the
 same membership and the same distinctness; `seenFold` is defined
 separately because the ENGINE's fold is first-occurrence (a row is
 emitted or absorbed the moment it arrives, never revised), and the
@@ -263,7 +263,7 @@ theorem seenFold_eq_of_nodup {β : Type} [DecidableEq β] {l : List β}
     (h : l.Nodup) : seenFold l = l :=
   seenFoldAux_eq_of_nodup [] h (fun _ _ hs => nomatch hs)
 
-/-- PRD 05's `dedup` is also the identity on duplicate-free streams —
+/-- `dedup` is also the identity on duplicate-free streams —
 the bridge between the two representations of "the distinct set". -/
 theorem dedup_eq_of_nodup {β : Type} [DecidableEq β] :
     ∀ {l : List β}, l.Nodup → dedup l = l
@@ -277,7 +277,7 @@ theorem dedup_eq_of_nodup {β : Type} [DecidableEq β] :
 
 /-- **Theorem 1 (`seenfold_is_set_semantics`).** Folding an
 enumeration of the emitted answers through the seen-set computes the
-answer SET: same membership as PRD 04's `rulesAnswers`, no duplicates
+answer SET: same membership as `rulesAnswers`, no duplicates
 — dedup-by-fold is the denotation, which is why "union is not an
 operator" is implementable at all. Bridge: the projection and
 aggregate sinks' seen-sets (`exec/sink.rs` — the module doc's
@@ -336,7 +336,7 @@ theorem map_eq_agree {σ σ' : Assignment} :
 
 /-- One occurrence's bound fields cover a key: some field list `K`
 that is a semantic key of the atom's relation extension
-(PRD 03's `Functionality` — the declared key's judgment on the
+(`Functionality` — the declared key's judgment on the
 instance) with every field of `K` pinned by one of the atom's
 bindings. The per-occurrence clause of
 `plan/fj/provably_distinct.rs::provably_distinct`. -/
@@ -444,7 +444,7 @@ requires the witness by value — construction cannot enter the elided
 regime without this theorem's premise. Single-rule only: the
 multi-rule union keeps its spanning head-projection seen-set even
 when every rule carries its own witness
-(docs/architecture/40-execution.md § the rule loop). The premise is
+. The premise is
 load-bearing: `Countermodels.distinct_premise_load_bearing` is the
 unkeyed occurrence whose `Sum` double-counts under elision. -/
 theorem distinct_witness_licence {γ : Type} {r : Rule} {I : Instance}
@@ -525,7 +525,7 @@ seen-set filters nothing (`seenFold` is the identity on it).
 Bridge: the spanning seen-set (`exec/sink.rs::seen`). Prepare no
 longer mints a diagnostic witness; execution keeps the spanning
 head-projection seen-set regardless: the measured cross-rule elision
-refutation (docs/architecture/40-execution.md § set semantics,
+refutation 
 "Refutation — cross-rule dedup removal") rejected the per-rule-drain
 representation on the clock, and that record is doc-side authority,
 cited here, not restated. This theorem proves the elision SOUND; the
@@ -734,7 +734,7 @@ theorem elim_extension_unique {C : Classify} {I : Instance}
     exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
   obtain ⟨g₁, hg₁, hm₁⟩ := h₁.1 b hbmem
   obtain ⟨g₂, hg₂, hm₂⟩ := h₂.1 b hbmem
-  -- the join pins the two witnesses' whole key tuples together
+
   have hproj : g₁.project Y = g₂.project Y := by
     refine (Fact.project_eq_iff g₁ g₂ Y).mpr fun j hj => ?_
     obtain ⟨i, hij⟩ := hYfull j hj
@@ -751,14 +751,14 @@ theorem elim_extension_unique {C : Classify} {I : Instance}
   rcases mem_allVars.mp hv with hf | ⟨x, hx, hvx⟩ | ⟨x, hx, hvx⟩ |
     ⟨c, hc, hvc⟩
   · exact hagree v (mem_allVars.mpr (Or.inl (hs.finds_eq ▸ hf)))
-  · -- a positive atom: a survivor, or the dropped atom itself
+  · 
     rw [hr] at hx
     rcases List.mem_append.mp hx with hx' | hx'
     · refine hagree v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, ?_, hvx⟩)))
       rw [hr']
       exact List.mem_append.mpr (Or.inl hx')
     · rcases List.mem_cons.mp hx' with heq | hx''
-      · -- the dropped atom: the one witness pins the value
+      · 
         rw [heq] at hvx
         obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hvx
         rcases hs.target_bindings bd hbd with ⟨v', hv'⟩ | ⟨c', hc', -⟩
@@ -921,8 +921,7 @@ theorem elimination_agg_domain_counts {C : Classify} {I : Instance}
       t ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots') →
       t.drop slotsE.length ∈ GroupSlots C r' I ρ keys gk slots' :=
     fun t ht => (honto _).mpr ⟨t, ht, rfl⟩
-  -- pushing a duplicate-free member list keeps it duplicate-free —
-  -- the injectivity half, spent
+
   have hnodup_map : ∀ l : List (List Value),
       (∀ u, u ∈ l →
         u ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots')) →
@@ -939,8 +938,7 @@ theorem elimination_agg_domain_counts {C : Classify} {I : Instance}
       obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hu
       exact hne v hv (hinj t v (hsub t List.mem_cons_self)
         (hsub v (List.mem_cons_of_mem t hv)) heq)
-  -- lifting a duplicate-free member list of the dropped domain —
-  -- the surjectivity half, spent
+
   have hlift : ∀ l' : List (List Value), l'.Nodup →
       (∀ u, u ∈ l' → u ∈ GroupSlots C r' I ρ keys gk slots') →
       ∃ l : List (List Value), l.Nodup ∧
