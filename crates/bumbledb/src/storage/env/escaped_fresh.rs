@@ -1,7 +1,6 @@
 //! Process-lifetime escaped fresh high-water and the parked Q-burn retry.
 //! Disk flush can still fail; this slot is what keeps `alloc` from going
 //! backwards in this process (`never_reissue_observable`).
-
 use std::collections::BTreeMap;
 use std::sync::PoisonError;
 #[cfg(test)]
@@ -111,7 +110,6 @@ fn lock_flush(state: &std::sync::Mutex<FlushState>) -> std::sync::MutexGuard<'_,
 
 impl Environment {
     /// before a flush that may fail: the next `read_fresh_next` never
-
     pub(crate) fn note_escaped_fresh(
         &self,
         marks: impl IntoIterator<Item = (RelationId, FieldId, u64)>,
