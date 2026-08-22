@@ -7,7 +7,6 @@ use crate::querygen::target::{AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
 
 pub(super) fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, domains: &Domains) {
     match rng.range(6) {
-
         0 => i64_dress(
             b,
             rng,
