@@ -2,7 +2,6 @@
 //! [`TracePoint`]. Labels derive as [`Category::label`] does — Chrome
 //! export still prints names; call sites cannot typo-drift a string.
 //! Payloads are [`TraceArgs`]: unused is not `0`.
-
 use super::Category;
 
 /// Payload of one recorded span or point. `None` is the unset/aborted
