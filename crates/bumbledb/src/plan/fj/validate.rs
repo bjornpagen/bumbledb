@@ -9,26 +9,10 @@ use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
 
-/// The var-sourced membership filters of one lowered occurrence — the
-/// `PointIn` filters whose point reads a bound variable. A view is built
-/// per execution while a variable binds per join row, so these never
-/// reach the filtered view: they execute inside the join
-/// ([`PointProbe`] for positive occurrences, the anti-probe's point
-/// checks for negated ones).
 fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
     occurrence.point_vars.clone()
 }
 
-/// The execution-facing occurrence table. Trie schemas: a positive
-/// occurrence's subatom var-lists in node order (§3.3); a negated
-/// occurrence's single probe level — all its variables in binding (slot)
-/// order, exactly the shape of a fully-hoisted positive lookup; a
-/// grounding-eliminated occurrence's empty schema — no level is ever forced
-/// or probed, and its selections and filters are likewise empty so the
-/// bind and view paths have nothing to resolve (`plan/ground.rs`). Key
-/// widths per level: the sum of the level's variables' slot widths (an
-/// interval join variable is one variable with a two-word key). Spans:
-/// the relation's field→column map, built once per witness.
 fn build_occurrences(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
@@ -76,12 +60,9 @@ fn build_occurrences(
                         .sum()
                 })
                 .collect();
-            // The field→column shape: a stored relation's layout, or —
-            // for an `Interior` occurrence — the target signature's sealed
-            // columns (`FieldId(i)` is head position `i`, the
+
             // positional reading `lean/Bumbledb/Query/Denotation.lean:
-            // tupleFact` promises; the transient image is built with
-            // exactly these types, so the spans agree by construction).
+
             let field_types: Vec<bumbledb_theory::schema::ValueType> = match occurrence.source() {
                 crate::ir::AtomSource::Edb(relation) => {
                     let layout = schema.relation(relation).layout();
@@ -95,25 +76,9 @@ fn build_occurrences(
                     .map(|column| *column.ty())
                     .collect(),
             };
-            // A positive occurrence's Eq-constants become selection
-            // levels (probes) — unless a measure predicate rides the
-            // list, which pins the whole list residual so the Eq runs
+
             // before the subtraction (the filter-order law,
-            // `split_filters`); a negated occurrence keeps its whole
-            // filter list — the ordinary filtered view its anti-probe
-            // runs against, memoized per (generation, resolved filters)
-            // (docs/architecture/40-execution.md, § anti-probe filters).
-            // A selection's miss contract — "the whole conjunctive query
-            // is empty" — holds for positive occurrences only; an empty
-            // negated view just means the anti-probe never rejects. A
-            // grounding-eliminated occurrence carries nothing: its filters
-            // are implied by the containment and the key, so nothing is
-            // resolved, probed, or scanned for it (`plan/ground.rs`). A
-            // grounding-FOLDED occurrence keeps its filter list but empties
-            // its selections: the filters are introspection's fold picture
-            // (`plan/ground/evaluate.rs::folded_picture`) — never
-            // resolved, probed, or scanned (`Role::discharged`, read by
-            // every execution-side loop).
+
             let view_filters = occurrence.filters.clone();
             let (selections, filters) = match &occurrence.role {
                 Role::Positive => split_filters(&view_filters),
@@ -136,16 +101,13 @@ fn build_occurrences(
         .collect()
 }
 
-/// The shared attachment rule (docs/architecture/40-execution.md):
-/// residual comparisons, decomposed word residuals, and anti-probes all
-/// attach to the **earliest node at which every variable of the item is
-/// bound**. `bound` holds the cumulative bound-variable set after each
-/// node; a zero-variable item (an emptiness-gate anti-probe) attaches to
-/// the root because the empty set is bound everywhere. The variables are
-/// a slice, re-walked in full per node: a single iterator consumed
-/// across the `position` steps is exhausted after the first failing
-/// node, making every later check vacuously true — the one-node-too-
-/// early misattachment the placement regression test pins.
+/// `bound` holds the cumulative bound-variable set after each node; a
+/// zero-variable item (an emptiness-gate anti-probe) attaches to the root
+/// because the empty set is bound everywhere. The variables are a slice,
+/// re-walked in full per node: a single iterator consumed across the `position`
+/// steps is exhausted after the first failing node, making every later check
+/// vacuously true — the one-node-too- early misattachment the placement
+/// regression test pins.
 fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usize> {
     bound
         .iter()
@@ -156,21 +118,17 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// residual/word-residual/anti-probe placement, trie schemas (negated
 /// occurrences included), field→column span maps, the two-slot-aware
 /// binding-slot layout, and the optional distinct-bindings witness.
-///
 /// # Errors
-///
 /// [`PlanError`] when the plan does not partition the query's
 /// participating occurrences, joins a non-participating occurrence,
 /// duplicates an occurrence within a node, lacks a cover, or leaves a
 /// residual or anti-probe unplaced.
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
 /// Test convenience: EDB-only fixtures pass no derived signatures.
 /// Production rules route through [`validate_with_signatures`].
+/// Only on programmer-invariant violations (more than 256 subatoms in one
 #[cfg(test)]
 pub fn validate(
     plan: &FjPlan,
@@ -181,25 +139,13 @@ pub fn validate(
     validate_with_signatures(plan, normalized, schema, &[], sink_vars)
 }
 
-/// [`validate`] with the interiors/rec signature surface: an `Interior`
-/// occurrence's field→column spans derive from the target table's
-/// sealed columns (in `InteriorId` then rec order) instead of a stored relation's
-/// layout — everything else is the conjunctive validation, verbatim.
-/// Test fixtures that are EDB-only pass the empty surface through
-/// [`validate`].
-///
 /// # Errors
-///
-/// As [`validate`].
-///
 /// # Panics
-///
-/// As [`validate`].
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the placement rules read in order;
-// each attaches one residual kind
+)] 
+
 pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
@@ -208,9 +154,7 @@ pub fn validate_with_signatures(
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
     check_occurrence_coverage(plan, normalized)?;
-    // Partition property, per participating occurrence: subatom vars are
-    // disjoint and union to the occurrence's var set. (Negated and
-    // eliminated occurrences appear in no subatom — enforced above.)
+
     for occurrence in &normalized.occurrences {
         if !occurrence.role.participates() {
             continue;
@@ -244,8 +188,6 @@ pub fn validate_with_signatures(
         };
     }
 
-    // Cumulative bound-variable sets, once — the one input every
-    // attachment below shares.
     let bound: Vec<BTreeSet<VarId>> = nodes
         .iter()
         .scan(BTreeSet::new(), |acc, node| {
@@ -254,7 +196,6 @@ pub fn validate_with_signatures(
         })
         .collect();
 
-    // Residual placement: the earliest node at which both sides are bound.
     for (residual_idx, residual) in normalized.residuals.iter().enumerate() {
         let (left, right, _) = residual.compare_sides();
         let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
@@ -264,8 +205,7 @@ pub fn validate_with_signatures(
         };
         nodes[node].residuals.push(residual.clone());
     }
-    // Decomposed point-membership word residuals: the same rule over
-    // the word operands' variables.
+
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
         let (left, right, _) = residual.compare_sides();
         let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
@@ -275,8 +215,7 @@ pub fn validate_with_signatures(
         };
         nodes[node].word_residuals.push(residual.clone());
     }
-    // Allen residuals: the same rule again — the earliest node binding
-    // both interval variables.
+
     for (residual_idx, residual) in normalized.allen_residuals.iter().enumerate() {
         let (left, right, _) = residual.allen_sides();
         let Some(node) = earliest_bound_node(&bound, &[left.var(), right.var()]) else {
@@ -286,12 +225,9 @@ pub fn validate_with_signatures(
         };
         nodes[node].allen_residuals.push(residual.clone());
     }
-    // Anti-probe attachment: the earliest node binding the negated
-    // occurrence's whole variable set — probe keys plus point-filter
-    // variables (a membership check reads its point variable inside the
+
     // probe, so the probe cannot run before that variable is bound); a
-    // zero-variable emptiness gate attaches to the root
-    // (docs/architecture/40-execution.md, § anti-probe filters).
+
     for (probe_idx, anti_probe) in normalized.anti_probes.iter().enumerate() {
         let occurrence = &normalized.occurrences[usize::from(anti_probe.occurrence.0)];
         let vars: Vec<VarId> = anti_probe
@@ -308,12 +244,6 @@ pub fn validate_with_signatures(
         nodes[node].anti_probes.push(anti_probe.clone());
     }
 
-    // Membership-probe attachment (participating occurrences): the
-    // earliest node where every point variable is bound AND the
-    // occurrence's trie is fully descended — only then are its remaining
-    // positions exactly the facts consistent with the binding, and the
-    // existential check `∃ fact: every membership holds` is per-binding
-    // correct.
     for occurrence in &normalized.occurrences {
         if !occurrence.role.participates() {
             continue;
@@ -340,10 +270,6 @@ pub fn validate_with_signatures(
             });
     }
 
-    // Binding-slot layout: node order, then `VarId` order within a node
-    // (`new_vars` comes off a `BTreeSet`) — dense, with an interval
-    // variable holding two consecutive slots (the [`SlotWidth`] layout,
-    // decided at normalization and carried into the witness).
     let width_of = |var: VarId| -> SlotWidth {
         normalized
             .slot_widths
@@ -361,15 +287,7 @@ pub fn validate_with_signatures(
     }
 
     let occurrences = build_occurrences(plan, normalized, schema, signatures, &slots);
-    // A tautology at this call site — `split_filters` just constructed
-    // these occurrences, so no Eq-constant can sit in `filters`. The real
-    // producers `check_selections` checks against are hand-built
-    // `PlanOccurrence`s (tests, future callers); the executor-side twin
-    // is a debug_assert too. `check_selections` judges participating
-    // occurrences only: a negated occurrence's Eq-constants legitimately
-    // live in its filter list, a folded occurrence retains its
-    // pre-split list for introspection, and an eliminated occurrence's lists
-    // are empty (see `build_occurrences`).
+
     debug_assert!(check_selections(&occurrences).is_ok());
 
     let distinctness = match provably_distinct(normalized, schema) {
