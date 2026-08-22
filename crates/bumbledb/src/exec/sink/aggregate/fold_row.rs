@@ -1,22 +1,9 @@
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
 
 impl AggregateSink {
-    /// Folds the full binding currently in `binding_scratch`: the
-    /// measure words first (the derived-slot parse's one computation
-    /// site — a ray poisons the sink and the row is dropped), then dedup
-    /// (unless elided), group resolution, accumulator update. The
-    /// per-row paths land here — the scratch row is the one
-    /// representation.
+
     pub(super) fn fold_scratch_row(&mut self) {
-        // Binding dedup: fold only the first occurrence of each distinct
-        // key — unless the elision proved the stream duplicate-free
-        // (single-rule: distinct bindings; multi-rule: the rule-
-        // disjointness composition, docs/architecture/40-execution.md
-        // § set semantics). Single-rule key: the whole slot array, so an
-        // interval variable's two words are both hashed (the SlotWidth
-        // layout). Multi-rule key: the head projection — rule-independent
-        // by construction, so the seen-set spanning rules folds each
-        // element of the union exactly once (20-query-ir § aggregation).
+
         if !self
             .dedup
             .consider(&self.binding_scratch, &mut self.union_scratch)
