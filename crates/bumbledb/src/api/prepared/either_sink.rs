@@ -4,7 +4,6 @@ use crate::exec::run::Sink;
 use crate::exec::sink::FindSpec;
 
 impl EitherSink {
-
     pub(super) fn reset(&mut self) {
         match self {
             Self::Projection(sink) => sink.reset(),
