@@ -16,13 +16,12 @@ pub struct LoadStats {
 }
 
 impl LoadStats {
-
     #[must_use]
     pub fn of(facts: u64, wall: Duration) -> Self {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
-        )] 
+        )]
         let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
         Self {
             facts,
