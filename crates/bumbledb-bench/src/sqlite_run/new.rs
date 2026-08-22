@@ -6,11 +6,9 @@ use crate::translate::Translated;
 use super::PreparedFamily;
 
 impl<'c> PreparedFamily<'c> {
-    /// Prepares the translated SQL once against the bench connection.
-    ///
+
     /// # Errors
-    ///
-    /// `SQLite` errors, stringified.
+
     pub fn new(
         conn: &'c Connection,
         translated: &Translated,
