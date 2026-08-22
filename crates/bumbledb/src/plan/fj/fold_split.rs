@@ -10,19 +10,6 @@ use std::collections::BTreeSet;
 /// leaf's scan runs are group-constant and the aggregate sink's
 /// scan-fold pushdown can fire (`exec/sink/aggregate/sink.rs`
 /// `begin_scan` declines any group word among the scan's key slots;
-/// the single-atom GROUP BY otherwise puts every group variable in the
-/// one flat leaf level). The split mints no machinery — the two-node
-/// shape is exactly the dimension-bound form the pushdown already
-/// serves. The two nodes cover one DP step, so the prefix copies the
-/// suffix's estimate.
-///
-/// The node's lookups partition by fold-domain contact: a lookup
-/// touching no fold variable moves to the group-prefix node — probed
-/// once per **group**, never once per fold element — where it is also
-/// a second cover candidate for the dynamic cover choice (`gj_split`
-/// cannot rescue it later: a lookup whose variables all bind at one
-/// node is exactly the shape its split skips, so left behind it stays
-/// behind). Lookups touching the fold domain stay with the suffix.
 pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
     let mut i = 0;
     while i < plan.nodes.len() {
@@ -47,9 +34,7 @@ pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>) {
             vars: fold_vars,
         }];
         for lookup in node.subatoms.into_iter().skip(1) {
-            // Contact with the suffix opening's variables is the one
-            // legality question: everything else the lookup reads is
-            // bound at or above the prefix node by construction.
+
             if lookup.vars.iter().any(|v| suffix[0].vars.contains(v)) {
                 suffix.push(lookup);
             } else {
