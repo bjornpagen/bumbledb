@@ -1,5 +1,4 @@
 //! Heap stage → packed catalog: key merge, live dictionary, freeze.
-
 use std::collections::HashMap;
 
 use crate::arena::{Arena, ArenaSlice};
