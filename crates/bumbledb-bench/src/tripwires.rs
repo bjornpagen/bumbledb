@@ -92,7 +92,6 @@ mod tests {
     }
 
     /// Finding 1 (the access path), forever: after one full param
-
     #[cfg(feature = "obs")]
     #[test]
     fn no_read_family_rescans_after_one_rotation() {
