@@ -98,7 +98,6 @@ type BuiltRule<F> = F extends (r: never) => infer RV ? RV : never
 type BuildsParams<Builds extends readonly ((r: never) => AnyRuleValue)[]> = ShapeOf<ParamsOf<BuiltRule<Builds[number]>>>
 
 interface TermOps {
-
 	readonly param: typeof makeParam
 
 	readonly inSet: typeof makeSetParam
@@ -122,16 +121,16 @@ interface TermOps {
 
 interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, stated as a signature so it holds for GENERIC R too
- * (VarsOf unifies with itself by identity; the general form's deferred
- * conditionals cannot). The mint invariant — a variable's mint slot IS its
- * position slot, same owner, same column — discharges the join judgment by
- * construction (proposals/one-representation/50-generic-binding.md, "The
- * ruling"); an all-var record contributes no params, so the chain starts
- * paramless. {@link ExactVars} maps a foreign key to `never`, so an
- * aliased extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, stated as a signature so it holds for GENERIC R too
+	 * (VarsOf unifies with itself by identity; the general form's deferred
+	 * conditionals cannot). The mint invariant — a variable's mint slot IS its
+	 * position slot, same owner, same column — discharges the join judgment by
+	 * construction (proposals/one-representation/50-generic-binding.md, "The
+	 * ruling"); an all-var record contributes no params, so the chain starts
+	 * paramless. {@link ExactVars} maps a foreign key to `never`, so an
+	 * aliased extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -154,14 +153,14 @@ interface QueryRuleChain<
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, generic R included. The mint invariant (a variable's mint
- * slot IS its position slot) discharges the join judgment by construction
- * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
- * all-var record contributes no params — P rides through unchanged.
- * {@link ExactVars} maps a foreign key to `never`, so an aliased
- * extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -187,14 +186,14 @@ interface QueryRuleChain<
 interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses>
 	extends TermOps {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, generic R included. The mint invariant (a variable's mint
- * slot IS its position slot) discharges the join judgment by construction
- * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
- * all-var record contributes no params, so the chain starts paramless.
- * {@link ExactVars} maps a foreign key to `never`, so an aliased
- * extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params, so the chain starts paramless.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -215,14 +214,14 @@ interface InteriorRuleChain<
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, generic R included. The mint invariant (a variable's mint
- * slot IS its position slot) discharges the join judgment by construction
- * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
- * all-var record contributes no params — P rides through unchanged.
- * {@link ExactVars} maps a foreign key to `never`, so an aliased
- * extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -243,14 +242,14 @@ interface InteriorRuleChain<
 
 interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, generic R included. The mint invariant (a variable's mint
- * slot IS its position slot) discharges the join judgment by construction
- * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
- * all-var record contributes no params, so the chain starts paramless.
- * {@link ExactVars} maps a foreign key to `never`, so an aliased
- * extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params, so the chain starts paramless.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -271,14 +270,14 @@ interface RecRuleChain<
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
- * The FULL binding: every column of R bound to its own v(R) mint — the
- * identity atom, generic R included. The mint invariant (a variable's mint
- * slot IS its position slot) discharges the join judgment by construction
- * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
- * all-var record contributes no params — P rides through unchanged.
- * {@link ExactVars} maps a foreign key to `never`, so an aliased
- * extra-key record falls to the general form's judgment.
- */
+	 * The FULL binding: every column of R bound to its own v(R) mint — the
+	 * identity atom, generic R included. The mint invariant (a variable's mint
+	 * slot IS its position slot) discharges the join judgment by construction
+	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
+	 */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -773,7 +772,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 }
 
 /**
- * The orderable ban's pointed refusal 
+ * The orderable ban's pointed refusal
  * § orderability): a closed reference is equality-and-membership only.
  */
 function closedOrderError(context: string, position: string, vocabulary: string): Error {
