@@ -2,9 +2,6 @@ use std::fmt::Write as _;
 
 use super::{GhzReport, Provenance, ReadFamilyReport, RunReport, WriteFamilyReport};
 
-// The one stats JSON format, shared with the scenario emitter — the
-// spelling is owned there (crate::scenarios::json_out) and reused here,
-// so `report.json` and `scenarios.json` can never drift apart.
 use crate::json;
 use crate::scenarios::json_out::push_stats;
 
@@ -61,11 +58,6 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
     out.push('}');
 }
 
-/// The one provenance object emitter — `report.json`, the metric lanes,
-/// and churn all spell the block here, so the shapes can never drift.
-/// With no shared-machine stamp the object is byte-identical to the
-/// pre-boost artifact; with one it gains `shared_machine`, `boost`, and
-/// the bracketing 1/5/15 load averages.
 pub(crate) fn push_provenance(out: &mut String, provenance: &Provenance) {
     out.push_str("{\"crate_version\":");
     json::push_str_lit(out, &provenance.crate_version);
@@ -127,7 +119,6 @@ fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
     out.push('}');
 }
 
-/// The machine-consumable artifact — every field, hand-rolled.
 #[must_use]
 pub fn to_json(report: &RunReport) -> String {
     let mut out = String::new();
