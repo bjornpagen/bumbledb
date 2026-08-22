@@ -10,8 +10,8 @@ impl Executor {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // the one hot loop; splitting it would
-    // scatter the batch invariants the comments walk through in order
+    )] 
+
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -21,17 +21,12 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-        // The one caller class: the LAST node — the
-        // pipeline pumps every middle node, single-node plans call this
-        // directly. Zero-node plans are unrepresentable (validation
-        // rule 14 rejects atom-less queries).
+
         assert!(
             node_idx + 1 == plan.nodes().len(),
             "run_node is the leaf pass; middle nodes pump"
         );
-        // The leaf fast paths: pinned-row elision and
-        // the scan-fold pushdown. A `None` decline falls through to the
-        // generic batch machinery with no counters fired.
+
         if matches!(self.leaf, super::LeafPrecompute::Fast { .. })
             && let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
         {
@@ -39,9 +34,6 @@ impl Executor {
         }
         counters.node_entry(node_idx);
 
-        // Dynamic cover choice (§4.4): compare magnitudes first across
-        // Exact and Estimate alike; Exact wins only a magnitude tie.
-        // A full tie keeps the lowest subatom index (40-execution).
         let cover_sub = self.choose_cover(plan, node_idx, colts);
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
@@ -52,21 +44,11 @@ impl Executor {
             colts[cover_occ].key_count(cover_cursor),
         );
 
-        // Word-level batch arity: an interval cover variable contributes
-        // its two key words (the SlotWidth layout).
         let arity = self.slot_map[node_idx][cover_sub].len();
-        // A zero-arity cover is a nonemptiness gate: every position
-        // yields the same empty key row, so under set semantics one
-        // entry stands for the whole suffix (`pump` hosts the pipelined
-        // twin of this collapse). Membership-probed occurrences keep
-        // enumerating — their positions carry distinct intervals.
+
         let gate_cover = arity == 0 && !self.point_probed[cover_occ];
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
 
-        // Resolve value sources against the runtime cover choice, one
-        // source per key WORD: a var bound by the chosen cover reads the
-        // batch key words at its word base; everything else reads its
-        // (already bound) outer slots.
         let cover_vars = &plan.nodes()[node_idx].subatoms[cover_sub].vars;
         for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
             scratch.sources[sub_idx].clear();
@@ -94,9 +76,7 @@ impl Executor {
                 resolve(spec.rhs, spec.rhs_slot),
             ));
         }
-        // Word residuals: sources pre-offset to the compared word — a
-        // cover-bound side reads its word base plus the residual's
-        // Start/End offset.
+
         scratch.word_residual_sources.clear();
         for spec in &self.precompute[node_idx].word_residual_slots {
             let resolve = |side: crate::image::view::OperandAddr, slot: usize| {
@@ -110,8 +90,7 @@ impl Executor {
                 resolve(spec.right, spec.rhs_slot),
             ));
         }
-        // Allen residuals: one base source per side; evaluation reads
-        // the (start, end) pair at offsets 0/1.
+
         scratch.allen_sources.clear();
         for spec in &self.precompute[node_idx].allen_residual_slots {
             let resolve = |var: crate::ir::VarId, slot: usize| {
@@ -124,21 +103,6 @@ impl Executor {
             ));
         }
 
-        // The overlap enumeration (finding 012; overlap_leaf.rs): a
-        // touching-mask Allen residual against an outer constant
-        // enumerates only the cover positions inside the residual's
-        // window around it (± one word per abutment component) — the
-        // start-sorted max-end index replaces the per-key all-pairs
-        // walk. Only the enumeration changes: the yielded batch runs
-        // the same probes and residuals below (the driving mask stays
-        // data — its kernel still filters the candidates), so a
-        // position the index withholds is exactly one that residual
-        // would have discarded. The call sits under the Iter phase —
-        // it IS this parent's enumeration work (driver resolution,
-        // index build on a group's second probe, the window query),
-        // and unwrapped it was invisible to the whole phase table
-        // (the leaf's Iter bucket showed only the drain below while
-        // the index paid its cost off the books).
         counters.phase_start(node_idx, JoinPhase::Iter);
         let overlap = self.overlap_enumerate(
             plan,
@@ -159,10 +123,7 @@ impl Executor {
         'outer: loop {
             counters.phase_start(node_idx, JoinPhase::Iter);
             let (yielded, next_token) = if overlap {
-                // Drain the matched positions in batch-sized bites,
-                // materialized in the exact iter_batch shape (key
-                // words + pinned-row children). `gate_cover` cannot
-                // hold here — an interval cover word means arity ≥ 2.
+
                 let take = (self.overlap_hits.len() - overlap_drained).min(self.batch);
                 super::overlap_leaf::overlap_gather(
                     &colts[cover_occ],
@@ -196,11 +157,7 @@ impl Executor {
                 .extend(0..u32::try_from(yielded).expect("batch fits u32"));
 
             // Residuals run BEFORE the sibling probes — the cost-class
-            // ordering (docs/architecture/40-execution.md, § inputs
-            // from normalization): residual operands read only cover
-            // batch words and outer bindings, and sibling probes bind
-            // no variables, so the pure-ALU rejection legally precedes
-            // the memory-bound hash probes.
+
             counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let spec = &self.precompute[node_idx].residual_slots[r_idx];
@@ -224,10 +181,7 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            // Word residuals: the decomposed interval compositions —
-            // single-word compares over pre-offset slot pairs, compacted
-            // exactly like the whole-value residuals above
-            // (docs/architecture/20-query-ir.md, § normalization).
+
             for (r_idx, (lhs_src, rhs_src)) in scratch.word_residual_sources.iter().enumerate() {
                 let op = self.precompute[node_idx].word_residual_slots[r_idx].op;
                 let n = scratch.survivors.len();
@@ -245,25 +199,7 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            // Allen residuals: classify the survivor batch through the
-            // configuration kernel (8 predicate lanes, the 64-byte
-            // `tbl` nibble table, the broadcast mask) and compact on
-            // the branchless cursor-write like every residual — no
-            // per-element classify, no scalar flag chain
-            // (docs/architecture/40-execution.md, § vectorized
-            // execution). Operand streams dispatch on the resolved
-            // source shapes: at the leaf (the entry assert) a Slot side
-            // reads the outer bindings — constant for the whole call —
-            // so only Batch sides gather; a constant side hoists once
-            // and broadcasts through the const-operand kernel, with the
-            // (Slot, Batch) orientation classifying the swapped pair
-            // under the converse mask (`Allen(a, b, m) ≡ Allen(b, a,
-            // converse(m))`, the theory crate's reversal law). The
-            // mixed shapes are structural: a cross-atom residual's two
-            // vars belong to different atoms, so at most one is a cover
-            // var. `probe_pass`'s twin keeps the four-stream gather on
-            // purpose — its Slot operands are per-parent, never
-            // batch-constant.
+
             for (r_idx, (lhs_src, rhs_src)) in scratch.allen_sources.iter().enumerate() {
                 let mask = self.precompute[node_idx].allen_masks[r_idx];
                 let n = scratch.survivors.len();
@@ -314,9 +250,7 @@ impl Executor {
                         Some(mask.converse())
                     }
                     (Source::Slot(ls), Source::Slot(rs)) => {
-                        // Both sides batch-constant: one scalar classify
-                        // decides the whole batch — the mask byte is
-                        // uniform, no kernel runs.
+
                         let code = crate::allen::classify_bounds(
                             &bindings.get(ls),
                             &bindings.get(ls + 1),
@@ -342,16 +276,8 @@ impl Executor {
             }
             counters.phase_end(node_idx, JoinPhase::Residual);
 
-            // Per sibling: the two-phase probe, then branchless
-            // compaction. `probe_pass.rs` hosts this pass's pipelined
-            // twin, kept line-parallel — a change here needs its mirror
             // there. Extracting the shared pass was refused: the bodies
-            // differ in more than parameters (this pass probes one
-            // batch-constant cursor per sibling and elides hashing for
-            // pinned rows; the twin sources a carried cursor PER ELEMENT
-            // and re-resolves value sources per pass), so the honest
-            // shape is two commented copies, not one function whose
-            // closure parameters reintroduce the difference.
+
             let value_of = |sources: &[Source],
                             entry_keys: &[u64],
                             bindings: &Bindings,
@@ -372,21 +298,12 @@ impl Executor {
                 colts[occ].ensure_forced(s_cursor, s_level);
                 counters.phase_end(node_idx, JoinPhase::Force);
 
-                // Phase 1: gather every probe key and compute every hash —
-                // pure ALU, no bucket loads. A pinned sibling
-                // (`Cursor::Row`) probes by field equality, never by
-                // hash: skip the hash work and its counter, so introspection's
-                // `hashes` counts hashes actually computed for map
-                // probes (one branch per sibling per batch).
                 let pinned = matches!(s_cursor, Cursor::Row(_));
                 counters.phase_start(node_idx, JoinPhase::Hash);
                 let n = scratch.survivors.len();
-                // Grow-only: the pinned arm leaves `hashes[..n]` stale,
-                // but a `Cursor::Row` probe resolves by field equality
-                // and never reads the hash (`colt/probe.rs`).
+
                 grow_scratch(&mut scratch.hashes, n);
-                // One gather loop for every source shape (the
-                // single-batch-word twin measured < 2% and died).
+
                 {
                     let survivors = &scratch.survivors[..n];
                     let entry_keys = &scratch.entry_keys[..];
@@ -409,14 +326,6 @@ impl Executor {
                 }
                 counters.phase_end(node_idx, JoinPhase::Hash);
 
-                // Phase 1.5: the prefetch pass — every bucket the batch
-                // will probe gets its ctrl and bucket lines hinted.
-                // Width-floor gated, and that is the ONLY gate — the
-                // residency/footprint tier was ablated twice and
-                // measured NEUTRAL (the `PREFETCH_WIDTH_FLOOR` doc
-                // block is the record). `!pinned` is applicability, not
-                // a gate: a pinned row probes by field equality and has
-                // no bucket to hint.
                 if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                     crate::obs::event(
                         crate::obs::names::PREFETCH_PASS,
@@ -430,9 +339,6 @@ impl Executor {
                     }
                 }
 
-                // Phase 2: all bucket loads — independent chains the
-                // out-of-order window overlaps — then kernel compaction.
-                // Alias-hoisted locals.
                 counters.phase_start(node_idx, JoinPhase::Probe);
                 grow_scratch(&mut scratch.mask, n);
                 {
@@ -459,19 +365,8 @@ impl Executor {
                 counters.phase_end(node_idx, JoinPhase::Probe);
             }
 
-            // Membership probes (docs/architecture/40-execution.md, the
-            // point-membership scan): per surviving binding, scan the
-            // occurrence's remaining positions for one fact satisfying
-            // every var-sourced membership; misses compact away. They
             // stay AFTER the sibling probes (unlike the ALU residuals
-            // above): a probed occurrence's cursor may be this batch's
-            // own sibling child, and the position scan is probe-class
-            // work. Point words read per-spec resolved sources, cursors
-            // a per-spec resolved source (the instruction diet — never
-            // a per-element variable or subatom search); the leaf's
-            // fallback cursor is the batch-constant outer cursor, so
-            // `Carried` never arises here (`probe_pass`'s twin carries
-            // per-parent columns instead).
+
             if !self.precompute[node_idx].point_probes.is_empty() {
                 counters.phase_start(node_idx, JoinPhase::Residual);
             }
@@ -526,11 +421,6 @@ impl Executor {
                 counters.phase_end(node_idx, JoinPhase::Residual);
             }
 
-            // Anti-probes: the residual step's sibling (docs/architecture/
-            // 40-execution.md, § anti-probe filters) — this node's lowered
-            // negated atoms probe per surviving binding; hits are
-            // compacted away on the same cursor-write. Slot reads come
-            // from the outer bindings (constant across the batch).
             anti_probe_pass(
                 &self.precompute[node_idx].anti_probes,
                 node_idx,
@@ -550,16 +440,9 @@ impl Executor {
                 counters,
             );
 
-            // The leaf: the batch is handed to the sink whole (this IS
-            // the last plan node — the entry assert). No recursion, no
-            // journal, no cursor writes — nothing below reads them — and
-            // no binding stores for the leaf's own vars (the batch
-            // carries them). Licensed suffix AND Licensed skip
-            // capability stop at the first emit; a Forbidden node
-            // consumes the whole batch — those rows are sink-relevant.
             if scratch.survivors.is_empty() {
                 if gate_cover {
-                    break; // the gate's one representative was filtered
+                    break; 
                 }
                 continue;
             }
@@ -573,9 +456,7 @@ impl Executor {
             };
             let batch_flow =
                 super::emit_node_batch(sink, plan.nodes()[node_idx].suffix_skip, &batch);
-            // introspection's `emits` counts rows the sink consumed: the
-            // whole batch, or exactly one when the first emit's skip
-            // stopped it (identical to the recursive path's counts).
+
             let emitted = if batch_flow == Flow::SkipSuffix {
                 1
             } else {
@@ -595,7 +476,7 @@ impl Executor {
                 break 'outer;
             }
             if gate_cover {
-                break; // exhausted at one yield: the gate is set-complete
+                break; 
             }
         }
 
@@ -603,9 +484,6 @@ impl Executor {
         flow
     }
 
-    /// Chooses the cover with the smallest magnitude; `Exact` wins only
-    /// a magnitude tie, and a full tie keeps the lowest subatom index
-    /// (v0 rule, 40-execution).
     fn choose_cover(&self, plan: &ValidatedPlan, node_idx: usize, colts: &[Colt]) -> usize {
         let node = &plan.nodes()[node_idx];
         let mut best: Option<(usize, KeyCount)> = None;
@@ -625,11 +503,6 @@ impl Executor {
     }
 }
 
-/// The const-operand classify of the leaf Allen pass: gathers only the
-/// batch side's endpoint pair streams (the constant side would repeat
-/// one hoisted pair per lane) and classifies through the broadcast
-/// kernel. The batch side is always the a operand — the caller supplies
-/// the converse mask when the residual's orientation is swapped.
 fn allen_classify_const(
     survivors: &[u32],
     entry_keys: &[u64],
