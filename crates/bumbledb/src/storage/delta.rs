@@ -4,7 +4,6 @@
 //! .
 //! During accumulation, `insert`/`delete` are pure set arithmetic: encode is
 //! the caller's job; membership is the delta's own disposition if present,
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
