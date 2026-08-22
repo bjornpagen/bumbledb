@@ -137,7 +137,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     let mut written = Vec::with_capacity(survivors.len());
     let mut first_rule_idx = None;
     for (rule_idx, normalized_rule) in survivors {
-
         if normalized_rule.dead.is_some() {
             continue;
         }
@@ -526,7 +525,6 @@ fn ground_main(
     schema: &Schema,
 ) -> Vec<(usize, NormalizedQuery)> {
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
-
         if normalized_rule.dead.is_some() {
             continue;
         }
@@ -661,7 +659,6 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         .iter()
         .filter(|o| o.role.participates())
     {
-
         if occurrence.bind.edb().is_none() {
             stats.push(crate::plan::selectivity::occurrence_stats_on(
                 catalog, images, schema, occurrence, 0,
@@ -744,7 +741,6 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
 fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     let mut memo = ViewMemo::new();
     for occurrence in plan.occurrences() {
-
         // ⌈N/8⌉ words), and every field after one is shifted — spans,
 
         let columns_of = |field: bumbledb_theory::schema::FieldId| -> Vec<usize> {
@@ -986,7 +982,6 @@ fn make_sink(
         .iter()
         .all(|spec| matches!(spec, FindSpec::Var { .. }));
     if all_plain {
-
         EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
     } else {
         let sink = match regime {
