@@ -97,7 +97,6 @@ impl AggregateSink {
     }
 
     /// 2026-07-23, R2): the union seen-set re-keys on the **shared slot
-
     /// law, `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
     #[must_use]
     pub fn for_dnf_union(
