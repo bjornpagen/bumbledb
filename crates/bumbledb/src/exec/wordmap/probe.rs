@@ -1,9 +1,7 @@
 use super::{WINDOW, WordMap, ctrl_tag, eq_byte_mask, zero_byte_mask};
 
 impl<V: Copy> WordMap<V> {
-    /// Whether the stored key at `slot` equals `key` — a manual word
-    /// loop: a runtime-length slice compare here compiles to a `bcmp`
-    /// call inside the probe loop (the measured law, same as colt).
+
     #[inline(always)]
     fn key_at_matches(&self, slot: usize, key: &[u64]) -> bool {
         let stored = &self.keys[slot * self.arity..slot * self.arity + key.len()];
@@ -14,8 +12,6 @@ impl<V: Copy> WordMap<V> {
         matches
     }
 
-    /// [`WordMap::key_at_matches`] with the width fixed at K: the loop
-    /// unrolls to K straight-line compares, `slot * K` strength-reduces.
     #[inline(always)]
     fn key_at_matches_core<const K: usize>(&self, slot: usize, key: &[u64]) -> bool {
         let stored = &self.keys[slot * K..slot * K + K];
@@ -26,25 +22,15 @@ impl<V: Copy> WordMap<V> {
         matches
     }
 
-    /// Slot index for `key`: the match, or the empty slot to fill.
-    /// Branchless window scan: eight ctrl bytes load as
-    /// one word; SWAR masks mark empties and tag matches; candidates
-    /// resolve in slot order. One well-predicted exit branch per window
-    /// replaces one branch per slot — the measured 4.6× at hit-rate 0,
-    /// which is the seen-set's steady state.
     pub(super) fn probe(&self, key: &[u64], hash: u64) -> (bool, usize) {
         self.probe_with(hash, |slot| self.key_at_matches(slot, key))
     }
 
-    /// [`WordMap::probe`] with the key width fixed at K — the compare is
-    /// K straight-line words.
     #[inline(always)]
     pub(super) fn probe_core<const K: usize>(&self, key: &[u64], hash: u64) -> (bool, usize) {
         self.probe_with(hash, |slot| self.key_at_matches_core::<K>(slot, key))
     }
 
-    /// The window-scan body, generic over the key compare so the const-
-    /// arity and runtime-arity probes share one probe shape.
     #[inline(always)]
     fn probe_with(&self, hash: u64, key_at: impl Fn(usize) -> bool) -> (bool, usize) {
         debug_assert!(!self.values.is_empty());
@@ -53,11 +39,9 @@ impl<V: Copy> WordMap<V> {
         let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
-            // The mirror tail makes a WINDOW-byte read at any
-            // idx < capacity in-bounds and wrap-correct
-            // (`ctrl.len() == capacity + WINDOW − 1`) — a construction
+
             // invariant the slice type cannot carry, because windows
-            // load at arbitrary unaligned indices.
+
             let window = u64::from_le_bytes(
                 *self.ctrl[idx..]
                     .first_chunk::<WINDOW>()
@@ -73,14 +57,9 @@ impl<V: Copy> WordMap<V> {
                 if empties & bit != 0 {
                     return (false, slot);
                 }
-                // A stale tag match — occupied under an older generation
-                // — terminates exactly like an empty: reclaimable slot,
-                // dead key (the generation-stamped clear's probe half).
-                // Sound because staleness is minted only by `clear`,
-                // which starts a new generation: within one generation a
-                // live key's probe walk can never grow a stale terminator
+
                 // ahead of it — every slot before it was live-occupied or
-                // tag-mismatched at insert time and stays so.
+
                 if self.stamps[slot] != self.generation {
                     return (false, slot);
                 }
