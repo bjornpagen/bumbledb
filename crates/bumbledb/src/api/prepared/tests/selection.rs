@@ -1,14 +1,11 @@
 use super::*;
 
-/// The differential pin for the selection cutover (docs/architecture/40-execution.md):
-/// rotating Eq params across many executions, every result compared
-/// against a nested-loop filter over the inserted rows.
 #[test]
 fn selection_params_rotate_differentially() {
     let dir = TempDir::new("prepared-select-diff");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Seeded rows over 8 memo values, amounts distinct per row.
+
     let mut state = 0xDEAD_BEEF_u64;
     let mut next = move || {
         state = state
@@ -51,21 +48,19 @@ fn selection_params_rotate_differentially() {
             );
         }
     }
-    // The never-interned miss stays the empty set.
+
     let out = prepared
         .execute_collect(&txn, &cache, &memo_param("never-stored"))
         .expect("execute");
     assert!(out.is_empty());
 }
 
-/// Counters pin (docs/architecture/40-execution.md): a selection's work is O(selected),
-/// never O(relation).
 #[test]
 fn selection_work_is_o_selected() {
     let dir = TempDir::new("prepared-select-counters");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // 20 rows, exactly 4 carrying the hot memo, distinct amounts.
+
     let rows: Vec<(u64, u64, String, i64)> = (0..20)
         .map(|id| {
             let memo = if id % 5 == 0 {
@@ -90,8 +85,6 @@ fn selection_work_is_o_selected() {
     assert_eq!(out.len(), 4);
 }
 
-/// The scan is dead (docs/architecture/40-execution.md): rotating Eq params build the view
-/// once per generation; every later execution memo-hits and probes.
 #[cfg(feature = "trace")]
 #[test]
 fn selection_params_rotate_without_view_rebuilds() {
@@ -142,8 +135,6 @@ fn selection_params_rotate_without_view_rebuilds() {
     assert_eq!(view_builds, 1, "one view build per generation");
     assert_eq!(memo_hits, 8, "every later execution memo-hits");
 
-    // A never-interned param short-circuits at resolve: no view work,
-    // no probe, no join — the empty set.
     obs::start_capture();
     let out = prepared
         .execute_collect(&txn, &cache, &memo_param("never-stored"))
