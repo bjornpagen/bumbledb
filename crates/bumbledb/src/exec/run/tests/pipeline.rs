@@ -1,17 +1,11 @@
 use super::*;
 use crate::ir::WordCmp;
 
-/// The pipelined executor matches the nested-loop oracle bit for bit
-/// across both all-variable and projected shapes, across batch
-/// sizes that stress fill boundaries (pending exactly at, one under,
-/// and far over the batch), multi-batch expansions with resume
-/// tokens, empty covers, and duplicate-heavy skew.
 #[test]
 fn pipelined_executor_matches_oracle() {
     let _dir = TempDir::new("run-pipeline-equiv");
     let schema = schema(3);
-    // Chain shape with heavy fanout at every step; sizes cross the
-    // 128 batch on both sides.
+
     for (n_r, n_s, n_t) in [(127u64, 128, 129), (5, 300, 40), (1, 1, 1), (200, 0, 10)] {
         let r: Vec<(u64, u64)> = (0..n_r).map(|i| (i % 13, i % 7)).collect();
         let s: Vec<(u64, u64)> = (0..n_s).map(|i| (i % 7, i % 11)).collect();
@@ -84,9 +78,6 @@ fn pipelined_executor_matches_oracle() {
     }
 }
 
-/// Counter-proven batching: a triangle-shaped plan
-/// whose middle node used to probe once per parent now probes in
-/// cross-parent batches with mean length well above the gate.
 #[test]
 fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     #[derive(Default)]
@@ -125,8 +116,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
 
     let dir = TempDir::new("run-pipeline-batching");
     let schema = schema(3);
-    // R fans out 1000 parents; the middle node probes S per parent —
-    // fanout 1 each — the exact starvation shape.
+
     let r: Vec<(u64, u64)> = (0..1000).map(|i| (i % 4, i)).collect();
     let s: Vec<(u64, u64)> = (0..1000).map(|i| (i, i % 5)).collect();
     let t: Vec<(u64, u64)> = (0..5).map(|i| (i, i)).collect();
@@ -163,7 +153,6 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
         counters.passes
     );
 
-    // The memory bound: pending buffers never exceed two batches.
     for scratch in &executor.scratch {
         assert!(
             scratch.pending_bindings.capacity()
@@ -172,19 +161,6 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     }
 }
 
-/// The zero-binding nonemptiness gate (a participating atom with no
-/// variables) asks one question — "does the relation hold any fact?" —
-/// yet the executor used to ENUMERATE the gate relation once per
-/// pending entry: every position yields the same empty key row, so a
-/// gate of |G| rows multiplied the join's work by |G| for zero
-/// distinguishable bindings. Under a projection sink D2's first-emit
-/// skip hid it; under an aggregate sink (never skips, gate forces the
-/// dedup seen-set) it was the S-scale crucible hang — verify random
-/// case 19, `MIN ... GROUP BY` over a star join × a bare `PostingTag`
-/// atom, |join| × |`PostingTag`| ≈ 10¹⁰ folds. The collapse: a
-/// zero-arity cover yields at most one entry — in `pump` (middle node)
-/// and `run_node` (leaf) both — and an empty gate still kills every
-/// binding.
 #[test]
 fn zero_binding_gate_yields_one_entry_not_the_relation() {
     #[derive(Default)]
@@ -206,7 +182,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     }
 
     let schema = schema(3);
-    // R0 ⋈ R2 on y: 300 answers; the gate holds 500 facts the
+
     // executor must never enumerate (emits stay at the join's own 300).
     let r: Vec<(u64, u64)> = (0..300u64).map(|i| (i, i % 7)).collect();
     let t: Vec<(u64, u64)> = (0..7u64).map(|i| (i, i + 100)).collect();
@@ -214,7 +190,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
-            occurrence(1, 1, &[]), // the gate: no bindings at all
+            occurrence(1, 1, &[]), 
             occurrence(2, 2, &[(0, 1), (1, 2)]),
         ],
         vec![],
@@ -227,8 +203,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
             vec![*x, *y, *z]
         })
         .collect();
-    // Both placements: the gate as a middle pipeline node (`pump`'s
-    // collapse) and as the leaf (`run_node`'s collapse).
+
     for order in [[0u16, 1, 2], [0u16, 2, 1]] {
         let plan = planned_with_sinks(&normalized, &schema, &order, &sinks);
         for present in [true, false] {
@@ -274,16 +249,9 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     }
 }
 
-/// Deep accumulation (≥ 4 nodes): sub-batch remainders below node 2
-/// survive every mid-stream `pump` return and flush exactly once at the
-/// execution's end — the tail drain is `run_pipeline`'s, not every pump
-/// return's. Selectivity ½ at each of the first two probes hands node 2
-/// its pending 64 rows at a time; the counter proves those accumulate
-/// into full 128-element probe passes instead of draining prematurely
-/// per recursion (the shape no ≤ 3-atom bench lane can reach).
 #[test]
 fn deep_nodes_accumulate_full_batches_across_pump_returns() {
-    /// Max probes in a single node-2 Probe phase segment.
+
     #[derive(Default)]
     struct MaxPass {
         current: usize,
@@ -317,8 +285,7 @@ fn deep_nodes_accumulate_full_batches_across_pump_returns() {
 
     let dir = TempDir::new("run-deep-accumulation");
     let schema = schema(4);
-    // Diagonal chain: R0 full, R1 keeps every 2nd key, R2 every 4th,
-    // R3 full — each pump(1) hands node 2 exactly 64 pending rows.
+
     let r0: Vec<(u64, u64)> = (0..2048).map(|i| (i, i)).collect();
     let r1: Vec<(u64, u64)> = (0..2048).filter(|i| i % 2 == 0).map(|i| (i, i)).collect();
     let r2: Vec<(u64, u64)> = (0..2048).filter(|i| i % 4 == 0).map(|i| (i, i)).collect();
