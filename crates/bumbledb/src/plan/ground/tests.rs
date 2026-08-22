@@ -50,7 +50,6 @@ fn containment(
     }
 }
 
-/// Runs the full honest pipeline: validate → normalize → grounding.
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut normalized = normalize_rules(schema, &[], witness.rules()).remove(0);
@@ -66,7 +65,6 @@ fn roles(normalized: &NormalizedQuery) -> Vec<Role> {
         .collect()
 }
 
-/// Hand-built DP stats for the participating occurrences (unit fanout).
 fn participating_stats(normalized: &NormalizedQuery) -> Vec<OccStats> {
     normalized
         .occurrences
@@ -80,9 +78,8 @@ fn participating_stats(normalized: &NormalizedQuery) -> Vec<OccStats> {
         .collect()
 }
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh,
-/// name str); Posting(account) <= Account(id) — statement 2 after the
-/// two fresh auto-keys.
+/// Posting(id fresh, account u64, amount i64); Account(id fresh, name str);
+/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
 fn walk_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -107,9 +104,6 @@ fn walk_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Q(amount) :- Posting(account = x, amount), Account(id = x) — the
-/// existence-walk shape: the reference target joined only to certify
-/// the reference the containment already certifies.
 fn walk_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
@@ -131,8 +125,6 @@ fn walk_query() -> Query {
     })
 }
 
-/// The existence-walk shape eliminates the reference target, and the DP
-/// plans over the reduced occurrence set.
 #[test]
 fn existence_walk_eliminates_the_reference_target() {
     let schema = walk_schema();
@@ -146,7 +138,6 @@ fn existence_walk_eliminates_the_reference_target() {
     assert_eq!(order.order, vec![OccId(0)], "the DP saw one occurrence");
 }
 
-/// The test-only off switch bypasses the rewrite (and restores itself).
 #[test]
 fn the_off_switch_bypasses_the_rewrite() {
     let schema = walk_schema();
@@ -163,11 +154,10 @@ fn the_off_switch_bypasses_the_rewrite() {
     );
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate
-/// i64) with Det(grading) -> Det; the discriminated-union pair
-/// `Grading(id | kind == 0) == Det(grading)` written as its two
-/// containments — statements 2 and 3 after Grading's auto-key (0) and
-/// the declared key (1).
+/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate i64) with
+/// Det(grading) -> Det; the discriminated-union pair `Grading(id | kind == 0)
+/// == Det(grading)` written as its two containments — statements 2 and 3 after
+/// Grading's auto-key (0) and the declared key (1).
 fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -198,11 +188,6 @@ fn du_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Q(rate) :- Det(grading = g, rate), Grading(id = g, kind == Det) —
-/// the one-sided discriminated-union walk: the header joined only to
-/// re-check the arm the `==` pair already certifies. The header falls;
-/// the child stays (its `rate` is projected, and support may not be
-/// circular).
 #[test]
 fn du_one_sided_walk_eliminates_the_header() {
     let schema = du_schema();
@@ -237,8 +222,6 @@ fn du_one_sided_walk_eliminates_the_header() {
     assert_eq!(order.order, vec![OccId(0)], "the DP saw one occurrence");
 }
 
-/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`;
-/// `A(b_ref) <= B(id)` (statement 3), `B(c_ref) <= C(id)` (statement 4).
 fn chain_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -267,9 +250,6 @@ fn chain_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// `Q(a) :- A(id = a, b_ref = x), B(id = x, c_ref = w), C(id = w)` — the
-/// `A<=B<=C` chain. `B` is blocked while `C` still reads its `c_ref`
-/// variable; eliminating `C` frees it — both fall only in fixpoint.
 #[test]
 fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
     let schema = chain_schema();
@@ -312,9 +292,6 @@ fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
     assert_eq!(order.order, vec![OccId(0)], "the DP saw one occurrence");
 }
 
-/// Condition 1 negative — a partial-key join: D's key is (k1, k2) and
-/// the containment pairs both positions, but the query joins on k1
-/// alone. Uniqueness needs the whole key; refuse.
 #[test]
 fn a_partial_key_join_refuses() {
     let schema = SchemaDescriptor {
@@ -366,8 +343,6 @@ fn a_partial_key_join_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// Condition 2 negative — a projected non-Y field: the walk query also
-/// finds Account's name, so the target still produces output. Refuse.
 #[test]
 fn a_projected_non_key_field_refuses() {
     let schema = walk_schema();
@@ -396,9 +371,6 @@ fn a_projected_non_key_field_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// Condition 2 negative — a negated atom referencing the target: the
-/// anti-probe reads a variable only `B` binds, so removal would leave
-/// the probe keyless. Refuse.
 #[test]
 fn a_negated_atom_referencing_the_target_refuses() {
     let schema = SchemaDescriptor {
@@ -458,9 +430,6 @@ fn a_negated_atom_referencing_the_target_refuses() {
     );
 }
 
-/// Condition 2 negative — a membership point sourced from the target:
-/// another occurrence's interval field contains a point variable only
-/// `B` binds (the `PointIn` filter's `Var` source). Refuse.
 #[test]
 fn a_membership_point_sourced_from_the_target_refuses() {
     let schema = SchemaDescriptor {
@@ -528,10 +497,6 @@ fn a_membership_point_sourced_from_the_target_refuses() {
     );
 }
 
-/// Condition 2 negative — missing φ on the source side: the statement's
-/// source selection must appear literally in the `A` occurrence's own
-/// filter list (set containment, never inference). The same query with
-/// the literal present is the positive control.
 #[test]
 fn a_missing_source_selection_refuses() {
     let schema = SchemaDescriptor {
@@ -595,9 +560,6 @@ fn a_missing_source_selection_refuses() {
     );
 }
 
-/// Condition 2 negative — an extra selection on the target beyond ψ:
-/// the containment says nothing about `name`, so the filter must be
-/// evaluated against a real fact. Refuse.
 #[test]
 fn an_extra_target_selection_refuses() {
     let schema = walk_schema();
@@ -626,9 +588,6 @@ fn an_extra_target_selection_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// Condition 4 negative — an interval-typed pair: pointwise coverage is
-/// not 1:1 fact-to-fact, so the containment proves existence of
-/// covering facts, not of a joinable equal fact. Refuse (v0).
 #[test]
 fn an_interval_typed_pair_refuses() {
     let during = ValueType::Interval {
@@ -682,9 +641,6 @@ fn an_interval_typed_pair_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// The whole grounded query: validate → normalize → grounding per rule,
-/// returning each rule's normalized form with its finds — the
-/// subsumption pass's exact inputs.
 fn grounded_main(schema: &Schema, query: &Query) -> Vec<(NormalizedQuery, Vec<FindTerm>)> {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut rules = normalize_rules(schema, &[], witness.rules());
@@ -697,12 +653,6 @@ fn grounded_main(schema: &Schema, query: &Query) -> Vec<(NormalizedQuery, Vec<Fi
     rules.into_iter().zip(finds).collect()
 }
 
-/// The DNF residue over the DU fixture: `Q(rate) :- Det(grading = g,
-/// rate = r), Grading(id = g, kind = k), (r > 30 ∨ k == Det)`. Lowering
-/// distributes the disjunction into two rules; the grounding eliminates the
-/// Grading occurrence from both (statement 3 discharges the second
-/// disjunct's `kind` filter with it), leaving that rule filterless — it
-/// subsumes the rate-filtered sibling.
 fn residue_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
@@ -738,10 +688,6 @@ fn residue_query() -> Query {
     })
 }
 
-/// The restricted witness fires on the DNF residue: both disjuncts'
-/// Grading occurrences fall to statement 3, the filterless disjunct
-/// contains the rate-filtered one, and the filtered rule is deleted —
-/// with the subsuming rule's index in the record.
 #[test]
 fn the_dnf_residue_subsumes_the_filtered_rule() {
     let schema = du_schema();
@@ -763,9 +709,6 @@ fn the_dnf_residue_subsumes_the_filtered_rule() {
     );
 }
 
-/// The off switch covers the second pass too: the same grounded pair
-/// yields no deletion under the switch, and the record returns once the
-/// switch releases.
 #[test]
 fn the_off_switch_covers_subsumption() {
     let schema = du_schema();
@@ -783,10 +726,6 @@ fn the_off_switch_covers_subsumption() {
     );
 }
 
-/// Subsumption negative — no elimination, no witness: without the
-/// child-to-header containment the Grading occurrences survive with
-/// differing filter lists, so neither direction's containment holds and
-/// both rules stay.
 #[test]
 fn distinct_bodies_refuse_subsumption() {
     let schema = SchemaDescriptor {
@@ -824,15 +763,13 @@ fn distinct_bodies_refuse_subsumption() {
     );
 }
 
-/// Circular support refused: a full `==` pair could certify each
-/// occurrence with the other; the support forest keeps exactly one
-/// standing whichever direction fires first.
+/// Circular support refused: a full `==` pair could certify each occurrence
+/// with the other; the support forest keeps exactly one standing whichever
+/// direction fires first.
 #[test]
 fn mutual_containments_never_eliminate_both() {
     let schema = du_schema();
-    // Q(g) :- Det(grading = g), Grading(id = g, kind == Det) — neither
-    // side binds anything beyond the join variable, so both directions'
-    // conditions hold; support acyclicity must keep one.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
