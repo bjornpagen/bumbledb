@@ -5,7 +5,6 @@
 //! holding all its variables, so a single `get`-style confirmation
 //! decides the probe — an anti-probe never iterates a leaf. The one
 //! The anti-probe pass: after residual compaction, each anti-probe attached to the
-
 use super::{
     AntiProbeForm, AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source,
     grow_scratch, word_base,
@@ -19,7 +18,6 @@ use super::{
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )]
-
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,
