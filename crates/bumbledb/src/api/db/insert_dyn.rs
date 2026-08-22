@@ -5,7 +5,6 @@ use crate::storage::delta::Disposition;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
-
     /// The whole collection is parsed before any row enters the delta.
 
     /// refusal, and the field roster run once.
