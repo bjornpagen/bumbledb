@@ -73,7 +73,7 @@ describe("TS builder verb set", function suite() {
 	test("the column spelling is unrepresentable — @ts-expect-error walls (70-deletions D1)", async function columnWall() {
 		const builder = InstanceBuilder.create(Ledger)
 		assert.throws(function loadBatch() {
-
+			// @ts-expect-error — ColumnBatch is deleted: Iterable<Fact<R>> is the ONE collection spelling (20-accepted-collection)
 			builder.load(Holder, { id: [1n], name: ["ada"] })
 		})
 		const owned = accepted(await builder.admit())
@@ -164,14 +164,12 @@ describe("TS builder verb set", function suite() {
 	})
 
 	test("nullary rows are representable on the crossing — N facts, 0 cells, exact reports", async function nullaryRows() {
-
 		const Marker = relation("Marker", {})
 		const Flags = schema("NullaryFlags", { Marker }, [])
 		const builder = InstanceBuilder.create(Flags)
 		const owned = accepted(await builder.admit())
 		const db = await Db.fromInstance(path.join(tmpRoot, "nullary-rows"), owned)
 		db.write(function insertMarkers(tx) {
-
 			const report = tx.insert(Marker, [{}, {}, {}])
 			assert.equal(report.submitted, 3n)
 			assert.equal(report.changed, 1n)
