@@ -1301,9 +1301,8 @@ mod marks {
         }
     }
 
-    /// `lean/Bumbledb/Capacity.lean: CapacityLaw` at its
-
-    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+    /// `lean/Bumbledb/Capacity.lean: CapacityLaw` at its boundaries;
+    /// `lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`.
     #[test]
     fn capacity_exactness_exclusion_and_reinsert_seams() {
         run(
