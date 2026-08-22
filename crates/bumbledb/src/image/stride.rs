@@ -30,7 +30,6 @@ impl StridePadder {
             let in_band = (residue > 0 && residue <= self.tolerance)
                 || residue >= SET_STRIDE - self.tolerance;
             if stride >= PAD_MIN_STRIDE && in_band {
-
                 idx += (SET_STRIDE - residue) / elem_size;
             }
         }
