@@ -94,7 +94,7 @@ fn opaque(diff: u64) -> u64 {
 /// on one `cbz` — zero cmp/ccmp µops in the candidate compare
 /// (disassembly-checked on this test binary) where the shipped walk carries the
 /// serial `cmp` + `ccmp`×3 chain — and the key-word reads are unchecked
-/// (safety: the map's bucket range is `bucket_start..
+/// (safety: the map's bucket range is `bucket_start..bucket_end`).
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
