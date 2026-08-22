@@ -6,9 +6,6 @@ use rusqlite::Connection;
 use super::{Scenario, Stores};
 use crate::{corpus, sqlmap};
 
-/// Loads one scenario into a fresh store pair under
-/// `<dir>/scenarios/<name>` (delete-and-recreated — scenario stores are
-/// tool scratch, never user data).
 pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores, String> {
     let root = dir.join("scenarios").join(scenario.name);
     let _ = std::fs::remove_dir_all(&root);
