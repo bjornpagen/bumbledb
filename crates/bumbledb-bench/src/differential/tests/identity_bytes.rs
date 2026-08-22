@@ -1,12 +1,3 @@
-//! The identity-bytes differential criteria (10-data-model, the
-//! `bytes<N>` cut): round-trip, determinant-key FD enforcement, and
-//! containment over a **bytes<32> key** — engine vs the naive model —
-//! plus Max(weight) and group-by over bytes<N> at widths
-//! 8/16/32/64. The corpus digests are adversarial by construction:
-//! shared prefixes (whole zero words), single-byte deltas between
-//! neighbors, the all-zeros digest, and the pad-boundary widths 7/9/63
-//! stored alongside for round-trip.
-
 use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
@@ -22,9 +13,6 @@ use crate::naive::{Delta, NaiveDb};
 const BLOB: RelationId = RelationId(0);
 const REF: RelationId = RelationId(1);
 
-/// Blob(hash bytes<32> KEY, d8, d16, d64, d7, d9, d63, weight u64);
-/// Ref(hash bytes<32>) <= Blob(hash). Materialized order:
-/// 0 Blob(hash) -> Blob, 1 Ref(hash) <= Blob(hash).
 fn schema() -> SchemaDescriptor {
     let digest = |name: &str, len: u16| field(name, ValueType::FixedBytes { len });
     SchemaDescriptor {
@@ -70,9 +58,6 @@ fn schema() -> SchemaDescriptor {
     }
 }
 
-/// An adversarial width-`len` digest: all-zero but for the trailing
-/// bytes of `k` — every digest shares the maximal prefix, neighbors are
-/// single-byte deltas, `k = 0` is all-zeros.
 fn digest(len: usize, k: u64) -> Value {
     let mut raw = vec![0u8; len];
     let tail = k.to_be_bytes();
@@ -81,9 +66,6 @@ fn digest(len: usize, k: u64) -> Value {
     Value::FixedBytes(raw.into())
 }
 
-/// One Blob row keyed by digest(32, k): the width-W columns draw from
-/// vocabularies of W-dependent size so distinct counts and group keys
-/// fold real duplicates.
 fn blob(k: u64) -> Vec<Value> {
     vec![
         digest(32, k),
@@ -97,7 +79,6 @@ fn blob(k: u64) -> Vec<Value> {
     ]
 }
 
-/// splitmix64, local like every differential stream's rng.
 struct Rng(u64);
 
 impl Rng {
@@ -114,17 +95,12 @@ impl Rng {
     }
 }
 
-/// The write ops: consistent pairs (commit), duplicate bytes<32> keys
-/// (determinant aborts — the same determinant bytes under a second fact), lone Refs
-/// (source-side containment aborts), key deletes stranding a Ref
-/// (target-side aborts), and pair demolitions (commit). The generator
-/// keeps a naive mirror so deletes name real facts.
 fn write_ops(rng: &mut Rng) -> Vec<Delta> {
     let mut mirror = NaiveDb::new(&schema());
     let mut deltas = Vec::new();
     for _ in 0..160 {
         let delta = match rng.below(10) {
-            // A keyed blob alone: commits unless the hash determinant is taken.
+
             0..=3 => {
                 let k = rng.below(24);
                 Delta {
@@ -132,9 +108,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                     inserts: vec![(BLOB, blob(k))],
                 }
             }
-            // A blob with a second blob under the SAME bytes<32> key but
-            // different payload: the determinant put-conflict — both oracles
-            // must abort on statement 0.
+
             4 => {
                 let k = rng.below(24);
                 let mut other = blob(k);
@@ -144,7 +118,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                     inserts: vec![(BLOB, blob(k)), (BLOB, other)],
                 }
             }
-            // A Ref with its Blob: commits.
+
             5 | 6 => {
                 let k = rng.below(24);
                 Delta {
@@ -152,12 +126,12 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                     inserts: vec![(BLOB, blob(k)), (REF, vec![digest(32, k)])],
                 }
             }
-            // A lone Ref: aborts source-side unless its Blob stands.
+
             7 => Delta {
                 deletes: vec![],
                 inserts: vec![(REF, vec![digest(32, rng.below(24))])],
             },
-            // Delete a Blob: aborts target-side when a Ref survives.
+
             8 => {
                 let k = rng.below(24);
                 Delta {
@@ -165,7 +139,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                     inserts: vec![],
                 }
             }
-            // Demolish a pair: commits when both stand.
+
             _ => {
                 let k = rng.below(24);
                 Delta {
@@ -199,18 +173,18 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>)
     })
 }
 
-/// The query block, replayed after every writes-prefix: round-trip
-/// projections of every width (7/8/9/16/32/63/64 — the pad boundaries),
-/// bytes<32> Eq hits and adversarial misses, a membership set, a
-/// bytes<32> join (Ref ⋈ Blob on hash), and the criteria pair —
-/// group-by over bytes<N> and Max(weight) at widths 8/16/32/64.
+/// The query block, replayed after every writes-prefix: round-trip projections
+/// of every width (7/8/9/16/32/63/64 — the pad boundaries), bytes<32> Eq hits
+/// and adversarial misses, a membership set, a bytes<32> join (Ref ⋈ Blob on
+/// hash), and the criteria pair — group-by over bytes<N> and Max(weight) at
+/// widths 8/16/32/64.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the criteria block, one query per line item
+)] 
 fn queries() -> Vec<Op> {
     let mut ops = Vec::new();
-    // Round-trip: project the whole row back (all seven digest widths).
+
     ops.push(Op::Query {
         query: plain(
             (0..8).map(|v| FindTerm::Var(VarId(v))).collect(),
@@ -219,8 +193,7 @@ fn queries() -> Vec<Op> {
         ),
         params: vec![],
     });
-    // bytes<32> Eq: a hit (digest 3), the all-zeros digest, and an
-    // adversarial single-byte-delta miss.
+
     for key in [digest(32, 3), digest(32, 0), {
         let Value::FixedBytes(mut raw) = digest(32, 3) else {
             unreachable!()
@@ -237,7 +210,7 @@ fn queries() -> Vec<Op> {
             params: vec![],
         });
     }
-    // Ne over a width-16 digest, and a membership set of bytes<16>.
+
     ops.push(Op::Query {
         query: plain(
             vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -266,7 +239,7 @@ fn queries() -> Vec<Op> {
             digest(16, 4),
         ])],
     });
-    // The bytes<32> join: Ref(hash = h), Blob(hash = h, weight = w).
+
     ops.push(Op::Query {
         query: plain(
             vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -281,8 +254,7 @@ fn queries() -> Vec<Op> {
         ),
         params: vec![],
     });
-    // The criteria pair, per width 8/16/32/64: group-by the digest
-    // (finds: [digest, Count]) and Max(weight) over it (global).
+
     for field in [1u16, 2, 0, 3] {
         ops.push(Op::Query {
             query: plain(
@@ -303,8 +275,7 @@ fn queries() -> Vec<Op> {
             ),
             params: vec![],
         });
-        // Grouped Max(weight) by a different-width digest: cross-width
-        // group keys exercise multi-word group keys beside multi-word inputs.
+
         if field != 1 {
             ops.push(Op::Query {
                 query: plain(
@@ -325,9 +296,6 @@ fn queries() -> Vec<Op> {
     ops
 }
 
-/// The seeded stream: writes interleaved with the query block, engine vs
-/// naive — every verdict (determinant aborts on the bytes<32> key, both
-/// containment directions) and every result set must agree.
 #[test]
 fn identity_bytes_agree_with_the_naive_model() {
     let dir = TempDir::new("differential");
@@ -349,7 +317,7 @@ fn identity_bytes_agree_with_the_naive_model() {
         Ok(summary) => summary,
         Err(divergence) => panic!("divergence: {divergence:?}"),
     };
-    // The stream genuinely exercised both verdicts and the queries.
+
     assert!(summary.commits >= 20, "commits: {}", summary.commits);
     assert!(summary.aborts >= 20, "aborts: {}", summary.aborts);
     assert!(summary.queries >= 60, "queries: {}", summary.queries);
