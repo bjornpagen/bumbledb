@@ -1,25 +1,3 @@
-//! The `crud` home-turf world — the OLTP regime where `SQLite` is
-//! expected to be strong; we bench to lose honestly where we lose. This
-//! module is the world's foundation: the schema, the sizes, (in
-//! [`corpus`]) the seeded rows and the durability-paired twin loader,
-//! the precomputed op streams ([`ops`]), the family runners
-//! ([`lanes`]), the family registry ([`families`]), the orchestration
-//! fold ([`run`]), and the artifact renderers ([`render`]). Everything
-//! here is REPORT-class infrastructure — no budget gate ever reads a
-//! crud number.
-//!
-//! The world's shape: `Doc` — a keyed row store (fresh id, a u64 `key`
-//! under a scalar key statement, an i64 `val`, a 32-byte payload — the
-//! points-world identity shape); `Counter` — a keyed accumulator (the
-//! upsert lane's target). Both key statements render as UNIQUE indexes
-//! on the mirror ([`crate::sqlmap::schema_ddl`]) — the `ON CONFLICT`
-//! targets the write lanes need.
-//!
-//! Post-state verification is the shared comparator
-//! ([`crate::poststate`]); the durability pairing is the closed lane sum
-//! ([`crate::duralane::DurabilityLane`]) — both worlds' config from one
-//! constructor, cross-matched pairs unrepresentable.
-
 use crate::corpus_gen::Scale;
 use crate::harness::Protocol;
 
@@ -51,7 +29,6 @@ bumbledb::schema! {
     Counter(key) -> Counter;
 }
 
-/// Relation ids by declaration order.
 pub mod ids {
     use bumbledb::RelationId;
 
@@ -59,13 +36,7 @@ pub mod ids {
     pub const COUNTER: RelationId = RelationId(1);
 }
 
-/// The validated crud schema, memoized for the mirror's DDL and the
-/// comparator's field walks; the store is created from [`CrudWorld`]'s
-/// descriptor ([`corpus::load_stores`]).
-///
 /// # Panics
-///
-/// Never in practice: the declared crud schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
@@ -78,26 +49,19 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// The crud corpus shape. `delete_pool` rows live at `Doc` ids/keys
-/// `docs..docs+delete_pool` and exist to be deleted by the delete lane;
 /// fresh minting after load therefore starts at `docs + delete_pool` on
-/// BOTH engines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrudSizes {
-    /// The standing `Doc` mass — the rows the point lanes read and
-    /// update.
+
     pub docs: u64,
-    /// `Counter` rows — the upsert lane's key space.
+
     pub counters: u64,
-    /// Extra `Doc` rows loaded above `docs`, reserved for the delete
-    /// lane to consume (each is a pure function of `(seed, i)`, so the
-    /// lane re-derives the full fact to hand `tx.delete`).
+
     pub delete_pool: u64,
 }
 
 impl CrudSizes {
-    /// Two size points, the scratch-world precedent: `Tiny` for tests
-    /// and the parity slice, one OLTP shape for every timed scale.
+
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
@@ -115,11 +79,7 @@ impl CrudSizes {
     }
 }
 
-/// One registered crud family: the name reports print, the honest
 /// one-line description, and the registered protocol. The protocol is
-/// DATA handed to the runners ([`lanes`]) at orchestration time, never
-/// baked into a runner — tests run the same runners under tiny
-/// protocols.
 #[derive(Debug, Clone, Copy)]
 pub struct CrudFamily {
     pub name: &'static str,
@@ -127,14 +87,10 @@ pub struct CrudFamily {
     pub protocol: Protocol,
 }
 
-/// The eleven crud families in THE run order — reads before writes,
-/// the bench-run law: `crud_read_point` measures the loaded corpus
-/// before any write family mutates it, and the registry order IS the
-/// run order (the orchestration iterates this slice, never reorders).
-/// The delete pool (4 096 at every timed scale) covers the largest
-/// registered write protocol (8 + 64 = 72 invocations) with room —
-/// the pool-size ≥ warmups+samples invariant, re-asserted at runner
-/// entry.
+/// The eleven crud families in THE run order — reads before writes, before any
+/// write family mutates it, and the registry order IS the registered write
+/// protocol (8 + 64 = 72 invocations) with room — the pool-size ≥
+/// warmups+samples invariant, re-asserted at runner
 #[must_use]
 pub fn families() -> &'static [CrudFamily] {
     &[
