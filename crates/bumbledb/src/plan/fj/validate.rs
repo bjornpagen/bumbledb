@@ -145,7 +145,6 @@ pub fn validate(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )]
-
 pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
