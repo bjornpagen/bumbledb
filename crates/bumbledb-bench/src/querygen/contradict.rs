@@ -42,7 +42,6 @@ pub(super) fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
         }));
     };
     match rng.range(3) {
-
         0 => {
             leaf(CmpOp::Eq, literal(1));
             leaf(CmpOp::Eq, literal(2));
