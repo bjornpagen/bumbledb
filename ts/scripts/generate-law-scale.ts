@@ -1,23 +1,3 @@
-/**
- * Generates `test/fixtures/law-scale.ts` — the PRIMER-SCALE law-typing
- * probe fixture (PRD-K4's scale bar): 40 relations (8 closed vocabularies
- * + 32 ordinary relations), 200 field slots, and 155 statements, all
- * spelled INLINE in one `schema()` call so the statements tuple type stays
- * precise and the type-level class machinery computes the whole map under
- * default `tsc` limits. Deterministic output — regenerate with
- * `node scripts/generate-law-scale.ts`, never hand-edit the fixture.
- *
- * The shape mirrors the audited primer schema's proportions: generator
- * chains (`ref` containments walking the relation roster), closed-vocab
- * references (`kind` containments), capacity laws over classed
- * slots, generator-less interval bijections (`at` mirrors — the
- * least-member/set-tier classes at scale), pointwise composite
- * containments, and σ-selected self-containments — each containment
- * target under the pointwise key it resolves (the target-key wall judges
- * this fixture at `schema()` exactly as the engine would at `Db.create`,
- * so the fixture is a LAWFUL theory, not just a class-typing shape).
- */
-
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -53,9 +33,7 @@ function generate(): string {
 	}
 	lines.push("")
 	for (let i = 0; i < RELATIONS; i += 1) {
-		// The closed reference is spelled with the vocabulary's OWN descriptor
-		// (`Vocab.id`) — the one spelling: a plain u64 column cannot alias a
-		// vocabulary through a declared containment (the roster-agreement wall).
+
 		lines.push(
 			`const R${i} = relation("R${i}", { id: u64.fresh, ref: u64, kind: Vocab${i % VOCABS}.id, at: interval(u64), label: str, score: i64 })`
 		)
@@ -69,38 +47,34 @@ function generate(): string {
 		members.push(`R${i}`)
 	}
 	const statements: string[] = []
-	// 31 generator chains: R{i}.ref <= R{i-1}.id
+
 	for (let i = 1; i < RELATIONS; i += 1) {
 		statements.push(`contained(on(R${i}, "ref"), on(R${i - 1}, "id"))`)
 	}
-	// 32 closed-vocab references: R{i}.kind <= Vocab{i % 8}.id
+
 	for (let i = 0; i < RELATIONS; i += 1) {
 		statements.push(`contained(on(R${i}, "kind"), on(Vocab${i % VOCABS}, "id"))`)
 	}
-	// 20 capacity laws over classed slots: R{i}.id groups at most 3 R{i+1}.ref
+
 	for (let i = 0; i < 20; i += 1) {
 		statements.push(`capacity(on(R${i}, "id"), within(0n, 3n), on(R${i + 1}, "ref"))`)
 	}
-	// 21 pointwise keys the interval bijections resolve: both faces of a
-	// mirrors are targets (the two materialized orientations), so R0..R20
-	// each key their own `at` — the target-key wall (and the engine)
-	// accepts each orientation against these.
+
 	for (let i = 0; i <= 20; i += 1) {
 		statements.push(`key(R${i}, ["at"])`)
 	}
-	// 20 generator-less interval bijections: R{i}.at == R{i+1}.at
+
 	for (let i = 0; i < 20; i += 1) {
 		statements.push(`mirrors(on(R${i}, "at"), on(R${i + 1}, "at"))`)
 	}
-	// 11 pointwise composite keys, then the composite containments that
-	// resolve them: R{i}(ref, at) <= R{i-1}(id, at) under R{i-1}(id, at) -> R{i-1}.
+
 	for (let i = 21; i < RELATIONS; i += 1) {
 		statements.push(`key(R${i - 1}, ["id", "at"])`)
 	}
 	for (let i = 21; i < RELATIONS; i += 1) {
 		statements.push(`contained(on(R${i}, ["ref", "at"]), on(R${i - 1}, ["id", "at"]))`)
 	}
-	// 9 σ-selected self-containments: R{i}(id | label == "hot") <= R{i}(id)
+
 	for (let i = 0; i < 9; i += 1) {
 		statements.push(`contained(on(R${i}.where({ label: "hot" }), "id"), on(R${i}, "id"))`)
 	}
