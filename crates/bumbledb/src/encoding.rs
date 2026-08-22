@@ -78,7 +78,6 @@ impl FixedBytesValue {
     /// # Panics
 
     /// On a programmer-invariant violation: a width outside
-
     #[must_use]
     pub fn new(raw: &[u8]) -> Self {
         assert!(
@@ -122,7 +121,6 @@ pub enum ValueRef {
 
 impl ValueRef {
     /// # Panics
-
     #[must_use]
     pub fn bytes(raw: &[u8]) -> Self {
         assert!(
@@ -182,7 +180,6 @@ impl FactLayout {
     }
 
     /// tests. Width is a programmer invariant (`encode_fact` writes
-
     #[must_use]
     pub(crate) fn encoded<'bytes, 'layout>(
         &'layout self,
