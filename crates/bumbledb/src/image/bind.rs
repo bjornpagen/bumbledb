@@ -11,24 +11,17 @@ use crate::storage::catalog::LmdbReadCatalog;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::RelationId;
 
-/// Image-binding layer above the join kernel. The kernel sees only
-/// `Arc<RelationImage>`. This trait is the only stratum that touches a
-/// catalog or a cache.
 pub(crate) trait ImageBind {
     fn epoch(&self, schema: &Schema, relation: RelationId) -> Result<ViewEpoch>;
     fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>>;
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>>;
 }
 
-/// Store coordinate: one read transaction plus the environment image
-/// cache. `T` is the ownership: [`ReadTxn`] inside [`crate::ReadInstance`],
-/// or `&ReadTxn` for prepare/execute helpers that already hold a lease.
 pub(crate) struct LmdbSource<'txn, T = ReadTxn<'txn>> {
     txn: T,
     cache: &'txn ImageCache,
 }
 
-/// Either an owned or borrowed LMDB read transaction.
 pub(crate) trait AsReadTxn {
     fn as_read_txn(&self) -> &ReadTxn<'_>;
 }
