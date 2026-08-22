@@ -1,5 +1,3 @@
-//! Interiors-only vs rec body: the one-engine locks.
-
 use super::*;
 use crate::ir::{CmpOp, ProjectionRule};
 
@@ -57,9 +55,7 @@ fn dead_main_with_live_interiors_still_reports_interior_emits() {
     insert_postings(&env, &schema, &[(1, 7, "a", 100), (2, 7, "b", 200)]);
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // Main is an EDB rule whose constant conditions refute themselves —
-    // the known fold kernel (`score > 5 ∧ score < 3` on i64). Interiors
-    // stay live; the pipeline is Cq with empty main rules.
+
     let query = Query {
         interiors: interiors_only().interiors().to_vec(),
         head: vec![HeadTerm::Var],
