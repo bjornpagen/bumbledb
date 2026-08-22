@@ -4,7 +4,6 @@ use crate::schema::FreshField;
 use bumbledb_theory::schema::{FieldId, RelationId};
 
 impl<S> Db<S> {
-
     /// # Errors
 
     pub fn fresh_field(
@@ -18,7 +17,6 @@ impl<S> Db<S> {
 }
 
 impl<S> WriteTx<'_, S> {
-
     /// # Errors
 
     /// axioms, never minted — `fresh` is already refused at declaration,
