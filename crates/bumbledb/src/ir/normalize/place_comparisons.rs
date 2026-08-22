@@ -63,7 +63,7 @@ fn same_atom(
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 pub(super) fn place_comparisons(
     comparisons: &[ClassifiedComparison],
     occurrences: &mut [Occurrence],
@@ -77,7 +77,6 @@ pub(super) fn place_comparisons(
     let mut allen_residuals = Vec::new();
     for comparison in comparisons {
         match comparison {
-
             ClassifiedComparison::VarVar { op, lhs, rhs } => {
                 match same_atom(occurrences, *lhs, *rhs) {
                     Some((occurrence, left, right)) => {
