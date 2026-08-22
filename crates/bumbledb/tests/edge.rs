@@ -72,7 +72,7 @@ fn cyclic_containments_insert_in_one_transaction() {
     let _ = common::expect_rejected(db.write(|tx| {
         tx.insert([&Alpha {
             id: AlphaId(5),
-            beta: BetaId(99), 
+            beta: BetaId(99),
         }])?;
         Ok(())
     }));
@@ -233,12 +233,10 @@ fn one_byte_compound_determinants() {
             },
         ],
         statements: vec![
-
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(0), FieldId(1)]),
             },
-
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(1),
@@ -357,7 +355,7 @@ fn mixed_params_query() -> Query {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
     let db = Db::create(dir.path(), Ledger)
@@ -390,7 +388,6 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
     let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
     db.read(|snap| {
-
         let args = [
             ParamArg::Scalar(BindValue::I64(5)),
             ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),
