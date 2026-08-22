@@ -65,7 +65,6 @@ pub fn schema() -> &'static bumbledb::Schema {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClosSizes {
-
     pub chain: u64,
 
     pub fanout: u64,
@@ -74,7 +73,6 @@ pub struct ClosSizes {
 }
 
 impl ClosSizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         match scale {
@@ -183,13 +181,9 @@ pub struct ClosureFamily {
 fn depth_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     vec![
-
         scalar_draw(vec![Value::U64(0)]),
-
         scalar_draw(vec![Value::U64(sizes.chain / 2)]),
-
         scalar_draw(vec![Value::U64(sizes.chain - 1)]),
-
         scalar_draw(vec![Value::U64(sizes.nodes() + 1_000_000)]),
     ]
 }
@@ -198,13 +192,9 @@ fn fanout_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = ClosSizes::of(cfg.scale);
     let base = sizes.tree_base();
     vec![
-
         scalar_draw(vec![Value::U64(base)]),
-
         scalar_draw(vec![Value::U64(base + 1)]),
-
         scalar_draw(vec![Value::U64(sizes.nodes() - 1)]),
-
         scalar_draw(vec![Value::U64(sizes.nodes() + 1_000_000)]),
     ]
 }
