@@ -82,7 +82,6 @@ fn an_empty_range_summary_is_statically_empty() {
 
 #[test]
 fn a_single_point_range_survives() {
-
     let summary = summary(&[(WordCmp::Gt, 5), (WordCmp::Le, 6)]);
     assert!(!range_is_empty(&summary));
     assert_eq!((summary.lo, summary.hi), (6, 6));
@@ -146,14 +145,12 @@ fn an_eq_constant_in_the_trimmed_set_survives() {
 
 #[test]
 fn a_refuted_literal_allen_pair_is_statically_empty() {
-
     assert!(allen_refuted((2, 5), AllenMask::AFTER, (7, 9)));
     assert!(allen_refuted((2, 5), AllenMask::EQUALS, (2, 6)));
 }
 
 #[test]
 fn an_admitted_literal_allen_pair_survives() {
-
     assert!(!allen_refuted((2, 5), AllenMask::BEFORE, (7, 9)));
 
     assert!(!allen_refuted((5, 5), AllenMask::AFTER, (7, 9)));
@@ -255,7 +252,6 @@ fn an_eq_pin_subsumes_its_folded_bounds() {
 
 #[test]
 fn param_and_ne_conditions_never_fold() {
-
     let schema = schema();
     let normalized = one_rule(
         &schema,
@@ -285,7 +281,6 @@ fn contradictory_order_filters_kill_the_rule() {
 
 #[test]
 fn an_eq_outside_the_summary_kills_the_rule_with_the_rendered_picture() {
-
     let schema = schema();
     let normalized = one_rule(
         &schema,
@@ -301,7 +296,6 @@ fn an_eq_outside_the_summary_kills_the_rule_with_the_rendered_picture() {
 
 #[test]
 fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
-
     // classify([2,5), [7,9)) = BEFORE refutes AFTER.
     let schema = schema();
     let query = Query::single(Rule {
@@ -340,7 +334,6 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
 
 #[test]
 fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
-
     let schema = schema();
     let normalized = one_rule(
         &schema,
@@ -361,7 +354,6 @@ fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
 
 #[test]
 fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
-
     let schema = schema();
     let filters = vec![
         FilterPredicate::Compare {
@@ -389,7 +381,6 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
 
 #[test]
 fn the_off_switch_keeps_constituents_and_verdicts_away() {
-
     let schema = schema();
     let query = range_query(vec![
         cmp(CmpOp::Gt, Term::Literal(Value::I64(5))),
@@ -402,7 +393,6 @@ fn the_off_switch_keeps_constituents_and_verdicts_away() {
 
 #[test]
 fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
-
     let schema = schema();
     let occurrence = |filters| Occurrence {
         occ_id: OccId(0),
