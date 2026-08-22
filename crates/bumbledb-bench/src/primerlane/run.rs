@@ -1,10 +1,3 @@
-//! The primerlane orchestration: builder lane → delta lane → read lane,
-//! one function per arm (10-measurement.md; the seams the count read
-//! lane and the accepted-collection arm extend). Wall time is std
-//! `Instant` per phase; `--alloc` wraps each phase in an allocation
-//! window; `--trace` holds one capture over the lanes and folds it into
-//! the component table.
-
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -16,10 +9,6 @@ use crate::cli::PrimerlaneArgs;
 use super::report::{PhaseAlloc, PhaseRow, PrimerlaneReport, to_json, to_markdown};
 use super::{PrimerConfig, corpus};
 
-/// The measured-mode admission twin (the `measure.rs` idiom): the
-/// feature fork lives here, so the run body is `#[cfg]`-free. Off-obs,
-/// `--trace` and `--alloc` are typed refusals — a flag that silently
-/// measured nothing would be a lie.
 mod obs_gate {
     #[cfg(feature = "obs")]
     #[expect(
@@ -39,12 +28,7 @@ mod obs_gate {
     }
 }
 
-/// Runs `f` as one named phase: optional allocation window around it,
-/// wall time by `Instant`, the row appended in run order.
-///
 /// # Panics
-///
-/// If a duration in nanoseconds does not fit in `u64`.
 fn phase<R>(
     phases: &mut Vec<PhaseRow>,
     name: &'static str,
@@ -81,9 +65,6 @@ fn rel_at(idx: usize) -> RelationId {
     RelationId(u32::try_from(idx).expect("relation count fits u32"))
 }
 
-/// The fresh-field witnesses, resolved ONCE per store handle (never per
-/// call — the V4 lesson): field 0 is the fresh id on every generated
-/// relation.
 fn fresh_fields(
     db: &Db<SchemaDescriptor>,
     counts: &[u64],
@@ -96,8 +77,6 @@ fn fresh_fields(
         .collect()
 }
 
-/// The builder write lane: `load_dyn` per relation → `admit` →
-/// `Db::from_instance` into the scratch dir (Primer's persist path).
 fn builder_lane(
     cfg: &PrimerConfig,
     counts: &[u64],
@@ -138,10 +117,6 @@ fn builder_lane(
     Ok(())
 }
 
-/// The delta write lane: `Db::create`, seed the corpus's first halves in
-/// one commit, then `insert_dyn` the second halves in one commit — the
-/// incremental path against an existing store, full commit pipeline.
-/// Returns the store for the read lane.
 fn delta_lane(
     cfg: &PrimerConfig,
     counts: &[u64],
@@ -168,15 +143,12 @@ fn delta_lane(
     Ok(db)
 }
 
-/// Which half of every relation one commit carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Half {
     First,
     Second,
 }
 
-/// One `db.write` carrying `half` of every relation: reserve the index
-/// range, then `insert_dyn` the generated rows.
 fn commit_halves(
     cfg: &PrimerConfig,
     counts: &[u64],
@@ -205,11 +177,6 @@ fn commit_halves(
     }
 }
 
-/// The read lane: full `scan` decode per relation over the delta store
-/// — the regression baseline. The exact-count read lane
-/// (40-exact-count.md) and the accepted-collection arm
-/// (20-accepted-collection.md) land beside this function as their own
-/// arms.
 fn scan_lane(
     db: &Db<SchemaDescriptor>,
     counts: &[u64],
@@ -239,13 +206,7 @@ fn scan_lane(
     }
 }
 
-/// Runs the primerlane: both write lanes, the scan read lane, one
-/// report.
-///
 /// # Errors
-///
-/// Setup, admission, or commit failure; a mode flag on a build without
-/// the obs feature.
 pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
     if args.trace {
         obs_gate::require("trace")?;
