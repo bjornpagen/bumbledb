@@ -4,7 +4,6 @@
 //! engine-only half behind: the coalescing segment sweep and the
 //! order-based overlap index, which are commit/exec machinery, not
 //! theory.
-
 pub(crate) mod overlap;
 pub(crate) mod sweep;
 
