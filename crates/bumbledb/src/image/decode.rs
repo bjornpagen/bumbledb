@@ -1,6 +1,5 @@
 //! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
-
 use crate::encoding::{ValueType, decode_bool};
 use crate::error::{CorruptionError, Error, Mismatch, Result};
 use bumbledb_theory::schema::RelationId;
