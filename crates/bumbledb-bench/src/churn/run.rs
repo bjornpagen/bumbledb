@@ -1,15 +1,3 @@
-//! The per-run driver loop — lockstep twins, per-lane wall-time
-//! windows, maintenance-included honesty. This module IS timing code,
-//! but the charter holds: it only ever executes in cargo tests at
-//! `Tiny`/smoke scale asserting correctness and shape; every timed
-//! NUMBER arrives via the owner's night session.
-//!
-//! Honesty by accounting shape, not by remembering: each lane owns a
-//! `window_ns` that accumulates ONLY that lane's own transactions (and,
-//! for the maintained lane, its own maintenance), so interleaved twins
-//! cannot contaminate each other's throughput series — the number is
-//! right by construction.
-
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -22,11 +10,6 @@ use super::ops;
 use super::probes;
 use super::verify_end;
 
-/// One `SQLite` twin's run-local state: the connection, its own
-/// throughput window, its own maintenance ledger, and its series so
-/// far. A local of [`run_spec`] (the `displaced::bench_families`
-/// lifetime pattern — connections and prepared things never outlive the
-/// run).
 struct SqliteLaneState {
     label: &'static str,
     maintained: bool,
@@ -37,13 +20,10 @@ struct SqliteLaneState {
     samples: Vec<SamplePoint>,
 }
 
-/// The elapsed wall time since `start`, in nanoseconds.
 fn elapsed_ns(start: &Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos()).expect("an elapsed span fits u64 nanoseconds")
 }
 
-/// One window's throughput: committed cycles per second of the lane's
-/// OWN accumulated wall time.
 #[expect(
     clippy::cast_precision_loss,
     reason = "reporting accepts lossy integer-to-float conversion"
@@ -52,11 +32,6 @@ fn commits_per_sec(cycles: u64, window_ns: u64) -> f64 {
     cycles as f64 / (window_ns as f64 / 1e9)
 }
 
-/// One timed maintenance statement on a maintained lane. VACUUM/ANALYZE
-/// time is charged to BOTH the throughput window and the maintenance
-/// ledger — the mandate's explicit honesty rule: the operator's
-/// maintenance is part of the lane's real life, so it lands in
-/// `SQLite`'s own series, itemized.
 fn maintain(lane: &mut SqliteLaneState, sql: &str) -> Result<(), String> {
     let start = Instant::now();
     lane.conn
@@ -68,7 +43,6 @@ fn maintain(lane: &mut SqliteLaneState, sql: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// One non-negative PRAGMA counter, as the report's `u64`.
 fn pragma_u64(conn: &rusqlite::Connection, pragma: &str) -> Result<u64, String> {
     let value: i64 = conn
         .query_row(pragma, [], |row| row.get(0))
@@ -76,25 +50,11 @@ fn pragma_u64(conn: &rusqlite::Connection, pragma: &str) -> Result<u64, String> 
     u64::try_from(value).map_err(|_| format!("churn sample {pragma}: negative count {value}"))
 }
 
-/// Drives one registry row end to end: builds the twins under
-/// `scratch/<name>/`, applies every cycle's identical logical
-/// operations to every store, charges maintenance into the maintained
-/// lane's own window, samples the probe registry on the configured
-/// stride (the per-sample cross-lane oracle gate rides the sampler by
-/// construction — [`probes::sample_sqlite`] takes the ours-side
-/// [`probes::ProbeRun`] by argument), and closes with the three-way end
-/// gate plus the working-set law.
-///
 /// # Errors
-///
-/// Validation refusals, engine and `SQLite` errors, and gate
-/// disagreements — each message names the lane or knob.
-///
 /// # Panics
-///
-/// On a broken working-set law at the end of the run, and on the
-/// monotone-burn invariant inside [`engines::apply_ours`] — both
-/// programmer errors, loud by design.
+/// On a broken working-set law at the end of the run, and on the monotone-burn
+/// invariant inside [`engines::apply_ours`] — both programmer errors, loud by
+/// design.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -140,9 +100,7 @@ pub fn run_spec(
                 .map_err(|e| format!("{}: {e}", lane.label))?;
             lane.window_ns += elapsed_ns(&start);
         }
-        // The operator's schedule, maintained lanes only — charged into
-        // the lane's own window by `maintain` (honesty by accounting
-        // shape).
+
         for lane in mirrors.iter_mut().filter(|lane| lane.maintained) {
             if cycle.is_multiple_of(cfg.vacuum_every) {
                 maintain(lane, "VACUUM")?;
@@ -166,9 +124,7 @@ pub fn run_spec(
                 let sets = probes::draws(probe, cfg.r#gen, &live, cycle);
                 let run = probes::sample_ours(&ours.db, probe, &sets)?;
                 for (lane, taken) in mirrors.iter().zip(mirror_probes.iter_mut()) {
-                    // The per-sample cross-lane oracle gate rides the
-                    // sampler by construction: `sample_sqlite` takes the
-                    // ours-side reference answers by argument.
+
                     taken.push(probes::sample_sqlite(
                         &lane.conn, probe, &sets, &run, lane.label,
                     )?);
@@ -196,12 +152,7 @@ pub fn run_spec(
             });
             ours_window_ns = 0;
             for (lane, taken) in mirrors.iter_mut().zip(mirror_probes) {
-                // The size-accounting checkpoint, run OUTSIDE the
-                // throughput window: truncating the WAL here is the
-                // sampler's artifact (so `disk_bytes` reads the main
-                // file honestly), not the workload's — SQLite's own
-                // autocheckpoints already ride inside the apply
-                // timings.
+
                 lane.conn
                     .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
                     .map_err(|e| format!("churn sample checkpoint ({}): {e}", lane.label))?;
@@ -211,8 +162,7 @@ pub fn run_spec(
                 lane.samples.push(SamplePoint {
                     cycle,
                     probes: taken,
-                    // Maintenance included: this window already carries
-                    // the VACUUM/ANALYZE spans `maintain` charged in.
+
                     commits_per_sec: commits_per_sec(cfg.sample_every, lane.window_ns),
                     maintenance_ns: lane.maintenance_ns,
                     disk_bytes,
