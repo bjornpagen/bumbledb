@@ -14,7 +14,6 @@
 //! Fixed-width families (`F`/`M`/`Q`/`S`) return arrays by value. Variable-
 //! width writers (`U`/`R`/prefixes) fill a caller-provided `[u8; MAX_KEY]`
 //! (post-mortem §25), and key types never derive `Ord` (LMDB byte order
-
 use std::borrow::Borrow;
 use std::ops::Deref;
 
@@ -231,9 +230,8 @@ fn rest_after(key: &[u8], expected: Namespace) -> Option<&[u8]> {
 /// vocabulary bytes. The commit plan asserts this at every fact-op
 /// derivation (the one place all four namespaces' key bytes originate);
 /// release builds rely on the write-surface refusal
-/// ([`ClosedRelationWrite`]) and the offline sweeper's
-/// `ClosedRelationEntry` conviction.
-/// [`ClosedRelationWrite`]: crate::error::Error::ClosedRelationWrite
+/// ([`Error::ClosedRelationWrite`](crate::error::Error::ClosedRelationWrite))
+/// and the offline sweeper's `ClosedRelationEntry` conviction.
 #[inline]
 pub fn debug_assert_ordinary(schema: &crate::schema::Schema, relation: RelationId) {
     debug_assert!(
