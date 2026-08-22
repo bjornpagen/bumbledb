@@ -1,29 +1,14 @@
 use super::{CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words};
 
 impl Colt {
-    /// Probes the selection levels with this execution's resolved words,
-    /// in level order, forcing lazily exactly like join-level probes.
-    /// `keys[level]` holds the level's key words: one word for a scalar
-    /// constant, the encoded pair for an interval constant, and the
-    /// sorted, deduplicated element words for a set-bound level. The
-    /// amortization contract: forcing a selection level walks its node
-    /// once per generation; every subsequent constant is O(1) probes —
-    /// a set-bound level pays **k probes** (one per element) and unions
-    /// the survivor position lists, never re-executing anything per
-    /// element (docs/architecture/40-execution.md, § selection levels).
-    /// `Some` sits at the first join level; `None` = no fact matches —
-    /// the occurrence, and with it the whole conjunctive query, is empty
-    /// on this snapshot.
+
     pub fn select(&mut self, keys: &[Vec<u64>]) -> Option<Cursor> {
         debug_assert_eq!(
             keys.len(),
             self.selection_depth(),
             "one resolved key per selection level"
         );
-        // Last execution's union subtrie — the position copies and every
-        // map the join forced beneath them — is dead now: truncating back
-        // to the mark keeps the pools at a fixpoint across set rebinds
-        // (capacity retained; see [`PoolMark`]).
+
         if let Some(mark) = self.union_mark.take() {
             self.truncate_to(mark);
         }
@@ -40,19 +25,9 @@ impl Colt {
         Some(cursor)
     }
 
-    /// One set-bound selection level (docs/architecture/40-execution.md,
-    /// § selection levels — param sets ride the selection machinery): k
-    /// level-probes, one per element, and the survivor position lists
-    /// union by concatenation. Distinct trie keys hold disjoint position
-    /// lists by construction of the force pass, and bind sorts and
-    /// dedups the element words, so the concatenation IS the union —
-    /// asserted, never deduplicated. Per-key children are never returned
-    /// (even a single hit is copied), so set-level children stay
-    /// unforced chunk lists for the trie's whole lifetime — the
     /// invariant `union_positions` reads.
     fn select_union(&mut self, cursor: Cursor, level: usize, words: &[u64]) -> Option<Cursor> {
-        // One key per element: a scalar element is one word, a bytes<N>
-        // element its ⌈N/8⌉-word span — the level's arity names the width.
+
         let arity = self.arity_at(level);
         debug_assert_eq!(words.len() % arity, 0, "flat element-major rows");
         debug_assert!(
@@ -76,12 +51,6 @@ impl Colt {
         union
     }
 
-    /// Unions the hit children's position lists into one cursor. A
-    /// single surviving position pins a row (no node allocated);
-    /// anything larger copies into a fresh chunked node — appended past
-    /// the union watermark, reclaimed at the next `select`. Gathering
-    /// goes through the pooled position scratch (capacity retained —
-    /// the concatenation IS the union, see `select_union`).
     fn union_of(&mut self, hits: &[Cursor]) -> Option<Cursor> {
         let mut positions = std::mem::take(&mut self.select_positions);
         positions.clear();
@@ -95,7 +64,7 @@ impl Colt {
                 if self.union_mark.is_none() {
                     self.union_mark = Some(self.pool_mark());
                 }
-                // Disjointness is structural (distinct keys); the debug
+
                 // build verifies it outright before concatenating.
                 debug_assert!(
                     {
@@ -106,9 +75,7 @@ impl Colt {
                 );
                 let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
                 for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
-                    // Exact-capacity frames: union chunks are copies
-                    // sized to their content (transient — reclaimed at
-                    // the next `select` by the watermark truncate).
+
                     let start =
                         u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
                     self.chunk_positions.extend_from_slice(segment);
@@ -139,7 +106,6 @@ impl Colt {
         cursor
     }
 
-    /// Drives `f` over a set-level hit's positions. The hit is a pinned
     /// row or an unforced chunk list by the `select_union` invariant.
     fn union_positions(&self, hit: Cursor, mut f: impl FnMut(u32)) {
         match hit {
@@ -164,7 +130,6 @@ impl Colt {
         }
     }
 
-    /// The current pool high-water ([`PoolMark`]).
     fn pool_mark(&self) -> PoolMark {
         PoolMark {
             nodes: self.nodes.len(),
@@ -177,11 +142,6 @@ impl Colt {
         }
     }
 
-    /// Truncates every pool back to a mark. Sound because nothing at or
-    /// below the mark references anything past it: post-mark entries are
-    /// exactly the union node, its chunk copies, and structures forced
-    /// beneath it during one execution's join — all reachable only
-    /// through the post-selection start cursor this `select` replaces.
     fn truncate_to(&mut self, mark: PoolMark) {
         self.nodes.truncate(mark.nodes);
         self.chunks.truncate(mark.chunks);
@@ -192,14 +152,10 @@ impl Colt {
         self.dense.truncate(mark.dense);
     }
 
-    /// The executor's per-execution start cursor: the root, or the
-    /// post-selection cursor once [`Colt::select`] ran this execution.
-    ///
     /// # Panics
-    ///
-    /// A release assert: starting a selection-bearing colt before
+
     /// `select()` would silently drop its selections — wrong results.
-    /// Once per occurrence per execution; noise against the join.
+
     #[must_use]
     pub fn start(&self) -> Cursor {
         match self.start {
@@ -208,7 +164,6 @@ impl Colt {
         }
     }
 
-    /// The root cursor (level 0).
     #[must_use]
     pub fn root() -> Cursor {
         Cursor::Node(NodeRef(0))
