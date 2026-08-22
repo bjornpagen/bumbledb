@@ -1,9 +1,3 @@
-/**
- * Test-only insert helper. Fresh fields the caller did not pass are filled
- * with `tx.reserve` then the singleton is inserted. Production insert takes
- * complete facts; this is not SDK surface.
- */
-
 import { isFreshField } from "#marshal.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 
