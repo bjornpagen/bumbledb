@@ -1,16 +1,13 @@
 //! state-changing commit: dirty relations evict, delete-free relations retain their
 //! images as append bases.
 //! The lineage-aware commit hook, run by the write path after each
-
 use super::{Cached, ImageCache};
 use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
 impl ImageCache {
     /// Entries of dirty relations below `generation` drop — a delete
-
     /// map drop only releases the map's reference — pinned readers keep
-
     /// # Panics
     pub fn advance(
         &self,
