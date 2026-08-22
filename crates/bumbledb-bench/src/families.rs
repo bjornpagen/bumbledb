@@ -1,9 +1,3 @@
-//! The gated read families (docs/architecture/60-validation.md § the
-//! primary benchmark, normative): exact IR, exact param policy,
-//! hand-written SQL golden, per-family `SQLite` index DDL, gate
-//! classification. This file of queries **is** the benchmark's identity —
-//! `digest()` keys the verify stamp and every report on it.
-
 use bumbledb::{BindValue, ParamArg, ParamId, Query, Value};
 
 use crate::corpus_gen::GenConfig;
@@ -21,29 +15,19 @@ pub use read::all;
 pub use render_queries_md::render_queries_md;
 pub use write::write_families;
 
-/// Whether a family gates the suite (loses ⇒ the run fails) or merely
-/// reports. The fifteen ledger families gate (`60-validation.md`: every
-/// family must win); the depth lane (`deep_chain`, the ≥ 4-node pump
-/// regime — R22, finding 088) reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Gate,
     Report,
 }
 
-/// One rotation draw: one [`ParamValue`] per dense `ParamId` position —
-/// scalars as values, param sets as element lists (the `ParamSet` IR
-/// term; the host-side union convention is retired with it).
 pub type Draw = Vec<ParamValue>;
 
-/// A scalar-only draw (most families).
 #[must_use]
 pub fn scalar_draw(values: Vec<Value>) -> Draw {
     values.into_iter().map(ParamValue::Scalar).collect()
 }
 
-/// One owned scalar as the engine's borrowed [`BindValue`] — str/bytes
-/// payloads by reference (the bind surface borrows; the draws own).
 #[must_use]
 pub fn bind_value(value: &Value) -> BindValue<'_> {
     match value {
@@ -57,13 +41,11 @@ pub fn bind_value(value: &Value) -> BindValue<'_> {
     }
 }
 
-/// A borrowed view of owned scalar values as the engine's bind slice.
 #[must_use]
 pub fn bind_values(values: &[Value]) -> Vec<BindValue<'_>> {
     values.iter().map(bind_value).collect()
 }
 
-/// One draw as the engine's borrowed [`ParamArg`] positions.
 #[must_use]
 pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
     draw.iter()
@@ -74,13 +56,7 @@ pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
         .collect()
 }
 
-/// One draw's scalar positions, positionally — the profile/introspect path
-/// (scalar params only).
-///
 /// # Panics
-///
-/// On a set position — callers route set-bound draws through
-/// [`param_args`].
 #[must_use]
 pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
     draw.iter()
@@ -91,12 +67,7 @@ pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
         .collect()
 }
 
-/// One draw's set bindings — the translator's re-render input
-/// (set params render as literal `IN` lists per execution).
-///
 /// # Panics
-///
-/// Never in practice: dense `ParamId`s fit `u16` by IR construction.
 #[must_use]
 pub fn set_bindings(draw: &[ParamValue]) -> Vec<(ParamId, Vec<Value>)> {
     draw.iter()
@@ -111,9 +82,6 @@ pub fn set_bindings(draw: &[ParamValue]) -> Vec<(ParamId, Vec<Value>)> {
         .collect()
 }
 
-/// Whether any position of any draw binds a set (the family re-renders
-/// its SQL per draw; prepared-statement parity is not claimed —
-/// `60-validation.md` says so).
 #[must_use]
 pub fn has_sets(draws: &[Draw]) -> bool {
     draws
@@ -121,36 +89,25 @@ pub fn has_sets(draws: &[Draw]) -> bool {
         .any(|draw| draw.iter().any(|arg| matches!(arg, ParamValue::Set(_))))
 }
 
-/// One family-owned `SQLite` index: `(name, table, columns)` — the
-/// honest opponent gets every index its query rewards, beyond the
-/// statement-derived set (`crate::sqlmap`). Interval families' composite
-/// `(account, active_start, active_end)` comes from the pointwise key's
-/// statement-derived index; family entries add the shapes statements do
-/// not imply.
+/// Interval families' composite `(account, active_start, active_end)` comes
+/// from the pointwise key's statement-derived index; family entries add the
+/// shapes statements do not imply.
 pub type FamilyIndex = (&'static str, &'static str, &'static [&'static str]);
 
-/// One read family: the benchmark's unit of identity.
 pub struct Family {
     pub name: &'static str,
     pub kind: Kind,
     pub query: fn() -> Query,
-    /// The seeded param draws — verify and bench call this with the same
-    /// `GenConfig` and therefore see identical rotations.
+
     pub params: fn(&GenConfig) -> Vec<Draw>,
-    /// Hand-written (docs/architecture/60-validation.md) — never
-    /// regenerated from the translator; pinned equal to `translate`
-    /// output by test (set-bound families pin under the documented
-    /// representative set).
+
     pub golden_sql: &'static str,
-    /// The documented param policy, rendered into the versioned query
-    /// list.
+
     pub param_policy: &'static str,
-    /// Per-family index DDL beyond the statement-derived indexes.
+
     pub indexes: &'static [FamilyIndex],
 }
 
-/// Every family-owned index, deduplicated by name (families may share a
-/// shape), as `CREATE INDEX` statements.
 #[must_use]
 pub fn index_ddl() -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
@@ -171,8 +128,6 @@ pub fn index_ddl() -> Vec<String> {
     out
 }
 
-/// The family-owned indexes as `(table, name)` pairs — the fairness
-/// contract's registry beside `sqlmap::expected_indexes`.
 #[must_use]
 pub fn expected_indexes() -> Vec<(String, String)> {
     let mut seen = std::collections::BTreeSet::new();
@@ -187,10 +142,7 @@ pub fn expected_indexes() -> Vec<(String, String)> {
     out
 }
 
-/// One write/cold family (docs/architecture/60-validation.md): a name,
 /// its report-only classification, and its write-appropriate protocol.
-/// The runners live in `writebench` — these are identities, not
-/// closures.
 pub struct WriteFamily {
     pub name: &'static str,
     pub kind: Kind,
