@@ -1,16 +1,6 @@
-//! The calendar read families (docs/architecture/60-validation.md § the
-//! calendar benchmark): six timed queries, one per landed representation,
-//! each naming what it times. Exact IR, seeded param policies,
-//! hand-written SQL goldens, per-family `SQLite` index DDL — the same
-//! identity discipline as the ledger families (`crate::families`);
-//! `digest()` keys the verify stamp on this list.
-//!
-//! `free_busy` is the one family the IR→SQL translator cannot express
 //! (`Pack` — [`crate::translate::Inexpressible::PackAggregate`]): it is
-//! **reported translator-unpaired, never dropped** — its `SQLite` side is
-//! the hand-written window-function coalesce below (`SQLite`'s honest
-//! best shot at Snodgrass coalescing), verified row-identical against
-//! the engine and the naive model before any timing.
+//! **reported translator-unpaired, never dropped** — its `SQLite` side is the
+//! engine and the naive model before any timing.
 
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
@@ -36,11 +26,6 @@ fn allen(lhs: Term, rhs: Term, mask: AllenMask) -> ConditionTree {
     })
 }
 
-/// One calendar family. `hand_param_slots` marks the translator-unpaired
-/// case: `None` means the `SQLite` side is `translate()` output (pinned
-/// equal to `golden_sql` by test); `Some(slots)` means the family's SQL
-/// **is** `golden_sql` with these positional slots — the no-silent-caps
-/// rule's visible form.
 pub struct CalFamily {
     pub name: &'static str,
     pub kind: Kind,
@@ -53,12 +38,9 @@ pub struct CalFamily {
 }
 
 impl CalFamily {
-    /// The family's `SQLite` side for one draw: translator output for
-    /// the paired families, the hand-written coalesce for `free_busy`.
-    ///
+
     /// # Errors
-    ///
-    /// Translation errors, stringified (never for hand-paired families).
+
     pub fn sql_for(
         &self,
         query: &Query,
@@ -78,11 +60,6 @@ impl CalFamily {
     }
 }
 
-/// `busy_scan` — **times the Allen mask against a param window over an
-/// O(n) scan** (PRDs 03/04: the mask kernel; `00-product.md`'s
-/// range-accelerator trigger names this family as its evidence).
-/// `Q(p, s) :- Claim(person = p, arm = Busy, span = s),
-/// Allen(s, ?0, INTERSECTS)`.
 fn busy_scan_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -99,9 +76,6 @@ fn busy_scan_query() -> Query {
     })
 }
 
-/// The busiest stretch of the corpus timeline (the Zipf head's chains
-/// reach `CAL_BASE + ~2.2 × 10⁷`; the tail's end early, so early windows
-/// are dense).
 const ACTIVE_SPAN: i64 = 22_000_000;
 
 fn window(at: i64, width: i64) -> Value {
@@ -114,20 +88,11 @@ fn busy_scan_params(_: &GenConfig) -> Vec<Draw> {
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 16, width)]),
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 4, width)]),
         scalar_draw(vec![window(CAL_BASE + ACTIVE_SPAN / 2, width)]),
-        // The pre-epoch miss: no claim (rays included) starts before
-        // CAL_BASE, so nothing intersects.
+
         scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
     ]
 }
 
-/// `meets_chain` — **times the named-relation probes: the singleton
-/// basics `MEETS` (a chain join) and `DURING` (a window filter)** —
-/// the mask's singleton-cost-equals-composite-cost claim, measured
-/// (PRD 03). `Q(a, b) :- Claim(person = ?0, span = a),
-/// Claim(person = ?0, span = b), Allen(a, b, MEETS),
-/// Allen(a, ?1, DURING)` — back-to-back segments of one person's chain
-/// inside a window (the generator abuts every third boundary, so chains
-/// exist by construction).
 fn meets_chain_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
@@ -166,12 +131,9 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `rsvp_union` — **times the DU whole-read: a three-rule family, one
-/// rule per RSVP arm through one spanning union seen-set** (rules as
-/// data, one sink, and cross-rule set semantics). The distinct `rsvp`
-/// selections still prove the arms disjoint and introspection reports that
-/// knowledge, but execution deliberately keeps the spanning set after
-/// the measured refutation in `docs/architecture/40-execution.md`.
+/// The distinct `rsvp` selections still prove the arms disjoint and
+/// introspection reports that knowledge, but execution deliberately keeps the
+/// spanning set after the measured refutation in.
 fn rsvp_union_query() -> Query {
     let arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -195,17 +157,10 @@ fn rsvp_union_query() -> Query {
 }
 
 fn rsvp_union_params(_: &GenConfig) -> Vec<Draw> {
-    // Param-less whole read: one empty draw.
+
     vec![scalar_draw(vec![])]
 }
 
-/// `conflict_pairs` — **times the Allen-mask self-join** (PRD 04 — the
-/// configuration kernel under a true interval-pair join).
-/// `Q(p1, p2) :- Person(id = p1, account = ?0), Claim(person = p1,
-/// span = u), Person(id = p2, account = ?0), Claim(person = p2,
-/// span = v), Allen(u, v, INTERSECTS)` — person pairs of one account
-/// concurrently claimed (reflexive pairs included, as in the ledger's
-/// `mandate_overlap`).
 fn conflict_pairs_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -235,21 +190,13 @@ fn conflict_pairs_query() -> Query {
 fn conflict_pairs_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
     vec![
-        scalar_draw(vec![Value::U64(0)]), // the Zipf head's account
+        scalar_draw(vec![Value::U64(0)]), 
         scalar_draw(vec![Value::U64(1)]),
         scalar_draw(vec![Value::U64(sizes.accounts / 2)]),
         scalar_draw(vec![Value::U64(sizes.accounts + 1_000_000)]),
     ]
 }
 
-/// `conflict_free` — **times the anti-probe with a point-membership
-/// binding** (PRD 04 + negation: the conflict family's conflict-free
-/// variant). `Q(p) :- Person(id = p, account = ?0),
-/// Event(created_at = ?1), ¬Claim(person = p, span ∋ ?1)` — persons of
-/// one account with no claim covering the instant; the `Event` atom is
-/// the instant's scalar anchor (the bivalent-anchor rule — a lone
-/// interval-position param would read as interval value equality),
-/// exactly the ledger's `mandate_at_instant` shape, negated.
 fn conflict_free_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -285,14 +232,10 @@ fn conflict_free_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `free_busy` — **times `Pack`, the coalescing fold** (PRDs 11/12: the
-/// shared segment sweep's second continuation), per person per window.
-/// `Q(p, Pack(s)) :- Person(id = p, account = ?0), Claim(person = p,
-/// span = s), Allen(s, ?1, INTERSECTS)` — one row per (person, maximal
-/// busy-or-OOO segment) among claims touching the window; free time is
-/// the host's two-line gap walk over the sorted output (the recorded
-/// `Gaps` refusal). Translator-unpaired: the `SQLite` side is the
-/// hand-written window-function coalesce ([`FREE_BUSY_SQL`]).
+/// `Q(p, Pack(s)):- Person(id = p, account = ?0), Claim(person = p, span = s),
+/// Allen(s, ?1, INTERSECTS)` — one row per (person, maximal busy-or-OOO
+/// segment) among claims touching the window; free time is the host's two-line
+/// gap walk over the sorted output (the recorded `Gaps` refusal).
 fn free_busy_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(2) }],
@@ -326,12 +269,6 @@ fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `slot_scan` — **times the mask kernel over the fixed-width interval
-/// type** (the order purge's `interval<i64, w>`: the encoding stores the
-/// start word only, the end derives as `start + w`): the `busy_scan`
-/// shape moved onto the 8-byte lane, so the pair prices the fixed
-/// encoding against the general 16-byte form under the identical O(n)
-/// scan. `Q(r, s) :- Slot(room = r, span = s), Allen(s, ?0, INTERSECTS)`.
 fn slot_scan_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -344,8 +281,6 @@ fn slot_scan_query() -> Query {
     })
 }
 
-/// The slot grid's covered stretch: one gapped-gapped-abutting triple
-/// per `8 × HOUR` ([`crate::calendar::corpus_gen::slot_span`]).
 fn grid_span(sizes: &CalSizes) -> i64 {
     i64::try_from(sizes.slots_per_room / 3 + 1).expect("fits") * 8 * HOUR
 }
@@ -359,39 +294,13 @@ fn slot_scan_params(cfg: &GenConfig) -> Vec<Draw> {
         scalar_draw(vec![window(CAL_BASE + span / 2, width)]),
         scalar_draw(vec![window(CAL_BASE + span * 7 / 8, width)]),
         // The pre-epoch miss: no slot starts before CAL_BASE, and the
-        // fixed type has no rays, so nothing intersects.
+
         scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
     ]
 }
 
-/// `slot_booking_overlap` — **times the fixed × general Allen join**:
-/// one room's fixed-width grid against its general-interval bookings —
-/// the two interval encodings meeting under one `INTERSECTS` condition
-/// (the width is the type; the join is over values, so the pair is
-/// legal by the shared element domain). `Q(s, v) :- Slot(room = ?0,
-/// span = s), Booking(room = ?0, span = v), Allen(s, v, INTERSECTS)`.
-///
-/// **The cross-process p50 bimodality is the rotation-boundary
-/// tail-max, not an engine mode (mechanism hunt, 2026-07-17).** With
-/// 256 samples rotated round-robin over these 4 draws (64 each), the
-/// nearest-rank p50 is `sorted[127]` — and this family's two fastest
-/// draw populations (the pre-epoch miss ≈ 208 ns, the `rooms/2` room
-/// ≈ 18.8 µs) fill ranks 0–127 exactly, with the next population at
-/// ≈ 280 µs. The reported p50 is therefore the MAX of the 64 `rooms/2`
-/// samples: an extreme order statistic that swung 19.2–40.0 µs across
-/// 30 fresh processes while every draw median held within ±0.5%
-/// (d2 18792–18980 ns). One number per process ⇒ whole-process
-/// "modes"; two independent tail-max draws ⇒ the observed 0.34–2.01
-/// per-pair A/B ratios on identical binaries. Falsified alternatives:
-/// same binary + same store still flips (10 processes); regenerated
-/// stores are byte-identical (same blake3 across 8 regens) and flip
-/// identically; a relinked binary (~8k text symbols moved) leaves
-/// every draw median unchanged and flips within-arm — store
-/// page-state and the code-placement relink lottery are both refuted.
-/// Min-of-3 keeps the low tail symmetrically, so gates are unaffected;
-/// the statistic itself is frozen with the published protocol.
-/// `postings_without_tag` (families/read.rs) is the same mechanism at
-/// the same rank.
+/// Min-of-3 keeps the low tail symmetrically, so gates are unaffected; the
+/// statistic itself is frozen with the published protocol.
 fn slot_booking_overlap_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -413,20 +322,13 @@ fn slot_booking_overlap_query() -> Query {
 fn slot_booking_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
     vec![
-        scalar_draw(vec![Value::U64(0)]), // the Zipf head's room
+        scalar_draw(vec![Value::U64(0)]), 
         scalar_draw(vec![Value::U64(1)]),
         scalar_draw(vec![Value::U64(sizes.rooms / 2)]),
         scalar_draw(vec![Value::U64(sizes.rooms + 1_000_000)]),
     ]
 }
 
-// ---------------------------------------------------------------------
-// Hand-written SQL goldens (docs/architecture/60-validation.md): never
-// regenerated from the translator; the pin test arbitrates.
-// ---------------------------------------------------------------------
-
-/// The 9 sharing basics of `INTERSECTS`, OR'd, over `(ls, le)` × the
-/// param window `(?a, ?b)` — written once, spliced per family.
 macro_rules! intersects_param {
     ($s:literal, $e:literal, $a:literal, $b:literal) => {
         concat!(
@@ -441,24 +343,16 @@ macro_rules! intersects_param {
     };
 }
 
-/// `busy_scan`: the busy arm pinned, the mask's 9 sharing basics OR'd
-/// against the window's two placeholders.
 pub const BUSY_SCAN: &str = concat!(
     "SELECT DISTINCT t0.\"person\", t0.\"span_start\", t0.\"span_end\" FROM \"Claim\" AS t0 ",
     "WHERE t0.\"arm\" = 0 AND ",
     intersects_param!("t0.\"span_start\"", "t0.\"span_end\"", "?1", "?2")
 );
 
-/// `meets_chain`: two singleton basics — `MEETS` as the chain join,
-/// `DURING` as the window filter.
 pub const MEETS_CHAIN: &str = "SELECT DISTINCT t0.\"span_start\", t0.\"span_end\", t1.\"span_start\", t1.\"span_end\" FROM \"Claim\" AS t0, \"Claim\" AS t1 WHERE t0.\"person\" = ?1 AND t1.\"person\" = ?1 AND ((t0.\"span_end\" = t1.\"span_start\")) AND ((?2 < t0.\"span_start\" AND t0.\"span_end\" < ?3))";
 
-/// `rsvp_union`: one `SELECT DISTINCT` per arm joined by `UNION` — the
-/// DU whole-read (`SQLite`'s `UNION` is exactly ∪ under DISTINCT
-/// discipline).
 pub const RSVP_UNION: &str = "SELECT DISTINCT t0.\"event\", t0.\"person\" FROM \"Attendance\" AS t0 WHERE t0.\"rsvp\" = 0 UNION SELECT DISTINCT t0.\"event\", t0.\"person\" FROM \"Attendance\" AS t0 WHERE t0.\"rsvp\" = 1 UNION SELECT DISTINCT t0.\"event\", t0.\"person\" FROM \"Attendance\" AS t0 WHERE t0.\"rsvp\" = 2";
 
-/// `conflict_pairs`: the Allen self-join across persons of one account.
 pub const CONFLICT_PAIRS: &str = concat!(
     "SELECT DISTINCT t0.\"id\", t2.\"id\" FROM \"Person\" AS t0, \"Claim\" AS t1, ",
     "\"Person\" AS t2, \"Claim\" AS t3 WHERE t0.\"account\" = ?1 AND t0.\"id\" = t1.\"person\" ",
@@ -471,19 +365,10 @@ pub const CONFLICT_PAIRS: &str = concat!(
     )
 );
 
-/// `conflict_free`: the anti-probe — `NOT EXISTS` with the instant's
-/// membership formula inside, the instant anchored by the `Event` gate.
 pub const CONFLICT_FREE: &str = "SELECT DISTINCT t0.\"id\" FROM \"Person\" AS t0, \"Event\" AS t1 WHERE t0.\"account\" = ?1 AND t1.\"created_at\" = ?2 AND NOT EXISTS (SELECT 1 FROM \"Claim\" AS n0 WHERE n0.\"person\" = t0.\"id\" AND n0.\"span_start\" <= ?2 AND ?2 < n0.\"span_end\")";
 
-/// `free_busy`: `SQLite`'s honest best shot at the coalescing fold —
-/// hand-written window-function islands (`SQLite` has no coalescing
-/// aggregate; a recursive-CTE row walk is strictly slower, so the
-/// islands form is the fairer opponent): order each person's distinct
-/// claim windows, start a new island where a window's start exceeds the
-/// running max end (`s <= max(prev e)` merges — half-open adjacency,
-/// exactly `Pack`'s law), then fold each island to `(MIN(s), MAX(e))`.
-/// Verified row-identical against the engine's `Pack` and the naive
-/// model's from-the-definition coalesce before any timing.
+/// Verified row-identical against the engine's `Pack` and the naive model's
+/// from-the-definition coalesce before any timing.
 pub const FREE_BUSY: &str = concat!(
     "SELECT p, MIN(s), MAX(e) FROM (",
     "SELECT p, s, e, SUM(head) OVER (PARTITION BY p ORDER BY s, e ",
@@ -497,26 +382,18 @@ pub const FREE_BUSY: &str = concat!(
     "))) GROUP BY p, island"
 );
 
-/// `free_busy`'s positional slots: the account, then the window's halves
-/// (the hand-written twin of the translator's `ParamSlot` order).
 pub const FREE_BUSY_SLOTS: &[ParamSlot] = &[
     ParamSlot::Whole(ParamId(0)),
     ParamSlot::Start(ParamId(1)),
     ParamSlot::End(ParamId(1)),
 ];
 
-/// `slot_scan`: the fixed-width lane's scan — the mask's 9 sharing
-/// basics OR'd against the window's two placeholders over the slot
-/// grid (`SQLite` stores both halves; the 8-byte start-only encoding is
-/// the engine side's private economy, invisible to the mapped oracle).
 pub const SLOT_SCAN: &str = concat!(
     "SELECT DISTINCT t0.\"room\", t0.\"span_start\", t0.\"span_end\" FROM \"Slot\" AS t0 ",
     "WHERE ",
     intersects_param!("t0.\"span_start\"", "t0.\"span_end\"", "?1", "?2")
 );
 
-/// `slot_booking_overlap`: the fixed × general Allen join within one
-/// room.
 pub const SLOT_BOOKING_OVERLAP: &str = concat!(
     "SELECT DISTINCT t0.\"span_start\", t0.\"span_end\", t1.\"span_start\", t1.\"span_end\" ",
     "FROM \"Slot\" AS t0, \"Booking\" AS t1 ",
@@ -529,11 +406,6 @@ pub const SLOT_BOOKING_OVERLAP: &str = concat!(
     )
 );
 
-/// The registry: the calendar's remaining rows — the numbered queries,
-/// the conflict family contributing its anti-probe variant as its own
-/// row (`60-validation.md`'s table), plus the roster extension's two
-/// fixed-width interval rows (`slot_scan`, `slot_booking_overlap` —
-/// report-only: measurement infrastructure, not gate claims).
 #[must_use]
 pub fn all() -> &'static [CalFamily] {
     &[
@@ -628,9 +500,6 @@ pub fn all() -> &'static [CalFamily] {
     ]
 }
 
-/// The family-list digest — a verify-stamp ingredient beside the
-/// ledger's ([`crate::families::digest`]); any calendar family change
-/// re-baselines every stamp.
 #[must_use]
 pub fn digest() -> [u8; 32] {
     let mut digest = bumbledb::digest::Digest::new();
@@ -642,9 +511,6 @@ pub fn digest() -> [u8; 32] {
     digest.finalize()
 }
 
-/// Every calendar-family-owned index, deduplicated by name, as
-/// `CREATE INDEX` statements — the calendar mirror's family layer over
-/// the statement-derived plan (`crate::sqlmap::schema_ddl`).
 #[must_use]
 pub fn index_ddl() -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
@@ -665,8 +531,6 @@ pub fn index_ddl() -> Vec<String> {
     out
 }
 
-/// The calendar family-owned indexes as `(table, name)` pairs — the
-/// fairness contract's registry beside the statement-derived set.
 #[must_use]
 pub fn expected_indexes() -> Vec<(String, String)> {
     let mut seen = std::collections::BTreeSet::new();
@@ -681,9 +545,6 @@ pub fn expected_indexes() -> Vec<(String, String)> {
     out
 }
 
-/// The translator-unpaired calendar families, by name — consumed by the
-/// verify report so the gap is counted and printed, never silent (the
-/// no-silent-caps rule).
 #[must_use]
 pub fn translator_unpaired() -> Vec<&'static str> {
     all()
@@ -693,19 +554,9 @@ pub fn translator_unpaired() -> Vec<&'static str> {
         .collect()
 }
 
-/// How many seeded random draws the verify pass adds per parameterized
-/// family (the calendar's randomized slice — windows, persons,
-/// accounts, and instants drawn over the corpus domains with misses).
 pub const RANDOM_DRAWS: u32 = 4;
 
-/// One seeded random draw for the verify pass's randomized calendar
-/// slice: in-domain most of the time, out-of-domain misses by
-/// construction (the 9/8 domain stretch). `None` for the param-less
-/// families — a whole read has no draw axis to randomize.
-///
 /// # Panics
-///
-/// Never in practice: draw arithmetic stays far inside `i64`.
 #[must_use]
 pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig) -> Option<Draw> {
     let sizes = CalSizes::of(cfg.scale);
@@ -728,8 +579,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
         )])),
         "conflict_free" => {
             let account = Value::U64(rng.range(sizes.accounts * 9 / 8));
-            // Half the instants are actual event creations (membership
-            // hits exist), half arbitrary points over the active span.
+
             let instant = if rng.range(2) == 0 {
                 created_at(cfg.seed, rng.range(sizes.events.max(1)))
             } else {
@@ -742,8 +592,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
             window(rng, ACTIVE_SPAN / 4),
         ])),
         "slot_scan" => {
-            // Windows over the slot grid's own stretch (the active-span
-            // windows would mostly miss the grid).
+
             let span = grid_span(&sizes);
             let start = CAL_BASE - HOUR
                 + i64::try_from(rng.range(u64::try_from(span + 2 * HOUR).expect("positive")))
@@ -761,9 +610,6 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
     }
 }
 
-/// One in-domain draw per family at unit scale (the naive lane: the
-/// S-scale rotations are mostly out of the unit corpus's tiny domains;
-/// these make every join produce witnesses).
 #[must_use]
 pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
     let wide = window(CAL_BASE - HOUR, CAL_HORIZON - CAL_BASE + HOUR - 1);
@@ -771,7 +617,7 @@ pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
         "busy_scan" | "slot_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),
         "rsvp_union" => scalar_draw(vec![]),
-        // The head account and the head room share ordinal 0.
+
         "conflict_pairs" | "slot_booking_overlap" => scalar_draw(vec![Value::U64(0)]),
         "conflict_free" => scalar_draw(vec![
             Value::U64(0),
