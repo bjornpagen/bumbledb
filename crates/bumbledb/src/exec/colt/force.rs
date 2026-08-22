@@ -84,7 +84,6 @@ impl Colt {
     }
 
     /// occurrence pays its root build once, BEFORE its same-shaped
-
     pub fn force_root(&mut self) {
         if self.schema_columns.is_empty() {
             return;
