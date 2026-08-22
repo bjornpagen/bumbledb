@@ -4,10 +4,7 @@ use crate::exec::sink::{
 };
 use crate::exec::wordmap::WordMap;
 
-pub(in crate::exec::sink) fn parse_finds(
-    finds: &[FindSpec],
-    slot_count: usize,
-) -> Vec<SinkSpec> {
+pub(in crate::exec::sink) fn parse_finds(finds: &[FindSpec], slot_count: usize) -> Vec<SinkSpec> {
     let mut parsed = Vec::with_capacity(finds.len());
     parse_finds_into(finds, slot_count, &mut parsed);
     parsed
@@ -250,8 +247,7 @@ impl AggregateSink {
             DedupState::Bindings { .. } | DedupState::Elided { .. } => {}
         }
         self.binding_scratch.clear();
-        self.binding_scratch
-            .resize(slot_count, 0);
+        self.binding_scratch.resize(slot_count, 0);
         if let GroupState::Pack { slot, .. } = &mut self.group_state {
             *slot = pack_slot(&self.finds).expect("Pack heads stay Pack across rules");
         }

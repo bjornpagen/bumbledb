@@ -830,8 +830,7 @@ impl<'spec> Resolver<'spec> {
                     (1, None)
                 }
                 Some(lo) if unit => {
-                    self.issues
-                        .push(SpecIssue::CapacityUnitFloor { statement });
+                    self.issues.push(SpecIssue::CapacityUnitFloor { statement });
                     (lo, None)
                 }
                 Some(lo) => (lo, None),

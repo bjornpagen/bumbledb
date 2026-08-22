@@ -908,9 +908,7 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
     let mut tokens = input.into_iter().peekable();
     match tokens.next() {
         Some(TokenTree::Ident(ident)) if ident.to_string() == "pub" => {}
-        other => panic!(
-            "schema!: the first item names the schema — `pub Name;` — found {other:?}"
-        ),
+        other => panic!("schema!: the first item names the schema — `pub Name;` — found {other:?}"),
     }
     let name = expect_ident(&mut tokens, "the schema name");
     expect_punct(&mut tokens, ';');

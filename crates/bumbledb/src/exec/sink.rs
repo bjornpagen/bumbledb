@@ -273,7 +273,6 @@ pub struct AggregateSink {
 
     finds: Vec<SinkSpec>,
 
-
     real_slots: usize,
 
     group_spans: Vec<(usize, usize)>,
