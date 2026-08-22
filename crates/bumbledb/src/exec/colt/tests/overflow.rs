@@ -2,7 +2,6 @@ use super::*;
 
 #[test]
 fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
-
     // 8 buckets: count 12 → guess 16 → next_pow2(16·5/16) = 8).
     let mut keys: Vec<u64> = Vec::new();
     let mut candidate = 0u64;
