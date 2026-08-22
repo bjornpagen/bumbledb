@@ -4,7 +4,6 @@
 //! ids and owned fact bytes, never formatted strings — no `format!` runs on
 //! a hot path; `Display` formats lazily when the host actually prints.
 //! panics are reserved for programmer-invariant violations. Payloads carry
-
 mod convert;
 mod display;
 
@@ -391,7 +390,6 @@ pub enum StatementErrorKind {
     /// meaning, one spelling: drop the window and declare the
     CapacityContainmentWindow,
     /// Roster "an interval position in a capacity projection" — refused
-
     /// (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
     CapacityIntervalPosition {
         relation: RelationId,
@@ -671,7 +669,6 @@ pub enum ValidationError {
         index: usize,
     },
     /// An order operator over a closed-bound variable (ruled 2026-07-23,
-
     /// declaration-order accident, not semantics — refused exactly as
     OrderComparisonOnClosedReference {
         index: usize,
@@ -724,7 +721,6 @@ pub enum ValidationError {
     },
 
     /// variable (ruled 2026-07-23, R4): its words are declaration
-
     /// accident — refused exactly as the order comparison is
     AggregateOverClosedReference {
         find: FindIndex,
@@ -950,7 +946,6 @@ pub enum Violation {
         fact: Box<[u8]>,
 
         /// width crosses untruncated (ruled 2026-07-24, C3). On
-
         /// 2026-07-24, C14: the clip serves the verdict, the full sum
         measure: u128,
     },
@@ -1272,7 +1267,6 @@ pub enum Error {
         mismatch: Mismatch<SchemaFingerprint>,
     },
     /// `create` refused a directory that already holds an LMDB
-
     /// Open-time: a foreign LMDB environment, or a half-created empty
     AlreadyInitialized,
 
@@ -1313,7 +1307,6 @@ pub enum Error {
     },
 
     /// a raw OS errno from its write/sync path — on macOS the data-page
-
     /// meta write; LMDB reports one errno for the phase and names no
     CommitSync {
         /// Bounded retries consumed before the error escaped.
@@ -1365,7 +1358,6 @@ pub enum Error {
     },
 
     /// (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`), but derived
-
     /// refusal: aborts the query, the snapshot
     DerivedBudgetExceeded {
         rounds: u32,
