@@ -64,7 +64,6 @@ impl DurabilityLane {
     /// # Panics
 
     /// If WAL refuses to engage — the fairness protocol is
-
     pub fn configure(self, conn: &Connection) -> Result<(), String> {
         match self {
             Self::Durable => {
@@ -91,7 +90,6 @@ impl DurabilityLane {
     /// `Nosync`. A misconfigured twin fails before flattering anyone.
 
     /// # Errors
-
     pub fn assert_parity(self, conn: &Connection) -> Result<(), String> {
         let journal: String = conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
