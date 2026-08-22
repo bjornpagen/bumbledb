@@ -43,7 +43,6 @@ pub struct InstanceBuilder<S> {
 }
 
 impl<S: Theory> InstanceBuilder<S> {
-
     /// # Errors
 
     pub fn new(theory: S) -> Result<Self> {
