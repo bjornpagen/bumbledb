@@ -5,22 +5,22 @@
  * stores:
  *
  * - the fixture theory lowers, admits, and fingerprints deterministically
- *   ACROSS PROCESSES (a second process's evaluation of the same theory
- *   reopens the store — resume = reopen, PRD-16 / frozen ruling 3);
+ * ACROSS PROCESSES (a second process's evaluation of the same theory
+ * reopens the store — resume = reopen, PRD-16 / frozen ruling 3);
  * - the exclusive-lock law the view lane's `peekRunStore` rides (a store
- *   held by a live worker in another process refuses a second open), and
- *   kill-durability (SIGKILL loses nothing committed, including the fresh
- *   high-water mark — the crash-window resume premise);
+ * held by a live worker in another process refuses a second open), and
+ * kill-durability (SIGKILL loses nothing committed, including the fresh
+ * high-water mark — the crash-window resume premise);
  * - the repair loop's violations round-trip: rejected commits return
- *   `===`-matchable statement values (what `store/diag-map.ts` resolves),
- *   a rejection leaves the store untouched, and the rebuilt delta commits;
+ * `===`-matchable statement values (what `store/diag-map.ts` resolves),
+ * a rejection leaves the store untouched, and the rebuilt delta commits;
  * - the store's revision idioms (sheet resupply update, verdict revise,
- *   judged-commit revert with its nested read-inside-write capture);
+ * judged-commit revert with its nested read-inside-write capture);
  * - keyed point reads through the PRIMARY-KEY rule exactly as the driver
- *   can and cannot spell them;
+ * can and cannot spell them;
  * - snapshot pinning under interleaved writes;
  * - fresh-mint identity across rejected commits (what ids the repair
- *   loop's persisted diagnostics can safely cite).
+ * loop's persisted diagnostics can safely cite).
  */
 
 import assert from "node:assert/strict"
@@ -63,16 +63,13 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
 }
 
-/** The run-store schema's relations record — what the violation values type against. */
 type RunRels = RunStoreSchema["relations"]
 
-/** Narrows a write result to its rejection's violations, failing the test on an accept. */
 function rejected(result: WriteOutcome<RunRels, unknown>): readonly Violation<RunRels>[] {
 	if (result.tag !== "rejected") {
 		assert.fail("expected the commit to be rejected")
@@ -125,7 +122,6 @@ function spawnChild(mode: "create" | "hold", dir: string): Promise<{ report: Chi
 	})
 }
 
-/** Waits for a spawned child's exit. */
 function waitExit(child: ChildProcess): Promise<void> {
 	return new Promise(function run(resolve) {
 		if (child.exitCode !== null || child.signalCode !== null) {
@@ -157,12 +153,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		const attemptRow = must(db.read((i) => i.scan(attempt))[0])
 		const verdictRow = must(db.read((i) => i.get(verdict, { attempt: attemptRow.id })))
 		assert.equal(verdictRow.outcome, "Rejected")
-		/**
-		 * The fresh high-water survives a clean exit: the child minted grp
-		 * `deletedGrp` and committed its delete (the revert idiom), so a
-		 * resumed run's next mint must be strictly greater — never a re-issue
-		 * of an id that was observable in a committed state.
-		 */
+
 		const state: { minted?: bigint } = {}
 		const written = db.write(function mintAfterResume(tx) {
 			const row = put(tx, grp, { sheet: sheetRow.id, label: "post-resume", context: "c" })
@@ -179,7 +170,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		const dir = path.join(tmpRoot, "held")
 		const { report, child } = await spawnChild("hold", dir)
 		try {
-			/** The peekRunStore premise: a live worker in another process refuses this open. */
+
 			await assert.rejects(async function openHeld() {
 				await Db.open(dir, runStoreSchema)
 			}, /another live handle holds this environment's lock/)
@@ -293,7 +284,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		)
 		assert.equal(violation.kind, "capacity")
 		assert.ok(violation.facts.length > 0, "the uncovered parent is cited")
-		/** Rejection is data and the store is untouched — the repair loop's premise. */
+
 		assert.deepEqual(
 			db.read((i) => i.scan(grp)),
 			grpsBefore
@@ -565,7 +556,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		const written = db.write(function doomedMint(tx) {
 			const minted = put(tx, grp, { sheet: must(ids.sheet), label: "doomed-mint", context: "c" })
 			state.doomed = minted.id
-			/** Force rejection through the objective ref key. */
+
 			put(tx, objective, {
 				sheet: must(ids.sheet),
 				unit: must(ids.unit),
