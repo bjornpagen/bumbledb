@@ -1,6 +1,5 @@
 //! The one view-validity epoch: closed theory, frozen heap, or store
 //! generation. Not a dummy generation and not a second process clock.
-
 use crate::storage::env::GenerationId;
 
 /// Identity is checked before a memo uses this value, so [`Self::Frozen`]
