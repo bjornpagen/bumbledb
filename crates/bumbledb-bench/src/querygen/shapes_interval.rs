@@ -88,7 +88,6 @@ pub(super) fn membership(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains
 fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     let org;
     match rng.range(3) {
-
         0 => {
             let posting = b.add_atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
@@ -145,7 +144,6 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
 
 fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     match rng.range(3) {
-
         0 => {
             let posting = b.add_atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
@@ -192,7 +190,6 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
 
 #[derive(Clone, Copy)]
 enum Right {
-
     Var,
 
     Literal,
@@ -226,14 +223,12 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         }
     };
     let (lhs, rhs) = if rng.chance(1, 2) {
-
         if matches!(right, Right::Var) && rng.chance(1, 3) {
             wide_mandate_join(b)
         } else {
             mandate_join(b, rng, cfg, right)
         }
     } else {
-
         let first = b.add_atom(ids::TRANSFER);
         let _payload = pin_transfer(b, rng, cfg, domains, first);
         let lhs = b.bind_var(first, ids::transfer::WINDOW);
@@ -307,7 +302,6 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         b.adjacent_right = true;
     }
     if rng.chance(1, 2) {
-
         let (s0, _) = interval_data::group_i64(cfg.seed, group, 0);
         let (_, e1) = interval_data::group_i64(cfg.seed, group, 1);
         let width = i64::try_from(TOUCH_WIDTH).expect("small");
@@ -333,7 +327,6 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         b.find_var(active);
         push_boundary_cmp(b, rng, active, literal, point);
     } else {
-
         let (s0, _) = interval_data::group_u64(cfg.seed, group, 0);
         let (_, e1) = interval_data::group_u64(cfg.seed, group, 1);
         let literal = if left {
@@ -388,7 +381,6 @@ pub(super) fn pack(b: &mut Builder, rng: &mut Rng) {
     let mandate = b.add_atom(ids::MANDATE);
     let active = b.bind_var(mandate, ids::mandate::ACTIVE);
     match rng.range(3) {
-
         0 => {
             let account = b.bind_var(mandate, ids::mandate::ACCOUNT);
             b.find_var(account);
