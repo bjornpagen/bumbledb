@@ -45,7 +45,7 @@ const fn containment_id(statement: StatementId) -> ContainmentId {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -330,7 +330,6 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
 
 #[test]
 fn fact_ops_carry_the_delta_computed_hash() {
-
     let dir = TempDir::new("plan-fact-hash");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -352,7 +351,6 @@ fn fact_ops_carry_the_delta_computed_hash() {
 
 #[test]
 fn plan_ops_land_in_relation_then_hash_order() {
-
     let dir = TempDir::new("plan-op-order");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -423,7 +421,6 @@ fn pair_statements_edge_their_own_directions() {
 
 #[test]
 fn edge_key_bytes_land_in_target_key_order() {
-
     let dir = TempDir::new("plan-permutation");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -432,8 +429,8 @@ fn edge_key_bytes_land_in_target_key_order() {
     let plan = plan_of(&env, &mut delta, &[], &[(LINK, l.clone())]);
 
     let mut expected = Vec::new();
-    expected.extend_from_slice(&encode_u64(2)); 
-    expected.extend_from_slice(&encode_u64(1)); 
+    expected.extend_from_slice(&encode_u64(2));
+    expected.extend_from_slice(&encode_u64(1));
     let edge = only_containment(insert_for(&plan.inserts, LINK, &l).containment_r_keys());
     assert_edge(&schema, edge, LINK_COMBO, &expected);
 }
