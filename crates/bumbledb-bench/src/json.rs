@@ -1,14 +1,5 @@
-//! Tiny hand-rolled JSON helpers (docs/architecture/60-validation.md; the
-//! dependency quarantine forbids serde). Shared by the trace writer and
-//! the report's JSON renderer — one escaping rule, one number format —
-//! plus a minimal parser for reading our own `report.json` back (the
-//! cross-run merge).
-
 use std::fmt::Write as _;
 
-/// Appends `s` as a JSON string literal: quote, backslash, and control
-/// characters escaped; non-ASCII passes through as UTF-8 (JSON is UTF-8
-/// by definition).
 pub fn push_str_lit(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -199,7 +190,7 @@ fn parse_str(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
                             .ok()
                             .and_then(|h| u32::from_str_radix(h, 16).ok())
                             .ok_or_else(|| format!("bad \\u escape at byte {pos}"))?;
-                        // Surrogates never appear in our own emitter's output.
+
                         out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
                         *pos += 4;
                     }
@@ -208,8 +199,7 @@ fn parse_str(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
                 *pos += 1;
             }
             Some(_) => {
-                // Consume one UTF-8 scalar (multi-byte sequences pass
-                // through intact — we slice on char boundaries).
+
                 let rest = std::str::from_utf8(&bytes[*pos..])
                     .map_err(|_| format!("invalid UTF-8 at byte {pos}"))?;
                 let c = rest.chars().next().expect("non-empty");
@@ -285,7 +275,7 @@ mod tests {
         assert_eq!(lit("a\\b"), "\"a\\\\b\"");
         assert_eq!(lit("a\nb\tc\rd"), "\"a\\nb\\tc\\rd\"");
         assert_eq!(lit("\u{01}"), "\"\\u0001\"");
-        // Non-ASCII memo content passes through as UTF-8.
+
         assert_eq!(lit("héllo — uniq-42"), "\"héllo — uniq-42\"");
     }
 
@@ -311,7 +301,6 @@ mod tests {
         assert_eq!(xs.len(), 3);
         assert_eq!(xs[2].get("y"), Some(&Value::Arr(vec![])));
 
-        // Escapes emitted by push_str_lit parse back to the original.
         let mut emitted = String::new();
         push_str_lit(&mut emitted, "a\nb\t\"c\"\\ — héllo \u{01}");
         let back = parse(&emitted).expect("parses");
