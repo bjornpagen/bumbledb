@@ -1,46 +1,9 @@
-//! The calendar theory — the benchmark's **second** schema/corpus/family
-//! world (docs/architecture/60-validation.md § the calendar benchmark):
+//! The calendar theory — the benchmark's **second** schema/corpus/family world:
 //! ledger-adjacent scheduling from the workload census, the measured form
-//! the algebra's vocabulary exists for. Same protocol as the ledger
 //! (fully-indexed `SQLite`, fullfsync parity, warm medians, verify before
-//! time), a second theory: accounts of persons, per-person calendars,
-//! events with bounded and ray horizons, attendance with RSVP arms (the
-//! discriminated-union shape whose exclusivity proof is visible in
-//! introspection), per-person claims over intervals with
-//! busy/OOO arms, rooms with pointwise-keyed bookings (the exclusion
-//! theorem as data), and working-hour segments covering every busy claim
-//! (the coverage walk as data).
-//!
-//! Statement completeness, per the design ruling:
-//! - **room exclusion** — `Booking(room, span) -> Booking`, the pointwise
-//!   key (no two bookings share a room and an instant);
-//! - **claim ↔ attendance `==`** — `Attendance(id | rsvp == Accepted) ==
-//!   Claim(source | arm == Busy)`: every accepted attendance owns exactly
-//!   one busy claim (totality) and every busy claim's source is an
-//!   accepted attendance (arm validity) — the DU pattern with the arm
-//!   carried inside a shared child relation, selected by its own
-//!   discriminant on both sides;
-//! - **working-hours coverage** — `Claim(person, span | arm == Busy) <=
-//!   WorkHours(person, hours)`: every point of every busy claim lies
-//!   under the person's working-hour segments (exact-abutment chains, a
-//!   ray tail reaching ∞ so ray claims are coverable).
-//!
-//! `Event.hash` is the `bytes<32>` content-hash column the PRD spine owes
-//! this family (PRD 17 landed first, so the type exists); `created_at`
-//! is the scalar-instant lane (every censused events table carries one),
-//! the anchor the at-instant anti-probe binds through — exactly the
-//! ledger's `Posting.at` role.
-//!
-//! **The roster-extension reshape (no prior reshape note existed — this
-//! is the minimal reshape covering the order purge's fixed-width
-//! interval types):** `Slot` is the fixed-width lane — a per-room grid
-//! of `interval<i64, 7200>` bookable slots (the width IS the type; the
-//! encoding stores the start word only) under the pointwise key
-//! `Slot(room, span) -> Slot`. It exists so the benchmark prices the
-//! 8-byte start-only encoding against the general 16-byte form on the
-//! same corpus (`slot_scan`, `slot_booking_overlap`). Changing this
-//! schema re-baselined every corpus digest and verify stamp — a
-//! deliberate act.
+//! time), a second theory: accounts of persons, per-person calendars, events
+//! with bounded and ray horizons, attendance with RSVP arms (the the algebra's
+//! vocabulary exists for. Same protocol as the ledger
 
 use bumbledb::schema::ValidateDescriptor as _;
 pub mod corpus;
@@ -127,14 +90,7 @@ bumbledb::schema! {
     Slot(room, span)    -> Slot;
 }
 
-/// The validated calendar schema, memoized for the inspection surfaces
-/// (DDL rendering, translation, id lookups); the engine takes
-/// [`Scheduling`] — `Db::create(dir, Scheduling)` — and validates there.
-///
 /// # Panics
-///
-/// Never in practice: the calendar declaration passes the acceptance
-/// gate (asserted on first use).
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -146,8 +102,6 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// Relation and field ids by name — no magic numbers in family
-/// definitions or the generator (declaration order is the id order).
 pub mod ids {
     use bumbledb::{FieldId, RelationId};
 
@@ -164,10 +118,8 @@ pub mod ids {
     pub const RSVP: RelationId = RelationId(10);
     pub const CLAIM_ARM: RelationId = RelationId(11);
 
-    /// The number of **writable** relations — loaders iterate
-    /// `0..RELATIONS`. The closed relations (`Rsvp`/`ClaimArm`, ids
     /// 10..12) sit after every ordinary relation by declaration: they
-    /// are unwritable ground axioms, so no loader touches them.
+
     pub const RELATIONS: u32 = 10;
 
     pub mod account {
@@ -231,12 +183,9 @@ pub mod ids {
     }
 }
 
-/// `Rsvp` row ids (declaration order is the encoding — closed-relation
-/// handles are ground row ids, plain `u64` values in facts and queries).
 pub const RSVP_ACCEPTED: u64 = 0;
 pub const RSVP_TENTATIVE: u64 = 1;
 pub const RSVP_DECLINED: u64 = 2;
 
-/// `ClaimArm` row ids.
 pub const ARM_BUSY: u64 = 0;
 pub const ARM_OOO: u64 = 1;
