@@ -12,7 +12,6 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
-
         WriteFamily {
             name: "commit_witnessed",
             kind: Kind::Report,
@@ -29,9 +28,7 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 32,
             },
         },
-
         // `crate::windowed`): commit_single's protocol against the twin
-
         WriteFamily {
             name: "commit_window_baseline",
             kind: Kind::Report,
@@ -56,7 +53,6 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
-
         WriteFamily {
             name: "commit_capacity_baseline",
             kind: Kind::Report,
@@ -94,7 +90,6 @@ pub fn write_families() -> &'static [WriteFamily] {
             kind: Kind::Report,
             protocol: Protocol::COLD,
         },
-
         WriteFamily {
             name: "cold_containment_walk_delete",
             kind: Kind::Report,
