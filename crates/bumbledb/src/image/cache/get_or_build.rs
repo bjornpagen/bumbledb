@@ -1,5 +1,4 @@
 //! The read/build path: return the reader's image, building outside the
-//! lock on a miss (docs/architecture/50-storage.md) — from scratch when
 //! no append base survives, by column copy plus tail decode when one
 //! does, and at zero copy when the relation was untouched.
 
@@ -18,63 +17,19 @@ use bumbledb_theory::schema::RelationId;
 
 use super::{Cached, GenerationCache, ImageCache, RelationSlot};
 
-/// The relation's surviving append base, cloned out of the map under the
-/// probe lock: the immutable image and the append boundary
-/// ([`Cached::row_id_next`]). No key rides along — the insert path
-/// sweeps EVERY older entry of the relation, not one remembered key.
 struct Base {
     image: Arc<RelationImage>,
     row_id_next: u64,
 }
 
 impl ImageCache {
-    /// Returns the image of `rel` at the reader's generation, building it
-    /// outside the lock on a miss. Two same-generation readers racing to
-    /// build may both build; insert-if-absent means the loser adopts the
-    /// winner's `Arc` and drops its own (accepted waste, no latch).
-    ///
-    /// The 3-argument form is the bind entry: [`LmdbSource`] mints the
-    /// [`ViewEpoch`] (SPINE-16) and [`Self::get_or_build_at`] matches the
-    /// slot. There is no schema-body match here.
-    ///
-    /// A newest-generation miss consults the relation's **append base**
-    /// first — the below-newest entry the last commits retained because
-    /// they were delete-free for this relation (the lineage law,
-    /// [`GenerationCache`]). Three arms, decided by the snapshot's row
-    /// count against the base's:
-    /// - equal ⇒ **carry-forward**: the same immutable `Arc`, re-keyed at
-    ///   the reader's generation (delete-free lineage + equal counts ⇒
-    ///   zero new rows ⇒ identical content);
-    /// - greater ⇒ **append**: a fresh frame, per-column prefix copy,
-    ///   tail decode of only the new rows ([`crate::image::append`]);
-    /// - less ⇒ typed `Corruption` (`RowCountMismatch`) — under the
-    ///   lineage law only storage corruption shrinks a delete-free
-    ///   relation's count; hard error, never a silent rebuild.
-    ///
-    /// EVERY insert — successor or full build — sweeps the relation's
-    /// entries below its own generation in the same critical section
-    /// (the lineage law's corollary, [`GenerationCache`]: no entry
-    /// outlives the next insert above it, so a full build whose
-    /// snapshot raced ahead of the commit epilogue's `advance`
-    /// supersedes the base it never probed instead of stranding it
-    /// forever). No base — or a reader below `newest` — takes the full
-    /// build exactly as before (below-newest readers stay query-local
-    /// and never insert, though they may now hit a retained base at
-    /// exactly their generation).
-    ///
-    /// A **closed** slot synthesizes from the sealed extension — the
-    /// theory is the storage, so there is no generation to key on, no
+
     /// LMDB read, no eviction. First touch builds into the relation's
-    /// `OnceLock`; every later reader clones the same `Arc` forever.
-    ///
+
     /// # Errors
-    ///
-    /// Build/append errors (`Lmdb`, `Corruption`) propagate; synthesis is
-    /// pure and cannot fail.
-    ///
+
     /// # Panics
-    ///
-    /// Only on a poisoned cache mutex (a prior panic while holding it).
+
     #[cfg(test)]
     pub fn get_or_build(
         &self,
@@ -85,8 +40,6 @@ impl ImageCache {
         LmdbSource::bind(txn, self).image(schema, rel)
     }
 
-    /// Slot-dispatched read/build. Epochs arrive from [`LmdbSource`]
-    /// (`ImageBind`) — never re-derived from a raw txn.
     pub(crate) fn get_or_build_at(
         &self,
         txn: &ReadTxn<'_>,
@@ -131,11 +84,7 @@ impl ImageCache {
                 );
                 return Ok(Arc::clone(&cached.image));
             }
-            // The append-base probe (newest readers only — a stale reader
-            // stays query-local and never inserts, so it never appends).
-            // A linear map walk, but the map is O(1) by the lineage law's
-            // corollary, and this is still a panic-free map operation
-            // under the lock.
+
             let base = (generation == inner.newest)
                 .then(|| {
                     inner
@@ -152,14 +101,11 @@ impl ImageCache {
         };
         self.counters.miss();
 
-        // Build, append, or carry outside the lock.
         let image = match base {
             Some(base) => self.extend(txn, schema, rel, &base)?,
             None => self.build_full(txn, schema, rel)?,
         };
 
-        // An old-generation reader keeps its image query-local: inserting it
-        // would poison the map for nobody (its generation is already evicted).
         if generation < newest {
             crate::obs::event(
                 crate::obs::names::CACHE_QUERY_LOCAL,
@@ -168,25 +114,13 @@ impl ImageCache {
             return Ok(image);
         }
 
-        // The append boundary the NEXT reader would extend from, read in
-        // this same snapshot — one counter get, paid only on the insert
-        // path. Under the one id allocator (R16) the counter is the
-        // relation's: a fresh-keyed relation's boundary is its `Q` next
-        // value (every committed row id sits strictly below it; a later
-        // commit landing UNDER it is the non-tail insert `advance`
-        // evicts on), a fresh-less relation's the `S` high-water.
         let row_id_next = match schema.fresh_mint_field(rel) {
             Some(field) => crate::storage::delta::read_fresh_next(txn, rel, field)?,
             None => txn.catalog().row_id_high_water(rel)?,
         };
 
         let mut inner = cache.lock();
-        // Re-check under the insert lock: a commit may have advanced past
-        // this generation between the first lock and here — inserting
-        // against the stale `newest` would undo the advance one entry at
-        // a time and leak the image until the next state-changing commit.
-        // The base entry stays untouched on this path: if the commit was
-        // delete-free for `rel` it is still the lineage-lawful base.
+
         if generation < inner.newest {
             return Ok(image);
         }
@@ -196,8 +130,7 @@ impl ImageCache {
                     crate::obs::names::CACHE_ADOPT,
                     crate::obs::TraceArgs::Count(u64::from(rel.0)),
                 );
-                // The winner already replaced the base in its own
-                // critical section — nothing to remove.
+
                 Ok(Arc::clone(&winner.get().image))
             }
             std::collections::hash_map::Entry::Vacant(slot) => {
@@ -205,15 +138,7 @@ impl ImageCache {
                     image: Arc::clone(&image),
                     row_id_next,
                 });
-                // The insert supersedes EVERY older entry of its relation
-                // — the same critical section, so no entry outlives the
-                // next insert above it (the lineage law's corollary).
-                // Removing only the probed base would strand one entry
-                // per commit-epilogue race won (a full build whose
-                // snapshot ran ahead of `newest` probes no base),
-                // monotone forever on a never-deleted relation; sweeping
-                // is always sound — map entries are pure caches, and
-                // pinned readers keep their `Arc`s.
+
                 inner.map.retain(|&g, _| g >= generation);
                 Ok(image)
             }
@@ -221,7 +146,7 @@ impl ImageCache {
     }
 
     /// The from-scratch arm: one full LMDB scan and decode, exactly the
-    /// pre-lineage miss path.
+
     fn build_full(
         &self,
         txn: &ReadTxn<'_>,
@@ -238,9 +163,6 @@ impl ImageCache {
         Ok(image)
     }
 
-    /// The lineage arms over a surviving base: carry-forward, append, or
-    /// typed corruption, decided by this snapshot's row count. Returns
-    /// the image; the insert path's per-relation sweep retires the base.
     fn extend(
         &self,
         txn: &ReadTxn<'_>,
@@ -252,18 +174,14 @@ impl ImageCache {
         let claimed = catalog.row_count(rel)?;
         let base_rows = base.image.row_count() as u64;
         let image = match claimed.cmp(&base_rows) {
-            // Only corruption shrinks a delete-free relation's count —
-            // hard error, never a skip (`append` types the same arm for
-            // a count that shrank between the probe and its own read;
-            // one snapshot, so the two reads agree by construction).
+
             std::cmp::Ordering::Less => {
                 return Err(Error::Corruption(CorruptionError::RowCountMismatch {
                     relation: rel,
                     stored: claimed,
                 }));
             }
-            // Zero new rows and images are immutable: the same `Arc`,
-            // re-keyed at the reader's generation.
+
             std::cmp::Ordering::Equal => {
                 self.counters.carry();
                 crate::obs::event(
@@ -272,8 +190,7 @@ impl ImageCache {
                 );
                 Arc::clone(&base.image)
             }
-            // New rows: fresh frame, per-column prefix copy, tail decode
-            // from the base's append boundary.
+
             std::cmp::Ordering::Greater => {
                 let mut span = crate::obs::span_args(
                     crate::obs::names::IMAGE_APPEND,
@@ -288,10 +205,6 @@ impl ImageCache {
         Ok(image)
     }
 
-    /// The virtual branch: the synthesized image of a closed relation,
-    /// built into its `OnceLock` slot on first touch. Losers of an init
-    /// race block on the winner's synthesis (`OnceLock::get_or_init`) and
-    /// adopt its Arc — exactly one build per slot per process, ever.
     fn get_or_synthesize(
         &self,
         schema: &Schema,
