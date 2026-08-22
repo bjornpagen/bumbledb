@@ -29,7 +29,6 @@ pub enum Flow {
 /// (everything else — bound by ancestor nodes, constant across the
 /// batch).
 pub struct LeafBatch<'a> {
-
     pub keys: &'a [u64],
     pub arity: usize,
 
@@ -43,14 +42,12 @@ pub struct LeafBatch<'a> {
 /// Where a leaf-batch output slot's value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeafSource {
-
     Key(usize),
 
     Outer,
 }
 
 impl LeafBatch<'_> {
-
     #[must_use]
     pub fn source_of(&self, slot: usize) -> LeafSource {
         self.key_slots
@@ -80,7 +77,6 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
 pub trait Sink {
-
     fn emit(&mut self, bindings: &Bindings) -> Flow;
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
@@ -145,7 +141,6 @@ pub enum SkipCapability {
 /// the per-row bookkeeping — binds, journal restores, and leaf emits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinPhase {
-
     Iter,
 
     Hash,
@@ -219,13 +214,11 @@ pub const PHASE_NODE_CAP: usize = 8;
 /// active obs capture.
 #[cfg(feature = "trace")]
 pub struct PhaseTimers {
-
     acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
 
     open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
 
     /// in-cap (node, phase) never reopens before it closes — but every
-
     depth: [[u32; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
 
     emits: u64,
@@ -309,7 +302,6 @@ enum Source {
 
 #[derive(Debug, Clone, Copy)]
 enum CursorSrc {
-
     Cover,
 
     Sibling(usize),
@@ -376,7 +368,6 @@ const PREFETCH_WIDTH_FLOOR: usize = 4;
 /// passes for it).
 #[derive(Default)]
 struct NodeScratch {
-
     entry_keys: Vec<u64>,
 
     children: Vec<Cursor>,
@@ -513,7 +504,6 @@ enum DriveState {
 }
 
 enum Poison {
-
     OriginOverflow,
 }
 
@@ -523,7 +513,6 @@ enum Drive {
 }
 
 struct PipeTables {
-
     entry_level: Vec<Vec<usize>>,
 
     carried: Vec<Vec<usize>>,
@@ -533,14 +522,12 @@ struct PipeTables {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SkipAbsorb {
-
     Root,
 
     Node(usize),
 }
 
 enum AntiProbeForm {
-
     Gate,
     Keyed {
         parts: Vec<(crate::ir::VarId, usize, usize)>,
