@@ -1,13 +1,3 @@
-//! Schema-macro expansion tests (docs/architecture/70-api.md): the
-//! `schema!` macro is exactly sugar — its expansion resolves to the same
-//! validated schema a hand-built [`SchemaDescriptor`] does, statements in
-//! source order with `==` lowered to two adjacent containments (`A <= B`
-//! first) and selection literals typed in the macro (closed-relation
-//! handles as declaration-order row ids).
-//!
-//! The example schema is `docs/architecture/30-dependencies.md`'s, minus
-//! its illustrative `Employment` line (that relation is not declared).
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
@@ -19,9 +9,6 @@ use bumbledb::{Db, Fact, Interval, Value};
 
 mod common;
 
-/// The macro's declared schema, validated — what the assertions inspect.
-/// The engine itself takes [`Ledger`]; validation runs inside
-/// `Db::create`/`Db::open`.
 fn declared() -> bumbledb::Schema {
     use bumbledb::Theory as _;
     Ledger
@@ -66,8 +53,6 @@ fn fresh_field(name: &str) -> FieldDescriptor {
     }
 }
 
-/// `Account(id | kind == Savings)` — the selected side of the `==`, its
-/// handle literal resolved to the declaration-order row id.
 fn savings_accounts() -> Side {
     Side {
         relation: RelationId(2),
@@ -76,7 +61,6 @@ fn savings_accounts() -> Side {
     }
 }
 
-/// `SavingsTerms(account)`.
 fn savings_terms_side() -> Side {
     Side {
         relation: RelationId(3),
@@ -85,7 +69,6 @@ fn savings_terms_side() -> Side {
     }
 }
 
-/// The same declaration, hand-built through the descriptor contract.
 fn hand_built() -> bumbledb::schema::Schema {
     SchemaDescriptor {
         relations: vec![
@@ -198,10 +181,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
             }
         })
         .collect();
-    // Materialized order: the two fresh auto-FDs first (Holder.id,
-    // Account.id), then Kind's closed auto-key, then the declared
-    // statements in source order — the `==` contributing its two
-    // containments adjacently, `A <= B` first.
+
     assert_eq!(descriptors.len(), 8);
     assert_eq!(
         descriptors[0],
@@ -279,8 +259,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
 
 #[test]
 fn the_equality_pair_seals_mirror_links() {
-    // The macro's `==` lowers to ids 5 and 6, which seal pointing at each
-    // other; every FD and the one-way containments carry `None`.
+
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
@@ -305,7 +284,7 @@ fn the_equality_pair_seals_mirror_links() {
 
 #[test]
 fn fact_structs_carry_host_types() {
-    // interval<i64> without `as`: the fact field is the raw engine value.
+
     let account = Account {
         id: AccountId(1),
         holder: HolderId(2),
@@ -329,17 +308,14 @@ fn fact_structs_carry_host_types() {
 
 #[test]
 fn fact_and_key_structs_are_value_types() {
-    // Every field kind the macro can emit is `Copy + Eq + Hash` by
-    // construction (borrows for `str`, owned `[u8; N]`, `Interval<T>`,
-    // newtypes), so the generated fact and key structs carry the free
-    // derives their newtype and host-enum siblings already have — a
+
     // decoded fact is a value: reusable after insertion, set-member,
-    // totally comparable.
+
     let holder = Holder {
         id: HolderId(2),
         name: "alice",
     };
-    let copied = holder; // Copy, not Clone — `holder` stays usable.
+    let copied = holder; 
     assert_eq!(holder, copied);
     let key = SavingsTermsByAccount {
         account: AccountId(1),
@@ -365,8 +341,7 @@ fn typed_round_trip_through_fact_bytes() {
         kind: Kind::Checking.id(),
         active: Interval::<i64>::new(-100, 100).expect("nonempty"),
     };
-    // Write the holder + account (interning the string through the delta),
-    // then decode back through a snapshot.
+
     db.write(|tx| {
         tx.insert([&Holder {
             id: HolderId(3),
@@ -379,7 +354,7 @@ fn typed_round_trip_through_fact_bytes() {
     .unwrap();
 
     db.read(|snap| {
-        // encode_probe finds the committed interned values now.
+
         let mut bytes = Vec::new();
         assert!(matches!(
             original.encode_probe(snap, &mut bytes).expect("encode"),
@@ -388,7 +363,6 @@ fn typed_round_trip_through_fact_bytes() {
         let decoded = Account::decode(snap, &bytes).expect("decode");
         assert_eq!(decoded, original);
 
-        // A never-interned value reports itself instead of encoding.
         let ghost = Holder {
             id: HolderId(9),
             name: "nobody",
@@ -405,10 +379,7 @@ fn typed_round_trip_through_fact_bytes() {
 
 #[test]
 fn id_constants_are_declaration_order_named_data() {
-    // The macro emits declaration-order id constants on the theory
-    // (docs/architecture/70-api.md § id constants): per relation, per
-    // field — the Rust host never writes a magic number into an
-    // `ir::Query`.
+
     assert_eq!(Ledger::KIND, RelationId(0));
     assert_eq!(Ledger::HOLDER, RelationId(1));
     assert_eq!(Ledger::ACCOUNT, RelationId(2));
@@ -419,18 +390,14 @@ fn id_constants_are_declaration_order_named_data() {
     assert_eq!(Ledger::ACCOUNT_KIND, FieldId(2));
     assert_eq!(Ledger::ACCOUNT_ACTIVE, FieldId(3));
     assert_eq!(Ledger::SAVINGS_TERMS_RATE_BPS, FieldId(1));
-    // The vocabulary's numbers live on the host enum (no per-handle
-    // constants exist): the weld is `id`/`from_id`.
+
     assert_eq!(Kind::Checking.id(), KindId(0));
     assert_eq!(Kind::Savings.id(), KindId(1));
 }
 
 #[test]
 fn the_manifest_is_the_constants_runtime_twin() {
-    // The manifest (docs/architecture/70-api.md § the manifest): the
-    // same numbers as plain data, reachable from the theory, for hosts
-    // that cannot see Rust constants. No serde anywhere — the value is
-    // the surface.
+
     use bumbledb::Theory as _;
     let manifest = Ledger.manifest();
     assert_eq!(manifest.relations.len(), 4);
@@ -440,8 +407,7 @@ fn the_manifest_is_the_constants_runtime_twin() {
     let kind = &account.fields[2];
     assert_eq!(&*kind.name, "kind");
     assert_eq!(kind.id, Ledger::ACCOUNT_KIND);
-    // The reference field is structurally a u64; the vocabulary rides
-    // the closed relation's extension table, row id = declaration index.
+
     assert_eq!(kind.value_type, ValueType::U64);
     let vocabulary = &manifest.relations[0];
     assert_eq!(&*vocabulary.name, "Kind");
@@ -468,8 +434,7 @@ mod interval_newtype {
 
     #[test]
     fn interval_as_newtype_wraps_the_interval() {
-        // The generated newtype wraps `Interval<i64>`; the fact struct
-        // carries it (and the raw engine value where `as` is absent).
+
         let booking = Booking {
             room: RoomId(7),
             active: ActiveDuring(Interval::<i64>::new(-10, 20).expect("nonempty")),
@@ -477,8 +442,7 @@ mod interval_newtype {
         };
         assert_eq!(booking.active.0.start(), -10);
         assert_eq!(booking.active.0.end(), 20);
-        // Both fields are interval-typed in the descriptor, and the schema
-        // passes validation (the FD's one interval is its last position).
+
         let schema = {
             use bumbledb::Theory as _;
             Bookings
@@ -532,7 +496,7 @@ mod selection_literals {
                 .validate()
                 .expect("the declared schema is valid")
         };
-        // Statement 0 is Sensor.id's fresh auto-FD; 1 is the containment.
+
         let StatementView::Containment(_, statement) = schema.statement(StatementId(1)) else {
             panic!("the declared statement is a containment");
         };
@@ -584,11 +548,6 @@ mod selection_literals {
 }
 
 mod fixed_bytes_host_type {
-    //! `bytes<N>` emits `[u8; N]` — owned, `Copy`, lifetime-free — and
-    //! takes `as NewType` (order-free, like interval newtypes: a
-    //! digest's lexicographic order is an encoding artifact). The typed
-    //! round-trip goes fact → canonical bytes → fact with zero
-    //! dictionary traffic.
 
     use bumbledb::{Db, Fact as _};
 
@@ -626,12 +585,10 @@ mod fixed_bytes_host_type {
             Ok(())
         })
         .expect("scan");
-        // The newtype is Copy and order-free; the value round-trips
-        // by identity.
+
         let copied: ContentHash = original.hash;
         assert_eq!(copied, ContentHash(digest));
-        // The bytes<32> key determinants writes: a second object under the
-        // same hash is a functionality violation.
+
         let _ = crate::common::expect_rejected(db.write(|tx| {
             tx.insert([&Object {
                 id: ObjectId(2),
@@ -640,8 +597,7 @@ mod fixed_bytes_host_type {
             }])?;
             Ok(())
         }));
-        // encode_probe is infallible for bytes<N> (no dictionary miss
-        // exists for an inline value).
+
         db.read(|snap| {
             let mut bytes = Vec::new();
             assert!(matches!(
@@ -657,9 +613,6 @@ mod fixed_bytes_host_type {
 }
 
 mod two_schemas_per_module {
-    //! Two `schema!` invocations coexist in one module — their `pub Name;`
-    //! headers disambiguate (the old one-invocation-per-module limit died
-    //! with the magic `schema()` constructor).
 
     use bumbledb::Db;
 
@@ -698,15 +651,6 @@ mod two_schemas_per_module {
 }
 
 mod closed_relations {
-    //! The emission (`docs/architecture/70-api.md` § the `schema!`
-    //! grammar): closed relations declare their extension in the schema.
-    //! The host enum is an emission, not a type — the engine's vocabulary
-    //! is relational, projected into a Rust enum so rustc's pattern
-    //! checking keeps working; the weld test pinning `id`/`from_id` is
-    //! EMITTED per closed relation (`__bumbledb_weld_status`,
-    //! `__bumbledb_weld_kind` — running in this very module), so it cannot
-    //! be forgotten for a new theory. No fact struct and no `Fact` impl
-    //! exist for `Status`/`Kind` — closed relations are unwritable.
 
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, RelationId, Row, StatementId, StatementView};
@@ -733,27 +677,19 @@ mod closed_relations {
         Submission(kind | status == Frozen) <= Kind(id | mastered == true);
     }
 
-    /// The two grammar tiers expand, and the emitted descriptor
-    /// round-trips through `validate()` — the tie to the declaration
-    /// roster.
     #[test]
     fn the_two_tiers_expand_and_validate() {
         Review
             .descriptor()
             .validate()
             .expect("the declared schema is valid");
-        // And through the real boundary: `Db::create` validates and
-        // fingerprints the same descriptor.
+
         let dir = crate::common::TempDir::new("macro-closed-relations");
         Db::create(dir.path(), Review)
             .expect("create")
             .expect("accepted");
     }
 
-    /// The descriptor carries the extension: ground axioms in declaration
-    /// order, values through the same literal machine as statement
-    /// selections (declared columns only — the synthetic id is
-    /// `validate()`'s to prepend).
     #[test]
     fn the_descriptor_carries_the_extension() {
         let descriptor = Review.descriptor();
@@ -782,25 +718,20 @@ mod closed_relations {
         assert_eq!(descriptor.relations[2].extension, None);
     }
 
-    /// A bare handle in a selection resolves through the field's newtype
-    /// to its owning closed relation's declaration-order row id; the
-    /// synthetic id field is addressable as `id` — `FieldId(0)` — on both
-    /// statement sides.
     #[test]
     fn handles_resolve_to_declaration_order_row_ids() {
         let schema = Review
             .descriptor()
             .validate()
             .expect("the declared schema is valid");
-        // Materialized order: Submission.id's fresh auto-FD, the two
-        // closed auto-keys (Status, Kind), then the declared containments.
+
         assert_eq!(schema.keys().len() + schema.containments().len(), 5);
         let StatementView::Containment(_, statement) = schema.statement(StatementId(4)) else {
             panic!("the second declared statement is a containment");
         };
         let source = &statement.source;
         let target = &statement.target;
-        // `Submission(kind | status == Frozen)` — Frozen is row id 1.
+
         assert_eq!(source.relation, Review::SUBMISSION);
         assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);
         assert_eq!(
@@ -810,8 +741,7 @@ mod closed_relations {
                 bumbledb::schema::LiteralSet::One(Value::U64(1))
             )]
         );
-        // `Kind(id | mastered == true)` — the synthetic id at FieldId(0),
-        // the declared column shifted to FieldId(1).
+
         assert_eq!(target.relation, Review::KIND);
         assert_eq!(target.projection[..], [FieldId(0)]);
         assert_eq!(
@@ -823,8 +753,6 @@ mod closed_relations {
         );
     }
 
-    /// The id constants see the sealed shape: the synthetic id at
-    /// `FieldId(0)`, declared columns shifted.
     #[test]
     fn id_constants_address_the_sealed_field_list() {
         assert_eq!(Review::STATUS, RelationId(0));
@@ -836,17 +764,13 @@ mod closed_relations {
         assert_eq!(Review::SUBMISSION_STATUS, FieldId(1));
     }
 
-    /// The host-enum weld, hand-checked (the exhaustive sibling is the
-    /// emitted test): `id`/`from_id` are `const fn` — usable in const
-    /// contexts — and the ids are the declaration-order row ids.
     #[test]
     fn the_host_enum_welds_to_row_ids() {
         const FROZEN: StatusId = Status::Frozen.id();
         assert_eq!(FROZEN, StatusId(1));
         assert_eq!(Kind::from_id(Kind::DirectPass.id()), Some(Kind::DirectPass));
         assert_eq!(Kind::from_id(KindId(2)), None);
-        // The host enum is the constant namespace: matching stays
-        // rustc-checked for exhaustiveness.
+
         let mastered = match Kind::Failed {
             Kind::DirectPass => true,
             Kind::Failed => false,
@@ -854,8 +778,6 @@ mod closed_relations {
         assert!(!mastered);
     }
 
-    /// The manifest carries the extension — the vocabulary as plain data,
-    /// for foreign surfaces that take their numbers as values.
     #[test]
     fn the_manifest_carries_the_extension() {
         let manifest = Review.manifest();
@@ -867,8 +789,7 @@ mod closed_relations {
         assert_eq!(rows[1].id, 1);
         assert!(rows[1].values.is_empty());
         let kind = &manifest.relations[1];
-        // The field list opens with the synthetic id the sealed schema
-        // answers to.
+
         assert_eq!(&*kind.fields[0].name, "id");
         let rows = kind.extension.as_ref().expect("Kind is closed");
         assert_eq!(rows[0].values[..], [("mastered".into(), Value::Bool(true))]);
@@ -878,13 +799,6 @@ mod closed_relations {
 
 mod closed_column_accessors {
     //! Declared columns project too (ruled 2026-07-23, R14 —
-    //! `docs/architecture/70-api.md` § the emission per closed
-    //! relation): per declared column the host enum carries a `const`
-    //! accessor in the `id()` style, rendered from the same typed
-    //! ground-axiom literals that seed the engine's extension — host and
-    //! engine cannot drift by construction, and reading an
-    //! expansion-time constant through a runtime query is the workaround
-    //! the accessors delete.
 
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
@@ -906,14 +820,9 @@ mod closed_column_accessors {
         };
     }
 
-    /// Every legal column kind projects as a const accessor; newtyped
-    /// columns return the newtype (a handle-typed column returns the
-    /// referenced handle newtype — the row id, exactly as the extension
-    /// stores it); and the declaring schema stays engine-valid.
     #[test]
     fn every_column_projects_as_a_const_accessor() {
-        // Const-evaluable by construction (R14): both bindings prove the
-        // accessors are `const fn`, so they lead the scope.
+
         const RANK: u64 = Plan::Pro.rank();
         const WINDOW: PlanWindow = Plan::Basic.window();
         Fleet
@@ -931,12 +840,6 @@ mod closed_column_accessors {
 }
 
 mod discriminated_union {
-    //! PRD 05's survival criterion: the discriminated-union pattern
-    //! (docs/cookbook.md recipe 2) with its arms discriminated by a
-    //! closed reference — the discriminator's type change (inline enum →
-    //! closed relation) left the DU theorems intact: totality and arm
-    //! validity are the same `==` statement over `kind == Det`, now a
-    //! row-id selection.
 
     use bumbledb::Db;
 
@@ -955,13 +858,12 @@ mod discriminated_union {
 
     #[test]
     fn the_du_pattern_survives_the_closed_discriminator() {
-        // The theory validates through the real boundary.
+
         let dir = crate::common::TempDir::new("macro-du-closed");
         let db = Db::create(dir.path(), Graph)
             .expect("the DU theory validates")
             .expect("accepted");
 
-        // Arm-consistent: the Det parent and its arm row in one commit.
         db.write(|tx| {
             let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Parent {
@@ -974,7 +876,6 @@ mod discriminated_union {
         .expect("a Det parent with its arm commits")
         .unwrap();
 
-        // Arm-violating: a Det parent with no arm row — totality aborts.
         let _ = crate::common::expect_rejected(db.write(|tx| {
             let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Parent {
@@ -984,7 +885,6 @@ mod discriminated_union {
             Ok(())
         }));
 
-        // The other arm's parent is unconstrained by the Det statement.
         db.write(|tx| {
             let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Parent {
@@ -999,9 +899,6 @@ mod discriminated_union {
 }
 
 mod invalid_declaration {
-    //! Semantic validation lives in `Db::create`/`Db::open`, not the
-    //! macro: a declaration the grammar accepts but the acceptance gate
-    //! refuses surfaces as the typed `SchemaError` — no panic path.
 
     use bumbledb::Db;
     use bumbledb::error::{SchemaError, StatementErrorKind};
@@ -1091,7 +988,7 @@ mod keyed_equality {
         relation Target { x: u64, y: i64, z: bool, weight: i64 }
 
         Source(a, b, c) -> Source;
-        // Same exact target field set, deliberately declared in another order.
+
         Target(z, x, y) -> Target;
         Source(a, b, c) == Target(x, y, z);
     }
@@ -1119,7 +1016,6 @@ mod keyed_equality {
             .expect("both projected products resolve to declared keys")
             .expect("accepted");
 
-        // Forward existence: Source's projected tuple has no Target witness.
         assert_containment(
             db.write(|tx| {
                 tx.insert([&Source {
@@ -1132,7 +1028,6 @@ mod keyed_equality {
             StatementId(2),
         );
 
-        // Reverse existence: Target's projected tuple has no Source witness.
         assert_containment(
             db.write(|tx| {
                 tx.insert([&Target {
@@ -1146,8 +1041,7 @@ mod keyed_equality {
         );
 
         // The selected projections correspond; whole facts do not. Their
-        // unprojected payloads even have different structural types, which is
-        // legal because `==` is projected-view equality, not row equality.
+
         db.write(|tx| {
             tx.insert([&Source {
                 a: 7,
@@ -1165,8 +1059,6 @@ mod keyed_equality {
         .expect("one witness on each keyed projection commits")
         .unwrap();
 
-        // Injectivity: another Target fact with the same projected product
-        // but a different payload is rejected by Target's reordered key.
         let violations = crate::common::expect_rejected(db.write(|tx| {
             tx.insert([&Target {
                 x: 7,
@@ -1245,11 +1137,6 @@ mod redundant_superkey_enforcement {
 }
 
 mod extension_forms {
-    //! The dependency-vocabulary extension's grammar: literal-set
-    //! selections and the capacity statement — B-family, target-left
-    //! (`Parent(key) <={lo..hi} Child(field)`, `{lo..*}` the no-ceiling
-    //! floor, `{n}` the exact measure; absent bracket = unit weight,
-    //! the count instance) (`docs/architecture/30-dependencies.md`).
 
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{Bound, LiteralSet, StatementDescriptor, StatementView, Weight};
@@ -1279,20 +1166,13 @@ mod extension_forms {
         Parent(id) <={0} Task(parent | state == 9);
     }
 
-    /// The macro lowers every extension form, target-left: the LEFT side
-    /// lands as the descriptor's `target`, the set selection as
-    /// `LiteralSet::Many`, and each canonical window spelling as its one
-    /// `(lo, hi)` — `{lo..*}` = no ceiling, `{n}` = `lo = hi = n`,
-    /// `{0}` = the exclusion. The bare `<={lo..hi}` spelling is the unit
-    /// weight — the count instance, pinned explicitly.
     #[test]
     fn the_extension_forms_lower_and_validate() {
         let schema = Tracker
             .descriptor()
             .validate()
             .expect("the declared schema is valid");
-        // Materialized order: Parent.id's fresh auto-key, Priority's
-        // closed auto-key, then the four declared statements.
+
         assert!(matches!(
             schema.statement(StatementId(2)),
             StatementView::Capacity(_, _)
@@ -1322,9 +1202,6 @@ mod extension_forms {
         assert_eq!(exclusion.hi.to_bound(), Some(Bound::Lit(0)));
     }
 
-    /// The capacity statement's descriptor is target-left as declared:
-    /// the first declared statement's `target` is the written left side,
-    /// and the absent bracket lowers to `Weight::Unit` — a case, not an
     /// absence (ruled 2026-07-24, C4).
     #[test]
     fn the_capacity_descriptor_is_target_left() {
@@ -1346,14 +1223,6 @@ mod extension_forms {
 }
 
 mod capacity_forms {
-    //! The weighted grammar accepts (`docs/architecture/30-dependencies.md`
-    //! § the capacity statement; the cutover's new productions): a column
-    //! weight under a dependent hi bound (`<=[watts]{0..supply}` — C1:
-    //! the bound ident resolves by name against TARGET's whole roster,
-    //! C6: hi slot only), a Duration weight under a literal ceiling
-    //! (C18 refuses only the count-window-vs-Duration-BOUND direction),
-    //! and the weighted floor `<=[w]{1..*}` — legal exactly where the
-    //! unit instance is banned (the per-aggregate ban law).
 
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
@@ -1378,10 +1247,6 @@ mod capacity_forms {
         Pool(id) <=[watts]{1..*} Device(pool);
     }
 
-    /// Every weighted production lowers to its descriptor shape and the
-    /// theory seals: the weight bracket to its `Weight` case, the bound
-    /// ident to `Bound::TargetField` by name against the target's whole
-    /// roster, `Duration(...)` to the interval-measure cases.
     #[test]
     fn the_weighted_forms_lower_and_validate() {
         let descriptor = Grid.descriptor();
@@ -1436,8 +1301,7 @@ mod capacity_forms {
             ]
         );
         let schema = descriptor.validate().expect("the weighted theory seals");
-        // Sealed arena, declaration order: the dependent bound, the
-        // Duration weight, the weighted floor.
+
         let caps = schema.capacities();
         assert_eq!(caps.len(), 3);
         assert_eq!(
@@ -1450,8 +1314,7 @@ mod capacity_forms {
         );
         assert_eq!(caps[2].lo, 1);
         assert_eq!(caps[2].hi.to_bound(), None);
-        // And through the real boundary: `Db::create` validates the same
-        // descriptor.
+
         let dir = crate::common::TempDir::new("macro-capacity-forms");
         bumbledb::Db::create(dir.path(), Grid)
             .expect("create")
@@ -1459,14 +1322,8 @@ mod capacity_forms {
     }
 }
 
-#[allow(non_snake_case)] // the point of the fixture: a FIELD literally named `Duration`
+#[allow(non_snake_case)] 
 mod duration_named_field {
-    //! `Duration` commits to the measure spelling only when the paren
-    //! group FOLLOWS (`parse_weight`'s peek, now mirrored at
-    //! `parse_bound`): a field literally named `Duration` is an
-    //! ordinary ident — a u64 dependent bound `{0..Duration}` and a u64
-    //! weight `[Duration]` both parse as field references, never as a
-    //! truncated `Duration(…)` measure.
 
     use bumbledb::Theory as _;
     use bumbledb::schema::ValidateDescriptor as _;
@@ -1503,11 +1360,6 @@ mod duration_named_field {
 
 mod radix_literals {
     //! Integer literals are rustc's (ruled 2026-07-23, R8): the
-    //! `0x`/`0o`/`0b` radix prefixes and `_` separators are accepted
-    //! uniformly at every integer position — `bytes<N>` and interval
-    //! widths and capacity bounds judge their text at the same seam as
-    //! selection literals, no position with a private dialect
-    //! (`docs/architecture/20-query-ir.md` § integer literals).
 
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{Bound, IntervalElement, LiteralSet, ValueType};
@@ -1526,8 +1378,6 @@ mod radix_literals {
         Parent(id) <={0x2..0b100} Task(parent | state == 0o17);
     }
 
-    /// Widths, capacity bounds, and selection literals all lower through
-    /// the one radix-aware seam, normalized to their numeric values.
     #[test]
     fn every_integer_position_reads_rustc_literals() {
         let descriptor = Radix.descriptor();
@@ -1554,13 +1404,8 @@ mod radix_literals {
 }
 
 mod fixed_width_intervals {
-    //! The Tier-2 literal type end to end: `interval<u64, w>` — the
-    //! width is the type, the encoding is the start
-    //! (`docs/architecture/10-data-model.md` § the admission rule;
+
     //! `lean/Bumbledb/Values.lean: FixedU64.not_ray`). One stored word,
-    //! the derived end feeding membership, Allen, and the measure over
-    //! the same kernels the general type runs — and the pointwise key's
-    //! neighbor probe judging overlap over derived bounds.
 
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
@@ -1583,7 +1428,7 @@ mod fixed_width_intervals {
 
     #[test]
     fn the_width_is_the_type_and_the_encoding_is_the_start() {
-        // The macro spells the family into the descriptor…
+
         let descriptor = Jukebox.descriptor();
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
@@ -1592,8 +1437,7 @@ mod fixed_width_intervals {
                 width: 5
             }
         );
-        // …and the sealed layout stores ONE word for the position:
-        // 8 (playlist) + 8 (slot start) + 8 (track) — the width halving.
+
         let schema = descriptor.validate().expect("valid");
         assert_eq!(schema.relations()[0].layout().fact_width(), 24);
     }
@@ -1616,9 +1460,7 @@ mod fixed_width_intervals {
             Ok(())
         })
         .expect("scan");
-        // A wide value is unrepresentable AT THE TYPE: the typed boundary
-        // reports the mismatch, exactly as the dynamic path's
-        // `value_matches` does — the width is the type.
+
         let err = db
             .write(|tx| {
                 tx.insert([&Slot {
@@ -1635,12 +1477,6 @@ mod fixed_width_intervals {
         );
     }
 
-    /// The width-matched ray at the TYPED boundary: the newtype carries
-    /// a general `Interval<u64>`, so `[MAX-5, MAX)` is constructible —
-    /// width 5 exactly, and a ray. The Q2 bar must reject it here too,
-    /// or the store would hold `start = MAX - 5`, which every later
-    /// read convicts: committed-then-unreadable, the shape a
-    /// regression pin exists for.
     #[test]
     fn a_width_matched_ray_is_rejected_at_the_typed_boundary() {
         let dir = crate::common::TempDir::new("macro-fixed-ray");
@@ -1676,8 +1512,7 @@ mod fixed_width_intervals {
             slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
             track,
         };
-        // Adjacent unit tiles land ([10,15) then [15,20)); another
-        // playlist's overlapping start is a different scalar group.
+
         db.write(|tx| {
             tx.insert([&slot(1, 10, 1)])?;
             tx.insert([&slot(1, 15, 2)])?;
@@ -1686,17 +1521,13 @@ mod fixed_width_intervals {
         })
         .expect("adjacency and cross-group starts are legal")
         .unwrap();
-        // An overlapping fixed value in the same group aborts: the
-        // neighbor probe derives both ends from the type's width.
+
         let _ = crate::common::expect_rejected(db.write(|tx| tx.insert([&slot(1, 12, 4)])));
     }
 
     #[test]
     fn the_key_probe_lane_finds_an_exact_fixed_tuple() {
-        // Pin the whole key (playlist, slot) by constants: classification
-        // takes the key-probe fast lane, whose determinant bytes must be
-        // the stored one-word tail — an exact fixed-interval lookup hits,
-        // a shifted one misses (empty result, never a phantom).
+
         let dir = crate::common::TempDir::new("macro-fixed-key-probe");
         let db = Db::create(dir.path(), Jukebox)
             .expect("create")
@@ -1745,7 +1576,6 @@ mod fixed_width_intervals {
         .expect("key probe");
     }
 
-    /// Q(track) :- Slot(playlist = 1, slot ∋ 12? no — slot covers ?point).
     fn membership_query(point: u64) -> Query {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -1811,8 +1641,6 @@ mod fixed_width_intervals {
         .expect("write")
         .unwrap();
 
-        // Membership: the element-typed literal at the fixed position
-        // reads point membership in the DERIVED [s, s+5)
         // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
         let mut covers_12 = db.prepare(&membership_query(12)).expect("prepare");
         let mut covers_15 = db.prepare(&membership_query(15)).expect("prepare");
@@ -1821,20 +1649,17 @@ mod fixed_width_intervals {
             let answers = snap.execute_collect(&mut covers_12, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 1);
             assert_eq!(answers.get(0, 0), AnswerValue::U64(1));
-            // Half-open at the derived end: 15 belongs to [15, 20) only.
+
             let answers = snap.execute_collect(&mut covers_15, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 1);
             assert_eq!(answers.get(0, 0), AnswerValue::U64(2));
-            // The gap [20, 25) covers nothing.
+
             let answers = snap.execute_collect(&mut covers_20, &[] as &[bumbledb::BindValue])?;
             assert!(answers.is_empty());
             Ok(())
         })
         .expect("membership");
 
-        // Allen over derived bounds: [10,15) meets [15,20) — the classify
-        // kernel reads the image's derived end column. Equality of two
-        // fixed values canonicalizes to Allen(EQUALS) the same way.
         let mut meets = db.prepare(&allen_meets_query()).expect("prepare");
         db.read(|snap| {
             let answers = snap.execute_collect(&mut meets, &[] as &[bumbledb::BindValue])?;
@@ -1857,20 +1682,8 @@ mod fixed_width_intervals {
 }
 
 mod element_domain_typing {
-    //! Q1 locks — element-domain typing at interval positions
-    //! (`docs/architecture/30-dependencies.md` § Q1): the playlist
-    //! recipe VERBATIM — a general `interval<u64>` span exact-partitioned
-    //! (`==`) by `interval<u64, 1>` unit slots, mixed widths meeting at
-    //! the containment's interval position because points carry an
+
     //! element domain and never a width (`lean/Bumbledb/Schema.lean:
-    //! Value.points_one_tag_u64`). Locks: the recipe validates, a tiling
-    //! commits, a gap delta aborts, an overlap delta aborts, and a
-    //! mixed-width Allen query classifies with hand answers. The
-    //! interval faces are BARE, as the cookbook spells them: one newtype
-    //! names one encoding (the width is the type), so a label spanning
-    //! both faces is an expansion error, and the coherence law refuses a
-    //! labeled face against a bare one — cross-width statement pairs are
-    //! structural.
 
     use bumbledb::error::Direction;
     use bumbledb::ir::{
@@ -1903,8 +1716,6 @@ mod element_domain_typing {
         Interval::<u64>::fixed(at, 1).expect("in-domain unit slot")
     }
 
-    /// The tiling delta: one playlist over `[0, 3)` and the three unit
-    /// slots partitioning it, committed together.
     fn tile(db: &Db<Playlists>) -> PlaylistId {
         db.write(|tx| {
             let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
@@ -1926,8 +1737,6 @@ mod element_domain_typing {
         .value
     }
 
-    /// Lock (a), the accepting half: the recipe VALIDATES (mixed widths
-    /// at the `==`'s interval position) and an exact tiling COMMITS.
     #[test]
     fn the_playlist_recipe_validates_and_a_tiling_commits() {
         let dir = crate::common::TempDir::new("macro-q1-tiling");
@@ -1944,9 +1753,6 @@ mod element_domain_typing {
         .expect("scan");
     }
 
-    /// Lock (a), gap: a tiling with a hole — slots at 0 and 2 under a
-    /// `[0, 3)` span — aborts: the span's point 1 has no covering slot
-    /// (the Playlist-side coverage judgment).
     #[test]
     fn a_gap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-gap");
@@ -1983,10 +1789,6 @@ mod element_domain_typing {
         );
     }
 
-    /// Lock (a), overlap: two unit slots at one position (they overlap
-    /// exactly when they collide — width 1) abort through the pointwise
-    /// key's disjointness, the same neighbor probe every fixed-width
-    /// group gets.
     #[test]
     fn an_overlap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-overlap");
@@ -2016,9 +1818,6 @@ mod element_domain_typing {
         );
     }
 
-    /// Lock (a)'s past-the-end sibling: a unit slot outside the span is
-    /// the Slot-side coverage violation — the partition is exact in both
-    /// directions.
     #[test]
     fn a_slot_past_the_span_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-past-end");
@@ -2048,10 +1847,6 @@ mod element_domain_typing {
         );
     }
 
-    /// Lock (b): a mixed-width Allen query CLASSIFIES — `interval<u64, 1>`
-    /// slot against `interval<u64>` span over derived bounds — with hand
-    /// answers per singleton mask: under span `[0, 3)`, slot `[0, 1)`
-    /// STARTS it, `[1, 2)` is DURING it, `[2, 3)` FINISHES it.
     #[test]
     fn a_mixed_width_allen_query_classifies_with_hand_answers() {
         let dir = crate::common::TempDir::new("macro-q1-allen");
@@ -2059,8 +1854,7 @@ mod element_domain_typing {
             .expect("create")
             .expect("accepted");
         tile(&db);
-        // Q(track) :- Playlist(id, span), Slot(playlist = id, slot, track),
-        //             Allen(slot, span, mask).
+
         let query = |mask: AllenMask| {
             Query::single(Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -2084,8 +1878,8 @@ mod element_domain_typing {
                 negated: vec![],
                 conditions: vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen { mask },
-                    lhs: Term::Var(VarId(2)), // slot: interval<u64, 1>
-                    rhs: Term::Var(VarId(1)), // span: interval<u64>
+                    lhs: Term::Var(VarId(2)), 
+                    rhs: Term::Var(VarId(1)), 
                 })],
             })
         };
@@ -2128,12 +1922,6 @@ mod element_domain_typing {
     }
 }
 
-/// The coherence check's PASSING arm, pinned beside its two compile-fail
-/// twins (`tests/schema-compile-fail/statement_newtype_mismatch.rs`,
-/// `statement_newtype_half_labeled.rs`): bare pairs with bare — a
-/// paired-face statement over two UNLABELED columns expands and the
-/// theory seals (`docs/architecture/30-dependencies.md` § the taxonomy
-/// is checked).
 mod newtype_coherence_pass {
     bumbledb::schema! {
         pub BareFaces;
