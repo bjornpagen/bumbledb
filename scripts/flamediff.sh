@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# flamediff.sh — cross-run attribution in one command.
-#
-# Takes two folded profiles (as scripts/flame.sh writes) and renders a
-# differential: a `stack before after` folded file plus a red/blue diff
-# SVG where every frame is colored by how its self time moved — red grew
 # (a regression), blue shrank, drawn on the AFTER profile's widths. Pure
-# text in, SVG out; no capture, no measurement, no build needed. The
-# renderer is scripts/flame.py (no network, no flamegraph.pl).
-#
-# usage: flamediff.sh <before.folded> <after.folded> [name]
-#
-#   before/after   folded files (…/flame/<family>.folded from flame.sh)
-#   name           output stem (default: <after-basename>-vs-<before>)
-#
-# output (BUMBLEDB_FLAME_OUT overrides the base, default bench-out):
-#   <base>/flame/<name>.diff.folded   `stack before after`
-#   <base>/flame/<name>.diff.svg      the red/blue differential
+# <base>/flame/<name>.diff.folded `stack before after`
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
