@@ -35,12 +35,10 @@ fn scan_corruption_aborts_the_build() {
     );
 }
 
-/// The reopen-trust ceiling: a hand-corrupted `S` row count that is
-/// large but plausible (2^40 passes every checked size computation)
-/// exceeds the `_data` entry-count witness and is typed
-/// `CounterDesync` before any slab allocation — never a multi-terabyte
-/// `vec!` / OOM abort. The test returning at all is the process-alive
-/// assertion.
+/// The reopen-trust ceiling: a hand-corrupted `S` row count that is large but
+/// plausible (2^40 passes every checked size computation) exceeds the `_data`
+/// entry-count witness and is typed `CounterDesync` before any slab allocation
+/// — never a multi-terabyte `vec!` / OOM abort.
 #[test]
 fn a_corrupt_row_count_above_the_store_witness_is_counter_desync() {
     const CLAIMED: u64 = 1 << 40;
@@ -61,8 +59,7 @@ fn a_corrupt_row_count_above_the_store_witness_is_counter_desync() {
         Error::Corruption(CorruptionError::CounterDesync { relation, exceeded }) => {
             assert_eq!(relation, R);
             assert_eq!(exceeded.observed, CLAIMED);
-            // The witness over-approximates the 10 real rows (the DBI
-            // spans every namespace) but stays store-sized.
+
             assert!(
                 (10..CLAIMED).contains(&exceeded.ceiling),
                 "witness {}",
