@@ -38,7 +38,6 @@ struct Cached {
 }
 
 pub(crate) struct GenerationCache {
-
     inner: Mutex<GenerationInner>,
 }
 
@@ -118,7 +117,6 @@ impl ImageCache {
 
 #[cfg(feature = "trace")]
 impl ImageCache {
-
     #[must_use]
     pub fn stats(&self) -> stats::CacheStats {
         self.counters.read()
