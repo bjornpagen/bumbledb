@@ -1,5 +1,4 @@
-//! The non-building cache probe (docs/architecture/40-execution.md:
-//! prepare-time statistics peek).
+//! The non-building cache probe.
 
 use std::sync::Arc;
 
@@ -19,20 +18,11 @@ use crate::storage::env::ReadTxn;
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
-    /// The resident image for `rel` at the reader's epoch — **never
-    /// builds** (docs/architecture/40-execution.md: prepare-time statistics peek; a cold
-    /// cache falls back to schema-derived bounds and floors).
-    ///
-    /// The 3-argument form is the bind entry: [`LmdbSource`] mints the
-    /// [`ViewEpoch`] (SPINE-16) and [`Self::peek_at`] matches the slot.
-    ///
+
     /// # Errors
-    ///
-    /// `Lmdb` from the store-generation read on an ordinary slot.
-    ///
+
     /// # Panics
-    ///
-    /// Only on a poisoned cache mutex (a prior panic while holding it).
+
     #[cfg(test)]
     pub fn peek(
         &self,
@@ -43,8 +33,6 @@ impl ImageCache {
         LmdbSource::bind(txn, self).peek(schema, rel)
     }
 
-    /// Slot-dispatched resident probe. Epochs arrive as parameters —
-    /// never re-derived from a raw txn.
     pub(crate) fn peek_at(&self, rel: RelationId, epoch: ViewEpoch) -> Option<Arc<RelationImage>> {
         match (self.slot(rel), epoch) {
             (RelationSlot::Closed(slot), ViewEpoch::Closed) => slot.get().map(Arc::clone),
