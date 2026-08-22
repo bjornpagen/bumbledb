@@ -7,7 +7,6 @@ use super::{GenerationId, META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
     /// # Errors
-
     pub fn generation(&self) -> Result<GenerationId> {
         if let Some(g) = self.generation.get() {
             return Ok(*g);
