@@ -1,11 +1,3 @@
-//! The benchmark and oracle suite for bumbledb
-//! (design authority: `docs/architecture/60-validation.md`).
-//!
-//! Library-first: every capability is a `pub` function here; the binary is
-//! argument parsing plus dispatch. The dependency quarantine
-//! (`docs/architecture/00-product.md`) allows exactly `rusqlite` — JSON,
-//! statistics, argument parsing, and randomness are hand-rolled.
-
 pub mod boost;
 pub mod calendar;
 pub mod capacity;
