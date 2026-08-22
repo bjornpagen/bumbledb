@@ -3,7 +3,6 @@ use super::{
 };
 
 impl Colt {
-
     fn alloc_chunk(&mut self, cap: usize) -> u32 {
         let idx = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
         let start = u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
@@ -21,7 +20,6 @@ impl Colt {
     pub(super) fn append_child(&mut self, child_at: usize, position: u32) {
         match unpack_child(self.buckets[child_at]) {
             Slot::Single(first_position) => {
-
                 let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap));
                 let c = self.chunks[chunk_idx as usize];
                 self.chunk_positions[c.start as usize] = first_position;
