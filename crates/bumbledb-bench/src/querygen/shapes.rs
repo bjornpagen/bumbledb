@@ -4,7 +4,6 @@ use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
 use crate::querygen::{Builder, REPEAT_VAR_PCT};
 
-/// Key-probe-capable relations: (relation, fresh-id field, projectable fields).
 const KEY_PROBE_RELATIONS: &[(RelationId, FieldId, &[FieldId])] = &[
     (ids::HOLDER, ids::holder::ID, &[ids::holder::NAME]),
     (
@@ -41,8 +40,6 @@ const KEY_PROBE_RELATIONS: &[(RelationId, FieldId, &[FieldId])] = &[
     ),
 ];
 
-/// Star satellites: (Posting reference field, relation, projected
-/// payload field) — each satellite joins on its fresh id (field 0).
 const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
     (
         ids::posting::ENTRY,
@@ -57,9 +54,6 @@ const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
     ),
 ];
 
-/// One atom, fresh id bound to a param — or, a fifth of the time, a
-/// param **set** (the point-lookup-over-a-set family) — with 1–2 vars
-/// projected.
 pub(super) fn key_probe(b: &mut Builder, rng: &mut Rng) {
     let idx = usize::try_from(rng.range(KEY_PROBE_RELATIONS.len() as u64)).expect("small");
     let (relation, id, fields) = KEY_PROBE_RELATIONS[idx];
@@ -80,9 +74,6 @@ pub(super) fn key_probe(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// Posting joined to 1–3 of `JournalEntry`/`Account`/`Instrument` on
-/// its reference fields, projecting amount plus each satellite's
-/// payload.
 pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
     let posting = b.add_atom(ids::POSTING);
     let amount = b.bind_var(posting, ids::posting::AMOUNT);
@@ -97,13 +88,7 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
         let projected = b.bind_var(satellite, payload);
         b.find_var(projected);
     }
-    // The wide-scalar projection (a quarter of stars): every remaining
-    // Posting field joins the find list, pushing the projected word
-    // count past 8 — the executor's hoist paths are width-unbounded by
-    // construction (docs/architecture/40-execution.md, scan-fold
-    // pushdown), and the differential oracle keeps that class covered.
-    // Before `repeat_var`, so `at` is a fresh variable, never the
-    // already-projected amount: 9–11 projected words, all scalar.
+
     if rng.chance(1, 4) {
         for field in [
             ids::posting::ID,
@@ -123,7 +108,6 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
     repeat_var(b, rng, posting);
 }
 
-/// Holder ← Account ← Posting (2–3 hops), projecting the ends.
 pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
     let posting = b.add_atom(ids::POSTING);
     let amount = b.bind_var(posting, ids::posting::AMOUNT);
@@ -132,7 +116,7 @@ pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
     let account = b.add_atom(ids::ACCOUNT);
     b.bind(account, ids::account::ID, Term::Var(account_join));
     if rng.chance(1, 2) {
-        // Three hops: through to Holder, projecting its name.
+
         let holder_join = b.bind_var(account, ids::account::HOLDER);
         let holder = b.add_atom(ids::HOLDER);
         b.bind(holder, ids::holder::ID, Term::Var(holder_join));
@@ -145,9 +129,6 @@ pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
     repeat_var(b, rng, posting);
 }
 
-/// Two Posting occurrences equated on `entry`, projecting both amounts
-/// — and, half the time, a cross-atom ordered residual between them
-/// (`x < y` and friends): residual placement and survivor compaction.
 pub(super) fn self_join(b: &mut Builder, rng: &mut Rng) {
     let first = b.add_atom(ids::POSTING);
     let entry = b.bind_var(first, ids::posting::ENTRY);
@@ -167,9 +148,6 @@ pub(super) fn self_join(b: &mut Builder, rng: &mut Rng) {
     repeat_var(b, rng, first);
 }
 
-/// The repeated in-atom variable ([`REPEAT_VAR_PCT`]% of qualifying
-/// Posting atoms): `at` rebound to the `amount` variable — two same-typed
-/// (i64) fields of one atom carrying one variable.
 fn repeat_var(b: &mut Builder, rng: &mut Rng, posting: usize) {
     if !rng.chance(REPEAT_VAR_PCT, 100) {
         return;
@@ -187,14 +165,6 @@ fn repeat_var(b: &mut Builder, rng: &mut Rng, posting: usize) {
     }
 }
 
-/// Any join shape re-projected as group-by + one fold aggregate
-/// (sometimes two); group key = 0–2 of the shape's bound variables.
-/// Aggregate targets cover both integer types: i64 (amount/at) and u64
-/// (the posting's account id — Sum over it is provably bounded: the fold
-/// is over distinct bindings, so any group's sum is at most
-/// postings × accounts ≤ 10⁷ × 5 × 10⁴ = 5 × 10¹¹ ≪ 2⁶³ at every scale,
-/// satisfying the Sum-range rule). A fifth of the time the posting's
-/// bool field joins the group-key candidates.
 pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
     if rng.chance(1, 2) {
         star(b, rng);
@@ -206,7 +176,7 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
         .expect("shape binds amount");
     let at = b.var_at(0, ids::posting::AT).expect("var or fresh");
     if rng.chance(1, 5) {
-        // A bool group-key candidate (registered by bind_var).
+
         let _ = b.var_at(0, ids::posting::RECONCILED);
     }
     let account = b
@@ -235,7 +205,7 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
             },
             Some(amount),
         ),
-        // The u64 targets (account: dense ids, bounded sums).
+
         4 => (
             FindTerm::Aggregate {
                 op: FoldOp::Sum,
@@ -283,9 +253,7 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
         b.find_var(*var);
     }
     b.finds.push(find);
-    // Multi-aggregate finds, a quarter of the time: Count beside any
-    // valued aggregate (always distinct), or Sum(amount) beside Count
-    // when amount stays off the group key.
+
     if rng.chance(1, 4) {
         let amount_term = FindTerm::Aggregate {
             op: FoldOp::Sum,
@@ -301,9 +269,6 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// One order operator, uniformly — applied ONLY to integer-typed
-/// variable pairs by every caller: the (order op, non-integer) matrix
-/// cells are unemittable because no other construction site exists.
 pub(super) fn order_op(rng: &mut Rng) -> CmpOp {
     match rng.range(4) {
         0 => CmpOp::Lt,
