@@ -2,19 +2,18 @@ use std::collections::HashMap;
 
 use super::*;
 
-/// The dense rule (docs/architecture/40-execution.md, extended to sink maps): after a hot
-/// execution inflates capacity, iteration and clearing stay O(len) —
-/// pinned structurally by insertion-order iteration over a
-/// high-water map.
+/// The dense rule: after a hot execution inflates capacity, iteration and
+/// clearing stay O(len) — pinned structurally by insertion-order iteration over
+/// a high-water map.
 #[test]
 fn iteration_is_dense_and_insertion_ordered_after_high_water() {
     let mut map: WordMap<u64> = WordMap::new(1);
-    // The hot execution: 50k entries inflate capacity.
+
     for i in 0..50_000u64 {
         map.get_or_insert_with(&[i], || i);
     }
     assert_eq!(map.len(), 50_000);
-    // The cold execution: clear (O(occupied)) then a handful.
+
     map.clear();
     assert_eq!(map.len(), 0);
     assert_eq!(map.iter().count(), 0, "cleared maps iterate nothing");
@@ -27,7 +26,7 @@ fn iteration_is_dense_and_insertion_ordered_after_high_water() {
         vec![(7, 70), (3, 30), (9, 90)],
         "exactly the occupied entries, in insertion order"
     );
-    // Growth preserves insertion order (re-probed via the dense list).
+
     let mut grown: WordMap<()> = WordMap::new(1);
     for i in (0..100u64).rev() {
         grown.insert(&[i]);
@@ -58,13 +57,10 @@ fn values_accumulate_through_get_or_insert() {
     }
     let mut totals: Vec<(u64, u64)> = map.iter().map(|(k, v)| (k[0], *v)).collect();
     totals.sort_unstable();
-    // Sum of 0..30 split by i % 3.
+
     assert_eq!(totals, vec![(0, 135), (1, 145), (2, 155)]);
 }
 
-/// A rehash never changes the entry count,
-/// so `grow` rewrites the dense list in place — same buffer, same
-/// capacity, insertion order and values intact.
 #[test]
 fn grow_rewrites_the_dense_list_in_place() {
     let mut map: WordMap<u64> = WordMap::new(1);
@@ -101,21 +97,9 @@ fn zero_arity_keys_share_one_group() {
     assert_eq!(map.iter().next().map(|(k, v)| (k.len(), *v)), Some((0, 5)));
 }
 
-/// The tag-byte map is behavior-identical to a
-/// reference model (`HashMap` + insertion-order list) across randomized
-/// operation sequences — inserted flags, values, iteration order,
-/// lengths — including growth boundaries, adversarial equal-low-bits
-/// keys, clear cycles, and every arity in use: all nine monomorph
-/// widths (1 through 8; 0 has its own pin above) plus a dyn-arm
-/// width (9). The window probe rides the same differential: the
-/// reference IS the portable implementation of record.
 #[test]
 fn differential_against_the_reference_model() {
-    // The Miri lane (scripts/miri.sh) interprets this differential;
-    // 2,000 ops × 9 arities × 3 rounds is ~16 interpreter-minutes for
-    // code paths the first few hundred ops already cover (growth from
-    // both hint shapes included), so the interpreted run scales down.
-    // Native runs keep the full sweep.
+
     let ops_per_round: u64 = if cfg!(miri) { 256 } else { 2_000 };
     let mut rng = 0x2468_ACE0_1357_9BDFu64;
     let mut next = move || {
@@ -134,13 +118,12 @@ fn differential_against_the_reference_model() {
             let mut model: HashMap<Vec<u64>, u64> = HashMap::new();
             let mut order: Vec<Vec<u64>> = Vec::new();
             for op in 0..ops_per_round {
-                // Adversarial low-entropy keys: many collisions and
-                // duplicate inserts; occasional extreme words.
+
                 let key: Vec<u64> = (0..arity)
                     .map(|_| match next() % 8 {
                         0 => 0,
                         1 => u64::MAX,
-                        2 => next() << 32, // equal low bits
+                        2 => next() << 32, 
                         _ => next() % 64,
                     })
                     .collect();
@@ -162,7 +145,7 @@ fn differential_against_the_reference_model() {
             let expected: Vec<(Vec<u64>, u64)> =
                 order.iter().map(|k| (k.clone(), model[k])).collect();
             assert_eq!(got, expected, "insertion-order iteration");
-            // Clear cycle: capacity retained, behavior fresh.
+
             map.clear();
             assert_eq!(map.len(), 0);
             assert!(map.insert(&vec![41u64; arity]));
@@ -171,9 +154,9 @@ fn differential_against_the_reference_model() {
     }
 }
 
-/// The mirror invariant: ctrl's tail `WINDOW-1` bytes always equal
-/// its head bytes — through inserts, clears, and growth — so window
-/// loads at high indices see the wrapped slots correctly.
+/// The mirror invariant: ctrl's tail `WINDOW-1` bytes always equal its head
+/// bytes — through inserts, clears, and growth — so window loads at high
+/// indices see the wrapped slots correctly.
 #[test]
 fn the_ctrl_mirror_tracks_the_head() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(1, 4);
@@ -193,8 +176,7 @@ fn the_ctrl_mirror_tracks_the_head() {
         &map.ctrl[..WINDOW - 1],
         "mirror out of sync after clear"
     );
-    // Reclaim writes (inserts landing on stale slots) keep the mirror
-    // in sync too — the generation clear leaves ctrl bytes standing.
+
     for i in 0..200u64 {
         map.insert(&[i.wrapping_mul(0x9E37_79B9_7F4A_7C15)]);
         let capacity = map.values.len();
@@ -206,17 +188,11 @@ fn the_ctrl_mirror_tracks_the_head() {
     }
 }
 
-/// The generation-stamped slot clear (the seen-set estate):
-/// `clear` bumps a counter instead of walking the table — stale slots
-/// probe as empties, reclaim on reinsert, and can never ghost back as
-/// live: not across a generation bump, and not across the u8 stamp
-/// wrap (whose physical reset this sweep crosses twice).
 #[test]
 fn generational_clear_never_ghosts_and_reclaims_warm_slots() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 512);
     for round in 0..600u64 {
-        // Alternating key universes keep stale slots from the other
-        // universe standing in the table at every generation.
+
         let base = (round % 2) * 1_000_000;
         for i in 0..300u64 {
             assert!(map.insert(&[base + i, i]), "round {round}: first sight");
@@ -229,11 +205,6 @@ fn generational_clear_never_ghosts_and_reclaims_warm_slots() {
     }
 }
 
-/// The clear's two regimes, observed structurally: the common clear
-/// touches no ctrl byte (`O(1)` — the 3.4 ms dense walk is gone), the
-/// warm same-universe reinsert drains the stale count back to zero
-/// (slot identity retained), and stale saturation past half the
-/// capacity forces the one physical memset.
 #[test]
 fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(1, 64);
@@ -246,19 +217,17 @@ fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
         "the generation clear leaves ctrl bytes standing"
     );
     assert_eq!(map.stale, 40, "every cleared entry turned stale");
-    // The warm path: the same universe re-lands on its old slots.
+
     for i in 0..40u64 {
         assert!(map.insert(&[i]), "cleared keys are first sights again");
     }
     assert_eq!(map.stale, 0, "same-universe reuse reclaims every slot");
-    // Disjoint universes accumulate stale slots until the threshold
-    // (capacity 256 here: hint 64 × load 3, next power of two) trips
-    // the physical reset on the clear that crosses it.
+
     let mut universe = 1u64;
     loop {
         map.clear();
         if map.stale == 0 {
-            break; // the memset fired
+            break; 
         }
         for i in 0..40u64 {
             map.insert(&[universe * 1_000 + i]);
@@ -270,15 +239,12 @@ fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
         map.ctrl.iter().all(|&c| c == 0),
         "the physical reset emptied every ctrl byte"
     );
-    // Post-reset behavior is fresh.
+
     assert!(map.insert(&[7]));
     assert!(!map.insert(&[7]));
     assert_eq!(map.len(), 1);
 }
 
-/// The presizing gate: a hint covering the workload means ZERO
-/// growth — the map allocated once and never rehashed (now at the
-/// 25% load target).
 #[test]
 fn a_covering_hint_never_grows() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 100_000);
