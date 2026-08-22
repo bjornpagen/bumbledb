@@ -313,14 +313,13 @@ done < <(grep -nEi -- "$purged_spelling" "${purged_docs[@]}" 2>/dev/null || true
 # names file:line and fails the lane. Loud vacuous guard: scanning zero
 # comments is a fail, not a pass.
 #
-# DISABLED until wave 4 (the comment purge must land first). Enable with
-# BUMBLEDB_CENSUS_LANE_I=1.
-if [ "${BUMBLEDB_CENSUS_LANE_I:-}" = "1" ]; then
-  lane_i_scanned=0
-  lane_i_allow=''
-  # Justification roster (exact phrases; empty until wave-4 enablement
-  # records the licensed survivors that still spell a banned token):
-  #   (none yet — wave 4 fills this when the purge is done)
+# Always on after the comment purge (wave 4). Allowlist is empty: no
+# licensed survivor still spells a banned token.
+lane_i_scanned=0
+lane_i_allow=''
+# Justification roster (exact phrases; empty — the purge left no licensed
+# survivors that still spell a banned token):
+#   (none)
 
   banned_tokens=(
     'audit/'
@@ -371,12 +370,9 @@ if [ "${BUMBLEDB_CENSUS_LANE_I:-}" = "1" ]; then
              ! -path '*/.lake/*' ! -path '*/target/*' ! -path '*/node_modules/*' \
              | sort)
 
-  if [ "$lane_i_scanned" -eq 0 ]; then
-    echo "spec-census: FAIL — lane (i) scanned zero comments (vacuous pass)" >&2
-    fail=1
-  fi
-else
-  echo "spec-census: lane (i) comment-hygiene skipped (set BUMBLEDB_CENSUS_LANE_I=1 to enable)"
+if [ "$lane_i_scanned" -eq 0 ]; then
+  echo "spec-census: FAIL — lane (i) scanned zero comments (vacuous pass)" >&2
+  fail=1
 fi
 
 if [ "$fail" -ne 0 ]; then
