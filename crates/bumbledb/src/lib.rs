@@ -44,7 +44,6 @@
 //! ```
 
 #![feature(try_blocks)]
-
 #![feature(portable_simd)]
 
 #[cfg(target_pointer_width = "32")]
@@ -228,7 +227,6 @@ pub(crate) mod testutil {
     pub struct TempDir(PathBuf);
 
     impl TempDir {
-
         pub fn new(tag: &str) -> Self {
             let path =
                 std::env::temp_dir().join(format!("bumbledb-test-{tag}-{}", std::process::id()));
