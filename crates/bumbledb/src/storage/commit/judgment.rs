@@ -53,7 +53,7 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
 /// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
 pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Admission<()>> {
     let obligations = view.plan.incremental_obligations();
-    let mut violations = Vec::new(); 
+    let mut violations = Vec::new();
     check_source(view, &obligations, &mut violations)?;
     check_target(view, &obligations, &mut violations)?;
     check_capacities(view, &obligations, &mut violations)?;
@@ -210,14 +210,12 @@ fn interval_measure(
 /// (membership among the sealed encodings — `lean/Bumbledb/Schema.lean:
 /// Selection.satisfies`, the field's value a MEMBER of the spelled set).
 pub(crate) enum FieldCheck {
-
     One(Box<[u8]>),
 
     AnyOf(Box<[Box<[u8]>]>),
 }
 
 impl FieldCheck {
-
     fn matches(&self, actual: &[u8]) -> bool {
         match self {
             Self::One(literal) => actual == &literal[..],
@@ -227,7 +225,6 @@ impl FieldCheck {
 }
 
 pub(crate) enum SelectionCheck {
-
     Empty,
 
     Compare(Box<[(FieldId, FieldCheck)]>),
@@ -249,7 +246,6 @@ pub(crate) struct Selections<'s> {
 }
 
 impl<'s> Selections<'s> {
-
     pub(crate) fn encode(delta: &'s WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
         Self::encode_with(delta.schema(), &mut |raw| delta.resolve(view, raw))
     }
@@ -343,12 +339,12 @@ fn resolve_encodable(checks: &[EncodableCheck]) -> SelectionCheck {
             .iter()
             .map(|check| match check {
                 EncodableCheck::Encoded { field, bytes } => {
-                    (*field, FieldCheck::One(bytes.clone())) 
+                    (*field, FieldCheck::One(bytes.clone()))
                 }
                 EncodableCheck::EncodedSet {
                     field,
                     alternatives,
-                } => (*field, FieldCheck::AnyOf(alternatives.clone())), 
+                } => (*field, FieldCheck::AnyOf(alternatives.clone())),
             })
             .collect(),
     )
@@ -367,22 +363,20 @@ where
     let mut fields = Vec::with_capacity(compiled.len());
     for check in compiled {
         let (field, encoded): (FieldId, FieldCheck) = match check {
-            CompiledCheck::Encoded { field, bytes } => {
-                (*field, FieldCheck::One(bytes.clone())) 
-            }
+            CompiledCheck::Encoded { field, bytes } => (*field, FieldCheck::One(bytes.clone())),
             CompiledCheck::EncodedSet {
                 field,
                 alternatives,
-            } => (*field, FieldCheck::AnyOf(alternatives.clone())), 
+            } => (*field, FieldCheck::AnyOf(alternatives.clone())),
             CompiledCheck::Interned { field, text } => match resolve(text.as_bytes())? {
-                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id.raw())))), 
+                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id.raw())))),
                 None => return Ok(SelectionCheck::Never),
             },
             CompiledCheck::InternedSet { field, texts } => {
                 let mut alternatives = Vec::with_capacity(texts.len());
                 for text in texts {
                     if let Some(id) = resolve(text.as_bytes())? {
-                        alternatives.push(Box::new(encode_u64(id.raw())) as Box<[u8]>); 
+                        alternatives.push(Box::new(encode_u64(id.raw())) as Box<[u8]>);
                     }
                 }
                 if alternatives.is_empty() {
@@ -469,7 +463,6 @@ pub(super) fn check_source(
         collect(outcome, violations)?;
     }
     for membership in obligations.memberships() {
-
         collect(Ok(membership.check.clone()), violations)?;
     }
     span.set_count(probes);
@@ -522,7 +515,7 @@ impl Ord for AffectedSource<'_> {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 pub(super) fn check_target(
     view: &FinalStateView<'_, '_, '_>,
     obligations: &IncrementalObligations<'_, '_>,
@@ -577,7 +570,6 @@ pub(super) fn check_target(
                         ..
                     },
                 ) => {
-
                     let source_tail = *source_tail;
                     let target_tail = *target_tail;
                     let (ts, te) = interval_words(
@@ -629,7 +621,6 @@ pub(super) fn check_target(
                     }
                 }
                 (Survivors::SealedRows, Enforcement::ScalarProbe { .. }) => {
-
                     if let Some(row) =
                         closed_source_survivor(schema, plan, dependent.containment, determinant)
                     {
@@ -667,9 +658,7 @@ pub(super) fn check_target(
                         break;
                     }
                 }
-                (Survivors::SealedRows, Enforcement::Closed { .. }) => {
-
-                }
+                (Survivors::SealedRows, Enforcement::Closed { .. }) => {}
                 (Survivors::SealedRows, Enforcement::IntervalCoverage { .. }) => {
                     unreachable!("closed sources refuse interval containments at validate")
                 }
@@ -689,7 +678,6 @@ pub(super) fn check_target(
             source.source_row,
         )?;
         if plan.inserts_fact(source.source_rel, fact_bytes.bytes()) {
-
             continue;
         }
         let probe = Probe::of(
@@ -823,7 +811,7 @@ fn closed_source_survivor(
         }
         keys::determinant_image(layout.encoded(&row.fact), key_projection, &mut derived);
         if derived.as_bytes() == determinant {
-            return Some(row.fact.clone()); 
+            return Some(row.fact.clone());
         }
     }
     None
@@ -844,7 +832,6 @@ pub(crate) struct Probe<'a> {
 }
 
 impl<'a> Probe<'a> {
-
     pub(crate) fn of(
         statement: &crate::schema::ContainmentStatement,
         target_check: &'a SelectionCheck,
@@ -891,8 +878,8 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
             catalog,
             schema,
             key: [0; MAX_KEY],
-            fact_scratch: Vec::new(),   
-            parent_scratch: Vec::new(), 
+            fact_scratch: Vec::new(),
+            parent_scratch: Vec::new(),
         }
     }
 
@@ -1057,7 +1044,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                         let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
                             || statement.hi.needs_parent_fact();
                         if !needs_fact {
-
                             let hi = match statement.hi {
                                 SealedBound::Unbounded => BoundCeiling::Unbounded,
                                 SealedBound::Lit(n) => BoundCeiling::Finite(n),
@@ -1071,7 +1057,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                                 self.load_row(statement.target.relation, row_id, true)?;
                                 return Ok(self.capacity_violation(
                                     statement,
-                                    self.parent_scratch.clone().into(), 
+                                    self.parent_scratch.clone().into(),
                                     measure,
                                 ));
                             }
@@ -1113,7 +1099,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         let hi = self.resolve_hi(statement, parent_fact)?;
         let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
         if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
-
             return Ok(self.capacity_violation(
                 statement,
                 self.capacity_payload(statement, parent_key),
@@ -1125,7 +1110,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
 
     fn capacity_payload(&self, statement: &CapacityStatement, parent_key: &[u8]) -> Box<[u8]> {
         match &statement.enforcement {
-            CapacityEnforcement::ScalarProbe { .. } => self.parent_scratch.clone().into(), 
+            CapacityEnforcement::ScalarProbe { .. } => self.parent_scratch.clone().into(),
             CapacityEnforcement::Closed { .. } => {
                 let word: [u8; 8] = parent_key
                     .try_into()
@@ -1138,7 +1123,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                     .closed_rows()
                     .expect("Closed arm resolves only against a closed target");
                 let index = usize::try_from(id).expect("a contained axiom index fits usize");
-                rows[index].fact.clone() 
+                rows[index].fact.clone()
             }
         }
     }
@@ -1265,7 +1250,6 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         if let Some(hit) = self.catalog.greater_or_equal(CatalogMap::Data, seek)?
             && hit.key.starts_with(seek)
         {
-
             return Ok(Some((hit.key.to_vec(), hit.value.to_vec())));
         }
         match self.catalog.lower(CatalogMap::Data, seek)? {
@@ -1293,7 +1277,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
         target_tail: ValueType,
     ) -> Result<Vec<(u64, u64, Vec<u8>)>> {
         let Some((entry_key, entry_value)) = located else {
-            return Ok(Vec::new()); 
+            return Ok(Vec::new());
         };
         let Some((_, _, _)) = (entry_key.len() == full_len)
             .then(|| segment_words(&entry_key, &entry_value, target_tail))
@@ -1303,7 +1287,7 @@ impl<'a, C: CatalogRead> Checker<'a, C> {
                 "U determinant key length",
             )));
         };
-        let mut segments = Vec::new(); 
+        let mut segments = Vec::new();
         let (start, end, _) =
             segment_words(&entry_key, &entry_value, target_tail).expect("length-checked above");
         segments.push((start, end, entry_value));
