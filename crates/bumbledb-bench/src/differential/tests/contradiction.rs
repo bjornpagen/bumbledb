@@ -1,9 +1,3 @@
-//! The contradiction-knob differential (PRD 10): the generator's
-//! poisoned draws must be judged ∅ identically by the engine (the
-//! statically-empty fold prepares them to nothing) and the naive model
-//! (which evaluates them to nothing) — folding is set-preserving by
-//! construction, and a semantic fold would diverge here first.
-
 use bumbledb::{Atom, FindTerm, Query, Rule, Term, Value, VarId};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -19,10 +13,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-/// A small live world — every containment satisfied (all three
-/// currencies backed, references in range), enough rows that an
-/// unpoisoned draw sees data: the emptiness below is the fold's, never
-/// the corpus's accident alone.
 fn base_delta() -> Delta {
     let mut inserts = vec![
         (ids::HOLDER, vec![Value::U64(0), string("h0")]),
@@ -129,9 +119,6 @@ fn contradiction_draws_are_empty_on_both_sides() {
     assert_eq!(summary.commits, 1, "the seed commits");
     assert_eq!(summary.queries, draws.len() as u64);
 
-    // `run` proved parity; emptiness is the point — the model evaluates
-    // every poisoned draw to ∅ by definition, so the engine's folded
-    // plans answered ∅ too.
     for (query, params) in &draws {
         assert!(
             naive
@@ -142,8 +129,6 @@ fn contradiction_draws_are_empty_on_both_sides() {
         );
     }
 
-    // Non-vacuity: the seeded world is visible to an unpoisoned scan —
-    // the emptiness above was the contradictions', not the corpus's.
     let control = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
