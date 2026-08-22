@@ -68,7 +68,6 @@ impl Answers {
     }
 
     /// invariant. The point fast lane's per-cell decode; the finalize
-
     pub(super) fn word_cell(ty: &ValueType, word: u64) -> Cell {
         match ty {
             ValueType::Bool => Cell::Bool(word != 0),
@@ -104,7 +103,6 @@ impl Answers {
     }
 
     /// stored invariant, not a runtime hope: every stored interval was
-
     pub(super) fn interval_cell(element: IntervalElement, start: u64, end: u64) -> Cell {
         match element {
             IntervalElement::U64 => Cell::IntervalU64(
