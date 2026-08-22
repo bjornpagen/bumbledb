@@ -35,8 +35,6 @@ fn parse_scale(raw: &str) -> Result<Scale, String> {
     }
 }
 
-/// A comma-separated scale list; the error names the bad token, an
-/// empty list is rejected.
 fn parse_scale_list(flag: &str, raw: &str) -> Result<Vec<Scale>, String> {
     if raw.is_empty() {
         return Err(format!("`{flag}` needs at least one scale"));
@@ -54,7 +52,6 @@ fn parse_u32(flag: &str, raw: &str) -> Result<u32, String> {
         .map_err(|_| format!("`{flag}` needs an integer, got `{raw}`"))
 }
 
-/// Tries the shared corpus flags; `Ok(true)` = consumed.
 fn corpus_flag(
     corpus: &mut CorpusArgs,
     flag: &str,
@@ -170,12 +167,6 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Trace { corpus, family })
 }
 
-/// The shared world-args walk (`scenarios`, `crud`, `lawful` — one
-/// flag vocabulary, [`ScenarioArgs`]); an unknown flag names `cmd`.
-/// `--alloc` is the one asymmetric flag: the per-query alloc window is
-/// a `scenarios` pass — the write worlds have no alloc mode, and a
-/// flag that parses but does nothing would be a lie, so they refuse it
-/// by name.
 fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, String> {
     let mut args = ScenarioArgs::default();
     while let Some(flag) = tokens.next() {
@@ -258,8 +249,6 @@ fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Storage(args))
 }
 
-/// A comma-separated durability-lane list; unknown lane tokens are
-/// named, an empty list is rejected.
 fn parse_lane_list(flag: &str, raw: &str) -> Result<Vec<DurabilityLane>, String> {
     if raw.is_empty() {
         return Err(format!("`{flag}` needs at least one lane"));
@@ -275,7 +264,6 @@ fn parse_lane_list(flag: &str, raw: &str) -> Result<Vec<DurabilityLane>, String>
         .collect()
 }
 
-/// A comma-separated batch-size list; zero and empty are rejected.
 fn parse_batch_list(flag: &str, raw: &str) -> Result<Vec<u32>, String> {
     if raw.is_empty() {
         return Err(format!("`{flag}` needs at least one batch size"));
@@ -424,11 +412,7 @@ fn parse_churn(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Churn(args))
 }
 
-/// Parses one invocation.
-///
 /// # Errors
-///
-/// A usage message naming the offending token.
 pub fn parse(args: &[String]) -> Result<Cmd, String> {
     let mut tokens = Tokens { args, index: 0 };
     let Some(command) = tokens.next() else {
