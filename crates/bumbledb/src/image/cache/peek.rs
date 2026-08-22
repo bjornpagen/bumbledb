@@ -1,5 +1,4 @@
 //! The non-building cache probe.
-
 use std::sync::Arc;
 
 use crate::image::RelationImage;
@@ -19,7 +18,6 @@ use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
     /// # Errors
-
     /// # Panics
     #[cfg(test)]
     pub fn peek(
