@@ -7,7 +7,6 @@ use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
 impl ImageCache {
-
     /// Entries of dirty relations below `generation` drop — a delete
 
     /// map drop only releases the map's reference — pinned readers keep
