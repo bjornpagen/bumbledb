@@ -4,7 +4,6 @@ import { test } from "node:test"
 import { LawScale, pinBare, pinChain, pinClosed, pinGenerator, pinVocab } from "#test/fixtures/law-scale.ts"
 
 test("the primer-scale fixture constructs and both tiers agree at scale", function scaleGate() {
-
 	assert.ok(pinChain && pinVocab && pinGenerator && pinClosed && pinBare)
 
 	assert.equal(Object.keys(LawScale.relations).length, 40, "40 relations")
