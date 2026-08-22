@@ -244,4 +244,4 @@ export type {
 	ValueTypeSpec,
 	WeightSpec
 }
-export { renderCapacityBound, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }
+export { renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }
