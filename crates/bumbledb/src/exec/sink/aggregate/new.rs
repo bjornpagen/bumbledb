@@ -43,7 +43,6 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 }
 
 impl AggregateSink {
-
     #[cfg(test)]
     #[must_use]
     pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
@@ -134,7 +133,6 @@ impl AggregateSink {
         hint: usize,
         dense_groups: &[u16],
     ) -> Self {
-
         let (finds, measures) = parse_finds(finds, slot_count);
         let scratch_words = slot_count + measures.len();
         let group_spans: Vec<(usize, usize)> = finds
@@ -247,7 +245,6 @@ impl AggregateSink {
             }));
         match &mut self.dedup {
             DedupState::DnfUnion { spans, .. } => {
-
                 spans.clear();
                 spans.extend_from_slice(shared_slots);
             }
@@ -300,7 +297,6 @@ impl AggregateSink {
 
 #[derive(Debug, Clone, Copy)]
 enum DedupRegime<'k> {
-
     Bindings,
 
     Union,
