@@ -1,17 +1,3 @@
-/**
- * The build's platform vocabulary, pinned as a unit (`scripts/platform.ts`):
- * the local-platform derivation (the build must place, link, and smoke-load
- * this host's artifact under `<platform>-<arch>` — the exact name the
- * runtime loader resolves — on EVERY host it can compile on, so a linux
- * build never misfiles its `.so` under the darwin name); the shipped-set
- * single-source pin (`PUBLISH_PLATFORM` === the loader's
- * `SHIPPED_PLATFORMS` === the `.gitignore` carve-out — src cannot import
- * scripts, so the pin is what holds the spellings in lockstep); and the
- * dev-twin manifest derivation (field inheritance from the committed
- * publish manifest by construction — the old hand-written literal had
- * silently dropped `engines`/`repository`/`publishConfig`).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import { describe, test } from "node:test"
@@ -64,12 +50,7 @@ describe("the build's local-platform derivation", function suite() {
 
 describe("the shipped set, single-sourced", function suite() {
 	test("the loader's SHIPPED_PLATFORMS is the build's PUBLISH_PLATFORM", function shippedSetLockstep() {
-		/**
-		 * src cannot import scripts (the packaging boundary), so the shipped
-		 * set is necessarily spelled on both sides — this pin is what holds
-		 * the two spellings in lockstep: adding a platform that edits one and
-		 * not the other fails here.
-		 */
+
 		assert.equal(SHIPPED_PLATFORMS, PUBLISH_PLATFORM)
 	})
 
@@ -104,7 +85,7 @@ describe("the dev-twin manifest derives from the publish manifest", function sui
 			}
 			assert.deepEqual(twin[key], publish[key], `field ${key} must be inherited from the publish manifest verbatim`)
 		}
-		// The exact fields the old hand-written literal silently dropped.
+
 		for (const key of ["version", "engines", "repository", "publishConfig", "main", "files"]) {
 			assert.ok(Object.hasOwn(twin, key), `field ${key} must ride into the dev twin`)
 		}
