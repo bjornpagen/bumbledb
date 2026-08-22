@@ -2,7 +2,6 @@ use super::{Colt, Cursor, KeyCount, NodeState, Positions};
 use crate::image::ColumnView;
 
 impl Colt {
-
     #[cfg(test)]
     #[must_use]
     pub fn arity(&self, level: usize) -> usize {
@@ -80,7 +79,6 @@ impl Colt {
 
     #[inline(always)]
     pub(super) fn position_matches(&self, level: usize, position: u32, key: &[u64]) -> bool {
-
         // arities agree, so the invariant is asserted where the
 
         debug_assert_eq!(key.len(), self.schema_columns[level].len());
