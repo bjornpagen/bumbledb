@@ -1,6 +1,5 @@
-//! `bumbledb-bench`: argument parsing plus dispatch — every capability
-//! lives in the library. Exit codes: 0 ok / gates won; 1 verify mismatch
-//! or gate loss; 2 usage or refusal (each refusal names the remedy).
+//! Exit codes: 0 ok / gates won; 1 verify mismatch or gate loss; 2 usage or
+//! refusal (each refusal names the remedy).
 
 use bumbledb_bench::{cli, driver, families, lanes};
 
@@ -44,8 +43,7 @@ fn main() {
         }
     };
     // The scheduler-boost seam (owner ruling 2026-07-20): one place, for
-    // exactly the measurement-running subcommands, switched by
-    // BUMBLEDB_BENCH_BOOST=1 (default off — ordinary runs never boost).
+
     if cmd.runs_measurements()
         && let Err(message) = bumbledb_bench::boost::engage_from_env()
     {
