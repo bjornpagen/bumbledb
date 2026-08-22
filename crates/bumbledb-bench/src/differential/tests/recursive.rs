@@ -1,14 +1,4 @@
-//! The closure goldens (the shipping law: the oracles landed BEFORE
-//! the evaluator — `docs/architecture/60-validation.md` § the two
-//! oracles): hand-verified reachability answers over a fixed tree and
-//! a fixed cyclic graph, held against every oracle that can run a
-//! Query — the naive interiors-then-rec-then-main eval
-//! ([`NaiveDb::query`]), the `SQLite` recursive lane
-//! ([`translate`] executed against the same facts), and the
-//! ENGINE's reach driver. The recursive conformance corpus
-//! (`crate::conformance`) carries the Lean side
 //! (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`) over the Tiny
-//! worlds.
 
 use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
@@ -23,8 +13,6 @@ use crate::fixture::field;
 use crate::naive::{Delta, NaiveDb, Tuple};
 use crate::translate::{LaneCase, sqlite_expressible_on, translate};
 
-/// The goldens' graph descriptor: `Node(id)`, `Edge(src, dst)` — no
-/// statements (nothing here judges writes; the graphs are fixed data).
 fn graph_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -43,7 +31,6 @@ fn graph_descriptor() -> SchemaDescriptor {
     }
 }
 
-/// The descriptor, validated.
 fn graph_schema() -> bumbledb::Schema {
     graph_descriptor()
         .validate()
@@ -53,19 +40,14 @@ fn graph_schema() -> bumbledb::Schema {
 const NODE: bumbledb::RelationId = bumbledb::RelationId(0);
 const EDGE: bumbledb::RelationId = bumbledb::RelationId(1);
 
-/// The fixed tree, edges child → parent: `0 ← {1, 2}`, `1 ← {3, 4}`,
-/// `2 ← {5}` — closure sizes bounded by depth 2.
 const TREE: [(u64, u64); 5] = [(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
 
-/// The fixed cyclic graph: the 3-cycle `0 → 1 → 2 → 0` with the tail
-/// `2 → 3` — the fixpoint must saturate the cycle and stop.
 const CYCLE: [(u64, u64); 4] = [(0, 1), (1, 2), (2, 0), (2, 3)];
 
 fn v(id: u16) -> Term {
     Term::Var(VarId(id))
 }
 
-/// The transitive closure: rec identity-main, linear, one self-atom.
 fn closure_query() -> Query {
     Query {
         interiors: vec![],
@@ -101,8 +83,6 @@ fn closure_query() -> Query {
     }
 }
 
-/// Main anti-joins the finished rec: `Node(id = x), ¬rec(c1 = x)` —
-/// nodes that are nobody's reachable target.
 fn unreached_query() -> Query {
     let mut query = closure_query();
     match &mut query {
@@ -131,7 +111,6 @@ fn unreached_query() -> Query {
     query
 }
 
-/// The naive model over one fixed graph: nodes 0..n plus the edges.
 fn naive_world(nodes: u64, edges: &[(u64, u64)]) -> NaiveDb {
     let descriptor = SchemaDescriptor {
         relations: vec![
@@ -164,8 +143,6 @@ fn naive_world(nodes: u64, edges: &[(u64, u64)]) -> NaiveDb {
     naive
 }
 
-/// The `SQLite` oracle over the same graph: DDL from the shared
-/// mapping, the fixed facts, the translated `WITH RECURSIVE` executed.
 fn sqlite_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<Tuple> {
     let schema = graph_schema();
     let conn = rusqlite::Connection::open_in_memory().expect("open");
@@ -205,9 +182,6 @@ fn sqlite_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
     rows.map(|row| row.expect("row decodes")).collect()
 }
 
-/// The engine over the same graph: a real store, the query prepared
-/// through `Db::prepare` — [`crate::differential::engine_query`] is
-/// the shared leg.
 fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<Tuple> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let descriptor = SchemaDescriptor {
@@ -250,8 +224,6 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
     }
 }
 
-/// Every oracle that can answer a query, by name — the goldens below
-/// loop over this list, so every oracle answers every case.
 fn oracle_answers(
     nodes: u64,
     edges: &[(u64, u64)],
@@ -288,8 +260,6 @@ fn singletons(expected: &[u64]) -> BTreeSet<Tuple> {
         .collect()
 }
 
-/// The tree closure, verified BY HAND: each node's ancestors up the
-/// two-level tree — 8 pairs, no more.
 #[test]
 fn tree_closure_matches_the_hand_answer_on_every_oracle() {
     let expected = pairs(&[
@@ -307,9 +277,6 @@ fn tree_closure_matches_the_hand_answer_on_every_oracle() {
     }
 }
 
-/// The cyclic closure, verified BY HAND: everyone on the 3-cycle
-/// reaches everyone (self included) plus the tail; the tail reaches
-/// nothing — 12 pairs, and the fixpoint terminates on the cycle.
 #[test]
 fn cyclic_closure_matches_the_hand_answer_on_every_oracle() {
     let expected = pairs(&[
@@ -331,9 +298,6 @@ fn cyclic_closure_matches_the_hand_answer_on_every_oracle() {
     }
 }
 
-/// Empty-store recursion: the fixpoint over zero facts is the empty
-/// set on every oracle — round 0 derives nothing, the first Δ is empty,
-/// and the driver closes without a round.
 #[test]
 fn recursion_over_the_empty_store_is_empty_on_every_oracle() {
     for (oracle, answers) in oracle_answers(0, &[], &closure_query()) {
@@ -344,10 +308,6 @@ fn recursion_over_the_empty_store_is_empty_on_every_oracle() {
     }
 }
 
-/// Negation of the finished rec, verified BY HAND: on the tree the
-/// leaves `{3, 4, 5}` are nobody's reachable target; on the cyclic
-/// graph every node is reached (the cycle reaches itself and the
-/// tail), so the answer is empty.
 #[test]
 fn stratified_negation_matches_the_hand_answers_on_every_oracle() {
     let expected = singletons(&[3, 4, 5]);
@@ -360,11 +320,6 @@ fn stratified_negation_matches_the_hand_answers_on_every_oracle() {
     }
 }
 
-/// Interval-typed interior columns, engine vs naive: a named interior
-/// projects a bound interval variable through its head, and main reads
-/// the interval-typed interior column both ways the validation doc
-/// defines. Engine-vs-naive only: the `SQLite` translator refuses
-/// interval-typed derived columns.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -401,7 +356,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         (1, (3, 12)),
         (2, (3, 12)),
         (2, (20, 30)),
-        (3, (40, u64::MAX)), // the ray `[40, ∞)`
+        (3, (40, u64::MAX)), 
     ];
     let probes = [5u64, 25, 45, 100];
 
