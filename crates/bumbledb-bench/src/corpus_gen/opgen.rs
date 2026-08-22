@@ -1,19 +1,3 @@
-//! The op-stream arm (docs/architecture/60-validation.md § the fuzzing
-//! charter; the crucible packet (git ecec1dc3)): "a legal interaction with
-//! a bumbledb store" reified as a generated op sequence — the flagship
-//! lifecycle fuzz target's generation half. The runner (the `ops` lane
-//! in the detached `fuzz/` crate) replays the sequence against the live
-//! engine with the naive model in lockstep; nothing here knows a
-//! verdict — the generator draws shapes, the two oracles judge
-//! (refusal: a generator that knows the rules can only confirm them).
-//!
-//! The theory is the querygen target ledger (`querygen::target`) so the
-//! query pool comes straight from [`random_query`]; the data world is a
-//! shrunken [`Domains`] drawn per scenario, streamed through the same
-//! [`target::corpus_row`] functions the seeded lanes use — every draw
-//! rides the entropy seam ([`Rng`]), so fuzzer bytes steer the whole
-//! scenario and the byte string IS the reproduction.
-
 use bumbledb::{Query, RelationId, Value};
 
 use crate::naive::{Delta, ParamValue};
@@ -23,64 +7,40 @@ use crate::querygen::{ParamDraw, interval_data, params_for, random_query};
 
 use super::{GenConfig, Rng, Scale};
 
-/// The op alphabet — the ten lifecycle verbs. Collection insert/delete
-/// STAGE facts into a pending delta (`Commit` is the one verb that
-/// judges, `Rollback` the one that abandons). The runner's
-/// model-mapping table (fuzz/src/lib.rs, the `ops` runner) states what
-/// each verb means on the engine and on the naive model.
 #[derive(Debug, Clone)]
 pub enum FuzzOp {
-    /// Stage inserts into the pending delta.
+
     Insert(Delta),
-    /// Stage deletes into the pending delta.
+
     Delete(Delta),
-    /// Stage deletes and inserts together.
+
     Mixed(Delta),
-    /// Send the pending delta through one write transaction — the
-    /// dependency judgment fires here, verdicts compared typed.
+
     Commit,
-    /// Abandon the pending delta: the engine applies it inside a write
-    /// closure and returns `Err` (the documented abandon), the model
-    /// discards it — both sides must be untouched.
+
     Rollback,
-    /// Execute a pooled prepared query with live params.
+
     Execute {
         slot: usize,
         params: Vec<ParamValue>,
     },
-    /// Re-prepare one pool slot from its `Query` — the prepared-state
-    /// lifecycle verb.
+
     Reprepare { slot: usize },
-    /// Read one relation's full contents through a snapshot scan.
+
     ViewRead { relation: RelationId },
     /// Drop the environment and reopen the store from disk (the pending
-    /// delta and the prepared pool die with the env).
+
     Reopen,
-    /// Run the store's own internal auditor.
+
     VerifyStore,
 }
 
-/// One generated lifecycle scenario: the prepared-query pool and the op
-/// sequence over it. `Execute`/`Reprepare` slots index `queries`.
 #[derive(Debug, Clone)]
 pub struct OpScenario {
     pub queries: Vec<Query>,
     pub ops: Vec<FuzzOp>,
 }
 
-/// A whole scenario from one entropy stream, Tiny-bounded: a seed world
-/// (corpus-valid by construction, committed first so later judgments
-/// run against real state), a 1–3 query pool, then 6–24 drawn steps.
-///
-/// One in four scenarios is an **insert streak** (the copy-on-append
-/// direction's stress, `the retired I1 copy-on-append packet (git history)`):
-/// the step alphabet narrows to collection inserts, commits, and reads, so
-/// long chains of delete-free commits — each read at a new generation
-/// extending the previous image rather than rebuilding it — stop being
-/// rare at the general 20-way weighting. Delete and mixed collections are
-/// excluded by the mode, and inserts are delete-free by
-/// construction ([`batch`] filters the closed-case arm's delete cases
-/// out of `Kind::Inserts`), so a streak really is append-on-append.
 pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     let cfg = GenConfig {
         seed: rng.u64(),
@@ -100,23 +60,12 @@ pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     OpScenario { queries, ops }
 }
 
-/// One generated crash scenario (the crucible packet (git ecec1dc3)):
-/// an ops prefix of commit-shaped deltas (each one write transaction)
-/// and ONE victim commit — the commit the crash harness kills at a
-/// drawn crashpoint. The generator draws shapes only; which crashpoints
-/// the victim actually reaches is the engine's business (a delta with
-/// no inserts never lies on the insert-path hooks — the runner's
-/// clean-exit arm owns that case).
 #[derive(Debug, Clone)]
 pub struct CrashScenario {
     pub prefix: Vec<Delta>,
     pub victim: Delta,
 }
 
-/// A crash scenario from one entropy stream, Tiny-bounded: the seed
-/// world as the opening prefix commit (real state on both sides), 0–2
-/// further mixed commits, then an insert-leaning victim (the
-/// namespace-write hooks lie on the insert path).
 pub fn random_crash_scenario(rng: &mut Rng) -> CrashScenario {
     let cfg = GenConfig {
         seed: rng.u64(),
@@ -136,22 +85,9 @@ pub fn random_crash_scenario(rng: &mut Rng) -> CrashScenario {
     CrashScenario { prefix, victim }
 }
 
-/// The deterministic crash-sweep matrix's cell count — the small
-/// ops-prefix matrix every crashpoint is killed against at least once
-/// (the sweep in `fuzz/tests/crash.rs`), never left to fuzzer luck.
 pub const CRASH_MATRIX_CELLS: usize = 3;
 
-/// One deterministic sweep cell: a fixed ops prefix and a victim commit
-/// CONSTRUCTED to lie on every crashpoint's path — accepted by the
-/// judgment (the co-located test pins it against the naive model) and
-/// touching every namespace family (inserts with determinants and edges,
-/// deletes, moved row counts). The victims are whole-world replacements:
-/// delete one complete seed world, insert another — the final state is
-/// exactly the incoming seed world, valid by construction.
-///
 /// # Panics
-///
-/// On a cell index at or beyond [`CRASH_MATRIX_CELLS`].
 #[must_use]
 pub fn crash_matrix_scenario(cell: usize) -> CrashScenario {
     let a = matrix_world_seed(0);
@@ -174,10 +110,6 @@ pub fn crash_matrix_scenario(cell: usize) -> CrashScenario {
     }
 }
 
-/// The sweep's fixed world ladder: strictly growing domains (every axis
-/// differs between steps, so a whole-world replacement always moves at
-/// least one row count — the `mid-write-s` hook's path) with per-step
-/// seeds (so replaced rows genuinely differ, never a no-op delta).
 fn matrix_world_seed(step: u64) -> Delta {
     let accounts = 2 + step;
     let world = Domains {
@@ -198,9 +130,6 @@ fn matrix_world_seed(step: u64) -> Delta {
     seed_world(cfg, &world)
 }
 
-/// A whole-world replacement delta: delete every fact of one seed
-/// world, insert every fact of another — judged against the final
-/// state, which is exactly the incoming world.
 fn replace(from: &Delta, to: Delta) -> Delta {
     Delta {
         deletes: from.inserts.clone(),
@@ -208,9 +137,6 @@ fn replace(from: &Delta, to: Delta) -> Delta {
     }
 }
 
-/// One drawn step — the weighted alphabet. Every verb is reachable
-/// (the co-located coverage test pins it); commits outweigh the rest so
-/// staged batches actually reach the judgment.
 fn step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> FuzzOp {
     match rng.range(20) {
         0..=3 => FuzzOp::Insert(batch(rng, cfg, world, Kind::Inserts)),
@@ -230,12 +156,8 @@ fn step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> Fu
     }
 }
 
-/// One insert-streak step — the narrowed alphabet of the append-chain
-/// scenarios: insert batches and commits dominate, and executions read
-/// between commits (an image extends only when a reader arrives at the
-/// new generation — a chain nobody reads exercises nothing). No delete,
-/// mixed, rollback, or reopen arm: a delete would fork the lineage back
-/// to a rebuild, and a reopen drops the process-local cache — both
+/// No delete, mixed, rollback, or reopen arm: a delete would fork the lineage
+/// back to a rebuild, and a reopen drops the process-local cache — both
 /// well-covered by the general alphabet.
 fn streak_step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> FuzzOp {
     match rng.range(20) {
@@ -249,10 +171,6 @@ fn streak_step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]
     }
 }
 
-/// The scenario's data world: a shrunken domain table in the corpus
-/// ladder's shape ([`Domains::of`]) — small enough that the naive
-/// model's nested loops stay inside the Tiny per-iteration budget,
-/// large enough that every relation has witnesses.
 fn world(rng: &mut Rng) -> Domains {
     let accounts = 2 + rng.range(3);
     let postings = 8 + rng.range(17);
@@ -269,10 +187,6 @@ fn world(rng: &mut Rng) -> Domains {
     }
 }
 
-/// Every writable relation's full corpus stream as ONE delta — valid by
-/// construction (references in-domain, the DU pair and the domain
-/// quantification's backings land together), so the opening commit
-/// establishes real state on both sides.
 fn seed_world(cfg: GenConfig, world: &Domains) -> Delta {
     let mut delta = Delta::default();
     for rel in 0..target::TARGET_RELATIONS {
@@ -293,24 +207,11 @@ enum Kind {
     Mixed,
 }
 
-/// One staged batch of 1–3 facts. A tenth of the facts route through
-/// the closed/judgment write-case generator ([`closed_write_cases`] —
-/// the existing write-case arm, reused whole); the rest draw from the
-/// corpus row functions under the fact policies below.
-///
-/// An "insert" batch really is one: for `Kind::Inserts` the closed-case
-/// arm keeps only its insert cases (it used to inject a delete into a
-/// tenth of the insert batches silently — neutralized so the streak
-/// scenarios' commit chains stay delete-free and genuinely exercise
-/// append-on-append; the delete cases still flow through the delete and
-/// mixed batches).
 fn batch(rng: &mut Rng, cfg: GenConfig, world: &Domains, kind: Kind) -> Delta {
     let mut delta = Delta::default();
     for _ in 0..=rng.range(3) {
         if rng.chance(1, 10) {
-            // The closed-relation surface: closed writes, dangling
-            // handles, roster-cap and ψ-subset misses — all six kinds
-            // (insert kinds only, under `Kind::Inserts`).
+
             let mut cases = closed_write_cases(rng, 6);
             if kind == Kind::Inserts {
                 cases.retain(|case| !case.delete);
@@ -337,14 +238,6 @@ fn batch(rng: &mut Rng, cfg: GenConfig, world: &Domains, kind: Kind) -> Delta {
     delta
 }
 
-/// One insert draw. Policies (the generator owns no validity logic —
-/// each one merely BIASES toward a verdict class, the engine judges):
-/// growth rows just past the world (mostly commit; an import-source
-/// entry pairs its `ImportBatch` sibling half the time, the DU
-/// judgment fires the other half), re-inserts of existing rows
-/// (no-ops), a twisted-seed twin of an existing row (same id, different
-/// payload — the key judgments), and a row drawn against inflated
-/// domains (dangling references — source-unsatisfied containments).
 fn push_insert(rng: &mut Rng, cfg: GenConfig, world: &Domains, delta: &mut Delta) {
     let rel = ordinary_relation(rng);
     let rows = target::corpus_rows(world, rel);
@@ -390,9 +283,6 @@ fn push_insert(rng: &mut Rng, cfg: GenConfig, world: &Domains, delta: &mut Delta
     }
 }
 
-/// One delete draw: an in-world row (a real delete — target-required
-/// containments may fire) or a just-past-the-world row (an absent-fact
-/// no-op), both from the same corpus functions the inserts use.
 fn push_delete(rng: &mut Rng, cfg: GenConfig, world: &Domains, delta: &mut Delta) {
     let rel = ordinary_relation(rng);
     let rows = target::corpus_rows(world, rel).max(1);
@@ -402,9 +292,6 @@ fn push_delete(rng: &mut Rng, cfg: GenConfig, world: &Domains, delta: &mut Delta
         .push((rel, target::corpus_row(cfg, world, rel, i)));
 }
 
-/// One prepared-execution draw: a pool slot plus live params from the
-/// query's own param generator ([`params_for`] — hits, boundaries, and
-/// misses), one of its draws picked per execution.
 fn execute_step(rng: &mut Rng, cfg: GenConfig, queries: &[Query]) -> FuzzOp {
     let slot = index(rng, queries.len());
     let draws = params_for(&queries[slot], rng, cfg);
@@ -416,7 +303,6 @@ fn execute_step(rng: &mut Rng, cfg: GenConfig, queries: &[Query]) -> FuzzOp {
     FuzzOp::Execute { slot, params }
 }
 
-/// One randomized draw as positional [`ParamValue`]s (dense `ParamId`s).
 fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     let len = draw.scalars.len() + draw.sets.len();
     let mut out: Vec<ParamValue> = vec![ParamValue::Scalar(Value::Bool(false)); len];
@@ -429,16 +315,14 @@ fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     out
 }
 
-/// A writable (ordinary) relation. The closed relations are ground
-/// axioms — their write surface is the closed-case arm in [`batch`],
-/// and their contents are schema, not store state, so the view-read
-/// and reopen comparisons range over the ordinary relations.
+/// The closed relations are ground axioms — their write surface is the
+/// closed-case arm in [`batch`], and their contents are schema, not store
+/// state, so the view-read and reopen comparisons range over the ordinary
+/// relations.
 fn ordinary_relation(rng: &mut Rng) -> RelationId {
     RelationId(u32::try_from(rng.range(u64::from(target::TARGET_RELATIONS))).expect("relation id"))
 }
 
-/// References beyond the world's domains — a growth row drawn against
-/// this table mostly dangles.
 fn inflated(world: &Domains) -> Domains {
     Domains {
         postings: world.postings * 4 + 7,
@@ -481,8 +365,6 @@ mod tests {
         }
     }
 
-    /// The arm is deterministic in its entropy: the same byte string
-    /// yields the identical scenario, and a different one steers away.
     #[test]
     fn the_same_bytes_yield_the_same_scenario() {
         let bytes: Vec<u8> = (1..=256u64)
@@ -504,9 +386,6 @@ mod tests {
         );
     }
 
-    /// Every one of the ten verbs is reachable across a modest seed
-    /// sweep — an alphabet with unreachable letters fuzzes less than it
-    /// claims.
     #[test]
     fn the_alphabet_reaches_all_ten_verbs() {
         let mut seen = std::collections::BTreeSet::new();
@@ -544,11 +423,6 @@ mod tests {
         }
     }
 
-    /// An "insert" batch stages no deletes, ever — the closed-case arm's
-    /// silent delete injection is neutralized for `Kind::Inserts` — so an
-    /// insert-streak scenario's commits are delete-free by construction:
-    /// the copy-on-append lineage the streak exists to stress (a single
-    /// stray delete would fork every chain back to a rebuild).
     #[test]
     fn insert_batches_are_delete_free() {
         for seed in 0..256u64 {
@@ -564,12 +438,10 @@ mod tests {
         }
     }
 
-    /// The insert-streak variant is reachable and shaped: across a
-    /// modest seed sweep, some scenario runs a long delete-free commit
     /// chain WITH reads between — at least three commits after the seed
-    /// commit, at least one execution, and no delete/mixed/rollback/
+
     /// reopen verb anywhere. That is the append-on-append stress: each
-    /// post-commit read at a new generation extends the previous image.
+
     #[test]
     fn the_streak_variant_reaches_long_read_interleaved_append_chains() {
         let streaks = (0..256u64)
@@ -600,9 +472,6 @@ mod tests {
         );
     }
 
-    /// The crash arm is deterministic in its entropy, and its victim is
-    /// never empty (an empty victim is the no-op commit — off every
-    /// crashpoint's path by the empty-delta gate).
     #[test]
     fn the_same_bytes_yield_the_same_crash_scenario() {
         let bytes: Vec<u8> = (1..=256u64)
@@ -627,12 +496,6 @@ mod tests {
         }
     }
 
-    /// The sweep matrix's contract, pinned against the naive model:
-    /// every cell's prefix commits are accepted, and every cell's victim
-    /// is accepted AND state-changing (the generation moves) — so all
-    /// ten crashpoints lie on the victim's path, deterministically,
-    /// never by fuzzer luck. Cells past 0 also exercise both delta
-    /// directions.
     #[test]
     fn every_crash_matrix_victim_is_accepted_and_state_changing() {
         for cell in 0..CRASH_MATRIX_CELLS {
