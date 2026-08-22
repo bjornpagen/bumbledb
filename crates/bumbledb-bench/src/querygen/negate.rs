@@ -3,7 +3,6 @@
 //! binding shapes sweep the space: key-covered (a fresh key bound; at most one
 //! witness) and open (non-key bindings over the multiply- witnessed relations —
 //! rejection must not depend on witness count),
-
 use bumbledb::{Term, Value};
 
 use crate::corpus_gen::Rng;
