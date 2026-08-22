@@ -160,8 +160,8 @@ language. **Reverses if:** never — owner axiom.
   **Decision: one store.** **Alternative:** a second no-durability kind with
   its own constructor and on-disk marker. **Why it lost:** no named product
   consumer; TS never had the surface; the niche is tmpfs plus a hidden bench
-  flag. **Reverses if:** the recorded add-back trigger in
-  `proposals/instance-lifetime.md` fires.
+  flag.   **Reverses if:** a named product consumer of mutable-no-durability
+  that tmpfs cannot cover appears.
 
 ## Target hardware
 
@@ -365,7 +365,7 @@ value-type roster is six); *rule program / stored rules* → the host loop over
 prepared queries (queries are host data, assembled per prepare); *magic sets /
 demand transformation* → the host seeds the frontier (`20-query-ir.md` § engine
 recursion).
-Storage-lifecycle purge (each add-back in `proposals/instance-lifetime.md`):
+Storage-lifecycle purge (each add-back names its own trigger):
 *ephemeral store kind* → purged (add-back: a named product consumer of
 mutable-no-durability that tmpfs cannot cover);
 *exhume* → purged (add-back: a real bytes-without-code incident, CLI only);

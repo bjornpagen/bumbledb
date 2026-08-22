@@ -142,11 +142,10 @@ check standalone here. The campaign REBUILT the base definitions
 in-tree (PRDs 02–05) and PORTED the artifact's theorem statements and
 proofs onto them, adapting names to the language law; the census
 (PRD 14) verified every artifact theorem against the tree and retired
-`docs/formal/` — the byte-pinned copy (SHA-256
+the byte-pinned seed (SHA-256
 `e1f09501079feb23ad93be9ab98aeba3b6b5f50a6a84cbbbf78af095c048a576`,
 byte-identical to the source artifact) remains reachable in git
-history forever. The port table lives in
-`docs/prd-covenant/14-census-close.md`; the one recorded semantic
+history forever. The one recorded semantic
 divergence is the empty-global aggregate (the artifact's `sum [] = 0`
 is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
 the artifact's stratification lemma was structurally subsumed at port

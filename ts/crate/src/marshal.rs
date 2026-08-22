@@ -1,6 +1,6 @@
 //! JS ⇄ engine-data marshaling — the whole vocabulary the bridge speaks.
 //!
-//! Direction and shape law (docs/graph-builder-rebirth/prd-04-ffi-surface.md):
+//! Direction and shape law:
 //!
 //! - **Fact cells are natural JS values, schema-directed**: `boolean ⇄ bool`,
 //!   `bigint ⇄ u64/i64` (range-checked, the error names relation and field),
