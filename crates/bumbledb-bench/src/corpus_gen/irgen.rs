@@ -17,7 +17,6 @@ const VAR_SPAN: u64 = 6;
 const PARAM_SPAN: u64 = 4;
 
 pub fn random_query(rng: &mut Rng) -> Query {
-
     if rng.chance(1, 2) {
         return plausible(rng);
     }
@@ -25,7 +24,7 @@ pub fn random_query(rng: &mut Rng) -> Query {
     let rule_count = if rng.chance(1, 32) {
         17 + rng.range(4)
     } else {
-        rng.range(4) 
+        rng.range(4)
     };
     let rules: Vec<Rule> = (0..rule_count).map(|_| random_rule(rng)).collect();
 
@@ -223,7 +222,7 @@ fn random_value(rng: &mut Rng) -> Value {
             let end = match rng.range(4) {
                 0 => start + 1,
                 1 => start + 1 + rng.range(6),
-                2 => u64::MAX, 
+                2 => u64::MAX,
                 _ => start + 2,
             };
             Value::IntervalU64(
@@ -259,9 +258,9 @@ fn random_tree(rng: &mut Rng, depth: u64) -> ConditionTree {
         .map(|_| random_tree(rng, depth - 1))
         .collect();
     if rng.chance(1, 2) {
-        ConditionTree::And(children) 
+        ConditionTree::And(children)
     } else {
-        ConditionTree::Or(children) 
+        ConditionTree::Or(children)
     }
 }
 
