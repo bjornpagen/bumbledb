@@ -33,42 +33,14 @@ import { isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { FactValue } from "#native.ts"
 import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
 
-/**
- * The fresh-mark probe: `true` exactly for a `.fresh`-marked u64 descriptor
- * (the S1 kernel's one structural mark — an unmarked u64's `fresh` property
- * holds the MARKED descriptor, so the probe compares against the literal
- * `true`, never truthiness).
- */
 function isFreshField(field: AnyField): boolean {
 	return "fresh" in field && field.fresh === true
 }
 
-/**
- * The key object `get` reads through. THE PRIMARY-KEY RULE: `get` always
- * reads through the PRIMARY candidate key — the first-declared one in the
- * engine's materialized statement order (fresh-implied keys first, closed
- * auto-keys second, declared `key()` statements last), so a fresh-bearing
- * relation's primary key is always its fresh field. When `R` carries a
- * fresh field the type demands exactly that field; otherwise the primary
- * key lives in the schema's statement list, which the type system cannot
- * see (the schema's statement list is not carried in the schema's type,
- * only in the KeyStatement values themselves), so the type admits any partial fact
- * and the projection is verified at runtime — a missing key field throws
- * naming the projection.
- */
 type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
 	? Partial<Fact<R>>
 	: { [K in FreshKeys<R>]: Fact<R>[K] }
 
-/**
- * Reprojects any host object to a string-indexed record — the boundary
- * through which generic fact objects (whose type parameters carry no index
- * signature) enter the name-directed marshaling below, without a cast. An
- * ALLOCATION-FREE IDENTITY (the admission predicate is the type
- * reprojection; the value passes through untouched): every consumer
- * downstream — `rowOf`, `keyRowOf`, the query param marshal — only READS
- * properties, so no copy is warranted.
- */
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
 	if (!isStringIndexed(fact)) {
 		throw errors.new("fact object is not string-indexable")
@@ -76,13 +48,6 @@ function recordOf(fact: object): Readonly<Record<string, unknown>> {
 	return fact
 }
 
-/**
- * The trusted admission seam of {@link recordOf}: every JS object IS
- * string-indexable (property reads on absent names yield `undefined`,
- * which every consumer already guards), so the predicate verifies the one
- * checkable fact — objecthood — and admits the value at the indexed type
- * without a copy or a cast.
- */
 function isStringIndexed(value: object): value is Readonly<Record<string, unknown>> {
 	return typeof value === "object" || typeof value === "function"
 }
@@ -106,14 +71,6 @@ function closedCellOf(context: string, closed: ClosedRoster, name: string): Fact
 	return BigInt(id)
 }
 
-/**
- * The read half of the closed bijection: one u64 row id back to its handle
- * NAME (`Number(cell)` is safe — the sealed extension holds at most 256
- * rows, engine law). An id outside the roster THROWS pointed, never a
- * silent fallback and never `undefined`: the state is reachable only in a
- * store whose closed-typed column was never pinned by its containment law,
- * and the error names that missing piece.
- */
 function handleOf(context: string, closed: ClosedRoster, cell: FactValue): string {
 	if (typeof cell !== "bigint") {
 		throw literalShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
@@ -127,17 +84,6 @@ function handleOf(context: string, closed: ClosedRoster, cell: FactValue): strin
 	return handle
 }
 
-/**
- * Marshals one host cell at its field position to the natural wire value,
- * schema-directed by the field descriptor's structural kind (never
- * guessed). A closed-referencing cell arrives as its handle NAME and
- * lowers through {@link closedCellOf} — the arm precedes the switch
- * because a closed reference is structurally a u64 descriptor plus the
- * roster (the same precedence `Infer` pins at the type level). Everything
- * else is bare, so the runtime values ARE the wire's natural JS values;
- * widths and domain labels are the engine's own judgment at the write
- * boundary.
- */
 function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 	const roster = rosterOf(field)
 	if (roster !== undefined) {
@@ -164,13 +110,7 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 			if (typeof value !== "string") {
 				throw literalShapeError(context, "string", value)
 			}
-			/**
-			 * A lone surrogate would be lossily replaced with U+FFFD at the
-			 * bridge's UTF-8 crossing — the stored fact would differ from the
-			 * written one, and distinct JS strings would collapse to one fact.
-			 * The bijection law refuses it here, the one seam every write and
-			 * lookup lowers through.
-			 */
+
 			if (!value.isWellFormed()) {
 				throw literalShapeError(context, "well-formed string", value)
 			}
@@ -191,11 +131,6 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 	}
 }
 
-/**
- * Marshals one complete fact object to its positional row, in field
- * declaration order (= ordinal ids). Every declared field must be present.
- * Mint with `tx.reserve` first; insert takes complete facts.
- */
 function rowOf(relation: RelationData, fact: Readonly<Record<string, unknown>>): FactValue[] {
 	return relation.fields.map(function marshalCell(declared) {
 		const value = fact[declared.name]
@@ -206,12 +141,6 @@ function rowOf(relation: RelationData, fact: Readonly<Record<string, unknown>>):
 	})
 }
 
-/**
- * Marshals a key object through a key statement's projection, in the
- * statement's projection order (what the engine's keyed point reads take).
- * A key field absent from the object throws naming the primary projection
- * (the {@link KeyFact} rule's runtime half).
- */
 function keyRowOf(
 	relation: RelationData,
 	projection: readonly string[],
@@ -234,12 +163,6 @@ function keyRowOf(
 	})
 }
 
-/**
- * The read-side trusted seam: a decoded row carrying every declared field
- * IS a fact of its relation — the engine admitted the row, and the values
- * are BARE structural values, so nothing is asserted beyond presence (no
- * brand exists to re-derive; the store is the proof carrier).
- */
 function isCompleteFact<R extends AnyRelation>(
 	relation: R,
 	decoded: Readonly<Record<string, FactValue>>
@@ -249,13 +172,6 @@ function isCompleteFact<R extends AnyRelation>(
 	})
 }
 
-/**
- * Unmarshals one positional row to the relation's named, frozen fact object
- * of bare structural values — the inverse of {@link rowOf},
- * ordinal-directed by the same declaration order. Closed-referencing cells
- * lift id → handle NAME through {@link handleOf} (the read half of the
- * bijection), so every fact a user sees speaks the roster's vocabulary.
- */
 function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): Fact<R> {
 	const data = relation.data
 	if (row.length !== data.fields.length) {
