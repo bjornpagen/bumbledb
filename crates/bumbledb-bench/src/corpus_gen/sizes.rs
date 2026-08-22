@@ -4,7 +4,6 @@ use crate::corpus_gen::{MANDATE_SEGMENTS, Scale, Sizes};
 use crate::schema::ids;
 
 impl Sizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         let (postings, instruments, orgs): (u64, u64, u64) = match scale {
