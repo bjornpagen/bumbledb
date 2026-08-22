@@ -224,7 +224,7 @@ fn fully_key_bound_single_atom_classifies_as_key_probe() {
     let schema = account_schema();
     let normalized = single(occurrence(
         &[(1, 0), (2, 1)],
-        vec![eq_filter(0, Const::Word(5))], 
+        vec![eq_filter(0, Const::Word(5))],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
     assert!(matches!(
@@ -324,10 +324,7 @@ fn extra_filters_survive_as_remaining() {
     let schema = account_schema();
     let normalized = single(occurrence(
         &[(2, 0)],
-        vec![
-            eq_filter(0, Const::Word(5)),
-            eq_filter(1, Const::Word(7)), 
-        ],
+        vec![eq_filter(0, Const::Word(5)), eq_filter(1, Const::Word(7))],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.remaining_filters, vec![eq_filter(1, Const::Word(7))]);
@@ -469,10 +466,7 @@ fn hit_miss_and_filter_rejection() {
 
     let rejected = single(occurrence(
         &[(1, 0)],
-        vec![
-            eq_filter(0, Const::Word(5)),
-            eq_filter(1, Const::Word(999)), 
-        ],
+        vec![eq_filter(0, Const::Word(5)), eq_filter(1, Const::Word(999))],
     ));
     let plan = classify(&rejected, &schema).expect("key probe");
     assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
@@ -697,4 +691,3 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     .expect("execute");
     assert_eq!(sink.into_answers().expect("rows"), vec![vec![1]]);
 }
-
