@@ -39,7 +39,6 @@ const MAX_ANSWER_ROWS: usize = 512;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Report {
-
     pub attempted: u64,
 
     pub written: u64,
@@ -54,7 +53,6 @@ pub struct Report {
 }
 
 impl Report {
-
     #[must_use]
     pub fn coverage_line(&self) -> String {
         format!(
@@ -88,7 +86,6 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-
         // a concurrent or wedged prior run collide on the LMDB flock.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -124,7 +121,7 @@ pub fn build_world(seed: u64) -> World {
         let rel = RelationId(rel);
         match rel {
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
-            target::ids::IMPORT_BATCH => {} 
+            target::ids::IMPORT_BATCH => {}
             _ => {
                 db.write(|tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
@@ -210,7 +207,6 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
 }
 
 impl World {
-
     fn intern(&mut self, value: &Value) {
         if let Value::String(bytes) = value
             && !self.dict.contains_key(bytes)
@@ -1204,7 +1200,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         bumbledb::Interval::<i64>::new(i64::MIN, i64::MAX - 1).expect("nonempty"),
     );
     vec![
-
         HandCase {
             name: "hand-pack-exact-partition",
             query: Query::single(rule(
@@ -1218,7 +1213,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-
         HandCase {
             name: "hand-empty-global-aggregates",
             query: Query::single(rule(
@@ -1235,7 +1229,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-
         HandCase {
             name: "hand-negation-untagged",
             query: Query::single(rule(
@@ -1252,7 +1245,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-
         HandCase {
             name: "hand-union-overlapping-rules",
             query: Query {
@@ -1289,7 +1281,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             },
             params: vec![],
         },
-
         HandCase {
             name: "hand-membership-var",
             query: Query::single(rule(
@@ -1313,7 +1304,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-
         HandCase {
             name: "hand-membership-literal",
             query: Query::single(rule(
@@ -1331,7 +1321,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-
         HandCase {
             name: "hand-interval-param-equality",
             query: Query::single(rule(
@@ -1350,7 +1339,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 bumbledb::Interval::<i64>::new(m_start, m_end).expect("corpus segments nonempty"),
             ))],
         },
-
         HandCase {
             name: "hand-param-set",
             query: Query::single(rule(
@@ -1371,7 +1359,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 Value::U64(m_account),
             ])],
         },
-
         HandCase {
             name: "hand-closed-join",
             query: Query::single(rule(
