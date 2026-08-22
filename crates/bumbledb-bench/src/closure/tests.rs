@@ -21,7 +21,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 #[test]
 fn the_corpus_shape_is_closed_form() {
     let sizes = ClosSizes::of(Scale::Tiny);
-    assert_eq!(sizes.tree_nodes(), (4u64.pow(4) - 1) / 3); 
+    assert_eq!(sizes.tree_nodes(), (4u64.pow(4) - 1) / 3);
     assert_eq!(sizes.nodes(), 64 + 1 + 85);
     let edges: Vec<Vec<Value>> = relation_rows(sizes, ids::EDGE).collect();
     assert_eq!(edges.len() as u64, sizes.edges());
