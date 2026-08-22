@@ -40,7 +40,7 @@ theorem semiNaive_delta {α : Type u} (T : Set α → Set α) :
 
 /-- **Semi-naive agrees with naive**: iterating on
 `new = T(acc) \ acc` walks exactly the naive chain. Instantiates at
-`T := reachOp C rec self I W ρ`. -/
+`T:= reachOp C rec self I W ρ`. -/
 theorem semi_naive_agrees {α : Type u} (T : Set α → Set α) :
     ∀ k, (semiNaiveIter T k).1 = naiveIter T k
   | 0 => rfl
