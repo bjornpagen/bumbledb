@@ -1,7 +1,6 @@
 //! The durability axis is [`crate::duralane::DurabilityLane`] — the one
 //! `ANALYZE` after load, `wal_checkpoint(TRUNCATE)` after load — then the
 //! pragmas back: a misconfigured twin fails before flattering
-
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
