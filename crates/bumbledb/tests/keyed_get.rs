@@ -110,7 +110,6 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
 /// this test fails if the expansion's statement-id computation is off by one.
 #[test]
 fn keyed_get_statement_ids_survive_mirror_offsets() {
-
     assert_eq!(
         <TaskByKindSubject as Key>::STATEMENT,
         bumbledb::schema::StatementId(6)
