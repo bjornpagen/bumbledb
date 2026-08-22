@@ -47,7 +47,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             anti_probes: Vec::new(),
             point_probes: Vec::new(),
             new_vars,
-            suffix_skip: super::SuffixSkip::Forbidden, 
+            suffix_skip: super::SuffixSkip::Forbidden,
             estimate: node.estimate,
         });
     }
