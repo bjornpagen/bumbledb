@@ -56,6 +56,16 @@ attributed there, not asserted.
   at the put site (`storage/commit/applier.rs`) — restated here because a
   transport proposal predictably resurrects it: the `M` key embeds the
   fact hash, so the stream is never key-ordered, structurally.
+- **u64 arena spans (erasing the 4 GiB transport bound).** Widening the
+  collection's `Cell` spans to u64 removes the bound but doubles the span
+  payload and grows every cell for every workload — a permanent hot-path
+  memory tax paid to serve a >4 GiB-per-relation-per-call size no
+  consumer has ever stated, when the caller-side recovery (split the
+  facts across calls in the same transaction) is semantically free
+  (the transport-bound section of
+  [20-accepted-collection.md](20-accepted-collection.md)). Re-litigate
+  only with a named consumer whose single-relation payload exceeds the
+  envelope and cannot chunk.
 
 ## Coupling (what lands with what)
 

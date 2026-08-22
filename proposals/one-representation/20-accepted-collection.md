@@ -105,6 +105,35 @@ form):
   because the physical form must never become semantic API — the
   upstream report's own words.
 
+## The transport bound (the 4 GiB refusal)
+
+The u32 arena spans that make every cell fixed-width also bound one
+collection's variable-width payload: **each arena — strings, and
+separately bytes — addresses at most u32::MAX ≈ 4 GiB per call.** A push
+that would move an arena past the bound (or a single value longer than
+it) refuses with the typed `FactShapeError::PayloadBound` naming the
+relation — never a panic (ETL input is data; the no-panics-on-the-import
+ruling in `docs/architecture/70-api.md`), enforced at the ONE seam every
+variable-width byte lands through (`CollectionBuilder::arena_span`,
+`crates/bumbledb/src/api/db/collection.rs`).
+
+The bound is a **transport envelope, not a semantic limit**, and the
+refusal is fully recoverable: split the facts across two or more
+`insert`/`load` calls **in the same transaction or builder**. The
+collection is a transport unit; atomicity lives one level up — a throw
+aborts the whole `db.write`, and the builder is all-or-nothing at
+`admit` — so chunking costs the caller nothing semantically, and every
+per-call law (parse-all-first, exact reports, poison) holds per chunk
+exactly as it held per call. Scale reality: the bound is per relation
+per call; Primer's entire 3,993,828-fact corpus is 1.68 GB across 39
+relations, an order of magnitude under one relation's envelope.
+
+Witnessing the refusal takes a real >4 GiB arena, which no CI harness
+can afford — the refusal stands on the typed arm, its variant pin in
+`error.rs`, and the comment at `arena_span`; an `#[ignore]`d manual
+instrument (the `alloc_census` precedent) is the sanctioned shape if an
+executing witness is ever wanted.
+
 ## Hot-path hygiene that does not wait for G1
 
 Ships first, on the baseline representation, so the G1 matrix measures

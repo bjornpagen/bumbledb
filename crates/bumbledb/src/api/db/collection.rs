@@ -482,13 +482,22 @@ impl<'s> CollectionBuilder<'s> {
 
     /// Arena offsets are u32 spans (R2's fixed-width cell): one
     /// collection's variable-width payload is bounded by the 4 GiB
-    /// transport contract (a bridge collection is one call's facts). ETL
-    /// input is data, so the bound is a typed refusal, never a panic
-    /// (`docs/architecture/70-api.md`'s recorded ruling). UNTESTABLE as
-    /// stated: witnessing the refusal takes a >4 GiB arena, which no CI
-    /// harness can afford, and the tree holds no precedent for a
-    /// test-scoped bound override — the typed arm stands on this comment
-    /// and the [`FactShapeError::PayloadBound`] pin in `error.rs`.
+    /// transport contract, PER ARENA — strings and bytes each — per call
+    /// (a bridge collection is one call's facts). ETL input is data, so
+    /// the bound is a typed refusal, never a panic
+    /// (`docs/architecture/70-api.md`'s recorded ruling), and it is
+    /// RECOVERABLE: the caller splits the facts across calls in the same
+    /// transaction or builder — atomicity lives one level up, so the
+    /// chunk is semantically free (the transport-bound section of
+    /// `proposals/one-representation/20-accepted-collection.md`; u64
+    /// spans are that ledger's recorded gravestone — a permanent
+    /// every-cell memory tax to serve a call size no consumer states).
+    /// UNTESTABLE as stated: witnessing the refusal takes a >4 GiB
+    /// arena, which no CI harness can afford, and the tree holds no
+    /// precedent for a test-scoped bound override — the typed arm stands
+    /// on this comment and the [`FactShapeError::PayloadBound`] pin in
+    /// `error.rs` (an `#[ignore]`d manual instrument, the `alloc_census`
+    /// precedent, is the sanctioned shape if a witness is ever wanted).
     fn arena_span(&self, len: usize) -> Result<u32> {
         u32::try_from(len).map_err(|_| {
             FactShapeError::PayloadBound {

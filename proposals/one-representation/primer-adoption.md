@@ -104,6 +104,17 @@ pnpm check     # primer-spec's one gate: typecheck + format + lint
 are banned there, so the pins for D10–D12 live in bumbledb's suites and
 in the acceptance run below).
 
+One envelope note, since D10 deletes the 16,384-row chunking and Primer
+now sends each relation's whole population in one `builder.load` call:
+the accepted collection bounds one call's variable-width payload at
+4 GiB per arena (strings; bytes) — the typed `PayloadBound` refusal, the
+transport-bound section of
+[20-accepted-collection.md](20-accepted-collection.md). Primer's entire
+1.68 GB corpus across 39 relations sits an order of magnitude under one
+relation's envelope; were a future corpus ever to cross it, the recovery
+is two `load` calls for that relation in the same builder — no packing
+code returns.
+
 ## The acceptance run
 
 Owner ceremony, from primer-spec, per
