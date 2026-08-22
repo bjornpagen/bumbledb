@@ -215,7 +215,6 @@ impl<F: Fn(usize) -> u64 + ?Sized> Operands for SlotOps<'_, F> {
     }
 
     fn intern(&self, _bytes: &[u8]) -> Result<u64, Self::Error> {
-
         Ok(crate::storage::dict::SENTINEL_ID)
     }
 }
