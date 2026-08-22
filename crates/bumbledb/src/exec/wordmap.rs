@@ -1,46 +1,17 @@
-//! An open-addressed map over inline u64 word tuples (docs/architecture/40-execution.md): the sink
+//! An open-addressed map over inline u64 word tuples: the sink
 //! machinery's seen-sets and group maps. A tag-byte-controlled
 //! single-probe-line map: a control byte per slot
 //! (0 = empty, else `0x80 | top-7-hash-bits`) means a probe step
 //! usually touches ONE ctrl line, key words load only on a tag match
 //! (~1/128 of collisions falsely), and values are uninitialized until
-//! occupied — no `Option` in the slot array.
-//!
-//! Geometry and probe shape follow the measured law: these maps are
-//! MISS-heavy by construction —
-//! a seen-set's first sight of every distinct key is a miss — and misses
-//! cost more than hits in open addressing (walk length plus a
-//! mispredicted exit branch). Two consequences, built in:
-//!
-//! - **33% max load** (was 50%): dropping load factor shortens the walks
-//!   that misses pay for (measured miss cost fell 9.2 → 2.8 ns between
-//!   38% and 5% load); the {50, 33, 25}% ledger sweep picked 33% —
-//!   most of the walk win at 1.5× the memory.
-//! - **Branchless window probing**: the ctrl bytes are scanned eight at
-//!   a time with SWAR masks — one well-predicted exit branch per window
-//!   instead of one branch per slot (measured 4.6× at hit-rate 0). The
-//!   ctrl slab carries a `WINDOW-1`-byte mirror of its first bytes so a
-//!   window read never wraps.
-//!
-//! Growth stays rehash-double with insertion order preserved (the dense
-//! rule: iteration walks `O(len)`, never `O(capacity)`). Clearing is the
-//! **generation-stamped slot clear**: one counter bump makes every
-//! occupied slot stale at once — `O(1)`, no ctrl walk — so a warm
-//! execution's multi-million-entry seen-set costs the next execution's
-//! reset nothing. Stale slots probe as empties (one stamp compare on a
-//! tag match), reclaim on insert, and die at growth; saturation and the
-//! stamp-width wrap fall back to one physical memset (`clear.rs`).
-//!
 #![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
 #![allow(clippy::inline_always)]
-// The probe path's
-// inlining is load-bearing (per-element call ceremony was measured cost)
-// and machine-checked by scripts/check-asm.sh, not trusted to attributes.
-//! `unsafe` per the 00-product policy (this module is allowlisted): the
+
 //! `MaybeUninit` reads are gated by ctrl-byte occupancy, and the probe
 //! indices are masked to the power-of-two capacity — both invariants
 //! stated at the sites. `V: Copy` keeps the uninitialized-slot story
-//! drop-free (both users store `()` and `usize`).
+//! `unsafe` per the 00-product policy (this module is allowlisted): the
+//! drop-free (both users store `` and `usize`).
 
 use std::mem::MaybeUninit;
 
@@ -51,39 +22,25 @@ const WINDOW: usize = 8;
 #[derive(Debug)]
 pub struct WordMap<V> {
     arity: usize,
-    /// One control byte per slot (0 = empty, else `0x80 | tag7(hash)`),
-    /// plus a `WINDOW - 1`-byte mirror of the first bytes at the tail so
-    /// window loads never wrap (`ctrl.len() == capacity + WINDOW - 1`).
+
     ctrl: Vec<u8>,
-    /// `capacity * arity` key words.
+
     keys: Vec<u64>,
-    /// One value per slot, initialized exactly when its ctrl byte is set.
+
     values: Vec<MaybeUninit<V>>,
-    /// Per-slot generation stamps: a set ctrl byte is **live** only when
-    /// its stamp equals [`WordMap::generation`] — the generation-stamped
-    /// slot clear's representation. Written with the ctrl byte
-    /// (`set_ctrl`), read only on a tag match, meaningless under a zero
-    /// ctrl byte.
+
     stamps: Vec<u8>,
-    /// The live generation. [`WordMap::clear`] bumps it; the u8 wrap
+
     /// forces the physical reset before a stamp value is ever reused,
-    /// so a slot from 255 clears ago can never ghost back as live.
+
     generation: u8,
-    /// Occupied-but-stale slots (ctrl set under an older generation):
-    /// inserts reclaim them one by one; the saturation threshold in
-    /// [`WordMap::clear`] reads this to keep miss walks short.
+
     stale: usize,
-    /// Occupied slot indices in insertion order — docs/architecture/40-execution.md dense
-    /// rule, extended to the sink maps: iteration *and clearing* walk
-    /// O(len), never O(capacity), so one hot execution's high-water
-    /// cannot tax every later execution's finalize and reset.
+
     dense: Vec<u32>,
     len: usize,
 }
 
-/// The presizing clamp: hints are planner estimates —
-/// trusted enough to kill rehash storms, capped so a wild estimate cannot
-/// balloon a sink.
 const HINT_CAP: usize = 1 << 21;
 
 /// Max load as `len × LOAD_DEN ≤ capacity` — 3 = 33% (justified by
@@ -106,8 +63,6 @@ mod grow;
 mod new;
 mod probe;
 
-// The tag/hash/mask primitives shared with the COLT bucket maps — one
-// definition (`exec/swar.rs`), two independent probe structures.
 use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};
 
 #[cfg(test)]
