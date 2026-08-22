@@ -14,7 +14,6 @@
 //! editing any case's notation, normalized text, or query JSON fails here.
 //! Regenerate after adding a case:
 //! `cargo test -p bumbledb-query regenerate_the_notation_corpus -- --ignored`.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
