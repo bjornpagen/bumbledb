@@ -1,14 +1,3 @@
-//! The rings scenario: hub near-bipartite graphs where cyclic joins
-//! expose the binary-join exponent. Wash-trade and temporal 3-rings run
-//! over a power-law transfer graph; two bipartite-bomb relations carry
-//! K_{m,m} cores whose only triangle is planted by construction (the
-//! analytic oracle: the answer is a theorem, not a measurement); the
-//! reciprocal-pair and 2-path families tell the denominator story. The
-//! bomb tiers are two separate relations — the tier is a type, each
-//! tier gets its own table and statement-derived composite index on
-//! both engines, and a `WHERE tier=?` plan asymmetry is
-//! unrepresentable.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId, Rule,
@@ -55,14 +44,7 @@ bumbledb::schema! {
     Bomb2(src, dst) -> Bomb2;
 }
 
-/// Relation ids by declaration order.
-/// The validated scenario schema, memoized for the inspection surfaces
-/// (DDL rendering, typing); the store is created from [`Rings`]'s
-/// descriptor (`scenarios::load`).
-///
 /// # Panics
-///
-/// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -81,8 +63,7 @@ pub mod ids {
     pub const TRANSFER: RelationId = RelationId(1);
     pub const BOMB1: RelationId = RelationId(2);
     pub const BOMB2: RelationId = RelationId(3);
-    /// The closed party-kind vocabulary (declared `Kind` — the macro's
-    /// id constants collide on a `PartyKind` spelling with `Party.kind`).
+
     pub const PARTY_KIND: RelationId = RelationId(4);
 
     pub mod party {
@@ -98,8 +79,7 @@ pub mod ids {
         pub const AMOUNT: FieldId = FieldId(3);
         pub const SPAN: FieldId = FieldId(4);
     }
-    /// Field ids shared by both bomb tiers (identical layouts — the
-    /// tier lives in the relation id, never in a column).
+
     pub mod bomb {
         use super::FieldId;
         pub const SRC: FieldId = FieldId(0);
@@ -107,7 +87,6 @@ pub mod ids {
     }
 }
 
-/// One corpus row-stream list — the [`Scenario::rows`] shape.
 type Rows = Vec<(RelationId, Box<dyn Iterator<Item = Vec<Value>>>)>;
 
 fn param(id: u16) -> Term {
@@ -140,14 +119,10 @@ fn intersects(lhs: Term, rhs: Term) -> ConditionTree {
     })
 }
 
-/// The count head shared by every folded family.
 fn count() -> Vec<FindTerm> {
     vec![FindTerm::Count]
 }
 
-/// The wash-ring atoms shared by r1 and r2: a directed 3-cycle over
-/// `Transfer` with the first hop's amount bound; `Lt(v0,v1) ∧ Lt(v0,v2)`
-/// makes v0 the strict minimum, so each ring is counted once.
 fn ring_atoms(with_spans: bool) -> Vec<Atom> {
     let mut atoms = vec![
         Atom {
@@ -175,7 +150,6 @@ fn ring_atoms(with_spans: bool) -> Vec<Atom> {
     atoms
 }
 
-/// r1 — the equality 3-ring (wash trade), counted.
 fn wash_ring() -> Query {
     Query::single(Rule {
         finds: count(),
@@ -185,8 +159,6 @@ fn wash_ring() -> Query {
     })
 }
 
-/// r2 — the temporal ring: r1 plus pairwise Allen INTERSECTS over the
-/// three hop spans.
 fn temporal_ring() -> Query {
     Query::single(Rule {
         finds: count(),
@@ -203,22 +175,8 @@ fn temporal_ring() -> Query {
     })
 }
 
-/// r2's hand-tuned `SQLite` twin (the never-flatter-ourselves law): the
-/// canonical translation of [`temporal_ring`] renders each
-/// `Allen(INTERSECTS)` as the 9-basic endpoint-formula OR-chain; here
-/// each chain is replaced by the two-comparison half-open overlap
-/// `LS < RE AND RS < LE` — exactly INTERSECTS over half-open intervals
-/// (it excludes Before/After/Meets/MetBy and admits the other 9 basics;
-/// Meets has LE = RS, failing RS < LE). Every other byte is the
-/// canonical output. Written BY HAND from the captured canonical SQL,
-/// never regenerated; the no-` OR ` law and the param-slot mirror are
-/// asserted in `tests`, and semantic identity is proven by the same
-/// uncapped multiset oracle gate that guards every lane.
 const HAND_R2: &str = "SELECT COUNT(*) FROM (SELECT DISTINCT t0.\"src\" AS v0, t0.\"dst\" AS v1, t1.\"dst\" AS v2, t0.\"amount\" AS v3, t0.\"span_start\" AS v4_start, t0.\"span_end\" AS v4_end, t1.\"span_start\" AS v5_start, t1.\"span_end\" AS v5_end, t2.\"span_start\" AS v6_start, t2.\"span_end\" AS v6_end FROM \"Transfer\" AS t0, \"Transfer\" AS t1, \"Transfer\" AS t2 WHERE t0.\"dst\" = t1.\"src\" AND t1.\"dst\" = t2.\"src\" AND t0.\"src\" = t2.\"dst\" AND t0.\"src\" < t0.\"dst\" AND t0.\"src\" < t1.\"dst\" AND t0.\"amount\" >= ?1 AND (t0.\"span_start\" < t1.\"span_end\" AND t1.\"span_start\" < t0.\"span_end\") AND (t1.\"span_start\" < t2.\"span_end\" AND t2.\"span_start\" < t1.\"span_end\") AND (t2.\"span_start\" < t0.\"span_end\" AND t0.\"span_start\" < t2.\"span_end\")) HAVING COUNT(*) > 0";
 
-/// The tuned lane value for r2: [`HAND_R2`] with the canonical
-/// placeholder row (?1 = the amount threshold, param 0), mirrored
-/// exactly — asserted equal to the canonical `.params` in `tests`.
 fn r2_tuned() -> crate::translate::Translated {
     crate::translate::Translated {
         sql: HAND_R2.to_owned(),
@@ -226,8 +184,6 @@ fn r2_tuned() -> crate::translate::Translated {
     }
 }
 
-/// r3/r4 — the full triangle count over one bomb tier. The corpus
-/// theorem (`corpus::bomb`) makes the answer exactly 3 by construction.
 fn bomb_triangle(rel: RelationId) -> Query {
     Query::single(Rule {
         finds: count(),
@@ -258,7 +214,6 @@ fn bomb_t2() -> Query {
     bomb_triangle(ids::BOMB2)
 }
 
-/// r5 — reciprocal pairs (the 2-cycle), kind-filtered on the lower id.
 fn reciprocal() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -281,7 +236,6 @@ fn reciprocal() -> Query {
     })
 }
 
-/// r6 — the distinct 2-path count: what binary joins must materialize.
 fn two_path_count() -> Query {
     Query::single(Rule {
         finds: count(),
@@ -300,10 +254,6 @@ fn two_path_count() -> Query {
     })
 }
 
-/// The amount-threshold policy shared by r1 and r2 — size-independent
-/// (fixed thresholds over the fixed amount range `0..10_000`; the last
-/// set is the miss: the planted amount `9_999` clears no `1_000_000`
-/// bar).
 fn amount_params(_seed: u64) -> Vec<Vec<Value>> {
     vec![
         vec![Value::I64(0)],
@@ -373,10 +323,6 @@ fn queries() -> Vec<ScenarioQuery> {
     ]
 }
 
-/// One registration shared by the full world and its smoke twin — the
-/// SAME queries and param policies over corpora that differ only in
-/// row counts (`corpus::Sizes`), so the tier-0 smoke gate exercises
-/// exactly what the night run times.
 fn build(rows: fn(u64) -> Rows) -> Scenario {
     Scenario {
         name: "rings",
@@ -395,14 +341,11 @@ fn build(rows: fn(u64) -> Rows) -> Scenario {
     }
 }
 
-/// The scenario registration (the full corpus).
 #[must_use]
 pub fn scenario() -> Scenario {
     build(corpus::rows_full)
 }
 
-/// The smoke twin: identical schema, queries, params, and indexes over
-/// the tiny corpus — the oracle-gate entry for the world's tests.
 #[cfg(test)]
 pub fn scenario_smoke() -> Scenario {
     build(corpus::rows_smoke)
