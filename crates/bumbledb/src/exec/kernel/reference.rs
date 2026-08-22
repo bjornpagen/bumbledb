@@ -1,19 +1,9 @@
-//! The reference twins — the differential oracle the property tests
 //! compare every kernel against, bit for bit. Deliberately SCALAR for
-//! every shape whose live kernel is `std::simd` (the crucible packet (git ecec1dc3)
-//! 03-portable-simd.md, Q1×Q2 resolution: one body cannot be its own
 //! oracle, so where the kernel adopted the portable lane form, the twin
 //! keeps the definitional scalar form — the differential's independence
 //! outranks the vocabulary win). The Allen twins likewise stay the
 //! `classify` decision tree (never the signature table) so the tests
 //! cross-check table against tree; [`allen_keep`] alone speaks
-//! `std::simd`, because its live kernel is the NEON `tbl` mechanism and
-//! the lane-parallel shift-and-mask remains an independent derivation.
-//!
-//! The Allen twins are also the live non-aarch64 dispatch arm; the
-//! filter twins are test-only (their portable kernels run everywhere).
-
-/// Scalar reference of [`super::filter_eq_u64`].
 #[cfg(test)]
 pub fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
     push_matching(col.len(), out, |i| col[i] == value);
@@ -47,8 +37,7 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
     });
 }
 
-/// Scalar reference of [`super::allen_code_batch`]'s core: PRD 03's
-/// `classify` decision tree per pair — deliberately **never** the
+/// Scalar reference of [`super::allen_code_batch`]'s core:
 /// signature table, so the property tests cross-check the NEON table
 /// against the tree, bit for bit. The code is the [`crate::allen::Basic`]
 /// discriminant (its bit index in the mask coordinate system).
@@ -106,7 +95,6 @@ pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
     items.truncate(write);
 }
 
-/// Branchless cursor-write over the whole column.
 #[cfg(test)]
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
     let start = out.len();
