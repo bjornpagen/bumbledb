@@ -14,10 +14,6 @@ const CFG: GenConfig = GenConfig {
     scale: Scale::S,
 };
 
-/// Every generated query passes the engine's validate (via prepare on
-/// an empty schema-loaded db) AND translates to SQL — under every param
-/// draw (set-bound queries re-render per draw; the empty set takes the
-/// `1 = 0` path).
 #[test]
 fn a_thousand_queries_validate_and_translate() {
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen");
@@ -30,9 +26,7 @@ fn a_thousand_queries_validate_and_translate() {
         if let Err(error) = db.prepare(&query) {
             panic!("query {i} fails validation: {error:?}\n{query:#?}");
         }
-        // Inexpressibility is routing data, never a panic (finding
-        // 025): the SQL-expressible draws translate, the rest are the
-        // enumerated naive-leg set.
+
         let expressible =
             crate::translate::sqlite_expressible(&crate::translate::LaneCase::Query(&query));
         for draw in params_for(&query, &mut rng, CFG) {
@@ -52,19 +46,11 @@ fn a_thousand_queries_validate_and_translate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The coverage contract (`docs/architecture/60-validation.md`, the
-/// exact asserted form): every shape within ±30% of its weight, every
-/// *legal* cell of the per-(op, type) comparison matrix nonzero and
-/// every illegal cell zero, every construct present — negation shapes,
-/// param-set sizes, membership kinds, both interval element lanes, the
-/// adjacent-touching boundary in both polarities, remaining folds
-/// (Count/Sum/Min/Max/Pack), and the structural
-/// compositions at least once per run.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the contract's assertion roster, one row per construct
+)] 
 fn the_coverage_contract_holds_at_a_thousand() {
     let cov = coverage(N, SEED, CFG);
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();
@@ -117,13 +103,12 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
-        // The boundary-shape ladder, drawn for every interval literal:
-        // equal/adjacent/nested/ray each appear per run.
+
         ("ladder_equal", cov.ladder[0]),
         ("ladder_adjacent", cov.ladder[1]),
         ("ladder_nested", cov.ladder[2]),
         ("ladder_ray", cov.ladder[3]),
-        // Multi-rule queries: every arm count and every variant.
+
         ("rules_two_arms", cov.rules_arms[0]),
         ("rules_three_arms", cov.rules_arms[1]),
         ("rules_four_arms", cov.rules_arms[2]),
@@ -142,22 +127,20 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("cross_residuals", cov.cross_residuals),
         ("bytes_hits", cov.bytes_hits),
         ("bytes_misses", cov.bytes_misses),
-        // Wide projections (the >8-word class the executor's hoist
+
         // paths must never cap): all-scalar width and the
-        // ≥4-interval-find flavor, both drawn per run.
+
         ("wide_scalar", cov.wide_scalar),
         ("wide_interval", cov.wide_interval),
-        // The grounding shapes' structural assertion: both an eliminated
+
         // (existence walks and both DU `==` directions) and a refused
-        // (extra projected target field; missing φ) shape appear per
-        // run — the engine-backed verdict test holds the tags honest.
+
         ("ground_eliminable", cov.ground_eliminable),
         ("ground_extra_field", cov.ground_extra_field),
         ("ground_missing_phi", cov.ground_missing_phi),
         ("du_header_falls", cov.du_header_falls),
         ("du_child_falls", cov.du_child_falls),
-        // The closed-relation classes (shapes_closed.rs) — restated in
-        // full by `the_closed_relation_classes_are_emitted`.
+
         ("closed_join_plain", cov.closed_join_plain),
         ("closed_join_selected", cov.closed_join_selected),
         ("closed_handle_literal", cov.closed_handle_literal),
@@ -175,13 +158,11 @@ fn the_coverage_contract_holds_at_a_thousand() {
             }
         }
     }
-    // Every Allen basic is reachable through some literal mask per run
-    // (singletons, composites, and random masks jointly).
+
     for (index, count) in cov.allen_basics.iter().enumerate() {
         assert!(*count > 0, "Allen basic {index} never appeared in a mask");
     }
-    // The structural compositions where bugs hide: at least one query
-    // per run carries each.
+
     assert!(cov.neg_and_aggregate > 0, "negation ∧ aggregate missing");
     assert!(cov.set_and_negation > 0, "param set ∧ negation missing");
     assert!(cov.membership_and_allen > 0, "membership ∧ Allen missing");
@@ -190,22 +171,19 @@ fn the_coverage_contract_holds_at_a_thousand() {
         cov.rules_aggregate > 0,
         "rules ∧ aggregate missing (asserted above; restated as the composite)"
     );
-    // The equality-spine cost bound (60-validation.md § the generator
-    // contract): every emitted membership/overlap construct rides an
-    // equality-connected spine — the keyless Cartesian degenerate
-    // (40-execution.md) is unemittable.
+
     assert_eq!(
         cov.spine_violations, 0,
         "a membership/overlap construct escaped the equality spine"
     );
 }
 
-/// The grounding tags are engine-verified: prepared against the target
-/// schema (statements included — the grounding runs at prepare, data-free),
-/// every eliminable variant's profile carries `Role::Eliminated` marks
-/// (the DU directions naming their fallen side) and every near-miss
-/// carries none — the structural assertion that both an eliminated and
-/// a refused shape appear per run, held to the engine's verdict.
+/// The grounding tags are engine-verified: prepared against the target schema
+/// (statements included — the grounding runs at prepare, data-free), every
+/// eliminable variant's profile carries `Role::Eliminated` marks (the DU
+/// directions naming their fallen side) and every near-miss carries none — the
+/// structural assertion that both an eliminated and a refused shape appear per
+/// run, held to the engine's verdict.
 #[test]
 fn grounding_shapes_eliminate_and_near_misses_refuse() {
     use super::GroundVariant;
@@ -238,29 +216,20 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The four closed-relation pattern classes are all emitted (the
-/// counting pattern): (a) joins against closed relations with and
-/// without payload-column selections, (b) handle literals and handle
-/// param sets on referencing fields, (c) the fold-shaped pattern under
-/// its own family knob (PRD 07 points here), and (d) the judgment
-/// write scenarios — closed writes, dangling handles below and beyond
-/// the roster cap, and the ψ-subset exclusions, each carrying its
-/// hand-derived typed violation.
 #[test]
 fn the_closed_relation_classes_are_emitted() {
     use crate::querygen::writes::{ClosedWriteKind, closed_write_cases};
 
     let cov = coverage(N, SEED, CFG);
-    // (a) joins, with and without the payload-column selection.
+
     assert!(cov.closed_join_plain > 0, "plain closed joins");
     assert!(cov.closed_join_selected > 0, "payload-column selections");
-    // (b) handle bindings on referencing fields.
+
     assert!(cov.closed_handle_literal > 0, "handle literals");
     assert!(cov.closed_handle_set > 0, "handle param sets");
-    // (c) the fold-shaped pattern — its own family knob.
+
     assert!(cov.ground_fold > 0, "the PRD 07 grounding fold shape");
 
-    // (d) the judgment write scenarios, all six kinds per batch.
     let mut rng = Rng::new(SEED);
     let cases = closed_write_cases(&mut rng, 24);
     for kind in [
@@ -276,7 +245,7 @@ fn the_closed_relation_classes_are_emitted() {
             "write kind {kind:?} never generated"
         );
     }
-    // The out-of-range ids genuinely straddle the roster cap.
+
     for case in &cases {
         let id = |fact: &[Value], index: usize| match fact[index] {
             Value::U64(v) => v,
@@ -298,9 +267,6 @@ fn the_closed_relation_classes_are_emitted() {
     }
 }
 
-/// The grammar never emits a NUL — the translator rejects NUL string
-/// literals by name, and this property keeps that boundary unreachable
-/// from generated queries.
 #[test]
 fn generated_string_literals_are_nul_free() {
     let mut rng = Rng::new(SEED);
@@ -326,8 +292,8 @@ fn generated_string_literals_are_nul_free() {
 }
 
 /// Same seed ⇒ identical query stream AND identical param draws — the
-/// reproducibility property the oracle protocol depends on (pinned on
-/// #500's rendering).
+/// reproducibility property the oracle protocol depends on (pinned on #500's
+/// rendering).
 #[test]
 fn generation_is_deterministic() {
     let stream_500 = |seed| {
@@ -344,10 +310,6 @@ fn generation_is_deterministic() {
     assert_ne!(stream_500(SEED), stream_500(SEED + 1));
 }
 
-/// Four draws per query; the miss draw's string, bytes, and u64 params
-/// — scalar or set element — are guaranteed misses (out of vocabulary
-/// or out of domain); set sizes cover {0, 1, 2, [`LARGE_BOUNDARY`]};
-/// injected duplicates occur.
 #[test]
 fn params_for_produces_the_documented_draws() {
     let mut rng = Rng::new(SEED);
@@ -434,8 +396,7 @@ fn check_miss(
         }
         Value::FixedBytes(raw) => {
             *saw_bytes = true;
-            // Adversarial single-byte-delta misses: a real digest of the
-            // anchored width with byte 0 flipped out of the corpus range.
+
             assert!(
                 matches!(raw.len(), 7 | 8 | 9 | 16 | 32 | 63 | 64),
                 "miss digests carry an anchored width, got {}",
@@ -447,20 +408,6 @@ fn check_miss(
     }
 }
 
-/// The recursive arm's coverage contract AND its differential — one
-/// run, both duties (the shipping law's estate, all three oracles
-/// live):
-///
-/// * every structural row ≥ 1 per run — linear self-recursion,
-///   negation of finished rec in main, a fold over rec on main,
-///   empty-Δ, primer `reach(x,x)`, interiors DAG / anti-join /
-///   many-interiors (>16);
-/// * every query passes `validate`, prepares through `Db::prepare`,
-///   and executes; engine answers set-equal to naive on every query,
-///   and every translator-admitted one through `SQLite` too;
-/// * the default rounds-budget trip is a dedicated 66k-edge chain
-///   (`a_chain_of_66k_edges_trips_the_default_rounds_budget`), not a
-///   knob on a drawn query.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -597,8 +544,6 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     );
 }
 
-/// A rec query whose only param lives on a base arm — `params_for` must
-/// bind it (walking interiors/rec/main, not just `query.rules`).
 #[test]
 fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
     use bumbledb::{
@@ -655,7 +600,7 @@ fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
 }
 
 /// Coverage tallies and contradiction planting must not panic on an
-/// interiors-or-rec query (Interior atoms are a match, not `relation()`).
+/// interiors-or-rec query (Interior atoms are a match, not `relation`).
 #[test]
 fn contradict_planting_does_not_panic_on_a_reach_query() {
     let mut rng = Rng::new(SEED);
@@ -676,8 +621,6 @@ bumbledb::schema! {
     }
 }
 
-/// A 66k-edge single-source chain exceeds the default 2^16-round budget
-/// with a trivial tuple count — the `DerivedBudgetExceeded` pin, no knob.
 #[test]
 fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
     use bumbledb::Fact;
