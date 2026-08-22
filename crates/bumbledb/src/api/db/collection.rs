@@ -74,7 +74,6 @@ pub struct AcceptedCollection {
 
 impl AcceptedCollection {
     /// # Errors
-
     pub fn from_value_rows(
         relation: RelationId,
         fields: &[FieldDescriptor],
@@ -170,7 +169,6 @@ pub struct CollectionBuilder<'s> {
 
 impl<'s> CollectionBuilder<'s> {
     /// # Panics
-
     #[must_use]
     pub fn new(relation: RelationId, fields: &'s [FieldDescriptor]) -> Self {
         Self {
@@ -208,7 +206,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn push_value_row(&mut self, row: &[Value]) -> Result<()> {
         if row.len() != self.fields.len() {
             return Err(FactShapeError::ArityMismatch {
@@ -239,7 +236,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn push_value(&mut self, value: &Value) -> Result<()> {
         let (field, expected) = self.expected()?;
         if let Err(mismatch) = value_matches(value, expected) {
@@ -260,31 +256,26 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn push_bool(&mut self, value: bool) -> Result<()> {
         self.push_scalar(&Value::Bool(value), Cell::Bool(value))
     }
 
     /// # Errors
-
     pub fn push_u64(&mut self, value: u64) -> Result<()> {
         self.push_scalar(&Value::U64(value), Cell::U64(value))
     }
 
     /// # Errors
-
     pub fn push_i64(&mut self, value: i64) -> Result<()> {
         self.push_scalar(&Value::I64(value), Cell::I64(value))
     }
 
     /// # Errors
-
     pub fn push_interval_u64(&mut self, value: Interval<u64>) -> Result<()> {
         self.push_scalar(&Value::IntervalU64(value), Cell::IntervalU64(value))
     }
 
     /// # Errors
-
     pub fn push_interval_i64(&mut self, value: Interval<i64>) -> Result<()> {
         self.push_scalar(&Value::IntervalI64(value), Cell::IntervalI64(value))
     }
@@ -300,7 +291,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn push_str(&mut self, value: &str) -> Result<()> {
         let (field, expected) = self.expected()?;
         if !matches!(expected, ValueType::String) {
@@ -313,7 +303,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn push_bytes(&mut self, value: &[u8]) -> Result<()> {
         let (field, expected) = self.expected()?;
         if !matches!(expected, ValueType::FixedBytes { len } if value.len() == usize::from(*len)) {
@@ -342,7 +331,6 @@ impl<'s> CollectionBuilder<'s> {
     /// the bound is a typed refusal, never a panic
 
     /// UNTESTABLE as stated: witnessing the refusal takes a >4 GiB
-
     fn arena_span(&self, len: usize) -> Result<u32> {
         u32::try_from(len).map_err(|_| {
             FactShapeError::PayloadBound {
@@ -355,7 +343,6 @@ impl<'s> CollectionBuilder<'s> {
     /// # Errors
 
     /// refusal of this seal: on a fieldless roster no push can have
-
     pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
         if !self.fields.is_empty() {
             return Err(FactShapeError::ArityMismatch {
@@ -374,7 +361,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     pub fn seal(self) -> Result<AcceptedCollection> {
         if self.fill != 0 {
             return Err(FactShapeError::ArityMismatch {
