@@ -67,10 +67,6 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     }
 }
 
-/// Assembles a `NormalizedQuery` the way `normalize` would: anti-probe
-/// descriptors derived from the negated occurrences, every variable one
-/// slot wide (these fixtures are scalar-only; interval fixtures go
-/// through real normalization in `witness.rs`).
 fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<FilterPredicate>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
@@ -109,7 +105,6 @@ fn subatom(occ: u16, vars: &[VarId]) -> Subatom {
     }
 }
 
-/// The clover query: R(x,a), S(x,b), T(x,c).
 fn clover() -> NormalizedQuery {
     normalized(
         vec![
