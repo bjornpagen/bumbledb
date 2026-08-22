@@ -101,7 +101,6 @@ fn string_params_resolve_per_execution() {
     insert_postings(&env, &schema, &[(1, 7, "rent", -1200)]);
     let cache = ImageCache::new(&schema);
 
-    // Q(amount) :- Posting(memo = ?0, amount).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -118,15 +117,12 @@ fn string_params_resolve_per_execution() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let mut out = Answers::new();
 
-    // Never-interned value: empty, not an error.
     prepared
         .execute(&txn, &cache, &[BindValue::Str("groceries")], &mut out)
         .expect("execute");
     assert!(out.is_empty());
     drop(txn);
 
-    // A later commit interns it; the SAME prepared query now finds rows
-    // (per-execution resolution — no stale-resolution trap).
     insert_postings(&env, &schema, &[(2, 9, "groceries", -55)]);
     let txn = env.read_txn().expect("txn");
     prepared
@@ -136,11 +132,6 @@ fn string_params_resolve_per_execution() {
     assert_eq!(out.get(0, 0), AnswerValue::I64(-55));
 }
 
-/// The per-slot param-word memo (docs/architecture/40-execution.md):
-/// re-binding the same text serves the word from the slot's memo — a
-/// hit is final, the dictionary being append-only — while a different
-/// text re-probes and a MISS never memoizes: a text interned by a
-/// later commit must be seen by the very next bind.
 #[cfg(feature = "trace")]
 #[test]
 fn param_word_memo_hits_are_final_and_misses_never_memoize() {
@@ -185,9 +176,8 @@ fn param_word_memo_hits_are_final_and_misses_never_memoize() {
     );
     assert_eq!(run(&mut prepared, &txn, "beta"), (vec![20], 1));
 
-    // The miss-finality law: "gamma" is unknown (empty result, sentinel
     // bind) and must NOT memoize — a commit interns it, and the very
-    // next bind sees the fresh word through the ordinary probe.
+
     assert_eq!(
         run(&mut prepared, &txn, "gamma"),
         (vec![], 0),
