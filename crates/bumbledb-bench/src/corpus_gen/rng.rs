@@ -1,6 +1,5 @@
 #[derive(Debug, Clone)]
 pub enum Rng {
-
     Seeded(SplitMix),
 
     Bytes(ByteSource),
@@ -52,7 +51,6 @@ impl ByteSource {
 }
 
 impl Rng {
-
     #[must_use]
     pub fn new(seed: u64) -> Self {
         Self::Seeded(SplitMix::new(seed))
