@@ -43,7 +43,6 @@ pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
     for atom in rule.atoms.iter().chain(&rule.negated) {
         for (field, term) in &atom.bindings {
-
             // interval-typed derived columns before any rule renders.
             let interval_field = match atom.source {
                 bumbledb::AtomSource::Edb(relation) => schema.relation(relation).fields()
@@ -68,7 +67,6 @@ pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
         let mut changed = false;
         for Comparison { op, lhs, rhs } in rule.conditions.iter().map(super::leaf) {
             match op {
-
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
                     changed |= types.mark_scalar(lhs);
                     changed |= types.mark_scalar(rhs);
