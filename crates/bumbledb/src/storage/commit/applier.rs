@@ -223,7 +223,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
     }
 
     /// proved the failure loud and atomic, never silent corruption: LMDB
-
     fn put_data(&mut self, len: usize, value: &[u8]) -> Result<()> {
         self.catalog
             .put(CatalogMap::Data, &self.key[..len], value)?;
@@ -247,7 +246,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
     /// O(log n), same write transaction — LMDB write txns read their own
 
     /// aborts after phase 2, and one recorded conviction per group
-
     fn probe_neighbors(
         &mut self,
         rel: RelationId,
