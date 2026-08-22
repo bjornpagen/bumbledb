@@ -2,16 +2,11 @@ use super::*;
 use crate::error::{Error, FindIndex};
 use crate::ir::FoldOp;
 
-/// The constant-group fast path — one group
-/// probe per run (memoized across batches), gather folds for every
-/// op — is value-identical to the per-row seen path at every batch
-/// size, on the stats shape (group key bound above the leaf).
 #[test]
 fn constant_group_batches_fold_once_per_run() {
     let dir = TempDir::new("sink-constant-group");
     let schema = schema();
-    // 8 accounts x 300 postings: each account's leaf subtree spans
-    // several batches at size 128 — the run memo holds probes at 8.
+
     let mut postings = Vec::new();
     let mut id = 0u64;
     for account in 0..8u64 {
@@ -26,9 +21,7 @@ fn constant_group_batches_fold_once_per_run() {
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
         vec![],
     );
-    // Hand-factored GJ plan: n0 binds the account, n1 the
-    // (id, amount) suffix — the stats shape, where the leaf's group
-    // key is outer.
+
     let plan = two_node_plan(&schema, &normalized, &[1], &[0, 2], &[0, 1, 2]);
     let finds = |plan: &ValidatedPlan| {
         vec![
@@ -39,7 +32,7 @@ fn constant_group_batches_fold_once_per_run() {
             agg_spec(plan, FoldOp::Max, 2, true),
         ]
     };
-    // The fast path (elided) vs the per-row seen path, across sizes.
+
     let mut reference: Option<Vec<Vec<u64>>> = None;
     for (batch, distinct) in [(1usize, true), (7, true), (128, true), (128, false)] {
         let mut colts = colts_for(&plan, &views);
@@ -62,7 +55,7 @@ fn constant_group_batches_fold_once_per_run() {
         }
         let mut rows = sink.into_answers().expect("in range");
         rows.sort_unstable();
-        // Per account: Sum = -150, Count = 300, Min = -150, Max = 149.
+
         assert_eq!(rows.len(), 8, "batch {batch} distinct {distinct}");
         assert_eq!(
             rows[0],
@@ -82,16 +75,13 @@ fn constant_group_batches_fold_once_per_run() {
     }
 }
 
-/// The dedup-then-gather arm — duplicate full bindings
-/// collapse before the fold, identically at every batch size, with
-/// the group probe still hoisted.
+/// The dedup-then-gather arm — duplicate full bindings collapse before the
+/// fold, identically at every batch size, with the group probe still hoisted.
 #[test]
 fn dedup_constant_group_collapses_duplicates_before_folding() {
     let dir = TempDir::new("sink-dedup-constant");
     let schema = schema();
-    // Fresh ids exist in storage but the query does not bind them:
-    // (account, amount) bindings collapse. Account 1 holds amounts
-    // {5, 5, 7} -> {5, 7}; account 2 holds {5, 5, 5} -> {5}.
+
     let postings = vec![
         (1u64, 1u64, 5i64),
         (2, 1, 5),
@@ -117,7 +107,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     for batch in [1usize, 2, 128] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        // distinct_bindings = false: the dedup arm is mandatory.
+
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count());
         Executor::with_batch_size(&plan, batch)
             .execute(
@@ -138,15 +128,10 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     }
 }
 
-/// Pack's finalize sort orders claims by the START word alone — the
-/// sweep's one precondition. Equal-start claims coalesce identically
-/// whatever their end order, so adversarial emit orders (longer end
-/// first, dominated claim last, detached segment interleaved, a ray)
-/// pack to the same maximal segments.
 #[test]
 fn pack_finalize_orders_claims_by_start_word_alone() {
     use crate::exec::run::{Bindings, Sink as _};
-    // Slots: 0 = group, 1..3 = the claim interval's word pair.
+
     let mut sink = AggregateSink::new(
         vec![
             FindSpec::Var { slot: 0, width: 1 },
@@ -157,10 +142,10 @@ fn pack_finalize_orders_claims_by_start_word_alone() {
     let mut bindings = Bindings::new(3);
     for (group, start, end) in [
         (1u64, 30u64, 40u64),
-        (1, 10, 20),       // equal start, longer end FIRST
-        (1, 10, 15),       // ... shorter end second
-        (1, 5, 12),        // overlaps [10, 20] from the left
-        (2, 10, u64::MAX), // a packed ray is a ray
+        (1, 10, 20),       
+        (1, 10, 15),       
+        (1, 5, 12),        
+        (2, 10, u64::MAX), 
         (2, 1, 2),
     ] {
         bindings.set(0, group);
@@ -181,18 +166,11 @@ fn pack_finalize_orders_claims_by_start_word_alone() {
     );
 }
 
-/// The count-only dedup arm — no fold input reads the batch keys, so
-/// the seen-set pass counts first sights instead of collecting a
-/// survivor list — is value-identical to the gather regime: duplicate
-/// full bindings collapse, outer-sourced folds stay value × count, at
-/// every batch size (the r6 seen-set lane's per-insert constant).
 #[test]
 fn count_only_dedup_folds_without_survivor_collection() {
     let dir = TempDir::new("sink-dedup-count-only");
     let schema = schema();
-    // Fresh ids exist in storage but the query does not bind them:
-    // (account, amount) bindings collapse. Account 1 holds amounts
-    // {5, 5, 7} -> {5, 7}; account 2 holds {5, 5, 5} -> {5}.
+
     let postings = vec![
         (1u64, 1u64, 5i64),
         (2, 1, 5),
@@ -208,8 +186,7 @@ fn count_only_dedup_folds_without_survivor_collection() {
         vec![],
     );
     let plan = two_node_plan(&schema, &normalized, &[0], &[1], &[0, 1]);
-    // Count (nullary) + Sum over the GROUP slot (outer at the leaf):
-    // no fold input is a leaf key word, so the count-only arm fires.
+
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 0),
@@ -220,7 +197,7 @@ fn count_only_dedup_folds_without_survivor_collection() {
     for batch in [1usize, 2, 128] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        // distinct_bindings = false: the dedup arm is mandatory.
+
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count());
         Executor::with_batch_size(&plan, batch)
             .execute(
@@ -233,23 +210,16 @@ fn count_only_dedup_folds_without_survivor_collection() {
             .expect("execute");
         let mut rows = sink.into_answers().expect("in range");
         rows.sort_unstable();
-        // Account 1: 2 distinct bindings — Count 2, Sum(account) 1×2.
-        // Account 2: 1 distinct binding — Count 1, Sum(account) 2×1.
+
         assert_eq!(rows, vec![vec![1, 2, 2], vec![2, 1, 2]], "batch {batch}");
     }
 }
 
-/// An aggregate over a slot bound above the leaf folds as
-/// value x count (i128/u128 — identical to count additions),
-/// including the deterministic finalize-time overflow.
 #[test]
 fn constant_over_slot_folds_value_times_count() {
     let dir = TempDir::new("sink-constant-over");
     let schema = schema();
-    // Sum(account) grouped by account: the over-slot is the group
-    // slot itself — outer at the leaf. Account big enough that
-    // value x count overflows u64 (caught at finalize) for one
-    // group, stays in range for the other.
+
     let big = u64::MAX / 2;
     let mut postings = vec![];
     for id in 0..5u64 {
@@ -267,8 +237,7 @@ fn constant_over_slot_folds_value_times_count() {
     let plan = two_node_plan(&schema, &normalized, &[1], &[0, 2], &[0, 1, 2]);
     let finds =
         |plan: &ValidatedPlan| vec![var_spec(plan, 1), agg_spec(plan, FoldOp::Sum, 1, false)];
-    // Overflow parity: the batch path and the per-row path yield the
-    // same typed error (big x 5 > u64::MAX).
+
     for distinct in [true, false] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
@@ -312,15 +281,11 @@ fn constant_over_slot_folds_value_times_count() {
     }
 }
 
-/// The aggregate leaf batch folds bit-identically
-/// to the scalar degenerate case at every batch size, including the
-/// deterministic-overflow class at the i64 boundary.
 #[test]
 fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
     let dir = TempDir::new("sink-batch-boundary");
     let schema = schema();
-    // Account 7 sums to exactly i64::MAX (in range); account 8
-    // overflows deterministically.
+
     let postings = vec![
         (1u64, 7u64, i64::MAX),
         (2, 7, 1),
@@ -356,8 +321,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        // Account 8's Sum overflows: the error is deterministic and
-        // carries the find index, at every batch size.
+
         let err = sink.into_answers().unwrap_err();
         assert!(
             matches!(
@@ -367,7 +331,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
             "batch {batch}: {err:?}"
         );
     }
-    // Remove the overflowing account: values identical at every size.
+
     let dir2 = TempDir::new("sink-batch-boundary-ok");
     let views = views_of(&dir2, &schema, &postings[..4], &[]);
     let mut reference: Option<Vec<Vec<u64>>> = None;
@@ -398,14 +362,11 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
     }
 }
 
-/// PRD 18 slot plumbing: an interval variable as a GROUP key — the
-/// group map keys on both words, so equal-start/different-end
-/// intervals land in different groups.
 #[test]
 fn interval_group_keys_span_both_words() {
     let dir = TempDir::new("sink-interval-group");
     let schema = schema();
-    // [5,9) x2, [5,7) x1: grouping by the interval yields counts 2, 1.
+
     let rows = vec![
         (1u64, 10u64, (5i64, 9i64)),
         (2, 11, (5, 9)),
@@ -433,19 +394,10 @@ fn interval_group_keys_span_both_words() {
     }
 }
 
-/// The union regime's dedup key is HEAD-shaped, never rule-slot-shaped
-/// (docs/architecture/40-execution.md § the rule loop): two rules with
-/// DIFFERENT binding-slot layouts emitting equal head projections fold
-/// once — a key over the full slot array could never absorb across
-/// layouts, which is exactly why the representation is the head
-/// projection.
 #[test]
 fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
     use crate::exec::run::{Bindings, Sink};
 
-    // Head: (group var, Sum(x), Count). Rule A: group at slot 0, x at
-    // slot 1 (two slots). Rule B: x at slot 0, an unrelated existential
-    // at slot 1, group at slot 2 (three slots).
     let spec = |group: usize, x: usize| {
         vec![
             FindSpec::Var {
@@ -462,9 +414,8 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
         ]
     };
     let mut sink = AggregateSink::for_union(&spec(0, 1), 2, 0);
-    sink.reset(); // once per execution, never per rule
+    sink.reset(); 
 
-    // Rule A: (g = 7, x = 100) and (g = 7, x = 250).
     let mut bindings = Bindings::new(2);
     for x in [100u64, 250] {
         bindings.reset();
@@ -474,10 +425,6 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
     }
     assert_eq!(sink.distinct_seen(), Some(2), "rule A seeds the union");
 
-    // Rule B, re-aimed to its own layout: re-derives (g = 7, x = 100)
-    // at different slots (absorbed) and adds (g = 7, x = 300).
-    // Hand-written provenance: the head-projection key never reads the
-    // shared-slot spans.
     sink.aim(&spec(2, 0), 3, &[]);
     let mut bindings = Bindings::new(3);
     for (x, existential) in [(100u64, 41u64), (300, 42)] {
@@ -501,22 +448,17 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
     );
 }
 
-/// The DNF-derived union regime re-keys on the SHARED SLOT ARRAYS
-/// (ruled 2026-07-23, R2): the disjuncts of one written rule share one
-/// variable scope, so the `VarId`-ordered spans read the same binding
-/// tuple through each clone's own layout — a cross-disjunct
-/// re-derivation is absorbed, while distinct full bindings projecting
-/// to EQUAL head rows all fold (the head-projection key would eat
-/// them; the or-transparency law forbids exactly that —
-/// `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// The DNF-derived union regime re-keys on the SHARED SLOT ARRAYS (ruled
+/// 2026-07-23, R2): the disjuncts of one written rule share one variable scope,
+/// so the `VarId`-ordered spans read the same binding tuple through each
+/// clone's own layout — a cross-disjunct re-derivation is absorbed, while
+/// distinct full bindings projecting to EQUAL head rows all fold (the
+/// head-projection key would eat them; the or-transparency law forbids exactly
+/// that — `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 #[test]
 fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     use crate::exec::run::{Bindings, Sink};
 
-    // Head: (g, Sum(x)) over the scope {g = v0, x = v1, e = v2} — e is
-    // an existential outside the head. Clone A lays out g@0, x@1, e@2;
-    // clone B lays out e@0, x@1, g@2 (the DP is free to reorder nodes,
-    // never the shared scope).
     let spec = |g: usize, x: usize| {
         vec![
             FindSpec::Var { slot: g, width: 1 },
@@ -532,9 +474,8 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     let spans_a = [(0, 1), (1, 1), (2, 1)];
     let spans_b = [(2, 1), (1, 1), (0, 1)];
     let mut sink = AggregateSink::for_dnf_union(&spec(0, 1), 3, &spans_a, 0);
-    sink.reset(); // once per execution, never per rule
+    sink.reset(); 
 
-    // Clone A: (g = 7, x = 100, e = 5).
     let mut bindings = Bindings::new(3);
     bindings.reset();
     bindings.set(0, 7);
@@ -543,9 +484,6 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     sink.emit(&bindings);
     assert_eq!(sink.distinct_seen(), Some(1), "clone A seeds the union");
 
-    // Clone B, re-aimed with ITS spans: the same full binding
-    // (7, 100, 5) is absorbed across layouts, and (7, 100, 6) — equal
-    // head row, distinct existential — folds.
     sink.aim(&spec(2, 1), 3, &spans_b);
     let mut bindings = Bindings::new(3);
     for existential in [5u64, 6] {
@@ -569,16 +507,10 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     );
 }
 
-/// The dense group table (finding 049) is answer-identical to the
-/// open-domain map over the same emissions: two schema-proven radixes
-/// (2 × 3 ordinals), every group inhabited out of order, ties of the
-/// mixed-radix arithmetic to the map's hash keys checked value by
-/// value.
 #[test]
 fn dense_group_tables_match_the_hashed_map_word_for_word() {
     use crate::exec::run::{Bindings, Sink};
 
-    // Head: (a, b, Sum(x), Count) — a ∈ 0..2, b ∈ 0..3, x open.
     let spec = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Var { slot: 1, width: 1 },
@@ -597,8 +529,6 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
     dense.reset();
     hashed.reset();
 
-    // Every (a, b) group, emitted out of ordinal order with duplicates
-    // (the seen-set absorbs the repeat identically in both regimes).
     let mut bindings = Bindings::new(3);
     for (a, b, x) in [
         (1u64, 2u64, 10u64),
@@ -608,7 +538,7 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
         (1, 2, 30),
         (0, 1, 2),
         (1, 1, 4),
-        (1, 2, 10), // the duplicate full binding
+        (1, 2, 10), 
     ] {
         bindings.reset();
         bindings.set(0, a);
