@@ -56,9 +56,6 @@ fn nothing_records_outside_capture() {
     assert!(events.is_empty());
 }
 
-/// The stamp-cost pin (measured): raw
-/// `cntvct` reads are ~0.30 ns (1/cycle) and `CNTVCTSS` back-to-back
-/// ~4.6 ns on the reference host; the gates leave headroom for load.
 #[test]
 #[ignore = "stamp-cost pin gate; timing-sensitive, run manually"]
 fn stamp_costs_match_the_measured_model() {
@@ -96,8 +93,7 @@ fn stamp_costs_match_the_measured_model() {
         "raw cntvct read: {raw_ns:.3} ns (model 0.30)"
     );
     assert!(ss_ns <= 7.0, "CNTVCTSS read: {ss_ns:.3} ns (model 4.6)");
-    // The ordering that justifies the policy: ss costs more than raw,
-    // and both are far under the old ~2 ns budget assumption.
+
     assert!(raw_ns < ss_ns, "raw {raw_ns:.3} vs ss {ss_ns:.3}");
 }
 
@@ -105,7 +101,7 @@ fn stamp_costs_match_the_measured_model() {
 fn nested_start_capture_extends_instead_of_discarding() {
     start_capture();
     event(names::SAMPLE, TraceArgs::Count(1));
-    start_capture(); // idempotent: the live buffer survives
+    start_capture(); 
     event(names::TOUCH, TraceArgs::Count(2));
     let events = finish_capture();
     assert_eq!(
