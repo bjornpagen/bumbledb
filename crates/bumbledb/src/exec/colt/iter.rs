@@ -5,7 +5,6 @@ use super::{
 
 impl Colt {
     /// # Panics
-
     /// Only on programmer-invariant violations: undersized caller buffers.
     pub fn iter_batch(
         &mut self,
