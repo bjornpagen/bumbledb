@@ -45,7 +45,6 @@ pub enum Engine {
 }
 
 impl Engine {
-
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
