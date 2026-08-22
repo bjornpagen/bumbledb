@@ -6,10 +6,6 @@ use crate::ir::VarId;
 use crate::ir::validate::{ClassifiedComparison, SealedConst};
 use bumbledb_theory::allen::AllenMask;
 
-/// The lowered constant of a sealed comparison side. String stays a
-/// pending intern, `bytes<N>` self-encodes, intervals lower to their two
-/// column words — [`lower_literal`] owns every case; a param stays a
-/// bind-time marker.
 fn sealed_interval(constant: &SealedConst) -> IntervalConst {
     match sealed_const(constant) {
         Const::Interval { start, end } => IntervalConst::Interval { start, end },
@@ -25,13 +21,10 @@ fn sealed_const(constant: &SealedConst) -> Const {
     }
 }
 
-/// The same-atom mask side of an `Allen` variable pair: the field kept on
-/// the left (both variables are the atom's fields), so no mirror applies.
 fn same_atom_mask(mask: AllenMask) -> MaskConst {
     mask
 }
 
-/// The variable's first positive occurrence and the field it reads there.
 fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, OperandAddr) {
     occurrences
         .iter()
@@ -46,8 +39,6 @@ fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, OperandAddr) {
         .expect("validated: comparison variables are atom-bound")
 }
 
-/// The occurrence (by table index) binding both variables of a pair, if
-/// any — the same-atom test — with each side's first field there.
 fn same_atom(
     occurrences: &[Occurrence],
     lhs: VarId,
@@ -69,23 +60,10 @@ fn same_atom(
         })
 }
 
-/// Places each classified comparison — a **total** consumer of
-/// validation's sealed proofs ([`ClassifiedComparison`]): the shape,
-/// operator, resolved variables, and sealed constants are all decided,
-/// so every arm constructs placement and nothing re-derives a
-/// comparison's form. Var-vs-constant pushes down as a filter on the
-/// variable's first positive occurrence (sound for multi-occurrence
-/// variables — join equality propagates the restriction); same-atom
-/// var-vs-var lowers to a per-atom field composition (`FieldsCompare`,
-/// or an interval shape); only cross-atom var-vs-var pairs become
-/// residuals — whole-value comparisons, except the interval-pair form
-/// `Allen`, which stays whole (four endpoint slots + mask,
-/// [`FilterPredicate::FieldsAllen`]), and point membership, which
-/// decomposes into word comparisons (docs/architecture/20-query-ir.md).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one arm per classified shape, each constructing its placement
+)] 
 pub(super) fn place_comparisons(
     comparisons: &[ClassifiedComparison],
     occurrences: &mut [Occurrence],
@@ -99,8 +77,7 @@ pub(super) fn place_comparisons(
     let mut allen_residuals = Vec::new();
     for comparison in comparisons {
         match comparison {
-            // Scalar var-vs-var: same-atom is a per-atom field
-            // composition; cross-atom is a whole-value residual.
+
             ClassifiedComparison::VarVar { op, lhs, rhs } => {
                 match same_atom(occurrences, *lhs, *rhs) {
                     Some((occurrence, left, right)) => {
@@ -119,9 +96,7 @@ pub(super) fn place_comparisons(
                     }),
                 }
             }
-            // Var-vs-constant: pushes down on the variable's first
-            // positive occurrence — the operator is sealed
-            // variable-on-left.
+
             ClassifiedComparison::VarConst { op, var, value } => {
                 let (occurrence, field) = field_of(occurrences, *var);
                 occurrences[occurrence]
@@ -132,9 +107,7 @@ pub(super) fn place_comparisons(
                         value: sealed_const(value),
                     });
             }
-            // The set marker: the selection-level `Eq` compare the plan
-            // routes into `selections` (docs/architecture/20-query-ir.md,
-            // § param sets).
+
             ClassifiedComparison::VarInSet { var, set } => {
                 let (occurrence, field) = field_of(occurrences, *var);
                 occurrences[occurrence]
@@ -145,9 +118,7 @@ pub(super) fn place_comparisons(
                         value: Const::ParamSet(*set),
                     });
             }
-            // Interval-pair `Allen`: same-atom rides the mask-carrying
-            // filter kind; cross-atom stays whole as the mask residual
-            // (four endpoint slots + mask).
+
             ClassifiedComparison::AllenVarVar { lhs, rhs, mask } => {
                 match same_atom(occurrences, *lhs, *rhs) {
                     Some((occurrence, left, right)) => {
@@ -166,8 +137,7 @@ pub(super) fn place_comparisons(
                     }),
                 }
             }
-            // Interval `Allen` against a constant — the field stays the
-            // left operand; the mask is sealed field-on-left already.
+
             ClassifiedComparison::AllenVarConst { var, other, mask } => {
                 let (occurrence, field) = field_of(occurrences, *var);
                 occurrences[occurrence]
@@ -178,9 +148,7 @@ pub(super) fn place_comparisons(
                         mask: *mask,
                     });
             }
-            // `interval ∋ point`: same-atom is the field composition;
-            // cross-atom decomposes into two word comparisons over slot
-            // pairs (`a.start ≤ p AND p < a.end`).
+
             ClassifiedComparison::PointInVarVar { interval, point } => {
                 match same_atom(occurrences, *interval, *point) {
                     Some((occurrence, interval_field, point_field)) => occurrences[occurrence]
@@ -203,9 +171,7 @@ pub(super) fn place_comparisons(
                     ]),
                 }
             }
-            // `interval-var ∋ constant point`: the point is
-            // element-typed by validation — a point membership on the
-            // interval field.
+
             ClassifiedComparison::PointInVarPoint { interval, point } => {
                 let (occurrence, field) = field_of(occurrences, *interval);
                 let point = match point {
@@ -216,8 +182,7 @@ pub(super) fn place_comparisons(
                     .filters
                     .push(FilterPredicate::PointIn { field, point });
             }
-            // `constant interval ∋ var`: the variable's scalar field lies
-            // within the constant interval.
+
             ClassifiedComparison::VarWithin { var, outer } => {
                 let (occurrence, field) = field_of(occurrences, *var);
                 occurrences[occurrence]
