@@ -3,7 +3,6 @@ use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
-
     /// # Errors
 
     pub fn finalize_into(
@@ -11,7 +10,6 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-
         let live = self.group_count();
         if let GroupState::Pack { claims, .. } = &mut self.group_state {
             for claims in &mut claims[..live] {
@@ -83,7 +81,6 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-
         struct PackEmit<'a, F> {
             finds: &'a [SinkSpec],
             key: &'a [u64],
