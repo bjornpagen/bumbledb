@@ -1,6 +1,5 @@
 //! Shared descriptor-wire tags. The encoder ([`super::fingerprint`]) names
 //! these discriminants; the bytes are the historical stream (tag 1 remains
-//! the deleted-enum tombstone). There is no decoder.
 
 use super::{Bound, FieldId};
 
@@ -68,8 +67,6 @@ wire_tag!(BoundKind {
     TargetDuration = 2,
 });
 
-/// The four-arm ceiling the sealed side already names. Encodes as the
-/// nested presence+kind tags the historical stream uses — bytes unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EncodedHi {
     Unbounded,
