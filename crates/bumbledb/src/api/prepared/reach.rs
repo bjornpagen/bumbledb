@@ -4,7 +4,6 @@
 //! (the unique self-atom is the marked delta occurrence). An empty Δ ends the rec
 //! Interiors-only never enters this module's loop.
 //! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
-
 use std::sync::Arc;
 
 use super::run_join::run_join;
