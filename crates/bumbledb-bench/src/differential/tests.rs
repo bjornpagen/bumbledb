@@ -1,9 +1,3 @@
-//! The seeded differential stream: a fixed 200-op random stream over a
-//! two-relation schema with one `==` pair and one pointwise key. Engine
-//! and model must agree on every write verdict (including the violating
-//! statement) and on every one of 20 fixed queries — plus the dual-run
-//! grounding differential ([`grounding`]).
-
 mod capacity_ray;
 mod capacity_witness;
 mod closed;
@@ -31,13 +25,6 @@ use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 
-/// Booking(room, span: interval<u64>, ref) with the pointwise key
-/// (room, span) and the scalar key (ref); Marker(id) with key (id); and
-/// the `==` pair Booking(ref) == Marker(id), lowered to its two
-/// containments. Materialized statement order:
-/// 0 Booking(room, span) -> Booking, 1 Booking(ref) -> Booking,
-/// 2 Marker(id) -> Marker, 3 Booking(ref) <= Marker(id),
-/// 4 Marker(id) <= Booking(ref).
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -105,9 +92,6 @@ fn schema() -> SchemaDescriptor {
 const BOOKING: RelationId = RelationId(0);
 const MARKER: RelationId = RelationId(1);
 
-/// splitmix64, local by design: the 200-op stream's exact content is
-/// this test's identity (the assertions pin its verdict mix), so it is
-/// not deduplicated into `corpus_gen::Rng`.
 struct Rng(u64);
 
 impl Rng {
@@ -134,8 +118,6 @@ fn booking(rng: &mut Rng, reference: u64) -> Vec<Value> {
     ]
 }
 
-/// A random pick from a relation's current facts, from the generator's
-/// own mirror of the state.
 fn pick(mirror: &NaiveDb, rel: RelationId, rng: &mut Rng) -> Option<Vec<Value>> {
     let facts = mirror.relation(rel);
     if facts.is_empty() {
@@ -145,22 +127,13 @@ fn pick(mirror: &NaiveDb, rel: RelationId, rng: &mut Rng) -> Option<Vec<Value>> 
     facts.iter().nth(index).map(|tuple| tuple.0.clone())
 }
 
-/// The 200 write ops: consistent pair inserts and deletes (which commit),
-/// lone inserts and lone-fact deletes (which abort on one of the five
-/// statements), overlapping spans (pointwise aborts), duplicate
-/// references (scalar-key aborts), redundant inserts alongside a delete
-/// of their containment target (the net-disposition pattern class — the
-/// second count returned; verdicts must classify target-side on both
-/// oracles), and no-op deletes. The generator keeps its own model mirror
-/// so deletes can name real facts.
 fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
     let mut mirror = NaiveDb::new(&schema());
     let mut deltas = Vec::new();
     let mut pattern_cases = 0u64;
     for _ in 0..200 {
         let delta = match rng.below(11) {
-            // A consistent pair: commits unless the reference is taken or
-            // the span overlaps an existing booking's.
+
             0..=3 => {
                 let reference = rng.below(8);
                 Delta {
@@ -171,8 +144,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                     ],
                 }
             }
-            // A lone insert: aborts on one containment direction unless
-            // its counterpart already stands.
+
             4 | 5 => {
                 if rng.below(2) == 0 {
                     let reference = rng.below(8);
@@ -187,7 +159,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                     }
                 }
             }
-            // A lone delete of a real fact: strands the counterpart.
+
             6 | 7 => {
                 let rel = if rng.below(2) == 0 { BOOKING } else { MARKER };
                 match pick(&mirror, rel, rng) {
@@ -198,7 +170,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                     None => Delta::default(),
                 }
             }
-            // Demolish a whole pair: commits.
+
             8 => match pick(&mirror, BOOKING, rng) {
                 Some(fact) => {
                     let reference = fact[2].clone();
@@ -209,14 +181,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                 }
                 None => Delta::default(),
             },
-            // The net-disposition pattern class (the normative rule:
-            // "source side" means facts the transaction actually added):
-            // a redundant insert of a committed booking alongside the
-            // delete of its containment target — in its plain form
-            // (re-insert of a committed fact) and its cancellation form
-            // (delete + re-insert netting to nothing). Either way the
-            // booking was not genuinely added, so the stranding judges
-            // target-side on both oracles, Direction included.
+
             9 => match pick(&mirror, BOOKING, rng) {
                 Some(fact) => {
                     let reference = fact[2].clone();
@@ -232,7 +197,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                 }
                 None => Delta::default(),
             },
-            // A no-op delete of a (probably) absent fact.
+
             _ => Delta {
                 deletes: vec![(MARKER, vec![Value::U64(100 + rng.below(8))])],
                 inserts: vec![],
@@ -257,11 +222,10 @@ fn booking_atom() -> Atom {
     atom(BOOKING, &[(0, var(0)), (1, var(1)), (2, var(2))])
 }
 
-/// The 23 fixed queries, each with its parameters.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // a fixed list, one entry per query
+)] 
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
     let fold = |op: FoldOp, over: u16| FindTerm::Aggregate {
@@ -269,14 +233,14 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         over: VarId(over),
     };
     vec![
-        // 1: every booking.
+
         (plain(vec![v(0), v(1), v(2)], vec![booking_atom()]), vec![]),
-        // 2: every marker.
+
         (
             plain(vec![v(0)], vec![atom(MARKER, &[(0, var(0))])]),
             vec![],
         ),
-        // 3: rooms booked at instant 7 (literal membership).
+
         (
             plain(
                 vec![v(0)],
@@ -287,8 +251,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-        // 4: marker ids inside some booking's span (point-variable
-        // membership anchored at Marker.id).
+
         (
             plain(
                 vec![v(0), v(1)],
@@ -299,7 +262,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-        // 5: the reference join.
+
         (
             plain(
                 vec![v(0), v(2)],
@@ -307,7 +270,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-        // 6: markers with no booking in room 0 (negation).
+
         (
             Query::single(Rule {
                 finds: vec![v(0)],
@@ -320,34 +283,34 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-        // 7: bookings per room.
+
         (
             plain(vec![v(0), FindTerm::Count], vec![booking_atom()]),
             vec![],
         ),
-        // 8: global booking count (empty input ⇒ empty set).
+
         (plain(vec![FindTerm::Count], vec![booking_atom()]), vec![]),
-        // 9: sum of references per room.
+
         (
             plain(vec![v(0), fold(FoldOp::Sum, 2)], vec![booking_atom()]),
             vec![],
         ),
-        // 10: global Max of the booking reference.
+
         (
             plain(vec![fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
-        // 11: Max reference per room.
+
         (
             plain(vec![v(0), fold(FoldOp::Max, 2)], vec![booking_atom()]),
             vec![],
         ),
-        // 12: global Min of the booking reference.
+
         (
             plain(vec![fold(FoldOp::Min, 2)], vec![booking_atom()]),
             vec![],
         ),
-        // 13: overlapping spans across distinct bookings.
+
         (
             Query::single(Rule {
                 finds: vec![v(2), v(5)],
@@ -373,7 +336,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-        // 14: spans containing another booking's span.
+
         (
             Query::single(Rule {
                 finds: vec![v(2), v(5)],
@@ -399,7 +362,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-        // 15: markers lying inside a booking's span, as a predicate.
+
         (
             Query::single(Rule {
                 finds: vec![v(2), v(3)],
@@ -413,7 +376,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-        // 16: bookings of one room (scalar param).
+
         (
             plain(
                 vec![v(0), v(1)],
@@ -424,7 +387,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![ParamValue::Scalar(Value::U64(1))],
         ),
-        // 17: bookings whose room is in a set (param set).
+
         (
             plain(
                 vec![v(0), v(1)],
@@ -435,7 +398,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![ParamValue::Set(vec![Value::U64(0), Value::U64(2)])],
         ),
-        // 18: references above a threshold (order predicate).
+
         (
             Query::single(Rule {
                 finds: vec![v(2)],
@@ -449,8 +412,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![],
         ),
-        // 19: markers not referenced from rooms in a set (negation with a
-        // param set inside the negated atom).
+
         (
             Query::single(Rule {
                 finds: vec![v(0)],
@@ -463,7 +425,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             }),
             vec![ParamValue::Set(vec![Value::U64(1), Value::U64(2)])],
         ),
-        // 20: markers gated on Booking being nonempty (zero-binding atom).
+
         (
             plain(
                 vec![v(0)],
@@ -471,10 +433,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             ),
             vec![],
         ),
-        // 21: the rules union with overlap — rooms booked at instant 7
-        // ∪ rooms of bookings with reference >= 4 (one head, one sink;
-        // the spanning seen-set is the union — 40-execution's rule
-        // loop, differentially pinned against the model's set union).
+
         (
             Query {
                 interiors: vec![],
@@ -504,10 +463,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             },
             vec![],
         ),
-        // 22: the multi-rule aggregate — Sum(reference) and Count over
-        // the union of the two rules' head-projected bindings (a
-        // booking matched by both rules folds once — the union fold,
-        // 20-query-ir § aggregation).
+
         (
             Query {
                 interiors: vec![],
@@ -540,9 +496,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             },
             vec![],
         ),
-        // 23: one query-global param reaching both rules — references
-        // of room ?0 ∪ references >= ?0 (params bind once; every rule
-        // reads the shared slot).
+
         (
             Query {
                 interiors: vec![],
@@ -572,14 +526,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     ]
 }
 
-/// The net-disposition Direction-divergence regression: `A(x) <= B(y)` standing,
-/// `a ∈ A` and its target `b ∈ B` committed; one transaction does
-/// `insert(a)` (a storage no-op) and `delete(b)`. The naive model is
-/// normative — "source side" means facts the transaction *actually
-/// added* — so both oracles must judge the delete target-side: identical
-/// verdicts **including `Direction`**. Covered in the plain form and the
-/// cancellation form (`delete(a); insert(a)` netting to nothing), which
-/// the engine's old last-disposition delta judged source-side.
 #[test]
 fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
     use bumbledb::{Direction, StatementId};
@@ -593,7 +539,6 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
 
-    // Pre-seed {a, b}: a booking and the marker it requires.
     let a = vec![
         Value::U64(0),
         Value::IntervalU64(bumbledb::Interval::<u64>::new(1, 4).expect("nonempty interval")),
@@ -622,9 +567,6 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
     });
     assert_eq!((summary.commits, summary.aborts), (1, 2));
 
-    // `run` proved the verdicts identical including Direction; pin the
-    // label itself to the normative target-side classification, on the
-    // Booking(ref) <= Marker(id) statement.
     for delta in [redundant, cancelled] {
         let violations = naive
             .apply(&delta)
@@ -659,7 +601,7 @@ fn fixed_200_op_stream_agrees_with_the_engine() {
     for (index, delta) in deltas.into_iter().enumerate() {
         ops.push(Op::Write(delta));
         // The full query battery after every 5th write and after the
-        // last, keeping the engine's per-commit fsync cost sane.
+
         if (index + 1) % 5 == 0 || index == 199 {
             for (query, params) in &fixed_queries {
                 ops.push(Op::Query {
@@ -673,7 +615,7 @@ fn fixed_200_op_stream_agrees_with_the_engine() {
     let summary: Summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
         panic!("engine and model disagree: {divergence:#?}");
     });
-    // The stream must actually exercise both verdicts and real data.
+
     assert!(summary.commits >= 20, "commits: {summary:?}");
     assert!(summary.aborts >= 20, "aborts: {summary:?}");
     assert!(summary.queries >= 800, "queries: {summary:?}");
