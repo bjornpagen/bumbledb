@@ -1,9 +1,5 @@
-//! The naive linear-reach landmarks
-//! (`lean/Bumbledb/Exec/Reach.lean` is the truth): a fold over a
-//! finished rec reads the closed lfp from main, and the empty-Δ-at-round-1
-//! boundary stops after the base round. The naive-vs-SQLite closure
-//! goldens live with the comparison runners (`crate::differential::tests::recursive`
-//! — nothing under `naive/` may touch another oracle).
+//! (`lean/Bumbledb/Exec/Reach.lean` is the truth): a fold over a boundary stops
+//! after the base round.
 
 use std::collections::BTreeSet;
 
@@ -90,7 +86,6 @@ fn rows(values: &[&[u64]]) -> BTreeSet<Tuple> {
         .collect()
 }
 
-/// Linear closure: identity main over the rec.
 fn closure_query() -> Query {
     Query {
         interiors: vec![],
@@ -115,7 +110,6 @@ fn closure_query() -> Query {
     }
 }
 
-/// A fold over a finished rec: `Count` per source over the closure.
 #[test]
 fn a_fold_reads_the_finished_fixpoint() {
     let naive = world(4, &[(1, 0), (2, 1), (3, 1)]);
@@ -152,8 +146,6 @@ fn a_fold_reads_the_finished_fixpoint() {
     );
 }
 
-/// The empty-Δ-at-round-1 boundary: on a star graph the rec arm derives
-/// nothing in round one, and the fixpoint is exactly the base round.
 #[test]
 fn an_empty_first_delta_stops_at_the_base_round() {
     let naive = world(4, &[(1, 0), (2, 0), (3, 0)]);
