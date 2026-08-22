@@ -14,12 +14,11 @@ use super::{
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
-)] 
-
+)]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
@@ -71,7 +70,6 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 }
             }
             AntiProbeForm::Gate => {
-
                 let start = colts[spec.occ].start();
                 grow_scratch(mask, n);
                 for k in 0..n {
@@ -91,7 +89,6 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 crate::exec::kernel::compact_u32_by_mask(survivors, mask);
             }
             AntiProbeForm::Keyed { parts, key_words } => {
-
                 let sources = &mut anti_sources[a_idx];
                 sources.clear();
                 for (var, slot, width) in parts {
@@ -184,6 +181,5 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 counters.phase_end(node_idx, JoinPhase::Probe);
             }
         }
-
     }
 }
