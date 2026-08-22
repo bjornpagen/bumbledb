@@ -6,7 +6,6 @@
 //! structure +53% — query (the view memo — every execute after the first shows
 //! scale (every family × draw row-identical across engines before a is O(rows)
 //! per pass), the exact warm protocol shape with the lane's
-
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
