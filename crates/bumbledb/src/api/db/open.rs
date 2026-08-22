@@ -81,8 +81,14 @@ impl<S> Db<S> {
     }
 
     /// ```compile_fail
+    /// fn require_builder(path: &std::path::Path, builder: &bumbledb::InstanceBuilder<()>) {
+    ///     let _ = bumbledb::Db::from_instance(path, builder);
+    /// }
     /// ```
+    ///
     /// # Errors
+    ///
+    /// `DestinationExists` if `path` already exists; `PublishedButUnsynced` if rename succeeded but the parent dirent sync failed; `Io`/`Lmdb` otherwise.
     pub fn from_instance(path: &Path, instance: &OwnedInstance<S>) -> Result<Self> {
         let env = Environment::publish(
             path,
