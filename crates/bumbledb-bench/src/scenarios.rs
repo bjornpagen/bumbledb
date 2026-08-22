@@ -40,7 +40,6 @@ pub use crate::sqlite_run::{CapMs, DEFAULT_CAP};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Twin {
-
     Canonical,
 
     Tuned(fn() -> crate::translate::Translated),
@@ -49,7 +48,6 @@ pub enum Twin {
 }
 
 pub enum Surface {
-
     Query(fn() -> Query),
 
     KeyedGet {
@@ -92,7 +90,6 @@ pub struct Scenario {
 
 #[derive(Debug, Clone, Default)]
 pub struct QueryModes {
-
     pub trace_root: Option<std::path::PathBuf>,
 
     pub alloc: bool,
@@ -114,7 +111,6 @@ pub struct QueryReport {
 }
 
 impl QueryReport {
-
     #[must_use]
     pub fn primary_ratio(&self) -> Option<f64> {
         match self.lanes.first()?.outcome {
@@ -137,7 +133,9 @@ pub enum LaneOutcome {
         ratio_p50: f64,
     },
 
-    ExceededCap { cap: CapMs },
+    ExceededCap {
+        cap: CapMs,
+    },
 }
 
 struct Stores {
