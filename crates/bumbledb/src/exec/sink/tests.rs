@@ -25,13 +25,6 @@ mod aggregate;
 mod projection;
 mod semantics;
 
-// The construction boundary is total: every symbolic find variant has
-// one exact measure-free execution form. Measure rows also pin the
-// derived-word table that preserves execution-time ray checking.
-
-/// Posting(id fresh u64, account u64, amount i64) +
-/// PostingTag(posting u64, tag u64) +
-/// Payroll(id fresh u64, emp u64, during Interval<I64>).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -146,7 +139,6 @@ fn views_of(
         .collect()
 }
 
-/// Commits Payroll rows (interval facts) and returns its image.
 fn payroll_views_of(
     dir: &TempDir,
     schema: &Schema,
@@ -173,7 +165,7 @@ fn payroll_views_of(
     drop(view);
     commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
-    // Relation-id-indexed like `views_of` (Posting/Tag images empty).
+
     [POSTING, TAG, PAYROLL]
         .iter()
         .map(|rel| crate::image::build(&txn.catalog(), schema, *rel).expect("build"))
@@ -184,9 +176,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
     plan.occurrences()
         .iter()
         .map(|occurrence| {
-            // Field→column through the span map (docs/architecture/
-            // 50-storage.md image layout): an interval field covers its
-            // start/end column pair and shifts every later field.
+
             let columns: Vec<Vec<usize>> = occurrence
                 .trie_schema
                 .iter()
@@ -235,10 +225,6 @@ fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence
     }
 }
 
-/// Assembles a `NormalizedQuery` the way `normalize` would: slot widths
-/// derived from the schema field each variable reads (the `SlotWidth`
-/// layout — interval variables are two words); no negation in these
-/// fixtures.
 fn normalized(
     schema: &Schema,
     occurrences: Vec<Occurrence>,
@@ -280,8 +266,6 @@ fn planned(
     validate(&plan, normalized, schema, &sinks).expect("valid plan")
 }
 
-/// Hand-built two-node plans (group var above the leaf — the stats
-/// shape) used by the batch-regime tests.
 fn two_node_plan(
     schema: &Schema,
     normalized: &NormalizedQuery,
@@ -347,7 +331,6 @@ fn aggregate_sink(plan: &ValidatedPlan, finds: Vec<FindSpec>, elided: bool) -> A
     }
 }
 
-/// A scalar find's spec (width 1 through the layout map).
 fn var_spec(plan: &ValidatedPlan, var: u16) -> FindSpec {
     FindSpec::Var {
         slot: plan.slot_of(VarId(var)),
@@ -355,7 +338,6 @@ fn var_spec(plan: &ValidatedPlan, var: u16) -> FindSpec {
     }
 }
 
-/// A scalar fold's spec. Count is [`AggSpec::Count`], not a `FoldOp`.
 fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: u16, signed: bool) -> FindSpec {
     FindSpec::Agg(AggSpec::Fold {
         op,
@@ -365,7 +347,6 @@ fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: u16, signed: bool) -> FindSp
     })
 }
 
-/// Counters recording D2 skips.
 #[derive(Default)]
 struct SkipCounter {
     skips: usize,
