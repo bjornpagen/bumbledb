@@ -4,7 +4,6 @@
 //! happens once at prepare time into the prepared rule sum; the branch
 //! exists exactly once. No images are touched on the key-probe path —
 //! it works identically on a cold, just-committed database (the latency
-
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
