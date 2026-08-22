@@ -1,7 +1,6 @@
 //! The hand-NEON residue: the configuration kernel trio, the kernels
 //! evidence; the filter/fold/gather kernels adopted `std::simd` and
 //! left this module).
-
 use std::arch::aarch64::{
     uint64x2_t, vandq_u64, vceqq_u64, vcgtq_u64, vdupq_n_u64, vld1q_u8, vld1q_u64, vorrq_u64,
     vst1q_u8,
