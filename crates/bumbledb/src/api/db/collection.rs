@@ -4,7 +4,6 @@
 //! Construction IS the parse (King: a parser returns a type that carries
 //! the proof). [`CollectionBuilder`] performs the whole shape judgment —
 //! arity per row, type-kind per cell against the sealed roster (the one
-
 use crate::encoding::{InternId, ValueRef};
 use crate::error::{FactShapeError, Mismatch, Result};
 use crate::ir::Value;
@@ -329,7 +328,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// the bound is a typed refusal, never a panic
-
     /// UNTESTABLE as stated: witnessing the refusal takes a >4 GiB
     fn arena_span(&self, len: usize) -> Result<u32> {
         u32::try_from(len).map_err(|_| {
@@ -341,7 +339,6 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-
     /// refusal of this seal: on a fieldless roster no push can have
     pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
         if !self.fields.is_empty() {
