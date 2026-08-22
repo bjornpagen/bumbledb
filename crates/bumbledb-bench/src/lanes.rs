@@ -61,7 +61,6 @@ mod tests {
     use crate::report::{Provenance, SharedMachine};
 
     /// owner's 2026-07-20 shared-machine ruling), boost-off emits the
-
     #[test]
     fn the_shared_machine_stamp_shape_is_pinned() {
         let base = Provenance {
