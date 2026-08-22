@@ -1,19 +1,3 @@
-/**
- * H5 pins — the closed surface cleanup. The compensation machinery whose
- * cause H1–H4 removed is GONE: no handle constants (`Kind.Checking` is
- * unspellable — the literal `"Checking"` is the ONE spelling), no `match`
- * (dispatch is native `switch` narrowing over the handle union), no
- * `fromId` (decode speaks handle names directly). What survives is exactly
- * `name`, `id`, `data`, `axioms`, `columns`, and — on the payload tier
- * only — `where()`; the type claims EXACTLY the runtime properties (the
- * `Object.keys`-vs-type probe the 0.2.0 review forced, re-pinned for the
- * slimmed shape). With no handle-named properties minted, handles are pure
- * DATA and no name is reserved: a vocabulary whose handles are named
- * `match`, `where`, and `id` constructs, keys its axioms record correctly,
- * and round-trips through a real store. The 3-arg `closed(name, columns,
- * axioms)` laws (K6/0.2.0-review) are untouched and re-pinned.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -26,10 +10,8 @@ import type { SelectionInput } from "#relation.ts"
 import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/** Pins a probe to `true` at compile time. */
 type Expect<T extends true> = T extends true ? true : never
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-closed-"))
@@ -49,47 +31,28 @@ const Grade = closed(
 	}
 )
 
-/**
- * Handles are pure data, so NO name is reserved: a vocabulary may legally
- * contain handles named like the value's own methods — the axioms record
- * and the roster are their own namespaces.
- */
 const Weird = closed("Weird", ["match", "where", "id"])
 
-/**
- * The whole surviving surface, spelled at the TYPE (`keyof` refuses any
- * key outside the union, and the exact-union pins in {@link Cases} refuse
- * any key missing from these lists) — the `Object.keys` assertions below
- * are the runtime half of the type-lie sweep.
- */
 const bareSurface: readonly (keyof typeof Kind)[] = ["name", "id", "data", "axioms", "columns"]
 const payloadSurface: readonly (keyof typeof Grade)[] = ["name", "id", "data", "axioms", "columns", "where"]
 
-/** The pinned cases, exported so the compiler counts every probe as used. */
 type Cases = [
-	// ——— the type claims EXACTLY the slimmed surface, per tier ———
+
 	Expect<Equal<keyof typeof Kind, "name" | "id" | "data" | "axioms" | "columns">>,
 	Expect<Equal<keyof typeof Grade, "name" | "id" | "data" | "axioms" | "columns" | "where">>,
-	// ——— 3-arg inference: Cols from arg 2 (the columns carrier reads back the declared descriptors) ———
+
 	Expect<Equal<typeof Grade.columns.mastered, BoolField>>,
 	Expect<Equal<typeof Grade.columns.score, U64Field>>,
 	Expect<Equal<keyof typeof Grade.columns, "mastered" | "score">>,
-	// ——— 3-arg inference: the handle set from arg 3's keys, spoken as the union ———
+
 	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Retried" | "Failed">>,
-	// ——— closed `where()` reads THE SAME input type as `relation().where()`
-	// (relation.ts::SelectionInput over the declared columns) — the identity
-	// pin, so H3's membership arrays flow through with no local change ———
+
 	Expect<Equal<Parameters<typeof Grade.where>[0], SelectionInput<typeof Grade.columns>>>,
-	// ——— method-named handles are ordinary roster data ———
+
 	Expect<Equal<Infer<typeof Weird.id>, "match" | "where" | "id">>,
 	Expect<Equal<keyof typeof Weird.axioms, "match" | "where" | "id">>
 ]
 
-/**
- * The hard-removal fail-probes — REAL directives (removing any one breaks
- * compilation). Never called: the dead spellings are compile subjects, not
- * runtime paths.
- */
 function handleConstantsDied(): unknown[] {
 	return [
 		// @ts-expect-error — H5: the handle constants died entirely; the literal "Checking" is the ONE spelling
@@ -146,13 +109,11 @@ describe("handles named like methods — pure data, no reserved names", function
 			kind: "u64",
 			closed: { name: "Weird", handles: ["match", "where", "id"] }
 		})
-		// the value's own surface is untouched by the handle names — where stays absent on the bare tier
+
 		assert.equal(Object.hasOwn(Weird, "where"), false)
 		assert.equal(Object.hasOwn(Weird, "match"), false)
 	})
 
-	// The marshal bijection (H2) translates handle names to row ids at write
-	// and back at decode — this round-trip rides it end to end.
 	test("the roster round-trips through a real store", async function probeWeirdRoundTrip() {
 		const Uses = relation("Uses", { id: u64.fresh, kind: Weird.id })
 		const WeirdTheory = schema("WeirdTheory", { Weird, Uses }, [contained(on(Uses, "kind"), on(Weird, "id"))])
