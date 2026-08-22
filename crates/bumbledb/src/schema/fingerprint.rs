@@ -4,7 +4,6 @@
 //! length-prefixed (u32 LE) so no two schemas can alias to one byte stream;
 //! relation, field, and statement ids are pinned by declaration/materialized
 //! order and therefore covered without being hashed separately.
-
 use super::wire::{
     ClosednessTag, EncodedHi, GenerationTag, IntervalElementTag, StatementFormTag, ValueTypeTag,
     WeightTag,
