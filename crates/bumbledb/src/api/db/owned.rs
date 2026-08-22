@@ -19,15 +19,12 @@ use super::{Fact, Key};
 
 /// An admitted heap instance. Mutation is unrepresentable. Query
 /// methods are inherent on this type.
-///
 /// `Send + Sync`: hosts may share an admitted instance across threads.
-///
 /// ```compile_fail
 /// fn require_load(instance: &mut bumbledb::OwnedInstance<()>) {
 ///     let _ = instance.load::<()>([]);
 /// }
 /// ```
-///
 /// ```compile_fail
 /// fn require_generation(instance: &bumbledb::OwnedInstance<()>) {
 ///     let _ = instance.generation();
@@ -61,8 +58,6 @@ impl<S> OwnedInstance<S> {
         &self.core.source.catalog
     }
 
-    /// Frozen catalog plus any lazy images already built. Host GC
-    /// accounting (N-API `adjust_external_memory`) rides this number.
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
         let catalog = self.core.source.catalog.byte_size();
@@ -89,11 +84,8 @@ impl<S> OwnedInstance<S> {
         self.core.source.peek_image(relation)
     }
 
-    /// Prepares a query against this admitted catalog.
-    ///
     /// # Errors
-    ///
-    /// Validation errors; `Corruption` from catalog reads.
+
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         crate::api::prepared::prepare_on(
             &self.core.identity,
@@ -104,12 +96,8 @@ impl<S> OwnedInstance<S> {
         )
     }
 
-    /// Executes a prepared query bound to this instance.
-    ///
     /// # Errors
-    ///
-    /// `ForeignPreparedQuery` when `prepared` came from another
-    /// instance; bind and storage errors otherwise.
+
     pub fn execute(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -125,49 +113,34 @@ impl<S> OwnedInstance<S> {
         )
     }
 
-    /// Full-relation scan of decoded dynamic facts.
-    ///
     /// # Errors
-    ///
-    /// `UnknownRelation`; per-item `Corruption`.
+
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         self.scan_dyn(rel)
     }
 
-    /// Typed full-relation scan.
-    ///
     /// # Errors
-    ///
-    /// As [`Self::scan`].
+
     pub fn scan_facts<'a, F: Fact<'a, Schema = S>>(
         &'a self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'a> {
         self.scan_typed()
     }
 
-    /// Membership of a typed fact.
-    ///
     /// # Errors
-    ///
-    /// Dictionary resolution errors.
+
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.contains_fact(fact)
     }
 
-    /// Membership of a dynamic fact.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` on an unknown relation or arity/type mismatch.
+
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.contains_values(rel, values)
     }
 
-    /// Keyed lookup of a typed fact.
-    ///
     /// # Errors
-    ///
-    /// `FactShape` when a manual `Key` impl lies about its statement.
+
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the public get takes Key by value to match ReadInstance::get"
@@ -176,11 +149,8 @@ impl<S> OwnedInstance<S> {
         self.get_typed(&key)
     }
 
-    /// Keyed lookup through a data-supplied key statement.
-    ///
     /// # Errors
-    ///
-    /// As [`crate::ReadInstance::get_dyn`].
+
     pub fn get_dyn(
         &self,
         relation: RelationId,
@@ -193,26 +163,10 @@ impl<S> OwnedInstance<S> {
             .then_some(out))
     }
 
-    /// Exact cardinality of `relation` in this frozen catalog — THE
-    /// public spelling for stored cardinality (one-representation PRD
-    /// 40): a structural read of the maintained counter
-    /// (`StatKind::RowCount`, folded transactionally at every commit
-    /// since format 8, O(1) to read, pinned equal to the scan count) —
-    /// never a scan, never an estimate, no allocation. `count` and
-    /// [`Self::scan`] read the one frozen catalog, so both observe the
-    /// same state by construction. A **closed** relation answers its
-    /// sealed extension length (virtual storage — the stored counter
-    /// never exists for it), the same arm as
-    /// [`crate::ReadInstance::count`].
-    ///
     /// # Errors
-    ///
-    /// `UnknownRelation`; `Corruption` on a malformed counter.
-    ///
+
     /// # Panics
-    ///
-    /// Never: a sealed extension is schema data admitted at declaration —
-    /// its length always fits `u64`.
+
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
             return Err(crate::error::DynIdError::UnknownRelation { relation }.into());
