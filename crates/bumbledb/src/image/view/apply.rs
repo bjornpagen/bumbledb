@@ -1,4 +1,4 @@
-//! The filter-application mechanism (docs/architecture/40-execution.md):
+//! The filter-application mechanism:
 //! evaluates the per-atom conjunction over a warm image into a
 //! survivor-position vector.
 
@@ -12,12 +12,10 @@ use super::{BoundView, Const, FilterPredicate, View};
 /// Applies the filter conjunction over a (warm) image, writing survivors
 /// into `buf` (caller-owned, reused across executions — capacity is
 /// retained). An empty predicate list yields the unfiltered [`View::All`].
-///
 /// # Panics
-///
-/// Only on programmer-invariant violations: an image beyond the u32
 /// position space (the 32 GiB map physically bounds live rows roughly an
 /// order of magnitude under u32; the validated 10⁷ scale sits far below).
+/// Only on programmer-invariant violations: an image beyond the u32
 #[must_use]
 pub fn apply(
     image: &Arc<RelationImage>,
@@ -28,7 +26,6 @@ pub fn apply(
     apply_infallible(image, predicates, params, buf)
 }
 
-/// The conjunction of every predicate kind.
 #[must_use]
 fn apply_infallible(
     image: &Arc<RelationImage>,
@@ -43,10 +40,8 @@ fn apply_infallible(
     debug_assert!(u32::try_from(row_count).is_ok(), "positions fit u32");
     buf.clear();
 
-    // Kernel fast path: the *first kernel-compatible* predicate (not
-    // blindly `predicates[0]` — a leading FieldsCompare or byte-column
     // `Ne` must not hide the SIMD path) produces the initial survivor
-    // set; every other predicate refines it below.
+
     if let Some(pivot) = predicates
         .iter()
         .position(|p| kernel_scan(image, p, params, &mut buf))
