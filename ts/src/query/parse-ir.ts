@@ -1,14 +1,6 @@
-/**
- * Host shape parse for the wire `QueryIr`: CQ/Reach eliminator, rec/main
- * nonempty, aggregate finds split (Count has no `over`; folds require
- * it), head/find alignment. The engine validator remains the one roster
- * authority — this parse refuses only shape the host type can see.
- */
-
 import * as errors from "@superbuilders/errors"
 import type { FindTermIr, HeadTermIr, ParsedQuery, QueryIr, RuleIr } from "#native.ts"
 
-/** Brands a shape-checked wire query so {@link Native.dbPrepare} will accept it. */
 function parseQueryIr(ir: QueryIr): ParsedQuery {
 	if (ir.rules.length === 0) {
 		throw errors.new("parseQueryIr: main rules are empty")
@@ -30,7 +22,6 @@ function parseQueryIr(ir: QueryIr): ParsedQuery {
 	return ir as ParsedQuery
 }
 
-/** One rule list must share the head's width and var/aggregate family. */
 function align(context: string, head: readonly HeadTermIr[], rules: readonly RuleIr[]): void {
 	for (const [ruleIndex, rule] of rules.entries()) {
 		if (rule.finds.length !== head.length) {
@@ -50,7 +41,6 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 	}
 }
 
-/** Count is nullary; pack and folds require `over`. */
 function parseFind(context: string, find: FindTermIr): void {
 	const raw = find as Record<string, unknown>
 	if (find.kind === "count") {
@@ -66,7 +56,6 @@ function parseFind(context: string, find: FindTermIr): void {
 	}
 }
 
-/** Head family of one find term: measure is a var slot; count/pack/folds are aggregates. */
 function findFamily(find: FindTermIr): "var" | "aggregate" {
 	switch (find.kind) {
 		case "var":
