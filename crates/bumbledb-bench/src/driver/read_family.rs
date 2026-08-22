@@ -53,7 +53,6 @@ impl BenchRun<'_> {
     }
 
     /// protocol, frequency-checked, traced and profiled where the modes
-
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,
