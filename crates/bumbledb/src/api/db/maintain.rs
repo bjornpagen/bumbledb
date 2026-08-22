@@ -5,7 +5,6 @@ use crate::error::Result;
 use crate::storage::env::GenerationId;
 
 impl<S> Db<S> {
-
     #[cfg(feature = "trace")]
     #[must_use]
     pub fn cache_stats(&self) -> crate::image::cache::stats::CacheStats {
