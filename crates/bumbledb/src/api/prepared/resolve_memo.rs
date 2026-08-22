@@ -20,7 +20,6 @@ impl ResolveMemo {
     }
 
     /// or copied out of the persistent arena — the LMDB descent and the
-
     pub(super) fn resolve<C: CatalogRead>(
         &mut self,
         catalog: &C,
