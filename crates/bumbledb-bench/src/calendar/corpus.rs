@@ -2,7 +2,6 @@
 //! targets precede their sources (accounts → persons → the `Attendance ==
 //! Claim` discriminated-union cluster loads through calendars → events; working
 //! hours before the claims they cover), and
-
 use std::path::Path;
 use std::time::Instant;
 
