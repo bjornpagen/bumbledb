@@ -1,8 +1,3 @@
-//! The grounding's result-equality pins (`plan/ground.rs`): the eliminated
-//! plan and the grounding-disabled plan execute the same query to identical
-//! result sets, projection and aggregate sinks both — the module doc's
-//! bit-identical claim, exercised end to end.
-
 use super::*;
 use crate::ir::FoldOp;
 
@@ -10,9 +5,8 @@ use crate::ir::normalize::Role;
 use crate::plan::ground::with_grounding_disabled;
 use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh,
-/// name str); Posting(account) <= Account(id) — statement 2 after the
-/// two fresh auto-keys.
+/// Posting(id fresh, account u64, amount i64); Account(id fresh, name str);
+/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
 fn ground_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -71,8 +65,6 @@ fn ground_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits accounts and postings in one transaction (the containment is
-/// judged on the final state, so the cluster inserts together).
 fn populate(env: &Environment, schema: &Schema) {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
@@ -86,9 +78,7 @@ fn populate(env: &Environment, schema: &Schema) {
         );
         delta.insert(&view, RelationId(1), &bytes).expect("insert");
     }
-    // Duplicate (account, amount) pairs on purpose: the aggregate fold
-    // must count both bindings (distinct posting ids), eliminated or
-    // not.
+
     for (id, account, amount) in [
         (1u64, 1u64, 10i64),
         (2, 1, 10),
@@ -113,8 +103,6 @@ fn populate(env: &Environment, schema: &Schema) {
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// The existence-walk atoms: Posting(id = pid, account = x, amount = m),
-/// Account(id = x).
 fn walk_atoms() -> Vec<Atom> {
     vec![
         Atom {
@@ -132,8 +120,6 @@ fn walk_atoms() -> Vec<Atom> {
     ]
 }
 
-/// One prepared rule's roles — asserting the marks so neither side of
-/// the differential is vacuously equal.
 fn plan_roles(prepared: &PreparedQuery<()>, rule: usize) -> Vec<Role> {
     let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
@@ -157,11 +143,10 @@ fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {
     answers
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate
-/// i64) with the declared key Det(grading) -> Det (statement 1 after
-/// Grading's auto-key 0) and the discriminated-union pair
-/// `Grading(id | kind == 0) == Det(grading)` written as its two
-/// containments (statements 2 and 3).
+/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate i64) with the
+/// declared key Det(grading) -> Det (statement 1 after Grading's auto-key 0)
+/// and the discriminated-union pair `Grading(id | kind == 0) == Det(grading)`
+/// written as its two containments (statements 2 and 3).
 fn du_schema() -> Schema {
     let side = |relation: u32, field: u16, selection: &[(u16, crate::ir::Value)]| Side {
         relation: RelationId(relation),
@@ -230,8 +215,6 @@ fn du_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits the DU cluster in one transaction: three gradings (two Det,
-/// one Custom) and the two Det rows the pair requires.
 fn populate_du(env: &Environment, schema: &Schema) {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
@@ -257,13 +240,6 @@ fn populate_du(env: &Environment, schema: &Schema) {
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// The introspection golden on the DU fixture
-/// (`docs/architecture/40-execution.md` § the grounding):
-/// the one-sided walk `Q(rate) :- Det(grading = g, rate),
-/// Grading(id = g, kind == 0)` reports the header's elimination with
-/// the licensing statement rendered in the `schema!` notation — the
-/// mirrored pair renders `==` once — and the structured stats carry the
-/// same mark as data.
 #[test]
 fn the_du_fixture_introspection_pins_the_eliminated_line() {
     let dir = TempDir::new("grounding-du-golden");
@@ -300,8 +276,6 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
     assert!(report.contains("query:"), "{report}");
 }
 
-/// Eliminated vs grounding-disabled execution: identical result sets under
-/// the projection sink and under the aggregate sink.
 #[test]
 fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     let dir = TempDir::new("grounding-differential");
@@ -311,17 +285,13 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Projection sink: Q(pid, m) — posting ids keep duplicate amounts
-    // distinct, so the set comparison is over real multi-row output.
     let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: walk_atoms(),
         negated: vec![],
         conditions: vec![],
     });
-    // Aggregate sink: Q(x, Sum(m)) — pid stays bound (not projected),
-    // so the fold domain counts every posting; the eliminated plan must
-    // reproduce it without ever touching Account.
+
     let aggregate = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(1)),
@@ -367,10 +337,10 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     }
 }
 
-/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`;
-/// `A(b_ref) <= B(id)` (statement 3 after the three fresh auto-keys),
-/// `B(c_ref) <= C(id)` (statement 4) — the `A<=B<=C` chain fixture (the
-/// plan-level twin lives in `plan/ground/tests.rs: chain_schema`).
+/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`; `A(b_ref)
+/// <= B(id)` (statement 3 after the three fresh auto-keys), `B(c_ref) <= C(id)`
+/// (statement 4) — the `A<=B<=C` chain fixture (the plan-level twin lives in
+/// `plan/ground/tests.rs: chain_schema`).
 fn chain_schema() -> Schema {
     let containment = |source: u32, target: u32| StatementDescriptor::Containment {
         source: Side {
@@ -419,11 +389,11 @@ fn chain_schema() -> Schema {
 }
 
 /// The chained elimination executed end to end (the empirical arm of
-/// `lean/Bumbledb/Exec/Rewrites.lean: Query.chained_elimination_sound`):
-/// on the `A<=B<=C` chain, `B` falls with `A` as its pairing source and
-/// `C` falls with the already-eliminated `B` as its source — the plan
-/// keeps one occurrence — and the execution's answers are identical to
-/// the grounding-disabled three-way join's.
+/// `lean/Bumbledb/Exec/Rewrites.lean: Query.chained_elimination_sound`): on the
+/// `A<=B<=C` chain, `B` falls with `A` as its pairing source and `C` falls with
+/// the already-eliminated `B` as its source — the plan keeps one occurrence —
+/// and the execution's answers are identical to the grounding-disabled
+/// three-way join's.
 #[test]
 fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
     let dir = TempDir::new("grounding-chain-differential");
@@ -457,7 +427,7 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
     }
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // Q(a) :- A(id = a, b_ref = x), B(id = x, c_ref = w), C(id = w).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -514,11 +484,6 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
     assert_eq!(with_grounding.len(), 3, "every A row survives the walk");
 }
 
-/// The grounding runs per rule, independently: a two-rule union where the
-/// walk's Account occurrence is containment-implied in rule 0 but
-/// filter-blocked in rule 1 (an extra selection beyond ψ — condition
-/// 2), so the mark stays rule-local, no rule subsumes the other, and
-/// the off switch changes no results.
 #[test]
 fn per_rule_elimination_marks_one_rule_only() {
     let dir = TempDir::new("grounding-per-rule");
@@ -527,9 +492,7 @@ fn per_rule_elimination_marks_one_rule_only() {
     populate(&env, &schema);
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    // rule 0: Q(pid, m) :- Posting(pid, x, m), Account(id = x);
-    // rule 1: the same walk with Account(name == "cash") — the extra
-    // target selection refuses elimination in that rule alone.
+
     let rule = |name_filter: bool| {
         let mut atoms = walk_atoms();
         if name_filter {
@@ -590,12 +553,6 @@ fn per_rule_elimination_marks_one_rule_only() {
     assert!(!with_grounding.is_empty(), "the fixture produces rows");
 }
 
-/// The DNF residue: lowering `(rate > 30 ∨ kind == Det)` over the DU
-/// walk produces a rule pair where elimination discharges the second
-/// disjunct's `kind` filter with the Grading occurrence itself — the
-/// filterless rule subsumes the rate-filtered one, the subsumed rule is
-/// deleted at prepare, results are identical with the passes off, and
-/// introspection names the deletion with the subsuming rule's index.
 #[test]
 fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     let dir = TempDir::new("grounding-subsume");
