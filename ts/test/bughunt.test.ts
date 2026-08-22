@@ -158,7 +158,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("an empty interval smuggled past span() is refused typed at the bridge", function emptyInterval() {
 		assert.throws(function smuggle() {
 			db.write(function bad(tx) {
-
 				const fake: { start: bigint; end: bigint } = { start: 5n, end: 5n }
 				put(tx, Ray, {
 					at: fake,
@@ -174,10 +173,10 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		})
 		assert.equal(right.tag, "accepted", "the exact-width value lands")
 		/**
- * The refusal is the engine's structural-typing judgment: a width-5
- * interval is a DIFFERENT type than interval<u64, 2>, so the dyn lane
- * reports TypeMismatch ("wrong value kind", relation/field by id).
- */
+		 * The refusal is the engine's structural-typing judgment: a width-5
+		 * interval is a DIFFERENT type than interval<u64, 2>, so the dyn lane
+		 * reports TypeMismatch ("wrong value kind", relation/field by id).
+		 */
 		assert.throws(
 			function wrongWidth() {
 				db.write(function bad(tx) {
@@ -206,7 +205,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a lone surrogate is refused typed — never silently mangled", function loneSurrogate() {
-
 		assert.throws(
 			function insertRefused() {
 				db.write(function seed(tx) {
@@ -231,7 +229,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("the query lane refuses a lone surrogate — inline literal, where() literal, and param", function loneSurrogateQueryLane() {
-
 		assert.throws(
 			function inlineLiteralRefused() {
 				db.prepare(
@@ -271,7 +268,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("the schema-literal lane refuses a lone surrogate — where() selections and closed payloads", function loneSurrogateSchemaLane() {
-
 		assert.throws(
 			function whereSelectionRefused() {
 				Txt.where({ note: "\uD800" })
@@ -289,7 +285,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a mirrors violation maps to the one SDK statement value, both directions", function mirrorViolation() {
-
 		const missingTerms = db.write(function violate(tx) {
 			put(tx, Item, { kind: "Special", flag: true })
 		})
@@ -322,7 +317,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("a handle selection without its companion closed-reference containment is refused at schema()", async function undeclaredRefRefused() {
-
 		const Item2 = relation("Item2", { id: u64.fresh, kind: Kind.id })
 		const Terms2 = relation("Terms2", { item: u64 })
 		const bareMirror = mirrors(on(Item2.where({ kind: "Special" }), "id"), on(Terms2, "item"))
@@ -331,9 +325,9 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		}, /no declared containment resolves the closed reference.*contained\(on\(Item2, "kind"\), on\(Kind, "id"\)\)/)
 
 		/**
- * With the companion containment declared, the two renderers agree on
- * the one spelling — the equality the refusal protects.
- */
+		 * With the companion containment declared, the two renderers agree on
+		 * the one spelling — the equality the refusal protects.
+		 */
 		const Full = schema("Full", { Kind, Item2, Terms2 }, [
 			key(Terms2, ["item"]),
 			contained(on(Item2, "kind"), on(Kind, "id")),
@@ -422,7 +416,6 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		await new Promise((resolve) => setImmediate(resolve))
 		const after = db.read((instance) => instance.generation)
 		if (attempt.error === undefined) {
-
 			assert.equal(lateError, undefined, "the callback's inserts must not throw spent")
 			assert.equal(db.read((i) => i.scan(Num)).length, beforeRows + 1, "the insert must land if admitted")
 		} else {
