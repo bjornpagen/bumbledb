@@ -1,7 +1,6 @@
 //! The filter-application mechanism:
 //! evaluates the per-atom conjunction over a warm image into a
 //! survivor-position vector.
-
 use std::sync::Arc;
 
 use crate::image::RelationImage;
