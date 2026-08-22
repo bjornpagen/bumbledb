@@ -6,7 +6,6 @@ use crate::sqlmap;
 use super::FairnessCheck;
 
 impl FairnessCheck {
-
     /// as a checked invariant, finding 074 — LMDB maps the whole store
 
     /// # Errors
