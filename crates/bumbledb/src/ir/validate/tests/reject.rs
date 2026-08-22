@@ -3,8 +3,6 @@ use crate::error::{AtomIndex, FindIndex};
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
 
-// --- Rejecting shapes, one per roster item ---
-
 #[test]
 fn rejects_unknown_relation() {
     let query = simple(
@@ -52,7 +50,7 @@ fn rejects_duplicate_field_binding() {
 
 #[test]
 fn rejects_variable_type_conflict() {
-    // Var 0 bound to a U64 field and an I64 field.
+
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(POSTING, vec![(1, var(0)), (2, var(0))])],
@@ -69,7 +67,7 @@ fn rejects_literal_type_mismatch() {
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
             POSTING,
-            vec![(0, var(0)), (2, Term::Literal(Value::U64(5)))], // I64 field
+            vec![(0, var(0)), (2, Term::Literal(Value::U64(5)))], 
         )],
     );
     assert!(matches!(
@@ -83,7 +81,7 @@ fn rejects_literal_type_mismatch() {
 
 #[test]
 fn rejects_conflicting_param_anchors() {
-    // Param 0 anchored at U64 (Posting.account) and I64 (Posting.amount).
+
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
@@ -103,7 +101,7 @@ fn rejects_conflicting_param_anchors() {
 
 #[test]
 fn rejects_order_comparison_on_string_in_both_written_orders() {
-    // Holder.name is a String: both written orders get the dedicated
+
     // equality-only refusal before generic classification.
     for literal_on_left in [false, true] {
         let literal = Term::Literal(Value::String(Box::from("x")));
@@ -131,7 +129,7 @@ fn rejects_order_comparison_on_string_in_both_written_orders() {
 
 #[test]
 fn rejects_self_comparison() {
-    // x < x is constant-valued: write the query you mean.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
@@ -150,9 +148,9 @@ fn rejects_self_comparison() {
 
 #[test]
 fn accepts_order_comparison_on_bool_in_both_written_orders() {
-    // Posting.flag is Bool (field 5): bool is orderable, false < true —
+
     // the strict 0/1 encoding IS the order (ruled 2026-07-23, R3), so
-    // both written orders validate.
+
     for literal_on_left in [false, true] {
         let literal = Term::Literal(Value::Bool(true));
         let (lhs, rhs) = if literal_on_left {
@@ -174,10 +172,6 @@ fn accepts_order_comparison_on_bool_in_both_written_orders() {
     }
 }
 
-/// The closed-relation fixture for the R4 order wall: `Priority` is
-/// closed (two rows), `Ticket.priority` is a declared containment into
-/// its id — both positions are closed references. `Ticket.span` gives
-/// the wall's measure and point-membership spellings an interval side.
 fn closed_schema() -> Schema {
     use bumbledb_theory::schema::{Row, Side, StatementDescriptor};
     let field = |name: &str, ty: ValueType| FieldDescriptor {
@@ -240,10 +234,10 @@ fn closed_expect_err(query: &Query) -> ValidationError {
 
 #[test]
 fn rejects_order_comparison_on_a_closed_reference() {
-    // Ticket.priority contains into the closed Priority(id): its var's
+
     // words are declaration indices, so `Lt` on it is refused — the
     // engine-judged wall, identical on every surface (ruled 2026-07-23,
-    // R4).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
@@ -262,7 +256,7 @@ fn rejects_order_comparison_on_a_closed_reference() {
 
 #[test]
 fn rejects_point_membership_of_a_closed_reference() {
-    // span ∋ priority: point membership sweeps the interval's order —
+
     // a closed-bound point side is refused (R4).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -285,7 +279,7 @@ fn rejects_point_membership_of_a_closed_reference() {
 
 #[test]
 fn rejects_cross_type_comparison() {
-    // U64 var vs I64 var: no silent coercion, ever.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
@@ -340,7 +334,7 @@ fn rejects_comparison_only_variable() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
-            lhs: var(9), // appears in no atom
+            lhs: var(9), 
             rhs: var(0),
         })],
     });
@@ -367,8 +361,6 @@ fn rejects_duplicate_find_terms() {
         ValidationError::DuplicateFindTerm { index: 1 }
     ));
 
-    // Aggregate terms collide under the same structural equality: two
-    // nullary Counts are one find written twice.
     let count = || FindTerm::Count;
     let query = simple(
         vec![count(), count()],
@@ -391,7 +383,7 @@ fn rejects_no_positive_atoms() {
 
 #[test]
 fn rejects_negated_atoms_without_any_positive_atom() {
-    // Negated atoms alone bind nothing: not a query.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![],
@@ -411,7 +403,7 @@ fn rejects_sum_over_non_integer() {
             op: FoldOp::Sum,
             over: VarId(0),
         }],
-        vec![atom(HOLDER, vec![(1, var(0))])], // String
+        vec![atom(HOLDER, vec![(1, var(0))])], 
     );
     assert!(matches!(
         expect_err(&query),
@@ -422,12 +414,11 @@ fn rejects_sum_over_non_integer() {
 #[test]
 fn rejects_min_and_max_over_str() {
     // The str-extrema roster refusal (the README's recorded ruling):
-    // intern words are not order-preserving, so a str extreme would be
-    // a dictionary-id extreme — meaningless. Min/Max fold U64/I64 only.
+
     for op in [FoldOp::Min, FoldOp::Max] {
         let query = simple(
             vec![FindTerm::Aggregate { op, over: VarId(0) }],
-            vec![atom(HOLDER, vec![(1, var(0))])], // String
+            vec![atom(HOLDER, vec![(1, var(0))])], 
         );
         assert!(matches!(
             expect_err(&query),
@@ -456,7 +447,7 @@ fn rejects_aggregate_over_group_key() {
 
 #[test]
 fn rejects_sparse_param_ids() {
-    // ?1 without ?0: the gap would be an unchecked positional slot.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
@@ -483,8 +474,7 @@ fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
 
 #[test]
 fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
-    // One 129-field relation binds 129 fresh variables in a single
-    // atom — past the executor's 128-bit variable bitsets.
+
     let wide = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -519,8 +509,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
 
 #[test]
 fn negated_occurrences_count_toward_the_occurrence_cap() {
-    // MAX_OCCURRENCES positive atoms alone pass; one negated atom tips
-    // the occurrence count over — anti-probes consume plan-time work.
+
     let cap = crate::plan::planner::MAX_OCCURRENCES;
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -533,12 +522,9 @@ fn negated_occurrences_count_toward_the_occurrence_cap() {
     );
 }
 
-// --- The PRD 12 reject corpus: the new roster lines ---
-
 #[test]
 fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
-    // Lt over Account.validity — the predictable mistake gets the good
-    // error, not a generic IllegalComparison.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -559,9 +545,7 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
 
 #[test]
 fn order_operator_on_two_bivalent_interval_variables() {
-    // Both sides bound only in interval fields: the bivalent anchors
-    // resolve to the interval type, and the order op is rejected with
-    // the dedicated diagnostic.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -583,9 +567,9 @@ fn order_operator_on_two_bivalent_interval_variables() {
 
 #[test]
 fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
-    // Lt over Posting.memo (bytes<32>): a digest's lexicographic order
+
     // is an encoding artifact — identity only, refused typed
-    // (docs/architecture/10-data-model.md, the order-on-bytes refusal).
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (4, var(1))])],
@@ -604,11 +588,11 @@ fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
 
 #[test]
 fn rejects_min_and_max_over_fixed_bytes() {
-    // Min/Max fold an order that bytes<N> refuses to have.
+
     for op in [FoldOp::Min, FoldOp::Max] {
         let query = simple(
             vec![FindTerm::Aggregate { op, over: VarId(0) }],
-            vec![atom(POSTING, vec![(4, var(0)), (0, var(1))])], // bytes<32>
+            vec![atom(POSTING, vec![(4, var(0)), (0, var(1))])], 
         );
         assert!(matches!(
             expect_err(&query),
@@ -619,8 +603,7 @@ fn rejects_min_and_max_over_fixed_bytes() {
 
 #[test]
 fn rejects_a_wrong_width_fixed_bytes_literal() {
-    // The length is the type: a 16-byte literal against bytes<32> is a
-    // type mismatch, exactly like a wrong variant.
+
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
@@ -642,8 +625,7 @@ fn rejects_a_wrong_width_fixed_bytes_literal() {
 
 #[test]
 fn rejects_param_set_under_ne() {
-    // Ne(x, set) reads as ambiguous quantification: a param set is legal
-    // only in atom bindings and under Eq.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (1, var(1))])],
@@ -662,7 +644,7 @@ fn rejects_param_set_under_ne() {
 
 #[test]
 fn rejects_a_param_id_used_both_scalar_and_set() {
-    // ?0 as a set in Posting.account and as a scalar in Holder.id.
+
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![
@@ -678,8 +660,7 @@ fn rejects_a_param_id_used_both_scalar_and_set() {
 
 #[test]
 fn rejects_a_membership_only_variable() {
-    // The comparison collapses t to the element type (U64), so its one
-    // atom binding is membership — no enumerable domain.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -698,7 +679,7 @@ fn rejects_a_membership_only_variable() {
 
 #[test]
 fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
-    // A negated atom binds nothing; y comes from nowhere.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
@@ -752,9 +733,7 @@ fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_
 
 #[test]
 fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
-    // The point-domain law: points are MIN..=MAX-1, and MAX is the ray's
-    // ∞ — inside no interval, so the membership is typed out, never
-    // silently unmatchable.
+
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
@@ -773,8 +752,7 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
 
 #[test]
 fn rejects_a_point_literal_at_the_ceiling_under_point_in() {
-    // The comparison-site sibling: a PointIn right side is an interval
-    // position, so the ceiling is equally not a point there.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -793,8 +771,7 @@ fn rejects_a_point_literal_at_the_ceiling_under_point_in() {
 
 #[test]
 fn rejects_an_interval_typed_param_set_anchor() {
-    // v resolves to the interval type (its only anchors are bivalent), so
-    // Eq(v, ?set0) would make ?set0 a set of intervals — not a thing.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -811,11 +788,9 @@ fn rejects_an_interval_typed_param_set_anchor() {
     ));
 }
 
-// --- The Allen mask roster lines (PRD ALG-03) ---
-
 #[test]
 fn rejects_the_empty_allen_mask() {
-    // Allen(v, [1,5), ∅): no basic can hold — "never"; write no query.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -838,8 +813,7 @@ fn rejects_the_empty_allen_mask() {
 
 #[test]
 fn rejects_the_full_allen_mask() {
-    // Allen(v, w, all 13): every pair satisfies it — "always"; write no
-    // condition.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -863,8 +837,7 @@ fn rejects_the_full_allen_mask() {
 
 #[test]
 fn rejects_allen_over_non_interval_sides() {
-    // Allen over two scalar variables: the interval-pair comparison
-    // types over intervals only.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (2, var(1))])],
@@ -885,8 +858,7 @@ fn rejects_allen_over_non_interval_sides() {
 
 #[test]
 fn rejects_point_in_between_two_intervals() {
-    // The interval⊇interval PointIn overload is gone — that predicate is
-    // Allen(COVERS); an interval-typed right side is illegal.
+
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
@@ -904,7 +876,7 @@ fn rejects_point_in_between_two_intervals() {
         expect_err(&query),
         ValidationError::IllegalComparison { index: 0 }
     ));
-    // The literal form of the same mistake.
+
     let literal = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
@@ -926,7 +898,7 @@ fn rejects_point_in_between_two_intervals() {
 #[test]
 fn rejects_a_second_pack_term() {
     // The multi-Pack product has no sighting — refused with its trigger
-    // recorded on the error variant.
+
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
@@ -946,7 +918,7 @@ fn rejects_a_second_pack_term() {
 
 #[test]
 fn rejects_pack_beside_a_fold_aggregate() {
-    // Pack is relation-shaped: a fold column repeated per segment row is
+
     // refused — coalesced-time accounting is two queries or a host fold.
     let query = simple(
         vec![
@@ -964,8 +936,7 @@ fn rejects_pack_beside_a_fold_aggregate() {
 
 #[test]
 fn rejects_pack_over_a_non_interval_variable() {
-    // Posting.amount is I64: the coalesce is defined by the interval
-    // point-set denotation and by nothing else.
+
     let query = simple(
         vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
@@ -978,8 +949,7 @@ fn rejects_pack_over_a_non_interval_variable() {
 
 #[test]
 fn rejects_pack_over_a_group_key_variable() {
-    // The packed variable projected plain makes it a group key; packing
-    // it too would coalesce a constant per group.
+
     let query = simple(
         vec![FindTerm::Var(VarId(1)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
@@ -990,10 +960,6 @@ fn rejects_pack_over_a_group_key_variable() {
     ));
 }
 
-// --- Q1's fence: element domain is not anything-goes ---
-
-/// Pair(id u64, ulane interval<u64, 5>, iline interval<i64>) — the
-/// cross-domain fixture for the Q1 fence.
 fn cross_domain_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -1028,9 +994,9 @@ fn cross_domain_schema() -> Schema {
 }
 
 /// Q1 relaxes widths, never element domains: Allen between a u64-domain
-/// fixed-width term and an i64-domain general term stays an illegal
-/// comparison — the two domains share no `Point` tag
-/// (`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
+/// fixed-width term and an i64-domain general term stays an illegal comparison
+/// — the two domains share no `Point` tag (`lean/Bumbledb/Schema.lean:
+/// Value.points_one_tag_u64`).
 #[test]
 fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
     let query = Query::single(Rule {
@@ -1044,8 +1010,8 @@ fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
             op: CmpOp::Allen {
                 mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
-            lhs: var(1), // interval<u64, 5>
-            rhs: var(2), // interval<i64>
+            lhs: var(1), 
+            rhs: var(2), 
         })],
     });
     assert!(matches!(
@@ -1054,11 +1020,6 @@ fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
     ));
 }
 
-/// Lock (d), the scalar/field side of Q1: a FIELD binding is value
-/// equality at the field's EXACT encoding — a general interval literal
-/// of the wrong width at an `interval<u64, 5>` position is still a
-/// literal type mismatch (the width is the type; only comparison
-/// positions relax to the element domain).
 #[test]
 fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
     let query = simple(
@@ -1068,9 +1029,9 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
             vec![
                 (0, var(0)),
                 (
-                    1, // ulane: interval<u64, 5>
+                    1, 
                     Term::Literal(Value::IntervalU64(
-                        bumbledb_theory::Interval::<u64>::new(3, 7).expect("nonempty"), // width 4
+                        bumbledb_theory::Interval::<u64>::new(3, 7).expect("nonempty"), 
                     )),
                 ),
             ],
@@ -1085,12 +1046,6 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
     ));
 }
 
-/// The one value the width-equality check alone would admit: a general
-/// interval whose width MATCHES the declared `w` but whose end is the
-/// domain ceiling — the ray in fixed clothing. The Q2 bar
-/// (`start + w < maxEnd`) rejects it; admitting it would encode
-/// `start = MAX − w`, the exact byte pattern every read path convicts
-/// as corruption.
 #[test]
 fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
     let query = simple(
@@ -1100,10 +1055,10 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
             vec![
                 (0, var(0)),
                 (
-                    1, // ulane: interval<u64, 5>
+                    1, 
                     Term::Literal(Value::IntervalU64(
                         bumbledb_theory::Interval::<u64>::new(u64::MAX - 5, u64::MAX)
-                            .expect("a legal general ray"), // width 5 — and a ray
+                            .expect("a legal general ray"), 
                     )),
                 ),
             ],
