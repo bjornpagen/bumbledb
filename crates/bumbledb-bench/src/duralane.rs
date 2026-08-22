@@ -15,7 +15,6 @@ pub enum DurabilityLane {
 pub const ALL: [DurabilityLane; 2] = [DurabilityLane::Durable, DurabilityLane::Nosync];
 
 impl DurabilityLane {
-
     #[must_use]
     pub fn store_mode(self) -> StoreMode {
         match self {
@@ -104,8 +103,8 @@ impl DurabilityLane {
             ));
         }
         let expected_sync: i64 = match self {
-            Self::Durable => 2, 
-            Self::Nosync => 0,  
+            Self::Durable => 2,
+            Self::Nosync => 0,
         };
         let sync: i64 = conn
             .query_row("PRAGMA synchronous", [], |row| row.get(0))
