@@ -33,7 +33,7 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&[7]);
             digest.update(&interval.start().to_le_bytes());
             digest.update(&interval.end().to_le_bytes());
-        } 
+        }
     }
 }
 
