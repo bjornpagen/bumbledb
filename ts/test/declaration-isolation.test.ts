@@ -1,13 +1,3 @@
-/**
- * Published-declaration isolation. A consumer with `skipLibCheck` and
- * `exactOptionalPropertyTypes` must typecheck ONLY `dist/*.d.ts` — never
- * `src/*.ts`. The in-repo `#*.ts` map is a dual: this package's
- * `customConditions: ["bumbledb-src"]` sees sources; everyone else sees
- * declarations. `tsc` leaves `#` specifiers in `.d.ts`; the build rewrites
- * them to a closed relative graph so isolation does not depend on the
- * consumer leaving `bumbledb-src` unset.
- */
-
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import * as fs from "node:fs"
@@ -167,7 +157,6 @@ describe("a strict downstream consumer", function suite() {
 	})
 })
 
-/** A consumer program that constructs every Violation arm under exactOptionalPropertyTypes. */
 function consumerProgram(): string {
 	return `import type {
 	CapacityViolation,
