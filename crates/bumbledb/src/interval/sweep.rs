@@ -9,7 +9,6 @@ pub(crate) trait Continuation<W, P> {
     type Error;
 
     /// A consumed segment, in input order, before it extends the
-
     fn segment(&mut self, payload: P) -> Result<(), Self::Error>;
 
     fn maximal(&mut self, start: W, frontier: W) -> Result<(), Self::Error>;
