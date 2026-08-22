@@ -27,13 +27,10 @@ import { PUBLISH_PLATFORM } from "./platform.ts"
  * parses.
  */
 
-/** The main package root (this file lives in `<root>/scripts/`). */
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url))
 
-/** The one platform package this release ships. */
 const PLATFORM_PACKAGE = `@bjornpagen/bumbledb-${PUBLISH_PLATFORM}`
 
-/** Reads and parses the main manifest, wrapping either failure. */
 function readManifest(file: string): Record<string, unknown> {
 	const text = errors.trySync(() => fs.readFileSync(file, "utf8"))
 	if (text.error) {
@@ -46,12 +43,10 @@ function readManifest(file: string): Record<string, unknown> {
 	return parsed.data
 }
 
-/** Writes the manifest back in the repo's own shape (tab-indented, trailing newline). */
 function writeManifest(file: string, manifest: Record<string, unknown>): void {
 	fs.writeFileSync(file, `${JSON.stringify(manifest, null, "\t")}\n`)
 }
 
-/** Injects the exact-version platform pin into the manifest (prepack). */
 function inject(file: string): void {
 	const manifest = readManifest(file)
 	const version = manifest.version
@@ -62,7 +57,6 @@ function inject(file: string): void {
 	writeManifest(file, manifest)
 }
 
-/** Removes the platform pin from the manifest (postpack). */
 function restore(file: string): void {
 	const manifest = readManifest(file)
 	if (!("optionalDependencies" in manifest)) {
