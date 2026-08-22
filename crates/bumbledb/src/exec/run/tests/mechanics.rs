@@ -5,8 +5,7 @@ use crate::ir::WordCmp;
 fn dynamic_cover_prefers_the_forced_small_side() {
     let dir = TempDir::new("run-cover-choice");
     let schema = schema(2);
-    // R: huge with duplicate x; S: tiny. Node 0 = [R(x), S(x)] via a
-    // GJ-style hand plan where both are covers.
+
     let r: Vec<(u64, u64)> = (0..500).map(|i| (i % 250, i)).collect();
     let s: Vec<(u64, u64)> = vec![(0, 0), (1, 1)];
     let views = views_of(&dir, &schema, &[r, s]);
@@ -17,7 +16,7 @@ fn dynamic_cover_prefers_the_forced_small_side() {
         ],
         vec![],
     );
-    // Hand-build the GJ plan: [[R(x), S(x)], [R(a)], [S(b)]].
+
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
             crate::plan::fj::Node {
@@ -51,7 +50,6 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     };
     let plan = validate(&plan, &normalized, &schema, &BTreeSet::new()).expect("valid plan");
 
-    // Pre-force S's root so its Exact(2) beats R's Estimate(500).
     let mut colts = colts_for(&plan, &views);
     let s_root = Colt::root();
     colts[1].get(s_root, 0, &[0]);
@@ -62,19 +60,13 @@ fn dynamic_cover_prefers_the_forced_small_side() {
         .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
         .expect("execute");
 
-    // Node 0's first choice: subatom 1 (S), whose count is Exact.
     let (node, subatom, exact) = counters.cover_choices[0];
     assert_eq!((node, subatom, exact), (0, 1, true));
     assert!(!sink.rows.is_empty());
 }
 
-/// Regression for the cover-soundness deviation
-/// (docs/architecture/40-execution.md): a subatom carrying an
-/// already-bound variable must never be a runtime-eligible cover. In
-/// the triangle below, node 1 = [S(z), T(x, z)]; with skew, T's tiny
-/// key count would win the dynamic choice, and iterating T(x, z)
-/// rebinds x over R's binding without re-probing R — producing a row
-/// where the correct answer is empty.
+/// Regression for the cover-soundness deviation: a subatom carrying an
+/// already-bound variable must never be a runtime-eligible cover.
 #[test]
 fn covers_never_rebind_an_already_bound_variable() {
     let dir = TempDir::new("run-cover-rebind");
@@ -84,7 +76,6 @@ fn covers_never_rebind_an_already_bound_variable() {
     let t = vec![(2, 5)];
     let views = views_of(&dir, &schema, &[r, s, t]);
 
-    // Q(x,y,z) :- R(x,y), S(y,z), T(x,z), order [R, S, T].
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -96,7 +87,7 @@ fn covers_never_rebind_an_already_bound_variable() {
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
 
     // The mixed-var subatom T(x, z) must not be listed as a cover of
-    // its node (x is bound by node 0).
+
     for node in plan.nodes() {
         for &cover in &node.covers {
             let vars = &node.subatoms[cover as usize].vars;
@@ -160,8 +151,7 @@ fn backtracking_restores_sources_across_sequential_executions() {
 
 #[test]
 fn results_are_identical_across_batch_sizes() {
-    // Skew, empty relations, partial final batches, and batch > row
-    // count are all covered by these fixtures x sizes.
+
     let dir = TempDir::new("run-batch-equality");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..150).map(|i| (i % 7, i % 11)).collect();
@@ -191,7 +181,6 @@ fn results_are_identical_across_batch_sizes() {
         );
     }
 
-    // An empty relation, every batch size.
     let dir2 = TempDir::new("run-batch-empty");
     let views = views_of(&dir2, &schema, &[vec![(1, 2)], vec![], vec![(0, 0)]]);
     for batch in [1usize, 2, 64, 128, 256, 1024] {
@@ -222,8 +211,6 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
         .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
         .expect("execute");
 
-    // All 10 root entries fit one batch: every hash of node 0's sibling
-    // pass must precede its first probe.
     let first_probe = counters
         .events
         .iter()
@@ -240,32 +227,26 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
     assert!(!sink.rows.is_empty());
 }
 
-/// A pinned sibling (`Cursor::Row`) probes
-/// by field equality — phase 1 computes no hash for it, and introspection's
-/// `hashes` counts only hashes computed for map probes. Probes still
-/// count; results are unchanged.
 #[test]
 fn pinned_siblings_probe_without_hashing() {
     let dir = TempDir::new("run-pinned-hash");
     let schema = schema(3);
-    // A(a,b) drives; B and C each have exactly one row per probe key,
+
     // so both pin to Cursor::Row after node 0. At node 1 both B(c)
-    // and C(c) are covers with count 1; the tie keeps the incumbent
-    // (B, the lower subatom index), leaving C as the pinned sibling.
+
     let a_rows: Vec<(u64, u64)> = vec![(1, 10), (2, 20)];
     let b_rows: Vec<(u64, u64)> = vec![(1, 100), (2, 200)];
     let c_rows: Vec<(u64, u64)> = vec![(10, 100), (20, 200)];
     let views = views_of(&dir, &schema, &[a_rows, b_rows, c_rows]);
     let normalized = normalized(
         vec![
-            occurrence(0, 0, &[(0, 0), (1, 1)]), // A(a, b)
-            occurrence(1, 1, &[(0, 0), (1, 2)]), // B(a, c)
-            occurrence(2, 2, &[(0, 1), (1, 2)]), // C(b, c)
+            occurrence(0, 0, &[(0, 0), (1, 1)]), 
+            occurrence(1, 1, &[(0, 0), (1, 2)]), 
+            occurrence(2, 2, &[(0, 1), (1, 2)]), 
         ],
         vec![],
     );
-    // Hand-built: node 0 probes both B(a) and C(b) — C's second
-    // appearance at node 1 is then a probe against its pinned child.
+
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
             crate::plan::fj::Node {
@@ -316,46 +297,38 @@ fn pinned_siblings_probe_without_hashing() {
             .filter(|(k, n, s)| *k == kind && *n == node && *s == subatom)
             .count()
     };
-    // Node 0's siblings probe root nodes: hashed.
+
     assert!(count("hash", 0, 1) > 0, "B's root probe hashes");
     assert!(count("hash", 0, 2) > 0, "C's root probe hashes");
-    // Node 1's pinned sibling (C, subatom 1): probed, never hashed.
+
     assert_eq!(count("hash", 1, 1), 0, "pinned probes compute no hash");
     assert_eq!(count("probe", 1, 1), 2, "both entries still probe C");
-    // Results unchanged: the two consistent binding triples.
+
     assert_eq!(
         sink.rows,
         BTreeSet::from([vec![1, 10, 100], vec![2, 20, 200]])
     );
 }
 
-/// The magnitude-first cover rule (docs/architecture/40-execution.md), table-tested: the
-/// smaller side wins whatever its label; Exact breaks ties; a full
-/// tie keeps the incumbent.
 #[test]
 fn cover_choice_is_magnitude_first() {
     use KeyCount::{Estimate, Exact};
-    // The measured bug: a 7-row unforced view must beat a 500-key
-    // forced map.
+
     assert!(better_cover(Estimate(7), Exact(500)));
     assert!(!better_cover(Exact(500), Estimate(7)));
-    // Magnitude wins in both label directions.
+
     assert!(better_cover(Exact(7), Estimate(500)));
     assert!(!better_cover(Estimate(500), Exact(7)));
-    // Equal magnitudes: Exact displaces Estimate, never vice versa,
-    // and same-label ties keep the incumbent (deterministic order).
+
     assert!(better_cover(Exact(9), Estimate(9)));
     assert!(!better_cover(Estimate(9), Exact(9)));
     assert!(!better_cover(Exact(9), Exact(9)));
     assert!(!better_cover(Estimate(9), Estimate(9)));
 }
 
-/// The cost-class ordering (finding 008; docs/architecture/
-/// 40-execution.md, § inputs from normalization): a node's ALU
-/// residuals compact the survivor set BEFORE its sibling hash probes,
-/// so every residual-killed element is a bucket load never issued.
-/// Pinned on both twins: node 0 of a two-node pipeline (`probe_pass`)
-/// and the single-node leaf pass (`run_node`).
+/// The cost-class ordering: a node's ALU residuals compact the survivor set
+/// BEFORE its sibling hash probes, so every residual-killed element is a bucket
+/// load never issued.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -381,9 +354,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
         fn emit(&mut self) {}
         fn skip(&mut self, _: usize) {}
     }
-    // probe_pass: node 0 = [R(x, y) cover, S(x) probe] with the
-    // residual Ne(x, y) placed at node 0 — half the batch dies before
-    // the probe loop runs.
+
     let dir = TempDir::new("run-residual-order-pipe");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..10)
@@ -432,8 +403,6 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
         "10 residuals compact to 5 before the first bucket load"
     );
 
-    // run_node: the hand-built single-node plan [[R(x, y), S(x, y)]] —
-    // the leaf pass with a sibling — and the same law holds.
     let dir = TempDir::new("run-residual-order-leaf");
     let r2: Vec<(u64, u64)> = (0..10)
         .map(|i| if i < 5 { (i, i) } else { (i, i + 1) })
