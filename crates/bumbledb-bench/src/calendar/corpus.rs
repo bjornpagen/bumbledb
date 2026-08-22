@@ -1,15 +1,7 @@
-//! Calendar corpus loading (docs/architecture/60-validation.md § the
-//! calendar benchmark): one generator stream, two stores, identical
-//! contents — the ledger loader's discipline
-//! ([`crate::corpus`]) applied to the second theory.
-//!
-//! The engine load respects the statements it is judged under:
-//! containment targets precede their sources (accounts → persons →
-//! calendars → events; working hours before the claims they cover), and
-//! the `Attendance == Claim` discriminated-union cluster loads through
-//! **joint chunked write transactions** — either relation alone violates
-//! one `==` direction mid-load, exactly the target corpus's
-//! `JournalEntry == ImportBatch` precedent (`verify::run`).
+//! The engine load respects the statements it is judged under: containment
+//! targets precede their sources (accounts → persons → the `Attendance ==
+//! Claim` discriminated-union cluster loads through calendars → events; working
+//! hours before the claims they cover), and
 
 use std::path::Path;
 use std::time::Instant;
@@ -23,9 +15,6 @@ use crate::corpus::{LoadStats, configure_sqlite, insert_rows};
 use crate::corpus_gen::GenConfig;
 use crate::sqlmap;
 
-/// The engine load order minus the `==` cluster: every containment's
-/// target precedes its source, and `WorkHours` precedes the claims whose
-/// coverage it proves.
 const ORDER: [RelationId; 8] = [
     ids::ACCOUNT,
     ids::PERSON,
@@ -37,28 +26,14 @@ const ORDER: [RelationId; 8] = [
     ids::SLOT,
 ];
 
-/// The joint chunk size of the `==` cluster (host policy: keep a
-/// bidirectional cluster inside one write).
 const CHUNK: usize = 4096;
 
-/// Loads the calendar corpus into a bumbledb store: the containment-safe
-/// prefix through one collection `insert_dyn` per relation, then the
-/// `Attendance == Claim` cluster through joint chunked write transactions.
-///
 /// # Errors
-///
-/// Engine errors verbatim — a corpus load has no resume story;
-/// regenerate.
 pub fn load_bumbledb(db: &Db<Scheduling>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     load_bumbledb_sized(db, cfg, CalSizes::of(cfg.scale))
 }
 
-/// [`load_bumbledb`] with explicit sizes — the unit-corpus seam (tests
-/// and the naive lane shrink every axis through [`CalSizes::unit`]).
-///
 /// # Errors
-///
-/// As [`load_bumbledb`].
 pub fn load_bumbledb_sized(
     db: &Db<Scheduling>,
     cfg: GenConfig,
@@ -89,7 +64,6 @@ pub fn load_bumbledb_sized(
     Ok(LoadStats::of(facts, start.elapsed()))
 }
 
-/// Commits one joint chunk of the `==` cluster.
 fn flush(
     db: &Db<Scheduling>,
     pending: &mut Vec<(RelationId, Vec<Value>)>,
@@ -109,31 +83,16 @@ fn flush(
     Ok(facts)
 }
 
-/// Creates, configures, and loads the calendar `SQLite` mirror: DDL from
-/// the schema descriptors plus the family-owned indexes, every relation
-/// via [`crate::corpus::insert_rows`], then `ANALYZE` and a truncating
-/// WAL checkpoint — the ledger mirror's exact recipe.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
-///
 /// # Panics
-///
 /// Only on programmer-invariant violations (WAL refused; corpus values
-/// breaking the mapping axiom).
 pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection, LoadStats)> {
     let conn = Connection::open(path)?;
     configure_sqlite(&conn)?;
     load_sqlite_into(&conn, cfg, CalSizes::of(cfg.scale)).map(|stats| (conn, stats))
 }
 
-/// [`load_sqlite`] against an already-open connection with explicit
-/// sizes — the unit-corpus and in-memory seams.
-///
 /// # Errors
-///
-/// `SQLite` errors verbatim.
 pub fn load_sqlite_into(
     conn: &Connection,
     cfg: GenConfig,
@@ -157,11 +116,6 @@ pub fn load_sqlite_into(
     Ok(LoadStats::of(facts, start.elapsed()))
 }
 
-/// The calendar mirror's DDL: the statement-derived plan, the closed
-/// vocabularies' extension INSERTs (`Rsvp`/`Arm` — schema surface, not
-/// corpus: a closed relation is never empty), plus the family-owned
-/// indexes (the honest opponent gets every index its queries reward —
-/// `crate::calendar::families::index_ddl`).
 #[must_use]
 pub fn ddl() -> Vec<String> {
     let mut statements = sqlmap::schema_ddl(schema());
@@ -172,13 +126,7 @@ pub fn ddl() -> Vec<String> {
     statements
 }
 
-/// Cross-store equality: per-relation counts against the generator's
-/// derived sizes, then a seeded sample of events fetched from `SQLite`
-/// by fresh id and compared value-for-value against the generator.
-///
 /// # Panics
-///
-/// On any inequality — this is test/verify support, not a soft check.
 pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfig) {
     let schema = schema();
     let sizes = CalSizes::of(cfg.scale);
@@ -197,9 +145,6 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
         assert_eq!(ours as u64, sizes.rows(rel), "generator count for {name}");
     }
 
-    // 100 seeded sample events, fetched from SQLite by id, compared to
-    // the generator's row (engine equality to the generator is covered
-    // transitively by counts + set semantics + the verify layer).
     let mut rng = crate::corpus_gen::Rng::new(cfg.seed ^ 0xCA1E);
     let events: Vec<Vec<Value>> = relation_rows_sized(cfg, sizes, ids::EVENT).collect();
     let relation = schema.relation(ids::EVENT);
