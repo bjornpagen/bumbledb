@@ -11,7 +11,6 @@
 //! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
 //! membership as `in`, `Allen(term, MASK, term)` with masks as named
 //! basics joined by `|` (set union) or the workload composites, `;`
-
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -56,7 +55,6 @@ impl ClosedRefs {
     }
 
     /// if any — the R4 refusal's resolution question, and the dense
-
     pub(crate) fn target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
         self.0.get(&(relation, field)).copied()
     }
