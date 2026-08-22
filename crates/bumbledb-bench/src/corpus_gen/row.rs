@@ -83,7 +83,6 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             Value::String(format!("org-{i:02}").into()),
         ],
         ids::ORG_PARENT => {
-
             let child = i + 1;
             vec![Value::U64(child), Value::U64(child / 2)]
         }
