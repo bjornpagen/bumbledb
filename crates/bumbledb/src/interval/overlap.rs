@@ -51,7 +51,6 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-
     fn report(&self, node: usize, lo: usize, hi_node: usize, out: &mut Vec<u32>) {
         if lo >= self.hi || self.tree[node] <= self.q_start {
             return;
@@ -68,7 +67,6 @@ impl Walk<'_> {
 
 #[derive(Default)]
 pub(crate) struct OverlapCache {
-
     table: Vec<u32>,
     dirs: Vec<Dir>,
     keys: Vec<u64>,
@@ -83,7 +81,6 @@ pub(crate) struct OverlapCache {
 }
 
 impl OverlapCache {
-
     pub(crate) fn reset(&mut self) {
         self.table.iter_mut().for_each(|slot| *slot = 0);
         self.dirs.clear();
@@ -306,7 +303,6 @@ mod tests {
         let mut cache = OverlapCache::default();
         let mut out = Vec::new();
         for round in 0..200u64 {
-
             let len = (rng.next() % 300) as usize;
             let group = random_group(&mut rng, len);
             let dir = build(&mut cache, &[round], &group);
