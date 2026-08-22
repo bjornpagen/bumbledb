@@ -1,16 +1,10 @@
 use super::*;
 
-/// The ctrl-gated bucket probe is behavior-
-/// identical to a model across adversarial keys (equal low bits —
-/// same slot, different tags), probe hits AND misses, singleton
-/// upgrades, and growth across the 0.4 max-load boundary.
 #[test]
 fn bucket_probes_match_the_model_under_adversarial_keys() {
     let dir = TempDir::new("colt-bucket-model");
     let schema = schema();
-    // Keys collide mod any small capacity (equal low 8 bits) and
-    // repeat (singleton -> chunk upgrades); enough distinct keys to
-    // force several rehash doubles from the /8 initial guess.
+
     let mut rows: Vec<(u64, u64)> = Vec::new();
     for i in 0..400u64 {
         let key = (i % 97) << 8;
@@ -23,7 +17,6 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
     let root = Colt::root();
     colt.ensure_forced(root, 0);
 
-    // Model: key -> positions (image order).
     let k_col: Vec<u64> = view.column_words(0).to_vec();
     let mut model: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
     for (pos, k) in k_col.iter().enumerate() {
@@ -43,25 +36,21 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
             .collect();
         assert_eq!(&got, positions, "key {key}");
     }
-    // Misses: same low bits as present keys, absent values.
+
     for i in 0..97u64 {
         let absent = (i << 8) | 1;
         assert!(colt.get(root, 0, &[absent]).is_none(), "key {absent}");
     }
 }
 
-/// The column-hoisted unchecked gathers are
-/// bit-identical to a first-principles per-position reference, across
-/// word and byte columns, the identity (all-rows) root, chunked
-/// children, and resume-token splits at every batch size.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one fixture, five batch sizes, two node shapes
+)] 
 fn hoisted_gathers_match_the_per_position_reference() {
     let dir = TempDir::new("colt-hoisted-gather");
-    // R(k u64, v u64, b bool): a byte-backed column beside the words.
+
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -89,7 +78,6 @@ fn hoisted_gathers_match_the_per_position_reference() {
     .validate()
     .expect("valid fixture");
 
-    // Skewed keys force multi-chunk children (k=0 holds >64 rows).
     let mut rows: Vec<(u64, u64, bool)> = (0..200u64)
         .map(|i| (if i % 3 == 0 { 0 } else { i % 7 }, i * 31 % 191, i % 2 == 0))
         .collect();
@@ -111,9 +99,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
     commit(delta, &env).expect("commit").expect("admitted");
     let txn = env.read_txn().expect("txn");
     let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
-    // The reference reads the image columns per position — the exact
-    // access the hoisted gather replaces; no assumption about the
-    // image's position order.
+
     let k_col: Vec<u64> = image.column_words(0).to_vec();
     let v_col: Vec<u64> = image.column_words(1).to_vec();
     let b_col: Vec<u64> = image
@@ -144,7 +130,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
     };
 
     for &size in &[1usize, 3, 8, 64, 128] {
-        // Identity root suffix over (k, b): word + byte columns.
+
         let mut colt = Colt::new(apply(&image, &[], &[], Vec::new()), &[], vec![vec![0, 2]]);
         let got = drain_at(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
@@ -157,7 +143,6 @@ fn hoisted_gathers_match_the_per_position_reference() {
             .collect();
         assert_eq!(got, expected, "identity root, batch {size}");
 
-        // Chunked child suffix over (v, b) under each key.
         let mut colt = Colt::new(
             apply(&image, &[], &[], Vec::new()),
             &[],
@@ -186,7 +171,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
 fn get_and_iter_agree_with_a_naive_oracle() {
     let dir = TempDir::new("colt-oracle");
     let schema = schema();
-    // Duplicate-heavy: keys follow i % 17, some singleton keys on top.
+
     let mut rows: Vec<(u64, u64)> = (0..2_000u64).map(|i| (i % 17, i)).collect();
     rows.extend((100..110u64).map(|k| (k, k * 1000)));
     let view = view_of(&dir, &schema, &rows);
@@ -197,7 +182,7 @@ fn get_and_iter_agree_with_a_naive_oracle() {
 
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
-    // Root iteration (non-suffix -> forces): keys match the oracle's.
+
     let entries = drain(&mut colt, root, 0);
     assert_eq!(entries.len(), oracle.len());
     assert!(matches!(
@@ -206,10 +191,10 @@ fn get_and_iter_agree_with_a_naive_oracle() {
     ));
     for (key, child) in entries {
         let expected = &oracle[&key[0]];
-        // get() agrees with the iterated child.
+
         let got = colt.get(root, 0, &key).expect("iterated key resolves");
         assert_eq!(got, child);
-        // Level-1 values match the oracle multiset.
+
         let mut values: Vec<u64> = drain(&mut colt, child, 1)
             .into_iter()
             .map(|(k, _)| k[0])
@@ -219,6 +204,6 @@ fn get_and_iter_agree_with_a_naive_oracle() {
         want.sort_unstable();
         assert_eq!(values, want, "key {}", key[0]);
     }
-    // Missing keys miss.
+
     assert_eq!(colt.get(root, 0, &[9999]), None);
 }
