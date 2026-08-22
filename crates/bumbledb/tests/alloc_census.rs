@@ -83,7 +83,6 @@ unsafe impl GlobalAlloc for CensusAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-
         ALLOCS.fetch_add(1, Ordering::Relaxed);
         ALLOC_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
@@ -142,7 +141,7 @@ fn measured<R>(flow: &str, label: &str, attrib: bool, f: impl FnOnce() -> R) -> 
 
 fn attribution_key(bt: &Backtrace) -> String {
     let text = format!("{bt}");
-    let mut frames: Vec<(String, String)> = Vec::new(); 
+    let mut frames: Vec<(String, String)> = Vec::new();
     let mut current: Option<String> = None;
     for line in text.lines() {
         let t = line.trim_start();
@@ -229,7 +228,7 @@ fn attribution_key(bt: &Backtrace) -> String {
 fn print_sites() {
     let events = std::mem::take(&mut *EVENTS.lock().expect("events lock"));
     let dropped = DROPPED.load(Ordering::Relaxed);
-    let mut agg: HashMap<String, (u64, u64, u64)> = HashMap::new(); 
+    let mut agg: HashMap<String, (u64, u64, u64)> = HashMap::new();
     for e in &events {
         let key = attribution_key(&e.bt);
         let entry = agg.entry(key).or_insert((0, 0, 0));
@@ -328,7 +327,6 @@ fn schema() -> SchemaDescriptor {
                 name: "Item".into(),
                 fields: vec![u64_field("doc"), u64_field("pos"), u64_field("note")],
             },
-
             RelationDescriptor {
                 extension: None,
                 name: "Profile".into(),
@@ -348,7 +346,6 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-
             StatementDescriptor::Capacity {
                 target: Side {
                     relation: ACCOUNT,
@@ -790,7 +787,6 @@ bumbledb::schema! {
 }
 
 fn flow_open() {
-
     let dir = common::TempDir::new("census-open");
     let db = measured("open", "Db::create(fixture schema)", true, || {
         Db::create(dir.path(), schema())
@@ -820,7 +816,6 @@ fn flow_open() {
 }
 
 fn flow_prepare(db: &Db<SchemaDescriptor>) {
-
     for (label, q) in [
         ("chain a=1 c=0 r=1", chain_query(1, 0, 1)),
         ("chain a=2 c=1 r=1", chain_query(2, 1, 1)),
@@ -860,7 +855,6 @@ fn flow_prepare(db: &Db<SchemaDescriptor>) {
 }
 
 fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u64, attrib: bool) {
-
     for round in 0..3 {
         let base = *next_id;
         *next_id += k;
